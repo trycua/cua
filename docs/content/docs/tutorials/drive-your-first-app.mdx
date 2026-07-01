@@ -22,13 +22,7 @@ Use the same one-line installer on every platform; it picks the right path for t
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
     ```
 
-    Start the daemon through the app bundle so macOS attributes permission prompts to CuaDriver.app:
-
-    ```bash
-    open -n -g -a CuaDriver --args serve
-    ```
-
-    Then grant Accessibility and Screen Recording:
+    Grant Accessibility and Screen Recording (this launches CuaDriver so the prompts are attributed to it):
 
     ```bash
     cua-driver permissions grant
@@ -41,11 +35,6 @@ Use the same one-line installer on every platform; it picks the right path for t
     irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
     ```
 
-    Start the daemon from an interactive desktop session, not an SSH session. **The daemon must run in Session 1 or later**; a daemon started over SSH usually lands in Session 0 and cannot drive the GUI.
-
-    ```powershell
-    cua-driver serve
-    ```
   </Tab>
   <Tab value="Linux">
     Requires an x86_64 Linux desktop session with X11 or XWayland, plus AT-SPI 2.
@@ -54,11 +43,6 @@ Use the same one-line installer on every platform; it picks the right path for t
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
     ```
 
-    Start the daemon from inside your graphical desktop session:
-
-    ```bash
-    cua-driver serve
-    ```
   </Tab>
 </Tabs>
 

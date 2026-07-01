@@ -100,7 +100,7 @@ const CUA_DRIVER_BIN = path.join(
   'release',
   process.platform === 'win32' ? 'cua-driver.exe' : 'cua-driver'
 );
-const DOCS_OUTPUT_DIR = path.join(ROOT_DIR, 'docs', 'content', 'docs', 'cua-driver', 'reference');
+const DOCS_OUTPUT_DIR = path.join(ROOT_DIR, 'docs', 'content', 'docs', 'reference', 'cua-driver');
 const TAG_PREFIX = 'cua-driver-rs-v';
 
 // ============================================================================
@@ -131,12 +131,6 @@ function resolveCargoCommand(): string {
   throw new Error('cargo not found on PATH; install Rust or set CARGO=/path/to/cargo');
 }
 
-interface VersionInfo {
-  version: string;
-  href: string;
-  isCurrent: boolean;
-}
-
 /**
  * Get the latest released version from git tags.
  */
@@ -153,51 +147,6 @@ export function getLatestReleasedVersion(): string {
     // Fall through
   }
   return '0.0.0';
-}
-
-/**
- * Discover available versioned doc folders and build version list.
- */
-export function discoverVersions(currentVersion: string): VersionInfo[] {
-  const versions: VersionInfo[] = [];
-  const currentMajorMinor = currentVersion.split('.').slice(0, 2).join('.');
-
-  // Add current version (latest)
-  versions.push({
-    version: currentMajorMinor,
-    href: '/cua-driver/reference/cli-reference',
-    isCurrent: true,
-  });
-
-  // Discover versioned folders (v0.2, v0.1, etc.)
-  if (fs.existsSync(DOCS_OUTPUT_DIR)) {
-    const entries = fs.readdirSync(DOCS_OUTPUT_DIR, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory() && entry.name.startsWith('v')) {
-        const version = entry.name.substring(1);
-        if (version === currentMajorMinor) continue;
-        versions.push({
-          version,
-          href: `/cua-driver/reference/${entry.name}/cli-reference`,
-          isCurrent: false,
-        });
-      }
-    }
-  }
-
-  // Sort descending
-  versions.sort((a, b) => {
-    const partsA = a.version.split('.').map((x) => parseInt(x, 10) || 0);
-    const partsB = b.version.split('.').map((x) => parseInt(x, 10) || 0);
-    for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
-      const partA = partsA[i] || 0;
-      const partB = partsB[i] || 0;
-      if (partA !== partB) return partB - partA;
-    }
-    return 0;
-  });
-
-  return versions;
 }
 
 // ============================================================================
@@ -312,13 +261,10 @@ async function main() {
 export function generateCLIReferenceMDX(docs: CLIDocumentation, releasedVersion: string): string {
   const lines: string[] = [];
 
-  const currentMajorMinor = releasedVersion.split('.').slice(0, 2).join('.');
-  const versions = discoverVersions(releasedVersion);
-
   // Frontmatter — must be at the very beginning of the file
   lines.push('---');
   lines.push('title: CLI Reference');
-  lines.push('description: Command Line Interface reference for Cua Driver');
+  lines.push('description: Command-line interface specification for Cua Driver');
   lines.push('---');
   lines.push('');
   lines.push(`{/*
@@ -328,24 +274,25 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation, releasedVersion:
   Version: ${releasedVersion}
 */}`);
   lines.push('');
-  lines.push("import { Callout } from 'fumadocs-ui/components/callout';");
-  lines.push("import { VersionHeader } from '@/components/version-selector';");
-  lines.push('');
-
-  // Version header component
-  lines.push('<VersionHeader');
-  lines.push(`  versions={${JSON.stringify(versions)}}`);
-  lines.push(`  currentVersion="${currentMajorMinor}"`);
-  lines.push(`  fullVersion="${releasedVersion}"`);
-  lines.push(`  packageName="cua-driver"`);
-  lines.push(
-    `  installCommand="curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash"`
-  );
-  lines.push('/>');
-  lines.push('');
 
   // Introduction
-  lines.push(escapeMdxText(docs.abstract));
+  lines.push(escapeMdxText(docs.abstract) + ' Install via the official script:');
+  lines.push('');
+  lines.push('```sh');
+  lines.push(
+    'curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash'
+  );
+  lines.push('```');
+  lines.push('');
+  lines.push(
+    `Documented against Cua Driver **${releasedVersion}**. Run \`cua-driver --version\` for your installed version.`
+  );
+  lines.push('');
+  lines.push(
+    'The macOS-only `cua-driver permissions` command is documented separately in [macOS permissions](/reference/cua-driver/macos-permissions).'
+  );
+  lines.push('');
+  lines.push('---');
   lines.push('');
 
   // Group commands by category
@@ -393,7 +340,11 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation, releasedVersion:
     ...configuration,
     ...diagnostics,
   ];
-  const uncategorised = docs.commands.filter((c) => !allCategorised.includes(c.name));
+  // Documented on their own pages, so keep them out of this reference.
+  const excludedFromReference = ['permissions']; // -> reference/cua-driver/macos-permissions
+  const uncategorised = docs.commands.filter(
+    (c) => !allCategorised.includes(c.name) && !excludedFromReference.includes(c.name)
+  );
   if (uncategorised.length > 0) {
     lines.push('## Other commands');
     lines.push('');
@@ -417,7 +368,7 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation, releasedVersion:
 export function generateCommandDoc(cmd: CommandDoc): string[] {
   const lines: string[] = [];
 
-  lines.push(`### cua-driver ${cmd.name}`);
+  lines.push(`### \`cua-driver ${cmd.name}\``);
   lines.push('');
   lines.push(escapeMdxText(cmd.abstract));
   lines.push('');
@@ -478,7 +429,7 @@ export function generateCommandDoc(cmd: CommandDoc): string[] {
   // Subcommands
   if (cmd.subcommands.length > 0) {
     for (const sub of cmd.subcommands) {
-      lines.push(`#### cua-driver ${cmd.name} ${sub.name}`);
+      lines.push(`#### \`cua-driver ${cmd.name} ${sub.name}\``);
       lines.push('');
       lines.push(escapeMdxText(sub.abstract));
       lines.push('');
@@ -536,7 +487,7 @@ export function generateCommandDoc(cmd: CommandDoc): string[] {
       // Nested subcommands
       if (sub.subcommands.length > 0) {
         for (const nested of sub.subcommands) {
-          lines.push(`##### cua-driver ${cmd.name} ${sub.name} ${nested.name}`);
+          lines.push(`##### \`cua-driver ${cmd.name} ${sub.name} ${nested.name}\``);
           lines.push('');
           lines.push(escapeMdxText(nested.abstract));
           lines.push('');
@@ -627,7 +578,11 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
   );
   lines.push('');
   lines.push(
-    'Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/cua-driver/reference/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.'
+    'Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.'
+  );
+  lines.push('');
+  lines.push(
+    'For the cross-cutting parameter contract (shared parameters, required-parameter rules, platform-specific parameters) and the action response shape, see [MCP tool notes](/reference/cua-driver/mcp-tool-notes).'
   );
   lines.push('');
   lines.push('<Callout type="info">');
@@ -638,7 +593,7 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
   lines.push('');
   lines.push('<Callout type="info">');
   lines.push(
-    "  **TCC auto-delegation.** When an MCP client spawns `cua-driver mcp` from an IDE terminal (Claude Code, Cursor, VS Code, Warp), macOS attributes the subprocess to the parent terminal — not `CuaDriver.app` — so AX probes fail against the wrong bundle id. `mcp` detects this and auto-launches a `cua-driver serve` daemon via `open -n -g -a CuaDriver --args serve`, then proxies every tool call through the daemon's Unix socket. Tool semantics are identical to the in-process path; no Python bridge is needed. Pass `--no-daemon-relaunch` (or set `CUA_DRIVER_MCP_NO_RELAUNCH=1`) to force in-process execution. See the [process model guide](/cua-driver/guide/getting-started/process-model) for the full lifecycle, failure modes, and wrapper-author guidance."
+    "  **TCC auto-delegation.** When an MCP client spawns `cua-driver mcp` from an IDE terminal (Claude Code, Cursor, VS Code, Warp), macOS attributes the subprocess to the parent terminal — not `CuaDriver.app` — so AX probes fail against the wrong bundle id. `mcp` detects this and auto-launches a `cua-driver serve` daemon via `open -n -g -a CuaDriver --args serve`, then proxies every tool call through the daemon's Unix socket. Tool semantics are identical to the in-process path; no Python bridge is needed. Pass `--no-daemon-relaunch` (or set `CUA_DRIVER_MCP_NO_RELAUNCH=1`) to force in-process execution. See the [process model](/explanation/process-model) for the full lifecycle, failure modes, and wrapper-author guidance."
   );
   lines.push('</Callout>');
   lines.push('');
@@ -651,6 +606,7 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
         'list_windows',
         'get_window_state',
         'get_accessibility_tree',
+        'get_desktop_state',
         'get_screen_size',
         'get_cursor_position',
         'get_config',
@@ -689,6 +645,8 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
       title: 'Configuration tools',
       tools: [
         'set_config',
+        'start_session',
+        'end_session',
         'set_agent_cursor_enabled',
         'set_agent_cursor_motion',
         'set_agent_cursor_style',
@@ -696,7 +654,12 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
     },
     {
       title: 'Maintenance tools',
-      tools: ['check_permissions', 'check_for_update'],
+      tools: [
+        'check_permissions',
+        'health_report',
+        'check_for_update',
+        'install_ffmpeg',
+      ],
     },
   ];
 
@@ -732,7 +695,7 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
 export function generateMCPToolDoc(tool: MCPToolDoc): string[] {
   const lines: string[] = [];
 
-  lines.push(`### ${tool.name}`);
+  lines.push(`### \`${tool.name}\``);
   lines.push('');
   lines.push(escapeMdxText(tool.description));
   lines.push('');

@@ -29,6 +29,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0 # full history for git-tag version discovery
+          persist-credentials: false # re-auth with the App token before pushing
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

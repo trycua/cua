@@ -340,7 +340,11 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation, releasedVersion:
     ...configuration,
     ...diagnostics,
   ];
-  const uncategorised = docs.commands.filter((c) => !allCategorised.includes(c.name));
+  // Documented on their own pages, so keep them out of this reference.
+  const excludedFromReference = ['permissions']; // -> reference/cua-driver/macos-permissions
+  const uncategorised = docs.commands.filter(
+    (c) => !allCategorised.includes(c.name) && !excludedFromReference.includes(c.name)
+  );
   if (uncategorised.length > 0) {
     lines.push('## Other commands');
     lines.push('');

@@ -28,10 +28,6 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-icons": "^5.5.0",
-    "remark": "^15.0.1",
-    "remark-gfm": "^4.0.1",
-    "remark-mdx": "^3.1.0",
-    "tailwind-merge": "^3.3.1",
     "zod": "^4.1.12"
   },
   "devDependencies": {

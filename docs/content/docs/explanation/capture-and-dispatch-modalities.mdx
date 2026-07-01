@@ -60,7 +60,7 @@ Dispatch success is not the same thing as application state change. The driver c
 
 `effect` is the confidence signal that separates those cases. `"confirmed"` means the driver verified the result through AX read-back. `"unverifiable"` means the dispatch path ran, but the driver cannot prove the application applied it. `"suspected_noop"` means an AX action dispatched but almost certainly did not change the target. Callers should treat `effect`, not the transport-level success status, as the action outcome.
 
-`escalation` is the machine-readable climb-the-ladder hint. When present, it tells the caller which surface to try next: `"px"` for acting off the screenshot, `"foreground"` for explicitly fronting the target, or `"page"` for the browser-tab DOM path through the `page` tool. See [Choose an action rung and dispatch mode](/how-to-guides/driver/choose-a-modality) for the procedural ladder and [MCP tool notes](/reference/cua-driver/mcp-tool-notes#action-response-shape) for the field table.
+`escalation` is the machine-readable climb-the-ladder hint. When present, it tells the caller which surface to try next: `"px"` for acting off the screenshot, `"foreground"` for explicitly fronting the target, or `"page"` for the browser-tab DOM path through the `page` tool. See [Choose an action rung and dispatch mode](/how-to-guides/driver/choose-a-modality) for the procedural ladder and [MCP tools](/reference/cua-driver/mcp-tools#action-response-shape) for the field table.
 
 ### When the tree lies
 

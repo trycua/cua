@@ -2156,6 +2156,10 @@ impl Tool for ClickTool {
                 surfaces with no UIA peer), and on those targets `delivery_mode:\"background\"` \
                 returns a structured `background_unavailable` error if PostMessage is \
                 known to drop too — at which point you switch to `delivery_mode:\"foreground\"`. \
+                **Always try the default `background` click first and let that error be \
+                your signal — do NOT pass `foreground` preemptively because the target \
+                'looks like' GTK/Chromium/etc. The driver decides when background is \
+                impossible; a guessed foreground click needlessly steals the user's focus.** \
                 `count: 2` posts two down/up pairs for a double-click. Pixel clicks need \
                 a visible on-screen window to anchor the coordinate conversion (errors \
                 with `pid X has no on-screen window` otherwise).\n\n\

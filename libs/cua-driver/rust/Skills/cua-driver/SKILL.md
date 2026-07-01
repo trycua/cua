@@ -561,10 +561,19 @@ Two consequences for callers:
   `scroll`, `type_text`, `press_key`, `hotkey` — uniformly. The
   `foreground` rung briefly fronts the target, acts, then restores the
   prior frontmost: the explicit last resort when a background attempt
-  didn't land. What each platform's *background* rung can actually carry
-  differs (e.g. a Windows background click can't carry `modifier` state —
-  see `WINDOWS.md`); the schema is uniform, the residual limits are
-  per-OS.
+  didn't land. **`foreground` is a reaction, never a prediction.** Always
+  fire the `background` default first and let the driver tell you it
+  can't (a `background_unavailable` error or `escalation.recommended ==
+  "foreground"`) — or observe a verified no-op — *before* you escalate.
+  Do **not** reason "it's a GTK/Chromium/Electron app, so background will
+  drop, so I'll front up-front": the toolkit lists in the tool schemas
+  are the *driver's* internal detectors, not a checklist for you to front
+  on a guess. (Concretely: GIMP's GTK toolbox accepts background pixel
+  clicks fine — a preemptive foreground click there just steals the
+  user's focus for nothing.) What each platform's *background* rung can
+  actually carry differs (e.g. a Windows background click can't carry
+  `modifier` state — see `WINDOWS.md`); the schema is uniform, the
+  residual limits are per-OS.
 
 **Required-set contract.** `click` requires nothing (`required:[]`),
 `scroll` requires `["direction"]`, `zoom` requires

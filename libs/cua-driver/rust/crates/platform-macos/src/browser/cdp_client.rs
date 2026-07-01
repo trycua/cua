@@ -314,20 +314,19 @@ impl CdpSession {
     /// socket, so it doesn't re-trigger Chrome's confirmation popup —
     /// that's the whole reason this exists instead of always reconnecting.
     async fn ensure_target(&mut self, port: u16, target_url_contains: Option<&str>) -> anyhow::Result<()> {
-        if let Some(hint) = target_url_contains {
-            let hint_lower = hint.to_ascii_lowercase();
-            let already_matches = self.current_target_url.as_deref()
-                .is_some_and(|u| u.to_ascii_lowercase().contains(&hint_lower));
-            if already_matches {
-                return Ok(());
-            }
-        } else if self.current_target_url.is_some() {
-            // No specific tab requested; whatever we're attached to is fine.
-            return Ok(());
-        }
-
         if self.session_id.is_some() {
-            // Flattened browser-endpoint mode: reattach in place.
+            // Flattened browser-endpoint mode: always re-resolve + reattach
+            // on the SAME connection (Target.getTargets/attachToTarget,
+            // never a new socket, so it's cheap and doesn't reprompt).
+            //
+            // Deliberately does NOT skip this when `current_target_url`
+            // already matches the hint — a brand-new tab can carry the
+            // exact same URL as a tab that was just closed (e.g. reopening
+            // the same compose page), and the cache has no way to tell
+            // "same URL" apart from "same still-alive target" without
+            // asking Chrome. Confirmed live: skipping this on a URL-only
+            // match kept sending Input.insertText into a closed target's
+            // dead session — no error, text just never appeared anywhere.
             self.attach_to_target(port, target_url_contains).await
         } else {
             // Classic mode is tied to one page's own websocket URL — there's

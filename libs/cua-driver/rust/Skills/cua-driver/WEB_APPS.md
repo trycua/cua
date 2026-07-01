@@ -607,29 +607,45 @@ Preconditions (shared with `insert_text`):
     via `cdp_port` (commonly 9222, but whatever the chrome://inspect
     page shows) — auto-discovery only works for the dedicated-profile
     route above.
-    **This can't be made fully unattended.** The checkbox itself is a
-    persistent, saved preference — confirmed it survives a full Chrome
-    quit/relaunch and the port reopens automatically without revisiting
-    `chrome://inspect`. But Chrome shows a separate "Allow remote
-    debugging?" confirmation popup on the *first* CDP connection attempt
-    of each new Chrome process's lifetime, and that needs a live human
-    click each time — it's a deliberate real-time consent gate, not a
-    one-time setting, specifically so a script can't silently attach
-    just because the port happens to be open. Confirmed this by testing
-    live: our first call after a Chrome restart blocked until the user
-    clicked it; every call after that within the same Chrome session
-    went straight through with no prompt. So: fine for a long-running
-    session, but every fresh Chrome launch needs the user present for
-    one click before this rung will work.
+    **This can't be made fully unattended, and the popup fires more
+    often than you'd think.** Chrome shows a live "Allow remote
+    debugging?" confirmation on every *new* WebSocket connection to the
+    browser endpoint — not once per Chrome process, and NOT something a
+    saved preference can skip. Confirmed by testing live, twice, with
+    different results depending on what actually opened a new socket:
+    - Naively calling `insert_text`/`type_keystrokes` fresh each time
+      (each one connecting from scratch) got prompted on **every single
+      call, 3 for 3** — worse than "once per session."
+    - `CdpSessionCache` (this platform's backend) fixes that: it caches
+      one open connection per port and reuses it across calls,
+      re-attaching to a different tab on the *same* connection via
+      `Target.getTargets`/`Target.attachToTarget` when
+      `target_url_contains` points somewhere new — flattened-mode
+      re-attach doesn't open a new socket, so it doesn't re-prompt.
+      Confirmed live: after the first approval, two more calls (typing
+      into the same tab) went through silently in well under a second.
+    - The popup *does* come back the moment the cache has to open a
+      genuinely new connection — confirmed by closing the tab the
+      cached session was attached to: the next call took ~2s (evict +
+      reconnect) and needed a fresh click. Also expect this after a
+      full Chrome restart, or a daemon restart (the cache is in-memory,
+      not persisted).
+    Net: one click to start, silent after that for as long as the
+    browser and the daemon both stay up and you're re-attaching rather
+    than reconnecting — but don't promise a caller "no more prompts,
+    ever" for a long session that outlives either of those.
   If no CDP port is found (and none was given explicitly), both
   actions fail fast with an actionable error rather than silently
   no-op'ing.
 - Multi-tab ambiguity: with more than one tab open, both actions act
   on whichever tab is found first — not necessarily the one you
   mean — unless you pass `target_url_contains` (a substring to match
-  against the tab's URL, e.g. `"x.com"`). Always pass this when the
-  browser might have more than one tab open, which in practice is
-  every real, non-disposable-profile session.
+  against the tab's URL, e.g. `"x.com/compose"`). Always pass this when
+  the browser might have more than one tab open, which in practice is
+  every real, non-disposable-profile session. Be as specific as the
+  URL allows — `"x.com"` alone matched BOTH a compose tab and a
+  notifications tab in testing, and `pick_target` just took whichever
+  came first; `"x.com/compose"` was needed to disambiguate.
 
 Prefer `execCommand` first for plain `<input>`/`<textarea>` fields
 (cheaper, no CDP-port precondition); reach for `type_keystrokes`

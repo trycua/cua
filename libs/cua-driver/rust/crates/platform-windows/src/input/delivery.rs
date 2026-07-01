@@ -117,8 +117,15 @@ pub fn delivery_mode_schema() -> Value {
          the tool returns a structured background_unavailable error rather than \
          fronting. 'foreground' is the explicit escalation: a brief \
          SetForegroundWindow swap + SendInput, restoring the prior foreground \
-         afterward (call bring_to_front first to avoid the flash). Matches the \
-         macOS delivery_mode surface.",
+         afterward (call bring_to_front first to avoid the flash). \
+         IMPORTANT: 'background' is not a hint to weigh — it is the mandatory \
+         first attempt. Do NOT pass 'foreground' preemptively because a target \
+         'looks like' GTK/Chromium/Electron; the DRIVER decides when background \
+         is impossible and tells you so via a background_unavailable error (or a \
+         verified no-op). Only THEN re-issue the same action with 'foreground'. \
+         The lists above are the driver's detectors, not a checklist for you to \
+         front on a guess — fronting up-front needlessly steals the user's focus \
+         and is a bug, not a shortcut. Matches the macOS delivery_mode surface.",
     )
 }
 

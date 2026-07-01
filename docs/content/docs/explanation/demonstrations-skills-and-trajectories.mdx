@@ -54,5 +54,5 @@ The systems differ by the actor recorded and the layer where the recording happe
 | System | Records | Artifact | Replay means | Use for |
 | --- | --- | --- | --- | --- |
 | Demonstration skills | Human demo over VNC | `~/.cua/skills/<name>/SKILL.md` plus `trajectory/` assets | Watch the MP4 with `cua skills replay`, or reuse by giving `SKILL.md` to a `ComputerAgent` as context | Teaching a reusable GUI workflow from one human demonstration |
-| Cua Driver recording | Agent action-tool calls | `turn-NNNNN` folders under `output_dir`, plus `recording.mp4` by default | Re-invoke recorded driver tools in order with `replay_trajectory` | Demos, regression diffs, and tool-level data collection |
+| Cua Driver recording | Agent action-tool calls | `turn-NNNNN` folders under `output_dir`, plus `recording.mp4` when `record_video` is set | Re-invoke recorded driver tools in order with `replay_trajectory` | Demos, regression diffs, and tool-level data collection |
 | Agent trajectories | Agent loop state, actions, next states, messages, model outputs, computer calls, outputs, and screenshots | Saved trajectory session files | Inspect sessions with `cua trajectory view` in the trajectory viewer | Debugging agent behavior and collecting training or eval data |

@@ -122,6 +122,8 @@ On CI runners or headless machines where the daemon should survive user logout, 
 loginctl enable-linger $USER
 ```
 
+A headless box has no `graphical-session.target`, so on those machines also change the unit's `[Install]` section to `WantedBy=default.target` — otherwise `enable` has nothing to hook into and the daemon won't start on boot.
+
   </Tab>
 </Tabs>
 

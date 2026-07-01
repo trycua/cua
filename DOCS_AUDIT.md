@@ -13,8 +13,11 @@ Ground truth: cua-driver 0.7.0, 38 MCP tools.
 | Platform | Install | Tutorial | How-to | Recipes | Reference |
 |---|---|---|---|---|---|
 | macOS (local) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Linux (Azure) | — | — | — | — | — |
+| Linux (Azure) | ✅ | gui¹ | ✅ | gui¹ | ✅ |
 | Windows (Azure) | — | — | — | — | — |
+
+¹ GUI-driving legs not run live: a stock Ubuntu server has no desktop, and the
+docs never say how to bootstrap one. Verified CLI + doc-consistency instead.
 
 macOS how-to guides largely clean (verified live: drove a real Chrome tab through
 the `page` tool; cursor/recording/modality flags match `describe`). Fixes below.
@@ -125,6 +128,42 @@ internal *page* links. Issues:
   curl-installed users — reframed so the plist is the path without a checkout.
 - personalize-cursor.mdx: documented the live `--cursor-palette <name>` launch
   flag (was missing from the cursor-personalization guide).
+- install.mdx (Linux): **[blocker]** fresh Ubuntu 22.04 can't launch the binary
+  (`libXi.so.6` missing) — added `sudo apt install libxi6 at-spi2-core` prereq
+  with the sudo caveat + a note that headless servers have no desktop to drive;
+  dropped the phantom "ffmpeg" claim from the `doctor` sentence (no ffmpeg probe).
+- keep-running.mdx (Linux): headless boxes have no `graphical-session.target` —
+  noted to use `WantedBy=default.target` there.
+
+## Findings — Linux (Azure Ubuntu 22.04, live v0.7.0)
+
+20. **[blocker] install.mdx Linux** — missing `libXi.so.6` on stock Ubuntu; docs
+    list no apt prereqs and claim "no admin access". → FIXED.
+21. **[inconsistent] mcp-tools.mdx:15 — tool count is platform-specific.** Linux
+    `list-tools` returns **43**, not 38; the 5 Linux-only tools are
+    `mouse_button_down`, `mouse_button_up`, `mouse_drag`, `parallel_mouse_drag`,
+    `type_text_chars`. This resolves the earlier `type_text_chars` puzzle (exists
+    on Linux, not macOS). mcp-tools.mdx is auto-generated from one platform and
+    documents 38. → GENERATOR FIX: emit a per-platform tool surface (or note the
+    Linux-only tools) + correct the count. Coordinate with cua#2088. The
+    `set_value` "prefer type_text_chars" line is then correct on Linux, wrong on
+    macOS — needs a platform qualifier.
+22. **[inconsistent] install.mdx §doctor** — sentence claims doctor checks
+    "ffmpeg"; it has no ffmpeg probe. → FIXED.
+23. **[polish] keep-running Linux systemd** — `graphical-session.target` vs the
+    headless case. → FIXED.
+24. **[confusing] install.sh post-install output (script, not doc)** — Linux
+    "Next steps" are macOS-centric (TCC/CuaDriver.app). → eng: make installer
+    output platform-aware.
+
+### Linux verified accurate
+Install path/layout exact; full serve/status/stop lifecycle after `libxi6`;
+`check_permissions` honest Linux JSON; `install_ffmpeg` report-only;
+`health_report` platform_supported=pass; explanation/linux-and-wayland.mdx claims
+(AT-SPI dependency, X11/Wayland detection, graceful headless `doctor` warnings)
+all hold.
+
+Azure VM torn down (RG `cua-docs-audit` delete accepted).
 
 ## Open / deferred
 - SOURCE/GENERATOR fixes (need cua-driver Rust / dump-docs changes, since the

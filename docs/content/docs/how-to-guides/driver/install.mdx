@@ -58,14 +58,14 @@ X11 is fully supported. Native Wayland input and capture remain opt-in with `CUA
 
 ```bash
 cua-driver --version
-# cua-driver 0.5.x
+# cua-driver 0.7.0
 ```
 
 For a full environment and install report:
 
 ```bash
 cua-driver doctor
-# [ok  ] binary: cua-driver 0.5.x (aarch64-macos)
+# [ok  ] binary: cua-driver 0.7.0 (aarch64-macos)
 # [ok  ] install dir: /Users/you/.local/bin/cua-driver
 # [ok  ] home dir: /Users/you/.cua-driver (3 release dirs cached)
 # ...
@@ -98,7 +98,7 @@ cua-driver check_permissions
 macOS opens the Accessibility and Screen Recording prompts. Grant both permissions, then run the check again:
 
 ```bash
-cua-driver check_permissions
+cua-driver permissions status
 # ✅ Accessibility: granted.
 # ✅ Screen Recording: granted.
 ```

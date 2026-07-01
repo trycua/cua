@@ -246,8 +246,8 @@ def main():
     parser = argparse.ArgumentParser(description="Build cua-driver Python wheel with bundled binary")
     parser.add_argument(
         "--version",
-        default="0.5.1",
-        help="cua-driver-rs version to download (default: 0.5.1)",
+        default="0.7.0",
+        help="cua-driver-rs version to download (default: 0.7.0)",
     )
     parser.add_argument(
         "--arch",

@@ -11,6 +11,7 @@ members = [
     "crates/cursor-overlay",
     "crates/focus-monitor-win",
     "crates/pip-preview",
+    "crates/input-capture",
 ]
 
 [workspace.package]

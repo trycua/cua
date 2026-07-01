@@ -128,6 +128,30 @@ struct RecordingInner {
     /// `session.json` after stop so the renderer can confirm the
     /// sampler ran.
     last_cursor_samples: usize,
+    /// Active human-input demonstration (glowing border + indicator-gated
+    /// capture + writer thread). `None` for ordinary agent-only recordings.
+    demonstration: Option<DemoHandle>,
+    /// Count of human input turns written this session (surfaced in state).
+    human_turns: usize,
+}
+
+/// Owns a live demonstration: the input-capture guard (border + hook) and the
+/// background thread draining captured events into `turn-*/` folders.
+struct DemoHandle {
+    guard: input_capture::Demonstration,
+    writer: Option<std::thread::JoinHandle<()>>,
+}
+
+impl DemoHandle {
+    /// Stop input capture + remove the border, then drain the writer thread.
+    /// Dropping the guard closes the event channel, so the writer's `recv`
+    /// returns and the thread exits.
+    fn stop(mut self) {
+        self.guard.stop();
+        if let Some(t) = self.writer.take() {
+            let _ = t.join();
+        }
+    }
 }
 
 /// Snapshot of the current recording state (cheap to clone).
@@ -149,6 +173,11 @@ pub struct RecordingState {
     /// drives ownership via `session_end` (it already knows its own id) rather
     /// than reading this back.
     pub owner: Option<String>,
+    /// True when a human-input demonstration (glowing border + gated capture)
+    /// is active. Surfaced so callers can confirm the recording-LED is on.
+    pub demonstration: bool,
+    /// Count of human input turns captured so far this session.
+    pub human_turns: usize,
 }
 
 impl RecordingSession {
@@ -166,6 +195,8 @@ impl RecordingSession {
                 last_video: None,
                 cursor: None,
                 last_cursor_samples: 0,
+                demonstration: None,
+                human_turns: 0,
             }),
         }
     }
@@ -188,6 +219,16 @@ impl RecordingSession {
     /// `configure()` shim) owned by nobody. See `stop_owner()` for how this
     /// gates teardown.
     pub fn start(&self, output_dir: &str, record_video: bool, owner: Option<&str>) -> anyhow::Result<()> {
+        // Tear down any stale demonstration BEFORE taking the main lock. The
+        // demo writer thread locks `inner` briefly per event, so joining it
+        // (inside `stop()`) must never happen while we hold `inner` — that
+        // would deadlock. Taking the handle out in a temporary lock that drops
+        // at the `;` lets us stop it lock-free.
+        let stale_demo = self.inner.lock().unwrap().demonstration.take();
+        if let Some(d) = stale_demo {
+            d.stop();
+        }
+
         let mut inner = self.inner.lock().unwrap();
         // Write-boundary resurrection guard — checked INSIDE the lock so the
         // is_session_ended test is atomic with the enabled/owner write below.
@@ -214,6 +255,7 @@ impl RecordingSession {
         if let Some(cur) = inner.cursor.take() {
             let _ = cur.stop();
         }
+        inner.human_turns = 0;
 
         let dir = expand_tilde(output_dir);
         std::fs::create_dir_all(&dir)?;
@@ -319,6 +361,10 @@ impl RecordingSession {
             }
         }
         inner.owner = None;
+        // Take the demonstration handle out now; stop it AFTER releasing the
+        // lock (its writer thread locks `inner` per event — joining under the
+        // lock would deadlock).
+        let demo = inner.demonstration.take();
         let dir = inner.output_dir.clone();
         let video_meta = inner.video.take().and_then(|rec| rec.stop().ok());
         let cursor_samples = inner.cursor.take().map(|c| c.stop()).unwrap_or(0);
@@ -354,6 +400,11 @@ impl RecordingSession {
                 &session_payload,
             );
         }
+        // Release the lock before stopping the demonstration (deadlock guard).
+        drop(inner);
+        if let Some(d) = demo {
+            d.stop();
+        }
         Ok(())
     }
 
@@ -384,6 +435,8 @@ impl RecordingSession {
             last_video_path: inner.last_video.as_ref()
                 .map(|m| m.path.to_string_lossy().into_owned()),
             owner: inner.owner.clone(),
+            demonstration: inner.demonstration.is_some(),
+            human_turns: inner.human_turns,
         }
     }
 
@@ -424,6 +477,103 @@ impl RecordingSession {
             result_text,
             start_ms,
             session_start_ms,
+            "agent",
+            None,
+        ) {
+            let mut inner = self.inner.lock().unwrap();
+            inner.last_error = Some(e.to_string());
+        }
+    }
+
+    /// Begin a human-input demonstration on the given window: show the glowing
+    /// recording border and start window-scoped, indicator-gated capture. Human
+    /// events are written as `turn-*/` folders (with `source: "human"`)
+    /// interleaved with any agent actions. Requires an already-started
+    /// recording (`start()` first). Errors if a demonstration is already
+    /// running or the platform doesn't support capture.
+    ///
+    /// `self: &Arc<Self>` so the writer thread can hold an owning handle.
+    pub fn begin_demonstration(
+        self: &std::sync::Arc<Self>,
+        pid: i64,
+        window_id: u64,
+        capture_raw_text: bool,
+    ) -> anyhow::Result<()> {
+        // Read the session anchor under a short lock, then release it before
+        // spawning threads.
+        let anchor = {
+            let inner = self.inner.lock().unwrap();
+            if !inner.enabled || inner.output_dir.is_none() {
+                anyhow::bail!("start a recording before beginning a demonstration");
+            }
+            if inner.demonstration.is_some() {
+                anyhow::bail!("a demonstration is already running");
+            }
+            inner
+                .session_monotonic_start
+                .ok_or_else(|| anyhow::anyhow!("recording has no monotonic anchor"))?
+        };
+
+        let clock: std::sync::Arc<dyn Fn() -> u64 + Send + Sync> =
+            std::sync::Arc::new(move || anchor.elapsed().as_millis() as u64);
+
+        let (tx, rx) = std::sync::mpsc::channel::<input_capture::HumanEvent>();
+        let cfg = input_capture::CaptureConfig { pid, window_id, capture_raw_text };
+        let guard = input_capture::Demonstration::start(cfg, tx, clock)
+            .map_err(|e| anyhow::anyhow!("failed to start demonstration capture: {e}"))?;
+
+        // Writer thread: drain captured events into turn folders.
+        let session = std::sync::Arc::clone(self);
+        let writer = std::thread::Builder::new()
+            .name("demo-turn-writer".into())
+            .spawn(move || {
+                while let Ok(ev) = rx.recv() {
+                    session.record_human_turn(pid, window_id, ev);
+                }
+            })?;
+
+        let mut inner = self.inner.lock().unwrap();
+        inner.demonstration = Some(DemoHandle { guard, writer: Some(writer) });
+        Ok(())
+    }
+
+    /// Persist one captured human event as a `turn-*/` folder. Briefly locks
+    /// `inner` to allocate a turn number (shared with agent actions so the two
+    /// timelines stay sequentially ordered), then writes outside the lock.
+    fn record_human_turn(&self, pid: i64, window_id: u64, ev: input_capture::HumanEvent) {
+        let Some((tool, mut args)) = ev.to_record() else {
+            return; // focus transitions etc. aren't persisted as turns
+        };
+        // Inject pid/window_id so write_turn's screenshot capture targets the
+        // recorded window (human click args carry only x/y).
+        if let Some(obj) = args.as_object_mut() {
+            obj.insert("window_id".into(), serde_json::json!(window_id));
+            obj.insert("pid".into(), serde_json::json!(pid));
+        }
+
+        let (turn_dir, session_start_ms) = {
+            let mut inner = self.inner.lock().unwrap();
+            if !inner.enabled {
+                return;
+            }
+            let Some(out) = inner.output_dir.clone() else {
+                return;
+            };
+            let idx = inner.next_turn;
+            inner.next_turn += 1;
+            inner.human_turns += 1;
+            (out.join(format!("turn-{idx:05}")), inner.session_start_ms)
+        };
+
+        if let Err(e) = write_turn(
+            &turn_dir,
+            tool,
+            &args,
+            "",
+            now_ms(),
+            session_start_ms,
+            "human",
+            Some(ev.t_ms()),
         ) {
             let mut inner = self.inner.lock().unwrap();
             inner.last_error = Some(e.to_string());
@@ -455,6 +605,7 @@ fn strip_internal_keys(args: &Value) -> std::borrow::Cow<'_, Value> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_turn(
     turn_dir: &Path,
     tool_name: &str,
@@ -462,6 +613,8 @@ fn write_turn(
     result_text: &str,
     start_ms: u64,
     session_start_ms: u64,
+    source: &str,
+    t_override: Option<u64>,
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(turn_dir)?;
     let now = now_ms();
@@ -496,8 +649,10 @@ fn write_turn(
         "tool": tool_name,
         "arguments": args,
         "result_summary": result_text,
+        "source": source,
         "timestamp": iso_now(),
-        "t_ms_from_session_start": now.saturating_sub(session_start_ms),
+        "t_ms_from_session_start": t_override
+            .unwrap_or_else(|| now.saturating_sub(session_start_ms)),
         "t_start_ms_from_session_start": start_ms.saturating_sub(session_start_ms),
     });
     if let Some((cx, cy)) = click_point {
@@ -585,11 +740,73 @@ fn video_session_payload(
     })
 }
 
-fn expand_tilde(path: &str) -> PathBuf {
+pub(crate) fn expand_tilde(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
         if let Ok(home) = std::env::var("HOME") {
             return PathBuf::from(home).join(rest);
         }
     }
     PathBuf::from(path)
+}
+
+#[cfg(test)]
+mod demo_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn tmpdir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("cua-rec-test-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn agent_turns_carry_source_and_process_to_markdown() {
+        let dir = tmpdir("agent");
+        let s = RecordingSession::new();
+        s.start(dir.to_str().unwrap(), false, None).unwrap();
+        s.record("click", &serde_json::json!({"x": 5, "y": 6}), "ok", now_ms());
+        s.record("type_text", &serde_json::json!({"text": "hi"}), "ok", now_ms());
+        s.stop_owner(None).unwrap();
+
+        // action.json carries source=agent
+        let a = std::fs::read_to_string(dir.join("turn-00001/action.json")).unwrap();
+        assert!(a.contains("\"source\": \"agent\""));
+
+        // markdown processor renders it
+        let res = crate::recording_markdown::process(
+            &dir,
+            &crate::recording_markdown::ProcessOptions::default(),
+        )
+        .unwrap();
+        let md = std::fs::read_to_string(res.trajectory_md).unwrap();
+        assert!(md.contains("Click at (5, 6)"));
+        assert_eq!(res.summary.agent_turns, 2);
+        assert_eq!(res.summary.human_turns, 0);
+    }
+
+    // The demonstration lifecycle must not deadlock: the writer thread locks
+    // `inner` per event, so begin/stop must never join it under the lock.
+    // Using window_id=0 (no such window) keeps the gate closed — no real input
+    // is captured — but exercises the full start-border + capture + teardown
+    // path on Windows. On non-Windows, begin_demonstration errors (Unsupported)
+    // and we just assert it doesn't hang.
+    #[test]
+    fn demonstration_lifecycle_does_not_deadlock() {
+        let dir = tmpdir("demo");
+        let s = Arc::new(RecordingSession::new());
+        s.start(dir.to_str().unwrap(), false, None).unwrap();
+        let began = s.begin_demonstration(0, 0, false).is_ok();
+        // Give the indicator/watchdog a couple of ticks.
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let st = s.current_state();
+        if cfg!(target_os = "windows") {
+            assert!(began, "demonstration should start on Windows");
+            assert!(st.demonstration, "state should report demonstration active");
+        }
+        // Must return promptly (no deadlock).
+        s.stop_owner(None).unwrap();
+        assert!(!s.current_state().demonstration);
+    }
 }

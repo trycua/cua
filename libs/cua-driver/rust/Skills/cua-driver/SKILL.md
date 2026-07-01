@@ -33,7 +33,10 @@ Cross-cutting topics also have their own files:
 - `WEB_APPS.md` — browser / Electron / Tauri specifics (sparse AX
   trees, omnibox navigation, the `set_value` workaround for
   minimized windows, tabs-vs-windows guidance).
-- `RECORDING.md` — session recording + `replay_trajectory`.
+- `RECORDING.md` — session recording, demonstration mode (human-input
+  capture + glowing recording-border security model), `replay_trajectory`.
+- `DEMONSTRATION.md` — turning a recorded demonstration into a reusable
+  `SKILL.md` (a record-and-replay demonstration-to-skill workflow).
 - `TESTS.md` — internal test surface.
 
 Use whichever combination matches the host. When in doubt, run

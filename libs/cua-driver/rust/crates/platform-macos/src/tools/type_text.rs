@@ -61,18 +61,20 @@ fn def() -> &'static ToolDef {
              `get_window_state` snapshot) directs the write to a specific field. \
              Without `element_index`, the write goes to the pid's currently \
              focused element.\n\n\
-             ELECTRON/CHROMIUM: the AX layer accepts a write and echoes it back \
-             through AXValue while the renderer never observes it. The driver \
-             DETECTS Electron and refuses to trust that echo — an AX-path insert \
-             on an Electron app returns effect:\"unverifiable\" + \
-             escalation:{recommended:\"px\"}, never a false \"confirmed\". The fix \
-             is this tool's px form: pass x,y (no element_index) to pixel-click the \
-             field — giving the Chromium renderer real keyboard focus — then type, \
-             in one call. NOTE: a px focus-click won't reliably open+focus a CLOSED \
-             control; AX-press to open/activate it first (works in the background), \
-             then px-type into the open field. Confirm via the screenshot \
-             regardless of effect; if px-background still drops, escalate to \
-             delivery_mode:\"foreground\"."
+             WEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, \
+             X's compose box): the AX layer accepts a write and echoes it back \
+             through AXValue while the renderer/DOM never observes it. The driver \
+             detects this at the element level (an AXWebArea ancestor) and refuses \
+             to trust that echo — an AX-path insert into web content returns \
+             effect:\"unverifiable\" + escalation, never a false \"confirmed\" (a \
+             browser's own native address bar/toolbar stays trusted). For a browser \
+             TAB the reliable path is the `page` tool (drives the DOM via CDP); for \
+             an embedded web view use this tool's px form: pass x,y (no \
+             element_index) to pixel-click the field then type, in one call. NOTE: \
+             a px focus-click won't reliably open+focus a CLOSED control; AX-press \
+             to open/activate it first (works in the background), then px-type. \
+             Always confirm via the screenshot; if px-background still drops, \
+             escalate to delivery_mode:\"foreground\"."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -244,17 +246,19 @@ impl Tool for TypeTextTool {
 
         match result {
             Ok(Ok((detail, path, verified))) => {
-                // SURFACE-AWARE VERIFICATION. On Electron/Chromium web inputs the
-                // AX layer accepts a write and echoes it straight back through
-                // `AXValue` while the renderer never observes it — so an AX-path
-                // read-back "confirm" is a shim echo, not ground truth (the
-                // Slack-search false-confirm). Refuse to claim verified there: the
-                // screenshot is the only truth and the next rung is the element px
-                // action. Probe ONLY when it would otherwise confirm via the AX
-                // path, so native types pay nothing.
+                // SURFACE-AWARE VERIFICATION. On any web-content surface —
+                // Chromium/WebKit/Electron — the AX layer accepts a write and
+                // echoes it straight back through `AXValue` while the renderer/DOM
+                // never observes it, so an AX-path read-back "confirm" is a shim
+                // echo, not ground truth (the Slack-search AND Chrome-on-X
+                // false-confirms). Detect it at the ELEMENT level (an `AXWebArea`
+                // ancestor) so it covers every browser + Electron uniformly, yet a
+                // browser's OWN native chrome (address bar, toolbar) stays trusted.
+                // Probe ONLY when it would otherwise confirm via the AX path, so
+                // native types pay nothing.
                 let ax_echo_surface = verified
                     && path == PATH_AX
-                    && crate::browser::electron_js::ElectronJs::is_electron(pid);
+                    && target_in_web_area(pid, element_ptr);
                 let verified = verified && !ax_echo_surface;
 
                 // `verified:false` means the driver could not confirm the text
@@ -266,11 +270,12 @@ impl Tool for TypeTextTool {
                     ("✅ Inserted", String::new())
                 } else if ax_echo_surface {
                     ("📨 Sent (unverified)",
-                     " — Electron/web surface: the AX layer accepts and echoes the \
-                      write but the renderer may not have observed it, so the driver \
-                      cannot confirm via AX. Verify via the screenshot; if it didn't \
-                      land, re-type with the px form (pass x,y to pixel-focus the \
-                      field).".to_string())
+                     " — web-content surface (Chromium / WebKit / Electron): the AX \
+                      layer accepts and echoes the write but the renderer/DOM may not \
+                      have observed it, so the driver cannot confirm via AX. Verify \
+                      via the screenshot. For a browser tab use the `page` tool (it \
+                      drives the DOM); for an embedded web view, re-type with the px \
+                      form (x,y).".to_string())
                 } else if path == PATH_KEY_EVENTS_FG {
                     ("📨 Sent (unverified)",
                      " — driver could not confirm; verify via screenshot.".to_string())
@@ -295,16 +300,28 @@ impl Tool for TypeTextTool {
                         "effect": if verified { "confirmed" } else { "unverifiable" },
                     });
                     if ax_echo_surface {
-                        // Electron AX echo → the element px action is the next rung,
-                        // not foreground (it's a renderer-focus problem, not an
-                        // activation one).
+                        // Web-content AX echo. A real browser TAB → the `page` tool
+                        // (drives the DOM via CDP) is the reliable rung; an embedded
+                        // web view (Electron, no CDP) → the element px action. It's a
+                        // renderer/DOM-focus problem, never a foreground one.
+                        let (recommended, reason) =
+                            if crate::browser::electron_js::ElectronJs::is_electron(pid) {
+                                ("px",
+                                 "Electron web view — the AX write was echoed but the \
+                                  renderer may not have observed it. Confirm via the \
+                                  screenshot; if it didn't land, re-type with the \
+                                  element px action (x,y to pixel-focus the field, then \
+                                  type).")
+                            } else {
+                                ("page",
+                                 "Browser web content — the AX write was echoed but the \
+                                  DOM may not have observed it (and AX type_text on a \
+                                  contenteditable is racy). Drive the tab's DOM with the \
+                                  `page` tool, or confirm via the screenshot.")
+                            };
                         s["escalation"] = serde_json::json!({
-                            "recommended": "px",
-                            "reason": "Electron/web surface — the AX write was echoed \
-                                       but the renderer may not have observed it. \
-                                       Confirm via the screenshot; if it didn't land, \
-                                       re-type with the element px action (pass x,y to \
-                                       pixel-focus the field, then type)."
+                            "recommended": recommended,
+                            "reason": reason,
                         });
                     } else if !verified && path != PATH_KEY_EVENTS_FG {
                         s["escalation"] = serde_json::json!({
@@ -379,6 +396,59 @@ fn read_axvalue(pid: i32, element_ptr_and_idx: Option<(usize, Option<usize>)>) -
         v
     } else {
         None
+    }
+}
+
+/// True when the addressed (or focused) AX element sits inside a web-content
+/// subtree — an `AXWebArea` ancestor. That covers every Chromium / WebKit /
+/// Electron rendered surface (Chrome, Safari, Slack, VS Code, X's compose box…),
+/// where an AX write is echoed back through `AXValue` while the renderer/DOM
+/// never observes it — so an AX read-back "confirm" there is a shim echo. A
+/// browser's OWN native chrome (address bar, toolbar) has no `AXWebArea`
+/// ancestor, so it stays trusted. Walks a bounded ancestor chain; each
+/// `AXParent` copy is released, and it stops at the window/app boundary.
+fn target_in_web_area(pid: i32, element_ptr_and_idx: Option<(usize, Option<usize>)>) -> bool {
+    use crate::ax::bindings::AXUIElementCopyAttributeValue;
+    use core_foundation::base::{CFTypeRef, TCFType};
+    use core_foundation::string::CFString;
+    unsafe {
+        // Start element: the addressed one (borrowed — do NOT release) or the pid's
+        // focused element (owned — must release when done).
+        let (start, start_owned) = match element_ptr_and_idx {
+            Some((ptr, _)) => (ptr as AXUIElementRef, false),
+            None => match focused_element_of_pid(pid) {
+                Some(el) => (el, true),
+                None => return false,
+            },
+        };
+        let parent_attr = CFString::new("AXParent");
+        let mut cur = start;
+        let mut cur_owned = start_owned;
+        let mut found = false;
+        for _ in 0..40 {
+            match copy_string_attr(cur, "AXRole").as_deref() {
+                Some("AXWebArea") => { found = true; break; }
+                // No web area lives above the window/app root — stop.
+                Some("AXWindow") | Some("AXApplication") | None => break,
+                _ => {}
+            }
+            let mut parent: CFTypeRef = std::ptr::null_mut();
+            let err = AXUIElementCopyAttributeValue(
+                cur, parent_attr.as_concrete_TypeRef(), &mut parent,
+            );
+            if cur_owned { CFRelease(cur as CFTypeRef); }
+            if err != kAXErrorSuccess || parent.is_null() {
+                cur = std::ptr::null_mut();
+                cur_owned = false;
+                break;
+            }
+            cur = parent as AXUIElementRef;
+            cur_owned = true;
+        }
+        if cur_owned && !cur.is_null() {
+            CFRelease(cur as CFTypeRef);
+        }
+        found
     }
 }
 

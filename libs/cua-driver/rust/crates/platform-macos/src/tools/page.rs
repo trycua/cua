@@ -14,10 +14,9 @@ use cua_driver_core::page::PageBackend;
 use std::sync::Arc;
 
 use super::ToolState;
-use crate::browser::{is_wk_web_view_app, AXPageReader, BrowserJs, ElectronJs};
+use crate::browser::{is_wk_web_view_app, AXPageReader, BrowserJs, CdpClient, ElectronJs};
 
 pub struct MacOsPageBackend {
-    #[allow(dead_code)] // reserved for future per-pid caches / config
     pub state: Arc<ToolState>,
 }
 
@@ -107,6 +106,57 @@ impl PageBackend for MacOsPageBackend {
                 .to_owned(),
         )
     }
+
+    async fn insert_text(
+        &self,
+        pid: i32,
+        _window_id: u32,
+        text: &str,
+        cdp_port: Option<u16>,
+        target_url_contains: Option<&str>,
+    ) -> anyhow::Result<String> {
+        let port = resolve_cdp_port(pid, cdp_port, "insert_text").await?;
+        self.state.cdp_sessions.insert_text(text, port, target_url_contains).await?;
+        Ok(format!("Inserted {} character(s) via CDP Input.insertText.", text.chars().count()))
+    }
+
+    async fn type_keystrokes(
+        &self,
+        pid: i32,
+        _window_id: u32,
+        text: &str,
+        cdp_port: Option<u16>,
+        target_url_contains: Option<&str>,
+    ) -> anyhow::Result<String> {
+        let port = resolve_cdp_port(pid, cdp_port, "type_keystrokes").await?;
+        self.state.cdp_sessions.dispatch_keystrokes(text, port, target_url_contains).await?;
+        Ok(format!("Typed {} character(s) via CDP keystroke events.", text.chars().count()))
+    }
+}
+
+/// Shared CDP-port lookup + actionable error for the `insert_text` /
+/// `type_keystrokes` actions. An explicit `cdp_port` skips auto-discovery
+/// entirely — needed when the port only answers the browser-level
+/// `devtools/browser` endpoint (see `CdpSession`), which auto-discovery
+/// can't confirm on its own.
+async fn resolve_cdp_port(pid: i32, cdp_port: Option<u16>, action: &str) -> anyhow::Result<u16> {
+    if let Some(port) = cdp_port {
+        return Ok(port);
+    }
+    CdpClient::find_port_for_pid(pid).await.ok_or_else(|| {
+        anyhow::anyhow!(
+            "No Chrome DevTools Protocol port found for pid {pid}. {action} needs \
+             the browser to have been launched with a CDP port on a NON-default profile — \
+             Chrome refuses to open --remote-debugging-port on its default data directory \
+             (even if you pass --user-data-dir explicitly pointing at that same default \
+             path). Relaunch via launch_app with cdp_debugging_port AND \
+             additional_arguments: [\"--user-data-dir=<some other path>\"], e.g. a \
+             dedicated automation profile — this will not have the user's existing \
+             logins/session. Alternatively, if you already enabled Chrome's own \
+             remote-debugging toggle for this profile (chrome://inspect/#remote-debugging), \
+             pass that port explicitly via cdp_port — auto-discovery can't confirm it."
+        )
+    })
 }
 
 /// Route JavaScript execution to the appropriate backend.

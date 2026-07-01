@@ -654,7 +654,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 ### Intentional Rust-only fields accepted (no-op)
 
-- `electron_debugging_port`, `webkit_inspector_port`,
+- `cdp_debugging_port`, `webkit_inspector_port`,
   `creates_new_application_instance` — Swift-specific.  Accepted in
   the schema so cross-platform callers can pass them; currently
   no-ops on Windows. Documented as follow-up.

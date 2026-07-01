@@ -1404,7 +1404,7 @@ impl Tool for LaunchAppTool {
                 `null` for ShellExecuteEx launches.\n\n\
                 Windows-only field: `path` (Swift uses `bundle_id` since macOS apps resolve via \
                 LaunchServices; Windows has no LaunchServices, so `path` is the canonical form). \
-                The macOS-specific `electron_debugging_port`, `webkit_inspector_port`, \
+                The macOS-specific `cdp_debugging_port`, `webkit_inspector_port`, \
                 `creates_new_application_instance`, and `additional_arguments` fields are \
                 accepted; `additional_arguments` is honored (forwarded as ShellExecuteEx \
                 parameters or as the AUMID activation arguments string), the others currently \
@@ -1417,7 +1417,7 @@ impl Tool for LaunchAppTool {
                 "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps`. Highest precedence — when set, this exact string is handed to ShellExecuteEx unchanged. For Windows desktop apps it's the full `.exe` commandline (path + arguments preserved from the source shortcut); for UWP apps it's `shell:appsFolder\\{PackageFamilyName}!{AppId}`. For precise UWP pid capture, prefer `aumid` over `launch_path`."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open in the default browser via ShellExecuteEx (no activation)."},
                 "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process (or activation arguments for packaged apps)."},
-                "electron_debugging_port":{"type":"integer","description":"Accepted for cross-platform parity; currently no-op on Windows."},
+                "cdp_debugging_port":{"type":"integer","description":"Accepted for cross-platform parity; currently no-op on Windows."},
                 "webkit_inspector_port":{"type":"integer","description":"Accepted for cross-platform parity; no-op on Windows."},
                 "creates_new_application_instance":{"type":"boolean","description":"Accepted for parity; no-op on Windows (ShellExecuteEx always creates a new process)."},
                 "start_minimized":{"type":"boolean","description":"When true, launch the app's window minimized to the taskbar instead of restored-but-not-activated. Use this when the agent wants to drive the app entirely in the background — the user's previously-frontmost window (e.g. terminal) stays visually on top. Implementation uses SW_SHOWMINNOACTIVE for the ShellExecuteEx path and a follow-up ShowWindow(SW_MINIMIZE) on the AUMID path. UIA / background dispatch still work on a minimized window; only `screenshot` and `delivery_mode:\"foreground\"` need it restored."}

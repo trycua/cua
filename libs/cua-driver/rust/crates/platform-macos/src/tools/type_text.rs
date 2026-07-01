@@ -317,7 +317,13 @@ impl Tool for TypeTextTool {
                                  "Browser web content — the AX write was echoed but the \
                                   DOM may not have observed it (and AX type_text on a \
                                   contenteditable is racy). Drive the tab's DOM with the \
-                                  `page` tool, or confirm via the screenshot.")
+                                  `page` tool: execute_javascript + el.value/innerText for a \
+                                  plain input; for a rich-text contenteditable \
+                                  (Draft.js/Lexical/Slate-style editors can silently discard \
+                                  a one-shot DOM write on their next render) try insert_text \
+                                  first (one CDP call, cheap), then type_keystrokes if that \
+                                  also gets discarded (real per-character keyboard events, \
+                                  slower but most durable). Or confirm via the screenshot.")
                             };
                         s["escalation"] = serde_json::json!({
                             "recommended": recommended,

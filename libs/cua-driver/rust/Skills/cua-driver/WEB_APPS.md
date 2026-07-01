@@ -483,3 +483,155 @@ If it silently drops (some web inputs don't implement
 synthesis — pure CGEvent keystrokes delivered to the pid, reaching
 any focused keyboard receiver. You can also click the field first
 to ensure focus before typing.
+
+### `escalation.recommended == "page"` — stop typing, switch tools
+
+On a rich-text contenteditable driven by React/Draft.js (X's tweet
+composer is the canonical example), CGEvent keystroke synthesis is
+fundamentally racy: a combined px-click-then-type call can drop or
+reorder the first character, and `hotkey(["cmd","a"])` / `press_key
+delete` frequently no-op against the editor's own selection model.
+`type_text` knows this and says so — when its response includes
+`escalation: {recommended: "page", reason: "...AX type_text on a
+contenteditable is racy..."}`, that is your cue to **stop iterating
+on the keyboard ladder immediately.** Do not retry with
+`delivery_mode:"foreground"`, do not triple-click to select, do not
+try `cmd+a`+`delete` first — every one of those is the wrong rung.
+Go straight to the `page` tool instead:
+
+```
+page({pid, window_id, action: "execute_javascript", javascript: `
+  (function() {
+    var el = document.querySelector('[data-testid="tweetTextarea_0"]');
+    el.focus();
+    document.execCommand('selectAll', false, null);
+    document.execCommand('delete', false, null);
+    document.execCommand('insertText', false, ${JSON.stringify(text)});
+    return el.innerText;
+  })()
+`})
+```
+
+`document.execCommand('insertText', ...)` dispatches the real
+`beforeinput`/`input` events Draft.js/React listen for, so it lands
+in the framework's own state — not just a raw DOM mutation the
+framework will stomp on next render. Swap the selector for whatever
+`[data-testid]`/`role="textbox"` the target editor uses; find it via
+`page(query_dom)` first if unfamiliar with the site.
+
+**Verification gotcha:** if the window is occluded or off-screen
+when you re-snapshot, `get_window_state`'s screenshot can return a
+stale cached frame while the DOM has actually already updated —
+`list_windows` showing `is_on_screen: false` for the target is the
+tell. Don't conclude the insert failed off a stale screenshot; verify
+with a follow-up `page(execute_javascript)` reading `el.innerText`
+directly, which reads the live DOM regardless of on-screen state.
+
+**`execCommand` is not durable on editors that reconcile their own
+state.** Confirmed on X's composer: `insertText` lands in the DOM
+immediately (verified via `el.innerText` right after), but a later
+background re-render of the surrounding page (e.g. the timeline
+polling in new posts) can silently wipe it back to empty — because
+it was one synthetic event, not something the editor's own input
+pipeline ever actually observed as a keystroke. If you see the text
+vanish on a follow-up read with no error anywhere, that's this,
+not a transient bug — reach for `insert_text` or `type_keystrokes`
+(below) instead of retrying `execCommand` in a loop.
+
+### `insert_text` — a cheaper, more durable middle rung
+
+```
+page({pid, window_id, action: "insert_text", text: "…"})
+```
+
+Inserts `text` at the focused element in a single CDP
+`Input.insertText` call — no synthesized keydown/keyup sequence, so
+it's one round-trip instead of three-per-character. It's still more
+durable than `execCommand`, though, because Chrome's renderer treats
+it like an IME composition commit rather than a JS-triggered DOM
+mutation, and rich editors already have to handle real IME commits
+correctly (CJK input, etc.) — so they're less likely to treat it as
+untrusted and discard it. It does skip real key events, so an
+editor's own keydown/keyup handlers (shortcut bindings, per-key
+validation) never fire for it.
+
+Try this before `type_keystrokes` when `execCommand` got discarded.
+Escalate to `type_keystrokes` only if `insert_text` also gets wiped,
+or the editor specifically needs to observe real keystrokes.
+
+Same preconditions as `type_keystrokes` below (focus + live CDP
+port on a non-default profile).
+
+### `type_keystrokes` — the slowest, most durable rung
+
+```
+page({pid, window_id, action: "type_keystrokes", text: "…"})
+```
+
+Types `text` as a stream of real per-character keyboard events
+(`Input.dispatchKeyEvent`: keyDown → char → keyUp per character) via
+the Chrome DevTools Protocol, rather than one synthetic DOM write.
+This is what makes it durable against React/Draft.js/Lexical/Slate
+editors that reconcile their own internal model on every render —
+they only trust input their own keydown/keypress/input pipeline
+actually saw, and `execCommand`/`innerText =` never touches that
+pipeline. Slower than `insert_text` (3 CDP round-trips per
+character, with a small inter-character delay) — reach for it only
+after `insert_text` didn't stick, or the editor needs real keydown
+events.
+
+Preconditions (shared with `insert_text`):
+- The target element must already have DOM focus — click it first
+  (`page(click_element)` or `execute_javascript` with `el.click()` /
+  `el.focus()`).
+- The browser needs a live CDP port. Two ways to get one:
+  - **Dedicated automation profile** — `launch_app`'s
+    `cdp_debugging_port` appends `--remote-debugging-port=N`, but
+    Chrome refuses to open that port on what it considers its
+    default data directory — confirmed this refusal happens even
+    when you pass `--user-data-dir` explicitly pointing at that same
+    default path; only a genuinely different path satisfies the
+    check. So this route needs `additional_arguments:
+    ["--user-data-dir=<some other path>"]` too — a separate profile
+    without the user's existing logins/session.
+  - **The user's real, already-logged-in Chrome** — have them open
+    `chrome://inspect/#remote-debugging` and check "Allow remote
+    debugging". Confirmed this opens a CDP port on the *default*
+    profile without relaunching anything, but it doesn't serve the
+    classic `/json` HTTP discovery (confirmed `/json/version` returns
+    404) — `insert_text`/`type_keystrokes` fall back automatically to
+    connecting straight to the browser-level `ws://host:port/devtools/browser`
+    endpoint and `Target.attachToTarget{flatten:true}` in that case,
+    but since that path can't be auto-discovered via `pid` + `lsof`
+    (no working `/json` to validate against), pass the port explicitly
+    via `cdp_port` (commonly 9222, but whatever the chrome://inspect
+    page shows) — auto-discovery only works for the dedicated-profile
+    route above.
+    **This can't be made fully unattended.** The checkbox itself is a
+    persistent, saved preference — confirmed it survives a full Chrome
+    quit/relaunch and the port reopens automatically without revisiting
+    `chrome://inspect`. But Chrome shows a separate "Allow remote
+    debugging?" confirmation popup on the *first* CDP connection attempt
+    of each new Chrome process's lifetime, and that needs a live human
+    click each time — it's a deliberate real-time consent gate, not a
+    one-time setting, specifically so a script can't silently attach
+    just because the port happens to be open. Confirmed this by testing
+    live: our first call after a Chrome restart blocked until the user
+    clicked it; every call after that within the same Chrome session
+    went straight through with no prompt. So: fine for a long-running
+    session, but every fresh Chrome launch needs the user present for
+    one click before this rung will work.
+  If no CDP port is found (and none was given explicitly), both
+  actions fail fast with an actionable error rather than silently
+  no-op'ing.
+- Multi-tab ambiguity: with more than one tab open, both actions act
+  on whichever tab is found first — not necessarily the one you
+  mean — unless you pass `target_url_contains` (a substring to match
+  against the tab's URL, e.g. `"x.com"`). Always pass this when the
+  browser might have more than one tab open, which in practice is
+  every real, non-disposable-profile session.
+
+Prefer `execCommand` first for plain `<input>`/`<textarea>` fields
+(cheaper, no CDP-port precondition); reach for `type_keystrokes`
+specifically when `execCommand` landed but didn't stick, or when
+you're driving a known rich-text composer up front.

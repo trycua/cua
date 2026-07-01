@@ -339,6 +339,11 @@ pub struct ToolState {
     pub config: Arc<std::sync::RwLock<DriverConfig>>,
     /// Per-MCP-session in-memory config overrides layered over `config`.
     pub session_config: Arc<SessionConfigRegistry>,
+    /// Open CDP connections, one per port, reused across `insert_text` /
+    /// `type_keystrokes` calls instead of reconnecting fresh every time —
+    /// see `CdpSessionCache` for why (Chrome's "allow remote debugging"
+    /// popup fires on every new connection, not once per session).
+    pub cdp_sessions: Arc<crate::browser::CdpSessionCache>,
 }
 
 impl Default for ToolState {
@@ -352,6 +357,7 @@ impl Default for ToolState {
             // `cua-driver config set` changes carry over into MCP sessions.
             config: Arc::new(std::sync::RwLock::new(load_driver_config())),
             session_config: Arc::new(SessionConfigRegistry::new()),
+            cdp_sessions: Arc::new(crate::browser::CdpSessionCache::new()),
         }
     }
 }

@@ -43,7 +43,9 @@ Linux depends on the session stack. AT-SPI provides accessibility-tree access an
 
 On X11, synthetic input and capture are window-addressable. `XSendEvent` can target a window ID without activating that window, and X11 window capture can read pixels from any mapped window. XWayland bridges help when an app still exposes an X11 surface.
 
-**Wayland** is the notable exception. Its security model intentionally blocks one client from synthesizing arbitrary input into another client. That is the point of the design. Native Wayland-only apps remain a known gap for background input.
+**Wayland** narrows the path but does not close it. Its security model intentionally blocks one client from synthesizing arbitrary *input* into another — that is the point of the design — so synthetic pointer and key events do not cross client boundaries. Actions still land, because the driver does not depend on synthetic input there. It dispatches through AT-SPI, where `Action.DoAction` invokes a control's own action toolkit-side, with no coordinates and no focus. Coordinate (vision) clicks resolve the same way: the target screen pixel is mapped to the accessible element under it, and that element's action is fired — the driver reconstructs each element's on-screen frame, since Wayland exposes no global coordinate space for a client to query.
+
+The residual gap on native Wayland is **raw keyboard injection**. Typing into accessible text fields works through AT-SPI, but synthetic key events — and the keys some apps only read as raw input — require an X11 / XWayland surface or a compositor-cooperative input portal, rather than coming for free.
 
 ## Agent Cursor Overlay
 

@@ -484,6 +484,13 @@ impl RenderStateCore {
                 self.shape = shape;
                 true
             }
+            OverlayCommand::SetBuiltinShape(builtin) => {
+                // Built-in selection drives the default silhouette and clears
+                // any custom image override so the built-in actually shows.
+                self.cfg.builtin_shape = builtin;
+                self.shape = None;
+                true
+            }
             OverlayCommand::SetGradient {
                 gradient_colors,
                 bloom_color,
@@ -758,8 +765,8 @@ pub fn paint_cursor(
     //        — rasterised once at 2× the display target.
     //   3. (No other built-ins today.)
     //
-    // Arrow is the default until the teardrop's retina path is fully
-    // sorted; opt-in via `--cursor-shape teardrop`.
+    // Teardrop is the default silhouette; `--cursor-shape arrow` (or
+    // `cursor_icon: "arrow"`) selects the procedural arrow instead.
     let shape: Option<&CursorShape> = match (core.shape.as_ref(), core.cfg.builtin_shape) {
         (Some(custom), _) => Some(custom),
         (None, BuiltinShape::Teardrop) => Some(CursorShape::teardrop()),

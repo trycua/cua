@@ -42,36 +42,57 @@ will perform the click but leaves the cursor frozen.
 Returns the resolved screen coords in `structuredContent` so callers can
 chain subsequent operations against the same point.
 
-### How the contract is enforced per call: the `dispatch` field
+### How the contract is enforced per call: the `delivery_mode` field
 
 Every Windows input tool (`click`, `double_click`, `right_click`,
 `drag`, `scroll`, `press_key`, `hotkey`, `type_text`) accepts an
-optional `dispatch` field. The default is `"background"` — strict
-no-foreground:
+optional `delivery_mode` field — this mirrors the macOS `delivery_mode`
+surface (same name, same two values). The default is `"background"` —
+strict no-foreground:
 
-| `dispatch` | Behavior on Windows |
+| `delivery_mode` | Behavior on Windows |
 |---|---|
-| `"background"` (DEFAULT) | **For pixel clicks**: cua-driver first does a UIA hit-test at the resolved screen position; if the deepest invokable element at that point exposes `InvokePattern`, it's invoked through the accessibility channel (same path as `element_index` mode — no foreground swap, no flash, works on UWP / WinUI3 / Win11 packaged apps). Only if the UIA hit-test misses does the PostMessage(WM_LBUTTONDOWN/UP) fallback run; if that's also known-to-drop for this event kind (Chromium DOM mouse + key-combos, GTK button widgets), the call returns a structured `background_unavailable` error. **No foreground swap, ever.** |
-| `"foreground"` | SendInput with brief `SetForegroundWindow(target)` → restore. Required to drive Chromium DOM content or GTK button widgets reliably, and the only path for canvas / video / custom-drawn surfaces that have no UIA peer to hit-test against. Flashes the target visible unless `bring_to_front` was called first. |
-| `"auto"` | Historical heuristic: silently falls back to SendInput on known-problematic targets. Opt-in for callers that prefer the old "things just work, sometimes at the cost of focus" behavior. |
+| `"background"` (DEFAULT) | Never fronts and **never raises/restacks** the target — macOS-aligned (mirrors CGEvent-to-pid). **Pixel clicks**: a UIA hit-test at the point first (accessibility-channel Invoke — works on UWP / WinUI3 / Win11 packaged apps, no flash); if that misses, coordinate-injected pen/touch, **but only when the target is the *visible* window at that point**; PostMessage for plain Win32. It returns a structured `background_unavailable` error — rather than raising or fronting — when the target is **occluded** at the point, or the event kind is known-dropped (Chromium DOM mouse + key-combos, GTK buttons, VCL/LibreOffice accelerators, terminal / WPF text with no `element_index`). **No foreground swap and no z-order raise, ever.** |
+| `"foreground"` | SendInput with brief `SetForegroundWindow(target)` → restore. The explicit, agent-chosen rung where fronting IS allowed — required to reach occluded targets, Chromium DOM content, GTK buttons, VCL accelerators, WPF drag, terminals, and canvas / custom-drawn surfaces with no UIA peer. Implemented for **every** input tool — `type_text` (SendInput Unicode via `send_text_synthesized`) and `scroll` (SendInput wheel via `send_wheel_synthesized`) included. Flashes the target visible unless `bring_to_front` was called first. |
 
-### Always try `dispatch:"background"` first
+> **macOS is the source of truth — `background` never alters the screen.**
+> Earlier Windows builds "cheated" in background with three tricks that this
+> pass **removed**: (1) a z-order raise (`ZorderGuard`) to win the pointer
+> hit-test on occluded windows, (2) a full focus-activate for WPF drags, and
+> (3) a *cloaked* (hidden) focus-grab for keystrokes/text the target would
+> otherwise drop. macOS does none of these (pure CGEvent-to-pid + focus
+> suppression), so Windows now does none either: when strict no-front /
+> no-raise delivery can't land, the tool returns `background_unavailable` and
+> **the agent — not the driver — decides** whether to escalate to
+> `delivery_mode:"foreground"` (the rung where fronting is explicitly opted
+> into). A `background` call will never raise, restack, flash, or steal focus.
 
-The hit-test fallback above means **`dispatch:"background"` is the correct
+> **Removed: the legacy `"auto"` mode.** Earlier builds had a third
+> Windows-only `dispatch:"auto"` mode (silent SendInput fallback on
+> known-problematic targets). It was removed in the macOS-alignment pass
+> because it could front the target *without the caller opting in* —
+> breaking the no-foreground contract macOS guarantees. Any unrecognised
+> value (including a stray `"auto"`) now resolves to `"background"`. If you
+> have notes/snippets that pass `dispatch:"auto"`, switch to an explicit
+> `delivery_mode:"foreground"` for the cases that need fronting.
+
+### Always try `delivery_mode:"background"` first
+
+The hit-test fallback above means **`delivery_mode:"background"` is the correct
 default even when the target is a XAML host whose input stack drops raw
 PostMessage** (UWP Calculator, Win11 Notepad, WinUI3 apps, etc.). cua-driver
 turns the pixel coord into a UIA Invoke at that point and delivers
 through the accessibility channel — no flash, no focus steal. Only
-escalate to `dispatch:"foreground"` when you actually see a
+escalate to `delivery_mode:"foreground"` when you actually see a
 `background_unavailable` structured error, and only with the
 `bring_to_front` flow described below so the agent pays the flash cost
 once instead of per-call.
 
-Empirical: pixel-clicks via `dispatch:"background"` against the UWP
+Empirical: pixel-clicks via `delivery_mode:"background"` against the UWP
 Calculator on Win11 (Number-pad buttons + operators) consistently
 resolve through `try_invoke_in_window_at_point` and produce
 `"✅ Performed UIA Invoke at (sx,sy) for pid X."` with zero visible
-flash. `dispatch:"foreground"` on the same coords also works but
+flash. `delivery_mode:"foreground"` on the same coords also works but
 flashes the Calculator window foreground for ~40 ms — it's the
 costlier path; only use it for surfaces with no UIA peer.
 
@@ -84,15 +105,22 @@ costlier path; only use it for surfaces with no UIA peer.
     "code": "background_unavailable",
     "target_class": "Chrome_WidgetWin_1",
     "event_kind": "mouse_click",
-    "suggestion": "Either call bring_to_front then retry with dispatch:\"foreground\", or accept the foreground swap by setting dispatch:\"foreground\" directly."
+    "escalation": { "recommended": "foreground", "reason": "occluded / known-dropped event kind" },
+    "suggestion": "Either call bring_to_front then retry with delivery_mode:\"foreground\", or accept the foreground swap by setting delivery_mode:\"foreground\" directly."
   }
 }
 ```
 
+The `escalation` field is the same machine-readable hint the action
+responses carry (see `SKILL.md` → behavior matrix). On Windows the
+recommendation is `"foreground"` — the dropped event needs the fronting
+rung. (Contrast macOS / X11, where a background px click can still land
+in the background, so there the hint is `px`.)
+
 The recommended flow when an agent gets that error:
 
 1. `bring_to_front(pid)` — activates the target ONCE (visible flicker).
-2. Subsequent input calls with `dispatch:"foreground"` deliver via
+2. Subsequent input calls with `delivery_mode:"foreground"` deliver via
    SendInput WITHOUT a per-call flash (the SetForegroundWindow swap
    inside SendInput is a no-op because the target is already frontmost).
 3. When done, leave the target as the user's foreground or call
@@ -100,10 +128,20 @@ The recommended flow when an agent gets that error:
    prior window back. **There is no "restore" tool** — you brought
    the target forward deliberately; restoring is your responsibility.
 
-The `bring_to_front` tool uses an `AttachThreadInput` trick so the
-foreground swap succeeds even when the daemon isn't at UIAccess
-integrity (the same trick that powers `send_key_synthesized`).
-Returns `{previous_fg_hwnd, now_fg_hwnd, landed_on_target}`.
+The `bring_to_front` tool uses an `AttachThreadInput` trick to *attempt*
+the foreground swap even when the daemon isn't at UIAccess integrity (the
+same trick that powers `send_key_synthesized`). Returns
+`{previous_fg_hwnd, now_fg_hwnd, landed_on_target}` — **check
+`landed_on_target`**. Without UIAccess, Windows' foreground-lock can still
+reject the swap (and a subsequent `delivery_mode:"foreground"` call will
+bail with the "Foreground swap … was rejected by Windows" diagnostic
+rather than landing input on the wrong window). When that happens the
+target genuinely cannot be driven by SendInput/keystrokes in this session:
+spawn the `cua-driver-uia` worker (UIAccess-manifested PE), or — for tasks
+that produce a file — generate the document and `launch_app` it instead of
+driving the GUI (e.g. building a spreadsheet and opening it in LibreOffice
+Calc rather than typing into the grid, which is dropped on the VCL
+background path).
 
 
 Before running any shell command, ask: **"does this raise, activate,
@@ -251,6 +289,36 @@ SendInput-swap path (`send_key_synthesized`) remains the dispatch for
 classic Notepad) use `TranslateAccelerator` which requires the system
 modifier state updated, and PostMessage can't do that.
 
+**`modifier` on a *background* click is a Windows residual.** A
+backgrounded click delivers through UIA `Invoke` or `PostMessage`, and
+neither carries live keyboard state — so a `modifier` (Ctrl/Shift/etc.)
+passed alongside a `delivery_mode:"background"` click **is not honored**
+on Windows. The `modifier` *param* is part of the shared schema and is
+accepted everywhere; it only takes effect on the SendInput rung, i.e. a
+`delivery_mode:"foreground"` (or `bring_to_front`-then-foreground) click,
+where SendInput sets real modifier state. If you need a modifier-click on
+Windows, escalate that one action to `foreground`.
+
+### Cross-platform schema residuals (Windows)
+
+The capture/dispatch/addressing params are a shared cross-platform
+contract (see `SKILL.md` → *Cross-platform parameter contract*). Three
+Windows-relevant notes:
+
+- **`session` is now accepted on every action/cursor tool.** Earlier
+  Windows builds rejected `session` via `additionalProperties:false` (it
+  was effectively a macOS-only key); the shared contract makes it
+  uniformly schema-accepted — cursor-wired where a cursor glides,
+  accepted elsewhere.
+- **`debug_window_info` is a Windows-only tool** (window-handle / class /
+  rect / z-order diagnostics for triaging the click chain). It is
+  deliberately not part of the cross-platform surface — there is no macOS
+  or Linux counterpart.
+- **`launch_app` identifiers are platform-specific.** Windows takes
+  `aumid` / `launch_path` / `path` / `start_minimized` (plus `bundle_id`
+  overloaded for AUMIDs); macOS takes `bundle_id` / `urls`. `name` is the
+  portable fallback. See the AUMID section below.
+
 **Chromium pixel-click foreground polling restore.** `click({pid, x, y})`
 on a Chromium target falls through to `send_click_synthesized` (SendInput
 + brief foreground swap) because Chromium's input thread filters by
@@ -345,14 +413,26 @@ When a cua-driver call surprises you, diagnose cua-driver first:
   stale (window closed, recreated). Re-resolve via `list_windows`.
 - **Empty `tree_markdown` / sparse UIA tree?** Some apps populate
   their UIA tree lazily on first call; retry `get_window_state`
-  once. If still empty, the app has no UIA provider — fall back to
-  vision-mode (x,y) clicks on visible content (acceptable for
-  exploration; pair with screenshots).
-- **Tiny screenshot dimensions?** Check `cua-driver get_config` →
-  `capture_mode`. Default `"som"` returns both tree + PNG. `"vision"`
-  omits the tree (PNG only); `"ax"` omits the PNG. If a snapshot
-  lacks a tree, `capture_mode` is almost certainly `"vision"` —
-  reason from the PNG or flip to `"som"` / `"ax"` via `set_config`.
+  once. If still empty, the app has no UIA provider — fall back to an
+  element px action (x,y clicks off the screenshot) on visible content
+  (acceptable for exploration; pair with screenshots).
+- **Empty tree, or a snapshot with no image?** `get_window_state`
+  returns **both** the UIA tree and a screenshot by default — there is no
+  capture mode to pick. If the tree came back empty, the response is
+  `degraded` (no UIA provider — retry once for lazy trees, see the note
+  above); act by **px** off the screenshot in the same response. The
+  `capture_mode` param is **deprecated and ignored** — it's still accepted
+  so old callers don't error, but both the tree and the image come back
+  regardless of what you pass.
+- **`get_desktop_state` returns `desktop_scope_disabled`?** That's
+  intended: full-display capture is a **desktop-scope** operation, gated
+  on the global `capture_scope`. It's `"window"` by default — so to verify
+  a specific window use `get_window_state(pid, window_id)` (works
+  backgrounded), and only use `get_desktop_state` after
+  `set_config capture_scope=desktop` (the same opt-in that enables
+  window-less screen-absolute `click`/`scroll`). Don't reach for
+  `get_desktop_state` as a casual screenshot — it's the capture surface for
+  desktop-scope coordinate loops, not window inspection.
 - **`Calc display stuck at 0 after my clicks`?** Almost always
   means UWP and you're on the PostMessage path. UWP processes
   pointer input via `Windows.UI.Input`, NOT through HWND message
@@ -529,7 +609,7 @@ Properties:
 This is the right path for **any** "click button N" / "click menu
 item X" / "click checkbox Y" intent.
 
-### `(x, y)` mode (vision / pixel)
+### `(x, y)` mode (element px action / pixel)
 
 ```json
 {"pid": 6004, "window_id": 459672, "x": 446, "y": 671}
@@ -850,6 +930,36 @@ renderer, so the fallback path works for hyperlinks and buttons.
   silent no-op on UWP). Switch to `element_index` mode. Symptom:
   success messages say `Posted click to pid N` instead of
   `Performed UIA Invoke at (sx,sy) ...`.
+- **LibreOffice (VCL) `type_text` / `hotkey` reported success but
+  nothing happened** — VCL/SAL apps route accelerators through
+  `TranslateAccelerator` (reads `GetKeyState`, which PostMessage doesn't
+  update) and the Calc/Writer document grid only takes real keystrokes
+  when a cell is in edit mode, so background `WM_CHAR` / key-combos are
+  silently dropped. Two honesty mechanisms now cover this instead of a
+  blind success:
+    - **`hotkey` / `press_key`** (keystroke + key-combo): `delivery_mode:"background"`
+      surfaces a `background_unavailable` error for VCL.
+    - **`type_text`** does a **UIA read-back** and returns a three-way `verify`
+      in structured output: `confirmed` (✅, value reflects the text),
+      `unchanged` (📨, read OK but value didn't change → likely dropped, retry
+      foreground), or `unreadable` (✅ "delivered, not verified"). **Pass an
+      `element_index`** for reliable verification: the read-back then reads
+      *that specific element* by handle (ValuePattern → TextPattern), which is
+      **focus-independent** — it reaches `confirmed`/`unchanged` whether or not
+      the target is foreground. (Verified live against the WPF harness: typed
+      via element_index, read back `confirmed`, value independently present in
+      the next snapshot — app never fronted.) **Without** an element_index it
+      falls back to system-wide `GetFocusedElement`, which on Windows only
+      resolves when the target is the **foreground** app (no per-app
+      `AXFocusedUIElement` like macOS); a backgrounded target then reads
+      `unreadable` even when the text actually landed — so `unreadable` is NOT a
+      failure signal, verify via screenshot if it matters.
+  Escalate to `delivery_mode:"foreground"` for both (SendInput Unicode /
+  accelerator). **But** foreground needs the swap to actually land — if the
+  daemon lacks UIAccess and `bring_to_front` returns `landed_on_target:false`
+  (or it reverts before the next call), you can't drive it by input at all:
+  produce the artifact and `launch_app` it (build the `.xlsx` / `.docx` and
+  open it) rather than typing into the GUI.
 - **Edge / Chrome shows tab switching even though I used pid-scoped
   hotkey** — `Ctrl+Tab` / `Ctrl+1..9` aren't pid-scopable; the
   receiver activates. Use the windows-per-URL pattern.

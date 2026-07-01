@@ -84,10 +84,13 @@ fn get_config_and_check_permissions() {
         assert!(resp["result"]["structuredContent"]["accessibility"].is_boolean());
     }
 
-    // set_config — change capture_mode to "ax" and verify get_config reflects the new value.
+    // set_config — change max_image_dimension and verify get_config reflects it.
+    // capture_mode / capture_scope are no longer settings on macOS (per-call
+    // params now — modality-ladder refactor); max_image_dimension is the
+    // cross-platform persisted field this exercises.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":4,"method":"tools/call",
-        "params":{"name":"set_config","arguments":{"capture_mode": "ax", "max_image_dimension": 1920}}
+        "params":{"name":"set_config","arguments":{"max_image_dimension": 1920}}
     }));
     let resp = d.recv();
     assert!(resp["error"].is_null(), "Protocol error from set_config: {resp:?}");
@@ -96,14 +99,12 @@ fn get_config_and_check_permissions() {
         assert!(!content.is_empty(), "set_config returned empty content");
     }
 
-    // get_config should now reflect the updated values.
+    // get_config should now reflect the updated value.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":5,"method":"tools/call",
         "params":{"name":"get_config","arguments":{}}
     }));
     let resp = d.recv();
-    assert_eq!(resp["result"]["structuredContent"]["capture_mode"], "ax",
-        "get_config should reflect set_config change");
     assert_eq!(resp["result"]["structuredContent"]["max_image_dimension"], 1920,
         "get_config should reflect max_image_dimension change");
 }
@@ -204,8 +205,10 @@ fn get_screen_size_and_cursor_position() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn get_window_state_ax_mode() {
-    //! get_window_state with capture_mode="ax" should return a tree but no screenshot image.
+fn get_window_state_returns_both_with_opt_out() {
+    //! Perception is mode-agnostic: get_window_state returns BOTH the tree AND a
+    //! screenshot by default (the deprecated `capture_mode` arg is ignored), and
+    //! `include_screenshot:false` is the opt-out that returns the tree only.
     let Some(mut d) = RawDriver::spawn() else { return; };
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
@@ -222,55 +225,63 @@ fn get_window_state_ax_mode() {
     }));
 
     let Some(win) = first_win else {
-        eprintln!("No windows found — skipping get_window_state ax test");
+        eprintln!("No windows found — skipping get_window_state perception test");
         return;
     };
     let pid = win["pid"].as_i64().unwrap();
     let wid = win["window_id"].as_u64().unwrap();
 
+    // DEFAULT (no capture_mode): both tree AND a screenshot come back.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
         "params":{"name":"get_window_state","arguments":{
-            "pid": pid, "window_id": wid, "capture_mode": "ax"
+            "pid": pid, "window_id": wid
         }}
     }));
     let resp = d.recv();
     assert!(resp["error"].is_null(), "Protocol error from get_window_state: {resp:?}");
 
     let content = resp["result"]["content"].as_array().expect("content array");
-    // ax mode must NOT return an image content item.
-    let has_image = content.iter().any(|c| c["type"] == "image");
-    assert!(!has_image, "capture_mode=ax should not return an image, got: {content:?}");
     assert!(!content.is_empty(), "Expected at least one content item");
-
-    // structuredContent must include window_id, pid, element_count.
     let sc = &resp["result"]["structuredContent"];
     assert_eq!(sc["window_id"].as_u64().unwrap_or(0), wid, "structuredContent.window_id mismatch");
     assert_eq!(sc["pid"].as_i64().unwrap_or(0), pid, "structuredContent.pid mismatch");
     assert!(sc["element_count"].is_number(), "expected element_count in structuredContent: {sc:?}");
-    if !cfg!(target_os = "windows") {
-        // ax mode — screenshot_width should NOT be present.
-        assert!(sc["screenshot_width"].is_null(), "ax mode should not have screenshot_width: {sc:?}");
+    // The screenshot is delivered by default (skip the strict image assertion on
+    // Windows, whose capture can vary, and when screen-recording isn't granted).
+    if !cfg!(target_os = "windows") && !sc["screenshot_width"].is_null() {
+        let has_image = content.iter().any(|c| c["type"] == "image");
+        assert!(has_image, "default get_window_state should deliver a screenshot image: {content:?}");
+        assert!(sc["screenshot_width"].as_f64().unwrap_or(0.0) > 0.0,
+            "default mode should report screenshot_width: {sc:?}");
     }
 
-    // Also test vision mode: screenshot_width/height should be present.
+    // OPT-OUT: include_screenshot:false → tree only, NO image / no screenshot_width.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":4,"method":"tools/call",
+        "params":{"name":"get_window_state","arguments":{
+            "pid": pid, "window_id": wid, "include_screenshot": false
+        }}
+    }));
+    let tree_only = d.recv();
+    assert!(tree_only["error"].is_null(), "Protocol error from tree-only get_window_state: {tree_only:?}");
+    let to_content = tree_only["result"]["content"].as_array().expect("content array");
+    let to_has_image = to_content.iter().any(|c| c["type"] == "image");
+    assert!(!to_has_image, "include_screenshot:false must NOT return an image, got: {to_content:?}");
+    assert!(tree_only["result"]["structuredContent"]["screenshot_width"].is_null(),
+        "include_screenshot:false must not report screenshot_width: {tree_only:?}");
+
+    // DEPRECATED `capture_mode:"vision"` must be IGNORED — still returns the tree.
+    d.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":5,"method":"tools/call",
         "params":{"name":"get_window_state","arguments":{
             "pid": pid, "window_id": wid, "capture_mode": "vision"
         }}
     }));
-    let vision_resp = d.recv();
-    assert!(vision_resp["error"].is_null(), "Protocol error from vision get_window_state: {vision_resp:?}");
-    if !vision_resp["result"]["isError"].as_bool().unwrap_or(false) {
-        let vsc = &vision_resp["result"]["structuredContent"];
-        assert!(vsc["screenshot_width"].as_f64().unwrap_or(0.0) > 0.0,
-            "vision mode should have screenshot_width: {vsc:?}");
-        if !cfg!(target_os = "windows") {
-            assert!(vsc["screenshot_height"].as_f64().unwrap_or(0.0) > 0.0,
-                "vision mode should have screenshot_height: {vsc:?}");
-        }
-    }
+    let dep = d.recv();
+    assert!(dep["error"].is_null(), "Protocol error: deprecated capture_mode must be accepted, not rejected: {dep:?}");
+    assert!(dep["result"]["structuredContent"]["element_count"].is_number(),
+        "capture_mode=vision is ignored — the tree must still be present: {dep:?}");
 }
 
 #[test]
@@ -471,8 +482,12 @@ fn type_text_chars_tool() {
     assert!(!resp["result"]["isError"].as_bool().unwrap_or(false),
         "type_text_chars returned error: {resp:?}");
     let msg = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
+    // type_text reports "Inserted" when an AX read-back verified the text, and
+    // "Sent (unverified)" when it dispatched but couldn't confirm (e.g. the field
+    // wasn't focused/frontmost) — both are accepted invocations. "Typed" covers
+    // the standalone type_text_chars wording.
     assert!(
-        msg.contains("Typed") || msg.contains("Inserted"),
+        msg.contains("Typed") || msg.contains("Inserted") || msg.contains("Sent"),
         "Unexpected message: {msg}"
     );
 }

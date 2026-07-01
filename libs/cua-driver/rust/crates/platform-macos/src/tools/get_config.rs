@@ -37,11 +37,9 @@ impl Tool for GetConfigTool {
         // sees its own override layered over the global; the anonymous session
         // (absent `_session_id`) sees the raw global — today's behavior.
         let session_id = args.opt_str("_session_id");
-        let (capture_mode, max_image_dimension, capture_scope) = {
+        let max_image_dimension = {
             let cfg = self.state.config.read().unwrap();
-            let (mode, dim) = self.state.session_config.effective(session_id.as_deref(), &cfg);
-            let scope = self.state.session_config.effective_scope(session_id.as_deref(), &cfg);
-            (mode, dim, scope)
+            self.state.session_config.effective_max_image_dimension(session_id.as_deref(), &cfg)
         };
         // Report the CALLING session's own cursor enabled-state, not a
         // nondeterministic HashMap.first(). Resolve the same key the click /
@@ -58,13 +56,15 @@ impl Tool for GetConfigTool {
         // response reflects whatever set_config (or a direct JSON edit)
         // last wrote.
         let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
+        let capture_scope = self.state.config.read().unwrap().capture_scope.clone();
         ToolResult::text("cua-driver-rs configuration")
             .with_structured(serde_json::json!({
                 "version": env!("CARGO_PKG_VERSION"),
                 "platform": "macos",
-                "capture_mode": capture_mode,
-                "capture_scope": capture_scope,
+                // capture_mode is a per-call param; capture_scope is a global
+                // setting that gates get_desktop_state.
                 "max_image_dimension": max_image_dimension,
+                "capture_scope": capture_scope,
                 "agent_cursor": {
                     "enabled": cursor_enabled,
                 },

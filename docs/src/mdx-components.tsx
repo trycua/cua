@@ -1,27 +1,12 @@
 import defaultMdxComponents from 'fumadocs-ui/mdx';
 import * as TabsComponents from 'fumadocs-ui/components/tabs';
 import type { MDXComponents } from 'mdx/types';
-import { Mermaid } from './components/mermaid';
-import IOU from './components/iou';
-import {
-  EditableCodeBlock,
-  EditableValue,
-  EditableForm,
-  EditableInput,
-} from './components/editable-code-block';
-import { Hero } from './components/hero';
 
-// use this function to get MDX components, you will need it for rendering MDX
+// Local MDX preview: fumadocs defaults + Tabs (the only custom component the
+// content uses). Hero/IOU/Mermaid/editable-code-block were unused by any page.
 export function getMDXComponents(components?: MDXComponents): MDXComponents {
   return {
     ...defaultMdxComponents,
-    Mermaid,
-    IOU,
-    EditableCodeBlock,
-    EditableValue,
-    EditableForm,
-    EditableInput,
-    Hero,
     ...TabsComponents,
     ...components,
   };

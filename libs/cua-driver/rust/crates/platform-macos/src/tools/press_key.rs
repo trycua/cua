@@ -24,17 +24,18 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "press_key".into(),
         description: "Press and release a single key, delivered to the target pid via \
-            CGEventPostToPid. No focus steal.\n\n\
-            Two delivery paths:\n\
-            • window_id + element_index: focuses the AX element first, then posts via the \
-              auth-message path (Chromium-safe).\n\
-            • window_id only (no element_index): NSMenu path — briefly activates the window \
-              WindowServer-frontmost via SLPSSetFrontProcessWithOptions (kCPSNoWindows, < 1 ms), \
-              posts WITHOUT the auth envelope so IOHIDPostEvent fires and NSApplication.sendEvent: \
-              dispatches NSMenu key equivalents. Restores prior frontmost immediately.\n\
-            • No window_id: standard auth-message path.\n\n\
-            Key names: return, tab, escape, up/down/left/right, space, delete, home, end, \
-            pageup, pagedown, f1-f12, plus any letter or digit.\n\
+            CGEventPostToPid. Follows the same `delivery_mode` ladder as click/type_text \
+            — it does NOT raise the window by default:\n\
+            • `background` (default): post to the pid WITHOUT fronting/raising — the \
+              auth-message path (Chromium-safe). With element_index it focuses that AX \
+              element first. `window_id` only targets; it does not raise.\n\
+            • `foreground`: briefly front the window (NSMenu path, < 1 ms) so native \
+              menu key-equivalents dispatch, then restore prior frontmost — the explicit \
+              escalation for menu shortcuts an app drops in the background. Requires \
+              window_id (and no element_index).\n\n\
+            A key press is never driver-verifiable → effect:\"unverifiable\"; confirm via \
+            screenshot. Key names: return, tab, escape, up/down/left/right, space, delete, \
+            home, end, pageup, pagedown, f1-f12, plus any letter or digit. \
             Modifiers array: cmd, shift, option/alt, ctrl, fn.".into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -48,9 +49,12 @@ fn def() -> &'static ToolDef {
                     "items": { "type": "string" },
                     "description": "Modifier keys: cmd, shift, option/alt, ctrl, fn."
                 },
-                "window_id": { "type": "integer" },
+                "window_id": { "type": "integer", "description": "Target window. Required for delivery_mode:\"foreground\". Does NOT itself raise the window — raising is gated on delivery_mode." },
                 "element_index": { "type": "integer" },
-                "element_token": { "type": "string", "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." }
+                "element_token": { "type": "string", "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." },
+                "x": { "type": "number", "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index." },
+                "y": { "type": "number", "description": "Screenshot-pixel Y (see x)." },
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false
         }),
@@ -101,6 +105,34 @@ impl Tool for PressKeyTool {
             key_raw.clone()
         };
         let display_key = key_raw.clone();
+        // delivery_mode gates the raise: background (default) never fronts the
+        // window (auth-envelope post, even with window_id); foreground is the
+        // explicit NSMenu-activation rung. Matches click/type_text/hotkey.
+        let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
+        let fg = delivery_mode.is_foreground();
+
+        // px form: pixel-click to focus, then the key goes to the focused element.
+        // Reuses click's translation + delivery_mode; after it, deliver via the
+        // plain background path (the focus-click already handled fronting if fg).
+        let px_focus = {
+            let px = args.get("x").and_then(|v| v.as_f64());
+            let py = args.get("y").and_then(|v| v.as_f64());
+            if let (Some(cx), Some(cy)) = (px, py) {
+                if element_index.is_some() {
+                    return ToolResult::error(
+                        "Pass either element_index (ax) or x,y (px) to press_key, not both."
+                    );
+                }
+                let from_zoom = args.get("from_zoom").and_then(|v| v.as_bool()).unwrap_or(false);
+                if let Err(e) = super::focus_by_pixel(
+                    &self.state, pid, window_id, cx, cy, fg,
+                    args.opt_str("session"), args.opt_str("_session_id"), from_zoom,
+                ).await {
+                    return e;
+                }
+                true
+            } else { false }
+        };
 
         // Resolve the pre-focus element pointer (if requested) outside
         // the suppression closure — only the focus_element() write itself
@@ -142,15 +174,20 @@ impl Tool for PressKeyTool {
 
                 tokio::task::spawn_blocking(move || {
                     let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    if let Some(wid) = window_id {
-                        if element_index.is_none() {
-                            // NSMenu path: window_id set but no element_index.
-                            crate::input::skylight::with_menu_shortcut_activation(pid as libc::pid_t, wid, || {
-                                crate::input::keyboard::press_key_no_auth(pid, &key, &m)
-                            })?;
-                            return Ok(());
+                    // foreground rung: NSMenu activation (raise+restore), only when
+                    // explicitly requested and addressing a window without an element.
+                    // Skipped when px-focus already fronted/clicked the target.
+                    if fg && !px_focus {
+                        if let Some(wid) = window_id {
+                            if element_index.is_none() {
+                                crate::input::skylight::with_menu_shortcut_activation(pid as libc::pid_t, wid, || {
+                                    crate::input::keyboard::press_key_no_auth(pid, &key, &m)
+                                })?;
+                                return Ok(());
+                            }
                         }
                     }
+                    // background (default): auth-envelope post, no raise.
                     crate::input::keyboard::press_key(pid, &key, &m)
                 })
                 .await
@@ -161,10 +198,26 @@ impl Tool for PressKeyTool {
         let changes = snapshot.detect_async().await;
 
         match result {
-            Ok(Ok(())) => ToolResult::text(format!(
-                "✅ Pressed {display_key} on pid {pid}.{}",
-                changes.result_suffix()
-            )),
+            Ok(Ok(())) => {
+                let label = if fg { " (delivery_mode:foreground)" } else { "" };
+                let mut structured = serde_json::json!({
+                    "path": if fg { "key_events_fg" } else { "key_events" },
+                    "verified": false,
+                    "effect": "unverifiable",
+                });
+                if !fg && window_id.is_some() && element_index.is_none() {
+                    structured["escalation"] = serde_json::json!({
+                        "recommended": "foreground",
+                        "reason": "a background menu key didn't land? re-call with \
+                                   delivery_mode:\"foreground\". (To type into a field, \
+                                   pixel-click to focus then type_text.)"
+                    });
+                }
+                ToolResult::text(format!(
+                    "✅ Pressed {display_key} on pid {pid}{label}.{}",
+                    changes.result_suffix()
+                )).with_structured(structured)
+            }
             Ok(Err(e)) => ToolResult::error(format!("press_key failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

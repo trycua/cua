@@ -73,11 +73,17 @@ impl Tool for StartSessionTool {
                 "start_session requires a non-empty `session` id.",
             );
         };
+        // Revive a recycled id: if this session was previously ended (explicit
+        // `end_session` / idle-TTL / connection EOF), clear its tombstone so its
+        // actions stop being rejected by the daemon's resurrection guard.
+        // Re-declaring a session is the EXPLICIT, caller-driven way to reuse an
+        // id — a stray late action still can't silently resurrect a dead one.
+        let revived = crate::session::revive_session(&id);
         // Refresh (or begin) the session's idle-TTL clock. The cursor appears on
         // the first action carrying this `session`.
         crate::session::touch_session(&id);
         ToolResult::text(format!("✅ Session '{id}' is active."))
-            .with_structured(json!({ "session": id, "active": true }))
+            .with_structured(json!({ "session": id, "active": true, "revived": revived }))
     }
 }
 

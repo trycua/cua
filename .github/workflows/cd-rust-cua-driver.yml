@@ -1,6 +1,6 @@
 name: "CD: Cua Driver (cross-platform)"
 
-# Matches the artifact convention from cd-swift-cua-driver.yml:
+# Rust implementation release workflow — cross-platform (Windows/Linux/macOS):
 #   - macOS: ONE universal binary tarball + bare universal binary
 #     (lipo arm64 + x86_64 in a single job, no separate per-arch matrix)
 #   - Windows: cua-driver.exe bare + .zip
@@ -251,8 +251,7 @@ jobs:
           APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
           CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
         run: |
-          # Create a temporary keychain just for this job (mirrors the
-          # pattern from cd-swift-cua-driver.yml). The keychain is torn
+          # Create a temporary keychain just for this job. The keychain is torn
           # down with the runner when the job exits.
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
@@ -325,14 +324,8 @@ jobs:
           # tarball so install.sh can `ditto` it to
           # /Applications/CuaDriver.app for the TCC auto-relaunch path.
           #
-          # No codesigning at this layer — the bundle ships ad-hoc
-          # signed (the bare binary inherits whatever signature was
-          # applied at build/notarize time, currently none for the
-          # Rust port). TCC keys grants on the cdhash of the binary
-          # the user grants permission to, so ad-hoc is fine for the
-          # BETA release; production signing will land in a separate
-          # change that wires up the notarization script the way the
-          # Swift driver does.
+          # The bundle ships unsigned (notarization happens in the next step).
+          # TCC keys grants on the bundle identity (com.trycua.driver).
           VERSION="${{ steps.version.outputs.version }}"
           mkdir -p release/CuaDriver.app
           cp -R scripts/CuaDriverBundle/Contents release/CuaDriver.app/Contents
@@ -503,9 +496,8 @@ jobs:
           cp libs/cua-driver/scripts/_install-rust.sh   release-upload/_install-rust.sh
 
           # Uninstaller scripts — single canonical file per shell (no
-          # `_uninstall-rust.sh` helper). uninstall.sh handles Rust by
-          # default and keeps an explicit --backend=swift legacy path for
-          # retired macOS installs. uninstall.ps1 is the Windows uninstaller
+          # `_uninstall-rust.sh` helper). uninstall.sh handles Rust (the only
+          # supported backend). uninstall.ps1 is the Windows uninstaller
           # and self-elevates via UAC when an -AutoStart install
           # (RunLevel=Highest task) needs to be torn down.
           cp libs/cua-driver/scripts/uninstall.sh       release-upload/uninstall.sh

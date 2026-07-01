@@ -7,8 +7,8 @@
 //! from `tokio::task::spawn_blocking`, so blocking here is safe).
 //!
 //! Element indices match the markdown produced by [`walk_tree`]: a depth-first,
-//! pre-order traversal of the target application's windows, numbering only the
-//! nodes that advertise AT-SPI actions. `perform_action`, `set_value`, and
+//! pre-order traversal of the target application's windows, numbering the
+//! nodes that advertise AT-SPI actions OR a Value interface (see is_indexable). `perform_action`, `set_value`, and
 //! `get_element_bounds` index into that same ordered set.
 
 use std::sync::OnceLock;
@@ -456,7 +456,7 @@ fn render(visited: &[Visited<'_>]) -> (String, Vec<AtspiNode>) {
             (0..v.depth).rev().find_map(|d| parent_at_depth.get(d).copied().flatten())
         };
 
-        if !v.actions.is_empty() {
+        if is_indexable(v) {
             let act_str = v.actions.join(",");
             let val_part = match &v.value {
                 Some(val) if !val.is_empty() => format!(" value=\"{val}\""),
@@ -506,6 +506,25 @@ fn format_value(v: f64) -> String {
     format!("{v:?}")
 }
 
+/// Whether a walked node is exposed as an indexed, usable element.
+///
+/// Historically this was "the node advertises AT-SPI Actions" (buttons, menu
+/// items, links). That silently dropped every **Value**-only widget — GTK
+/// `GtkScale` sliders, scroll bars, spin buttons, progress bars expose the
+/// `Value` interface but NO `Action`, so they never got an `element_index` and
+/// were invisible to `get_window_state`/`set_value` even though the driver can
+/// drive them (`set_value` already handles `has_value`). We now also index any
+/// node carrying the Value interface so sliders and scroll regions surface as
+/// usable elements.
+///
+/// This predicate is the single source of truth for the element-index space and
+/// MUST be applied identically in `render` and in every `action_nodes` filter
+/// (`perform_action`, `set_value`, `get_element_bounds`, `get_all_element_bounds`);
+/// any divergence would desync indices between the snapshot and the operations.
+fn is_indexable(v: &Visited) -> bool {
+    !v.actions.is_empty() || v.has_value
+}
+
 // ── Public (sync) entry points ───────────────────────────────────────────────
 
 pub fn walk_tree(pid: u32) -> Result<Option<(String, Vec<AtspiNode>)>> {
@@ -535,6 +554,123 @@ pub fn walk_tree_bounded(
             Err(_) => {
                 dlog!("walk_tree timed out for pid {pid}");
                 Ok(None)
+            }
+        }
+    })
+}
+
+/// Enumerate top-level windows from the AT-SPI registry — the window-listing
+/// fallback for Wayland compositors that DON'T implement
+/// `zwlr_foreign_toplevel_management` (GNOME Mutter, KDE KWin). Native Wayland
+/// apps have no X11 XID and Mutter/KWin expose no foreign-toplevel list, so
+/// `wayland::list_windows` comes back empty there and the whole element flow
+/// (get_window_state -> click by element_index) is unreachable — even though the
+/// AT-SPI tree itself is keyed by PID and works fine (see `walk_tree_bounded`,
+/// whose walk ignores the xid). This bridges that gap: it returns one
+/// [`WindowInfo`] per application top-level frame, with a SYNTHETIC but stable
+/// `xid`. Downstream `get_window_state` / `click` walk the tree by PID and never
+/// dereference the xid against X11, so the synthetic value only needs to be
+/// non-zero and to round-trip back from the caller.
+pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
+    use crate::x11::WindowInfo;
+    runtime().block_on(async {
+        let work = async {
+            let conn = AccessibilityConnection::new()
+                .await
+                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
+            let zconn = conn.connection();
+            let root = match call(conn.root_accessible_on_registry()).await {
+                Some(Ok(r)) => r,
+                _ => return Ok(Vec::new()),
+            };
+            let dbus = atspi::zbus::fdo::DBusProxy::new(zconn)
+                .await
+                .map_err(|e| anyhow!("DBus proxy unavailable: {e}"))?;
+            let apps = match call(root.get_children()).await {
+                Some(Ok(a)) => a,
+                _ => return Ok(Vec::new()),
+            };
+            let mut out: Vec<WindowInfo> = Vec::new();
+            for app_ref in apps {
+                // Skip apps that can't answer the pid query (modal-grabbed) and
+                // apps that don't match the filter.
+                let cpid = match call(pid_of(&dbus, &app_ref)).await {
+                    Some(Some(p)) => p,
+                    _ => continue,
+                };
+                if let Some(want) = filter_pid {
+                    if cpid != want {
+                        continue;
+                    }
+                }
+                let app = match call(accessible_for(zconn, &app_ref)).await {
+                    Some(Ok(a)) => a,
+                    _ => continue,
+                };
+                let app_name = call(app.name()).await.and_then(|r| r.ok()).unwrap_or_default();
+                let frames = match call(app.get_children()).await {
+                    Some(Ok(c)) => c,
+                    _ => Vec::new(),
+                };
+                let mut emitted = 0usize;
+                for (i, frame_ref) in frames.iter().enumerate() {
+                    let frame = match call(accessible_for(zconn, frame_ref)).await {
+                        Some(Ok(f)) => f,
+                        _ => continue,
+                    };
+                    let role = call(frame.get_role_name())
+                        .await
+                        .and_then(|r| r.ok())
+                        .unwrap_or_default();
+                    if !matches!(
+                        role.as_str(),
+                        "frame" | "window" | "dialog" | "alert" | "file chooser"
+                    ) {
+                        continue;
+                    }
+                    let title = call(frame.name())
+                        .await
+                        .and_then(|r| r.ok())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| app_name.clone());
+                    // Stable, non-zero, unique per (pid, frame ordinal).
+                    let xid = (((cpid as u64) << 16) | (i as u64)).max(1);
+                    out.push(WindowInfo {
+                        xid,
+                        pid: Some(cpid),
+                        title,
+                        x: 0,
+                        y: 0,
+                        width: 0,
+                        height: 0,
+                    });
+                    emitted += 1;
+                }
+                // App with no enumerable top-level frame still gets one handle so
+                // the by-pid AT-SPI element flow stays reachable.
+                if emitted == 0 {
+                    out.push(WindowInfo {
+                        xid: (cpid as u64).max(1),
+                        pid: Some(cpid),
+                        title: app_name,
+                        x: 0,
+                        y: 0,
+                        width: 0,
+                        height: 0,
+                    });
+                }
+            }
+            Ok::<_, anyhow::Error>(out)
+        };
+        match tokio::time::timeout(OP_TIMEOUT, work).await {
+            Ok(Ok(v)) => v,
+            Ok(Err(e)) => {
+                dlog!("atspi list_windows failed: {e}");
+                Vec::new()
+            }
+            Err(_) => {
+                dlog!("atspi list_windows timed out");
+                Vec::new()
             }
         }
     })
@@ -764,7 +900,7 @@ fn screen_to_window_coords(xid: u64, screen_x: i32, screen_y: i32) -> Option<(i3
     Some((screen_x - trans.dst_x as i32, screen_y - trans.dst_y as i32))
 }
 
-pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
+pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
     bounded(async {
         let conn = AccessibilityConnection::new()
             .await
@@ -772,10 +908,19 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
         let visited = collect_visited(&conn, pid)
             .await?
             .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| !v.actions.is_empty()).collect();
+        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
         let target = action_nodes
             .get(idx)
             .ok_or_else(|| anyhow!("element {idx} not found (total: {})", action_nodes.len()))?;
+
+        // Suspected no-op: actuating `do_action(0)` on a passive display role
+        // (a `label`/`static`/`image` indexed only for its Value interface) or a
+        // node that advertises no action at all is the AT-SPI analogue of macOS'
+        // "element does not advertise this action" — the call returns success but
+        // likely changes nothing. Reuses the same passive-role detector
+        // `select_click_target` leans on for the coordinate paths. The caller
+        // turns this into `effect: "suspected_noop"` + an escalation hint.
+        let suspected_noop = target.actions.is_empty() || is_passive_role(&target.role);
 
         let ap = target
             .acc
@@ -788,8 +933,197 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
         ap.do_action(0)
             .await
             .map_err(|e| anyhow!("doAction failed: {e}"))?;
-        Ok(target.actions.first().cloned().unwrap_or_default())
+        Ok((target.actions.first().cloned().unwrap_or_default(), suspected_noop))
     }, || Err(anyhow!("perform_action timed out for pid {pid} (app unresponsive to AT-SPI)")))
+}
+
+/// Resolve a window-local pixel `(win_x, win_y)` to the deepest actionable
+/// AT-SPI element covering it and perform its primary action.
+///
+/// This is the no-focus-steal way to land a *pixel* click on toolkits that drop
+/// synthetic X11 pointer events. GTK3/4 take input via XInput2, so neither the
+/// background `XSendEvent` path (synthetic, `send_event=True` — toolkits ignore
+/// it) nor XTEST (its core events don't reach an XI2-only client; on a headless
+/// Xvfb it also can't move a real device) actually clicks a GTK button. AT-SPI
+/// `doAction` does, without activating or raising the window — the same path the
+/// `element_index` click already uses, here driven by coordinates instead.
+///
+/// Hit-testing uses `Component.GetExtents(CoordType::Window)` so the caller's
+/// window-local coordinates are compared directly against window-local widget
+/// bounds — no screen-origin guessing. The smallest-area containing node wins so
+/// a click lands on the button, not its enclosing panel. Returns `Ok(Some(action))`
+/// when an element was actuated, `Ok(None)` when no actionable element covers the
+/// point (the caller then falls back to the synthetic X11 path).
+pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Option<String>> {
+    bounded(async {
+        let conn = AccessibilityConnection::new()
+            .await
+            .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
+        let visited = match collect_visited(&conn, pid).await? {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+
+        // Collect actionable nodes whose window-local bounds contain the point,
+        // then let `select_click_target` pick the innermost *real actuator* —
+        // preferring a button over its slightly-smaller inner label (GTK4 nests
+        // one inside every button; an area-only pick lands on the inert label
+        // and `do_action` silently no-ops). Pre-order keeps containers ahead of
+        // children, but the area/role split is what actually disambiguates.
+        let mut frames: Vec<(usize, i32, i32, u32, u32, bool)> = Vec::new();
+        for (i, v) in visited.iter().enumerate() {
+            if v.actions.is_empty() || !v.has_component {
+                continue;
+            }
+            let Some(Ok(proxies)) = call(v.acc.proxies()).await else { continue };
+            let Some(Ok(comp)) = call(proxies.component()).await else { continue };
+            let Some(Ok((x, y, w, h))) = call(comp.get_extents(CoordType::Window)).await else {
+                continue;
+            };
+            if w <= 0 || h <= 0 {
+                continue;
+            }
+            frames.push((i, x, y, w as u32, h as u32, is_passive_role(&v.role)));
+        }
+
+        let Some(idx) = select_click_target(&frames, win_x, win_y) else { return Ok(None) };
+        let target = &visited[idx];
+        let ap = target
+            .acc
+            .proxies()
+            .await
+            .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?
+            .action()
+            .await
+            .map_err(|e| anyhow!("Action unavailable: {e}"))?;
+        ap.do_action(0)
+            .await
+            .map_err(|e| anyhow!("doAction failed: {e}"))?;
+        Ok(Some(target.actions.first().cloned().unwrap_or_default()))
+    }, || Ok(None))
+}
+
+/// Vision/pixel click that actually lands — the Wayland answer (and a robust
+/// GTK4 path generally). Maps a *screen* pixel to the smallest `element_index`
+/// whose reconstructed screen frame covers it, then fires that element's
+/// primary action via [`perform_action`].
+///
+/// Why not [`perform_action_at_point`]: that one hit-tests raw
+/// `CoordType::Window` extents over an ad-hoc node set and `do_action`s the node
+/// it resolves directly. On GTK4 that can land on an inner, non-actuating node
+/// (a label inside the button) → a silent no-op that still returns `Some`
+/// ("false success"). And on native Wayland there is no virtual-pointer click to
+/// fall back to (Mutter drops synthetic pointer events). This routine instead
+/// reuses [`get_all_element_bounds`] — the SAME screen frames `get_window_state`
+/// exposes to the agent, reconstructed via the GNOME Shell helper on Wayland and
+/// `_GTK_FRAME_EXTENTS` on X11 — and actuates by `element_index`, the click path
+/// already verified working. So "click at pixel (x,y)" becomes "click the
+/// element the agent sees there", with no pointer injection and no reliance on
+/// `CoordType::Screen` (which GTK4 reports as (0,0)).
+///
+/// `screen_x`/`screen_y` are full-display screen pixels (what the vision
+/// screenshot and `get_window_state` frames are in). Returns `Ok(Some(action))`
+/// on a hit, `Ok(None)` when no element covers the point so the caller can fall
+/// back to its native injection path.
+pub fn perform_action_at_screen_point(
+    pid: u32,
+    xid: u64,
+    screen_x: i32,
+    screen_y: i32,
+) -> Result<Option<String>> {
+    bounded(async {
+        let conn = AccessibilityConnection::new()
+            .await
+            .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
+        let visited = match collect_visited(&conn, pid).await? {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+
+        // Reconstruct each indexable element's SCREEN frame the same way
+        // get_window_state does: WINDOW-relative extents (GTK4 reports these
+        // correctly; Screen is (0,0)) plus the window's screen origin (the
+        // GNOME Shell helper on Wayland, _GTK_FRAME_EXTENTS on X11). When no
+        // offset resolves, fall back to CoordType::Screen (correct on Qt/GTK3).
+        let offset = window_to_screen_offset(pid, xid);
+        let coord = if offset.is_some() { CoordType::Window } else { CoordType::Screen };
+        let (ox, oy) = offset.unwrap_or((0, 0));
+
+        // (element_index, x, y, w, h, is_passive_label) over the SAME indexable
+        // list `perform_action`/`get_window_state` use, so the chosen index
+        // maps straight back to a verified `element_index` actuation.
+        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
+        let mut frames: Vec<(usize, i32, i32, u32, u32, bool)> = Vec::new();
+        for (idx, node) in action_nodes.iter().enumerate() {
+            if !node.has_component {
+                continue;
+            }
+            let Some(Ok(proxies)) = call(node.acc.proxies()).await else { continue };
+            let Some(Ok(comp)) = call(proxies.component()).await else { continue };
+            let Some(Ok((x, y, w, h))) = call(comp.get_extents(coord)).await else {
+                continue;
+            };
+            if x == i32::MIN || y == i32::MIN || w <= 1 || h <= 1 {
+                continue;
+            }
+            frames.push((idx, x + ox, y + oy, w as u32, h as u32, is_passive_role(&node.role)));
+        }
+
+        let Some(idx) = select_click_target(&frames, screen_x, screen_y) else {
+            return Ok(None);
+        };
+        let target = action_nodes[idx];
+        let ap = target
+            .acc
+            .proxies()
+            .await
+            .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?
+            .action()
+            .await
+            .map_err(|e| anyhow!("Action unavailable: {e}"))?;
+        ap.do_action(0)
+            .await
+            .map_err(|e| anyhow!("doAction failed: {e}"))?;
+        Ok(Some(target.actions.first().cloned().unwrap_or_default()))
+    }, || Ok(None))
+}
+
+/// Roles that draw text/graphics but don't *do* anything when actuated. GTK4
+/// nests a `label` inside every `button` with a near-identical (slightly
+/// smaller) frame, so an area-only hit-test lands on the inert label —
+/// `do_action` is a silent no-op (the "false success"). Treat these as
+/// last-resort click targets.
+fn is_passive_role(role: &str) -> bool {
+    matches!(
+        role,
+        "label" | "static" | "static text" | "separator" | "filler" | "image" | "icon"
+    )
+}
+
+/// Pick the `element_index` to actuate for a click at `(px, py)`. `frames` are
+/// `(element_index, x, y, w, h, is_passive_label)` in the same coordinate space
+/// as the point. Prefers the smallest covering *real actuator*; only falls back
+/// to a passive label if nothing else covers the point. Smallest-area within a
+/// class wins so the click lands on the button, not its enclosing panel.
+/// Right/bottom edges are exclusive (`px < x + w`). `None` if nothing covers it.
+fn select_click_target(
+    frames: &[(usize, i32, i32, u32, u32, bool)],
+    px: i32,
+    py: i32,
+) -> Option<usize> {
+    let mut best_active: Option<(i64, usize)> = None;
+    let mut best_passive: Option<(i64, usize)> = None;
+    for &(idx, x, y, w, h, passive) in frames {
+        let (w, h) = (w as i32, h as i32);
+        if px >= x && px < x + w && py >= y && py < y + h {
+            let area = (w as i64) * (h as i64);
+            let slot = if passive { &mut best_passive } else { &mut best_active };
+            if slot.map(|(a, _)| area < a).unwrap_or(true) {
+                *slot = Some((area, idx));
+            }
+        }
+    }
+    best_active.or(best_passive).map(|(_, idx)| idx)
 }
 
 pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
@@ -800,7 +1134,7 @@ pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
         let visited = collect_visited(&conn, pid)
             .await?
             .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| !v.actions.is_empty()).collect();
+        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
         let target = action_nodes
             .get(idx)
             .ok_or_else(|| anyhow!("element {idx} not found (total: {})", action_nodes.len()))?;
@@ -867,7 +1201,7 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
         let visited = collect_visited(&conn, pid)
             .await?
             .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| !v.actions.is_empty()).collect();
+        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
         let target = action_nodes
             .get(idx)
             .ok_or_else(|| anyhow!("element {idx} not found"))?;
@@ -882,11 +1216,25 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
             .component()
             .await
             .map_err(|e| anyhow!("Component unavailable: {e}"))?;
-        let (x, y, w, h) = comp
-            .get_extents(CoordType::Screen)
-            .await
-            .map_err(|e| anyhow!("getExtents failed: {e}"))?;
-        Ok((x, y, w.max(0) as u32, h.max(0) as u32))
+        // Prefer WINDOW coords + a deterministic screen offset — fixes GTK4,
+        // whose CoordType::Screen collapses every element to (0,0). Fall back to
+        // Screen on Wayland / when no X11 window resolves (offset is None).
+        match window_to_screen_offset(pid, 0) {
+            Some((ox, oy)) => {
+                let (x, y, w, h) = comp
+                    .get_extents(CoordType::Window)
+                    .await
+                    .map_err(|e| anyhow!("getExtents failed: {e}"))?;
+                Ok((x + ox, y + oy, w.max(0) as u32, h.max(0) as u32))
+            }
+            None => {
+                let (x, y, w, h) = comp
+                    .get_extents(CoordType::Screen)
+                    .await
+                    .map_err(|e| anyhow!("getExtents failed: {e}"))?;
+                Ok((x, y, w.max(0) as u32, h.max(0) as u32))
+            }
+        }
     }, || Err(anyhow!("get_element_bounds timed out for pid {pid} (app unresponsive to AT-SPI)")))
 }
 
@@ -908,65 +1256,99 @@ fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
     Some((trans.dst_x as i32, trans.dst_y as i32))
 }
 
-/// Compute the additive screen-coordinate correction for GTK4's AT-SPI bridge.
+/// Read the GTK4 client-side-decoration shadow inset from the X11
+/// `_GTK_FRAME_EXTENTS` property (`CARDINAL[4]` = left, right, top, bottom).
 ///
-/// Reads the frame (toplevel) node's reported `GetExtents(Screen)` origin and
-/// compares it with the window's real X11 screen origin. GTK3/Qt report the
-/// true origin, so the two match and the offset is `(0,0)` — no correction.
-/// GTK4 reports the frame at (≈0,0) regardless of where the window actually
-/// is, so the offset becomes the window's real origin and every element is
-/// shifted into true screen space.
+/// A GTK4 window is an outer X11 window whose *visible content* starts `left`
+/// px in and `top` px down — the rest is the invisible CSD shadow. AT-SPI
+/// `CoordType::Window` coordinates are relative to that content origin, so
+/// reconstructing true screen coords needs this inset added to the X11 window
+/// origin. Returns `None` (treated as no inset, i.e. `(0,0)`) for non-GTK /
+/// server-side-decorated windows that don't set the property — which is also
+/// how we tell GTK4-CSD apart from everyone else.
+fn gtk_frame_extents(xid: u64) -> Option<(i32, i32)> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::*;
+    use x11rb::rust_connection::RustConnection;
+
+    let (conn, _) = RustConnection::connect(None).ok()?;
+    // only_if_exists=true → atom is 0 when no client ever set the property.
+    let atom = conn
+        .intern_atom(true, b"_GTK_FRAME_EXTENTS")
+        .ok()?
+        .reply()
+        .ok()?
+        .atom;
+    if atom == 0 {
+        return None;
+    }
+    let reply = conn
+        .get_property(false, xid as u32, atom, AtomEnum::CARDINAL, 0, 4)
+        .ok()?
+        .reply()
+        .ok()?;
+    let vals: Vec<u32> = reply.value32()?.collect();
+    parse_gtk_frame_extents(&vals)
+}
+
+/// Parse a `_GTK_FRAME_EXTENTS` `CARDINAL[4]` (`[left, right, top, bottom]`) into
+/// the `(left, top)` shadow inset. `None` when fewer than 4 values (property
+/// absent or malformed). Split out from [`gtk_frame_extents`] so the index
+/// mapping (left = `[0]`, top = `[2]`, *not* `[1]`/`[3]`) is unit-tested without
+/// an X server.
+fn parse_gtk_frame_extents(vals: &[u32]) -> Option<(i32, i32)> {
+    if vals.len() < 4 {
+        return None;
+    }
+    Some((vals[0] as i32, vals[2] as i32))
+}
+
+/// Additive screen-coordinate offset that turns an element's
+/// `CoordType::Window` extents into true screen coordinates:
+/// `screen = x11_window_origin + _GTK_FRAME_EXTENTS.(left,top) + window_xy`.
 ///
-/// Returns `(0,0)` whenever anything is uncertain (no frame, no Component, no
-/// X11 origin), so the existing behaviour is preserved for non-GTK4 toolkits
-/// and the change can never make correct coordinates worse.
-async fn gtk4_screen_offset(visited: &[Visited<'_>], pid: u32, xid: u64) -> (i32, i32) {
-    // Native Wayland forbids a client from querying another window's screen
-    // origin (privacy by design), so the X11-based offset recovery below
-    // can't run. Return (0, 0) — GTK4 element bounds will be window-local
-    // rather than screen-relative on Wayland, which mirrors how every other
-    // tool reports coords on this backend.
+/// AT-SPI `CoordType::Window` coords are relative to the toolkit's *content*
+/// toplevel. The content's screen position is the X11 window's root-relative
+/// origin plus the GTK4 CSD shadow inset (`_GTK_FRAME_EXTENTS`). This is
+/// deterministic and replaces the old frame-(0,0)-detection heuristic; it fixes
+/// GTK4, whose `CoordType::Screen` collapses *every* element to (0,0) so a
+/// constant offset could never separate them (GNOME/gtk a11y rework, issues
+/// #1564 / #1739) — `CoordType::Window` returns the distinct per-widget offsets
+/// instead.
+///
+/// **Gated on `_GTK_FRAME_EXTENTS` presence**: only GTK toolkits set that
+/// property (for CSD), and only GTK's Screen extents are unreliable. Non-GTK
+/// toolkits (Qt, etc.) have no such property *and* report correct Screen
+/// extents, so we return `None` for them — callers keep the unchanged Screen
+/// path and the WINDOW reconstruction can never regress a toolkit that was
+/// already correct. Also returns `None` on native Wayland (clients may not
+/// query screen origins, by design) or when no X11 window resolves.
+fn window_to_screen_offset(pid: u32, xid: u64) -> Option<(i32, i32)> {
     if crate::wayland::is_wayland() {
-        let _ = (visited, pid, xid);
-        return (0, 0);
+        // Native Wayland: clients can't query a window's screen origin, and
+        // AT-SPI CoordType::Screen collapses to (0,0) on Mutter. The bundled
+        // `org.cua.WinRects` GNOME Shell extension supplies the window's screen
+        // origin (`meta_window.get_frame_rect()`); combined with the per-widget
+        // CoordType::Window coords (which GTK4 reports correctly on Wayland too)
+        // this reconstructs real screen coords — the GNOME analogue of the X11
+        // `_GTK_FRAME_EXTENTS` path below. `None` (no extension) keeps the
+        // legacy Screen path (still (0,0), but no worse than before).
+        return crate::wayland::shell_helper::window_origin_for_pid(pid);
     }
-    // The frame is the toplevel window accessible. Prefer an explicit "frame"
-    // role; fall back to the first node that exposes a Component interface.
-    let frame = visited
-        .iter()
-        .find(|v| v.role.eq_ignore_ascii_case("frame") && v.has_component)
-        .or_else(|| visited.iter().find(|v| v.has_component));
-    let Some(frame) = frame else { return (0, 0) };
-
-    let frame_origin = async {
-        let proxies = call(frame.acc.proxies()).await?.ok()?;
-        let comp = call(proxies.component()).await?.ok()?;
-        let (fx, fy, _, _) = call(comp.get_extents(CoordType::Screen)).await?.ok()?;
-        Some((fx, fy))
-    }
-    .await;
-    let Some((frame_sx, frame_sy)) = frame_origin else { return (0, 0) };
-
-    // The window's real screen origin. Resolve the xid we were given; if it's
-    // unusable (0), fall back to this pid's first window (matches the rest of
-    // the backend's xid-recovery pattern).
-    let win_origin = x11_window_origin(xid).or_else(|| {
-        let alt = crate::x11::list_windows(Some(pid));
-        alt.first().and_then(|w| x11_window_origin(w.xid))
-    });
-    let Some((win_sx, win_sy)) = win_origin else { return (0, 0) };
-
-    // Only correct the GTK4 signature: the frame claims to sit at the screen
-    // origin while the window is really somewhere else. A small tolerance keeps
-    // GTK3/Qt (whose frame origin already matches X11 within a pixel or two of
-    // decoration inset) at a zero offset, so they are never shifted.
-    let frame_at_origin = frame_sx.abs() <= 2 && frame_sy.abs() <= 2;
-    let window_displaced = win_sx.abs() > 2 || win_sy.abs() > 2;
-    if frame_at_origin && window_displaced {
-        (win_sx - frame_sx, win_sy - frame_sy)
+    // Resolve a usable window xid. `xid == 0` means "no hint" (get_element_bounds
+    // has no window context); fall back to this pid's first window — the same
+    // convention resolve_element_local_coords uses. Guard the 0 case explicitly:
+    // x11_window_origin(0) would resolve the *root* window to (0,0), not None.
+    let win_xid = if xid != 0 {
+        xid
     } else {
-        (0, 0)
-    }
+        crate::x11::list_windows(Some(pid)).first().map(|w| w.xid)?
+    };
+    // `?` here is the GTK gate: no _GTK_FRAME_EXTENTS → non-GTK toolkit → keep
+    // the legacy Screen path (which those toolkits report correctly).
+    let (fl, ft) = gtk_frame_extents(win_xid)?;
+    let (ox, oy) = x11_window_origin(win_xid)?;
+    Some((ox + fl, oy + ft))
 }
 
 /// Screen-coordinate bounds for every action node in the tree, keyed by the
@@ -978,15 +1360,13 @@ async fn gtk4_screen_offset(visited: &[Visited<'_>], pid: u32, xid: u64) -> (i32
 /// or whose extents query fails/times out, are silently skipped — the result is
 /// best-effort and never errors on a per-node hiccup.
 ///
-/// GTK4 caveat: GTK4's AT-SPI bridge reports `GetExtents(Screen)` as if it were
-/// `GetExtents(Window)` — every element comes back relative to the toplevel
-/// window's own origin, so the frame lands at (0,0) and every descendant is
-/// off by the window's real on-screen position (issue #1564: all elements
-/// `x:0,y:0`). GTK3 and Qt report true screen coordinates. We detect and
-/// correct this generically: read the frame's reported screen origin and the
-/// window's real X11 screen origin (`xid`); when they disagree (the GTK4
-/// signature) we shift every element by the difference. For GTK3/Qt the two
-/// origins already agree, so the offset is zero and nothing changes.
+/// GTK4 caveat: GTK4's AT-SPI bridge returns `GetExtents(Screen)` as `(0,0)`
+/// for every element (issue #1564 / the #1739 a11y rework), so a screen query
+/// is useless. Instead we query `CoordType::Window` (which GTK4 *does* report
+/// correctly, per-widget) and add a deterministic screen offset — the X11
+/// window origin plus the GTK4 CSD shadow inset from `_GTK_FRAME_EXTENTS` (see
+/// [`window_to_screen_offset`]). For GTK3/Qt the inset is absent, so the
+/// offset is just the X11 origin and the result matches the old screen path.
 ///
 /// Returns `(element_index, x, y, width, height)` tuples.
 pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32, u32, u32)>> {
@@ -998,16 +1378,20 @@ pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32
             .await?
             .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
 
-        // GTK4 screen-coordinate correction. The frame node (toplevel window)
-        // is the natural reference: GTK3/Qt report its true screen origin,
-        // GTK4 reports (0,0). Comparing that against the window's real X11
-        // origin tells us how far every element is shifted.
-        let (offset_x, offset_y) = gtk4_screen_offset(&visited, pid, xid).await;
-        if offset_x != 0 || offset_y != 0 {
-            dlog!("GTK4 screen-coord correction: shifting elements by ({offset_x},{offset_y})");
+        // Query WINDOW-relative extents and add a deterministic screen offset
+        // (X11 window origin + GTK4 CSD inset). This fixes GTK4 — whose
+        // CoordType::Screen reports every element at (0,0) — by using the
+        // distinct per-widget WINDOW coords instead. On Wayland / when no X11
+        // window resolves, `offset` is None and we keep the legacy Screen path
+        // so non-X11 behaviour is unchanged.
+        let offset = window_to_screen_offset(pid, xid);
+        let coord = if offset.is_some() { CoordType::Window } else { CoordType::Screen };
+        let (offset_x, offset_y) = offset.unwrap_or((0, 0));
+        if let Some((ox, oy)) = offset {
+            dlog!("element bounds: WINDOW coords + screen offset ({ox},{oy})");
         }
 
-        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| !v.actions.is_empty()).collect();
+        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
         // Each element costs ~3 D-Bus round-trips (proxies + component +
         // GetExtents). Big trees (geany exposes ~787 nodes) would grind for
         // minutes and time out callers, so cap the walk; pre-order means the
@@ -1036,13 +1420,13 @@ pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32
                 Some(Ok(c)) => c,
                 _ => continue,
             };
-            if let Some(Ok((x, y, w, h))) = call(comp.get_extents(CoordType::Screen)).await {
+            if let Some(Ok((x, y, w, h))) = call(comp.get_extents(coord)).await {
                 // Unrealized widgets (e.g. items inside closed menus/popovers)
                 // report GetExtents as the i32::MIN sentinel and/or a degenerate
                 // 0x0 / 1x1 size. Emitting those poisons downstream consumers
                 // (overlay renderers, click targeting), so keep only elements
                 // with plausible on-screen geometry. (Validate the raw extents,
-                // before applying the GTK4 offset, so the sentinel check still
+                // before applying the screen offset, so the sentinel check still
                 // catches unrealized widgets.)
                 if x == i32::MIN || y == i32::MIN || x < -16384 || y < -16384 || w <= 1 || h <= 1 {
                     continue;
@@ -1055,4 +1439,94 @@ pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32
         dlog!("get_all_element_bounds timed out for pid {pid}; returning no bounds");
         Ok(Vec::new())
     })
+}
+
+#[cfg(test)]
+mod coord_tests {
+    use super::parse_gtk_frame_extents;
+    use super::{is_passive_role, select_click_target};
+
+    #[test]
+    fn click_target_prefers_button_over_its_inner_label() {
+        // The exact live GTK4 gnome-calculator case this fixes: button "7"
+        // (idx 6, role 'button', 82,331 64x44) wraps a slightly smaller inner
+        // label (idx 7, role 'label', 82,331 56x40). A click at the shared
+        // center must actuate the BUTTON (idx 6) — area alone would pick the
+        // smaller inert label (idx 7) → silent no-op "false success".
+        let frames = vec![
+            (6usize, 82, 331, 64, 44, false), // button "7"
+            (7usize, 82, 331, 56, 40, true),  // inner label "7"
+        ];
+        assert_eq!(select_click_target(&frames, 114, 353), Some(6));
+    }
+
+    #[test]
+    fn click_target_smallest_active_over_enclosing_panel() {
+        let frames = vec![
+            (0usize, 0, 0, 400, 600, false),    // panel
+            (3usize, 80, 320, 64, 44, false),   // button "7"
+            (5usize, 150, 320, 64, 44, false),  // button "8"
+        ];
+        assert_eq!(select_click_target(&frames, 100, 340), Some(3));
+        assert_eq!(select_click_target(&frames, 180, 340), Some(5));
+    }
+
+    #[test]
+    fn click_target_falls_back_to_label_when_no_actuator_covers() {
+        // A lone clickable label (no button covers the point) is still a valid
+        // last-resort target — don't drop the click entirely.
+        let frames = vec![(9usize, 10, 10, 30, 20, true)];
+        assert_eq!(select_click_target(&frames, 20, 15), Some(9));
+    }
+
+    #[test]
+    fn click_target_edges_exclusive_and_misses_return_none() {
+        let frames = vec![(7usize, 10, 10, 20, 20, false)];
+        assert_eq!(select_click_target(&frames, 10, 10), Some(7)); // top-left inclusive
+        assert_eq!(select_click_target(&frames, 29, 29), Some(7)); // inside
+        assert_eq!(select_click_target(&frames, 30, 20), None); // right edge exclusive
+        assert_eq!(select_click_target(&frames, 20, 30), None); // bottom edge exclusive
+        assert_eq!(select_click_target(&frames, 5, 5), None); // outside
+        assert_eq!(select_click_target(&[], 0, 0), None); // no frames
+    }
+
+    #[test]
+    fn passive_roles_classified() {
+        assert!(is_passive_role("label"));
+        assert!(is_passive_role("static text"));
+        assert!(!is_passive_role("button"));
+        assert!(!is_passive_role("push button"));
+        assert!(!is_passive_role("text box")); // editable display is a real target
+    }
+
+    #[test]
+    fn frame_extents_maps_left_and_top_not_right_or_bottom() {
+        // _GTK_FRAME_EXTENTS = [left, right, top, bottom]; we need (left, top).
+        assert_eq!(parse_gtk_frame_extents(&[61, 61, 55, 67]), Some((61, 55)));
+        // Asymmetric values prove we don't accidentally read right([1])/bottom([3]).
+        assert_eq!(parse_gtk_frame_extents(&[10, 20, 30, 40]), Some((10, 30)));
+        // Maximized GTK4 window: zero inset, but property present.
+        assert_eq!(parse_gtk_frame_extents(&[0, 0, 0, 0]), Some((0, 0)));
+    }
+
+    #[test]
+    fn frame_extents_absent_or_short_is_none() {
+        assert_eq!(parse_gtk_frame_extents(&[]), None);
+        assert_eq!(parse_gtk_frame_extents(&[61, 61]), None);
+        assert_eq!(parse_gtk_frame_extents(&[61, 61, 55]), None);
+    }
+
+    #[test]
+    fn screen_reconstruction_matches_live_gnome_calculator() {
+        // Regression anchor for the whole GTK4 fix, from a live-verified capture:
+        // gnome-calculator button "7" = x11_window_origin (55,27)
+        //   + _GTK_FRAME_EXTENTS inset (61,55) + atspi WINDOW coords (16,293)
+        //   = screen (132,375).
+        let (fl, ft) = parse_gtk_frame_extents(&[61, 61, 55, 67]).unwrap();
+        let origin = (55, 27); // x11_window_origin
+        let window = (16, 293); // atspi CoordType::Window
+        let offset = (origin.0 + fl, origin.1 + ft); // window_to_screen_offset
+        let screen = (offset.0 + window.0, offset.1 + window.1);
+        assert_eq!(screen, (132, 375));
+    }
 }

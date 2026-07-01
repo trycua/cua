@@ -3,7 +3,7 @@
 use std::time::Duration;
 use std::collections::HashSet;
 
-use super::cdp_client::CdpClient;
+use super::cdp_client::{listening_ports, CdpClient};
 
 const DEFAULT_PORTS: &[u16] = &[9222, 9223, 9224, 9225, 9230];
 
@@ -126,31 +126,3 @@ fn find_bundle_path_for_app(name: &str) -> Option<String> {
     None
 }
 
-/// Return TCP listening ports for a process via `lsof`.
-async fn listening_ports(pid: i32) -> Vec<u16> {
-    let out = tokio::process::Command::new("lsof")
-        .args([
-            "-p", &pid.to_string(),
-            "-iTCP", "-sTCP:LISTEN",
-            "-Fn", "-P",
-        ])
-        .output()
-        .await;
-
-    let Ok(out) = out else { return vec![] };
-    let text = String::from_utf8_lossy(&out.stdout);
-
-    let mut ports = Vec::new();
-    for line in text.lines() {
-        // Lines starting with 'n' contain the address e.g. n*:9222 or n127.0.0.1:9222
-        let trimmed = line.trim();
-        if !trimmed.starts_with('n') { continue; }
-        if let Some(colon_pos) = trimmed.rfind(':') {
-            let port_str = &trimmed[colon_pos + 1..];
-            if let Ok(p) = port_str.parse::<u16>() {
-                ports.push(p);
-            }
-        }
-    }
-    ports
-}

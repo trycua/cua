@@ -85,9 +85,44 @@ pub fn walk_tree_bounded(
 }
 
 /// Perform the first advertised action on element `idx` within pid's app tree.
-/// Returns Ok(action_name) on success.
-pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
+/// Returns `Ok((action_name, suspected_noop))` on success — `suspected_noop`
+/// is true when the actuated node looked like a silent no-op (a passive
+/// display role, or no advertised action), so the caller can surface
+/// `effect: "suspected_noop"`.
+pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
     native::perform_action(pid, idx)
+}
+
+/// Enumerate top-level windows from the AT-SPI registry. The window-listing
+/// fallback for Wayland compositors without `zwlr_foreign_toplevel_management`
+/// (GNOME Mutter / KDE KWin), where native apps have no X11 XID. Returns one
+/// entry per application top-level frame with a synthetic, stable `xid` that
+/// round-trips into the by-pid AT-SPI element flow. See [`native::list_windows`].
+pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
+    native::list_windows(filter_pid)
+}
+
+/// Resolve a window-local pixel to the actionable AT-SPI element at that point
+/// and perform its primary action — the no-focus-steal way to land a *pixel*
+/// click on toolkits (GTK) that drop synthetic X11 pointer events. Returns
+/// `Ok(Some(action))` when an element was actuated, `Ok(None)` when no
+/// actionable element covers the point (caller falls back to the X11 path).
+pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Option<String>> {
+    native::perform_action_at_point(pid, win_x, win_y)
+}
+
+/// Resolve a *screen* pixel to the indexable element whose reconstructed screen
+/// frame covers it and fire its primary action by `element_index` — the
+/// vision/pixel click that lands on Wayland (no pointer injection) and on GTK4
+/// generally (no `CoordType::Screen`, which reports (0,0)). See
+/// [`native::perform_action_at_screen_point`].
+pub fn perform_action_at_screen_point(
+    pid: u32,
+    xid: u64,
+    screen_x: i32,
+    screen_y: i32,
+) -> Result<Option<String>> {
+    native::perform_action_at_screen_point(pid, xid, screen_x, screen_y)
 }
 
 /// Try to type text into any editable field in the window via AT-SPI EditableText.

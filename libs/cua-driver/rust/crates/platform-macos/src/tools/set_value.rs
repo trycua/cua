@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_children, copy_string_attr, perform_action, set_string_attr,
-    kAXErrorSuccess, AXUIElementRef,
+    copy_children, copy_number_attr, copy_string_attr, perform_action, set_number_attr,
+    set_string_attr, kAXErrorSuccess, AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
@@ -65,7 +65,7 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "description": "CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used; optional when element_token is supplied (the token carries it)."
                 },
-                "element_index": { "type": "integer", "description": "Element index from last get_window_state. Must be supplied unless element_token is provided." },
+                "element_index": { "type": "integer", "description": "Element index from last get_window_state. Must be supplied unless element_token is provided. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op." },
                 "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." },
                 "value": {
                     "type": "string",
@@ -185,14 +185,97 @@ fn set_value_blocking(
             .unwrap_or_default();
         select_popup_option(element, element_index, pid, value, &element_title)
     } else {
-        // Default path: write AXValue directly.
-        let err = unsafe { set_string_attr(element, "AXValue", value) };
+        // Default path: write AXValue directly. Numeric controls (AXSlider /
+        // AXStepper) reject a CFString with -25201 and need a CFNumber; text
+        // fields take a CFString. Try numeric first when the value parses as a
+        // number, then fall back to a string write.
+        // Numeric target carried through so we can step toward it if the
+        // direct writes are rejected (SwiftUI AXSlider rejects every AXValue
+        // write with -25200 yet exposes a readable AXValue + increment/decrement
+        // actions).
+        let numeric_target = value.trim().parse::<f64>().ok();
+        let err = match numeric_target {
+            Some(n) => {
+                let e = unsafe { set_number_attr(element, "AXValue", n) };
+                if e == kAXErrorSuccess {
+                    e
+                } else {
+                    unsafe { set_string_attr(element, "AXValue", value) }
+                }
+            }
+            None => unsafe { set_string_attr(element, "AXValue", value) },
+        };
         if err == kAXErrorSuccess {
             Ok(format!("✅ Set AXValue on [{element_index}] {role}."))
+        } else if let Some(target) = numeric_target {
+            // Both direct writes failed for a numeric target — fall back to
+            // stepping the control via AXIncrement / AXDecrement actions.
+            if step_to_value(element, target) {
+                Ok(format!(
+                    "✅ Set AXValue on [{element_index}] {role} via AXIncrement/AXDecrement stepping."
+                ))
+            } else {
+                anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
+            }
         } else {
             anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
         }
     }
+}
+
+// ── AXIncrement / AXDecrement stepping fallback ──────────────────────────────
+
+/// Step a numeric control toward `target` using its `AXIncrement` /
+/// `AXDecrement` actions. Used only when direct `AXValue` writes are rejected
+/// (notably SwiftUI's `AXSlider`, which exposes a readable-but-unsettable
+/// `AXValue` plus increment/decrement actions).
+///
+/// Returns `true` once the control's value lands within half of the last
+/// observed step of `target`, `false` if it can't be read or can't be moved.
+fn step_to_value(element: AXUIElementRef, target: f64) -> bool {
+    // Can't target precisely without feedback — bail if AXValue is unreadable.
+    let mut current = match unsafe { copy_number_attr(element, "AXValue") } {
+        Some(v) => v,
+        None => return false,
+    };
+
+    // Half of the last observed step. Start near-zero so we never declare the
+    // target "reached" before performing (and observing) a real
+    // AXIncrement/AXDecrement — otherwise a slider at 0.0 targeting 0.5 would
+    // report success without ever moving. The radius widens only after we learn
+    // the control's actual step size from an observed value change.
+    let mut step_radius = f64::EPSILON;
+
+    // Hard cap to prevent runaway on a control that never quite converges.
+    for _ in 0..500 {
+        if (current - target).abs() <= step_radius {
+            return true;
+        }
+
+        let action = if current < target { "AXIncrement" } else { "AXDecrement" };
+        let _ = unsafe { perform_action(element, action) };
+
+        let next = match unsafe { copy_number_attr(element, "AXValue") } {
+            Some(v) => v,
+            None => return false,
+        };
+
+        // The action didn't move the value — the control can't be stepped (or
+        // has hit a min/max bound short of target). Stop to avoid looping.
+        if next == current {
+            return false;
+        }
+
+        // Refine the stop threshold to half of the actual step the control took.
+        let step = (next - current).abs();
+        if step > 0.0 {
+            step_radius = step / 2.0;
+        }
+        current = next;
+    }
+
+    // Exhausted the iteration cap without converging.
+    (current - target).abs() <= step_radius
 }
 
 // ── AXPopUpButton path ───────────────────────────────────────────────────────

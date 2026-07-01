@@ -1,6 +1,6 @@
 ---
 title: Connect your agent
-description: Register Cua Driver as an MCP server with Claude Code, Codex, Cursor, Antigravity, OpenClaw, OpenCode, Hermes, and Pi.
+description: Register Cua Driver as an MCP server with Claude Code, Codex, Cursor, Antigravity, OpenClaw, OpenCode, Hermes, Pi, Qwen Code, Factory Droid, and ZCode.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -22,7 +22,7 @@ cua-driver mcp-config --client <client>
 ```
 
 <Callout type="info">
-  The `claude` client can register a computer-use compatibility surface through `--claude-code-computer-use-compat`. Every client gets the same driver tools. There is no standalone screenshot tool, so window capture comes from `get_window_state` (set `capture_mode` to `vision` for a screenshot).
+  The `claude` client can register a computer-use compatibility surface through `--claude-code-computer-use-compat`. Every client gets the same driver tools. There is no standalone screenshot tool, so window capture comes from `get_window_state`, which returns a screenshot alongside the tree by default.
 </Callout>
 
 ## Claude Code
@@ -52,7 +52,7 @@ It emits:
 claude mcp add-json cua-computer-use '{"command":"cua-driver","args":["mcp","--claude-code-computer-use-compat"]}'
 ```
 
-This registers the server under the key `cua-computer-use` and passes `--claude-code-computer-use-compat`. The flag selects the Claude Code compat surface. The compat screenshot tool was removed in #1692, so the flag has no tool-surface effect today; the wiring stays in place for any future compat-gated tool. Capture the target window with `get_window_state` (set `capture_mode` to `vision` for a screenshot).
+This registers the server under the key `cua-computer-use` and passes `--claude-code-computer-use-compat`. The flag selects the Claude Code compat surface. The compat screenshot tool was removed in #1692, so the flag has no tool-surface effect today; the wiring stays in place for any future compat-gated tool. Capture the target window with `get_window_state`, which returns a screenshot alongside the tree by default.
 
 <Callout type="info">
   This is NOT Anthropic's native computer-use API. It is Cua Driver's MCP compatibility mode for Claude Code. Start with `launch_app` or `list_windows`, then capture the target window with `get_window_state`.
@@ -204,6 +204,43 @@ cua-driver --help        # full tool catalog
 Each call is one-shot and returns JSON or text on stdout, which is the shape Pi is built around.
 
 Verify: run `cua-driver --help` from the same Pi shell context.
+
+## Qwen Code
+
+Alibaba's open-source coding CLI. It has a CLI add command and a settings file.
+
+- CLI: `qwen mcp add cua-driver cua-driver mcp` (also `cua-driver mcp-config --client qwen` prints this)
+- Or paste under top-level `mcpServers` in `~/.qwen/settings.json` (user) or `.qwen/settings.json` (project):
+
+```json
+{ "mcpServers": { "cua-driver": { "command": "cua-driver", "args": ["mcp"] } } }
+```
+
+- Verify inside Qwen Code with `/mcp`.
+
+## Factory Droid
+
+Factory.ai's Droid CLI.
+
+- CLI: `droid mcp add cua-driver "cua-driver mcp"` (also `cua-driver mcp-config --client droid`)
+- Or paste under top-level `mcpServers` in `~/.factory/mcp.json` (user) or `.factory/mcp.json` (project):
+
+```json
+{ "mcpServers": { "cua-driver": { "type": "stdio", "command": "cua-driver", "args": ["mcp"] } } }
+```
+
+## ZCode
+
+ZCode by Z.ai (a GLM coding GUI app). Configure in the GUI — there is no CLI add command.
+
+- In ZCode: Settings → MCP Servers → New MCP Server (type: stdio, command `cua-driver`, arguments `mcp`), or paste under "Full configuration":
+
+```json
+{ "mcpServers": { "cua-driver": { "type": "stdio", "command": "cua-driver", "args": ["mcp"] } } }
+```
+
+- `cua-driver mcp-config --client zcode` prints this JSON to paste.
+- If you use Z.ai's separate `zai` CLI instead of the ZCode app, run: `zai mcp add cua-driver --transport stdio --command "cua-driver" --args mcp`
 
 ## Any other client
 

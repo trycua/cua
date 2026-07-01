@@ -46,9 +46,21 @@ fn tools_list_schema_shape() {
             "set_agent_cursor_motion schema missing {knob}: {sacm_props:?}");
     }
 
-    // set_config has the capture_mode enum restriction.
-    let sc = tools.iter().find(|t| t["name"] == "set_config")
-        .expect("set_config not found in tools/list");
-    assert!(sc["inputSchema"]["properties"]["capture_mode"]["enum"].is_array(),
-        "set_config capture_mode should have enum: {:?}", sc["inputSchema"]["properties"]);
+    // capture_mode enum restriction. On macOS, capture_mode is a per-call param
+    // on get_window_state (removed from set_config — behavior knobs are per-call
+    // now, not settings). On Windows it is still also a set_config field.
+    #[cfg(target_os = "macos")]
+    {
+        let gws = tools.iter().find(|t| t["name"] == "get_window_state")
+            .expect("get_window_state not found in tools/list");
+        assert!(gws["inputSchema"]["properties"]["capture_mode"]["enum"].is_array(),
+            "get_window_state capture_mode should have enum: {:?}", gws["inputSchema"]["properties"]);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let sc = tools.iter().find(|t| t["name"] == "set_config")
+            .expect("set_config not found in tools/list");
+        assert!(sc["inputSchema"]["properties"]["capture_mode"]["enum"].is_array(),
+            "set_config capture_mode should have enum: {:?}", sc["inputSchema"]["properties"]);
+    }
 }

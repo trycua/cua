@@ -22,7 +22,7 @@ pub use palette::Palette;
 pub use motion::{MotionConfig, Spring};
 pub use bezier::CubicBezier;
 pub use path_planner::{PathPlanner, PlannedPath, PathState};
-pub use shape::{BuiltinShape, CursorShape};
+pub use shape::{resolve_cursor_icon, BuiltinShape, CursorIconResolution, CursorShape};
 pub use render_state::{RenderStateCore, FocusRect, render_frame, paint_cursor, draw_default_arrow};
 pub use z_order::ZOrderEnforcer;
 
@@ -318,9 +318,14 @@ pub enum OverlayCommand {
     SetPalette(Palette),
     /// Pin the overlay above a specific window (by platform window id).
     PinAbove(u64),
-    /// Replace the cursor shape at runtime.
-    /// `None` reverts to the built-in gradient arrow.
+    /// Replace the cursor shape at runtime with a custom image (or clear it).
+    /// `None` clears the custom override so the configured `builtin_shape`
+    /// shows again. Built-in silhouettes go through `SetBuiltinShape` instead.
     SetShape(Option<CursorShape>),
+    /// Select the built-in silhouette at runtime (`arrow` / `teardrop`).
+    /// Sets `builtin_shape` and clears any custom `SetShape` override, so
+    /// either built-in is reachable regardless of which one is the default.
+    SetBuiltinShape(BuiltinShape),
     /// Update the gradient/bloom colours used by the default arrow renderer.
     /// `gradient_colors`: ordered list of `#RRGGBB` hex strings.
     /// `bloom_color`: `#RRGGBB` hex string for the radial halo.
@@ -332,4 +337,17 @@ pub enum OverlayCommand {
     /// `[x, y, width, height]` in screen coordinates (top-left origin).
     /// `None` clears the highlight.
     ShowFocusRect(Option<[f64; 4]>),
+}
+
+impl OverlayCommand {
+    /// The overlay command that applies a resolved `cursor_icon` value: a
+    /// built-in name selects the silhouette (`SetBuiltinShape`), a custom image
+    /// becomes a one-off override (`SetShape`). Shared by every platform's MCP
+    /// handler so they stay in lockstep.
+    pub fn from_cursor_icon(resolution: CursorIconResolution) -> Self {
+        match resolution {
+            CursorIconResolution::Builtin(b) => OverlayCommand::SetBuiltinShape(b),
+            CursorIconResolution::Image(s) => OverlayCommand::SetShape(Some(s)),
+        }
+    }
 }

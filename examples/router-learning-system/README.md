@@ -3,7 +3,7 @@
 This example demonstrates a production-ready task routing pattern for computer-use agents:
 
 - **Multi-tier fallback**: CLI → CDP → Cua Driver → Vision
-- **Self-learning**: SQLite-backed history that dynamically reorders paths based on success rate
+- **Self-learning**: SQLite-backed history that dynamically reorders paths based on historical execution time and reliability (after 5+ samples)
 - **Failure detection**: Skips paths with 3+ consecutive failures
 - **Cold start**: Works with static defaults, optimizes after 5+ samples
 

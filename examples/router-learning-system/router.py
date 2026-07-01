@@ -72,8 +72,8 @@ def _exec_safari(task: str, args: dict) -> dict:
     """Tier 2: Safari AX → navigate GitHub tokens page"""
     if task == "create_github_token":
         return {
-            "success": True,
-            "note": "Safari AX path ready",
+            "success": False,
+            "note": "Safari AX path prepared but not completed — readiness only",
             "method": "Safari AX",
             "task": task,
             "warnings": ["GitHub now requires sudo mode (2FA/email) for token creation"],
@@ -164,13 +164,75 @@ def _exec_cli(task: str, args: dict) -> dict:
             "detail": "Cannot create token via CLI. Browser web flow required."
         }
     
+    if task == "git_commit":
+        message = args.get("message", "update")
+        try:
+            result = subprocess.run(
+                ["git", "commit", "-am", message],
+                capture_output=True, text=True, timeout=15
+            )
+            if result.returncode == 0:
+                return {
+                    "success": True,
+                    "message": result.stdout.strip(),
+                    "method": "git CLI",
+                    "task": task,
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.stderr.strip() or result.stdout.strip(),
+                    "detail": f"git commit exit code {result.returncode}",
+                }
+        except FileNotFoundError:
+            return {"success": False, "error": "git 未安裝"}
+        except Exception as e:
+            return {"success": False, "error": f"git commit 失敗: {e}"}
+    
+    if task == "git_push":
+        remote = args.get("remote", "origin")
+        branch = args.get("branch", "")
+        try:
+            if not branch:
+                # Get current branch
+                branch_result = subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if branch_result.returncode == 0:
+                    branch = branch_result.stdout.strip()
+                else:
+                    branch = "main"
+            result = subprocess.run(
+                ["git", "push", remote, branch],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode == 0:
+                return {
+                    "success": True,
+                    "message": result.stdout.strip(),
+                    "method": "git CLI",
+                    "task": task,
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.stderr.strip() or result.stdout.strip(),
+                    "detail": f"git push exit code {result.returncode}",
+                }
+        except FileNotFoundError:
+            return {"success": False, "error": "git 未安裝"}
+        except Exception as e:
+            return {"success": False, "error": f"git push 失敗: {e}"}
+    
     return {"success": False, "error": f"CLI 未知任務: {task}"}
 
 
 def _exec_cdp(task: str, args: dict) -> dict:
     """Tier 2: CDP WebSocket execution"""
     
-    if task in ("browser_click", "browser_fill_form", "browser_eval"):
+    if task in ("browser_click", "browser_fill_form", "browser_eval",
+                 "browser_fill_input", "browser_click_checkbox", "browser_click_button"):
         # CDP execution — delegate to node script
         return {
             "success": True,
@@ -388,20 +450,25 @@ class RouterHistoryDB:
             conn.close()
 
     def best_path(self, task: str, min_samples: int = 5) -> dict:
-        """查歷史：最快成功嘅 path（至少 min_samples 次）
-        
+        """查歷史：最快又可靠嘅 path（至少 min_samples 次）
+
+        考慮成功率和平均時間，避免少數快但不可靠嘅 path 勝出。
+
         Returns:
             {"path": str, "avg_ms": float, "samples": int} or None
         """
         conn = self._connect()
         try:
             row = conn.execute("""
-                SELECT path_id, AVG(time_ms) as avg_ms, COUNT(*) as samples
+                SELECT path_id,
+                       AVG(time_ms) as avg_ms,
+                       COUNT(*) as samples,
+                       AVG(CASE WHEN success=1 THEN 1.0 ELSE 0.0 END) as success_rate
                 FROM router_history
-                WHERE task = ? AND success = 1
+                WHERE task = ?
                 GROUP BY path_id
-                HAVING samples >= ?
-                ORDER BY avg_ms ASC
+                HAVING samples >= ? AND success_rate > 0
+                ORDER BY success_rate DESC, avg_ms ASC
                 LIMIT 1
             """, (task, min_samples)).fetchone()
             if row:
@@ -474,8 +541,16 @@ class RouterHistoryDB:
             conn.close()
 
 
-# Global singleton — 所有 module import router 時共享同一個 DB
-_HISTORY_DB = RouterHistoryDB()
+# Global singleton — lazily initialized on first use
+_HISTORY_DB: Optional[RouterHistoryDB] = None
+
+
+def _get_history_db() -> RouterHistoryDB:
+    """Get or create the RouterHistoryDB singleton lazily."""
+    global _HISTORY_DB
+    if _HISTORY_DB is None:
+        _HISTORY_DB = RouterHistoryDB()
+    return _HISTORY_DB
 
 
 # ============================================================
@@ -526,7 +601,7 @@ def route(task: str, context: dict = None) -> dict:
         }
     
     # 有歷史 data？動態排序 paths
-    best = _HISTORY_DB.best_path(task, min_samples=5)
+    best = _get_history_db().best_path(task, min_samples=5)
     sorted_paths = list(route_def.paths)
     
     if best:
@@ -543,7 +618,7 @@ def route(task: str, context: dict = None) -> dict:
     
     for path in sorted_paths:
         # 有冇連續 fail？（最近 3 次）
-        recent = _HISTORY_DB.recent_failures(task, path.id, n=3)
+        recent = _get_history_db().recent_failures(task, path.id, n=3)
         consecutive_fails = sum(1 for r in recent if not r["success"])
         if consecutive_fails >= 3:
             paths_checked.append({
@@ -631,7 +706,20 @@ def execute(route_result: dict, args: dict = None) -> dict:
     
     # 執行 + 計時
     start = time.monotonic()
-    result = exec_fn(task, args)
+    try:
+        result = exec_fn(task, args)
+    except Exception as e:
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        result = {
+            "success": False,
+            "error": f"execution 異常: {e}",
+        }
+        result["method"] = f"{path.name} (Tier {path.tier})"
+        result["time_ms"] = elapsed_ms
+        success = False
+        error_msg = str(e)
+        _get_history_db().record(task, path.id, path.tier, success, elapsed_ms, error_msg)
+        return result
     elapsed_ms = int((time.monotonic() - start) * 1000)
     
     result["method"] = f"{path.name} (Tier {path.tier})"
@@ -640,7 +728,7 @@ def execute(route_result: dict, args: dict = None) -> dict:
     # 自動記錄到歷史 DB
     success = result.get("success", False)
     error_msg = result.get("error", "") or result.get("detail", "") or ""
-    _HISTORY_DB.record(task, path.id, path.tier, success, elapsed_ms, error_msg)
+    _get_history_db().record(task, path.id, path.tier, success, elapsed_ms, error_msg)
     
     return result
 
@@ -659,7 +747,42 @@ def do(task: str, context: dict = None, args: dict = None) -> dict:
     r = route(task, context)
     if not r.get("available"):
         return {"success": False, "error": r.get("reason")}
-    return execute(r, args)
+    
+    # Try each available path in order as fallback
+    sorted_paths = r.get("paths_checked", [])
+    last_error = None
+    
+    # Use the route result's path as primary, but also try others
+    primary_path = r.get("path")
+    if primary_path:
+        # Build a list: the primary path first, then any other available paths
+        available_ids = [p["path"] for p in sorted_paths if p.get("available") and p["path"] != primary_path.id]
+        candidate_ids = [primary_path.id] + available_ids
+        
+        for path_id in candidate_ids:
+            # Re-execute routing for this specific path
+            route_def = ALL_TASKS.get(task)
+            if not route_def:
+                continue
+            path_obj = next((p for p in route_def.paths if p.id == path_id), None)
+            if not path_obj:
+                continue
+            
+            # Build a route_result for this path
+            path_route = {
+                "task": task,
+                "available": True,
+                "path": path_obj,
+                "paths_checked": sorted_paths,
+                "reason": f"✅ {path_obj.name} (Tier {path_obj.tier})",
+                "learning": r.get("learning"),
+            }
+            exec_result = execute(path_route, args)
+            if exec_result.get("success"):
+                return exec_result
+            last_error = exec_result.get("error", f"Path {path_id} failed")
+    
+    return {"success": False, "error": f"所有路徑都失敗: {last_error}"}
 
 
 def history_stats(task: str = None) -> dict:
@@ -672,11 +795,11 @@ def history_stats(task: str = None) -> dict:
         {"task": str, "stats": {...}} or {"all_tasks": {...}}
     """
     if task:
-        return {"task": task, "stats": _HISTORY_DB.stats(task)}
+        return {"task": task, "stats": _get_history_db().stats(task)}
     # 全部任務
     all_stats = {}
     for tid in ALL_TASKS:
-        s = _HISTORY_DB.stats(tid)
+        s = _get_history_db().stats(tid)
         if s["total"] > 0:
             all_stats[tid] = s
     return {"all_tasks": all_stats}

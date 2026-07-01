@@ -1,0 +1,91 @@
+name: "CD: Cua Driver Reference Docs"
+
+# On a cua-driver release tag, regenerate the auto-generated reference MDX
+# (cli-reference.mdx + mcp-tools.mdx) from the released binary's `dump-docs`
+# output and open a PR with the refresh. This keeps the shipped reference in
+# lockstep with the released binary's CLI/MCP surface without a human having
+# to remember to run `pnpm docs:generate:cua-driver` after every cut.
+#
+# A PR (rather than a direct push to main) keeps a human in the loop for the
+# generated-content diff. The App token mirrors the identity the version-bake
+# step in cd-rust-cua-driver.yml already uses for release-time repo writes.
+
+on:
+  push:
+    tags:
+      - "cua-driver-rs-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  regenerate-reference-docs:
+    name: Regenerate cua-driver reference
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for git-tag version discovery
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install docs dependencies
+        run: pnpm install
+        working-directory: docs
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build cua-driver (release)
+        run: cargo build -p cua-driver --release
+        working-directory: libs/cua-driver/rust
+
+      - name: Regenerate reference docs
+        run: npx tsx scripts/docs-generators/runner.ts --library cua-driver
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Open PR with refreshed reference docs
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          if git diff --quiet -- docs/content/docs/reference/cua-driver; then
+            echo "Reference docs already up to date; nothing to open."
+            exit 0
+          fi
+
+          BRANCH="docs/cua-driver-reference-${GITHUB_REF_NAME}"
+
+          # Re-authenticate origin with the App token so the push uses the
+          # bypass-enabled identity, not the default github-actions[bot]
+          # credentials baked in by actions/checkout.
+          git config --unset-all "http.https://github.com/.extraheader" || true
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+
+          git config user.name  "trycua-release[bot]"
+          git config user.email "trycua-release[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add docs/content/docs/reference/cua-driver
+          git commit -m "docs(cua-driver): regenerate reference for ${GITHUB_REF_NAME}"
+          git push -u origin "$BRANCH" --force-with-lease
+
+          gh pr create --base main --head "$BRANCH" \
+            --title "docs(cua-driver): regenerate reference for ${GITHUB_REF_NAME}" \
+            --body "Auto-generated from \`cua-driver dump-docs\` at \`${GITHUB_REF_NAME}\` by the cua-driver reference-docs workflow. Only the auto-generated \`cli-reference.mdx\` and \`mcp-tools.mdx\` change; the hand-maintained sibling files are untouched." \
+            || echo "PR already exists for ${BRANCH}; the push updated it."

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cua-driver"
-version = "0.5.1"
+version = "0.7.0"
 description = "Python wrapper for cua-driver - cross-platform MCP server for computer-use automation"
 readme = "README.md"
 license = "MIT"
@@ -35,6 +35,9 @@ classifiers = [
 requires-python = ">=3.10"
 
 dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest"]
 
 [project.urls]
 Homepage = "https://github.com/trycua/cua"

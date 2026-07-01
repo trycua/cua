@@ -12,9 +12,12 @@ Ground truth: cua-driver 0.7.0, 38 MCP tools.
 
 | Platform | Install | Tutorial | How-to | Recipes | Reference |
 |---|---|---|---|---|---|
-| macOS (local) | ✅ audited | ✅ audited | — | — | in progress |
+| macOS (local) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Linux (Azure) | — | — | — | — | — |
 | Windows (Azure) | — | — | — | — | — |
+
+macOS how-to guides largely clean (verified live: drove a real Chrome tab through
+the `page` tool; cursor/recording/modality flags match `describe`). Fixes below.
 
 Severity: **[blocker]** wrong + blocks a user · **[confusing]** works but
 misleads · **[inconsistent]** disagrees with another doc or the CLI ·
@@ -115,6 +118,13 @@ internal *page* links. Issues:
 - windows-ssh.mdx: removed `screenshot` from the sample tool list.
 - connect-your-agent.mdx: Pi examples use `cua-driver call …`; mcp-config claude
   example updated to live output (`--scope user`, no compat flag) + explanation.
+- recipes (fill-a-form, build-a-report, export-contacts): `call check_permissions`
+  (returns JSON) → `permissions status` (matches the shown ✅ output); recipe
+  version placeholder `0.5.x` → `0.7.0`.
+- keep-running.mdx: the macOS autostart helper is repo-relative and fails for
+  curl-installed users — reframed so the plist is the path without a checkout.
+- personalize-cursor.mdx: documented the live `--cursor-palette <name>` launch
+  flag (was missing from the cursor-personalization guide).
 
 ## Open / deferred
 - SOURCE/GENERATOR fixes (need cua-driver Rust / dump-docs changes, since the

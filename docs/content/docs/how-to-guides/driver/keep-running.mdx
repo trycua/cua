@@ -11,13 +11,15 @@ Use a **persistent daemon** for element-indexed workflows. The per-pid element c
 <Tabs items={['macOS', 'Windows', 'Linux']}>
   <Tab value="macOS">
 
-`cua-driver autostart` is not implemented for macOS yet. Write a LaunchAgent with `install-local.sh --autostart`:
+`cua-driver autostart` is not implemented for macOS yet, so write a LaunchAgent instead.
+
+If you have a checkout of the [cua repo](https://github.com/trycua/cua), the helper script writes it for you (run from the repo root):
 
 ```bash
 bash libs/cua-driver/scripts/install-local.sh --autostart
 ```
 
-You can also create the plist yourself. Save this file at `~/Library/LaunchAgents/com.trycua.cua-driver.plist`:
+If you installed via the one-line installer and have no checkout, create the plist yourself. Save this file at `~/Library/LaunchAgents/com.trycua.cua-driver.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>

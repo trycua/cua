@@ -56,6 +56,16 @@ Custom cursor assets are rendered with no rotation compensation — the driver a
 2. **Stick with PNG / static art** if you don't care about motion-aligned rotation — the cursor will render at a fixed orientation regardless of motion direction. This is what most OS cursor packs do.
 </Callout>
 
+## Recolour at launch
+
+`--cursor-palette <name>` picks a built-in colour palette for the cursor at launch — the launch-time counterpart to the runtime `set_agent_cursor_style` palette. Like the other cursor flags it is parsed on `serve` and `mcp` only.
+
+```bash
+cua-driver serve --cursor-palette <name>
+```
+
+Run `cua-driver serve --help` for the available palette names.
+
 ## How the built-ins render
 
 ### `arrow`

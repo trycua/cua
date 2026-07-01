@@ -62,7 +62,7 @@ cua-driver autostart enable
 cua-driver autostart kick
 ```
 
-`enable` registers a Scheduled Task named `cua-driver-serve` with `LogonType: Interactive`. That keeps the daemon in Session 1+ instead of Session 0. The command is idempotent, so running it again after an upgrade updates the binary path automatically.
+`enable` registers a Scheduled Task named `cua-driver-serve` with `LogonType: Interactive`. That keeps the daemon in Session 1+ instead of Session 0. The command is idempotent, so running it again after an upgrade updates the binary path automatically. Run it from a non-interactive context (over SSH, or in Session 0 as `SYSTEM`) and it fails with a confusing `No mapping between account names and security IDs was done` error — use RDP or the local console instead.
 
 `kick` starts the task immediately, so you do not need to wait for the next logon.
 

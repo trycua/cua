@@ -14,7 +14,7 @@ Ground truth: cua-driver 0.7.0, 38 MCP tools.
 |---|---|---|---|---|---|
 | macOS (local) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Linux (Azure) | ✅ | gui¹ | ✅ | gui¹ | ✅ |
-| Windows (Azure) | — | — | — | — | — |
+| Windows (Azure) | ✅ | gui¹ | ✅ | gui¹ | ✅ |
 
 ¹ GUI-driving legs not run live: a stock Ubuntu server has no desktop, and the
 docs never say how to bootstrap one. Verified CLI + doc-consistency instead.
@@ -165,6 +165,58 @@ Install path/layout exact; full serve/status/stop lifecycle after `libxi6`;
 all hold.
 
 Azure VM torn down (RG `cua-docs-audit` delete accepted).
+
+## Findings — Windows (Azure Win Server 2022, live v0.7.0)
+
+Verified over `az vm run-command` (Session 0 / SYSTEM) — validates the
+non-interactive story windows-ssh.mdx targets, but interactive-only paths
+(autostart happy path, a real `session:` number, GUI tools) couldn't be exercised.
+Live `list-tools` = **39** (macOS 38 / Linux 43 / Windows 39 — platform-specific).
+
+25. **[blocker] windows-ssh.mdx** — the quoted Session-0 `doctor` warning lists a
+    `screenshot` tool that doesn't exist. → FIXED on branch (already removed);
+    the binary's own doctor string still says it → upstream eng fix.
+26. **[confusing] install.mdx (Windows)** — the installer silently attempts
+    `autostart enable`; keep-running presents it as a manual step. → FIXED (noted
+    the installer registers it + the interactive requirement).
+27. **[confusing] keep-running.mdx (Windows)** — `autostart enable/kick` from a
+    non-interactive/SSH/Session-0 context fails with a cryptic SID error. → FIXED
+    (added the symptom + "use RDP/local console").
+28. **[inconsistent] windows-ssh.mdx / keep-running.mdx** — both show `status`
+    printing a `session:` line; live Session-0 `status` printed only socket+pid.
+    Likely conditional on session ≥1 but unconfirmed. → DEFERRED (needs an
+    interactive RDP session to verify before changing).
+29. **[polish]** `cua-driver-uia.exe` ships beside `cua-driver.exe`, undocumented;
+    `list_windows` shows `[]` vs the real structured object; PATH append doesn't
+    reach SYSTEM/SSH processes. → minor, noted.
+
+### Windows verified verbatim
+install one-liner + documented paths/PATH/`-NoPathUpdate`; `--version` 0.7.0;
+`doctor` all [ok] (UIA); serve/status/stop lifecycle (`\\.\pipe\cua-driver`);
+`list_apps`, `check_permissions` (elevated/System/uia), `autostart status/disable`.
+
+Azure VM torn down (RG `cua-docs-audit-win` delete accepted).
+
+## Summary
+
+Audited cua-driver 0.7.0 docs end-to-end on **macOS (local, full live drive),
+Linux (Azure Ubuntu 22.04), and Windows (Azure Server 2022)** — install →
+tutorial → how-to → recipes → reference → explanation. ~20 hand-doc issues fixed
+on `docs/driver-audit-fixes` (1 macOS blocker, 1 Linux blocker, plus consistency
+and staleness). Biggest wins: the Linux `libXi` launch blocker, the tutorial's
+self-contradiction, and the stale `mcp-config` example.
+
+**Left for the generator (coordinate with cua#2088; not edited here to avoid
+conflicts):** the reference is generated from ONE platform, but the tool surface
+is platform-specific — macOS 38 / Linux 43 / Windows 39. mcp-tools.mdx should
+emit per-platform tools (incl. the Linux-only `type_text_chars` that `set_value`
+references) and a correct count; cli-reference needs `manifest`, the compat-flag
+no-op note, and the undocumented serve/mcp flags.
+
+**Upstream eng (binary), not docs:** the Windows/Linux `doctor` warning string
+names a nonexistent `screenshot` tool; `autostart enable` should detect Session 0
+and print a friendly message; `recording render` help advertises `--output` but
+takes a positional arg.
 
 ## Open / deferred
 - SOURCE/GENERATOR fixes (need cua-driver Rust / dump-docs changes, since the

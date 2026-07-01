@@ -2,12 +2,10 @@ import './global.css';
 import { RootProvider } from 'fumadocs-ui/provider';
 import { Geist, Geist_Mono, Urbanist } from 'next/font/google';
 import type { ReactNode } from 'react';
-import { PHProvider, PostHogPageView } from '@/providers/posthog-provider';
-import { CopilotKitProvider } from '@/providers/copilotkit-provider';
-import { AnalyticsTracker } from '@/components/analytics-tracker';
-import { CookieConsent } from '@/components/cookie-consent';
 
-import { Suspense } from 'react';
+// This app is a local MDX preview only — the production docs are served from the
+// website. Analytics (PostHog), the cuabot assistant (CopilotKit), and the
+// prompt-digest cron live on the website, so they're intentionally absent here.
 
 const geist = Geist({
   subsets: ['latin'],
@@ -55,22 +53,12 @@ export default function Layout({ children }: { children: ReactNode }) {
         />
       </head>
       <body className="flex min-h-screen flex-col" suppressHydrationWarning>
-        <PHProvider>
-          <Suspense fallback={null}>
-            <PostHogPageView />
-          </Suspense>
-          <AnalyticsTracker />
-          <CopilotKitProvider>
-            <RootProvider
-              search={{ options: { api: '/docs/api/search' } }}
-              theme={{ defaultTheme: 'dark' }}
-            >
-              {children}
-            </RootProvider>
-
-          </CopilotKitProvider>
-          <CookieConsent />
-        </PHProvider>
+        <RootProvider
+          search={{ options: { api: '/docs/api/search' } }}
+          theme={{ defaultTheme: 'dark' }}
+        >
+          {children}
+        </RootProvider>
       </body>
     </html>
   );

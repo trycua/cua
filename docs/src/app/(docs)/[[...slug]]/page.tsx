@@ -9,7 +9,6 @@ import { ChevronDown, ExternalLink } from 'lucide-react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { PageFeedback } from '@/components/page-feedback';
 import { DocActionsMenu } from '@/components/doc-actions-menu';
 
 export default async function Page(props: { params: Promise<{ slug?: string[] }> }) {
@@ -263,7 +262,6 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
             a: createRelativeLink(source, page),
           })}
         />
-        <PageFeedback />
       </DocsBody>
     </DocsPage>
   );

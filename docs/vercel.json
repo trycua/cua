@@ -1,9 +1,3 @@
 {
-  "crons": [
-    {
-      "path": "/docs/api/cron/prompt-digest",
-      "schedule": "17 4 * * 2-6"
-    }
-  ],
   "ignoreCommand": "git diff --quiet HEAD^ HEAD ./"
 }

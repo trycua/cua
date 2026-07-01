@@ -373,23 +373,6 @@ fn verify_typed(before: Option<&str>, after: Option<&str>, text: &str) -> bool {
         || before.map_or(false, |b| after.chars().count() > b.chars().count())
 }
 
-/// Decide whether an `AXSelectedText` write that returned `kAXErrorSuccess`
-/// should be treated as a silent no-op — i.e. the success code lied and we must
-/// fall back to CGEvent keystrokes.
-///
-/// `axvalue` is the read-back of `AXValue` *after* the write:
-/// - `Some(non-empty)` → the text landed; trust the AX path (`false`).
-/// - `Some("")` → readable but empty: the write was dropped, e.g. a Chromium /
-///   Electron web input that accepts the call but never updates its DOM value.
-/// - `None` → **unreadable**: unverifiable, so we must NOT report success. Mac
-///   Catalyst apps (WhatsApp, Messages) accept the write, return success, and
-///   expose no readable `AXValue`, yet the text never appears. Treat as dropped.
-///
-/// Empty input text is never a silent-accept (nothing to verify).
-fn is_silent_accept(text: &str, axvalue: Option<&str>) -> bool {
-    !text.is_empty() && axvalue.map(|v| v.is_empty()).unwrap_or(true)
-}
-
 /// Read the focused/target field's `AXValue`, for before/after read-back.
 /// Re-fetches the focused element each call when no explicit element is given
 /// (cheap, and focus is stable across our own keystrokes).
@@ -542,23 +525,32 @@ fn type_text_blocking(
             pid, text, delay_ms, before.as_deref(), clear_first, element_ptr_and_idx,
             FOREGROUND_SETTLE_MS,
         );
-        let verified = match window_id {
+        let (verified, fronted) = match window_id {
             Some(wid) => {
                 // Front → type → restore. The closure returns the read-back
-                // result; with_foreground_assist returns whether it fronted.
+                // result; with_foreground_assist returns whether it actually
+                // fronted (Ok(false) when the fronting SPIs are unavailable —
+                // the keystrokes still ran, just as background input).
                 let mut typed_verified = false;
-                crate::input::skylight::with_foreground_assist(pid as libc::pid_t, wid, || {
-                    typed_verified = do_type()?;
-                    Ok(())
-                })?;
-                typed_verified
+                let fronted = crate::input::skylight::with_foreground_assist(
+                    pid as libc::pid_t,
+                    wid,
+                    || {
+                        typed_verified = do_type()?;
+                        Ok(())
+                    },
+                )?;
+                (typed_verified, fronted)
             }
             // No window to front — best-effort background keystrokes instead.
-            None => do_type()?,
+            None => (do_type()?, false),
         };
+        // Only claim the `_fg` path when a front actually happened; when no
+        // foregrounding occurred (no window, or SPIs unavailable) these were
+        // background keystrokes and `path` must say so honestly.
         return Ok((
             format!(" via foreground keystrokes ({delay_ms}ms delay)"),
-            PATH_KEY_EVENTS_FG,
+            if fronted { PATH_KEY_EVENTS_FG } else { PATH_KEY_EVENTS },
             verified,
         ));
     }
@@ -589,13 +581,15 @@ fn type_text_blocking(
         let role  = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
         let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
         let err = unsafe { set_string_attr(element, "AXSelectedText", text) };
-        // Landed iff the API succeeded AND a read-back confirms it (not a
-        // silent/unreadable accept). See `is_silent_accept`.
+        // Landed iff the API succeeded AND a read-back positively confirms the
+        // intended `text` — it now contains `text`, or the field grew vs
+        // `before`. A non-empty `AXValue` alone is NOT enough: a pre-filled
+        // field whose `AXSelectedText` write silently no-ops still reads back
+        // its old (non-empty) value, which would otherwise report a false
+        // success. `verify_typed` compares the read-back against `before`/`text`.
+        let after = unsafe { copy_string_attr(element, "AXValue") };
         let ax_landed = err == kAXErrorSuccess
-            && !is_silent_accept(
-                text,
-                unsafe { copy_string_attr(element, "AXValue") }.as_deref(),
-            );
+            && verify_typed(before.as_deref(), after.as_deref(), text);
         if owns { unsafe { CFRelease(element as _); } }
         if ax_landed {
             let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
@@ -654,33 +648,6 @@ mod tests {
         // calling it with is_terminal_target=true is safe and never
         // dereferences null AX pointers.
         let _ = r;
-    }
-
-    #[test]
-    fn silent_accept_unreadable_axvalue_falls_back() {
-        // The WhatsApp/Catalyst bug: AXSelectedText returns success but AXValue
-        // is unreadable (None). Must be treated as silent-accept ⇒ fall back.
-        assert!(is_silent_accept("i love u", None));
-    }
-
-    #[test]
-    fn silent_accept_readable_empty_falls_back() {
-        // Chromium/Electron: readable but empty after a non-empty write ⇒ dropped.
-        assert!(is_silent_accept("hello", Some("")));
-    }
-
-    #[test]
-    fn silent_accept_readable_nonempty_is_trusted() {
-        // Standard Cocoa field: AXValue reflects the inserted text ⇒ AX path ok.
-        assert!(!is_silent_accept("hello", Some("hello")));
-        assert!(!is_silent_accept("world", Some("prefix world")));
-    }
-
-    #[test]
-    fn silent_accept_empty_text_is_never_silent() {
-        // Nothing to verify when inserting empty text.
-        assert!(!is_silent_accept("", None));
-        assert!(!is_silent_accept("", Some("")));
     }
 
     #[test]

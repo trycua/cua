@@ -17,9 +17,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     ChildWindowFromPointEx, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT,
-    GetCursorPos, GetForegroundWindow, GetSystemMetrics, PostMessageW, SetCursorPos,
-    SetWindowPos, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW, PostMessageW,
+    SetCursorPos, SetWindowPos, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST,
+    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_TOPMOST,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
     WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP,
 };
@@ -437,6 +438,10 @@ pub fn send_click_synthesized_mods(
         // need UIAccess — the technique the OG GTK path used. (Keyboard
         // foreground still needs *real* focus; only pointer can be z-routed.)
         let _noact = crate::input::NoActivateGuard::arm(target);
+        // Capture whether the target was ALREADY always-on-top so we don't strip
+        // that state on restore — only demote below if WE promoted it.
+        let was_topmost =
+            (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32) & WS_EX_TOPMOST.0 != 0;
         let _ = SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
 
         // Move the cursor so the OS hover state matches before the click; the
@@ -477,7 +482,9 @@ pub fn send_click_synthesized_mods(
         // demote the target out of the topmost band and restack the user's
         // window on top (no activation), and restore the cursor.
         sleep(Duration::from_millis(40));
-        let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        if !was_topmost {
+            let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        }
         if !prev_fg.0.is_null() && prev_fg != target {
             let _ = SetWindowPos(prev_fg, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
         }
@@ -568,6 +575,10 @@ pub fn send_drag_synthesized(
         // SetForegroundWindow is lock-denied without UIAccess and isn't needed
         // for pointer input; NoActivateGuard keeps the press from activating it.
         let _noact = crate::input::NoActivateGuard::arm(target);
+        // Capture whether the target was ALREADY always-on-top so we only demote
+        // below if WE promoted it (else we'd strip a legitimate topmost window).
+        let was_topmost =
+            (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32) & WS_EX_TOPMOST.0 != 0;
         let _ = SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
 
         // 1. Move + press at the start of the drag.
@@ -579,7 +590,9 @@ pub fn send_drag_synthesized(
         ];
         let sent = SendInput(&prelude, std::mem::size_of::<INPUT>() as i32);
         if sent as usize != prelude.len() {
-            let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+            if !was_topmost {
+                let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+            }
             if !prev_fg.0.is_null() && prev_fg != target {
                 let _ = SetWindowPos(prev_fg, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
             }
@@ -612,7 +625,9 @@ pub fn send_drag_synthesized(
         // Brief settle, then restore z-order (demote target, restack user's
         // window — no activation) and the cursor.
         sleep(Duration::from_millis(40));
-        let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        if !was_topmost {
+            let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        }
         if !prev_fg.0.is_null() && prev_fg != target {
             let _ = SetWindowPos(prev_fg, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
         }

@@ -679,11 +679,13 @@ impl Tool for ClickTool {
                             }
                         };
                         // Foreground rung: brief front → click → restore.
+                        // Returns whether the window was ACTUALLY fronted, so the
+                        // reported `path` honestly reflects the rung that ran.
                         match (fg, window_id) {
                             (true, Some(wid)) => crate::input::skylight::with_foreground_assist(
                                 pid as libc::pid_t, wid, do_click,
-                            ).map(|_| ()),
-                            _ => do_click(),
+                            ),
+                            _ => do_click().map(|_| false),
                         }
                     })
                     .await
@@ -698,18 +700,23 @@ impl Tool for ClickTool {
                 "middle" => "middle-click",
                 _        => "click",
             };
-            let (path, mode_label) = if fg {
-                ("cgevent_fg", "foreground CGEvent")
-            } else {
-                ("cgevent", "background CGEvent")
-            };
             match result {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Posted {button_label} to pid {pid} ({mode_label}; \
-                     not driver-verified — confirm via screenshot).{}",
-                    changes.result_suffix()
-                ))
-                .with_structured(serde_json::json!({ "path": path, "verified": false, "effect": "unverifiable" })),
+                Ok(Ok(fronted)) => {
+                    // `with_foreground_assist` returns `false` when the fronting SPIs
+                    // were unavailable and it clicked WITHOUT activation — report the
+                    // background path in that case so `path` reflects the rung that ran.
+                    let (path, mode_label) = if fg && fronted {
+                        ("cgevent_fg", "foreground CGEvent")
+                    } else {
+                        ("cgevent", "background CGEvent")
+                    };
+                    ToolResult::text(format!(
+                        "✅ Posted {button_label} to pid {pid} ({mode_label}; \
+                         not driver-verified — confirm via screenshot).{}",
+                        changes.result_suffix()
+                    ))
+                    .with_structured(serde_json::json!({ "path": path, "verified": false, "effect": "unverifiable" }))
+                }
                 Ok(Err(e)) => ToolResult::error(format!("{button_label} failed: {e}")),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             }

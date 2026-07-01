@@ -70,6 +70,14 @@ pub unsafe fn scroll_into_view_and_recenter(
     if element_ptr == 0 {
         return None;
     }
+    // Ensure COM is live on THIS thread before the first UIA call. Strategy 1
+    // (`scroll_item_into_view`) touches UIA directly, so on a worker thread that
+    // never called `CoInitializeEx` it would otherwise fail with
+    // `CO_E_NOTINITIALIZED`. Fire-and-forget + idempotent (the crate convention,
+    // see `uia::mod` / `tools::page`): a redundant init just returns S_FALSE /
+    // RPC_E_CHANGED_MODE, which the `let _ =` swallows.
+    let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+
     let elem: IUIAutomationElement = IUIAutomationElement::from_raw(element_ptr as *mut _);
 
     // A recentred point only counts if it actually lands inside the host window
@@ -111,7 +119,8 @@ unsafe fn scroll_ancestor_into_view(
     host_hwnd: u64,
     elem: &IUIAutomationElement,
 ) -> Option<(i32, i32)> {
-    let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    // COM is already initialized by `scroll_into_view_and_recenter` (this fn's
+    // only caller), so no redundant `CoInitializeEx` here.
     let automation: IUIAutomation =
         CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
     let walker = automation.ControlViewWalker().ok()?;

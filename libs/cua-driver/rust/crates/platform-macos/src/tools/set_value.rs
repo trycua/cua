@@ -239,9 +239,12 @@ fn step_to_value(element: AXUIElementRef, target: f64) -> bool {
         None => return false,
     };
 
-    // Half of the last observed step; before any step is observed, treat 1.0 as
-    // the "close enough" radius (covers integer-stepped controls).
-    let mut step_radius = 1.0_f64;
+    // Half of the last observed step. Start near-zero so we never declare the
+    // target "reached" before performing (and observing) a real
+    // AXIncrement/AXDecrement — otherwise a slider at 0.0 targeting 0.5 would
+    // report success without ever moving. The radius widens only after we learn
+    // the control's actual step size from an observed value change.
+    let mut step_radius = f64::EPSILON;
 
     // Hard cap to prevent runaway on a control that never quite converges.
     for _ in 0..500 {

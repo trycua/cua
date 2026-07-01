@@ -143,6 +143,18 @@ impl Tool for ScrollTool {
         };
         let pre_focus_ptr: Option<usize> = pre_focus_guard.as_ref().map(|g| g.as_ptr());
 
+        // An element target was explicitly requested (element_index/element_token)
+        // but couldn't be retained from the cache — the snapshot is stale. Fail
+        // loudly instead of silently falling through to the keystroke/page
+        // scroller below, which would scroll the wrong thing.
+        if let Some(idx) = element_index {
+            if pre_focus_guard.is_none() {
+                return ToolResult::error(format!(
+                    "Element index {idx} not found. Call get_window_state first."
+                ));
+            }
+        }
+
         // ── Pixel-wheel path (targeted scroll) ───────────────────────────────
         // A target — element (preferred) OR window-local x,y — routes the scroll
         // through a synthesized mouse-wheel event at that screen point, so the
@@ -184,6 +196,15 @@ impl Tool for ScrollTool {
             .ok()
             .flatten()
         } else if let (Some(mut cx), Some(mut cy)) = (x_arg, y_arg) {
+            // Targeted x,y are window-local screenshot pixels and REQUIRE a
+            // window_id to anchor the window→screen conversion (schema contract).
+            // Without one, refuse rather than scrolling at screen-absolute coords.
+            if window_id.is_none() {
+                return ToolResult::error(
+                    "window_id is required when scrolling by window-local x,y pixels."
+                        .to_string(),
+                );
+            }
             // Pixel path: x,y are window-local screenshot pixels. Mirror the
             // click pixel path — undo any session downscale, then add the
             // window origin and divide out the Retina backing scale.

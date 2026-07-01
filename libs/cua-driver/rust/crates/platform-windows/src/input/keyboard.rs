@@ -444,12 +444,34 @@ pub fn send_text_synthesized(hwnd: u64, text: &str) -> Result<()> {
     if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
         bail!(msg);
     }
-    // Build the Unicode key-event sequence: each UTF-16 code unit as a
-    // down/up pair with KEYEVENTF_UNICODE (wVk=0, wScan=code unit).
+    // Build the key-event sequence. Printable codepoints go through as Unicode
+    // packets (KEYEVENTF_UNICODE, wVk=0, wScan=code unit), but line breaks are
+    // mapped to a real VK_RETURN keystroke — mirroring the background path
+    // (`post_enter_keystroke`) — because terminals and rich editors honour an
+    // Enter key event, not a raw `\r`/`\n` Unicode packet. `\r\n` collapses to
+    // a single Return (the `\r` emits the Enter; the following `\n` is silent).
+    let return_vk = windows::Win32::UI::Input::KeyboardAndMouse::VK_RETURN;
     let mut events: Vec<INPUT> = Vec::with_capacity(text.len() * 2);
-    for unit in text.encode_utf16() {
-        events.push(unicode_key_input(unit, false));
-        events.push(unicode_key_input(unit, true));
+    let mut prev_was_cr = false;
+    for ch in text.chars() {
+        match ch {
+            '\n' if prev_was_cr => {
+                prev_was_cr = false;
+            }
+            '\n' | '\r' => {
+                events.push(key_input(return_vk, false));
+                events.push(key_input(return_vk, true));
+                prev_was_cr = ch == '\r';
+            }
+            _ => {
+                prev_was_cr = false;
+                let mut buf = [0u16; 2];
+                for unit in ch.encode_utf16(&mut buf) {
+                    events.push(unicode_key_input(*unit, false));
+                    events.push(unicode_key_input(*unit, true));
+                }
+            }
+        }
     }
     if events.is_empty() {
         return Ok(());

@@ -66,7 +66,18 @@ impl Tool for BringToFrontTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let pid = match args.get("pid").and_then(Value::as_i64) {
-            Some(p) => p as libc::pid_t,
+            Some(p) => match libc::pid_t::try_from(p) {
+                Ok(pid) => pid,
+                Err(_) => {
+                    return ToolResult::error(format!(
+                        "bring_to_front: `pid` {p} is out of range for a process identifier."
+                    ))
+                    .with_structured(serde_json::json!({
+                        "code": "bring_to_front_pid_out_of_range",
+                        "pid": p,
+                    }));
+                }
+            },
             None => return ToolResult::error("Missing required integer field: pid".to_string()),
         };
         let window_id = args.get("window_id").and_then(Value::as_i64);
@@ -74,26 +85,40 @@ impl Tool for BringToFrontTool {
         // `-[NSRunningApplication activateWithOptions:]` is documented
         // thread-safe. ActivateAllWindows brings the app's windows forward (not
         // just the key one) so a multi-window target lands fully frontmost.
-        let activated = unsafe {
-            match NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
-                Some(app) => {
-                    app.activateWithOptions(
-                        NSApplicationActivationOptions::NSApplicationActivateAllWindows,
-                    );
-                    true
-                }
-                None => false,
+        // The BOOL return tells us whether Cocoa actually accepted the swap —
+        // `None` here means the pid has no running app at all.
+        let activation = unsafe {
+            NSRunningApplication::runningApplicationWithProcessIdentifier(pid).map(|app| {
+                app.activateWithOptions(
+                    NSApplicationActivationOptions::NSApplicationActivateAllWindows,
+                )
+            })
+        };
+
+        let activated = match activation {
+            None => {
+                return ToolResult::error(format!(
+                    "bring_to_front: no running application for pid {pid} \
+                     (process not found or already exited)."
+                ))
+                .with_structured(serde_json::json!({
+                    "code": "bring_to_front_pid_not_found",
+                    "pid": pid,
+                }));
             }
+            Some(activated) => activated,
         };
 
         if !activated {
             return ToolResult::error(format!(
-                "bring_to_front: no running application for pid {pid} \
-                 (process not found or already exited)."
+                "bring_to_front: macOS rejected activation for pid {pid} \
+                 (activateWithOptions returned NO — the app may be hidden or \
+                 terminating, or the system denied the foreground swap)."
             ))
             .with_structured(serde_json::json!({
-                "code": "bring_to_front_pid_not_found",
+                "code": "bring_to_front_activation_rejected",
                 "pid": pid,
+                "activated": false,
             }));
         }
 

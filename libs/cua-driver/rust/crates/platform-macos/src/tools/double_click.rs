@@ -233,9 +233,16 @@ fn ax_double_click(pid: i32, wid: u32, element_ptr: usize, idx: usize, cursor_ke
     // no-ops on AppKit controls that hit-test the window-local stamp. Mirror the
     // delivering path the `click` pixel branch uses so the double-click actually
     // lands without foregrounding the app.
+    // Window-routed target: we MUST have the window's bounds to translate the
+    // screen center into a window-local stamp. If bounds are missing, refuse
+    // rather than stamping screen coords as window-local — that no-ops or hits
+    // the wrong location while still routing to `wid`.
     let (wx, wy) = crate::windows::window_bounds_by_id(wid)
         .map(|b| (cx - b.x, cy - b.y))
-        .unwrap_or((cx, cy));
+        .ok_or_else(|| anyhow::anyhow!(
+            "Cannot resolve window bounds for window_id {wid}; refusing to stamp \
+             screen coordinates as window-local for element [{idx}]."
+        ))?;
     crate::input::mouse::click_at_xy_with_window_local(pid, cx, cy, wx, wy, wid, 2, &[])?;
     Ok(format!("✅ Double-clicked element [{idx}] at ({cx:.1}, {cy:.1})."))
 }

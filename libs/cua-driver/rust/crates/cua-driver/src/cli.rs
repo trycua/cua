@@ -877,7 +877,7 @@ pub fn build_manifest() -> serde_json::Value {
               ] },
             { "name": "mcp-config",
               "description": "Print the MCP server config snippet or a client-specific install command.",
-              "args": [ { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi. Omit for the generic snippet." } ] },
+              "args": [ { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi, qwen, droid, zcode. Omit for the generic snippet." } ] },
             { "name": "manifest",
               "description": "Emit this machine-readable description of the CLI surface.",
               "args": [ { "name": "--pretty", "type": "flag", "description": "Pretty-print the JSON." } ] },
@@ -1104,8 +1104,47 @@ pub fn run_mcp_config(client: Option<&str>) {
                  exactly the shape Pi is designed around."
             );
         }
+        Some("qwen") | Some("qwen-code") => {
+            // Qwen Code (Alibaba's open-source coding CLI, a Gemini-CLI fork).
+            // Config: ~/.qwen/settings.json (user) or .qwen/settings.json
+            // (project), top-level "mcpServers" keyed by name. It also ships a
+            // CLI: `qwen mcp add <name> <command> [args...]`.
+            println!("qwen mcp add cua-driver {binary} mcp");
+        }
+        Some("droid") | Some("factory") => {
+            // Factory Droid CLI. Config: ~/.factory/mcp.json (user) or
+            // .factory/mcp.json (folder/project), top-level "mcpServers" with
+            // "type":"stdio". The CLI takes command+args as one quoted string.
+            println!("droid mcp add cua-driver \"{binary} mcp\"");
+        }
+        Some("zcode") => {
+            // ZCode by Z.ai (GLM coding harness) — a GUI app. MCP servers are
+            // added in Settings -> MCP Servers -> New MCP Server (type: stdio),
+            // or by pasting JSON under "Full configuration". No CLI and no
+            // documented config-file path, so emit the JSON to paste. (Z.ai's
+            // separate `zai` CLI does have `zai mcp add` — noted below.)
+            let normalised = binary.replace('\\', "/");
+            let full = serde_json::json!({
+                "mcpServers": {
+                    "cua-driver": {
+                        "command": normalised,
+                        "args": ["mcp"],
+                        "type": "stdio",
+                    }
+                }
+            });
+            let pretty = serde_json::to_string_pretty(&full)
+                .unwrap_or_else(|_| full.to_string());
+            println!(
+                "# ZCode (Z.ai) is a GUI app — add via Settings -> MCP Servers ->\n\
+                 # New MCP Server (type: stdio), or paste this under \"Full\n\
+                 # configuration\". If you use Z.ai's `zai` CLI instead, run:\n\
+                 #   zai mcp add cua-driver --transport stdio --command \"{binary}\" --args mcp\n\
+                 {pretty}",
+            );
+        }
         Some(other) => {
-            eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi.");
+            eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, qwen, droid, zcode.");
             process::exit(2);
         }
     }
@@ -2059,7 +2098,7 @@ fn cli_docs_json() -> serde_json::Value {
             {
                 "name": "mcp-config",
                 "abstract": "Print MCP server config or a client-specific install command.",
-                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, and pi.",
+                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, qwen, droid, and zcode.",
                 "arguments": no_args,
                 "options": [{"name":"client","short_name":null,"help":"Client name to print configuration for.","type":"String","default_value":null,"is_optional":true}],
                 "flags": no_flags,

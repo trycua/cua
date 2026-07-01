@@ -1,6 +1,6 @@
 ---
 title: Connect your agent
-description: Register Cua Driver as an MCP server with Claude Code, Codex, Cursor, Antigravity, OpenClaw, OpenCode, Hermes, and Pi.
+description: Register Cua Driver as an MCP server with Claude Code, Codex, Cursor, Antigravity, OpenClaw, OpenCode, Hermes, Pi, Qwen Code, Factory Droid, and ZCode.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -204,6 +204,43 @@ cua-driver --help        # full tool catalog
 Each call is one-shot and returns JSON or text on stdout, which is the shape Pi is built around.
 
 Verify: run `cua-driver --help` from the same Pi shell context.
+
+## Qwen Code
+
+Alibaba's open-source coding CLI. It has a CLI add command and a settings file.
+
+- CLI: `qwen mcp add cua-driver cua-driver mcp` (also `cua-driver mcp-config --client qwen` prints this)
+- Or paste under top-level `mcpServers` in `~/.qwen/settings.json` (user) or `.qwen/settings.json` (project):
+
+```json
+{ "mcpServers": { "cua-driver": { "command": "cua-driver", "args": ["mcp"] } } }
+```
+
+- Verify inside Qwen Code with `/mcp`.
+
+## Factory Droid
+
+Factory.ai's Droid CLI.
+
+- CLI: `droid mcp add cua-driver "cua-driver mcp"` (also `cua-driver mcp-config --client droid`)
+- Or paste under top-level `mcpServers` in `~/.factory/mcp.json` (user) or `.factory/mcp.json` (project):
+
+```json
+{ "mcpServers": { "cua-driver": { "type": "stdio", "command": "cua-driver", "args": ["mcp"] } } }
+```
+
+## ZCode
+
+ZCode by Z.ai (a GLM coding GUI app). Configure in the GUI — there is no CLI add command.
+
+- In ZCode: Settings → MCP Servers → New MCP Server (type: stdio, command `cua-driver`, arguments `mcp`), or paste under "Full configuration":
+
+```json
+{ "mcpServers": { "cua-driver": { "type": "stdio", "command": "cua-driver", "args": ["mcp"] } } }
+```
+
+- `cua-driver mcp-config --client zcode` prints this JSON to paste.
+- If you use Z.ai's separate `zai` CLI instead of the ZCode app, run: `zai mcp add cua-driver --transport stdio --command "cua-driver" --args mcp`
 
 ## Any other client
 

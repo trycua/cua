@@ -81,9 +81,12 @@ jobs:
           # Cargo feature (disabled by default) and are wired in via the
           # Nix build. The wlroots screencopy + virtual-pointer paths and
           # the X11 fallback work without them.
+          # libxcb1-dev: x11rb's `allow-unsafe-code` feature links the
+          # libxcb-backed XCBConnection fallback (#1978), so the binary now
+          # needs libxcb at link time even in this minimal (no-portal) build.
           apt-get install -y --no-install-recommends \
             git ca-certificates curl build-essential pkg-config \
-            libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev
+            libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev libxcb1-dev
       - uses: actions/checkout@v4
       - name: Determine version
         id: version

@@ -124,28 +124,30 @@ jobs:
       matrix:
         include:
           # Debian family
-          # X11 runtime libs (libx11-6 libxi6 libxtst6 libxext6) and the
+          # X11 runtime libs (libx11-6 libxi6 libxtst6 libxext6 libxcb1) and the
           # Wayland client lib (libwayland-client0) are required because
           # cua-driver is dynamically linked against the X11 input stack and
-          # the native Wayland backend (added in #1910). They are the runtime
+          # the native Wayland backend (added in #1910). libxcb1 specifically is
+          # needed because x11rb's `allow-unsafe-code` feature links the
+          # libxcb-backed XCBConnection fallback (#1978). They are the runtime
           # counterparts of the build-time deps
-          # (libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev) used
-          # in the CD workflow. Without them the dynamic linker fails before
+          # (libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev libxcb1-dev)
+          # used in the CD workflow. Without them the dynamic linker fails before
           # main() and --version exits 127, which the smoke-test correctly
           # treats as an ABI error. Installing only curl+ca-certificates is not
           # enough.
           - distro: "debian:12"
             image: "debian:12"
             glibc_version: "2.36"
-            pkg_install: "apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0"
+            pkg_install: "apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libxcb1 libwayland-client0"
           - distro: "ubuntu:22.04"
             image: "ubuntu:22.04"
             glibc_version: "2.35"
-            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0"
+            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libxcb1 libwayland-client0"
           - distro: "ubuntu:24.04"
             image: "ubuntu:24.04"
             glibc_version: "2.39"
-            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0"
+            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libxcb1 libwayland-client0"
           # RPM family
           # Rocky Linux 9 ships curl-minimal in the base image which conflicts
           # with the full curl package. Use --allowerasing to let dnf replace
@@ -155,11 +157,11 @@ jobs:
           - distro: "rockylinux:9"
             image: "rockylinux:9"
             glibc_version: "2.34"
-            pkg_install: "dnf install -y --setopt=install_weak_deps=False --allowerasing curl ca-certificates libX11 libXi libXtst libXext libwayland-client"
+            pkg_install: "dnf install -y --setopt=install_weak_deps=False --allowerasing curl ca-certificates libX11 libXi libXtst libXext libxcb libwayland-client"
           - distro: "fedora:41"
             image: "fedora:41"
             glibc_version: "2.40"
-            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates libX11 libXi libXtst libXext libwayland-client"
+            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates libX11 libXi libXtst libXext libxcb libwayland-client"
 
     steps:
       - name: Skip if no release binary

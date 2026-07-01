@@ -26,7 +26,7 @@ Several parameters are a **shared cross-platform contract**: the same JSON shape
 | Parameter | Where | Notes |
 | --------- | ----- | ----- |
 | `session` | every action and cursor tool | Optional run identity for the agent cursor and per-session state; the same id works over MCP, the CLI, or the raw socket and follows the run across apps and windows. Accepted on all three platforms — earlier Windows and Linux builds rejected it via `additionalProperties:false`. |
-| `delivery_mode` | the input family (`click`, `double_click`, `right_click`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`) | `background` (default) injects without fronting or raising the target — the [no-foreground contract](/explanation/the-no-foreground-contract). `foreground` briefly fronts the target, acts, then restores the prior frontmost — the explicit last resort when a background attempt did not land. |
+| `delivery_mode` | the input family (`click`, `double_click`, `right_click`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`) | `"background"` (default) injects without fronting or raising the target — the [no-foreground contract](/explanation/the-no-foreground-contract). `"foreground"` briefly fronts the target, acts, then restores the prior frontmost — the explicit last resort when a background attempt did not land. Legacy `"auto"` is removed. |
 | `capture_mode` | `get_window_state` | **Deprecated and ignored.** Still accepted for back-compat so old callers don't error, but it has no effect — `get_window_state` always returns both the accessibility tree and a screenshot by default. There is no `ax`/`vision`/`som` capture choice; the modality (`ax` vs `px`) is chosen at action time by how you address the target. |
 | `include_screenshot` | `get_window_state` | Boolean, default `true` (returns the tree **and** a screenshot). Set `false` to skip the screenshot grab and return the tree only — a **perf** opt-out for the cheap re-index-before-an-element-`ax`-action path, not a modality choice. |
 | `modifier`, `button`, `element_index`, `element_token` | pointer and element tools | Held modifier keys, mouse button, and the two element-addressing handles. |
@@ -316,6 +316,8 @@ Two addressing forms — mutually exclusive:
 - **Element index** (`element_index` + `window_id`): the **element ax action**. Directs the write to a specific field, no pre-click.
 - **Pixel** (`x`, `y`, no `element_index`): the **element px action**. The tool pixel-clicks at `(x, y)` to establish real renderer focus, then types into the now-focused element (reusing `click`'s coordinate translation and `delivery_mode`). This is the one-call fix for Chromium/Electron inputs the AX path can't reach — read `x, y` off the `get_window_state` screenshot, same convention as `click`.
 
+Keyboard px form: `x, y` are accepted and are mutually exclusive with `element_index`.
+
 | Argument | Type | Required | Description |
 | -------- | ---- | -------- | ----------- |
 | `pid` | integer | Yes | Target process ID. |
@@ -346,6 +348,8 @@ Delivery paths:
 - `window_id` only (no `element_index`): NSMenu path. Briefly activates the window, posts without the auth envelope so `IOHIDPostEvent` fires and `NSApplication.sendEvent:` dispatches NSMenu key equivalents. Restores prior frontmost immediately.
 - No `window_id`: standard auth-message path.
 
+Keyboard px form: `x, y` are accepted and are mutually exclusive with `element_index`.
+
 Key names: `return`, `tab`, `escape`, `up`/`down`/`left`/`right`, `space`, `delete`, `home`, `end`, `pageup`, `pagedown`, `f1`–`f12`, plus any letter or digit.
 
 | Argument | Type | Required | Description |
@@ -369,9 +373,12 @@ Key names: `return`, `tab`, `escape`, `up`/`down`/`left`/`right`, `space`, `dele
 Press a combination of keys simultaneously. The combo is posted directly to the target pid's event queue; the target does NOT need to be frontmost.
 
 Delivery paths:
+- `window_id` + `element_index` (ax): focuses the AX element first, then posts the combo.
 - Default (no `window_id`): auth-message envelope. Chromium/Electron apps accept the keystrokes as trusted live input on macOS 14+.
-- `x`, `y` (px): pixel-clicks at `(x, y)` to establish real renderer focus first, then sends the combo to the now-focused field — e.g. `["cmd", "v"]` to paste into a specific Chromium/Electron input the background combo can't reach. A keyboard combo on its own does not focus a field.
+- `x`, `y`, no `element_index` (px): pixel-clicks at `(x, y)` to establish real renderer focus first, then sends the combo to the now-focused field — e.g. `["cmd", "v"]` to paste into a specific Chromium/Electron input the background combo can't reach. A keyboard combo on its own does not focus a field.
 - With `window_id`: NSMenu path. Briefly activates the target WindowServer-frontmost, posts without the auth envelope so `IOHIDPostEvent` fires and NSMenu key equivalents dispatch (e.g. Cmd+Z undo, Cmd+W close). Restores prior frontmost immediately.
+
+Keyboard px form: `x, y` are accepted and are mutually exclusive with `element_index`.
 
 Recognized modifiers: `cmd`/`command`, `shift`, `option`/`alt`, `ctrl`/`control`, `fn`. Order: modifiers first, one non-modifier last.
 
@@ -379,7 +386,8 @@ Recognized modifiers: `cmd`/`command`, `shift`, `option`/`alt`, `ctrl`/`control`
 | -------- | ---- | -------- | ----------- |
 | `pid` | integer | Yes | Target process ID. |
 | `keys` | array of string | Yes | Modifier(s) and one non-modifier key, e.g. `["cmd", "c"]`. |
-| `window_id` | integer | No | When set, uses NSMenu path. |
+| `element_index` | integer | No | Element index (ax). Mutually exclusive with `x`/`y`. |
+| `window_id` | integer | No | Target window ID. Required when `element_index` or `x, y` is used; without an element or pixel target, setting `window_id` uses the NSMenu path. |
 | `x` | number | No | Window-local screenshot X — the px form: pixel-click there to focus, then send the combo. Pass with `y`. |
 | `y` | number | No | Window-local screenshot Y. See `x`. |
 
@@ -470,6 +478,19 @@ After a zoom, pass `from_zoom=true` to `click`/`type_text` to auto-translate coo
 ```json
 {"window_id": 10725, "x1": 100, "y1": 200, "x2": 400, "y2": 500}
 ```
+
+---
+
+## Action response shape
+
+Action tools (`click`, `double_click`, `right_click`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`, `set_value`) return these structured fields:
+
+| Field | Type | Meaning | Value set / presence |
+| ----- | ---- | ------- | -------------------- |
+| `path` | string | Delivery rung that ran. | `"ax"`, `"cgevent"`, `"cgevent_fg"`, `"key_events"`, `"key_events_fg"`, `"pixel"`, `"x11_atspi"`, `"x11_pixel"`, `"x11_pixel_fg"`, `"msaa"`. |
+| `verified` | boolean or absent | AX read-back verification result. `true` means the driver read the effect back through AX; `false` means the action dispatched but is unconfirmed; absent means the tool does not carry this field. | `true`, `false`, or absent. |
+| `effect` | string | Action confidence signal. | `"confirmed"`, `"unverifiable"`, `"suspected_noop"`. |
+| `escalation` | object or absent | Machine-readable next-rung recommendation. Present only when the driver recommends climbing the ladder. | `{ recommended: "px" \| "foreground" \| "page", reason: string }`, or absent. |
 
 ---
 

@@ -13,7 +13,7 @@ X11 was built when one program reading or driving another's window was normal; w
 
 ## The semantic path is the through-line
 
-The one mechanism that behaves the same on X11 and Wayland is **AT-SPI** (the Linux accessibility bus). When the driver clicks a control by `element_index`, it calls that control's own accessibility action — `Action.DoAction` — which the toolkit (GTK, Qt) executes internally. No coordinates, no synthetic pointer event, no window focus, no raised window. Because the action is dispatched toolkit-side rather than as input, it crosses the Wayland client boundary that blocks synthetic input. This is why background, by-element automation is the default on Linux: it is the rung that works everywhere and the only one the driver can *verify* (it reads the result back from the same tree).
+The one mechanism that behaves the same on X11 and Wayland is **AT-SPI** (the Linux accessibility bus). When the driver clicks a control by `element_index`, it calls that control's own accessibility action — `Action.DoAction` — which the toolkit (GTK, Qt) executes internally. No coordinates, no synthetic pointer event, no window focus, no raised window. Because the action is dispatched toolkit-side rather than as input, it crosses the Wayland client boundary that blocks synthetic input. This is why background, by-element automation is the default on Linux: it is the rung that works everywhere and the one the driver can *verify without a screenshot* (it reads the result back from the same tree). Pixel actions still get an honest verdict — the driver cross-checks the screenshot and reports `effect`/`escalation` — they just aren't confirmable from the tree alone.
 
 ## Why coordinates need reconstructing
 

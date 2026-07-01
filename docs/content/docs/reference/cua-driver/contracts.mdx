@@ -40,7 +40,7 @@ Every tool then reads the **effective** value with this precedence:
 effective = call-argument  >  session override  >  global default (disk)
 ```
 
-Keys that flow through this: `capture_mode`, `capture_scope`, `max_image_dimension`. See the [`set_config` reference](/reference/cua-driver/mcp-tools) for the per-session isolation details.
+Keys that flow through this: `capture_scope`, `max_image_dimension`. (`capture_mode` is deprecated and ignored — it is still accepted for back-compat but has no effect; `get_window_state` always returns both the tree and a screenshot.) See the [`set_config` reference](/reference/cua-driver/mcp-tools) for the per-session isolation details.
 
 ---
 

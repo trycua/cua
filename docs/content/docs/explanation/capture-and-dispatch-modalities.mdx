@@ -11,7 +11,7 @@ Every Cua Driver action is shaped by four things: **what the agent observes**, *
 
 ### 1. Perception — what the agent observes
 
-`get_window_state(pid, window_id)` returns **both the accessibility tree and a screenshot by default**, in one call. There is no capture mode to pick: you ground on the tree and the screenshot together and cross-check one against the other. This matters because the tree *lies* on some surfaces — Electron echo-confirms a `set_value` against its AX shim while the rendered view never changed, Catalyst apps expose null `AXValue`s, and virtualized or off-viewport list rows report bogus frames (an `h:1` height, an off-screen origin). A grounding screenshot is always present, so when the tree looks wrong you check the pixels in the *same* response.
+`get_window_state(pid, window_id)` returns **both the accessibility tree and a screenshot by default**, in one call. There is no capture mode to pick: you ground on the tree and the screenshot together and cross-check one against the other. This matters because the tree *lies* on some surfaces: it can expose useful structure while still echoing a write the app did not apply, omitting the rendered value, or reporting geometry that disagrees with the pixels. A grounding screenshot is always present, so when the tree looks wrong you check the pixels in the *same* response.
 
 The accessibility tree is the ground truth for *what is clickable* — roles, labels, advertised actions, and an `element_index` handle on every actionable element. The screenshot tells you *which one*, disambiguates repeated or empty labels, and surfaces captions, colors, and layout the tree omits entirely (common in Chromium and Electron). They are complementary, which is why both come back together.
 
@@ -41,7 +41,7 @@ Set per call on the input family (`click`, `double_click`, `right_click`, `drag`
 | `background` (default) | Input is routed to the target process/window/element directly. The user's frontmost app, real cursor, and window z-order are untouched. This is the [no-foreground contract](/explanation/the-no-foreground-contract). |
 | `foreground` | The target is briefly fronted (pair with `bring_to_front` to avoid a per-call flash), input lands on the now-active window, then the prior frontmost is restored. The explicit last resort when a background attempt did not land — and the only path for apps that accept events solely when foregrounded (DirectInput games, raw-input canvases). |
 
-Only `background` and `foreground` are valid; any other value (including the historical `auto` heuristic) resolves to `background`. Element ax actions (`element_index`) are inherently background — they address an element, not the focused window — so they hold the contract without any `delivery_mode` flag. The dispatch axis matters most for the pixel rung (`x, y`), where `background` routes the event to the target and `foreground` raises the window first.
+Only `background` and `foreground` are valid; the historical `auto` heuristic is removed. Element ax actions (`element_index`) are inherently background — they address an element, not the focused window — so they hold the contract without any `delivery_mode` flag. The dispatch axis matters most for the pixel rung (`x, y`), where `background` routes the event to the target and `foreground` raises the window first.
 
 ### 4. Capture scope — what coordinate space the action targets
 
@@ -53,6 +53,20 @@ Set with `set_config capture_scope=…`.
 | `desktop` | Screen-absolute. Window-less actions (no `pid`/`window_id`) land at absolute screen coordinates via hit-testing (`WindowFromPoint`). | `get_desktop_state` — full display, no downscale |
 
 Desktop scope is the "Computer-Use 1.0" loop: the agent reads the whole screen and clicks absolute coordinates, the way a screenshot-only model expects. Window scope is the default because it is what makes background, concurrent automation possible.
+
+## Response signals: verification, effect, and escalation
+
+Dispatch success is not the same thing as application state change. The driver can verify an effect only when it can read the changed state back through the accessibility layer. That is why `verified: true` is reserved for AX read-back: it means the driver observed the effect, not merely that it sent an event. Pixel input, foreground input, and echo-prone AX surfaces can be routed correctly while still leaving confirmation to the caller.
+
+`effect` is the confidence signal that separates those cases. `"confirmed"` means the driver verified the result through AX read-back. `"unverifiable"` means the dispatch path ran, but the driver cannot prove the application applied it. `"suspected_noop"` means an AX action dispatched but almost certainly did not change the target. Callers should treat `effect`, not the transport-level success status, as the action outcome.
+
+`escalation` is the machine-readable climb-the-ladder hint. When present, it tells the caller which surface to try next: `"px"` for acting off the screenshot, `"foreground"` for explicitly fronting the target, or `"page"` for the browser-tab DOM path through the `page` tool. See [Choose an action rung and dispatch mode](/how-to-guides/driver/choose-a-modality) for the procedural ladder and [MCP tools](/reference/cua-driver/mcp-tools#action-response-shape) for the field table.
+
+### When the tree lies
+
+Some accessibility layers echo writes they did not apply. Electron can report an AX value change through its shim while the renderer stays unchanged. Catalyst controls can expose null `AXValue`s. Chromium/WebKit web content can reflect a write through the accessibility bridge without proving the DOM or rendered view changed.
+
+The driver treats those as surface-aware verification cases. It probes at the element level for a web-content surface, including an `AXWebArea` ancestor, so native chrome such as a browser address bar stays trusted while browser-tab content does not get a false confirmation. On those surfaces the driver refuses false `verified: true` responses and returns `verified: false`, `effect: "unverifiable"`, and an `escalation` object instead. Electron app surfaces recommend `"px"` so the caller can act by pixel off the screenshot in the same response; browser-tab web content recommends `"page"` so the caller can switch to DOM/CDP via the `page` tool.
 
 ## The Validity Matrix
 

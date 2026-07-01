@@ -133,6 +133,7 @@ internal *page* links. Issues:
   with the sudo caveat + a note that headless servers have no desktop to drive;
   dropped the phantom "ffmpeg" claim from the `doctor` sentence (no ffmpeg probe).
 - keep-running.mdx (Linux): headless boxes have no `graphical-session.target` —
+- update.mdx: refreshed stale sample versions (0.3.x → 0.7.0 / 0.6.9 outdated example).
   noted to use `WantedBy=default.target` there.
 
 ## Findings — Linux (Azure Ubuntu 22.04, live v0.7.0)

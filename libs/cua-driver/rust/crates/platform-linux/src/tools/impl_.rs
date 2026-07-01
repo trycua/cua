@@ -774,10 +774,14 @@ impl Tool for LaunchAppTool {
         match result {
             Ok(Ok((message, pid_opt, name))) => {
                 if let Some(pid) = pid_opt {
-                    let windows = crate::x11::list_windows(Some(pid))
-                        .iter()
-                        .map(window_record_json)
-                        .collect::<Vec<_>>();
+                    let windows = tokio::task::spawn_blocking(move || {
+                        crate::x11::list_windows(Some(pid))
+                            .iter()
+                            .map(window_record_json)
+                            .collect::<Vec<_>>()
+                    })
+                    .await
+                    .unwrap_or_default();
                     ToolResult::text(message).with_structured(json!({
                         "pid": pid,
                         "bundle_id": Value::Null,

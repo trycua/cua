@@ -784,6 +784,50 @@ pub fn screenshot_window_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
 
 // ── Input session helper ─────────────────────────────────────────────────────
 
+/// Sentinel substring carried by the `open_vptr_session` error when the
+/// compositor exposes no `zwlr_virtual_pointer_manager_v1` (KWin/Plasma,
+/// Mutter/GNOME). The input dispatch matches on this to decide whether the
+/// libei/portal fallback ([`libei`]) can recover the call. Kept as a string
+/// marker (rather than a typed error) so the existing `anyhow::Result`
+/// signatures of every input fn are unchanged. See #1982.
+pub const NO_VPTR_MARKER: &str = "no-zwlr-virtual-pointer";
+
+/// True when `err` is the "compositor has no wlroots virtual-pointer" failure
+/// from [`open_vptr_session`] — i.e. the point where a non-wlroots compositor
+/// needs the libei fallback rather than a hard error.
+fn is_no_vptr(err: &anyhow::Error) -> bool {
+    err.to_string().contains(NO_VPTR_MARKER)
+}
+
+/// Run the wlroots virtual-pointer closure `f`; if it fails specifically
+/// because the compositor exposes no `zwlr_virtual_pointer_manager_v1` and this
+/// binary carries the `portal-libei` feature, run the libei `fallback` instead.
+/// Any other wlroots error (and the no-vptr error in a build without the
+/// feature) propagates unchanged. This is the single seam through which #1982's
+/// KDE/GNOME input recovery flows.
+fn with_libei_fallback<T>(
+    f: impl FnOnce() -> anyhow::Result<T>,
+    #[allow(unused_variables)] fallback: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    match f() {
+        Ok(v) => Ok(v),
+        Err(e) if is_no_vptr(&e) => {
+            #[cfg(feature = "portal-libei")]
+            {
+                tracing::info!(
+                    "wlroots virtual-pointer unavailable ({e}); falling back to libei/portal"
+                );
+                return fallback();
+            }
+            #[cfg(not(feature = "portal-libei"))]
+            {
+                Err(e)
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Live virtual-pointer session: connection + queue + the bound objects every
 /// pointer op (click, scroll, drag) needs. Returned by [`open_vptr_session`].
 pub struct VptrSession {
@@ -810,33 +854,50 @@ pub fn open_vptr_session(activate_window_id: Option<u32>) -> anyhow::Result<Vptr
 
     let mut state = State::default();
     queue.roundtrip(&mut state)?;
-    if state.manager.is_none() {
-        anyhow::bail!("compositor does not expose zwlr_foreign_toplevel_manager_v1");
-    }
     for _ in 0..4 {
         queue.roundtrip(&mut state)?;
+    }
+
+    // Evaluate the virtual-pointer / NO_VPTR_MARKER path FIRST: on compositors
+    // that expose neither zwlr_virtual_pointer nor zwlr_foreign_toplevel
+    // (KWin/Plasma, Mutter/GNOME) we must surface the marker so
+    // `with_libei_fallback` re-routes through libei/portal. Requiring
+    // foreign-toplevel up front would mask the marker and leave the libei
+    // fallback dead. See #1982.
+    let mgr = state.vptr_manager.clone().ok_or_else(|| {
+        if PORTAL_LIBEI_ENABLED {
+            // The caller (via `with_libei_fallback`) recognises NO_VPTR_MARKER
+            // and re-routes the op through the libei/portal backend, which DOES
+            // reach KWin/Plasma and Mutter/GNOME. Keep the marker in the text.
+            anyhow::anyhow!(
+                "compositor does not expose zwlr_virtual_pointer_manager_v1 \
+                 ({NO_VPTR_MARKER})"
+            )
+        } else {
+            // KWin/Plasma and Mutter/GNOME don't implement zwlr_virtual_pointer,
+            // and this build has no libei/portal fallback — so input has no
+            // backend at all rather than silently no-op'ing. The marker still
+            // lets the dispatch layer classify the failure uniformly. See #1982.
+            anyhow::anyhow!(
+                "no input backend for this compositor ({NO_VPTR_MARKER}): it \
+                 exposes no zwlr_virtual_pointer_manager_v1 and this build was \
+                 compiled without libei/portal support (#1982). Use the \
+                 portal-enabled Linux build for input on KDE Plasma / GNOME, or \
+                 a wlroots compositor (sway, labwc, hyprland)."
+            )
+        }
+    })?;
+
+    // foreign-toplevel is only needed to activate a specific window before
+    // synthesising input; require it only when a caller actually asks for that.
+    if activate_window_id.is_some() && state.manager.is_none() {
+        anyhow::bail!("compositor does not expose zwlr_foreign_toplevel_manager_v1");
     }
 
     let seat = state
         .seat
         .clone()
         .ok_or_else(|| anyhow::anyhow!("compositor exposed no wl_seat for virtual-pointer input"))?;
-    let mgr = state.vptr_manager.clone().ok_or_else(|| {
-        if PORTAL_LIBEI_ENABLED {
-            anyhow::anyhow!("compositor does not expose zwlr_virtual_pointer_manager_v1")
-        } else {
-            // KWin/Plasma and Mutter/GNOME don't implement zwlr_virtual_pointer,
-            // and this build has no libei/portal fallback — so input has no
-            // backend at all rather than silently no-op'ing. See #1982.
-            anyhow::anyhow!(
-                "no input backend for this compositor: it exposes no \
-                 zwlr_virtual_pointer_manager_v1 and this build was compiled \
-                 without libei/portal support (#1982). Use the portal-enabled \
-                 Linux build for input on KDE Plasma / GNOME, or a wlroots \
-                 compositor (sway, labwc, hyprland)."
-            )
-        }
-    })?;
 
     if let Some(id) = activate_window_id {
         let handle = state
@@ -851,6 +912,42 @@ pub fn open_vptr_session(activate_window_id: Option<u32>) -> anyhow::Result<Vptr
     let vptr = mgr.create_virtual_pointer(Some(&seat), &qh, ());
     let (output_w, output_h) = (state.output_w.max(1), state.output_h.max(1));
     Ok(VptrSession { conn, queue, state, seat, vptr, output_w, output_h })
+}
+
+/// Query the first `wl_output`'s pixel dimensions via a short Wayland
+/// roundtrip, independent of the virtual-pointer protocol. Used by the libei
+/// fallback (which never opens a `VptrSession`) to reproduce the vptr path's
+/// default-to-centre and clamp behaviour so both backends treat coordinates
+/// identically. Falls back to `(1, 1)` when no output reports a mode.
+#[cfg(feature = "portal-libei")]
+fn output_dimensions() -> anyhow::Result<(u32, u32)> {
+    let conn = Connection::connect_to_env()?;
+    let mut queue = conn.new_event_queue::<State>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+    let mut state = State::default();
+    queue.roundtrip(&mut state)?;
+    for _ in 0..4 {
+        queue.roundtrip(&mut state)?;
+    }
+    Ok((state.output_w.max(1), state.output_h.max(1)))
+}
+
+/// Reproduce the wlroots vptr path's coordinate handling for the libei
+/// fallback: `(0, 0)` defaults to the output centre, and any value is clamped
+/// to `[0, dim-1]`. Keeps `click(.., 0, 0, ..)` landing on centre rather than
+/// the top-left corner across both backends.
+#[cfg(feature = "portal-libei")]
+fn normalize_click_xy(x: i32, y: i32, w: u32, h: u32) -> (i32, i32) {
+    let (px, py) = if x == 0 && y == 0 {
+        ((w / 2) as i32, (h / 2) as i32)
+    } else {
+        (x, y)
+    };
+    (
+        px.clamp(0, (w as i32).saturating_sub(1)),
+        py.clamp(0, (h as i32).saturating_sub(1)),
+    )
 }
 
 /// Map a cua/X11 pointer button (1=left / 2=middle / 3=right) to its evdev
@@ -871,6 +968,15 @@ pub fn evdev_pointer_button(button: u8) -> u32 {
 /// real coords. A short delay between iterations gives the compositor time
 /// to discriminate single vs. double clicks.
 pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+    with_libei_fallback(
+        || click_vptr(window_id, x, y, count, button),
+        || libei_click(x, y, count, button),
+    )
+}
+
+/// wlroots virtual-pointer implementation of [`click`]. Falls back to libei via
+/// [`with_libei_fallback`] when the compositor exposes no virtual-pointer.
+fn click_vptr(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
     let mut sess = open_vptr_session(Some(window_id as u32))?;
     let (w, h) = (sess.output_w, sess.output_h);
     let (px, py) = if x == 0 && y == 0 {
@@ -906,6 +1012,15 @@ pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::
 /// virtual-pointer protocol, mirroring how a real wheel notch decomposes. The
 /// magnitude follows wl_pointer convention: ±10 (in wl_fixed = ×256) per tick.
 pub fn scroll(window_id: u64, direction: &str, amount: u32) -> anyhow::Result<()> {
+    let direction = direction.to_string();
+    with_libei_fallback(
+        || scroll_vptr(window_id, &direction, amount),
+        || libei_scroll(&direction, amount),
+    )
+}
+
+/// wlroots virtual-pointer implementation of [`scroll`].
+fn scroll_vptr(window_id: u64, direction: &str, amount: u32) -> anyhow::Result<()> {
     let mut sess = open_vptr_session(Some(window_id as u32))?;
     let (axis, sign): (Axis, i32) = match direction.to_ascii_lowercase().as_str() {
         "up" => (Axis::VerticalScroll, -1),
@@ -965,6 +1080,14 @@ pub fn last_synth_cursor_pos() -> Option<(i32, i32)> {
 /// the compositor commits the warp before returning. Records the position in
 /// the synthetic-cursor registry so `last_synth_cursor_pos` can report it.
 pub fn move_cursor_absolute(window_id: Option<u64>, x: i32, y: i32) -> anyhow::Result<()> {
+    with_libei_fallback(
+        || move_cursor_absolute_vptr(window_id, x, y),
+        || libei_move_absolute(x, y),
+    )
+}
+
+/// wlroots virtual-pointer implementation of [`move_cursor_absolute`].
+fn move_cursor_absolute_vptr(window_id: Option<u64>, x: i32, y: i32) -> anyhow::Result<()> {
     let mut sess = open_vptr_session(window_id.map(|w| w as u32))?;
     let (w, h) = (sess.output_w, sess.output_h);
     let px = x.clamp(0, (w as i32).saturating_sub(1)) as u32;
@@ -984,6 +1107,23 @@ pub fn move_cursor_absolute(window_id: Option<u64>, x: i32, y: i32) -> anyhow::R
 /// output-relative; window-local coords need the EIS inject socket
 /// (`CUA_INJECT_SOCKET`).
 pub fn drag(
+    window_id: u64,
+    from_x: i32,
+    from_y: i32,
+    to_x: i32,
+    to_y: i32,
+    steps: u32,
+    button: u8,
+) -> anyhow::Result<()> {
+    with_libei_fallback(
+        || drag_vptr(window_id, from_x, from_y, to_x, to_y, steps, button),
+        || libei_drag(from_x, from_y, to_x, to_y, steps, button),
+    )
+}
+
+/// wlroots virtual-pointer implementation of [`drag`].
+#[allow(clippy::too_many_arguments)]
+fn drag_vptr(
     window_id: u64,
     from_x: i32,
     from_y: i32,
@@ -1048,24 +1188,34 @@ pub fn type_text(text: &str) -> anyhow::Result<()> {
     // to wire up keyboard routing, and that first key is dropped. Sacrificing a
     // modifier tap (no character) absorbs the drop so the real text lands intact;
     // it's harmless where routing is already live (labwc).
-    let out = std::process::Command::new("wtype")
+    let result = std::process::Command::new("wtype")
         .args(["-k", "Shift_L", "--"])
         .arg(text)
-        .output()?;
-    if !out.status.success() {
-        anyhow::bail!("wtype failed: {}", String::from_utf8_lossy(&out.stderr));
+        .output();
+    match result {
+        Ok(out) if out.status.success() => Ok(()),
+        // `wtype` relies on `zwp_virtual_keyboard_v1`, which KWin/Plasma and
+        // Mutter/GNOME don't implement (and the binary may be missing wtype
+        // entirely). On a portal-libei build, route typing through libei's
+        // `ei_text` interface instead. See #1982.
+        other => with_wtype_libei_fallback(
+            || libei_type_text(text),
+            other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
+        ),
     }
-    Ok(())
 }
 
 /// Press a single named key into the focused Wayland surface via `wtype -k`.
 pub fn press_key(key: &str) -> anyhow::Result<()> {
     let keysym = key_to_keysym(key);
-    let out = std::process::Command::new("wtype").args(["-k", &keysym]).output()?;
-    if !out.status.success() {
-        anyhow::bail!("wtype -k {keysym} failed: {}", String::from_utf8_lossy(&out.stderr));
+    let result = std::process::Command::new("wtype").args(["-k", &keysym]).output();
+    match result {
+        Ok(out) if out.status.success() => Ok(()),
+        other => with_wtype_libei_fallback(
+            || libei_press_key(key),
+            other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
+        ),
     }
-    Ok(())
 }
 
 /// Press a key combination (modifiers + final key) via `wtype`. Each modifier
@@ -1088,15 +1238,43 @@ pub fn hotkey(keys: &[String]) -> anyhow::Result<()> {
         args.push("-m".into());
         args.push(m.clone());
     }
-    let out = std::process::Command::new("wtype").args(&args).output()?;
-    if !out.status.success() {
-        anyhow::bail!(
-            "wtype {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    let result = std::process::Command::new("wtype").args(&args).output();
+    match result {
+        Ok(out) if out.status.success() => Ok(()),
+        other => {
+            let stderr = other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned());
+            #[cfg(feature = "portal-libei")]
+            {
+                // A bare key (no modifiers) is just a single key press, which
+                // the libei adapter handles. Route it through the same wtype→
+                // libei fallback as `press_key`. Only true modifier chords stay
+                // unsupported: the worker doesn't yet wire ei_keyboard modifier
+                // state, so dropping the modifiers would mis-fire the bare key.
+                // See #1982.
+                if mods.is_empty() {
+                    return with_wtype_libei_fallback(
+                        || libei_press_key(&final_key),
+                        stderr,
+                    );
+                }
+                let _ = &stderr;
+                anyhow::bail!(
+                    "hotkey {keys:?} cannot be delivered: this compositor has no \
+                     virtual-keyboard ({}) and the libei fallback does not yet \
+                     support modifier chords",
+                    stderr.unwrap_or_else(|_| "wtype unavailable".into())
+                );
+            }
+            #[cfg(not(feature = "portal-libei"))]
+            {
+                anyhow::bail!(
+                    "wtype {} failed: {}",
+                    args.join(" "),
+                    stderr.unwrap_or_else(|_| "wtype unavailable".into())
+                );
+            }
+        }
     }
-    Ok(())
 }
 
 /// Split a `keys` array into wtype-compatible modifier names and a single
@@ -1142,6 +1320,257 @@ fn key_to_keysym(key: &str) -> String {
         _ => return key.to_string(),
     }
     .to_string()
+}
+
+// ── libei / portal fallback adapters ───────────────────────────────────────
+//
+// These bridge the wlroots-shaped public input API (output-relative integer
+// coordinates, cua button codes, X-keysym key names) onto the libei worker
+// (`libei` module), which speaks logical device-region floats and evdev
+// codes. They are the recovery path for compositors with no
+// `zwlr_virtual_pointer_v1` (KWin/Plasma, Mutter/GNOME) — see #1982.
+//
+// In a build WITHOUT the `portal-libei` feature the `libei` module does not
+// exist, so each adapter compiles to an error stub. The dispatch seams above
+// only ever CALL these inside `#[cfg(feature = "portal-libei")]` branches, so
+// the stubs are dead in that build; they exist purely so the closures passed
+// to `with_libei_fallback` / `with_wtype_libei_fallback` type-check.
+
+/// libei recovery wrapper for the `wtype`-based typing/key functions: when the
+/// virtual-keyboard shell-out failed (`wtype_err`), try the libei `run` on a
+/// portal-libei build, otherwise surface the original wtype failure.
+fn with_wtype_libei_fallback(
+    #[allow(unused_variables)] run: impl FnOnce() -> anyhow::Result<()>,
+    wtype_err: Result<String, std::io::Error>,
+) -> anyhow::Result<()> {
+    #[cfg(feature = "portal-libei")]
+    {
+        match wtype_err {
+            Ok(stderr) => tracing::info!(
+                "wtype failed ({stderr}); falling back to libei/portal typing"
+            ),
+            Err(e) => tracing::info!(
+                "wtype unavailable ({e}); falling back to libei/portal typing"
+            ),
+        }
+        run()
+    }
+    #[cfg(not(feature = "portal-libei"))]
+    {
+        let _ = run;
+        match wtype_err {
+            Ok(stderr) => anyhow::bail!("wtype failed: {stderr}"),
+            Err(e) => anyhow::bail!("wtype unavailable: {e}"),
+        }
+    }
+}
+
+// Stubs for the no-feature build: the dispatch seams never call these (the
+// libei branch in `with_libei_fallback` / `with_wtype_libei_fallback` is
+// `#[cfg]`-d out), but the closures still need them to exist to type-check.
+#[cfg(not(feature = "portal-libei"))]
+fn libei_click(_x: i32, _y: i32, _count: u32, _button: u8) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-libei feature)")
+}
+#[cfg(not(feature = "portal-libei"))]
+fn libei_scroll(_direction: &str, _amount: u32) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-libei feature)")
+}
+#[cfg(not(feature = "portal-libei"))]
+fn libei_move_absolute(_x: i32, _y: i32) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-libei feature)")
+}
+#[cfg(not(feature = "portal-libei"))]
+#[allow(clippy::too_many_arguments)]
+fn libei_drag(
+    _from_x: i32,
+    _from_y: i32,
+    _to_x: i32,
+    _to_y: i32,
+    _steps: u32,
+    _button: u8,
+) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-libei feature)")
+}
+#[cfg(not(feature = "portal-libei"))]
+fn libei_type_text(_text: &str) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-libei feature)")
+}
+#[cfg(not(feature = "portal-libei"))]
+fn libei_press_key(_key: &str) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-libei feature)")
+}
+
+#[cfg(feature = "portal-libei")]
+fn cua_button_to_libei(button: u8) -> libei::Button {
+    match button {
+        2 => libei::Button::Middle,
+        3 => libei::Button::Right,
+        _ => libei::Button::Left,
+    }
+}
+
+#[cfg(feature = "portal-libei")]
+fn libei_click(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+    let btn = cua_button_to_libei(button);
+    let (w, h) = output_dimensions()?;
+    let (px, py) = normalize_click_xy(x, y, w, h);
+    libei::move_absolute(px as f64, py as f64)?;
+    for i in 0..count.max(1) {
+        if i > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(80));
+        }
+        libei::click(px as f64, py as f64, btn)?;
+    }
+    record_synth_cursor(px, py);
+    Ok(())
+}
+
+#[cfg(feature = "portal-libei")]
+fn libei_scroll(direction: &str, amount: u32) -> anyhow::Result<()> {
+    // libei scroll is logical-unit deltas; mirror the wlroots ±10/tick step.
+    let (dx, dy): (f64, f64) = match direction.to_ascii_lowercase().as_str() {
+        "up" => (0.0, -10.0),
+        "down" => (0.0, 10.0),
+        "left" => (-10.0, 0.0),
+        "right" => (10.0, 0.0),
+        other => anyhow::bail!("unknown scroll direction: {other}"),
+    };
+    for i in 0..amount.max(1) {
+        if i > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        libei::scroll(dx, dy)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "portal-libei")]
+fn libei_move_absolute(x: i32, y: i32) -> anyhow::Result<()> {
+    // Match `move_cursor_absolute_vptr`: clamp to output bounds (no
+    // default-to-centre — an explicit (0,0) move means the top-left corner).
+    let (w, h) = output_dimensions()?;
+    let px = x.clamp(0, (w as i32).saturating_sub(1));
+    let py = y.clamp(0, (h as i32).saturating_sub(1));
+    libei::move_absolute(px as f64, py as f64)?;
+    record_synth_cursor(px, py);
+    Ok(())
+}
+
+#[cfg(feature = "portal-libei")]
+fn libei_drag(
+    _from_x: i32,
+    _from_y: i32,
+    _to_x: i32,
+    _to_y: i32,
+    _steps: u32,
+    _button: u8,
+) -> anyhow::Result<()> {
+    // A real drag needs the button HELD across the interpolated motion. The
+    // libei worker only exposes a combined press+release `click`, with no
+    // standalone button-hold (press/release) primitive, so we cannot perform a
+    // genuine press→move→release sequence. Emulating it as move→click-at-end
+    // would hold nothing and silently no-op drag-and-drop / selection / resize
+    // while reporting success — so fail loudly instead. See #1982.
+    anyhow::bail!(
+        "libei fallback cannot perform button-hold drags yet: the libei worker \
+         exposes no standalone button press/release primitive (only a combined \
+         click). Drag is unsupported on this compositor via the libei/portal \
+         backend (#1982)."
+    )
+}
+
+#[cfg(feature = "portal-libei")]
+fn libei_type_text(text: &str) -> anyhow::Result<()> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    libei::type_text(text)
+}
+
+#[cfg(feature = "portal-libei")]
+fn libei_press_key(key: &str) -> anyhow::Result<()> {
+    let keycode = key_to_evdev(key)
+        .ok_or_else(|| anyhow::anyhow!("no evdev keycode mapping for key '{key}' (libei path)"))?;
+    libei::press_key(keycode)
+}
+
+/// Map cua key names to Linux evdev keycodes for the libei `press_key` path
+/// (libei emulates raw evdev, not X keysyms). Mirrors [`key_to_keysym`] but
+/// emits `linux/input-event-codes.h` values. Returns `None` for keys with no
+/// known mapping so the caller can fail loudly.
+#[cfg(feature = "portal-libei")]
+fn key_to_evdev(key: &str) -> Option<u32> {
+    let code = match key.to_lowercase().as_str() {
+        "enter" | "return" => 28, // KEY_ENTER
+        "tab" => 15,              // KEY_TAB
+        "esc" | "escape" => 1,    // KEY_ESC
+        "space" => 57,            // KEY_SPACE
+        "backspace" => 14,        // KEY_BACKSPACE
+        "delete" | "del" => 111,  // KEY_DELETE
+        "up" => 103,              // KEY_UP
+        "down" => 108,            // KEY_DOWN
+        "left" => 105,            // KEY_LEFT
+        "right" => 106,           // KEY_RIGHT
+        "home" => 102,            // KEY_HOME
+        "end" => 107,             // KEY_END
+        "pageup" | "page_up" => 104,    // KEY_PAGEUP
+        "pagedown" | "page_down" => 109, // KEY_PAGEDOWN
+        // Letters a-z. evdev codes follow the QWERTY scancode layout, not the
+        // alphabet, so each is listed explicitly (linux/input-event-codes.h).
+        "a" => 30,  // KEY_A
+        "b" => 48,  // KEY_B
+        "c" => 46,  // KEY_C
+        "d" => 32,  // KEY_D
+        "e" => 18,  // KEY_E
+        "f" => 33,  // KEY_F
+        "g" => 34,  // KEY_G
+        "h" => 35,  // KEY_H
+        "i" => 23,  // KEY_I
+        "j" => 36,  // KEY_J
+        "k" => 37,  // KEY_K
+        "l" => 38,  // KEY_L
+        "m" => 50,  // KEY_M
+        "n" => 49,  // KEY_N
+        "o" => 24,  // KEY_O
+        "p" => 25,  // KEY_P
+        "q" => 16,  // KEY_Q
+        "r" => 19,  // KEY_R
+        "s" => 31,  // KEY_S
+        "t" => 20,  // KEY_T
+        "u" => 22,  // KEY_U
+        "v" => 47,  // KEY_V
+        "w" => 17,  // KEY_W
+        "x" => 45,  // KEY_X
+        "y" => 21,  // KEY_Y
+        "z" => 44,  // KEY_Z
+        // Digits. KEY_1=2 .. KEY_9=10, KEY_0=11 (input-event-codes.h).
+        "1" => 2,   // KEY_1
+        "2" => 3,   // KEY_2
+        "3" => 4,   // KEY_3
+        "4" => 5,   // KEY_4
+        "5" => 6,   // KEY_5
+        "6" => 7,   // KEY_6
+        "7" => 8,   // KEY_7
+        "8" => 9,   // KEY_8
+        "9" => 10,  // KEY_9
+        "0" => 11,  // KEY_0
+        // Function keys. KEY_F1=59 .. KEY_F10=68, then KEY_F11=87, KEY_F12=88.
+        "f1" => 59,
+        "f2" => 60,
+        "f3" => 61,
+        "f4" => 62,
+        "f5" => 63,
+        "f6" => 64,
+        "f7" => 65,
+        "f8" => 66,
+        "f9" => 67,
+        "f10" => 68,
+        "f11" => 87,
+        "f12" => 88,
+        _ => return None,
+    };
+    Some(code)
 }
 
 // ── EIS nested-compositor injection ────────────────────────────────────────

@@ -540,6 +540,14 @@ not a transient bug — reach for `insert_text` or `type_keystrokes`
 
 ### `insert_text` — a cheaper, more durable middle rung
 
+**macOS-only for now.** Windows and Linux don't yet implement the CDP
+`Input.insertText`/`Input.dispatchKeyEvent` calls this and
+`type_keystrokes` need — both return a clean "not implemented" error
+there, not a silent no-op. Tracked in
+[trycua/cua#2084](https://github.com/trycua/cua/issues/2084). Every
+other `page` action (`get_text`, `query_dom`, `click_element`,
+`execute_javascript`) works cross-platform.
+
 ```
 page({pid, window_id, action: "insert_text", text: "…"})
 ```

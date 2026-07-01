@@ -26,10 +26,10 @@ Use the `page` tool on the page already loaded in a running browser or Electron 
 | Chrome, Brave, Edge | Browser page support, with CDP for JavaScript and typing actions. |
 | Safari | Uses AppleScript on macOS. |
 | Electron | Uses CDP. |
-| Chromium/Firefox on Windows | UIA for read actions; CDP for `execute_javascript`, `insert_text`, and `type_keystrokes` when started with `--remote-debugging-port`. |
+| Chromium/Firefox on Windows | UIA for read actions; CDP for `execute_javascript` when started with `--remote-debugging-port`. |
 | WKWebView, Tauri, AT-SPI | Fallback paths for page reads where available. |
 
-Read actions (`get_text`, `query_dom`) work broadly. JavaScript and typing actions need a CDP endpoint: launch Chromium with `--remote-debugging-port=<n>` and pass `cdp_port`, or target a tab with `target_url_contains`.
+Read actions (`get_text`, `query_dom`) work broadly, and `execute_javascript` works cross-platform given a CDP endpoint. **`insert_text` and `type_keystrokes` are macOS-only for now** — Windows and Linux don't yet implement the CDP `Input.insertText`/`Input.dispatchKeyEvent` calls these actions need, and return a clear "not implemented" error rather than a silent no-op. Tracked in [trycua/cua#2084](https://github.com/trycua/cua/issues/2084). Where a CDP endpoint is available (macOS), launch Chromium with `--remote-debugging-port=<n>` and pass `cdp_port`, or target a tab with `target_url_contains`.
 
 ## insert_text vs type_keystrokes
 

@@ -41,7 +41,7 @@ Set per call on the input family (`click`, `double_click`, `right_click`, `drag`
 | `background` (default) | Input is routed to the target process/window/element directly. The user's frontmost app, real cursor, and window z-order are untouched. This is the [no-foreground contract](/explanation/the-no-foreground-contract). |
 | `foreground` | The target is briefly fronted (pair with `bring_to_front` to avoid a per-call flash), input lands on the now-active window, then the prior frontmost is restored. The explicit last resort when a background attempt did not land — and the only path for apps that accept events solely when foregrounded (DirectInput games, raw-input canvases). |
 
-Only `background` and `foreground` are valid; the historical `auto` heuristic is removed. Element ax actions (`element_index`) are inherently background — they address an element, not the focused window — so they hold the contract without any `delivery_mode` flag. The dispatch axis matters most for the pixel rung (`x, y`), where `background` routes the event to the target and `foreground` raises the window first.
+Only `background` and `foreground` are valid; the historical `auto` heuristic is removed. At runtime, omitted or unknown values fall back to `background` for safety. Element ax actions (`element_index`) are inherently background — they address an element, not the focused window — so they hold the contract without any `delivery_mode` flag. The dispatch axis matters most for the pixel rung (`x, y`), where `background` routes the event to the target and `foreground` raises the window first.
 
 ### 4. Capture scope — what coordinate space the action targets
 

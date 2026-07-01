@@ -1,1 +1,13 @@
-{ "title": "How-to guides", "icon": "Wrench", "pages": ["index", "driver", "recipes", "sandbox", "skills", "agent-context"] }
+{
+  "title": "How-to guides",
+  "icon": "Wrench",
+  "pages": [
+    "index",
+    "driver",
+    "recipes",
+    "sandbox",
+    "lume",
+    "skills",
+    "agent-context"
+  ]
+}

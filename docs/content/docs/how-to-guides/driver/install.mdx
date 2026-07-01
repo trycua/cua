@@ -30,7 +30,7 @@ If `~/.local/bin` is missing from your PATH, the installer detects your shell (`
 irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
 ```
 
-The installer downloads the release under `%USERPROFILE%\.cua-driver\packages\releases\` and exposes `cua-driver.exe` from `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin`. It runs without administrator privileges, detects whether the host is x64 or arm64, and appends the install directory to your User-scope `Path` so new PowerShell windows can resolve `cua-driver.exe`.
+The installer downloads the release under `%USERPROFILE%\.cua-driver\packages\releases\` and exposes `cua-driver.exe` from `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin`. It runs without administrator privileges, detects whether the host is x64 or arm64, and appends the install directory to your User-scope `Path` so new PowerShell windows can resolve `cua-driver.exe`. It also attempts to register the `cua-driver-serve` autostart task; that step needs an interactive session, so on a non-interactive or SSH install it is skipped — set it up later with [`cua-driver autostart enable`](/how-to-guides/driver/keep-running).
 
 To skip the PATH change, pass the no-update flag:
 
@@ -41,7 +41,13 @@ To skip the PATH change, pass the no-update flag:
   </Tab>
   <Tab value="Linux">
 
-**Requirements:** an x86_64 Linux desktop session with X11 or XWayland, plus AT-SPI 2 for accessibility-tree tools.
+**Requirements:** an x86_64 Linux desktop session with X11 or XWayland, plus AT-SPI 2 for accessibility-tree tools. The window-driving tools (`click`, `type_text`, `get_window_state`) need a live display server and a running app, so a headless server has no windows to drive until you start a desktop session (for example `xfce4` under `Xvfb`).
+
+On a minimal or server image, install the runtime libraries the binary links against first. Unlike the installer itself, this step needs `sudo`; without `libXi` the binary fails to launch with `libXi.so.6: cannot open shared object file`, before `doctor` can even run:
+
+```bash
+sudo apt install libxi6 at-spi2-core
+```
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
@@ -49,7 +55,7 @@ To skip the PATH change, pass the no-update flag:
 
 The installer downloads the binary to `~/.cua-driver/packages/releases/`, points `~/.cua-driver/packages/current` at that release, and creates the `~/.local/bin/cua-driver` symlink. It does not use sudo.
 
-X11 is fully supported. Native Wayland input and capture remain opt-in with `CUA_DRIVER_RS_ENABLE_WAYLAND=1` and are still maturing; Wayland sessions use XWayland by default. After installation, run `cua-driver doctor` to check distro-specific requirements such as the AT-SPI bus and ffmpeg.
+X11 is fully supported. Native Wayland input and capture remain opt-in with `CUA_DRIVER_RS_ENABLE_WAYLAND=1` and are still maturing; Wayland sessions use XWayland by default. After installation, run `cua-driver doctor` to check distro-specific requirements such as the AT-SPI bus and the display server.
 
   </Tab>
 </Tabs>
@@ -58,14 +64,14 @@ X11 is fully supported. Native Wayland input and capture remain opt-in with `CUA
 
 ```bash
 cua-driver --version
-# cua-driver 0.5.x
+# cua-driver 0.7.0
 ```
 
 For a full environment and install report:
 
 ```bash
 cua-driver doctor
-# [ok  ] binary: cua-driver 0.5.x (aarch64-macos)
+# [ok  ] binary: cua-driver 0.7.0 (aarch64-macos)
 # [ok  ] install dir: /Users/you/.local/bin/cua-driver
 # [ok  ] home dir: /Users/you/.cua-driver (3 release dirs cached)
 # ...
@@ -98,7 +104,7 @@ cua-driver check_permissions
 macOS opens the Accessibility and Screen Recording prompts. Grant both permissions, then run the check again:
 
 ```bash
-cua-driver check_permissions
+cua-driver permissions status
 # ✅ Accessibility: granted.
 # ✅ Screen Recording: granted.
 ```

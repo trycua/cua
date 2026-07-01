@@ -509,6 +509,8 @@ Interact with the browser page loaded in a running app. Supports Chrome, Brave, 
 | `query_dom` | Find elements matching a CSS selector. |
 | `click_element` | Click a CSS-selected element and animate the agent cursor to its on-screen center. |
 | `enable_javascript_apple_events` | macOS-only: patch the browser's Preferences to allow JS from Apple Events. Requires `user_has_confirmed_enabling: true` and a browser restart. |
+| `insert_text` | Set text into the focused field via CDP (fast DOM insert). |
+| `type_keystrokes` | Type text as per-character key events via CDP (fires JS key handlers). |
 
 | Argument | Type | Required | Description |
 | -------- | ---- | -------- | ----------- |
@@ -521,6 +523,9 @@ Interact with the browser page loaded in a running app. Supports Chrome, Brave, 
 | `selector` | string | No | CSS selector for `click_element`. |
 | `bundle_id` | string | No | Bundle ID of the browser. Required for `enable_javascript_apple_events` (macOS only). |
 | `user_has_confirmed_enabling` | boolean | No | Must be true to proceed with `enable_javascript_apple_events`. |
+| `text` | string | No | Text for `insert_text` / `type_keystrokes`. |
+| `cdp_port` | integer | No | Chromium remote-debugging port for the CDP path. |
+| `target_url_contains` | string | No | Substring to pick the target tab by URL (CDP). |
 
 ```json
 {"action": "get_text"}

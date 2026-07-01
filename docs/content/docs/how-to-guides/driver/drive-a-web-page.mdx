@@ -1,0 +1,88 @@
+---
+title: 'Drive a Web Page'
+description: 'Read and act on the page already loaded in a browser or Electron app with the page tool — get text, query the DOM, click, insert text, type keystrokes, run JavaScript.'
+---
+
+# Drive a Web Page
+
+Use the `page` tool on the page already loaded in a running browser or Electron app. It does not navigate; open the URL first, either through `launch_app` or by having the user open it. This is the DOM/CDP path, the same rung that honest-verification `escalation.recommended: 'page'` points to when AX typing echoes but the DOM does not observe it. For the surrounding ladder, see [Choose a capture and dispatch mode](/how-to-guides/driver/choose-a-modality) and [Capture and dispatch modalities](/explanation/capture-and-dispatch-modalities).
+
+## Actions
+
+| Action | What it does |
+|---|---|
+| `get_text` | Extract visible text from the page. Params: `pid`, `window_id`. |
+| `query_dom` | Find elements by CSS selector. Params: `css_selector`, `attributes` (array of attribute names to return). |
+| `click_element` | Click a CSS-selected element (animates the agent cursor). Params: `selector`. |
+| `insert_text` | Set text into the focused field via CDP (fast DOM insert). Params: `text` (required), `cdp_port` (optional), `target_url_contains` (optional). |
+| `type_keystrokes` | Type text as real per-character key events via CDP — fires JS keydown/keyup handlers. Use when `insert_text` does not trigger the app's input logic. Params: `text` (required), `cdp_port` (optional), `target_url_contains` (optional). |
+| `execute_javascript` | Run JS and return the result. Params: `javascript`. |
+| `enable_javascript_apple_events` | macOS only. One-time patch: edits the browser Preferences to allow JS from Apple Events. Requires a browser restart. Params: `bundle_id`, `user_has_confirmed_enabling` (must be true). |
+
+## Backend and browser support
+
+| Backend | Support |
+|---|---|
+| Chrome, Brave, Edge | Browser page support, with CDP for JavaScript and typing actions. |
+| Safari | Uses AppleScript on macOS. |
+| Electron | Uses CDP. |
+| Chromium/Firefox on Windows | UIA for read actions; CDP for `execute_javascript`, `insert_text`, and `type_keystrokes` when started with `--remote-debugging-port`. |
+| WKWebView, Tauri, AT-SPI | Fallback paths for page reads where available. |
+
+Read actions (`get_text`, `query_dom`) work broadly. JavaScript and typing actions need a CDP endpoint: launch Chromium with `--remote-debugging-port=<n>` and pass `cdp_port`, or target a tab with `target_url_contains`.
+
+## insert_text vs type_keystrokes
+
+`insert_text` does a bulk CDP DOM-level insert. It is fast and does not fire JS key events. `type_keystrokes` sends per-character keydown/keyup events through CDP. It is slower and fires JS handlers. Use `type_keystrokes` for React/Vue inputs and other frameworks that listen for key events.
+
+## Examples
+
+Read all visible text from an open page:
+
+```jsonc
+page({
+  pid,
+  window_id,
+  action: "get_text"
+})
+```
+
+Query a CSS selector and return its `href` attribute:
+
+```jsonc
+page({
+  pid,
+  window_id,
+  action: "query_dom",
+  css_selector: "a.docs-link",
+  attributes: ["href"]
+})
+```
+
+Type into the focused input field with real key events:
+
+```jsonc
+page({
+  action: "type_keystrokes",
+  text: "status: ready",
+  cdp_port: 9222,
+  target_url_contains: "localhost"
+})
+```
+
+Run JavaScript to read a value from the page:
+
+```jsonc
+page({
+  pid,
+  window_id,
+  action: "execute_javascript",
+  javascript: "document.querySelector('#total')?.textContent"
+})
+```
+
+## Related
+
+- [page tool reference](/reference/cua-driver/mcp-tools#page)
+- [Choose a capture and dispatch mode](/how-to-guides/driver/choose-a-modality)
+- [Capture and dispatch modalities](/explanation/capture-and-dispatch-modalities)

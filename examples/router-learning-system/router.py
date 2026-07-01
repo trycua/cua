@@ -662,6 +662,14 @@ def route(task: str, context: dict = None) -> dict:
                 "available": True,
                 "message": "✅ 無需前置檢查",
             })
+            return {
+                "task": task,
+                "available": True,
+                "path": path,
+                "paths_checked": paths_checked,
+                "reason": f"✅ {path.name} (Tier {path.tier}) — 無需前置檢查",
+                "learning": learning_info,
+            }
     
     # No path available
     return {

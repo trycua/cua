@@ -77,6 +77,27 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
+# Resolve a temp directory that actually exists. $env:TEMP / $env:TMP can point
+# at a missing or unresolvable short 8.3 profile path (e.g. C:\Users\SHORTN~1.DOM),
+# which makes Set-Content / Remove-Item fail. Pick the first candidate that
+# exists, expand 8.3 short components to the long form, and fall back to
+# %SystemRoot%\Temp (always present). See issue #1911.
+function Get-CuaDriverTempDir {
+    foreach ($cand in @($env:TEMP, $env:TMP, (Join-Path $env:LOCALAPPDATA 'Temp'), (Join-Path $env:SystemRoot 'Temp'))) {
+        if ([string]::IsNullOrWhiteSpace($cand)) { continue }
+        try {
+            if (Test-Path -LiteralPath $cand) {
+                return (Get-Item -LiteralPath $cand -ErrorAction Stop).FullName
+            }
+        } catch { }
+    }
+    $fallback = Join-Path $env:SystemRoot 'Temp'
+    if (-not (Test-Path -LiteralPath $fallback)) {
+        New-Item -ItemType Directory -Path $fallback -Force | Out-Null
+    }
+    return $fallback
+}
+
 # $Force is read from the environment so the script body stays iex-safe.
 # `[CmdletBinding()]` / `param()` declarations are only legal at the start
 # of a script-file, function, or scriptblock — NOT inside an
@@ -129,7 +150,7 @@ if (-not (Test-IsElevated) -and (Test-NeedsElevation)) {
 
     $scriptPath = $MyInvocation.MyCommand.Path
     if (-not $scriptPath) {
-        $tmp = Join-Path $env:TEMP ("cua-driver-uninstall-" + [Guid]::NewGuid().ToString('N') + ".ps1")
+        $tmp = Join-Path (Get-CuaDriverTempDir) ("cua-driver-uninstall-" + [Guid]::NewGuid().ToString('N') + ".ps1")
         $body = $MyInvocation.MyCommand.Definition
         Set-Content -LiteralPath $tmp -Value $body -Encoding UTF8
         $scriptPath = $tmp

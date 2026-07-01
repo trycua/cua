@@ -18,6 +18,27 @@
 
 Set-StrictMode -Version Latest
 
+# Resolve a temp directory that actually exists. $env:TEMP / $env:TMP can point
+# at a missing or unresolvable short 8.3 profile path (e.g. C:\Users\SHORTN~1.DOM),
+# which makes Set-Content / Remove-Item fail. Pick the first candidate that
+# exists, expand 8.3 short components to the long form, and fall back to
+# %SystemRoot%\Temp (always present). See issue #1911.
+function Get-CuaDriverTempDir {
+    foreach ($cand in @($env:TEMP, $env:TMP, (Join-Path $env:LOCALAPPDATA 'Temp'), (Join-Path $env:SystemRoot 'Temp'))) {
+        if ([string]::IsNullOrWhiteSpace($cand)) { continue }
+        try {
+            if (Test-Path -LiteralPath $cand) {
+                return (Get-Item -LiteralPath $cand -ErrorAction Stop).FullName
+            }
+        } catch { }
+    }
+    $fallback = Join-Path $env:SystemRoot 'Temp'
+    if (-not (Test-Path -LiteralPath $fallback)) {
+        New-Item -ItemType Directory -Path $fallback -Force | Out-Null
+    }
+    return $fallback
+}
+
 # Best-effort kill of any running cua-driver / cua-driver-uia processes
 # so the next `cua-driver autostart kick` / `cua-driver mcp` starts the
 # FRESH binary, not whatever's still in memory. Without this the
@@ -171,7 +192,7 @@ function Import-CuaDriverInstallModule {
         throw "Import-CuaDriverInstallModule: no local file and no -Url to fetch from."
     }
     $body = Invoke-RestMethod -Uri $Url -UseBasicParsing
-    $tmp = Join-Path $env:TEMP ("CuaDriverInstall-" + [Guid]::NewGuid().ToString('N') + ".psm1")
+    $tmp = Join-Path (Get-CuaDriverTempDir) ("CuaDriverInstall-" + [Guid]::NewGuid().ToString('N') + ".psm1")
     Set-Content -LiteralPath $tmp -Value $body -Encoding UTF8
     try {
         Import-Module -Name $tmp -Force -ErrorAction Stop

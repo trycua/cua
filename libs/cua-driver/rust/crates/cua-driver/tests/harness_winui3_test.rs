@@ -178,7 +178,7 @@ where
 /// Regression guard for the click → TogglePattern dispatch fix.
 /// cua-driver `click` now tries Invoke → Toggle → SelectionItem →
 /// ExpandCollapse before falling through to PostMessage, so WinUI3
-/// CheckBox toggles correctly via UIA without needing dispatch:foreground.
+/// CheckBox toggles correctly via UIA without needing delivery_mode:foreground.
 #[test]
 #[ignore]
 fn harness_winui3_checkbox_toggle() {

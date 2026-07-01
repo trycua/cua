@@ -4,7 +4,7 @@
 //! swap before driving a focus-proxy target — a window that only accepts input
 //! while its host app genuinely holds activation. The macOS input rungs never
 //! need this internally: every `CGEvent.postToPid` dispatch reaches a
-//! backgrounded window, and the `dispatch:"foreground"` rung does its own
+//! backgrounded window, and the `delivery_mode:"foreground"` rung does its own
 //! sub-millisecond front→act→restore flash. The one surface that flash can't
 //! satisfy is a remote-desktop client (e.g. Microsoft's Windows App / RDP),
 //! which re-establishes its keyboard channel with the remote host *on
@@ -34,7 +34,7 @@ fn def() -> &'static ToolDef {
         description:
             "Persistently activate an app so it genuinely holds macOS foreground, \
              then leave it there. Most input does NOT need this — every macOS \
-             dispatch reaches backgrounded windows, and `dispatch:\"foreground\"` \
+             dispatch reaches backgrounded windows, and `delivery_mode:\"foreground\"` \
              does its own brief front→act→restore. Reach for `bring_to_front` only \
              for a focus-proxy surface that re-arms its own input channel on \
              activation and must stay frontmost across the interaction — chiefly a \

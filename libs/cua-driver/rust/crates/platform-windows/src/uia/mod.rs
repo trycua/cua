@@ -286,7 +286,7 @@ unsafe fn walk_tree_unsafe(
         // The diagnostic tells callers exactly how to drive the SAL
         // dialog without the tree: pixel click off the screenshot
         // get_window_state always returns, or press_key with
-        // dispatch:"foreground" for accelerator-style dismissal. That's enough for the
+        // delivery_mode:"foreground" for accelerator-style dismissal. That's enough for the
         // common modal-dismissal case (Yes/No/Esc on a Confirmation),
         // which is what SAL dialogs almost always need.
         let is_sal = {

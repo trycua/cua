@@ -2258,7 +2258,7 @@ fn cli_docs_json() -> serde_json::Value {
 pub fn run_dump_docs_with_type(registry: &ToolRegistry, pretty: bool, doc_type: &str) {
     // Each MCP tool: `{name, description, input_schema}` (Swift's MCPToolDoc
     // shape — Rust adds read_only/destructive/idempotent as intentional
-    // extras documented in PARITY.md).
+    // extras).
     let tools: Vec<serde_json::Value> = registry.iter_defs()
         .map(|(_, def)| serde_json::json!({
             "name":         def.name,

@@ -1,17 +1,16 @@
 # cua-driver-fixtures
 
-Canonical HTML test fixtures for cua-driver (Swift / macOS) and
-cua-driver-rs (Rust / Windows + Linux + macOS). One source of truth; both
-ports' integration tests reference these files via relative symlinks from
-their existing `Tests/integration/fixtures/` and `assets/` trees.
+Canonical HTML test fixtures used by the cua-driver test harness. One source
+of truth; the driver integration tests reference these files via relative
+symlinks from their existing `tests/integration/fixtures/` and `assets/` trees.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `interactive.html` | 31-line minimal click + type-mirror harness. Stable IDs: `#counter`, `#clicker`, `#textbox`, `#typed`. Used by `test_background_focus.py` (both ports) — opened via `file://`. |
+| `interactive.html` | 31-line minimal click + type-mirror harness. Stable IDs: `#counter`, `#clicker`, `#textbox`, `#typed`. Used by `test_background_focus.py` — opened via `file://`. |
 | `form_all_inputs.html` | Every HTML5 input type (text, password, email, number, tel, textarea, select, checkbox, radio, range, date, color). Submit handler stores result in `window._submitted`; live read via `getFieldValues()`. Used by `test_drag_slider_delivery.py`, `test_hermes_form_fill*.py`. |
-| `test_page.html` | Richer Safari/Chrome/Electron harness — button counter, text input, checkbox, dropdown, textarea, link, canvas. Served via local `html_server` HTTP fixture. Used by `test_chrome.py`, `test_safari.py`, `test_electron.py` (both ports). |
+| `test_page.html` | Richer Safari/Chrome/Electron harness — button counter, text input, checkbox, dropdown, textarea, link, canvas. Served via local `html_server` HTTP fixture. Used by `test_chrome.py`, `test_safari.py`, `test_electron.py`. |
 | `gesture_panels.html` | **New** — extends the same ID-convention style as `test_page.html` with panels for the four gestures not currently covered by the v2 harness: hotkey + modifier-state propagation, pixel-coord pinpoint accuracy, drag-and-drop event sequence, scroll position. See **Why** below. |
 
 All four files are vanilla HTML — no external deps, no build step. Open
@@ -21,20 +20,13 @@ directly in any browser:
 open libs/cua-driver-fixtures/test_page.html
 ```
 
-## Where each port references the canonical copy
+## Where the driver references the canonical copy
 
-Existing port paths are preserved as symlinks. Tests that read these
+Existing driver test paths are preserved as symlinks. Tests that read these
 paths (`os.path.join(_THIS_DIR, "fixtures", "interactive.html")`,
 `f"{html_server}/test_page.html"`) work unchanged.
 
 ```
-libs/cua-driver/Tests/integration/
-├── fixtures/
-│   ├── interactive.html      → ../../../../cua-driver-fixtures/interactive.html
-│   └── form_all_inputs.html  → ../../../../cua-driver-fixtures/form_all_inputs.html
-└── assets/
-    └── test_page.html        → ../../../../cua-driver-fixtures/test_page.html
-
 libs/cua-driver/rust/tests/integration/
 ├── fixtures/
 │   └── interactive.html      → ../../../../cua-driver-fixtures/interactive.html
@@ -42,13 +34,13 @@ libs/cua-driver/rust/tests/integration/
     └── test_page.html        → ../../../../../cua-driver-fixtures/test_page.html
 ```
 
-Edits to a fixture now propagate to **both ports** in a single commit.
+Edits to a fixture now propagate to the driver tests in a single commit.
 Drift is impossible by construction.
 
 ## Why `gesture_panels.html` was added
 
 `test_page.html` covers Safari/Chrome/Electron interaction surfaces well
-but doesn't probe four gestures that the Windows cua-driver-rs stress
+but doesn't probe four gestures that the Windows cua-driver stress
 test (May 2026) showed need explicit harness coverage:
 
 1. **Hotkey + modifier-state propagation** (`#hotkey-focus` + `#hotkey-status`):
@@ -105,11 +97,10 @@ canonical fixtures, only how they're driven.
 
 1. Add the new HTML file directly to this dir
 2. Document it in the table above (purpose + stable IDs + who uses it)
-3. Add a relative symlink under whichever port(s) need it at the path
-   their tests already use
+3. Add a relative symlink under whichever driver test path needs it
 4. Commit the new file + symlink(s) in the same PR
 
-Do **not** create copies under each port's tree — symlink-only.
+Do **not** create copies under the driver tree — symlink-only.
 
 ## License
 

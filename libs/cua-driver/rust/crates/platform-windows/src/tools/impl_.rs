@@ -2127,8 +2127,7 @@ impl Tool for ClickTool {
             // Description matches Swift `ClickTool.swift` semantics (left-click
             // primitive with two addressing modes — element_index via UIA, or
             // window-local pixel coords via PostMessage).  Windows-only schema
-            // extras (`button`, no `modifier`/`action`/`debug_image_out`) are
-            // documented in PARITY.md.
+            // extras (`button`, no `modifier`/`action`/`debug_image_out`) apply here.
             description: "Left-click against a target pid. **Prefer `element_index` over \
                 pixel coordinates** — element_index works on backgrounded / minimized / \
                 hidden / off-desktop windows, surfaces a stable handle that survives \
@@ -5659,8 +5658,7 @@ impl Tool for GetAgentCursorStateTool {
             tr = motion.turn_radius as i64,
         );
         // Rust-only structured payload: the same fields + the multi-cursor
-        // instance map. Cursor instances are a Rust extension Swift doesn't
-        // expose; documented in PARITY.md.
+        // instance map. Cursor instances are a Rust-only extension.
         let cursors = serde_json::to_value(self.state.cursor_registry.all_states()).unwrap_or_default();
         ToolResult::text(format!("✅ {summary}"))
             .with_structured(json!({
@@ -6017,8 +6015,7 @@ impl Tool for GetConfigTool {
             name: "get_config".into(),
             // Description ported from Swift `GetConfigTool.swift` with the
             // Windows config path. Swift's `agent_cursor.*` subtree is not
-            // mirrored on Windows yet (separate cursor-overlay config path);
-            // documented in PARITY.md.
+            // mirrored on Windows yet (separate cursor-overlay config path).
             description: "Report the current persistent driver config.\n\n\
                 Pure read-only. Returns defaults when the underlying state is unset — \
                 same fallback the daemon uses at startup. Sibling to `set_config`.\n\n\

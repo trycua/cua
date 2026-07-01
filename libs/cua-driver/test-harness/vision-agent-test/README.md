@@ -9,8 +9,9 @@ private ratio, which never exercises the driver's image→screen mapping).
 clicked** — verified by the target's own instrumented state changing.
 
 ## The loop (no cheating in locate/click)
-1. **capture** — `get_window_state(capture_mode=vision)` (window) / `get_desktop_state`
-   (desktop, true pixels): the exact image an agent receives.
+1. **capture** — `get_window_state` (window; returns the screenshot alongside the
+   tree by default) / `get_desktop_state` (desktop, true pixels): the exact image
+   an agent receives.
 2. **locate** — a deterministic pixel **in the returned-image coordinate space**
    (`PixelRegistryLocator`: a pre-measured pixel read off the real PNG, with a
    dims-guard that fails loud if the pinned geometry drifts). No AX `element_index`,

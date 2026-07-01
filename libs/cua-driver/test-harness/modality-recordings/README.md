@@ -44,10 +44,14 @@ Recorded on the Ubuntu 24.04 VM under a headless **Xvfb + openbox + picom + AT-S
 | `gtk3-px-bg.mp4` | 1/6 actions changed the app | **0/7 stole focus** |
 | `gtk3-px-desktop.mp4` | 1/3 actions changed the app | foreground-mode, 4 actions |
 
+> **Superseded:** GTK background pixel clicks now land via AT-SPI `doAction` at
+> point. See `FINDINGS.md` and the canonical
+> `reference/cua-driver/modality-test-suite.mdx` (§ Linux) for the current result.
+
 **Key Linux finding (visible in the ✓/✗ column):** cua-driver injects Linux input via **XSendEvent**
 (synthetic events delivered to a window without stealing focus — required for the no-foreground
 contract). **GTK ignores synthetic XSendEvent events** (the `send_event` flag, a security feature),
-so cua-driver's *pixel-based* actions (double-click, right-click, drag, scroll, and all vision-mode
+so cua-driver's *pixel-based* actions (double-click, right-click, drag, scroll, and all coordinate
 clicks) **do not land** on the GTK harness — they're honestly marked ✗ no-op. The *AT-SPI / element*
 actions (single-click, set_value, type) use accessibility actions, which GTK honors, so they ✓ work.
 This is a real, documented driver behavior (see `platform-linux/src/input/mod.rs`), surfaced here by
@@ -62,7 +66,7 @@ is the point: the recordings *measure* the contract honestly rather than asserti
 
 ### Notes / known limitations
 - **Linux AT-SPI** exposes only buttons/text/checkbox roles (no sliders/scrollers) and no element
-  frames, so drag/scroll and all vision-mode pixel actions are driven from harness-exported widget
+  frames, so drag/scroll and all coordinate pixel actions are driven from harness-exported widget
   geometry. The drag/scroll actions fire and are measured but may not visibly move those widgets.
 - **px-desktop** uses screen-absolute (window-less) clicks; under Xvfb these are not always
   delivered faithfully, so some clicks register as no-ops while still being measured.

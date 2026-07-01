@@ -13,6 +13,11 @@ set_value, type, press-key) against a controlled harness on Windows (WPF) and Li
 Principle followed: the harness/recorder stays honest (no overfitting); real gaps are documented
 here as cua-driver work, to be fixed in the driver first and then re-tested.
 
+**Historical note:** the Electron **7/8** and Linux **3/8** violation figures below
+are recorder-baseline artifacts from an earlier pass and have since been addressed.
+See the newer fix note later in this file and the canonical
+`reference/cua-driver/modality-test-suite.mdx`.
+
 ## What the verifier surfaced (to triage as driver work)
 
 ### Windows / WPF (ax-bg, representative) — after fixes: 5/7 land
@@ -34,7 +39,7 @@ steal foreground, breaking the very contract these bg runs measure).
 
 ### Linux / GTK3
 - AT-SPI/element actions (single-click, set_value, type) **✓ work**.
-- All **pixel-based** actions (double-click, right-click, drag, scroll, every vision-mode click)
+- All **pixel-based** actions (double-click, right-click, drag, scroll, every coordinate click)
   **✗ no-op**: cua-driver's Linux input is **XSendEvent** (synthetic, no focus steal — required for
   the contract), but **GTK ignores synthetic XSendEvent** (`send_event` flag). Documented in
   `platform-linux/src/input/mod.rs`. Real limitation; not a recorder bug.
@@ -44,8 +49,8 @@ steal foreground, breaking the very contract these bg runs measure).
 The cross-platform Electron harness runs on Linux straight from `node_modules` (no packaging),
 launched `electron . --no-sandbox --disable-gpu --force-renderer-accessibility` under
 Xvfb + a dbus session. `--force-renderer-accessibility` makes Chromium publish its full
-**web-AX tree on AT-SPI**, which `get_window_state(capture_mode=ax)` reads cleanly (check box
-"I agree", slider, entry "type here", the click-target section, and every
+**web-AX tree on AT-SPI**, which `get_window_state` returns cleanly alongside the
+screenshot (check box "I agree", slider, entry "type here", the click-target section, and every
 `agreed=`/`slider_value=`/`last_action=`/`mirror=` status label — 72 elements). Same verifier as
 Windows, but reading AT-SPI text instead of UIA. Recorder: `linux/lin-rec-electron.py`
 (+ `lin-run-electron.sh`, `lin-dashboard-electron.html`, `lin-all-electron.sh`).

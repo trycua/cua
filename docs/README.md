@@ -1,5 +1,7 @@
 # docs
 
+Production docs are served from https://cua.ai/docs; this app is now a local MDX preview only.
+
 This is a Next.js application generated with
 [Create Fumadocs](https://github.com/fuma-nama/fumadocs).
 

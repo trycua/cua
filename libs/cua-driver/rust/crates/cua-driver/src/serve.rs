@@ -369,7 +369,7 @@ pub fn read_pid_file(pid_file_path: &str) -> Option<u32> {
 /// Uses a 3-second connect timeout (by polling) and a 10-second read timeout.
 #[cfg(unix)]
 pub fn send_request(socket_path: &str, req: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
-    use std::io::{Read, Write};
+    use std::io::Read;
     use std::os::unix::net::UnixStream;
     use std::time::{Duration, Instant};
 
@@ -383,8 +383,14 @@ pub fn send_request(socket_path: &str, req: &DaemonRequest) -> anyhow::Result<Da
 
     let mut w = stream.try_clone()?;
     let line = serde_json::to_string(req)? + "\n";
-    w.write_all(line.as_bytes())?;
-    w.flush()?;
+    // EAGAIN-aware write: a daemon momentarily too busy to read our request
+    // (backpressure under concurrent slow tools) makes the 5s SO_SNDTIMEO write
+    // time out. Treat that like the read loop below does (#1997) — keep retrying
+    // until an overall deadline — instead of failing with a fatal "Resource
+    // temporarily unavailable (os error 35)" transport error. Mirrors the 120s
+    // read budget.
+    let write_deadline = Instant::now() + Duration::from_secs(120);
+    cua_driver_core::socket_io::write_all_with_retry(&mut w, line.as_bytes(), write_deadline)?;
 
     // Read the single newline-terminated response line. A blocking UnixStream
     // with SO_RCVTIMEO returns `WouldBlock`/`TimedOut` (EAGAIN, os error 35)

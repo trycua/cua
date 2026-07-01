@@ -702,7 +702,13 @@ def execute(route_result: dict, args: dict = None) -> dict:
             "error": route_result.get("reason", "冇可用路徑"),
         }
     
-    path = route_result["path"]
+    path = route_result.get("path")
+    if path is None:
+        return {
+            "success": False,
+            "error": "route_result missing path field",
+            "detail": f"route_result keys: {list(route_result.keys())}",
+        }
     task = route_result["task"]
     exec_fn = EXEC_FUNCS.get(path.exec_fn)
     

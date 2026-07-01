@@ -870,6 +870,125 @@ fn type_text_structured(path: &str, characters: usize, verified: bool) -> Value 
     s
 }
 
+/// Structured payload for the Electron/Chromium AX-echo case: the AT-SPI
+/// `insertText` rung returned success on a Chromium embedder, but on those
+/// surfaces the a11y bridge can accept and echo the write while the renderer
+/// never observes it — so a path=="ax" "confirm" is a shim echo, not ground
+/// truth. Mirrors the macOS `type_text` `ax_echo_surface` branch: report
+/// effect:"unverifiable" + escalation:{recommended:"px"} (a renderer-focus
+/// problem — pixel-focus the field, not foreground-activate it).
+fn type_text_structured_electron(text_len: usize) -> Value {
+    json!({
+        "path": "ax",
+        "characters": text_len,
+        "verified": false,
+        "effect": "unverifiable",
+        "escalation": {
+            "recommended": "px",
+            "reason": "Electron/web surface — the AX write was echoed but the \
+                       renderer may not have observed it. Confirm via the screenshot; \
+                       if it didn't land, re-type with the element px action (pass x,y \
+                       to pixel-focus the field, then type)."
+        }
+    })
+}
+
+/// Build the success `ToolResult` for an AT-SPI insert that the driver would
+/// otherwise mark `verified:true` (path=="ax"). Applies the Electron/Chromium
+/// AX-echo suppression: when `pid` is a Chromium embedder, the a11y layer can
+/// echo the `insertText` write back while the renderer ignores it, so we refuse
+/// to claim a confirmed insert — downgrade to effect:"unverifiable" +
+/// escalation:{recommended:"px"} and tell the agent to confirm via screenshot.
+/// Probe ONLY here, on the rung that would otherwise confirm, so native AT-SPI
+/// types pay nothing. `route` is the human route phrase, e.g. "via AT-SPI".
+/// Mirrors macOS `type_text`'s `ax_echo_surface` gate.
+fn type_text_ax_confirm_result(pid: u32, text_len: usize, route: &str) -> ToolResult {
+    if is_chromium_embedder(pid) {
+        return ToolResult::text(format!(
+            "📨 Sent (unverified) {text_len} character(s) ({route}). — Electron/web \
+             surface: the AX layer accepts and echoes the write but the renderer may \
+             not have observed it, so the driver cannot confirm via AX. Verify via the \
+             screenshot; if it didn't land, re-type with the px form (pass x,y to \
+             pixel-focus the field)."
+        ))
+        .with_structured(type_text_structured_electron(text_len));
+    }
+    ToolResult::text(format!("Typed {text_len} character(s) ({route})."))
+        .with_structured(type_text_structured("ax", text_len, true))
+}
+
+/// True when `pid` is a Chromium-based embedder — a Chrome/Chromium browser or
+/// any Electron/CEF app. On these surfaces an AT-SPI `EditableText.insertText`
+/// can succeed at the bridge while the Chromium *renderer* never observes it,
+/// so the AT-SPI "ax" rung must not be trusted as a confirmed insert (see
+/// [`type_text_ax_confirm_result`]).
+///
+/// This is the Linux analogue of macOS `ElectronJs::is_electron` (which checks
+/// for a bundled Electron Framework). Linux has no bundle, so the signal is
+/// Chromium's multiprocess fingerprint: the embedder forks sandboxed helpers
+/// whose argv carries `--type=renderer` / `--type=zygote` / `--type=gpu-process`.
+/// Native GTK/Qt apps never spawn such helpers, so this is conservative (very
+/// low false-positive). The single-process fallback also matches the embedder's
+/// own argv. Reads `/proc`; cheap and only invoked on the rare AT-SPI confirm.
+fn is_chromium_embedder(pid: u32) -> bool {
+    fn argv_is_chromium_helper(p: u32) -> bool {
+        match fs::read(format!("/proc/{p}/cmdline")) {
+            Ok(raw) => String::from_utf8_lossy(&raw).split('\0').any(|arg| {
+                arg == "--type=renderer"
+                    || arg == "--type=zygote"
+                    || arg == "--type=gpu-process"
+            }),
+            Err(_) => false,
+        }
+    }
+    // Single-process / the embedder itself carrying a Chromium switch.
+    if argv_is_chromium_helper(pid) {
+        return true;
+    }
+    // Build PPid → children across /proc, then BFS the descendants of `pid`
+    // looking for a Chromium helper. Same /proc-walk shape as
+    // `terminal_descendant_ttys`.
+    let mut children: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+    let entries = match fs::read_dir("/proc") {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let child: u32 = match name.to_string_lossy().parse() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        let status = match fs::read_to_string(format!("/proc/{child}/status")) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if let Some(ppid) = status
+            .lines()
+            .find(|l| l.starts_with("PPid:"))
+            .and_then(|l| l[5..].trim().parse::<u32>().ok())
+        {
+            children.entry(ppid).or_default().push(child);
+        }
+    }
+    let mut queue = std::collections::VecDeque::from([pid]);
+    let mut seen = std::collections::HashSet::new();
+    while let Some(cur) = queue.pop_front() {
+        if !seen.insert(cur) {
+            continue;
+        }
+        if let Some(kids) = children.get(&cur) {
+            for &kid in kids {
+                if argv_is_chromium_helper(kid) {
+                    return true;
+                }
+                queue.push_back(kid);
+            }
+        }
+    }
+    false
+}
+
 /// Screen-absolute center of a window (top-left from translate_coordinates plus
 /// half its geometry). Used to position the no-focus-steal scroll over the
 /// window's content. Blocking — call inside spawn_blocking.
@@ -1770,8 +1889,9 @@ impl Tool for TypeTextTool {
         match atspi_result {
             Ok(Ok(())) => {
                 // AT-SPI succeeded — focus-free typing worked (Qt6, GTK4, etc.)!
-                return ToolResult::text(format!("Typed {text_len} character(s) (via AT-SPI)."))
-                    .with_structured(type_text_structured("ax", text_len, true));
+                // Electron/Chromium can echo this write without the renderer
+                // observing it, so the confirm is suppressed there (mirrors macOS).
+                return type_text_ax_confirm_result(pid, text_len, "via AT-SPI");
             }
             _ => {
                 // AT-SPI failed (no editable exposed). Qt5 doesn't expose widgets
@@ -1799,8 +1919,9 @@ impl Tool for TypeTextTool {
 
         match qt5_result {
             Ok(Ok(())) => {
-                return ToolResult::text(format!("Typed {text_len} character(s) (via AT-SPI with focus workaround)."))
-                    .with_structured(type_text_structured("ax", text_len, true));
+                return type_text_ax_confirm_result(
+                    pid, text_len, "via AT-SPI with focus workaround",
+                );
             }
             _ => {
                 // AT-SPI still didn't work. Fall back to X11 XSendEvent.
@@ -1850,10 +1971,16 @@ impl Tool for TypeTextTool {
             // insert into the widget model (truthful on GTK/Qt). The keystroke /
             // XSendEvent / XTest rungs aren't read-back-confirmed (verified:false;
             // caller confirms via screenshot).
+            // Only the AT-SPI ("ax") rung is read-back-confirmable; route it
+            // through the Electron/Chromium AX-echo suppression (mirrors macOS).
+            // Every other rung is already verified:false.
+            Ok(Ok("ax")) => type_text_ax_confirm_result(
+                pid, text_len, &format!("via X11, delivery_mode={mode_label}"),
+            ),
             Ok(Ok(path)) => ToolResult::text(format!(
                 "Typed {text_len} character(s) (via X11, delivery_mode={mode_label})."
             ))
-            .with_structured(type_text_structured(path, text_len, path == "ax")),
+            .with_structured(type_text_structured(path, text_len, false)),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

@@ -3128,16 +3128,42 @@ impl Tool for TypeTextTool {
                         None    => "unreadable",
                     }
                 }).await.unwrap_or("unreadable");
+                // SURFACE-AWARE VERIFICATION (mirrors macOS type_text). On
+                // Electron/Chromium web inputs the UIA layer accepts a
+                // `ValuePattern.SetValue` and echoes it straight back through
+                // `ValuePattern.CurrentValue` while the renderer/DOM never observes
+                // it — so a read-back "confirm" is a shim echo, not ground truth
+                // (the Windows analogue of the Slack-search AX false-confirm).
+                // Refuse to claim verified there: the screenshot is the only truth
+                // and the next rung is the element px action. Probe ONLY when it
+                // would otherwise confirm via the UIA value path, so native UIA
+                // types (WPF / WinForms / UWP / XAML) pay nothing. The signal is
+                // the window class — Chromium and every Electron host expose
+                // `Chrome_WidgetWin_*` (see `is_chromium_target_window`).
+                let ax_echo_surface = verify == "confirmed"
+                    && crate::input::is_chromium_target_window(hwnd);
+                let verified = verify == "confirmed" && !ax_echo_surface;
+                let (mark, note) = if verified {
+                    ("✅ Wrote", String::new())
+                } else if ax_echo_surface {
+                    ("📨 Sent (unverified)",
+                     " — Electron/web surface: the UIA layer accepts and echoes the \
+                      write but the renderer may not have observed it, so the driver \
+                      cannot confirm via UIA. Verify via the screenshot; if it didn't \
+                      land, re-type with the px form (pass x,y to pixel-focus the \
+                      field).".to_string())
+                } else {
+                    ("📨 Sent (unverified)",
+                     " — driver could not confirm; verify via screenshot.".to_string())
+                };
                 return ToolResult::text(format!(
-                    "✅ Wrote {text_len} char(s) on pid {raw_pid} via UIA ValuePattern \
-                     (element_index=[{idx}]; verify: {verify})."
+                    "{mark} {text_len} char(s) on pid {raw_pid} via UIA ValuePattern \
+                     (element_index=[{idx}]; verify: {verify}).{note}"
                 ))
                 .with_structured({
-                    // `effect` mirrors the UIA read-back: a positive read-back is
-                    // "confirmed"; an unchanged/unreadable value is "unverifiable".
-                    // The field IS in the UIA tree (it's a focus/accept problem, not
-                    // a missing element), so escalation points at foreground.
-                    let verified = verify == "confirmed";
+                    // `effect` mirrors the UIA read-back: a TRUSTED positive
+                    // read-back is "confirmed"; an unchanged/unreadable value, or an
+                    // Electron UIA echo we refuse to trust, is "unverifiable".
                     let mut s = serde_json::json!({
                         "path": "ax",
                         "characters": text_len,
@@ -3145,7 +3171,21 @@ impl Tool for TypeTextTool {
                         "verify": verify,
                         "effect": if verified { "confirmed" } else { "unverifiable" },
                     });
-                    if !verified {
+                    if ax_echo_surface {
+                        // Electron UIA echo → the element px action is the next rung,
+                        // not foreground (it's a renderer-focus problem, not an
+                        // activation one).
+                        s["escalation"] = serde_json::json!({
+                            "recommended": "px",
+                            "reason": "Electron/web surface — the UIA write was echoed \
+                                       but the renderer may not have observed it. \
+                                       Confirm via the screenshot; if it didn't land, \
+                                       re-type with the element px action (pass x,y to \
+                                       pixel-focus the field, then type)."
+                        });
+                    } else if !verified {
+                        // The field IS in the UIA tree (it's a focus/accept problem,
+                        // not a missing element), so escalation points at foreground.
                         s["escalation"] = serde_json::json!({
                             "recommended": "foreground",
                             "reason": "background insert could not be confirmed — re-call \

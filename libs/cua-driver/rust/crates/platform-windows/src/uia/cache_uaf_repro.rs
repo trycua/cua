@@ -124,6 +124,7 @@ fn snapshot_with(ptrs: Vec<usize>) -> CachedSnapshot {
     let n = ptrs.len();
     CachedSnapshot {
         kind: SnapshotKind::Uia,
+        window_rect: None,
         elements: ptrs,
         centers: vec![(0, 0); n],
         rects: vec![None; n],

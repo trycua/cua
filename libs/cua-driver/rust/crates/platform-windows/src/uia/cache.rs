@@ -16,7 +16,11 @@
 use super::UiaNode;
 use cua_driver_core::element_cache::ElementCacheCore;
 use windows::core::Interface;
+use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::Accessibility::{IAccessible, IUIAutomationElement};
+use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+
+type WindowRect = (i32, i32, i32, i32);
 
 /// A cached element pointer borrowed out of the cache with an extra COM
 /// `AddRef`, so it stays alive for the duration of a UIA/MSAA action even if a
@@ -101,6 +105,10 @@ pub enum SnapshotKind {
 
 pub struct CachedSnapshot {
     pub kind: SnapshotKind,
+    /// Top-level window rect (left, top, right, bottom) captured alongside the
+    /// element snapshot so follow-up actions can detect stale screen centers if
+    /// the window moved or resized after `get_window_state`.
+    pub window_rect: Option<WindowRect>,
     /// element_index → raw COM pointer (retained).
     pub elements: Vec<usize>,
     /// element_index → screen-coordinate center (captured at walk time).
@@ -137,6 +145,23 @@ impl Drop for CachedSnapshot {
     }
 }
 
+fn live_window_rect(hwnd: u64) -> Option<WindowRect> {
+    let hwnd = HWND(hwnd as *mut _);
+    let mut rect = RECT::default();
+    unsafe {
+        GetWindowRect(hwnd, &mut rect).ok()?;
+    }
+    Some((rect.left, rect.top, rect.right, rect.bottom))
+}
+
+fn snapshot_is_stale(snapshot: &CachedSnapshot, current_window_rect: Option<WindowRect>) -> bool {
+    match (snapshot.window_rect, current_window_rect) {
+        (Some(cached), Some(current)) => cached != current,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
 pub struct ElementCache {
     core: ElementCacheCore<CacheKey, CachedSnapshot>,
 }
@@ -162,15 +187,44 @@ impl ElementCache {
     }
 
     fn update_with_kind(&self, pid: u32, hwnd: u64, nodes: &[UiaNode], kind: SnapshotKind) {
-        let actionable: Vec<&UiaNode> = nodes.iter().filter(|n| n.element_index.is_some()).collect();
+        let actionable: Vec<&UiaNode> =
+            nodes.iter().filter(|n| n.element_index.is_some()).collect();
+        let window_rect = live_window_rect(hwnd);
         let elements: Vec<usize> = actionable.iter().map(|n| n.element_ptr).collect();
-        let centers: Vec<(i32, i32)> = actionable.iter().map(|n| (n.center_x, n.center_y)).collect();
+        let centers: Vec<(i32, i32)> = actionable
+            .iter()
+            .map(|n| (n.center_x, n.center_y))
+            .collect();
         let rects: Vec<Option<(i32, i32, i32, i32)>> = actionable.iter().map(|n| n.rect).collect();
         let msaa_roles: Vec<Option<i32>> = actionable.iter().map(|n| n.msaa_role).collect();
         self.core.insert(
             CacheKey { pid, hwnd },
-            CachedSnapshot { kind, elements, centers, rects, msaa_roles },
+            CachedSnapshot {
+                kind,
+                window_rect,
+                elements,
+                centers,
+                rects,
+                msaa_roles,
+            },
         );
+    }
+
+    fn with_fresh_snapshot<R>(
+        &self,
+        key: &CacheKey,
+        current_window_rect: Option<WindowRect>,
+        f: impl FnOnce(&CachedSnapshot) -> R,
+    ) -> Option<R> {
+        self.core
+            .with_snapshot(key, |snapshot| {
+                if snapshot_is_stale(snapshot, current_window_rect) {
+                    None
+                } else {
+                    Some(f(snapshot))
+                }
+            })
+            .flatten()
     }
 
     /// Look up + COM-`AddRef` the element for `element_index` in (pid, hwnd),
@@ -221,19 +275,31 @@ impl ElementCache {
             .flatten()
     }
 
-    pub fn get_element_center(&self, pid: u32, hwnd: u64, element_index: usize) -> Option<(i32, i32)> {
-        self.core
-            .with_snapshot(&CacheKey { pid, hwnd }, |s| s.centers.get(element_index).copied())
-            .flatten()
+    pub fn get_element_center(
+        &self,
+        pid: u32,
+        hwnd: u64,
+        element_index: usize,
+    ) -> Option<(i32, i32)> {
+        self.with_fresh_snapshot(&CacheKey { pid, hwnd }, live_window_rect(hwnd), |s| {
+            s.centers.get(element_index).copied()
+        })
+        .flatten()
     }
 
     /// Cached screen rect for the element. Used by the click tool to
     /// compute the right-edge dispatch point for `action:"expand"` on
     /// MSAA BUTTONDROPDOWN.
-    pub fn get_element_rect(&self, pid: u32, hwnd: u64, element_index: usize) -> Option<(i32, i32, i32, i32)> {
-        self.core
-            .with_snapshot(&CacheKey { pid, hwnd }, |s| s.rects.get(element_index).copied().flatten())
-            .flatten()
+    pub fn get_element_rect(
+        &self,
+        pid: u32,
+        hwnd: u64,
+        element_index: usize,
+    ) -> Option<(i32, i32, i32, i32)> {
+        self.with_fresh_snapshot(&CacheKey { pid, hwnd }, live_window_rect(hwnd), |s| {
+            s.rects.get(element_index).copied().flatten()
+        })
+        .flatten()
     }
 
     /// Kind + MSAA role for the element. `(Msaa, Some(0x38))` identifies a
@@ -258,6 +324,42 @@ impl ElementCache {
             .with_snapshot(&CacheKey { pid, hwnd }, |s| s.elements.len())
             .unwrap_or(0)
     }
+
+    pub fn is_snapshot_stale(&self, pid: u32, hwnd: u64) -> bool {
+        self.core
+            .with_snapshot(&CacheKey { pid, hwnd }, |snapshot| {
+                snapshot_is_stale(snapshot, live_window_rect(hwnd))
+            })
+            .unwrap_or(false)
+    }
+
+    #[cfg(test)]
+    fn get_element_center_for_window_rect(
+        &self,
+        pid: u32,
+        hwnd: u64,
+        element_index: usize,
+        current_window_rect: Option<WindowRect>,
+    ) -> Option<(i32, i32)> {
+        self.with_fresh_snapshot(&CacheKey { pid, hwnd }, current_window_rect, |snapshot| {
+            snapshot.centers.get(element_index).copied()
+        })
+        .flatten()
+    }
+
+    #[cfg(test)]
+    fn get_element_rect_for_window_rect(
+        &self,
+        pid: u32,
+        hwnd: u64,
+        element_index: usize,
+        current_window_rect: Option<WindowRect>,
+    ) -> Option<WindowRect> {
+        self.with_fresh_snapshot(&CacheKey { pid, hwnd }, current_window_rect, |snapshot| {
+            snapshot.rects.get(element_index).copied().flatten()
+        })
+        .flatten()
+    }
 }
 
 impl Default for ElementCache {
@@ -270,3 +372,84 @@ impl Default for ElementCache {
 #[path = "cache_uaf_repro.rs"]
 mod cache_uaf_repro;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn insert_test_snapshot(cache: &ElementCache, key: CacheKey, window_rect: Option<WindowRect>) {
+        cache.core.insert(
+            key,
+            CachedSnapshot {
+                kind: SnapshotKind::Uia,
+                window_rect,
+                elements: vec![0],
+                centers: vec![(250, 140)],
+                rects: vec![Some((200, 120, 300, 160))],
+                msaa_roles: vec![None],
+            },
+        );
+    }
+
+    #[test]
+    fn center_lookup_stays_valid_when_window_rect_matches() {
+        let cache = ElementCache::new();
+        let key = CacheKey { pid: 7, hwnd: 11 };
+        let window_rect = Some((100, 100, 500, 400));
+        insert_test_snapshot(&cache, key, window_rect);
+
+        assert_eq!(
+            cache.get_element_center_for_window_rect(key.pid, key.hwnd, 0, window_rect),
+            Some((250, 140))
+        );
+    }
+
+    #[test]
+    fn center_lookup_fails_when_window_rect_changes() {
+        let cache = ElementCache::new();
+        let key = CacheKey { pid: 7, hwnd: 11 };
+        insert_test_snapshot(&cache, key, Some((100, 100, 500, 400)));
+
+        assert_eq!(
+            cache.get_element_center_for_window_rect(
+                key.pid,
+                key.hwnd,
+                0,
+                Some((220, 150, 620, 450)),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn rect_lookup_fails_when_window_rect_changes() {
+        let cache = ElementCache::new();
+        let key = CacheKey { pid: 7, hwnd: 11 };
+        insert_test_snapshot(&cache, key, Some((100, 100, 500, 400)));
+
+        assert_eq!(
+            cache.get_element_rect_for_window_rect(
+                key.pid,
+                key.hwnd,
+                0,
+                Some((220, 150, 620, 450)),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn center_and_rect_lookup_fail_when_live_window_rect_is_unavailable() {
+        let cache = ElementCache::new();
+        let key = CacheKey { pid: 7, hwnd: 11 };
+        insert_test_snapshot(&cache, key, Some((100, 100, 500, 400)));
+
+        assert_eq!(
+            cache.get_element_center_for_window_rect(key.pid, key.hwnd, 0, None),
+            None
+        );
+        assert_eq!(
+            cache.get_element_rect_for_window_rect(key.pid, key.hwnd, 0, None),
+            None
+        );
+    }
+}

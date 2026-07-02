@@ -5,8 +5,9 @@
 //! channels, not through the GUI's WM_CHAR queue. PostMessage(WM_CHAR)
 //! against those hosts is silently dropped — the user reports
 //! "type was acknowledged but nothing appeared". We detect the target
-//! by window class name and route through SendInput (Unicode key
-//! events) via the existing `inject_text_cloaked` primitive instead.
+//! by window class name; in background, type_text to a terminal returns
+//! `background_unavailable` (escalate to `delivery_mode:"foreground"`,
+//! which delivers via SendInput Unicode) rather than fronting it.
 //!
 //! Adding a new terminal: append a class-name prefix to
 //! [`TERMINAL_CLASS_PREFIXES`] and a coverage entry in the tests.
@@ -47,14 +48,14 @@ pub fn class_matches_terminal(class_name: &str) -> bool {
 }
 
 /// Returns `true` if the HWND at `hwnd` belongs to a known terminal
-/// host. Uses the existing `input::dispatch::read_class_name` helper
+/// host. Uses the existing `input::delivery::read_class_name` helper
 /// (cheap: one `GetClassNameW` call into a 256-WCHAR buffer).
 #[cfg(target_os = "windows")]
 pub fn is_terminal_hwnd(hwnd: u64) -> bool {
     if hwnd == 0 {
         return false;
     }
-    let class = crate::input::dispatch::read_class_name(hwnd);
+    let class = crate::input::delivery::read_class_name(hwnd);
     class_matches_terminal(&class)
 }
 

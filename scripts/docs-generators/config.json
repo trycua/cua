@@ -6,7 +6,7 @@
       "name": "Cua Driver",
       "language": "rust",
       "sourcePath": "libs/cua-driver/rust/crates",
-      "docsOutputPath": "docs/content/docs/cua-driver/reference",
+      "docsOutputPath": "docs/content/docs/reference/cua-driver",
       "generatorScript": "scripts/docs-generators/cua-driver.ts",
       "watchPaths": [
         "libs/cua-driver/rust/crates/**/*.rs",
@@ -28,8 +28,8 @@
           "extractCommand": "target/release/cua-driver dump-docs --type cli"
         }
       ],
-      "enabled": false,
-      "notes": "Targets the Swift driver; the shipping cross-platform Rust port (cua-driver-rs) ships a stubbed `dump-docs --type cli`. Reference docs are hand-maintained from `cua-driver list-tools` / `describe` until the generator is repointed at the Rust binary."
+      "enabled": true,
+      "notes": "Generates cli-reference.mdx + mcp-tools.mdx from the Rust binary's `dump-docs`. MCP tool docs come straight from the live tool registry; CLI docs come from a hand-maintained `cli_docs_json()` literal in crates/cua-driver/src/cli.rs (the CLI is hand-parsed, not clap, so there is nothing to introspect yet — introspecting it is a tracked follow-up). Curated cross-cutting content lives in the sibling non-generated files mcp-tool-notes.mdx and macos-permissions.mdx."
     },
     "lume": {
       "name": "Lume VM Manager",

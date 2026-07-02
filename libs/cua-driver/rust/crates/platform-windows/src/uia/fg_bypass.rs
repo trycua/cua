@@ -16,10 +16,18 @@
 //!     foreground window dropped below the target in 91% of poller samples.
 //!   - With this bypass: 0/507 z-drops across Calculator, Clock, Settings.
 //!
-//! Non-UWP / classic Win32 apps don't exhibit the bug
+//! Chromium / Electron hosts (`Chrome_WidgetWin_*`) exhibit the identical
+//! self-foreground during UIA `Invoke` and are covered by the same shield (the
+//! gate also accepts `is_chromium_target_window`). On Windows their content
+//! window calls `SetForegroundWindow(self)` from the Invoke handler — measured
+//! 7/8 background ax-bg actions stole focus before this; the `EnableWindow`
+//! shield blocks it because a disabled top-level cannot become foreground while
+//! the Invoke still lands over the a11y channel.
+//!
+//! Non-UWP / non-Chromium classic Win32 apps don't exhibit the bug
 //! (`flash-repro/15-non-uwp.ps1`, Notepad: 0/45 baseline z-drops). The bypass
-//! is therefore gated on `crate::input::is_xaml_host_hwnd` and is a no-op
-//! for non-XAML hosts.
+//! is therefore gated on `is_xaml_host_hwnd || is_chromium_target_window` and is
+//! a no-op for other hosts.
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
@@ -86,7 +94,21 @@ fn make_guard(host_hwnd: isize) -> Option<DisabledHwndGuard> {
     if host_hwnd == 0 {
         return None;
     }
-    if !crate::input::is_xaml_host_hwnd(host_hwnd as u64) {
+    // XAML/UWP/WinUI hosts self-foreground during UIA pattern handling (the
+    // original case). Chromium/Electron hosts (`Chrome_WidgetWin_*`) exhibit the
+    // SAME bug: their UIA `InvokePattern.Invoke` handler reaches the browser's
+    // focus path and calls `SetForegroundWindow(self)`, stealing focus from the
+    // user's window on a *background* click (measured 7/8 ax-bg actions stole on
+    // Windows — Chromium-specific; macOS WKWebView / Linux Electron hold).
+    // `WS_EX_NOACTIVATE` (the injection path's `NoActivateGuard`) does NOT stop
+    // an explicit self-`SetForegroundWindow`, but the `EnableWindow` shield does:
+    // a *disabled* top-level cannot be made the foreground window, while the UIA
+    // Invoke still lands (it's delivered over the kernel accessibility channel,
+    // not the input queue `EnableWindow` gates). Same mechanism, same 0-z-drop
+    // result as UWP — so gate the shield on Chromium too.
+    let shielded = crate::input::is_xaml_host_hwnd(host_hwnd as u64)
+        || crate::input::is_chromium_target_window(host_hwnd as u64);
+    if !shielded {
         return None;
     }
     let h = HWND(host_hwnd as *mut _);

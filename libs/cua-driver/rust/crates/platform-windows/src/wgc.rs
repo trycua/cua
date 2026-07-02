@@ -10,8 +10,8 @@
 //! - Minimum OS: Windows 10 version 1903 (~April 2019). ~100% of users
 //!   today; we surface a structured error on older builds.
 //! - Cannot capture **minimized** windows. They have no rendered content.
-//!   For minimized targets, the caller should use UIA via
-//!   `get_window_state` `capture_mode:"ax"`. We surface this as an
+//!   `get_window_state` still returns the UIA tree for a minimized target
+//!   (the screenshot is reported unavailable). We surface this as an
 //!   error with the recommended fallback.
 //! - First call per process pays ~50ms for D3D11 device creation +
 //!   COM activation factory lookup. Subsequent calls don't cache the
@@ -58,9 +58,9 @@ unsafe fn wgc_capture_impl(hwnd: HWND) -> Result<(Vec<u8>, u32, u32)> {
     if IsIconic(hwnd).as_bool() {
         bail!(
             "WGC cannot capture a minimized window (no rendered content). \
-             Restore the window first, or use `get_window_state` with \
-             `capture_mode:\"ax\"` for UIA tree access — that works on \
-             minimized windows."
+             Restore the window first — `get_window_state` still returns the \
+             UIA tree for a minimized window (the screenshot is reported \
+             unavailable)."
         );
     }
 

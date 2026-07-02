@@ -11,6 +11,10 @@
 //! them, because XTest delivers to the *focused* window and would break the
 //! no-focus-steal contract.
 
+/// Shared `delivery_mode` contract (background|foreground) — mirrors macOS
+/// `tools::DeliveryMode` and Windows `input::delivery`.
+pub mod delivery;
+
 use anyhow::{anyhow, bail, Context, Result};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
@@ -250,6 +254,65 @@ pub fn check_parallel_pointer_support() -> Result<()> {
     result
 }
 
+/// The file name of the X server binary backing `DISPLAY`, read from the PID in
+/// the server's standard `/tmp/.X{N}-lock` file. Used to recognise servers that
+/// can't expose uinput/libinput pointers as real X input slaves.
+fn x_server_exe_name() -> Option<String> {
+    let display = std::env::var("DISPLAY").unwrap_or_default();
+    let display_num = display
+        .rsplit(':')
+        .next()
+        .unwrap_or("")
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim();
+    if display_num.is_empty() {
+        return None;
+    }
+    let lock_path = format!("/tmp/.X{display_num}-lock");
+    let contents = fs::read_to_string(&lock_path).ok()?;
+    let pid = contents.trim();
+    if pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if let Ok(exe) = fs::read_link(format!("/proc/{pid}/exe")) {
+        if let Some(name) = exe.file_name().and_then(|n| n.to_str()) {
+            return Some(name.to_owned());
+        }
+    }
+    fs::read_to_string(format!("/proc/{pid}/comm"))
+        .ok()
+        .map(|s| s.trim().to_owned())
+}
+
+/// True when `DISPLAY` is served by a headless Xvfb. Xvfb has no udev/libinput
+/// hotplug, so a uinput device never becomes an X input slave — the whole MPX
+/// real-input path (master pointer + uinput slave + shield grab) can never
+/// work, and `ensure_master_pointer` would otherwise burn the 5 s slave-bind
+/// timeout per attempt before failing.
+fn is_xvfb_process_running() -> bool {
+    x_server_exe_name().as_deref() == Some("Xvfb")
+}
+
+/// Cheap up-front probe (no device creation, no slave-bind wait) for whether the
+/// no-focus-steal MPX real-input pointer path can work on this X server. Lets the
+/// click/scroll tools decide whether to attempt the MPX path or go straight to
+/// the legacy XSendEvent fallback, without paying the multi-second uinput
+/// slave-bind timeout on servers (Xvfb, Xtigervnc) where it can never succeed.
+///
+/// NOTE: this only rules out the servers known to lack uinput→X-slave hotplug.
+/// A `true` result means "worth attempting"; the per-action call still fails
+/// gracefully (and the caller falls back) if the slave never binds.
+pub fn real_pointer_input_available() -> bool {
+    let Ok(display) = open_display() else {
+        return false;
+    };
+    let supported = supports_parallel_pointer_injection(display).is_ok() && !is_xvfb_process_running();
+    unsafe { x11::xlib::XCloseDisplay(display) };
+    supported
+}
+
 fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
     if let Some(ids) = mpx_pointers().lock().unwrap().get(cursor_id).copied() {
         return Ok(ids);
@@ -372,7 +435,11 @@ fn create_uinput_pointer(name: &str) -> Result<VirtualDevice> {
     let mut rel_axes = AttributeSet::<RelativeAxisType>::new();
     rel_axes.insert(RelativeAxisType::REL_X);
     rel_axes.insert(RelativeAxisType::REL_Y);
+    // REL_WHEEL (vertical) and REL_HWHEEL (horizontal) so the same uinput slave
+    // can also drive scroll: libinput turns these into the XI2 smooth-scroll
+    // events GTK consumes, where synthetic Button4-7 XSendEvents are dropped.
     rel_axes.insert(RelativeAxisType::REL_WHEEL);
+    rel_axes.insert(RelativeAxisType::REL_HWHEEL);
 
     Ok(
         evdev::uinput::VirtualDeviceBuilder::new()?
@@ -745,6 +812,78 @@ fn ewmh_activate_window(
     }
 }
 
+/// Foreground rung for X11 (`delivery_mode:"foreground"`): briefly activate
+/// `xid` via EWMH `_NET_ACTIVE_WINDOW`, run `body` (which injects the input
+/// while the window holds focus), then restore the prior active window. The
+/// Linux analogue of macOS `with_foreground_assist` / the Windows foreground
+/// swap, reusing the existing [`ewmh_active_window`] / [`ewmh_activate_window`]
+/// primitives (proper `x_server_time` stamping beats the WM's focus-stealing
+/// prevention).
+///
+/// Best-effort: if no X display can be opened the body still runs (without
+/// activation) so a headless/Wayland path degrades rather than hard-fails.
+/// `settle_ms` is the pause after activation before the first injected event —
+/// the WM needs a moment to complete the focus swap (mirrors the macOS settle).
+pub fn with_x11_foreground<T>(
+    xid: u64,
+    settle_ms: u64,
+    body: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
+    if display.is_null() {
+        return body();
+    }
+    let prior = ewmh_active_window(display);
+    ewmh_activate_window(display, xid as x11::xlib::Window, prior.unwrap_or(0));
+    unsafe { x11::xlib::XSync(display, 0); }
+    if settle_ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(settle_ms));
+    }
+    // EWMH `_NET_ACTIVE_WINDOW` is honored as *raise-only* by WMs with
+    // focus-stealing prevention (e.g. KWin): the window reaches the top of the
+    // stack — enough for a coordinate click, which lands by stacking — but the X
+    // *input focus* never transfers, so XTest key events (which the server routes
+    // to the focused window) go to whatever was focused before. Set the input
+    // focus explicitly too, exactly as `xdotool windowactivate` does, so the
+    // foreground key/hotkey rung actually reaches the target. Guarded against
+    // BadMatch on a not-yet-viewable window — Xlib's default handler would exit
+    // the process — reusing the scoped `ignore_x_error` pattern used elsewhere.
+    unsafe {
+        let prev_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+        x11::xlib::XSetInputFocus(
+            display,
+            xid as x11::xlib::Window,
+            x11::xlib::RevertToParent,
+            x11::xlib::CurrentTime,
+        );
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(prev_handler);
+    }
+    let result = body();
+    // Restore the prior active window (brief swap, like macOS/Windows).
+    if let Some(p) = prior {
+        ewmh_activate_window(display, p, xid as x11::xlib::Window);
+        unsafe { x11::xlib::XSync(display, 0); }
+    }
+    unsafe { x11::xlib::XCloseDisplay(display); }
+    result
+}
+
+/// Activate `xid` and LEAVE it active (no restore) — the persistent foreground
+/// swap behind `bring_to_front`. Returns the window that was active before, so
+/// the caller can report/inspect it. Best-effort; returns `None` prior on a
+/// headless display.
+pub fn x11_activate_window_persistent(xid: u64) -> Result<Option<u64>> {
+    let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
+    if display.is_null() {
+        bail!("cannot activate window: no X display (DISPLAY={:?})", std::env::var("DISPLAY").ok());
+    }
+    let prior = ewmh_active_window(display).map(|w| w as u64);
+    ewmh_activate_window(display, xid as x11::xlib::Window, prior.unwrap_or(0) as x11::xlib::Window);
+    unsafe { x11::xlib::XSync(display, 0); x11::xlib::XCloseDisplay(display); }
+    Ok(prior)
+}
+
 fn button_code(button: u8) -> Result<Key> {
     match button {
         1 => Ok(Key::BTN_LEFT),
@@ -772,6 +911,19 @@ fn emit_relative_motion(device: &mut VirtualDevice, dx: i32, dy: i32) -> Result<
         return Ok(());
     }
     device.emit(&events)?;
+    Ok(())
+}
+
+/// Emit one wheel detent on the uinput slave. `horizontal` selects REL_HWHEEL
+/// (positive = right) over REL_WHEEL (positive = up); `value` is the signed
+/// detent count. libinput translates these into the XI2 scroll events GTK reads.
+fn emit_scroll(device: &mut VirtualDevice, horizontal: bool, value: i32) -> Result<()> {
+    let axis = if horizontal {
+        RelativeAxisType::REL_HWHEEL
+    } else {
+        RelativeAxisType::REL_WHEEL
+    };
+    device.emit(&[InputEvent::new(EventType::RELATIVE, axis.0, value)])?;
     Ok(())
 }
 
@@ -959,6 +1111,158 @@ pub fn send_parallel_virtual_pointer_drags(
     for (cursor_id, _) in drags {
         forget_master_pointer(cursor_id);
     }
+    restore_focus_state(display, &saved_focus);
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
+    result
+}
+
+/// A discrete no-focus-steal pointer click driven through the same real-input
+/// pipeline as [`send_parallel_virtual_pointer_drags`] — MPX master pointer +
+/// uinput slave + XI2 shield grab — reduced to a press/release (or a short
+/// press/release train for `count` > 1) at one screen point.
+///
+/// This is what lands **right / middle / double** clicks (and any left click
+/// the AT-SPI path can't actuate) on XInput2 toolkits: GTK3/4 silently drop
+/// synthetic `XSendEvent` pointer events and never see XTEST core events, so
+/// those clicks are otherwise no-ops. Coordinates are screen-absolute;
+/// `target_window` is the X11 window the shield grab is installed on so the WM
+/// never sees the press and never steals focus. `button` is an X button number
+/// (1=left, 2=middle, 3=right); `count` >= 1 (2 = double-click).
+#[derive(Clone, Debug)]
+pub struct VirtualPointerClick {
+    pub target_window: u64,
+    pub x: i32,
+    pub y: i32,
+    pub button: u8,
+    pub count: usize,
+}
+
+/// Land a discrete click via the MPX real-input pipeline (see
+/// [`VirtualPointerClick`]). Mirrors the per-item press/replay logic of
+/// `send_parallel_virtual_pointer_drags`: install a device-specific synchronous
+/// XI2 shield grab on the target window, warp the master pointer, then for each
+/// press freeze→replay it so the application receives a real button event while
+/// the WM stays blind to it. The master is torn down and focus restored on exit
+/// (matching the drag) to keep non-MPX WMs' focus bookkeeping consistent.
+pub fn send_virtual_pointer_click(cursor_id: &str, click: &VirtualPointerClick) -> Result<()> {
+    let display = open_display()?;
+    supports_parallel_pointer_injection(display)?;
+    let xi_opcode = xinput_opcode(display);
+    let saved_focus = save_focus_state(display);
+
+    let result = (|| -> Result<()> {
+        let ids = ensure_master_pointer(cursor_id)?;
+        let device = uinput_pointers()
+            .lock()
+            .unwrap()
+            .get(cursor_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("missing uinput pointer for '{cursor_id}'"))?;
+        let opcode = xi_opcode.ok_or_else(|| {
+            anyhow!("no-focus-steal click requires XInput/XI2 shield grabs")
+        })?;
+
+        let window = click.target_window as x11::xlib::Window;
+        install_shield_grab(display, ids.pointer_id, window, click.button)
+            .with_context(|| format!("shield grab failed for '{cursor_id}'"))?;
+        // Run the press train under a guard so the shield is always removed,
+        // even on an early error mid-train.
+        let click_result = (|| -> Result<()> {
+            warp_master_pointer(display, ids, click.x, click.y)?;
+            let count = click.count.max(1);
+            for i in 0..count {
+                {
+                    let mut device = device.lock().unwrap();
+                    emit_button(&mut device, click.button, true)?;
+                }
+                // The shield grab freezes the device on every press; drain and
+                // replay this one so it reaches the app (and re-arms for the
+                // next press in a multi-click train).
+                let mut pending = std::collections::HashSet::from([ids.pointer_id]);
+                replay_shielded_presses(display, opcode, &mut pending, Duration::from_millis(1000));
+                if !pending.is_empty() {
+                    return Err(anyhow!(
+                        "shield replay timed out before XI_ButtonPress arrived for '{cursor_id}'"
+                    ));
+                }
+                {
+                    let mut device = device.lock().unwrap();
+                    emit_button(&mut device, click.button, false)?;
+                }
+                // Multi-click cadence: keep press→press well under the toolkit
+                // double-click threshold (GTK default 250 ms) so count=2 lands
+                // as a real double-click, not two singles.
+                if count > 1 && i + 1 < count {
+                    sleep(Duration::from_millis(CLICK_DELAY_MS));
+                }
+            }
+            Ok(())
+        })();
+        remove_shield_grab(display, ids.pointer_id, window, click.button);
+        click_result
+    })();
+
+    forget_master_pointer(cursor_id);
+    restore_focus_state(display, &saved_focus);
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
+    result
+}
+
+/// A discrete no-focus-steal scroll driven through the MPX master pointer +
+/// uinput slave. Unlike a click it needs no shield grab: WMs don't focus on
+/// wheel input, and libinput turns the emitted REL_WHEEL/REL_HWHEEL detents into
+/// the XI2 smooth-scroll events GTK consumes — where synthetic Button4-7
+/// `XSendEvent`s are dropped. `x`,`y` are the screen point to scroll over (the
+/// scroll lands on whatever window owns that pixel under our master pointer);
+/// `ticks` is a signed detent count (+up / +right per evdev convention).
+#[derive(Clone, Debug)]
+pub struct VirtualPointerScroll {
+    pub target_window: u64,
+    pub x: i32,
+    pub y: i32,
+    pub horizontal: bool,
+    pub ticks: i32,
+}
+
+/// Land a discrete scroll via the MPX real-input pipeline (see
+/// [`VirtualPointerScroll`]). Warps the dedicated master pointer over the target
+/// point, then emits `|ticks|` wheel detents on the uinput slave. The master is
+/// torn down and focus restored on exit, matching the click/drag paths.
+pub fn send_virtual_pointer_scroll(cursor_id: &str, scroll: &VirtualPointerScroll) -> Result<()> {
+    let display = open_display()?;
+    supports_parallel_pointer_injection(display)?;
+    let saved_focus = save_focus_state(display);
+
+    let result = (|| -> Result<()> {
+        let ids = ensure_master_pointer(cursor_id)?;
+        let device = uinput_pointers()
+            .lock()
+            .unwrap()
+            .get(cursor_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("missing uinput pointer for '{cursor_id}'"))?;
+
+        warp_master_pointer(display, ids, scroll.x, scroll.y)?;
+        let detents = scroll.ticks.unsigned_abs() as usize;
+        if detents == 0 {
+            return Ok(());
+        }
+        let unit = if scroll.ticks >= 0 { 1 } else { -1 };
+        for _ in 0..detents {
+            {
+                let mut device = device.lock().unwrap();
+                emit_scroll(&mut device, scroll.horizontal, unit)?;
+            }
+            sleep(Duration::from_millis(CLICK_DELAY_MS));
+        }
+        Ok(())
+    })();
+
+    forget_master_pointer(cursor_id);
     restore_focus_state(display, &saved_focus);
     unsafe {
         x11::xlib::XCloseDisplay(display);
@@ -1490,6 +1794,113 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         conn.flush()?;
         sleep(Duration::from_millis(KEY_DELAY_MS));
     }
+    // Round-trip so the server delivers the final character's key events before
+    // this short-lived connection drops (see send_key_xtest — keyboard XTEST
+    // events queued on a connection that closes immediately can be lost).
+    let _ = conn.get_input_focus()?.reply();
+    Ok(())
+}
+
+/// Press a named key (with optional modifiers) into whatever window holds X
+/// keyboard focus, via the XTest extension. This is the REAL-input analogue of
+/// [`send_key`]: XTest events are indistinguishable from physical input, so
+/// GTK/Qt/Chromium/Firefox accept them — whereas the synthetic `XSendEvent`
+/// path in [`send_key`] is silently dropped by those toolkits (they check the
+/// `send_event` flag). Used by the `foreground` delivery rung, which activates
+/// the target first, so XTest-to-focus lands on the intended widget.
+///
+/// Modifiers (e.g. `["ctrl"]`, `["ctrl","shift"]`) are pressed before and
+/// released after the key. Modifier names resolve to their keysyms
+/// (Control_L/Shift_L/Alt_L/Super_L), then to keycodes that are in the server's
+/// modifier map, so the modifier mask actually engages. Sparse/headless keymaps
+/// that lack a keysym borrow a spare keycode (xdotool-style) via
+/// [`keycode_for_keysym`]; the returned guards restore the map on drop.
+pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    let (conn, _) = connect_x11_for_input()?;
+    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+
+    // Resolve modifier keycodes first. Keep any spare-keycode remap guards alive
+    // until after the events are delivered (drop at end of fn).
+    let mut guards = Vec::new();
+    let mut mod_keycodes = Vec::new();
+    for m in modifiers {
+        let ks = key_name_to_keysym(m)?;
+        let (kc, guard) = keycode_for_keysym(&conn, &mapping, ks, m)?;
+        if let Some(g) = guard {
+            guards.push(g);
+        }
+        mod_keycodes.push(kc);
+    }
+
+    // Resolve the main key, SHIFT-AWARE. A keysym at the shifted level (slot 1)
+    // — e.g. '*', '+', '(' on a US layout, including the spelled-out names
+    // asterisk/plus/parenleft — must be typed with Shift held; a bare keycode
+    // press emits the slot-0 glyph instead (e.g. '*' -> '8', '+' -> '='). Prefer
+    // the slot-0/slot-1 lookup (`char_to_keycode_shift`); fall back to the
+    // spare-keycode remap (which binds the keysym across all levels, so no shift)
+    // only when the keysym is absent from the map.
+    let keysym = key_name_to_keysym(key)?;
+    let (keycode, needs_shift) = match char_to_keycode_shift(&mapping, keysym) {
+        Some(found) => found,
+        None => {
+            let (kc, guard) = keycode_for_keysym(&conn, &mapping, keysym, key)?;
+            if let Some(g) = guard {
+                guards.push(g);
+            }
+            (kc, false)
+        }
+    };
+
+    // Hold Shift around the key when it lives at the shifted level and the caller
+    // didn't already pass Shift as a modifier. Resolve the Shift keycode from the
+    // server's modifier map so the mask actually engages.
+    let shift_requested = modifiers.iter().any(|m| m.eq_ignore_ascii_case("shift"));
+    let auto_shift_kc = if needs_shift && !shift_requested {
+        let modmap = conn.get_modifier_mapping()?.reply()?;
+        let kpm = modmap.keycodes_per_modifier() as usize;
+        modmap
+            .keycodes
+            .get(..kpm)
+            .and_then(|s| s.iter().copied().find(|&k| k != 0))
+    } else {
+        None
+    };
+
+    // Press modifiers (+ auto-Shift), tap the key, release in reverse order.
+    for &kc in &mod_keycodes {
+        conn.xtest_fake_input(KEY_PRESS_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)?;
+    }
+    if let Some(sk) = auto_shift_kc {
+        conn.xtest_fake_input(KEY_PRESS_EVENT, sk, 0, x11rb::NONE, 0, 0, 0)?;
+    }
+    conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+    sleep(Duration::from_millis(KEY_DELAY_MS));
+    conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+    if let Some(sk) = auto_shift_kc {
+        conn.xtest_fake_input(KEY_RELEASE_EVENT, sk, 0, x11rb::NONE, 0, 0, 0)?;
+    }
+    for &kc in mod_keycodes.iter().rev() {
+        conn.xtest_fake_input(KEY_RELEASE_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)?;
+    }
+    conn.flush()?;
+
+    // Round-trip so the server actually PROCESSES (delivers) the injected XTEST
+    // key events before this function returns and drops its short-lived
+    // connection. `flush()` only writes the requests to the socket; without a
+    // following reply-bearing request the connection can close before the server
+    // routes the KeyPress/KeyRelease to the focused window, and the events are
+    // dropped. Observed under Xtigervnc: identical raw `xtest_fake_input` calls
+    // deliver when the connection stays alive but vanish from this short-lived
+    // one — pointer events (send_click_xtest_desktop) survive, keyboard events do
+    // not. Unconditional (previously only ran for spare-keycode remaps).
+    let _ = conn.get_input_focus()?.reply();
+    if !guards.is_empty() {
+        // Spare-keycode remap: give the target a beat to translate the events
+        // under the temporary mapping before the guards restore it on drop.
+        sleep(Duration::from_millis(KEY_DELAY_MS));
+    }
+    drop(guards);
     Ok(())
 }
 
@@ -1516,6 +1927,11 @@ pub fn send_click_xtest_desktop(x: i32, y: i32, button: u8, count: usize) -> Res
         conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
     }
     conn.flush()?;
+    // Round-trip so the server processes the warp+button events before this
+    // short-lived connection drops. Pointer events happened to survive the close
+    // under Xtigervnc where keyboard events did not (see send_key_xtest), but make
+    // it explicit so the desktop click is reliable across X servers too.
+    let _ = conn.get_input_focus()?.reply();
     Ok(())
 }
 
@@ -1628,6 +2044,14 @@ fn key_name_to_keysym(key: &str) -> Result<u32> {
         "f9" => 0xFFC6, "f10" => 0xFFC7, "f11" => 0xFFC8, "f12" => 0xFFC9,
         "shift" => 0xFFE1, "ctrl" | "control" => 0xFFE3, "alt" => 0xFFE9, "super" | "meta" | "win" => 0xFFEB,
         "capslock" => 0xFFE5, "numlock" => 0xFF7F,
+        // Common X keysym names for punctuation. The single-char branch below
+        // already resolves the literal glyph ("+", "=", "*", "/"), but callers
+        // that speak the X keysym-name vocabulary may pass the spelled-out name.
+        // For the ASCII range the keysym value equals the codepoint.
+        "plus" => 0x2B, "minus" | "dash" => 0x2D, "equal" | "equals" => 0x3D,
+        "asterisk" | "star" => 0x2A, "slash" => 0x2F, "backslash" => 0x5C,
+        "period" | "dot" => 0x2E, "comma" => 0x2C, "semicolon" => 0x3B,
+        "colon" => 0x3A, "underscore" => 0x5F, "parenleft" => 0x28, "parenright" => 0x29,
         s if s.len() == 1 => s.chars().next().unwrap() as u32,
         _ => anyhow::bail!("Unknown key: {key}"),
     };

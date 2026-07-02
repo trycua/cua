@@ -38,7 +38,7 @@ Numbers is a **macOS-only** app with **no clean automation API** for building a 
 
     ```bash
     cua-driver --version
-    # cua-driver 0.5.x
+    # cua-driver 0.7.0
     ```
   </Step>
 
@@ -48,7 +48,7 @@ Numbers is a **macOS-only** app with **no clean automation API** for building a 
     Grant Accessibility and Screen Recording to the driver, then verify both grants:
 
     ```bash
-    cua-driver call check_permissions
+    cua-driver permissions status
     ```
 
     If either permission is missing, approve it in macOS System Settings, then run the check again.

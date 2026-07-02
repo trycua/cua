@@ -1,0 +1,21 @@
+---
+title: macOS Permissions
+description: The macOS-only `cua-driver permissions` command for inspecting and requesting Accessibility and Screen Recording TCC grants.
+---
+
+`cua-driver permissions` is a macOS-only command. It is not part of the auto-generated [CLI reference](/reference/cua-driver/cli-reference) because it has no Windows or Linux counterpart, so it is documented here.
+
+## `cua-driver permissions` (macOS)
+
+Inspect or request the macOS TCC grants the driver needs (Accessibility and Screen Recording).
+
+```bash
+cua-driver permissions status   # report grant status; read-only, no prompt
+cua-driver permissions grant    # launch CuaDriver via LaunchServices so the prompt attributes to the app
+```
+
+**Flags:**
+
+| Flag | Description |
+| ---- | ----------- |
+| `--json` | Machine-readable status output. |

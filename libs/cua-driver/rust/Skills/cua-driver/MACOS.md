@@ -148,12 +148,15 @@ failure mode and it steals focus every time.
 
 When a cua-driver call surprises you, diagnose cua-driver first:
 
-- **Tiny screenshot / empty `tree_markdown`?** Check
-  `cua-driver get_config` → `capture_mode`. Default `"som"` returns
-  both the AX tree and screenshot. `"vision"` omits the AX tree
-  (PNG only), `"ax"` omits the PNG. If a snapshot lacks a tree,
-  `capture_mode` is almost certainly `"vision"` — either reason
-  purely from the PNG or flip to `"som"` / `"ax"` via `set_config`.
+- **Empty `tree_markdown`?** `get_window_state` returns **both** the
+  AX tree and a screenshot by default — there's nothing to configure and
+  no capture mode to pick. An empty tree means the surface isn't AX (a
+  non-AX surface: Electron/Chromium/canvas), and the response carries
+  `degraded: true` — so act by **`px`** off the screenshot that's
+  already in the same response. `capture_mode` is **deprecated and
+  ignored** (still accepted so old callers don't error, but it has no
+  effect — tree + screenshot come back regardless); don't reach for
+  `get_config` to "switch modes," there is no mode to switch.
 - **`has_screenshot: false`?** The window capture failed (transient
   race against a close, or the window has no backing store yet).
   Re-snapshot; if persistent, pick a different `window_id` via
@@ -172,32 +175,48 @@ genuinely needs frontmost state, fall through to the activate
 fallback. Always name the focus steal in your response ("I'll
 briefly bring Chrome to the front because …").
 
-### Verifying actions: prefer `som` over `ax`
+### Verifying actions: cross-check the tree against the pixels you already have
 
-When verifying that an action **landed** (a click registered, a text
-input took, a menu pick changed selection), default to `get_window_state({
-capture_mode: "som"})`. `"ax"` is cheaper (no PNG in the response), but
-the AX tree **lies** for two common surface types:
+There is no `ax`/`vision` capture toggle. **Every `get_window_state`
+returns both the AX tree and a screenshot** (default), so verifying that
+an action **landed** never means "go grab a screenshot" — it means
+cross-check the tree diff against the pixels you already have in the same
+response, and only switch *dispatch rung* on a real signal:
 
-- **Canvas-backed editors** — Monaco (VSCode, Cursor), xterm, Figma,
-  WebGL apps. The AX tree shows the surrounding chrome but reports
-  nothing for the canvas content. A snapshot can look unchanged after a
-  successful text edit.
-- **Catalyst / iOS-on-Mac text views** — see "Known text-input limits"
-  above. The AX `AXValue` can lag the rendered pixels, or report the
-  placeholder string when the field is actually populated.
+1. **Re-snapshot and read the tree diff** — a changed `AXValue`, a new
+   element, a collapsed menu, a disabled button. If the tree shows the
+   change, you're done. When you only need the tree diff and don't need
+   fresh pixels, pass `include_screenshot:false` to skip the grab — a
+   **perf** knob, not a mode flip.
+2. **Trust the screenshot and do an element px action** when the tree
+   **lies** — the action response carried `effect:"suspected_noop"`, the
+   re-snapshot came back `degraded` (empty tree), or the tree looks
+   unchanged/unreadable / disagrees with the pixels on a surface where
+   it's known to lie:
+   - **Canvas-backed editors** — Monaco (VSCode, Cursor), xterm, Figma,
+     WebGL. The AX tree shows the chrome but nothing for the canvas
+     content; a snapshot's tree can look unchanged after a successful
+     edit while the pixels show it landed.
+   - **Catalyst / iOS-on-Mac text views** — see "Known text-input
+     limits" above. `AXValue` can lag the rendered pixels or report the
+     placeholder while the field is actually populated.
 
-`"som"` returns both the AX tree AND a PNG screenshot in a single call.
-Pay the extra tokens; the screenshot is the ground truth for both of
-the cases above, and you avoid the "type → AX-check succeeds → think
-the action landed → discover the lie three calls later" loop.
+On these surfaces you read the result off the screenshot already in the
+response, then address the target by `x,y` — an **element px action**.
+`px` is your **conscious switch to the pixel addressing path**, not a
+different capture: the screenshot was always there, you just change *how
+you address* the target. The point is to catch the "type → AX-check
+succeeds → believe the lie → find out three calls later" trap on exactly
+the surfaces that warrant it.
 
 Rule of thumb:
-- **`som`** — verifying an action landed (default).
-- **`ax`** — cheap element lookup before a click (you don't need the
-  pixels, you need the `[N]` index).
-- **`vision`** — pure visual inspection (e.g. asking the model to read
-  a chart). Skip the AX walk entirely.
+- **element ax action** (default) — the element lookup before a click
+  AND the first verify after it; you address by `[N]` `element_index`
+  and read the tree diff.
+- **element px action** — when the tree is unreadable / `suspected_noop`
+  / `degraded` / disagrees with the pixels, or for pure visual
+  inspection (reading a chart). You address by `x,y` off the screenshot
+  that's already in the snapshot response.
 
 ### Self-check pattern
 
@@ -285,6 +304,37 @@ is suppressed. Full mechanics in
 `Sources/CuaDriverCore/Input/MouseInput.swift` (`clickViaAuthSignedPost`)
 and the companion `FocusWithoutRaise.swift`.
 
+### `delivery_mode` on the pointer family (macOS)
+
+`click`, `double_click`, `right_click`, `drag`, and `scroll` accept
+`delivery_mode` (`"background"` default / `"foreground"`) — matching the
+breadth Windows and Linux already exposed (`type_text` / `press_key` /
+`hotkey` carry it too). `"background"` is the SkyLight per-pid path above:
+no raise, no focus steal. `"foreground"` briefly fronts the owning app,
+acts, then restores the prior frontmost — the explicit last resort for a
+surface that only accepts events while frontmost (the canvas/viewport/game
+case below). Element-indexed (AX) actions are inherently background and
+hold the no-foreground contract without the flag.
+
+macOS-specific residuals worth knowing (the rest of the capture/dispatch/
+addressing params are a shared cross-platform contract — see `SKILL.md` →
+*Cross-platform parameter contract*):
+
+- **`check_permissions.prompt` is macOS-only.** It raises the TCC
+  Accessibility / Screen-Recording dialogs; pass `{"prompt":false}` for a
+  read-only status check. There is no Windows/Linux equivalent — TCC is a
+  macOS construct, so the param is intentionally absent from the shared
+  contract.
+- **`session` always worked on macOS;** the cross-platform change is that
+  Windows/Linux stopped *rejecting* it. No macOS-side change to how you
+  pass it.
+- **`scope`** (`window` default / `desktop`) is a **macOS-specific per-call
+  param** on the pointer tools — pass `scope:"desktop"` with `x,y` and no
+  pid/window_id for a screen-absolute click. Windows and Linux support the
+  same windowless capability but gate it on the persisted `capture_scope`
+  config instead (`set_config capture_scope=desktop`), so they have no
+  per-call `scope` param. Unifying the knob is a tracked follow-up.
+
 ### Canvases, viewports, games (Blender, Unity, GHOST, Qt, wxWidgets)
 
 Apps whose main surface is an OpenGL / Metal / Qt / wxWidgets
@@ -322,35 +372,50 @@ There is no backgrounded path that reaches these apps today.
 
 ### Known text-input limits (Catalyst + Electron)
 
-`type_text` returns `✅ Inserted N char(s)` against **Catalyst** apps
-(WhatsApp, Reminders, Notes-via-Catalyst, anything in `/Applications`
-that's actually `iOSAppOnMac.app`) and **Electron** apps (VSCode's
-Monaco editor, Slack composer, Discord, Linear) but the characters
-don't reach the rendered text view. The AX path (`AXSetAttribute` on
-`kAXSelectedText`) reports success because the API call succeeds on
-the AX shim, but the UIKit/Chromium text view that owns the actual
-input doesn't observe the AX value change. The CGEvent fallback path
-runs, but the renderer's focused-process check drops the keystrokes
-when the app isn't WindowServer-frontmost.
+On **Catalyst** apps (WhatsApp, Reminders, Notes-via-Catalyst,
+anything in `/Applications` that's actually `iOSAppOnMac.app`) and
+**Electron** apps (VS Code's Monaco editor, Slack composer, Discord,
+Linear), an AX `type_text` can't reach the rendered text view: the
+`AXSetAttribute(kAXSelectedText)` write succeeds on the AX shim, but
+the UIKit/Chromium view that owns the input never observes it — and on
+Electron the shim *echoes the value straight back through `AXValue`*,
+so a naive read-back "confirms" a value that isn't really there.
 
-Workaround — clipboard + windowed `Cmd+V`:
+The driver **detects Electron and refuses to trust that echo**: an
+AX-path `type_text` on an Electron app returns `effect:"unverifiable"`
++ `escalation:{recommended:"px"}`, **never** a false `verified:true`.
+(On Catalyst the AX value reads back unreadable, so it reports
+unverified too.) Bottom line: on these surfaces **do not trust the AX
+confirm — the screenshot in the same response is the only truth.**
 
-1. Put the string on the macOS clipboard externally (e.g. shell
-   `pbcopy`, or `NSPasteboard.general.setString:forType:` from your
-   own helper).
-2. Dispatch `hotkey({pid, window_id, keys: ["cmd", "v"]})`. **The
-   `window_id` matters**: the NSMenu key-equivalent path briefly
-   foregrounds the app via `SLPSSetFrontProcessWithOptions(kCPSNoWindows)`
-   for ~1 ms — enough for `paste:` to deliver — then restores prior
-   frontmost. Without `window_id`, the auth-message envelope path
-   runs and hits the same drop as `type_text`.
-3. Verify with a `get_window_state({capture_mode: "som"})` snapshot.
-   Both the AX value and the rendered pixels should show the pasted
-   text. (See the verify-with-som pattern below.)
+Fix — **one call**: `type_text({pid, window_id, x, y, text})`. Passing
+`x,y` (no `element_index`) is the **element px action** form of
+`type_text` — the tool pixel-clicks at `(x,y)` to give the Chromium /
+UIKit renderer the real keyboard focus the AX layer can't, then types
+into the now-focused field. Read `x,y` straight off the screenshot in
+the `get_window_state` response (same convention as `click`). This is
+the one-call replacement for the old two-step "pixel-click then
+`type_text`" — and you do **not** reach for a clipboard + `Cmd+V`
+dance.
 
-This costs one round-trip of clipboard pollution. Restore the user's
-prior clipboard if your workflow cares — store via `pbpaste` before,
-write back via `pbcopy` after.
+0. **If the control is CLOSED, open it first.** A px focus-click won't
+   reliably *open and focus* a closed control (a search button, a
+   collapsed field) — it lands on whatever is already focused (e.g.
+   the message composer), so your text leaks there. **AX-press to
+   open/activate the control first** (AX actions work in the
+   background), then px-type into the now-open field.
+1. **`type_text({pid, window_id, x, y, text})`** — focus + type in a
+   single call. Re-snapshot and read the text off the screenshot to
+   confirm; the AX value can still lag on Catalyst/Electron.
+2. Only if the keystrokes *still* drop (a focus-polling app), escalate
+   that one `type_text` with `delivery_mode:"foreground"`.
+
+The `x,y` (px) form is **mutually exclusive** with `element_index`
+(ax) — pass one or the other, not both. Why not `Cmd+V` / `hotkey`: a
+keyboard combo does **not** focus a text field, and `hotkey` /
+`press_key` no longer raise the window on their own (raising is gated
+on `delivery_mode:"foreground"`, like every other tool). The reliable
+move is the px form of `type_text` — focus and type in one call.
 
 ## Navigating native menu bars (AXMenuBar)
 

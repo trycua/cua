@@ -1,26 +1,23 @@
-//! modality_capture_mode_test — the **capture_mode** axis (`ax` / `vision` /
-//! `som`) of the modality matrix, asserted on each platform's native
-//! controlled-harness app.
+//! modality_capture_mode_test — the get_window_state **perception** contract,
+//! asserted on each platform's native controlled-harness app.
 //!
-//! This generalizes the Windows-only oracle in `modality_background_test`
-//! (`capture_mode_ax_returns_tree_only` / `capture_mode_vision_returns_image_only`)
-//! to macOS (AppKit) and Linux (GTK3), closing the audited gap where the
-//! `capture_mode` axis was only exercised on Windows. The matrix it covers is
-//! documented in `docs/content/docs/explanation/capture-and-dispatch-modalities.mdx`.
+//! get_window_state is perception-mode-agnostic now: it ALWAYS returns BOTH the
+//! element tree AND a screenshot (ground on both, cross-check the sometimes-lying
+//! tree). `capture_mode` is deprecated and ignored; the only way to suppress the
+//! screenshot is the perf opt-out `include_screenshot:false`.
 //!
 //! Oracle, against the harness window:
-//!   * `capture_mode=ax`     → accessibility tree present (`btn-increment`),
-//!                             NO `image` content entry.
-//!   * `capture_mode=vision` → `image` content present, NO tree markdown.
-//!   * `capture_mode=som`    → both (the default).
+//!   * default → BOTH the tree (`btn-increment`) AND an `image` content entry.
+//!   * `include_screenshot:false` → tree present, NO `image` (the cheap path).
+//!   * `capture_mode:"vision"` (deprecated) → IGNORED; still returns both.
 //!
 //! Caveats handled as graceful skips (these are `#[ignore]` interactive tests,
 //! consistent with the rest of the harness suite):
-//!   * Native **vision** capture needs a screen-capture grant (Screen Recording
-//!     on macOS). Without it the driver returns a tree but no PNG, so the image
-//!     assertions skip-with-note rather than false-fail.
-//!   * The **ax** tree needs the platform accessibility grant (TCC on macOS,
-//!     AT-SPI bus on Linux). An empty tree skips the tree assertion.
+//!   * The screenshot needs a screen-capture grant (Screen Recording on macOS).
+//!     Without it the driver returns a tree but no PNG, so the image assertions
+//!     skip-with-note rather than false-fail.
+//!   * The tree needs the platform accessibility grant (TCC on macOS, AT-SPI bus
+//!     on Linux). An empty tree skips the tree assertion.
 //!
 //! Run explicitly:
 //!   cargo test -p cua-driver --test modality_capture_mode_test -- --ignored --nocapture --test-threads=1
@@ -85,6 +82,32 @@ fn snapshot_settled(driver: &mut McpDriver, pid: u32, wid: u64, mode: &str) -> T
         }
         std::thread::sleep(Duration::from_millis(500));
         resp = snapshot(driver, pid, wid, mode);
+    }
+    resp
+}
+
+/// Snapshot with NO capture_mode / no extra args (the default path), retrying
+/// until the tree settles.
+fn snapshot_settled_default(driver: &mut McpDriver, pid: u32, wid: u64) -> ToolResponse {
+    let args = serde_json::json!({ "pid": pid as i64, "window_id": wid });
+    let mut resp = driver.call("get_window_state", args.clone());
+    for _ in 0..16 {
+        if tree_has_marker(&resp) { break; }
+        std::thread::sleep(Duration::from_millis(500));
+        resp = driver.call("get_window_state", args.clone());
+    }
+    resp
+}
+
+/// Snapshot with `include_screenshot:false` (the perf opt-out), retrying until
+/// the tree settles.
+fn snapshot_settled_tree_only(driver: &mut McpDriver, pid: u32, wid: u64) -> ToolResponse {
+    let args = serde_json::json!({ "pid": pid as i64, "window_id": wid, "include_screenshot": false });
+    let mut resp = driver.call("get_window_state", args.clone());
+    for _ in 0..16 {
+        if tree_has_marker(&resp) { break; }
+        std::thread::sleep(Duration::from_millis(500));
+        resp = driver.call("get_window_state", args.clone());
     }
     resp
 }
@@ -187,73 +210,80 @@ fn resolve_new_window(
 
 // ── tests ───────────────────────────────────────────────────────────────────────
 
-/// `capture_mode=ax`: tree present, NO image content.
+/// DEFAULT: get_window_state returns BOTH the tree AND a screenshot — grounding
+/// on both is the whole point. Each half is asserted only when its OS grant is
+/// available (accessibility for the tree, screen-recording for the image), so a
+/// missing grant skips-with-note rather than false-failing.
 #[test]
 #[ignore]
-fn capture_mode_ax_returns_tree_only() {
+fn default_returns_tree_and_screenshot() {
     let Some(mut driver) = McpDriver::spawn() else { return };
     let Some((pid, wid)) = launch(&mut driver) else { return };
 
-    let resp = snapshot_settled(&mut driver, pid, wid, "ax");
-    assert!(!resp.is_error(), "get_window_state(ax) errored: {}", resp.text());
+    let resp = snapshot_settled_default(&mut driver, pid, wid);
+    assert!(!resp.is_error(), "get_window_state(default) errored: {}", resp.text());
+
+    let tree = tree_has_marker(&resp);
+    let img = has_image(&resp);
+    assert!(
+        tree || img,
+        "default returned neither tree nor image — both grants missing? {}",
+        resp.text().chars().take(160).collect::<String>()
+    );
+    // When BOTH grants are present, BOTH must be returned (the contract).
+    if tree && !img {
+        eprintln!("[capture_mode] default: tree present, no image (screen-capture grant likely missing) — partial check");
+    } else if img && !tree {
+        eprintln!("[capture_mode] default: image present, no tree (accessibility grant likely missing) — partial check");
+    }
+    println!("✅ default: tree={tree} image={img} (both expected when grants present)");
+}
+
+/// `include_screenshot:false` is the perf opt-out: tree present, NO image. This
+/// is the only way to suppress the screenshot now (capture_mode no longer does).
+#[test]
+#[ignore]
+fn include_screenshot_false_returns_tree_only() {
+    let Some(mut driver) = McpDriver::spawn() else { return };
+    let Some((pid, wid)) = launch(&mut driver) else { return };
+
+    let resp = snapshot_settled_tree_only(&mut driver, pid, wid);
+    assert!(!resp.is_error(), "get_window_state(include_screenshot:false) errored: {}", resp.text());
 
     if !tree_has_marker(&resp) {
-        eprintln!("[capture_mode] ax tree has no {TREE_MARKER:?} — accessibility grant likely missing; skipping");
+        eprintln!("[capture_mode] tree-only: no {TREE_MARKER:?} — accessibility grant likely missing; skipping");
         return;
     }
     assert!(
         !has_image(&resp),
-        "capture_mode=ax must NOT return an image content entry: {}",
+        "include_screenshot:false must NOT return an image content entry: {}",
         resp.text().chars().take(160).collect::<String>()
     );
-    println!("✅ capture_mode=ax: tree present ({TREE_MARKER}), no image");
+    println!("✅ include_screenshot:false: tree present ({TREE_MARKER}), no image");
 }
 
-/// `capture_mode=vision`: image content present, NO tree markdown.
+/// `capture_mode` is DEPRECATED and ignored: passing `vision` (which used to
+/// suppress the tree) must STILL return both — proving the arg has no effect.
 #[test]
 #[ignore]
-fn capture_mode_vision_returns_image_only() {
+fn deprecated_capture_mode_is_ignored() {
     let Some(mut driver) = McpDriver::spawn() else { return };
     let Some((pid, wid)) = launch(&mut driver) else { return };
 
-    let resp = snapshot(&mut driver, pid, wid, "vision");
-    assert!(!resp.is_error(), "get_window_state(vision) errored: {}", resp.text());
+    let resp = snapshot_settled(&mut driver, pid, wid, "vision");
+    assert!(!resp.is_error(), "get_window_state(capture_mode=vision) errored: {}", resp.text());
 
-    if !has_image(&resp) {
-        eprintln!("[capture_mode] vision returned no image — screen-capture grant likely missing; skipping");
+    // The legacy "vision" value must NOT suppress the tree anymore.
+    if has_image(&resp) && tree_has_marker(&resp) {
+        println!("✅ capture_mode=vision ignored: BOTH tree and image returned");
         return;
     }
-    assert!(
-        !tree_has_marker(&resp),
-        "capture_mode=vision must NOT return tree markdown (found {TREE_MARKER}): {}",
-        resp.text().chars().take(160).collect::<String>()
-    );
-    println!("✅ capture_mode=vision: image present, no tree");
-}
-
-/// `capture_mode=som` (default): both tree and image present (each asserted only
-/// when its grant is available, so the test is a true superset of ax + vision).
-#[test]
-#[ignore]
-fn capture_mode_som_returns_tree_and_image() {
-    let Some(mut driver) = McpDriver::spawn() else { return };
-    let Some((pid, wid)) = launch(&mut driver) else { return };
-
-    let resp = snapshot_settled(&mut driver, pid, wid, "som");
-    assert!(!resp.is_error(), "get_window_state(som) errored: {}", resp.text());
-
-    let img = has_image(&resp);
-    let tree = tree_has_marker(&resp);
-    assert!(
-        img || tree,
-        "capture_mode=som returned neither tree nor image — both grants missing? {}",
-        resp.text().chars().take(160).collect::<String>()
-    );
-    if !img {
-        eprintln!("[capture_mode] som: no image (screen-capture grant missing) — tree-only check");
+    // Tolerate a missing grant, but the deprecated arg must never make the
+    // present half disappear: if the tree marker shows, that already proves
+    // "vision" didn't suppress it.
+    if tree_has_marker(&resp) {
+        println!("✅ capture_mode=vision ignored: tree still present (image grant may be missing)");
+    } else {
+        eprintln!("[capture_mode] vision: no tree marker — accessibility grant likely missing; skipping");
     }
-    if !tree {
-        eprintln!("[capture_mode] som: no tree marker (accessibility grant missing) — image-only check");
-    }
-    println!("✅ capture_mode=som: tree={tree} image={img}");
 }

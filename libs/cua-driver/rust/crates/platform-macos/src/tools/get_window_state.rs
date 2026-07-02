@@ -26,11 +26,22 @@ fn def() -> &'static ToolDef {
             INVARIANT: call get_window_state once per turn per (pid, window_id) before any \
             element-indexed action. The index map is replaced by the next snapshot.\n\n\
             PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
-            indexed row with `element_index`, `role`, `label`, `frame: {x,y,w,h}`, \
-            `parent_index`, `depth`). The markdown `tree_markdown` stays available \
+            indexed row with `element_index`, `role`, `label`, `value` (the \
+            element's text/AXValue when present — use it to verify what a field \
+            holds), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
+            `tree_markdown` stays available \
             and unchanged in shape for existing text-parsing callers — but new \
             fields will only be added to the structured side.\n\n\
-            Also captures a PNG screenshot of the specified window.\n\n\
+            Always returns BOTH the element tree AND a screenshot — ground on \
+            both and cross-check (the tree lies on some surfaces: Electron \
+            echo-confirms, Catalyst null values, virtualized off-viewport rows \
+            with `h:1` frames). You choose the modality at ACTION time, not here: \
+            an element ax action (pass `element_index`/`element_token` → the \
+            accessibility rung) or an element px action (pass `x`,`y` → the pixel \
+            rung, read straight off this screenshot). `capture_mode` is deprecated \
+            and ignored. Pass `include_screenshot:false` to skip the grab and get \
+            the tree only — the cheap path when you're just re-indexing before an \
+            element ax action.\n\n\
             Optional `query` filters the tree_markdown to matching lines plus their ancestor \
             chain (case-insensitive substring). The element_index values are unchanged — \
             filtering only trims the rendered Markdown.\n\n\
@@ -47,10 +58,10 @@ fn def() -> &'static ToolDef {
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": { "type": "integer", "description": "Target window ID from list_windows." },
                 "query": { "type": "string", "description": "Case-insensitive filter for tree_markdown." },
-                "capture_mode": {
-                    "type": "string",
-                    "enum": ["som", "vision", "ax"],
-                    "description": "som=AX+screenshot (default), vision=screenshot only (no AX walk), ax=AX only (no screenshot)."
+                "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
+                "include_screenshot": {
+                    "type": "boolean",
+                    "description": "Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return the tree only (the cheap path when you're just re-indexing before an element ax action; saves the image tokens + screen-grab latency). screenshot_out_file still forces a capture to disk."
                 },
                 "screenshot_out_file": {
                     "type": "string",
@@ -97,11 +108,24 @@ impl Tool for GetWindowStateTool {
         // Effective config resolves call-arg > session-override > global. The
         // daemon injects `_session_id` for named MCP sessions; absent => global.
         let session_id = args.opt_str("_session_id");
-        let (default_mode, effective_max_dim) = {
+        let effective_max_dim = {
             let cfg = self.state.config.read().unwrap();
-            self.state.session_config.effective(session_id.as_deref(), &cfg)
+            self.state.session_config.effective_max_image_dimension(session_id.as_deref(), &cfg)
         };
-        let capture_mode = args.opt_str("capture_mode").unwrap_or(default_mode);
+        // `capture_mode` is DEPRECATED and ignored — get_window_state always
+        // returns BOTH the tree and a screenshot now, so the agent grounds on
+        // both and cross-checks (the AX tree lies often enough that a grounding
+        // screenshot should always be present). The modality is chosen at action
+        // time: an element ax action (element_index) or element px action (x,y).
+        // We don't even read the arg; it stays in the schema only so old callers
+        // don't trip additionalProperties:false.
+        //
+        // `include_screenshot` (default true) is the perf opt-out: set false to
+        // skip the grab and return the tree only — the cheap path when you're
+        // just re-indexing before an element ax action. `screenshot_out_file`
+        // still forces a capture (an explicit "write the frame to disk").
+        let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
+        let should_capture = include_screenshot != Some(false) || screenshot_out_file.is_some();
         // Optional caps — when omitted, fall back to the defaults baked into
         // the AX walker (#22865). minimum:1 keyed in the schema, but defend
         // against 0 here as well so a misbehaving client can't disable the
@@ -117,9 +141,8 @@ impl Tool for GetWindowStateTool {
             .map(|v| v.max(1) as usize)
             .unwrap_or(crate::ax::tree::DEFAULT_MAX_DEPTH);
 
-        // Walk AX tree (unless vision-only mode). Accept "tree" as deprecated alias for "ax".
-        let capture_mode = if capture_mode == "tree" { "ax".to_owned() } else { capture_mode };
-        let tree_result = if capture_mode != "vision" {
+        // Always walk the AX tree (perception returns both tree + screenshot).
+        let tree_result = {
             let q = query.clone();
             // Wrap the blocking AX walk in a 30-second timeout. Heavy webview apps
             // (Arc, Safari with many tabs, Electron) can block
@@ -142,13 +165,12 @@ impl Tool for GetWindowStateTool {
                         "AX tree walk for pid={pid} timed out after 30 s. \
                          The app (likely Arc, Electron, or Safari with many tabs) has a \
                          pathologically large accessibility tree. \
-                         Workarounds: switch to capture_mode=vision for pixel-click \
-                         workflows, or use capture_mode=ax with a depth-limited scan."
+                         Workaround: re-call with a depth-limited scan \
+                         (max_elements / max_depth), then act by pixel (x,y) off \
+                         the screenshot if the tree stays unusable."
                     ));
                 }
             }
-        } else {
-            None
         };
 
         // Update element cache.
@@ -156,11 +178,14 @@ impl Tool for GetWindowStateTool {
             self.state.element_cache.update(pid, window_id, &r.nodes);
         }
 
-        // Screenshot (unless ax-only mode). Uses the session-effective max
-        // dimension resolved above.
+        // Capture the screenshot and deliver it alongside the tree — the
+        // grounding frame the agent cross-checks the (sometimes-lying) tree
+        // against. Skipped only when `include_screenshot:false` (and no
+        // screenshot_out_file). With `screenshot_out_file` set, write to disk and
+        // surface the path instead of embedding base64; otherwise embed base64.
         let max_dim = effective_max_dim;
         // Returns (b64_or_path, final_w, final_h, Option<original_w>, is_file_path)
-        let screenshot = if capture_mode != "ax" {
+        let screenshot = if should_capture {
             let out_file = screenshot_out_file.clone();
             let res = tokio::task::spawn_blocking(move || -> anyhow::Result<(Option<String>, Option<String>, u32, u32, Option<u32>)> {
                 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
@@ -282,6 +307,34 @@ impl Tool for GetWindowStateTool {
                 Issue #22865: use `max_elements` / `max_depth` to bound the \
                 AX walk on apps with very large trees."
         });
+        // Best-effort-background ladder, rung (2): an AX walk that ran but found
+        // zero actionable elements is NOT a clean snapshot — the window may be a
+        // non-AX surface (canvas/WebGL) or its tree wasn't ready (Chromium needs
+        // an enable+settle). Mark it degraded so callers don't read `elements: []`
+        // as "this window has no controls". Only applies when a walk was actually
+        // attempted (tree_result is None in capture_mode=vision, where empty is
+        // expected, not degraded).
+        if tree_result.is_some() && element_count == 0 {
+            structured["degraded"] = serde_json::json!(true);
+            structured["degraded_reason"] = serde_json::json!(
+                "ax_tree_empty: the AX walk returned no actionable elements. The \
+                 window may be a non-AX surface (canvas/WebGL/custom-drawn) or its \
+                 accessibility tree was not ready (Chromium/Electron require an \
+                 AX-enable + settle). Do not treat element data as authoritative — \
+                 re-snapshot if the app just launched, otherwise switch to the \
+                 visual path."
+            );
+            // Point the agent at the next rung: an empty AX tree means
+            // element_index has nothing to bind to, so the deliberate move is an
+            // element px action — read the screenshot already in this response and
+            // click by pixel (x,y). macOS can pixel-target in the background, so
+            // the recommendation is `px`, not `foreground`.
+            structured["escalation"] = serde_json::json!({
+                "recommended": "px",
+                "reason": "non-AX surface — act by pixel (x,y) off the screenshot \
+                           in this response (an element px action)."
+            });
+        }
         if let Some((sw, sh)) = screenshot_dims {
             structured["screenshot_width"] = serde_json::json!(sw);
             structured["screenshot_height"] = serde_json::json!(sh);
@@ -343,6 +396,17 @@ pub(crate) fn build_elements_array_with_token(
             });
             if let Some(label) = label {
                 entry["label"] = serde_json::Value::String(label);
+            }
+            // Surface the element's AXValue separately from `label`. `label`
+            // collapses title→description→value→identifier into one display
+            // string, so on a control that has BOTH a title/description AND a
+            // value (e.g. a "Compose message" text field holding typed text),
+            // the value is shadowed and invisible to a caller reading the
+            // structured side — it only showed up in `tree_markdown`, forcing a
+            // markdown grep to verify what landed. Emit it explicitly so the
+            // verify-then-escalate loop can read the typed text structurally.
+            if let Some(value) = node.value.clone().filter(|v| !v.is_empty()) {
+                entry["value"] = serde_json::Value::String(value);
             }
             if let Some(frame) = frame {
                 entry["frame"] = frame;
@@ -431,6 +495,30 @@ mod tests {
         assert_eq!(frame["y"], 2.5);
         assert_eq!(frame["w"], 33.0);
         assert_eq!(frame["h"], 44.0);
+    }
+
+    #[test]
+    fn elements_surface_value_separately_from_label() {
+        // A field with BOTH a title and a value (e.g. WhatsApp's "Compose
+        // message" box holding typed text): label is the title, but the typed
+        // value must ALSO be exposed so the caller can verify what landed.
+        let mut nodes = vec![
+            node(Some(0), "AXTextArea", Some("Compose message"), 1, None, None),
+        ];
+        nodes[0].value = Some("i love u".into());
+        let entry = &build_elements_array(&nodes)[0];
+        assert_eq!(entry["label"], "Compose message", "label stays the title");
+        assert_eq!(entry["value"], "i love u", "value must be surfaced separately");
+    }
+
+    #[test]
+    fn elements_omit_empty_value() {
+        // An empty AXValue must not emit a `value` field (matches the other
+        // optional fields' omit-when-absent contract).
+        let mut nodes = vec![node(Some(0), "AXButton", Some("OK"), 0, None, None)];
+        nodes[0].value = Some(String::new());
+        let entry = &build_elements_array(&nodes)[0];
+        assert!(entry.get("value").is_none(), "empty value must be omitted");
     }
 
     #[test]

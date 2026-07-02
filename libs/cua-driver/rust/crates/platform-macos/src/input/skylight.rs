@@ -412,6 +412,26 @@ pub fn get_process_psn_for_window(window_id: u32, pid: libc::pid_t, out_psn: &mu
     false
 }
 
+/// Tool-agnostic foreground-assist: briefly front `window_id`, run `body` (which
+/// posts the synthetic input), then restore the prior frontmost process.
+///
+/// This is the `delivery_mode:"foreground"` rung of the best-effort-background
+/// ladder, shared by `type_text` and `click`. It is the same brief front →
+/// act → restore primitive `press_key`/`hotkey` use for NSMenu key dispatch —
+/// see [`with_menu_shortcut_activation`], which this delegates to. Reached only
+/// when the agent has seen the background rungs fail (clicks) or the field is
+/// unverifiable + focus-sensitive (Catalyst typing).
+///
+/// Returns `Ok(true)` when the brief activation happened, `Ok(false)` when the
+/// fronting SPIs are unavailable (the body still ran, just without a front).
+pub fn with_foreground_assist(
+    target_pid: libc::pid_t,
+    target_wid: u32,
+    body: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    with_menu_shortcut_activation(target_pid, target_wid, body)
+}
+
 /// Activate `target_pid`'s window `target_wid` for NSMenu key dispatch, run `action`,
 /// then immediately restore the prior frontmost process.
 ///

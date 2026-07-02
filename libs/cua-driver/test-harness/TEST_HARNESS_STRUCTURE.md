@@ -44,7 +44,7 @@ libs/cua-driver/rust/crates/cua-driver/tests/   ◀── the CONSUMERS (Rust in
 ├── harness_libreoffice_test.rs   (Windows — LibreOffice VCL/SAL via MSAA)
 ├── harness_appkit_test.rs        (macOS)
 └── harness_swiftui_test.rs       (macOS)
-    (the focus-steal sentinel + capture_mode tests now live under
+    (the focus-steal sentinel + deprecated capture_mode compatibility tests now live under
      modality_background_test.rs — see TEST_SUITE.md for the full inventory)
 ```
 
@@ -102,7 +102,7 @@ The loop per test: **launch the built app → read `scenarios.json` for the expe
 | `macos/appkit` | macOS | `appkit` | AX tree, NSButton AXPress, NSTextField, NSScrollView, NSMenu | `harness_appkit_test` |
 | `macos/swiftui` | macOS | `swiftui` | AX tree, SwiftUI `.popover()` (separate AXWindow) | `harness_swiftui_test` |
 | *(LibreOffice — not a harness app)* | Windows | — | VCL/SAL SplitButton, modal dialogs, color picker via MSAA fallback | `harness_libreoffice_test` |
-| *(WPF + focus sentinel)* | Windows | `wpf` | background-modality / no-focus-steal sentinel + `capture_mode` (ax / vision / som) | `modality_background_test` |
+| *(WPF + focus sentinel)* | Windows | `wpf` | background-modality / no-focus-steal sentinel + `capture_mode` (deprecated/ignored) | `modality_background_test` |
 
 ## Runtime requirements (why CI coverage is uneven)
 

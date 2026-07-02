@@ -8,16 +8,16 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 The cua agent cursor ships with two built-in silhouettes:
 
-- **`arrow`** (the default) — a procedural gradient diamond drawn from vector primitives each frame. Sharp at any backing scale.
-- **`teardrop`** — an embedded `cursor-up` SVG (upward teardrop with notched bottom, gradient body, white outline) rasterised once into a 52 px buffer.
+- **`teardrop`** (the default) — an embedded `cursor-up` SVG (upward teardrop with notched bottom, gradient body, white outline) rasterised once into a 52 px buffer, sized 2× the display target for a clean 2:1 retina downscale.
+- **`arrow`** — a procedural gradient diamond drawn from vector primitives each frame. Sharp at any backing scale.
 
-`arrow` is the default while we finish sorting the teardrop's retina rasterisation. Opt into the teardrop with `--cursor-shape teardrop`. You can also replace the silhouette entirely with your own SVG / PNG / JPEG / ICO file via `--cursor-icon <path>`, swap the body palette at runtime, or scale the bloom halo independently.
+`teardrop` is the default. Opt back into the arrow with `--cursor-shape arrow`. You can also replace the silhouette entirely with your own SVG / PNG / JPEG / ICO file via `--cursor-icon <path>`, swap the body palette at runtime, or scale the bloom halo independently.
 
 ## Pick a built-in silhouette
 
 ```bash
-cua-driver serve --cursor-shape teardrop   # opt into the SVG teardrop
-cua-driver serve --cursor-shape arrow      # explicit; same as the default
+cua-driver serve --cursor-shape teardrop   # explicit; same as the default
+cua-driver serve --cursor-shape arrow      # opt into the procedural arrow
 ```
 
 `--cursor-shape` is parsed on `serve` and `mcp`. It's a no-op on one-shot CLI calls like `cua-driver call` — those don't keep the long-lived UI runloop the overlay needs.
@@ -37,9 +37,9 @@ Every per-instance cursor accepts a runtime style override via the `set_agent_cu
 
 - `gradient_colors`: array of CSS hex strings used as the cursor body's tip-to-tail gradient. An empty array reverts to the palette default (`#F0FBFF` → `#66D9FF` → `#35C6D8` on the teardrop; the palette's `cursor_start/mid/end` on the arrow).
 - `bloom_color`: hex string for the radial halo behind the cursor. Empty string reverts.
-- `image_path`: path to a PNG / JPEG / SVG / ICO file. When set, replaces the built-in silhouette with your asset. Empty string reverts.
+- `image_path`: path to a PNG / JPEG / SVG / ICO file. When set, replaces the built-in silhouette with your asset. Empty string clears the override, reverting to the default silhouette.
 
-Switching between `arrow` and `teardrop` at runtime is not exposed via `set_agent_cursor_style` yet — for now it's CLI-only.
+Switching between the built-in `arrow` and `teardrop` silhouettes at runtime is exposed via `set_agent_cursor_motion`'s `cursor_icon` field — pass the built-in name (or a file path), exactly the vocabulary the CLI `--cursor-shape` / `--cursor-icon` flags accept. Both the CLI and MCP resolve names through the same `BuiltinShape` table, so they can never drift.
 
 ## Use your own cursor asset
 
@@ -56,30 +56,39 @@ Custom cursor assets are rendered with no rotation compensation — the driver a
 2. **Stick with PNG / static art** if you don't care about motion-aligned rotation — the cursor will render at a fixed orientation regardless of motion direction. This is what most OS cursor packs do.
 </Callout>
 
+## Recolour at launch
+
+`--cursor-palette <name>` picks a built-in colour palette for the cursor at launch — the launch-time counterpart to the runtime `set_agent_cursor_style` palette. Like the other cursor flags it is parsed on `serve` and `mcp` only.
+
+```bash
+cua-driver serve --cursor-palette <name>
+```
+
+Run `cua-driver serve --help` for the available palette names.
+
 ## How the built-ins render
 
-### `arrow` (default)
+### `arrow`
 
 - **Path**: procedural gradient diamond. 4-vertex polygon `(14, 0) → (−8, −9) → (−3, 0) → (−8, 9)` rebuilt each frame.
 - **Body**: linear gradient from the palette's `cursor_start` to `cursor_end` (runtime `gradient_colors` overrides).
 - **Rotation**: tip at +x at rest; `heading + π` aligns the tip with motion direction.
 - **Resolution**: drawn from vector primitives every frame, so it stays sharp at any backing scale without rasterisation artifacts.
 
-### `teardrop`
+### `teardrop` (default)
 
 - **Path**: classic upward teardrop with a notched bottom (Streamline Iconoir `cursor-up`).
 - **Body**: linear gradient from `#F0FBFF` at the tip to `#35C6D8` at the tail.
 - **Outline**: white 1.5 px stroke, rounded caps and joins.
 - **Bloom**: soft radial halo behind the cursor, tinted from the palette's bloom color.
 - **Rotation**: the SVG points up at rest; a `+90°` paint-time offset aligns the tip with motion direction so the cursor faces where it's heading.
-- **Resolution**: source rasterised at 2× the display target (52 px) and rendered at backing-aware physical resolution on retina. We're still tightening retina crispness on this path — that's why the default is `arrow` for now.
+- **Resolution**: source rasterised at 2× the display target (52 px) and rendered at backing-aware physical resolution on retina — the 2:1 ratio maps 1:1 to physical pixels on 2× displays for a clean downscale. Switch to `arrow` if you want a fully procedural, rasterisation-free silhouette.
 
 ## Things that aren't currently personalizable
 
 - **Multiple agent cursors with distinct palettes.** Only one built-in palette today. If you want per-agent distinct cursors, file an issue with the use case.
 - **Cursor display size.** Fixed at 26 logical pixels (52 physical on retina). The runtime `cursor_size` field controls the **dot-style** cursor's radius and doesn't apply to the shape-based render path.
 - **Motion-path curve shape.** Glide duration, post-click dwell, idle-hide delay, and spring damping are tunable via `set_agent_cursor_motion`, but the underlying bezier shape of the path is hardcoded.
-- **Switching `arrow` ↔ `teardrop` at runtime.** Today it's CLI-only — restart the daemon with a different `--cursor-shape` to swap.
 
 ## See also
 

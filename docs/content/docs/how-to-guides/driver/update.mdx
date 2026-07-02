@@ -16,18 +16,18 @@ cua-driver check-update
 When you're behind:
 
 ```
-Current: 0.3.1
-Latest:  0.3.2
+Current: 0.6.9
+Latest:  0.7.0
 
 Update available. Run `cua-driver update --apply` to install.
-Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.3.2
+Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.7.0
 ```
 
 When you're current:
 
 ```
-Current: 0.3.1
-Latest:  0.3.1
+Current: 0.7.0
+Latest:  0.7.0
 
 You're on the latest release.
 ```
@@ -47,11 +47,11 @@ cua-driver update --apply
 Output:
 
 ```
-Current version: 0.3.1
+Current version: 0.6.9
 Checking for updates…
-New version available: 0.3.2
-Downloading and installing Cua Driver 0.3.2…
-Installed Cua Driver 0.3.2.
+New version available: 0.7.0
+Downloading and installing Cua Driver 0.7.0…
+Installed Cua Driver 0.7.0.
 ```
 
 `update --apply` calls the canonical installer script, the same one-line installer used for the first install.
@@ -72,14 +72,14 @@ cua-driver check-update --json
 
 ```json
 {
-  "current_version": "0.3.1",
-  "latest_version": "0.3.2",
+  "current_version": "0.6.9",
+  "latest_version": "0.7.0",
   "update_available": true,
   "source": "github_releases",
-  "checked_at": "2026-05-27T14:30:00Z",
+  "checked_at": "2026-07-01T14:30:00Z",
   "cache_hit": false,
   "install_command": "curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash",
-  "release_notes_url": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.3.2",
+  "release_notes_url": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.7.0",
   "error": null
 }
 ```
@@ -102,9 +102,9 @@ The same payload is available over MCP through the `check_for_update` tool. MCP 
 Every `cua-driver mcp`, `serve`, and `doctor` invocation starts a background version check. If it finds a newer release, Cua Driver prints a two-line banner to stderr:
 
 ```
-✨ cua-driver v0.3.2 is available (you have v0.3.1).
+✨ cua-driver v0.7.0 is available (you have v0.6.9).
    Update with: cua-driver update
-   Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.3.2
+   Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.7.0
 ```
 
 The check uses a 20-hour cache and never blocks startup. One-shot commands such as `--version`, `call`, and `list-tools` skip it so piped output remains clean.

@@ -36,7 +36,7 @@ Use this recipe when the data already lives on your machine, for example in a PD
 
     ```bash
     cua-driver --version
-    # cua-driver 0.5.x
+    # cua-driver 0.7.0
     ```
   </Step>
 
@@ -46,13 +46,13 @@ Use this recipe when the data already lives on your machine, for example in a PD
     On macOS, grant Accessibility and Screen Recording so Cua Driver can inspect windows, click controls, and type into apps.
 
     ```bash
-    cua-driver call check_permissions
+    cua-driver permissions grant
     ```
 
     Approve both prompts, then run the check again:
 
     ```bash
-    cua-driver call check_permissions
+    cua-driver permissions status
     # Accessibility: granted.
     # Screen Recording: granted.
     ```
@@ -84,7 +84,7 @@ Use this recipe when the data already lives on your machine, for example in a PD
     field from the PDF, and submit the form.
     ```
 
-    The agent can use `launch_app` to open the PDF viewer, `page` to drive the browser, `get_window_state` or `get_accessibility_tree` to read visible fields, and `click`, `type_text`, or `set_value` to fill the form. It can set `capture_mode` to `vision` on `get_window_state` when a screenshot is needed.
+    The agent can use `launch_app` to open the PDF viewer, `page` to drive the browser, `get_window_state` or `get_accessibility_tree` to read visible fields, and `click`, `type_text`, or `set_value` to fill the form. `get_window_state` returns a screenshot alongside the tree by default, so the agent can ground on both.
   </Step>
 
   <Step>

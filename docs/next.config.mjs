@@ -5,7 +5,6 @@ const withMDX = createMDX();
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
-  serverExternalPackages: ['pino', 'pino-pretty', 'thread-stream'],
   trailingSlash: false,
   basePath: '/docs',
   assetPrefix: '/docs',

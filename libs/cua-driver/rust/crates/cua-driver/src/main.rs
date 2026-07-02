@@ -804,6 +804,13 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
         // don't all fail "Authorization required" (#1926). No-op when
         // XAUTHORITY is already set or there's no DISPLAY.
         platform_linux::xauth::ensure_xauthority_discovered();
+        // AT-SPI lives on the session bus; when the daemon is started outside
+        // the desktop session (container, headless, runuser, systemd system
+        // unit) DBUS_SESSION_BUS_ADDRESS is unset and the AT-SPI tree comes back
+        // empty. Recover it from /run/user/<uid>/bus or a running session
+        // process before the a11y advertise (which itself needs the bus). No-op
+        // when already set.
+        platform_linux::session_bus::ensure_session_bus_discovered();
         // Turn on Chromium/Electron (and GTK/Qt) accessibility for the session
         // so their AT-SPI trees are visible to get_window_state. Best-effort and
         // idempotent; only on the serve path, not for short-lived CLI calls.

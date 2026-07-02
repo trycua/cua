@@ -16,9 +16,9 @@ fn def() -> &'static ToolDef {
              or `name` (e.g. \"Calculator\"). If both are given, bundle_id wins.\n\n\
              Optional `urls` are handed to the app as open targets — for Finder, pass a folder \
              path to open a backgrounded Finder window there.\n\n\
-             Optional `electron_debugging_port`: opens a Chrome DevTools Protocol (CDP) server \
+             Optional `cdp_debugging_port`: opens a Chrome DevTools Protocol (CDP) server \
              on the specified port (appends --remote-debugging-port=N to the app's argv). \
-             Use this to automate Electron/VS Code/Cursor via CDP.\n\n\
+             Use this to automate Electron/VS Code/Cursor, or Chrome/Brave/Edge, via CDP.\n\n\
              Optional `webkit_inspector_port`: opens a WebKit inspector server on the specified \
              port (sets WEBKIT_INSPECTOR_SERVER=127.0.0.1:N + TAURI_WEBVIEW_AUTOMATION=1). \
              Use this for Tauri/WebKit-based apps.\n\n\
@@ -52,7 +52,7 @@ fn def() -> &'static ToolDef {
                     "items": { "type": "string" },
                     "description": "Optional file paths or URLs to open with the app (e.g. a folder path for Finder)."
                 },
-                "electron_debugging_port": {
+                "cdp_debugging_port": {
                     "type": "integer",
                     "description": "Open a Chrome DevTools Protocol server on this port (appends --remote-debugging-port=N)."
                 },
@@ -88,7 +88,7 @@ impl Tool for LaunchAppTool {
         let bundle_id = args.opt_str("bundle_id");
         let name      = args.opt_str("name");
         let urls: Vec<String> = args.str_array("urls");
-        let electron_debugging_port = args.opt_u64("electron_debugging_port").map(|v| v as u16);
+        let cdp_debugging_port = args.opt_u64("cdp_debugging_port").map(|v| v as u16);
         let webkit_inspector_port = args.opt_u64("webkit_inspector_port").map(|v| v as u16);
         let creates_new_instance = args.bool_or("creates_new_application_instance", false);
         let mut additional_arguments: Vec<String> = args.str_array("additional_arguments");
@@ -120,7 +120,7 @@ impl Tool for LaunchAppTool {
         }
 
         // Build additional arguments (e.g., CDP port).
-        if let Some(port) = electron_debugging_port {
+        if let Some(port) = cdp_debugging_port {
             additional_arguments.push(format!("--remote-debugging-port={port}"));
         }
 
@@ -133,7 +133,7 @@ impl Tool for LaunchAppTool {
 
         let port_summary = {
             let mut s = String::new();
-            if let Some(port) = electron_debugging_port {
+            if let Some(port) = cdp_debugging_port {
                 s.push_str(&format!("\nCDP renderer available on port {port}."));
             }
             if let Some(port) = webkit_inspector_port {

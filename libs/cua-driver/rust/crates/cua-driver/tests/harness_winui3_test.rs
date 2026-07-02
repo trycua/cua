@@ -104,7 +104,7 @@ fn harness_winui3_type_text() {
 
     let snap = driver.call(
         "get_window_state",
-        serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode":"som"}),
+        serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode":"ax"}),
     );
     let idx = element_index_by_id(snap.text(), "txt-input").expect("txt-input not in WinUI3 snapshot");
 
@@ -121,7 +121,7 @@ fn harness_winui3_type_text() {
 
     let post = driver.call(
         "get_window_state",
-        serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode":"som"}),
+        serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode":"ax"}),
     );
     assert!(post.text().contains("mirror=winui3-typed"),
         "WinUI3 TextBox mirror did not advance. Snapshot excerpt: {}",
@@ -141,7 +141,7 @@ fn harness_winui3_xaml_popup_open() {
 
     let snap = driver.call(
         "get_window_state",
-        serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode":"som"}),
+        serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode":"ax"}),
     );
     let idx = element_index_by_id(snap.text(), "btn-open-popup").expect("btn-open-popup");
 
@@ -152,7 +152,7 @@ fn harness_winui3_xaml_popup_open() {
 
     let post = driver.call(
         "get_window_state",
-        serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode":"som"}),
+        serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode":"ax"}),
     );
     let text = post.text();
     assert!(text.contains("XAML_POPUP_MARKER_v1"),

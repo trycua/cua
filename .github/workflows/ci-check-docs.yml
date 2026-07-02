@@ -22,7 +22,7 @@ on:
       # Cua-Bot
       - "libs/cuabot/src/**"
       # Documentation files themselves
-      - "docs/content/docs/cua-driver/reference/**"
+      - "docs/content/docs/reference/cua-driver/**"
       - "docs/content/docs/cua/reference/**"
       - "docs/content/docs/cuabot/reference/**"
       # Generator scripts
@@ -71,7 +71,7 @@ jobs:
           GENERATORS=""
 
           # Source changes
-          if echo "$CHANGED_FILES" | grep -q "^libs/cua-driver/rust/crates/\|^libs/cua-driver/rust/Cargo.toml\|^libs/cua-driver/rust/Cargo.lock\|^docs/content/docs/cua-driver/reference/"; then
+          if echo "$CHANGED_FILES" | grep -q "^libs/cua-driver/rust/crates/\|^libs/cua-driver/rust/Cargo.toml\|^libs/cua-driver/rust/Cargo.lock\|^docs/content/docs/reference/cua-driver/"; then
             GENERATORS="$GENERATORS cua-driver"
           fi
           if echo "$CHANGED_FILES" | grep -q "^libs/lume/src/"; then

@@ -517,8 +517,8 @@ async fn forward_tool_call(
 //
 // Unit-test only the JSON shape of the proxy's tool-error envelope.
 // The full proxy loop is exercised by the macOS integration test
-// (CUA_DRIVER_RS_MCP_FORCE_PROXY harness in PARITY.md §"Manual smoke
-// test"); these tests just lock in the per-branch reshape so a
+// (the CUA_DRIVER_RS_MCP_FORCE_PROXY harness); these tests just lock
+// in the per-branch reshape so a
 // regression to `Response::error` for tool-level failures would fail
 // fast in CI on every platform.
 

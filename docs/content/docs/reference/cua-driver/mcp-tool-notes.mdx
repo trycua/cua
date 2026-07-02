@@ -1,0 +1,55 @@
+---
+title: MCP Tool Notes
+description: Cross-cutting contracts behind the MCP tools — shared parameters, required-parameter rules, platform-specific parameters, and the action response shape.
+---
+
+These notes are hand-maintained companions to the auto-generated [MCP Tools](/reference/cua-driver/mcp-tools) reference. They document the cross-cutting parameter contract and response shape that span multiple tools and are not derivable from any single tool's schema.
+
+## Common parameters
+
+Several parameters are a **shared cross-platform contract**: the same JSON shape on Windows, macOS, and Linux, composed from canonical schema fragments and enforced by a CI consistency gate so the three platforms cannot drift. Tools accept them uniformly.
+
+| Parameter | Where | Notes |
+| --------- | ----- | ----- |
+| `session` | every action and cursor tool | Optional run identity for the agent cursor and per-session state; the same id works over MCP, the CLI, or the raw socket and follows the run across apps and windows. Accepted on all three platforms — earlier Windows and Linux builds rejected it via `additionalProperties:false`. |
+| `delivery_mode` | the input family (`click`, `double_click`, `right_click`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`) | `"background"` (default) injects without fronting or raising the target — the [no-foreground contract](/explanation/the-no-foreground-contract). `"foreground"` briefly fronts the target, acts, then restores the prior frontmost — the explicit last resort when a background attempt did not land. Legacy `"auto"` is removed; omitted or unknown values fall back to `"background"` for safety. |
+| `capture_mode` | `get_window_state` | **Deprecated and ignored.** Still accepted for back-compat so old callers don't error, but it has no effect — `get_window_state` always returns both the accessibility tree and a screenshot by default. There is no `ax`/`vision`/`som` capture choice; the modality (`ax` vs `px`) is chosen at action time by how you address the target. |
+| `include_screenshot` | `get_window_state` | Boolean, default `true` (returns the tree **and** a screenshot). Set `false` to skip the screenshot grab and return the tree only — a **perf** opt-out for the cheap re-index-before-an-element-`ax`-action path, not a modality choice. |
+| `modifier`, `button`, `element_index`, `element_token` | pointer and element tools | Held modifier keys, mouse button, and the two element-addressing handles. |
+
+### Required parameters
+
+The `required` set is uniform across platforms: `click` requires nothing, `scroll` requires `direction`, and `zoom` requires `window_id` plus `x1`/`y1`/`x2`/`y2`. `pid` is **conditionally** required — needed for every per-window action, omitted for a windowless desktop-scope call — so it is validated in code with a clear error rather than pinned in the schema. A client that omits `pid` for a desktop-scope action is therefore not schema-rejected.
+
+### Platform-specific parameters
+
+A few parameters are platform-specific by design and are intentionally NOT part of the shared contract:
+
+| Parameter or tool | Platform | Why |
+| ----------------- | -------- | --- |
+| `launch_app` identifiers | macOS: `bundle_id`, `urls`. Windows: `aumid`, `launch_path`, `path`, `start_minimized`. | App launch is OS-native. `name` is the portable fallback that works on both. |
+| `debug_window_info` | Windows only | A window-handle / class / rect / z-order debug tool with no macOS or Linux counterpart. |
+| `check_permissions.prompt` | macOS only | Raises the TCC permission dialogs; there is no Windows or Linux equivalent of TCC. |
+| Windowless screen-absolute (desktop-scope) clicks/scrolls | all three platforms, **exposed differently** | The capability exists everywhere, but the knob differs: macOS takes a **per-call `scope:"desktop"`** parameter on the pointer tools, while Windows and Linux gate it on the persisted **`capture_scope:"desktop"`** config (`set_config`). So a per-call `scope` param appears only on macOS; on Windows/Linux you opt in once via config. Unifying this knob is a tracked follow-up. |
+| `modifier` on a *background* click | honored on macOS and Linux; dropped on a Windows background click | A Windows background click goes through UIA Invoke / PostMessage, which carry no live keyboard state, so `modifier` takes effect only on the `delivery_mode:"foreground"` (SendInput) rung there. |
+
+## Action response shape
+
+Action tools (`click`, `double_click`, `right_click`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`, `set_value`) return these structured fields:
+
+| Field | Type | Meaning | Value set / presence |
+| ----- | ---- | ------- | -------------------- |
+| `path` | string | Delivery rung that ran. | `"ax"`, `"cgevent"`, `"cgevent_fg"`, `"key_events"`, `"key_events_fg"`, `"pixel"`, `"x11_atspi"`, `"x11_pixel"`, `"x11_pixel_fg"`, `"msaa"`. |
+| `verified` | boolean or absent | AX read-back verification result. `true` means the driver read the effect back through AX; `false` means the action dispatched but is unconfirmed; absent means the tool does not carry this field. | `true`, `false`, or absent. |
+| `effect` | string | Action confidence signal. | `"confirmed"`, `"unverifiable"`, `"suspected_noop"`. |
+| `escalation` | object or absent | Machine-readable next-rung recommendation. Present only when the driver recommends climbing the ladder. | `{ recommended: "px" \| "foreground" \| "page", reason: string }`, or absent. |
+
+## Per-tool notes
+
+### `get_window_state` degraded results
+
+On Linux (and macOS/Windows), the structured result may include `degraded: true` alongside a `degraded_reason` string when the accessibility walk completed but found no actionable elements. This distinguishes "a11y bridge not up, daemon not on the session D-Bus, or non-AX surface" from a window that genuinely has no controls — do not treat `elements: []` as authoritative when `degraded: true` is set. When `degraded: true`, act by `px` off the screenshot returned in the same response.
+
+### `page` platform support
+
+`get_text`, `query_dom`, `click_element`, and `execute_javascript` work cross-platform (macOS, Windows, Linux). `insert_text` and `type_keystrokes` are implemented on macOS only for now; Windows and Linux return a clear "not implemented" error rather than a silent no-op. Tracked in [trycua/cua#2084](https://github.com/trycua/cua/issues/2084).

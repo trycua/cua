@@ -11,7 +11,7 @@
 # or runs on a non-macOS host. Do not invoke directly; flag parity with
 # the dispatcher's argv shape is maintained from there.
 #
-# Mirrors _install-local-swift.sh (the sibling Swift helper) in shape:
+# Rust local installer (dev-only helper for libs/cua-driver/rust):
 #   --release    build the release configuration (default: debug)
 #   --autostart  register an auto-start daemon (macOS: LaunchAgent;
 #                Linux: systemd user unit). Default off; the post-install
@@ -230,9 +230,9 @@ fi
 # Skill pack — stage from the repo so the `current` symlink below
 # transparently exposes it to agents. Mirrors what install.sh does
 # from a release tarball.
-SOURCE_SKILLS="$REPO_ROOT/Skills/cua-driver-rs"
+SOURCE_SKILLS="$REPO_ROOT/Skills/cua-driver"
 if [ -d "$SOURCE_SKILLS" ]; then
-    STAGED_SKILLS="$VERSIONED_DIR/Skills/cua-driver-rs"
+    STAGED_SKILLS="$VERSIONED_DIR/Skills/cua-driver"
     rm -rf "$STAGED_SKILLS"
     mkdir -p "$(dirname "$STAGED_SKILLS")"
     cp -R "$SOURCE_SKILLS" "$STAGED_SKILLS"

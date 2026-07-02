@@ -135,7 +135,7 @@ async fn check_screen_capture_capability() -> CheckEntry {
             "D3D11 device probe failed.",
             "Confirm a hardware-accelerated graphics adapter is present and current drivers \
              are installed. In Session 0 / headless contexts, D3D hardware may be unavailable \
-             — set capture_mode to `ax` to skip screen capture entirely.",
+             — set `include_screenshot:false` on `get_window_state` to skip screen capture entirely.",
         )
         .with_data(CheckData {
             error_detail: Some(detail),

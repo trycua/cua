@@ -202,7 +202,7 @@ fn harness_wpf_type_text() {
 
         let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx,
-            "dispatch": "foreground"
+            "delivery_mode": "foreground"
         }));
         std::thread::sleep(Duration::from_millis(400));
 
@@ -284,7 +284,7 @@ fn harness_wpf_right_click() {
         // routed-event chain (intermittent in batch runs).
         let resp = driver.call("right_click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx,
-            "dispatch": "foreground"
+            "delivery_mode": "foreground"
         }));
         println!("right_click: {}", resp.text());
         std::thread::sleep(Duration::from_millis(400));
@@ -313,7 +313,7 @@ fn harness_wpf_double_click() {
         // MouseDoubleClick / ClickCount=2 path under test-batch load.
         let resp = driver.call("double_click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx,
-            "dispatch": "foreground"
+            "delivery_mode": "foreground"
         }));
         println!("double_click: {}", resp.text());
         std::thread::sleep(Duration::from_millis(400));
@@ -560,7 +560,7 @@ fn harness_wpf_slider_drag() {
             "from_x": 44.0, "from_y": 304.0,
             "to_x": 330.0, "to_y": 304.0,
             "duration_ms": 700, "steps": 40,
-            "dispatch": "foreground"
+            "delivery_mode": "foreground"
         }));
         let msg = resp.text();
         println!("drag slider (foreground): {msg}");
@@ -624,7 +624,7 @@ fn harness_wpf_checkbox_toggle() {
         // recognises as a real user click and processes through Toggle.
         let resp = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx,
-            "dispatch": "foreground"
+            "delivery_mode": "foreground"
         }));
         println!("click chk-agreed: {}", resp.text());
         std::thread::sleep(Duration::from_millis(400));
@@ -648,7 +648,7 @@ fn harness_wpf_radio_select() {
         // Same dispatch:foreground rationale as the checkbox test.
         let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx,
-            "dispatch": "foreground"
+            "delivery_mode": "foreground"
         }));
         std::thread::sleep(Duration::from_millis(400));
         let post = snapshot(driver, pid, wid);
@@ -672,7 +672,7 @@ fn harness_wpf_combo_select() {
         // item AIDs land in the element cache, then click the target item.
         let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": combo_idx,
-            "dispatch": "foreground"
+            "delivery_mode": "foreground"
         }));
         std::thread::sleep(Duration::from_millis(500));
 
@@ -681,7 +681,7 @@ fn harness_wpf_combo_select() {
             .expect("cbo-item-orange missing after expand");
         let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": item_idx,
-            "dispatch": "foreground"
+            "delivery_mode": "foreground"
         }));
         std::thread::sleep(Duration::from_millis(500));
 
@@ -703,7 +703,7 @@ fn harness_wpf_listbox_select() {
             .expect("lst-cherry missing");
         let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx,
-            "dispatch": "foreground"
+            "delivery_mode": "foreground"
         }));
         std::thread::sleep(Duration::from_millis(400));
         let post = snapshot(driver, pid, wid);
@@ -725,7 +725,7 @@ fn harness_wpf_menu_invoke() {
             .expect("menu-file missing");
         let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": file_idx,
-            "dispatch": "foreground"
+            "delivery_mode": "foreground"
         }));
         std::thread::sleep(Duration::from_millis(400));
 
@@ -736,7 +736,7 @@ fn harness_wpf_menu_invoke() {
             .expect("menu-file-new missing after expand");
         let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": new_idx,
-            "dispatch": "foreground"
+            "delivery_mode": "foreground"
         }));
         std::thread::sleep(Duration::from_millis(500));
 

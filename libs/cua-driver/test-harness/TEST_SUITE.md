@@ -53,8 +53,8 @@ flowchart LR
 | | `harness_libreoffice_test` | win | LibreOffice VCL/SAL via MSAA (some `dispatch:"foreground"`) |
 | | `harness_appkit_test` | mac | AppKit: AX tree, AXPress, NSTextField, NSScrollView, NSMenu |
 | | `harness_swiftui_test` | mac | SwiftUI: AX tree, `.popover()` |
-| **modality_** | `modality_background_test` | win | background-modality / no-focus-steal sentinel + `capture_mode` ax/vision/som |
-| | `modality_capture_mode_test` | mac+win+linux | `capture_mode` axis on each native harness: `ax`→tree-only, `vision`→image-only, `som`→both |
+| **modality_** | `modality_background_test` | win | background-modality / no-focus-steal sentinel + deprecated `capture_mode` values accepted but ignored |
+| | `modality_capture_mode_test` | mac+win+linux | deprecated `capture_mode` parameter on each native harness: values are accepted but ignored |
 | | `modality_input_e2e_test` | win | unified background input across Electron/Tauri/Win32, no z-raise |
 | | `modality_desktop_scope_test` | win | desktop-scope (foreground): `capture_scope=desktop`, `get_desktop_state`, window-less screen-absolute actions |
 | | `modality_focus_test` | mac | background automation does not steal focus |
@@ -88,27 +88,29 @@ mirror pairs into single `cfg!`-branching tests, sharing one `RawDriver`.
 - **Transport** is now a first-class axis: `transport_config_persistence`
   exercises CLI (disk) vs MCP (session) directly; most other tests run over MCP.
 
-### The modality matrix: `capture_mode` × `dispatch` × `capture_scope`
+### The modality matrix: action target × dispatch × `capture_scope`
 
 The user-facing matrix is documented in
-`docs/content/docs/explanation/capture-and-dispatch-modalities.mdx`. Coverage of
-its five valid cells, per platform:
+`docs/content/docs/explanation/capture-and-dispatch-modalities.mdx`. `get_window_state`
+always returns both the accessibility tree and a screenshot; AX vs pixel modality is
+chosen at action time by using `element_index` vs `x,y`. Coverage of its valid cells,
+per platform:
 
-| Cell (`scope`/`mode`/`dispatch`) | Windows | macOS | Linux |
+| Cell (`scope`/action target/`dispatch`) | Windows | macOS | Linux |
 |---|---|---|---|
-| `window`/`ax`/`background` (default) | `harness_*`, `modality_background` | `harness_{appkit,swiftui}`, `modality_focus`, `modality_capture_mode` | `harness_gtk3`, `modality_capture_mode` |
-| `window`/`ax`/`foreground` | `harness_wpf` (`dispatch:"foreground"`) | activation differs | activation differs |
-| `window`/`vision`/`background` | `modality_background`, `modality_capture_mode`, `modality_input_e2e` | `modality_capture_mode` | `modality_capture_mode` |
-| `window`/`vision`/`foreground` | gap | n/a (no `bring_to_front`) | n/a (stubbed) |
-| `desktop`/`vision`/`foreground` | `modality_desktop_scope` | rolling out | rolling out |
+| `window`/`element_index`/`background` (default) | `harness_*`, `modality_background` | `harness_{appkit,swiftui}`, `modality_focus`, `modality_capture_mode` | `harness_gtk3`, `modality_capture_mode` |
+| `window`/`element_index`/`foreground` | `harness_wpf` (`dispatch:"foreground"`) | activation differs | activation differs |
+| `window`/`x,y`/`background` | `modality_background`, `modality_capture_mode`, `modality_input_e2e` | `modality_capture_mode` | `modality_capture_mode` |
+| `window`/`x,y`/`foreground` | gap | n/a (no `bring_to_front`) | n/a (stubbed) |
+| `desktop`/`x,y`/`foreground` | `modality_desktop_scope` | rolling out | rolling out |
 | **negative gate** (`desktop_scope_disabled`) | `window_scope_rejects_windowless_click` | — | — |
 
-`modality_capture_mode_test` is the cross-platform spine of the `capture_mode`
-axis: it drives each platform's native harness and asserts `ax`→tree-only,
-`vision`→image-only, `som`→both. It closes the prior "`capture_mode` only on
-Windows" gap.
+`capture_mode` is deprecated and ignored: `get_window_state` returns both the
+accessibility tree and a screenshot regardless of the parameter. The
+`modality_capture_mode_test` now exercises compatibility only: deprecated
+`ax`/`vision`/`som` values are accepted but do not change the returned shape.
 
-- **Remaining gaps** (honest): `window`/`vision`/`foreground` has no explicit
+- **Remaining gaps** (honest): `window`/`x,y`/`foreground` has no explicit
   test on any platform; the desktop-scope window-less actuator is Windows-only
   (macOS click still requires `pid`), so the desktop cell and its negative gate
   are Windows-only until that loop lands on macOS/Linux; CLI transport is

@@ -22,7 +22,7 @@ Use the same one-line installer on every platform; it picks the right path for t
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
     ```
 
-    Start the daemon through the app bundle so macOS attributes permission prompts to CuaDriver.app:
+    Start the daemon through the app bundle so macOS attributes permission prompts to CuaDriver.app — this is what makes the TCC grant stick to the driver:
 
     ```bash
     open -n -g -a CuaDriver --args serve
@@ -41,11 +41,6 @@ Use the same one-line installer on every platform; it picks the right path for t
     irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
     ```
 
-    Start the daemon from an interactive desktop session, not an SSH session. **The daemon must run in Session 1 or later**; a daemon started over SSH usually lands in Session 0 and cannot drive the GUI.
-
-    ```powershell
-    cua-driver serve
-    ```
   </Tab>
   <Tab value="Linux">
     Requires an x86_64 Linux desktop session with X11 or XWayland, plus AT-SPI 2.
@@ -54,11 +49,6 @@ Use the same one-line installer on every platform; it picks the right path for t
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
     ```
 
-    Start the daemon from inside your graphical desktop session:
-
-    ```bash
-    cua-driver serve
-    ```
   </Tab>
 </Tabs>
 
@@ -145,19 +135,48 @@ Register Cua Driver with your agent harness once.
 
 Using Cursor, Gemini/Antigravity, OpenCode, OpenClaw, or Pi instead? See [Connect your agent](/how-to-guides/driver/connect-your-agent).
 
-## 4. Ask your agent to drive an app
+## 4. Ask your agent
 
-Now ask your agent in plain English. Type this prompt to Claude Code, Codex, or Hermes:
+You can now prompt your agent in plain English, and it will drive Cua Driver for you.
 
-```text
-Using cua-driver, open the calculator and compute 17 x 23, then tell me the answer.
-```
+<Tabs items={['Claude Code', 'Codex']}>
+  <Tab value="Claude Code">
+    ```text
+    > Using the cua-computer-use MCP, open the Calculator, compute 6 × 7, and tell me the result.
 
-The agent uses Cua Driver to launch the calculator (Calculator on macOS and Windows, the system calculator on Linux), read the window's accessibility tree, click the number and operator keys, and read the result back from the display. All of it runs in the background. The agent picks the right calculator app for your OS, so the same prompt works on all three platforms.
+    → launch_app Calculator
+    → get_window_state
+    → click 7 [element_index=12]
+    → click × [element_index=20]
+    → click 6 [element_index=11]
+    → click = [element_index=22]
+    → get_window_state
+    ✓ The result is 42.
+    ```
+  </Tab>
+  <Tab value="Codex">
+    ```text
+    > Using the Cua Driver skill, open the Calculator, compute 6 × 7, and read the result back.
+
+    → launch_app Calculator
+    → get_window_state
+    → click 7 [element_index=12]
+    → click × [element_index=20]
+    → click 6 [element_index=11]
+    → click = [element_index=22]
+    → get_window_state
+    ✓ The result is 42.
+    ```
+  </Tab>
+</Tabs>
+
+Everything runs in the background, and the agent picks the right calculator for your OS (Calculator on macOS and Windows, the system calculator on Linux), so the same prompt works on all three platforms.
+
+To explore capture and dispatch modes, see [Choose an action rung and dispatch mode](/how-to-guides/driver/choose-a-modality).
 
 ## 5. Confirm what happened
 
-The agent reports 391. Cua Driver kept the calculator in the background the whole time. It never stole your keyboard focus and never moved your cursor. That is the *no-foreground contract*: the agent drives the app while you keep working. See [The no-foreground contract](/explanation/the-no-foreground-contract).
+The agent reports 42. Cua Driver kept the calculator in the background the whole time. It never stole your keyboard focus and never moved your cursor. That is the *no-foreground contract*: the agent drives the app while you keep working. See [The no-foreground contract](/explanation/the-no-foreground-contract).
 
 ## What you did
 

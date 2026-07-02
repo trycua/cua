@@ -22,7 +22,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
     KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
-    KEYEVENTF_SCANCODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY,
+    KEYEVENTF_SCANCODE, KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, SetForegroundWindow,
@@ -365,7 +365,11 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
     unsafe {
         // Save & set foreground so SendInput lands on `target`.
         let prev_fg = GetForegroundWindow();
-        let _ = SetForegroundWindow(target);
+        // Robust auto bring-to-front (AttachThreadInput, same engine as
+        // bring_to_front / macOS with_foreground_assist) — a bare
+        // SetForegroundWindow is denied by the foreground-lock without UIAccess.
+        // Restored to prev_fg below.
+        let _ = crate::input::inject::force_foreground_attached(target);
         // Brief settle so the foreground swap is processed before we send.
         sleep(Duration::from_millis(8));
 
@@ -388,7 +392,7 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
                  swap, SendInput would land on the wrong window. Fix: install \
                  / spawn the cua-driver-uia worker (UIAccess-manifested PE) \
                  and route hotkey calls through it. Until then, the calling \
-                 app must already be foreground for dispatch:\"foreground\" \
+                 app must already be foreground for delivery_mode:\"foreground\" \
                  to be safe.",
                 target.0, actual_fg.0
             );
@@ -421,6 +425,127 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
     Ok(())
 }
 
+/// Foreground-delivery text entry: the `delivery_mode:"foreground"` rung for
+/// `type_text`. Symmetric with [`send_key_synthesized`] — briefly fronts the
+/// target, types `text` as SendInput Unicode (`KEYEVENTF_UNICODE`, so every
+/// codepoint lands regardless of keyboard layout), then restores the prior
+/// foreground. This is only reached on the explicit `delivery_mode:"foreground"`
+/// rung (background never fronts); it does NOT silently fall back to
+/// PostMessage: if the foreground swap is rejected
+/// (daemon not at UIAccess integrity) it bails with the same diagnostic
+/// `send_key_synthesized` returns, so the caller gets an honest error instead
+/// of a false success. Required for VCL/LibreOffice document grids and other
+/// targets where PostMessage WM_CHAR is silently dropped.
+pub fn send_text_synthesized(hwnd: u64, text: &str) -> Result<()> {
+    let target = HWND(hwnd as *mut _);
+    if target.0.is_null() {
+        bail!("invalid target hwnd");
+    }
+    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
+        bail!(msg);
+    }
+    // Build the key-event sequence. Printable codepoints go through as Unicode
+    // packets (KEYEVENTF_UNICODE, wVk=0, wScan=code unit), but line breaks are
+    // mapped to a real VK_RETURN keystroke — mirroring the background path
+    // (`post_enter_keystroke`) — because terminals and rich editors honour an
+    // Enter key event, not a raw `\r`/`\n` Unicode packet. `\r\n` collapses to
+    // a single Return (the `\r` emits the Enter; the following `\n` is silent).
+    let return_vk = windows::Win32::UI::Input::KeyboardAndMouse::VK_RETURN;
+    let mut events: Vec<INPUT> = Vec::with_capacity(text.len() * 2);
+    let mut prev_was_cr = false;
+    for ch in text.chars() {
+        match ch {
+            '\n' if prev_was_cr => {
+                prev_was_cr = false;
+            }
+            '\n' | '\r' => {
+                events.push(key_input(return_vk, false));
+                events.push(key_input(return_vk, true));
+                prev_was_cr = ch == '\r';
+            }
+            _ => {
+                prev_was_cr = false;
+                let mut buf = [0u16; 2];
+                for unit in ch.encode_utf16(&mut buf) {
+                    events.push(unicode_key_input(*unit, false));
+                    events.push(unicode_key_input(*unit, true));
+                }
+            }
+        }
+    }
+    if events.is_empty() {
+        return Ok(());
+    }
+
+    unsafe {
+        // Save & set foreground so SendInput lands on `target`. Same verify-
+        // before-send guard as send_key_synthesized: a foreground-lock no-op
+        // would otherwise spray the text into whatever window actually held
+        // focus (typically the terminal hosting this daemon).
+        let prev_fg = GetForegroundWindow();
+        // Robust auto bring-to-front (AttachThreadInput, same engine as
+        // bring_to_front / macOS with_foreground_assist) — a bare
+        // SetForegroundWindow is denied by the foreground-lock without UIAccess.
+        // Restored to prev_fg below.
+        let _ = crate::input::inject::force_foreground_attached(target);
+        sleep(Duration::from_millis(8));
+        let actual_fg = GetForegroundWindow();
+        if actual_fg != target {
+            bail!(
+                "Foreground swap to target HWND {:?} was rejected by Windows \
+                 (actual foreground is HWND {:?}). This daemon is not at \
+                 UIAccess integrity, so SetForegroundWindow is subject to the \
+                 foreground-lock and the swap silently fails. Without the swap, \
+                 SendInput would land on the wrong window. Fix: install / spawn \
+                 the cua-driver-uia worker (UIAccess-manifested PE) and route \
+                 type_text through it. Until then, the calling app must already \
+                 be foreground for delivery_mode:\"foreground\" to be safe.",
+                target.0, actual_fg.0
+            );
+        }
+
+        let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
+        if sent as usize != events.len() {
+            let _ = SetForegroundWindow(prev_fg);
+            bail!(
+                "SendInput inserted only {sent} of {} key events. Likely cause: \
+                 the daemon is not at UIAccess integrity, so SetForegroundWindow \
+                 was rejected and the events landed on the wrong window.",
+                events.len()
+            );
+        }
+
+        // Settle so the target processes the text before we yield focus back.
+        sleep(Duration::from_millis(40));
+        if !prev_fg.0.is_null() && prev_fg != target {
+            let _ = SetForegroundWindow(prev_fg);
+        }
+    }
+    Ok(())
+}
+
+/// Build a single Unicode keyboard INPUT struct for one UTF-16 code unit,
+/// either down (`up = false`) or up (`up = true`). Used by
+/// [`send_text_synthesized`].
+fn unicode_key_input(unit: u16, up: bool) -> INPUT {
+    let mut flags = KEYEVENTF_UNICODE;
+    if up {
+        flags |= KEYEVENTF_KEYUP;
+    }
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0),
+                wScan: unit,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
 /// Build a single keyboard INPUT struct for `vk`, either down (`up = false`)
 /// or up (`up = true`). Uses scancode + EXTENDEDKEY where applicable so the
 /// target sees a hardware-like keystroke.
@@ -451,10 +576,23 @@ fn modifier_vk(name: &str) -> Option<VIRTUAL_KEY> {
     match name.to_lowercase().as_str() {
         "ctrl" | "control" => Some(VK_CONTROL),
         "shift" => Some(VK_SHIFT),
-        "alt" | "menu" => Some(VK_MENU),
-        "win" | "meta" | "windows" => Some(VK_LWIN),
+        "alt" | "menu" | "option" => Some(VK_MENU),
+        "win" | "meta" | "windows" | "cmd" | "command" => Some(VK_LWIN),
         _ => None,
     }
+}
+
+/// Build the SendInput `INPUT` events that HOLD the named modifier keys around a
+/// pointer action: `(downs, ups)` where `downs` presses each modifier (in order)
+/// and `ups` releases them (reverse order). A pointer path emits `downs`, does
+/// the click, then emits `ups`. Unknown modifier names are skipped. Empty input
+/// → two empty vecs (no-op). Lets the mouse SendInput path hold cmd/shift/alt/
+/// ctrl exactly like `send_key_synthesized` does for keystrokes.
+pub fn modifier_hold_inputs(modifiers: &[&str]) -> (Vec<INPUT>, Vec<INPUT>) {
+    let mod_vks: Vec<VIRTUAL_KEY> = modifiers.iter().filter_map(|m| modifier_vk(m)).collect();
+    let downs: Vec<INPUT> = mod_vks.iter().map(|v| key_input(*v, false)).collect();
+    let ups: Vec<INPUT> = mod_vks.iter().rev().map(|v| key_input(*v, true)).collect();
+    (downs, ups)
 }
 
 fn is_extended(vk: VIRTUAL_KEY) -> bool {

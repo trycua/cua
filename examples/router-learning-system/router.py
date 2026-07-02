@@ -76,6 +76,7 @@ def _exec_safari(task: str, args: dict) -> dict:
             "note": "Safari AX path prepared but not completed — readiness only",
             "method": "Safari AX",
             "task": task,
+            "requires_user_action": True,
             "warnings": ["GitHub now requires sudo mode (2FA/email) for token creation"],
         }
     return {"success": False, "error": f"Safari 未知任務: {task}"}

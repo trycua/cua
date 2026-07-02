@@ -7358,7 +7358,6 @@ mod chromium_flag_injection_tests {
 mod click_button_schema_tests {
     use super::ClickTool;
     use cua_driver_core::tool::Tool;
-    use std::sync::Arc;
 
     /// Surface 5: schema must keep advertising the three canonical button
     /// values. Windows was already shipping `button` (pre-Surface-5) so this

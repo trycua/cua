@@ -4,8 +4,8 @@
 //! WITHOUT the target window ever being raised to the foreground.
 //!
 //! Verified two ways per action:
-//!   1. The tool succeeds in the DEFAULT dispatch mode — no
-//!      `background_unavailable` error, no `dispatch:"foreground"` needed.
+//!   1. The tool succeeds in the DEFAULT delivery mode — no
+//!      `background_unavailable` error, no `delivery_mode:"foreground"` needed.
 //!   2. The `focus-monitor-win` sentinel records ZERO foreground losses across
 //!      the action == the target window was not z-raised over the user's
 //!      window (same oracle as `harness_bg_modality_test`).
@@ -351,7 +351,7 @@ fn webview_click_case(label: &str, exe: PathBuf) {
     assert!(!errored, "{label}: default-mode click errored: {delivered}");
     assert!(
         !needs_foreground,
-        "{label}: click should not need dispatch:foreground, got {delivered:?}"
+        "{label}: click should not need delivery_mode:foreground, got {delivered:?}"
     );
     // Delivery is confirmed by the driver's own ✅ result (UIA Invoke fires the
     // element's default action / DOM `click`). The /events pointer-log is info

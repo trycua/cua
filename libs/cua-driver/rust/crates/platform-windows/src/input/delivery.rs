@@ -168,7 +168,7 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
         // clicks, drawing-area widgets accept them. We cannot distinguish
         // at the HWND level (single HWND for the whole GTK window) so we
         // flag mouse clicks broadly. Canvas-style drag works in practice;
-        // caller can still opt to retry with dispatch:"background" on the
+        // caller can still opt to retry with delivery_mode:"background" on the
         // drag path if the click error wasn't actually load-bearing.
         return matches!(kind, MouseClick);
     }
@@ -181,7 +181,7 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
         // Alt+F4) silently fail. Plain WM_CHAR text input through the
         // document widgets still works (verified end-to-end against
         // Writer's main editing area). Flag the keystroke-class events
-        // so dispatch:"background" surfaces a structured error instead
+        // so delivery_mode:"background" surfaces a structured error instead
         // of pretending to succeed.
         return matches!(kind, Keystroke | KeyCombo);
     }
@@ -275,7 +275,7 @@ pub fn read_class_name(hwnd: u64) -> String {
 }
 
 /// Build the structured `background_unavailable` error returned when
-/// `dispatch:"background"` would silently drop.
+/// `delivery_mode:"background"` would silently drop.
 pub fn background_unavailable_error(
     hwnd: u64,
     kind: EventKind,

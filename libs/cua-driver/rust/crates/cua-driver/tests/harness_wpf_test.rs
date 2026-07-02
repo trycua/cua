@@ -26,7 +26,7 @@
 //! sandbox runner unignores them explicitly via the `--ignored` arg.
 //!
 //! **Foreground-lock caveat:** a handful of these tests (`double_click`,
-//! `right_click`, `type_text`) rely on `dispatch:"foreground"` to reach
+//! `right_click`, `type_text`) rely on `delivery_mode:"foreground"` to reach
 //! WPF's input chain reliably. Windows' system-wide foreground-lock
 //! kicks in after ~30s with no real user input — once that happens,
 //! `SetForegroundWindow` is denied for non-UIAccess processes and the
@@ -78,7 +78,7 @@ fn launch_harness(driver: &mut McpDriver) -> Option<u32> {
     // wait happens via polling in find_window. A 200ms-only
     // wait turned out to be too short for the harness to establish
     // foreground reliably under test-batch load, which caused
-    // SetForegroundWindow-needing tests (dispatch:foreground) to
+    // SetForegroundWindow-needing tests (delivery_mode:foreground) to
     // fail with a foreground-lock rejection.
     std::thread::sleep(Duration::from_millis(800));
     Some(pid)
@@ -192,7 +192,7 @@ fn harness_wpf_type_text() {
         // WPF's TextBox needs *keyboard focus* for WM_CHAR delivery — and
         // PostMessage(WM_LBUTTONDOWN) doesn't reliably transfer keyboard
         // focus (WPF's input system treats posted events differently from
-        // real ones). Use dispatch:"foreground" → SendInput synthesizes
+        // real ones). Use delivery_mode:"foreground" → SendInput synthesizes
         // an OS-level click that WPF treats identically to a user mouse,
         // landing actual keyboard focus on the TextBox.
         let _ = driver.call("bring_to_front", serde_json::json!({
@@ -279,7 +279,7 @@ fn harness_wpf_right_click() {
         let snap = snapshot(driver, pid, wid);
         let idx = ax::element_index_by_id(snap.text(), "border-click-target")
             .expect("border-click-target not in snapshot");
-        // Same dispatch:foreground rationale as type_text — PostMessage
+        // Same delivery_mode:foreground rationale as type_text — PostMessage
         // WM_RBUTTONDOWN doesn't always reach WPF's MouseRightButtonDown
         // routed-event chain (intermittent in batch runs).
         let resp = driver.call("right_click", serde_json::json!({
@@ -308,7 +308,7 @@ fn harness_wpf_double_click() {
         let snap = snapshot(driver, pid, wid);
         let idx = ax::element_index_by_id(snap.text(), "border-click-target")
             .expect("border-click-target not in snapshot");
-        // dispatch:foreground for the same reason as right_click —
+        // delivery_mode:foreground for the same reason as right_click —
         // PostMessage WM_LBUTTONDOWN ×2 doesn't always reach WPF's
         // MouseDoubleClick / ClickCount=2 path under test-batch load.
         let resp = driver.call("double_click", serde_json::json!({
@@ -534,7 +534,7 @@ fn harness_wpf_slider_drag() {
     // Regression guard for the SendInput drag path. PostMessage drag
     // doesn't update GetKeyState, so WPF's Thumb-drag handler (which
     // polls Mouse.LeftButton via GetKeyState) never sees the button
-    // held — the thumb stays put. dispatch:"foreground" routes through
+    // held — the thumb stays put. delivery_mode:"foreground" routes through
     // send_drag_synthesized which goes via the system input queue and
     // DOES update GetKeyState, so the thumb actually tracks.
     //
@@ -620,7 +620,7 @@ fn harness_wpf_checkbox_toggle() {
         // CheckBox exposes UIA TogglePattern (actions=[toggle]), not Invoke.
         // cua-driver's click tool tries UIA Invoke first; for elements that
         // don't support it the PostMessage fallback path runs. Use
-        // dispatch:"foreground" to land a SendInput click that WPF
+        // delivery_mode:"foreground" to land a SendInput click that WPF
         // recognises as a real user click and processes through Toggle.
         let resp = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx,
@@ -645,7 +645,7 @@ fn harness_wpf_radio_select() {
         let idx = ax::element_index_by_id(snap.text(), "rdo-high")
             .expect("rdo-high missing");
         // RadioButton exposes SelectionItem pattern (actions=[select]).
-        // Same dispatch:foreground rationale as the checkbox test.
+        // Same delivery_mode:foreground rationale as the checkbox test.
         let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx,
             "delivery_mode": "foreground"

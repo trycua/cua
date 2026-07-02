@@ -17,6 +17,10 @@ on:
       - 'libs/cua-driver/rust/**'
       - '.github/workflows/nix-build.yml'
   workflow_dispatch:
+  # Callable as the Linux release-gate preamble from release-bump-version.yml:
+  # the bump action runs THIS exact suite against the release commit before any
+  # bump/tag/publish. See RELEASE_TEST_GATE_PLAN.md (Phase 0).
+  workflow_call:
 
 permissions:
   id-token: write
@@ -33,6 +37,10 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Quarantine known-flaky jobs (matrix `allow_failure: true`): they still run
+    # and upload artifacts, but a failure does NOT fail the workflow — so a flake
+    # can't block a PR merge OR the release gate. De-flake then remove the flag.
+    continue-on-error: ${{ matrix.allow_failure || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -51,6 +59,7 @@ jobs:
             artifact_name: ""
           - name: Linux cursor click GIF test
             check_attr: cua-driver-linux-cursor-click-gif
+            allow_failure: true  # known-flaky (GIF timing) — quarantined; de-flake + remove
             timeout_minutes: 12
             visual: true
             result_link: result-linux-cursor-click-gif

@@ -1,1 +1,11 @@
-{ "title": "Reference", "icon": "BookText", "pages": ["index", "cua-driver", "sandbox-sdk", "docs-code-mcp"] }
+{
+  "title": "Reference",
+  "icon": "BookText",
+  "pages": [
+    "index",
+    "cua-driver",
+    "lume",
+    "sandbox-sdk",
+    "docs-code-mcp"
+  ]
+}

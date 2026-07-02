@@ -144,6 +144,7 @@ class VM {
     func run(
         noDisplay: Bool, sharedDirectories: [SharedDirectory], mount: Path?, vncPort: Int = 0,
         vncPassword: String? = nil, recoveryMode: Bool = false, usbMassStoragePaths: [Path]? = nil,
+        additionalDiskPaths: [Path]? = nil,
         networkMode: NetworkMode? = nil, clipboard: Bool = false
     ) async throws {
         Logger.info(
@@ -248,6 +249,7 @@ class VM {
                 mount: mount,
                 recoveryMode: recoveryMode,
                 usbMassStoragePaths: usbMassStoragePaths,
+                additionalDiskPaths: additionalDiskPaths,
                 networkMode: networkMode
             )
             Logger.info(
@@ -870,6 +872,7 @@ class VM {
         mount: Path? = nil,
         recoveryMode: Bool = false,
         usbMassStoragePaths: [Path]? = nil,
+        additionalDiskPaths: [Path]? = nil,
         networkMode: NetworkMode? = nil
     ) throws -> VMVirtualizationServiceContext {
         // This is a diagnostic log to track actual file paths on disk for debugging
@@ -891,6 +894,7 @@ class VM {
             nvramPath: vmDirContext.nvramPath,
             recoveryMode: recoveryMode,
             usbMassStoragePaths: usbMassStoragePaths,
+            additionalDiskPaths: additionalDiskPaths,
             networkMode: effectiveNetworkMode
         )
     }

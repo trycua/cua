@@ -1,389 +1,340 @@
+#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "aiohttp>=3.9",
+#     "beautifulsoup4>=4.12",
+#     "lancedb>=0.6",
+#     "openai>=1.0",
+# ]
+# ///
 """
-Comprehensive crawler for cua.ai/docs using Playwright.
-Recursively crawls all documentation pages and saves content to JSON files.
+docs-mcp standalone crawler
+============================
+
+Lightweight version of the Modal crawl job for local development and
+one-off re-indexing without deploying to Modal.
+
+Usage:
+    uv run docs/scripts/crawl_docs.py [--out-dir ./docs_db_local]
+
+Requirements:
+    OPENAI_API_KEY env var (for embedding; skip with --no-embed to crawl only)
+
+This script uses the same URL filter logic as modal_app.py so local
+test results match production behaviour.
 """
 
+from __future__ import annotations
+
+import argparse
 import asyncio
-import html
-from html.parser import HTMLParser
-import json
+import hashlib
+import logging
 import re
+import sqlite3
+import tempfile
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
-from playwright.async_api import Browser, async_playwright
+import aiohttp
+from bs4 import BeautifulSoup
 
-# Configuration
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Config (kept in sync with modal_app.py)
+# ---------------------------------------------------------------------------
+
 BASE_URL = "https://cua.ai"
-DOCS_URL = f"{BASE_URL}/docs"
-OUTPUT_DIR = Path(__file__).parent.parent / "crawled_data"
-MAX_CONCURRENT = 5  # Limit concurrent requests to be polite
-DELAY_BETWEEN_REQUESTS = 0.5  # seconds
+
+# Seed URLs — the crawler starts here and follows links that pass is_valid_url().
+# Add every top-level product / docs page that does NOT live under /docs/.
+SEED_URLS: list[str] = [
+    # Main docs root
+    f"{BASE_URL}/docs",
+    # Product pages that live outside /docs/ and must be explicitly seeded.
+    # Without these the crawler would never discover them because it only
+    # follows links from already-visited cua.ai pages.
+    f"{BASE_URL}/cua-driver",
+]
+
+# URL path prefixes that are valid docs/product content pages.
+# Extend this list whenever a new top-level product page is added to the
+# website's routes.ts that should appear in the Docs Assistant index.
+VALID_PATH_PREFIXES: tuple[str, ...] = (
+    "/docs",        # primary docs tree
+    "/cua-driver",  # product landing page (moved out of /docs in 2026-06 migration)
+)
+
+EMBED_MODEL = "text-embedding-3-small"
+EMBED_DIMENSIONS = 1536
+CHUNK_SIZE = 800
+CHUNK_OVERLAP = 100
+
+MAX_CONCURRENT_REQUESTS = 5
+REQUEST_TIMEOUT = 30
+CRAWL_DELAY = 0.25
 
 
-class HTMLToMarkdown(HTMLParser):
-    """Small dependency-free HTML-to-Markdown converter for crawled docs pages.
+# ---------------------------------------------------------------------------
+# URL filtering
+# ---------------------------------------------------------------------------
 
-    Extraction is scoped to the page's main content container (``<article>``,
-    falling back to ``<main>``) and site chrome (``nav``/``aside``/``footer``) is
-    dropped, so the crawled corpus is the documentation body rather than the
-    navigation tree that repeats identically on every page.
+def is_valid_url(url: str) -> bool:
+    """Return True if *url* should be crawled and indexed.
+
+    Rules:
+    - Must be on cua.ai (exact hostname match, no subdomains).
+    - Path must start with one of VALID_PATH_PREFIXES.
+    - Skip non-HTML resources and internal/admin paths.
     """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
 
-    block_tags = {
-        "blockquote",
-        "br",
-        "div",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "header",
-        "li",
-        "main",
-        "ol",
-        "p",
-        "pre",
-        "section",
-        "table",
-        "tr",
-        "ul",
-    }
-    # Content of these tags is dropped entirely: non-text assets and the site
-    # chrome (sidebar/nav tree, "on this page" aside, footer) that is identical
-    # on every page and would otherwise dominate the embedded corpus.
-    skip_tags = {"script", "style", "svg", "nav", "aside", "footer"}
+    if parsed.netloc not in ("cua.ai", "www.cua.ai"):
+        return False
 
-    def __init__(self, scope_tag: str | None = None) -> None:
-        super().__init__(convert_charrefs=True)
-        self.parts: list[str] = []
-        self.skip_depth = 0
-        self.in_pre = False
-        # When set, only emit text while inside this container; None = emit all.
-        self.scope_tag = scope_tag
-        self.scope_depth = 0
+    path = parsed.path.rstrip("/") or "/"
 
-    @property
-    def _capturing(self) -> bool:
-        return self.scope_tag is None or self.scope_depth > 0
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in self.skip_tags:
-            self.skip_depth += 1
-            return
-        if tag == self.scope_tag:
-            self.scope_depth += 1
-        if self.skip_depth or not self._capturing:
-            return
-        if tag in self.block_tags:
-            self.parts.append("\n")
-        if tag == "li":
-            self.parts.append("- ")
-        elif tag == "pre":
-            self.in_pre = True
-            self.parts.append("\n```\n")
-        elif tag == "code" and not self.in_pre:
-            self.parts.append("`")
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in self.skip_tags and self.skip_depth:
-            self.skip_depth -= 1
-            return
-        if self.skip_depth:
-            return
-        if self._capturing:
-            if tag == "pre":
-                self.in_pre = False
-                self.parts.append("\n```\n")
-            elif tag == "code" and not self.in_pre:
-                self.parts.append("`")
-            if tag in self.block_tags:
-                self.parts.append("\n")
-        if tag == self.scope_tag and self.scope_depth:
-            self.scope_depth -= 1
-
-    def handle_data(self, data: str) -> None:
-        if self.skip_depth or not self._capturing:
-            return
-        text = data if self.in_pre else re.sub(r"\s+", " ", data)
-        if text.strip():
-            self.parts.append(text)
-
-    def markdown(self) -> str:
-        text = html.unescape("".join(self.parts))
-        text = re.sub(r"[ \t]+\n", "\n", text)
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        return text.strip()
-
-
-def html_to_markdown(page_html: str) -> str:
-    # Prefer the main content container so the navigation/sidebar chrome that
-    # repeats on every page does not pollute the crawled corpus; fall back to
-    # the whole document when neither container is present.
-    scope_tag = None
-    for tag in ("article", "main"):
-        if re.search(rf"<{tag}[\s>]", page_html, re.IGNORECASE):
-            scope_tag = tag
-            break
-    parser = HTMLToMarkdown(scope_tag)
-    parser.feed(page_html)
-    return parser.markdown()
-
-
-def extract_metadata(page_html: str, title: str) -> dict[str, str]:
-    description = ""
-    match = re.search(
-        r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']*)["\']',
-        page_html,
-        re.IGNORECASE,
+    # Skip API, auth, admin, and other non-content paths
+    skip_prefixes = (
+        "/api/",
+        "/admin",
+        "/signin",
+        "/signup",
+        "/cli-auth",
+        "/connect/",
+        "/dashboard",
+        "/maintenance",
+        "/docs/api/copilotkit",
+        "/docs/llms",
+        "/docs-md",
     )
-    if match:
-        description = html.unescape(match.group(1))
-    return {"title": title, "description": description}
+    if any(path.startswith(p) for p in skip_prefixes):
+        return False
+
+    # Only index paths that belong to docs or known product pages
+    if not any(path.startswith(prefix) for prefix in VALID_PATH_PREFIXES):
+        return False
+
+    return True
 
 
-class CuaDocsCrawler:
-    def __init__(self):
-        self.visited_urls: set[str] = set()
-        self.to_visit: set[str] = set()
-        self.failed_urls: set[str] = set()
-        self.all_data: list[dict] = []
-        self.semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+# ---------------------------------------------------------------------------
+# Crawling
+# ---------------------------------------------------------------------------
 
-    def normalize_url(self, url: str) -> str:
-        """Normalize URL to avoid duplicates"""
-        parsed = urlparse(url)
-        # Remove trailing slashes and fragments
-        path = parsed.path.rstrip("/")
-        if not path:
-            path = ""
-        return f"{parsed.scheme}://{parsed.netloc}{path}"
-
-    def is_valid_url(self, url: str) -> bool:
-        """Check if URL should be crawled (only /docs pages)"""
-        parsed = urlparse(url)
-
-        # Only crawl cua.ai pages
-        if parsed.netloc and parsed.netloc not in ["cua.ai", "www.cua.ai"]:
-            return False
-
-        # Only crawl /docs paths
-        if not parsed.path.startswith("/docs"):
-            return False
-
-        # Skip non-page resources
-        skip_extensions = [
-            ".pdf",
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".gif",
-            ".svg",
-            ".css",
-            ".js",
-            ".ico",
-            ".woff",
-            ".woff2",
-            ".ttf",
-            ".zip",
-            ".tar",
-            ".gz",
-        ]
-        if any(parsed.path.lower().endswith(ext) for ext in skip_extensions):
-            return False
-
-        # Skip external links and anchors
-        if url.startswith("#") or url.startswith("mailto:") or url.startswith("javascript:"):
-            return False
-
-        return True
-
-    def extract_links(self, html: str, current_url: str) -> set[str]:
-        """Extract all internal links from HTML content"""
-        links = set()
-
-        # Find all href attributes
-        href_pattern = r'href=["\']([^"\']+)["\']'
-        matches = re.findall(href_pattern, html, re.IGNORECASE)
-
-        for href in matches:
-            # Convert relative URLs to absolute
-            if href.startswith("/"):
-                full_url = urljoin(BASE_URL, href)
-            elif href.startswith("http"):
-                full_url = href
-            elif not href.startswith("#") and not href.startswith("mailto:"):
-                full_url = urljoin(current_url, href)
-            else:
-                continue
-
-            normalized = self.normalize_url(full_url)
-            if self.is_valid_url(normalized):
-                links.add(normalized)
-
-        return links
-
-    def extract_path_info(self, url: str) -> dict:
-        """Extract meaningful path information from URL"""
-        parsed = urlparse(url)
-        path = parsed.path.replace("/docs/", "").strip("/")
-        parts = path.split("/") if path else []
-
-        return {
-            "path": path,
-            "category": parts[0] if parts else "root",
-            "subcategory": parts[1] if len(parts) > 1 else None,
-            "page": parts[-1] if parts else "index",
-            "depth": len(parts),
-        }
-
-    async def crawl_page(self, browser: Browser, url: str) -> dict | None:
-        """Crawl a single page"""
-        async with self.semaphore:
-            page = None
-            try:
-                print(f"Crawling: {url}")
-
-                page = await browser.new_page()
-                response = await page.goto(url, wait_until="networkidle", timeout=30_000)
-                if response is None or not response.ok:
-                    status = response.status if response else "no response"
-                    print(f"Failed to crawl {url}: HTTP {status}")
-                    self.failed_urls.add(url)
-                    return None
-
-                page_html = await page.content()
-                metadata = extract_metadata(page_html, await page.title())
-
-                # Extract new links from the page
-                new_links = self.extract_links(page_html, url)
-                for link in new_links:
-                    if link not in self.visited_urls and link not in self.to_visit:
-                        self.to_visit.add(link)
-
-                path_info = self.extract_path_info(url)
-
-                page_data = {
-                    "url": url,
-                    "title": metadata["title"],
-                    "description": metadata["description"],
-                    "markdown": html_to_markdown(page_html),
-                    "path_info": path_info,
-                    "links_found": list(new_links),
-                }
-
-                # Save individual page
-                self.save_page(url, page_data)
-
-                await asyncio.sleep(DELAY_BETWEEN_REQUESTS)
-                return page_data
-
-            except Exception as e:
-                print(f"Error crawling {url}: {e}")
-                self.failed_urls.add(url)
+async def fetch_page(session: aiohttp.ClientSession, url: str) -> tuple[str, str] | None:
+    """Fetch *url* and return ``(final_url, html)`` or ``None`` on failure."""
+    try:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)) as resp:
+            if resp.status != 200:
+                logger.warning("HTTP %d for %s", resp.status, url)
                 return None
-            finally:
-                if page is not None:
-                    await page.close()
-
-    def save_page(self, url: str, data: dict):
-        """Save page data to a JSON file"""
-        # Create filename from URL path
-        parsed = urlparse(url)
-        path = parsed.path.strip("/") or "index"
-        filename = path.replace("/", "_") + ".json"
-
-        filepath = OUTPUT_DIR / filename
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-
-    async def crawl_all(self):
-        """Main crawl loop"""
-        OUTPUT_DIR.mkdir(exist_ok=True)
-
-        # Start with the docs URL and key sections based on typical CUA docs structure
-        seed_urls = [
-            DOCS_URL,
-            f"{DOCS_URL}/cua",
-            f"{DOCS_URL}/cua/guide",
-            f"{DOCS_URL}/cua/guide/get-started",
-            f"{DOCS_URL}/cua/reference",
-            f"{DOCS_URL}/cua/reference/computer-sdk",
-            f"{DOCS_URL}/cua-bench",
-            f"{BASE_URL}/llms.txt",  # LLM-optimized content if available
-        ]
-
-        for url in seed_urls:
-            normalized = self.normalize_url(url)
-            if self.is_valid_url(normalized) or url.endswith("llms.txt"):
-                self.to_visit.add(normalized)
-
-        async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(headless=True)
-            try:
-                while self.to_visit:
-                    # Get batch of URLs to crawl
-                    batch = []
-                    while self.to_visit and len(batch) < MAX_CONCURRENT:
-                        url = self.to_visit.pop()
-                        if url not in self.visited_urls:
-                            batch.append(url)
-                            self.visited_urls.add(url)
-
-                    if not batch:
-                        break
-
-                    # Crawl batch concurrently
-                    tasks = [self.crawl_page(browser, url) for url in batch]
-                    results = await asyncio.gather(*tasks)
-
-                    # Collect successful results
-                    for result in results:
-                        if result:
-                            self.all_data.append(result)
-
-                    print(
-                        f"Progress: {len(self.visited_urls)} crawled, "
-                        f"{len(self.to_visit)} remaining"
-                    )
-            finally:
-                await browser.close()
-
-        # Save summary
-        summary = {
-            "total_pages": len(self.all_data),
-            "failed_urls": list(self.failed_urls),
-            "all_urls": list(self.visited_urls),
-            "categories": self._get_categories(),
-        }
-
-        with open(OUTPUT_DIR / "_summary.json", "w", encoding="utf-8") as f:
-            json.dump(summary, f, indent=2)
-
-        # Save all data in one file too
-        with open(OUTPUT_DIR / "_all_pages.json", "w", encoding="utf-8") as f:
-            json.dump(self.all_data, f, indent=2, ensure_ascii=False)
-
-        print("\nCrawl complete!")
-        print(f"Total pages crawled: {len(self.all_data)}")
-        print(f"Failed URLs: {len(self.failed_urls)}")
-        print(f"Output saved to: {OUTPUT_DIR.absolute()}")
-
-    def _get_categories(self) -> dict:
-        """Get summary of categories crawled"""
-        categories = {}
-        for page in self.all_data:
-            cat = page.get("path_info", {}).get("category", "unknown")
-            categories[cat] = categories.get(cat, 0) + 1
-        return categories
+            content_type = resp.headers.get("content-type", "")
+            if "text/html" not in content_type:
+                return None
+            html = await resp.text()
+            return (str(resp.url), html)
+    except Exception as exc:
+        logger.warning("Failed to fetch %s: %s", url, exc)
+        return None
 
 
-async def main():
-    crawler = CuaDocsCrawler()
-    await crawler.crawl_all()
+def extract_links(base_url: str, html: str) -> list[str]:
+    """Extract and normalise valid links from *html* relative to *base_url*."""
+    soup = BeautifulSoup(html, "html.parser")
+    links: list[str] = []
+    for tag in soup.find_all("a", href=True):
+        href = tag["href"].strip()
+        if not href or href.startswith("#") or href.startswith("mailto:"):
+            continue
+        absolute = urljoin(base_url, href)
+        parsed = urlparse(absolute)
+        clean = parsed._replace(fragment="", query="").geturl()
+        if is_valid_url(clean):
+            links.append(clean)
+    return links
+
+
+def extract_text(url: str, html: str) -> dict:
+    """Strip navigation chrome from *html* and return a ``{url, title, text}`` dict."""
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "nav", "footer", "header"]):
+        tag.decompose()
+    title_tag = soup.find("title")
+    title = title_tag.get_text(strip=True) if title_tag else url
+    main = soup.find("main") or soup.find("article") or soup.body or soup
+    text = re.sub(r"\n{3,}", "\n\n", main.get_text(separator="\n", strip=True))
+    return {"url": url, "title": title, "text": text}
+
+
+async def crawl(seed_urls: list[str]) -> list[dict]:
+    """BFS crawl starting from *seed_urls*; return list of ``{url, title, text}`` dicts."""
+    visited: set[str] = set()
+    queue: list[str] = list(seed_urls)
+    pages: list[dict] = []
+
+    connector = aiohttp.TCPConnector(limit=MAX_CONCURRENT_REQUESTS)
+    headers = {"User-Agent": "cua-docs-mcp-crawler/1.0 (+https://cua.ai)"}
+
+    async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
+        while queue:
+            batch, queue = queue[:MAX_CONCURRENT_REQUESTS], queue[MAX_CONCURRENT_REQUESTS:]
+            tasks = [fetch_page(session, u) for u in batch if u not in visited]
+            for url in batch:
+                visited.add(url)
+
+            results = await asyncio.gather(*tasks)
+            for result in results:
+                if result is None:
+                    continue
+                final_url, html = result
+                visited.add(final_url)
+                page = extract_text(final_url, html)
+                if page["text"].strip():
+                    pages.append(page)
+                    logger.info("Crawled: %s (%d chars)", final_url, len(page["text"]))
+                for link in extract_links(final_url, html):
+                    if link not in visited:
+                        queue.append(link)
+
+            await asyncio.sleep(CRAWL_DELAY)
+
+    logger.info("Crawl complete. %d pages indexed.", len(pages))
+    return pages
+
+
+# ---------------------------------------------------------------------------
+# Chunking
+# ---------------------------------------------------------------------------
+
+def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
+    """Split *text* into overlapping chunks of roughly *chunk_size* chars."""
+    if len(text) <= chunk_size:
+        return [text]
+    chunks: list[str] = []
+    start = 0
+    while start < len(text):
+        end = min(start + chunk_size, len(text))
+        boundary = text.rfind("\n\n", start, end)
+        if boundary > start + overlap:
+            end = boundary
+        chunks.append(text[start:end].strip())
+        if end >= len(text):
+            break
+        start = end - overlap
+    return [c for c in chunks if c]
+
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+
+def build_databases(pages: list[dict], out_dir: Path) -> None:
+    """Embed *pages* with OpenAI and write LanceDB + SQLite FTS5 databases to *out_dir*."""
+    import os
+    import lancedb
+    import openai
+
+    oai = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+    rows: list[dict] = []
+    for page in pages:
+        for i, chunk in enumerate(chunk_text(page["text"])):
+            chunk_id = hashlib.sha256(f"{page['url']}#{i}".encode()).hexdigest()[:16]
+            rows.append({
+                "id": chunk_id,
+                "url": page["url"],
+                "title": page["title"],
+                "chunk_index": i,
+                "text": chunk,
+            })
+
+    if not rows:
+        logger.warning("No chunks to index.")
+        return
+
+    logger.info("Embedding %d chunks...", len(rows))
+    vectors: list[list[float]] = []
+    batch_size = 100
+    for i in range(0, len(rows), batch_size):
+        batch = [r["text"] for r in rows[i : i + batch_size]]
+        resp = oai.embeddings.create(model=EMBED_MODEL, input=batch, dimensions=EMBED_DIMENSIONS)
+        vectors.extend([item.embedding for item in resp.data])
+
+    # LanceDB
+    lance_path = str(out_dir / "lance")
+    db = lancedb.connect(lance_path)
+    table_data = [{**row, "vector": vec} for row, vec in zip(rows, vectors, strict=True)]
+    if "docs" in db.table_names():
+        db.drop_table("docs")
+    db.create_table("docs", data=table_data)
+    logger.info("LanceDB written: %s", lance_path)
+
+    # SQLite FTS5
+    sqlite_path = out_dir / "fts.db"
+    con = sqlite3.connect(str(sqlite_path))
+    con.execute("DROP TABLE IF EXISTS docs_fts")
+    con.execute("""
+        CREATE VIRTUAL TABLE docs_fts USING fts5(
+            id UNINDEXED,
+            url UNINDEXED,
+            title,
+            text,
+            tokenize='porter unicode61'
+        )
+    """)
+    con.executemany(
+        "INSERT INTO docs_fts(id, url, title, text) VALUES (?, ?, ?, ?)",
+        [(r["id"], r["url"], r["title"], r["text"]) for r in rows],
+    )
+    con.commit()
+    con.close()
+    logger.info("SQLite FTS5 written: %s", sqlite_path)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    """CLI entry point: parse arguments, crawl, and optionally build databases."""
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--out-dir", default="./docs_db_local", help="Output directory for databases")
+    parser.add_argument("--no-embed", action="store_true", help="Crawl only; skip embedding and database build")
+    parser.add_argument("--seed", action="append", dest="seeds", metavar="URL",
+                        help="Additional seed URL (may be repeated; appended to defaults)")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
+    seeds = list(SEED_URLS)
+    if args.seeds:
+        seeds.extend(args.seeds)
+
+    logger.info("Seeds: %s", seeds)
+    pages = asyncio.run(crawl(seeds))
+    logger.info("Total pages crawled: %d", len(pages))
+
+    if args.no_embed:
+        for p in pages:
+            print(f"  {p['url']} ({len(p['text'])} chars)")
+        return
+
+    import os
+    if "OPENAI_API_KEY" not in os.environ:
+        logger.error("OPENAI_API_KEY not set. Use --no-embed to skip embedding.")
+        raise SystemExit(1)
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    build_databases(pages, out_dir)
+    logger.info("Done. Databases written to %s", out_dir)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

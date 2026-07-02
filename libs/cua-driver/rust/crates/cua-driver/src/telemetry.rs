@@ -26,6 +26,28 @@
 //! We send: driver version, OS name, OS version, CPU arch, CI-environment
 //! flag, and a stable per-install UUID. We do **NOT** send: usernames,
 //! file paths, command arguments, tool args, or anything user-typed.
+//!
+//! ### Entry-event enrichment (bounded enum-like properties only)
+//!
+//! Entry-point events ([`entry_event_properties`]) carry up to three extra
+//! properties, each drawn from a **closed, bounded value set** — never a
+//! free-form or user-typed string:
+//!
+//! - **`capture_mode`** (`"som" | "vision" | "ax"`) — the effective global
+//!   capture mode read from `~/.cua-driver/config.json`, defaulting to
+//!   `"som"`. Attached to the `cua_driver_mcp` / `cua_driver_serve` events.
+//! - **`mcp_client`** (`"claude" | "codex" | "cursor" | "antigravity" |
+//!   "openclaw" | "opencode" | "hermes" | "pi" | "generic"`) — the bounded
+//!   client identifier from `mcp-config --client`, never a path or config
+//!   content. Unknown/omitted clients collapse to `"generic"`. Attached to
+//!   the `cua_driver_mcp_config` event.
+//! - **`display_server`** (Linux only; `"wayland" | "x11" | "xwayland" |
+//!   "unknown"`) — derived from the *type* of `XDG_SESSION_TYPE` /
+//!   `WAYLAND_DISPLAY` (we read whether the var is set / its category,
+//!   never the value contents). Omitted entirely on macOS / Windows.
+//!
+//! None of these are PII: they are bounded enums normalised to a fixed
+//! allow-list before they ever reach the payload.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -550,6 +572,126 @@ fn civil_from_unix(unix_secs: u64) -> (i32, u32, u32, u32, u32, u32) {
     (year, m, d, hour, minute, second)
 }
 
+// ── Entry-event property enrichment ──────────────────────────────────────
+
+/// Build the bounded, anonymous property bag attached to entry-point
+/// telemetry events. Returns `None` when a command contributes no extra
+/// properties (and there's no Linux `display_server` to add), so the
+/// caller can pass `None` straight through to [`capture`].
+///
+/// Every value here is a **bounded enum** normalised to a fixed allow-list
+/// — never a path, arg, or user-typed string. See the module-level privacy
+/// posture for the exact value sets.
+pub fn entry_event_properties(cmd: &crate::cli::Command) -> Option<serde_json::Value> {
+    use crate::cli::Command;
+
+    let mut map = serde_json::Map::new();
+
+    match cmd {
+        // `capture_mode` on the long-running entry points only.
+        Command::Mcp { .. } | Command::Serve { .. } => {
+            map.insert("capture_mode".into(), effective_capture_mode().into());
+        }
+        // `mcp_client` on the config-emit path. Bounded identifier only.
+        Command::McpConfig { client } => {
+            map.insert(
+                "mcp_client".into(),
+                normalize_mcp_client(client.as_deref()).into(),
+            );
+        }
+        _ => {}
+    }
+
+    // `display_server` on every entry event — Linux only.
+    if let Some(ds) = linux_display_server() {
+        map.insert("display_server".into(), ds.into());
+    }
+
+    if map.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(map))
+    }
+}
+
+/// Read the effective global `capture_mode` from the persisted config
+/// (`~/.cua-driver/config.json`), normalised to the bounded set
+/// `"som" | "vision" | "ax"`. Defaults to `"som"` when absent, unreadable,
+/// or an unrecognised value (fail-safe to the default, never leak the raw
+/// string).
+fn effective_capture_mode() -> &'static str {
+    let raw = crate::cli::read_config_file()
+        .get("capture_mode")
+        .and_then(|v| v.as_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    normalize_capture_mode(&raw)
+}
+
+/// Map a raw capture-mode string onto the bounded allow-list. Unknown
+/// values collapse to the `"som"` default so we never emit an unbounded
+/// or user-influenced value.
+fn normalize_capture_mode(raw: &str) -> &'static str {
+    match raw.trim() {
+        "vision" => "vision",
+        "ax" => "ax",
+        _ => "som",
+    }
+}
+
+/// Map a raw `--client` identifier onto the bounded client allow-list.
+/// Unknown / unspecified clients collapse to `"generic"`. Only the bounded
+/// identifier is ever emitted — never a path or config content.
+fn normalize_mcp_client(client: Option<&str>) -> &'static str {
+    match client.map(|c| c.trim().to_ascii_lowercase()).as_deref() {
+        Some("claude") | Some("claude-code") => "claude",
+        Some("codex") => "codex",
+        Some("cursor") => "cursor",
+        Some("antigravity") | Some("gemini") => "antigravity",
+        Some("openclaw") => "openclaw",
+        Some("opencode") => "opencode",
+        Some("hermes") => "hermes",
+        Some("pi") => "pi",
+        // None, empty, or any unrecognised client → generic snippet.
+        _ => "generic",
+    }
+}
+
+/// Detect the Linux display server *type* from the session env, normalised
+/// to `"wayland" | "x11" | "xwayland" | "unknown"`. Returns `None` on
+/// non-Linux targets so the property is omitted entirely.
+///
+/// We read only the *category* of the environment — whether
+/// `XDG_SESSION_TYPE` is `wayland`/`x11` and whether a `WAYLAND_DISPLAY`
+/// socket is present — never the value contents (the socket name / path is
+/// not emitted).
+fn linux_display_server() -> Option<&'static str> {
+    #[cfg(target_os = "linux")]
+    {
+        let session_type = std::env::var("XDG_SESSION_TYPE")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        let has_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+
+        let value = match session_type.as_str() {
+            "wayland" => "wayland",
+            // X11 session but a Wayland socket is present → almost certainly
+            // running under XWayland.
+            "x11" if has_wayland => "xwayland",
+            "x11" => "x11",
+            // No (or unrecognised) session type, but a Wayland socket exists.
+            _ if has_wayland => "wayland",
+            _ => "unknown",
+        };
+        Some(value)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -803,4 +945,118 @@ mod tests {
         });
     }
 
+    // ── Entry-event property enrichment ──────────────────────────────────
+
+    #[test]
+    fn normalize_capture_mode_collapses_to_bounded_set() {
+        assert_eq!(normalize_capture_mode("som"), "som");
+        assert_eq!(normalize_capture_mode("vision"), "vision");
+        assert_eq!(normalize_capture_mode("ax"), "ax");
+        // Unknown / empty / garbage → default "som" (never leak the raw).
+        assert_eq!(normalize_capture_mode(""), "som");
+        assert_eq!(normalize_capture_mode("totally-made-up"), "som");
+        assert_eq!(normalize_capture_mode("/etc/passwd"), "som");
+    }
+
+    #[test]
+    fn normalize_mcp_client_maps_to_bounded_identifiers() {
+        for (raw, expected) in [
+            (Some("claude"), "claude"),
+            (Some("claude-code"), "claude"),
+            (Some("CLAUDE"), "claude"),
+            (Some("codex"), "codex"),
+            (Some("cursor"), "cursor"),
+            (Some("antigravity"), "antigravity"),
+            (Some("gemini"), "antigravity"),
+            (Some("openclaw"), "openclaw"),
+            (Some("opencode"), "opencode"),
+            (Some("hermes"), "hermes"),
+            (Some("pi"), "pi"),
+        ] {
+            assert_eq!(normalize_mcp_client(raw), expected, "raw={raw:?}");
+        }
+        // None / empty / unknown → generic.
+        assert_eq!(normalize_mcp_client(None), "generic");
+        assert_eq!(normalize_mcp_client(Some("")), "generic");
+        assert_eq!(normalize_mcp_client(Some("some-rando-client")), "generic");
+        // Never a path or user-typed string.
+        assert_eq!(normalize_mcp_client(Some("/home/me/.config")), "generic");
+    }
+
+    #[test]
+    fn entry_event_properties_attaches_mcp_client_on_config_event() {
+        use crate::cli::Command;
+        let props = entry_event_properties(&Command::McpConfig {
+            client: Some("cursor".into()),
+        })
+        .expect("mcp-config must contribute properties");
+        assert_eq!(props["mcp_client"], "cursor");
+        // No capture_mode on the config event.
+        assert!(props.get("capture_mode").is_none());
+
+        // None client → generic.
+        let props = entry_event_properties(&Command::McpConfig { client: None })
+            .expect("mcp-config always contributes mcp_client");
+        assert_eq!(props["mcp_client"], "generic");
+    }
+
+    #[test]
+    fn entry_event_properties_attaches_capture_mode_on_mcp_and_serve() {
+        use crate::cli::Command;
+        let mcp = entry_event_properties(&Command::Mcp {
+            no_daemon_relaunch: false,
+            socket: None,
+            claude_code_compat: false,
+        })
+        .expect("mcp must contribute capture_mode");
+        // Value is one of the bounded set (default "som" with no config file).
+        let mode = mcp["capture_mode"].as_str().unwrap();
+        assert!(
+            matches!(mode, "som" | "vision" | "ax"),
+            "capture_mode must be bounded, got {mode:?}"
+        );
+        assert!(mcp.get("mcp_client").is_none());
+
+        let serve = entry_event_properties(&Command::Serve {
+            socket: None,
+            no_permissions_gate: false,
+            claude_code_compat: false,
+        })
+        .expect("serve must contribute capture_mode");
+        assert!(serve["capture_mode"].as_str().is_some());
+    }
+
+    #[test]
+    fn entry_event_properties_omits_capture_mode_on_non_daemon_commands() {
+        use crate::cli::Command;
+        // `status` contributes no capture_mode / mcp_client. On non-Linux
+        // it therefore yields no properties at all (None).
+        let props = entry_event_properties(&Command::Status { socket: None });
+        #[cfg(not(target_os = "linux"))]
+        assert!(props.is_none(), "status has no enrichment off Linux");
+        #[cfg(target_os = "linux")]
+        {
+            // On Linux only the display_server property is present.
+            let props = props.expect("linux always attaches display_server");
+            assert!(props.get("capture_mode").is_none());
+            assert!(props.get("mcp_client").is_none());
+            assert!(props.get("display_server").is_some());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_display_server_is_bounded() {
+        let ds = linux_display_server().expect("linux must report a value");
+        assert!(
+            matches!(ds, "wayland" | "x11" | "xwayland" | "unknown"),
+            "display_server must be bounded, got {ds:?}"
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn linux_display_server_omitted_off_linux() {
+        assert!(linux_display_server().is_none());
+    }
 }

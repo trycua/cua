@@ -98,6 +98,29 @@ to eliminate. Embedded mode short-circuits the disclaim re-exec
 (`responsibility.rs`) and the `open -a CuaDriver` daemon relaunch, which are
 the only two places the driver would otherwise leave your chain.
 
+### App + gateway architectures
+
+`--embedded` does not transfer a GUI app's permissions to the driver; it
+only keeps the driver inside its **spawner's** TCC responsibility chain. If
+your product has a GUI app that owns the macOS grants and a separate
+gateway, daemon, or Node process that spawns MCP servers, registering
+`cua-driver mcp --embedded` with the gateway makes the driver inherit the
+gateway's identity, not the app's. Spawn the driver from the GUI app itself,
+or bridge MCP from the gateway to an app-spawned child.
+
+```text
+Wrong (inherits the gateway's identity):        Right:
+
+gateway / node daemon                           YourApp.app
+  └─ cua-driver --embedded                        └─ cua-driver --embedded
+```
+
+Note `check_permissions` cannot detect this: `source.attribution` reports
+`host` whenever `CUA_DRIVER_EMBEDDED=1` is set, even if a gateway spawned
+the driver. The symptoms are grant booleans that track the *gateway's* TCC
+state and prompts/Settings entries naming the gateway process; see
+Troubleshooting below.
+
 ## Reading `check_permissions` from the host
 
 Call the `check_permissions` tool over MCP. In embedded mode it never raises

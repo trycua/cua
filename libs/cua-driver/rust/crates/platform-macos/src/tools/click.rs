@@ -279,13 +279,15 @@ impl Tool for ClickTool {
                 Ok(Ok(Some(pid))) => ToolResult::text(format!(
                     "✅ Sent {button_label} at desktop-pixel ({sx_shot:.0},{sy_shot:.0}) \
                      → screen-point ({sx:.0},{sy:.0}) on pid {pid} (desktop scope; \
-                     not driver-verified — confirm via screenshot)."
+                     not driver-verified — confirm via screenshot).{}",
+                    crate::display_state::asleep_suffix()
                 ))
                 .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
                 Ok(Ok(None)) => ToolResult::text(format!(
                     "✅ Sent screen-absolute {button_label} at desktop-pixel \
                      ({sx_shot:.0},{sy_shot:.0}) → screen-point ({sx:.0},{sy:.0}) \
-                     (desktop scope, no window under point; not driver-verified)."
+                     (desktop scope, no window under point; not driver-verified).{}",
+                    crate::display_state::asleep_suffix()
                 ))
                 .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
                 Ok(Err(e)) => ToolResult::error(format!("desktop-scope click failed: {e}")),
@@ -406,7 +408,8 @@ impl Tool for ClickTool {
                 return match result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Posted middle-click to pid {pid} at element [{idx}] center \
-                         (background CGEvent; not driver-verified — confirm via screenshot)."
+                         (background CGEvent; not driver-verified — confirm via screenshot).{}",
+                        crate::display_state::asleep_suffix()
                     ))
                     .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
                     Ok(Err(e)) => ToolResult::error(format!("Middle-click failed: {e}")),
@@ -712,8 +715,9 @@ impl Tool for ClickTool {
                     };
                     ToolResult::text(format!(
                         "✅ Posted {button_label} to pid {pid} ({mode_label}; \
-                         not driver-verified — confirm via screenshot).{}",
-                        changes.result_suffix()
+                         not driver-verified — confirm via screenshot).{}{}",
+                        changes.result_suffix(),
+                        crate::display_state::asleep_suffix()
                     ))
                     .with_structured(serde_json::json!({ "path": path, "verified": false, "effect": "unverifiable" }))
                 }

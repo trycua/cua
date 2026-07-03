@@ -194,7 +194,10 @@ impl Tool for DoubleClickTool {
 
         let mode_label = if fg { " (delivery_mode:foreground)" } else { "" };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("✅ Double-clicked at ({screen_x:.1}, {screen_y:.1}){mode_label}."))
+            Ok(Ok(())) => ToolResult::text(format!(
+                "✅ Double-clicked at ({screen_x:.1}, {screen_y:.1}){mode_label}.{}",
+                crate::display_state::asleep_suffix()
+            ))
                 .with_structured(serde_json::json!({
                     "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
                 })),
@@ -244,5 +247,8 @@ fn ax_double_click(pid: i32, wid: u32, element_ptr: usize, idx: usize, cursor_ke
              screen coordinates as window-local for element [{idx}]."
         ))?;
     crate::input::mouse::click_at_xy_with_window_local(pid, cx, cy, wx, wy, wid, 2, &[])?;
-    Ok(format!("✅ Double-clicked element [{idx}] at ({cx:.1}, {cy:.1})."))
+    Ok(format!(
+        "✅ Double-clicked element [{idx}] at ({cx:.1}, {cy:.1}).{}",
+        crate::display_state::asleep_suffix()
+    ))
 }

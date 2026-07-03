@@ -295,8 +295,9 @@ impl Tool for ScrollTool {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "✅ Sent {direction} scroll by {by} × {amount} via pixel wheel at \
                      ({screen_x:.0}, {screen_y:.0}){mode_label} (background CGEvent; not \
-                     driver-verified — confirm via screenshot).{}",
-                    changes.result_suffix()
+                     driver-verified — confirm via screenshot).{}{}",
+                    changes.result_suffix(),
+                    crate::display_state::asleep_suffix()
                 ))
                 .with_structured(serde_json::json!({
                     "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
@@ -361,8 +362,9 @@ impl Tool for ScrollTool {
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
                 "✅ Sent {direction} scroll by {by} × {amount} via keystroke \
-                 (background; not driver-verified — confirm via screenshot).{}",
-                changes.result_suffix()
+                 (background; not driver-verified — confirm via screenshot).{}{}",
+                changes.result_suffix(),
+                crate::display_state::asleep_suffix()
             ))
             .with_structured(serde_json::json!({ "path": "key_events", "verified": false })),
             Ok(Err(e)) => ToolResult::error(format!("Scroll failed: {e}")),

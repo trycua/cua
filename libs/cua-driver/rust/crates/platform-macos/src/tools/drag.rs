@@ -284,7 +284,7 @@ impl Tool for DragTool {
                 from_sx as i64, from_sy as i64,
                 to_sx   as i64, to_sy   as i64,
                 changes.result_suffix(),
-            ))
+            ) + crate::display_state::asleep_suffix())
             .with_structured(serde_json::json!({
                 "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
             })),

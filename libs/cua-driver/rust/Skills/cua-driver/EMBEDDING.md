@@ -157,6 +157,9 @@ background AX read, agent-cursor glide.
 `ExampleAgentHarness.swift`:
 
 ```swift
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // ExampleAgentHarness — minimal reference host for embedding cua-driver.
 // Mirrored verbatim in Skills/cua-driver/EMBEDDING.md ("Minimal host
 // example") — keep the two in sync.
@@ -242,6 +245,9 @@ func call(_ tool: String, _ args: [String: Any] = [:]) -> [String: Any] {
     while true {
         let msg = readMessage()
         if msg["id"] as? Int == nextId {
+            if let error = msg["error"] as? [String: Any] {
+                log("RPC error for \(tool): \(error)")
+            }
             return msg["result"] as? [String: Any] ?? [:]
         }
     }

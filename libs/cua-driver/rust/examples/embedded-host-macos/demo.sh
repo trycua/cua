@@ -71,7 +71,7 @@ echo "    'DEMO COMPLETE: PASS'. Then verify System Settings → Privacy &"
 echo "    Security lists ONLY ExampleAgentHarness (no CuaDriver)."
 # Portable wait (stock macOS has no timeout(1)).
 for _ in $(seq 1 120); do
-    grep -q "DEMO COMPLETE\|grant the prompts" "$LOG" 2>/dev/null && break
+    grep -q "DEMO COMPLETE\|grant the missing item(s)" "$LOG" 2>/dev/null && break
     sleep 1
 done
 cat "$LOG" 2>/dev/null

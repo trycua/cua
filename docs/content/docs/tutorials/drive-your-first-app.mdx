@@ -103,11 +103,13 @@ Register Cua Driver with your agent harness once.
     cua-driver mcp-config --client codex
     ```
 
-    It prints a command you run to register the server:
+    It prints a command you run to register the server. The emitted command uses the absolute installed binary path:
 
     ```bash
-    codex mcp add cua-driver -- cua-driver mcp
+    codex mcp add cua-driver -- /Users/you/.local/bin/cua-driver mcp
     ```
+
+    Restart Codex or open a fresh Codex session after registration so the new tools appear.
   </Tab>
   <Tab value="Hermes">
     Print the Hermes snippet:

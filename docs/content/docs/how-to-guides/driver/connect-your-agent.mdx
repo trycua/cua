@@ -12,7 +12,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 </Callout>
 
 <Callout type="warn">
-  Grant the required permissions before you connect an agent. On macOS, grant Accessibility and Screen Recording. Verify them with `cua-driver call check_permissions`.
+  Grant the required permissions before you connect an agent. On macOS, grant Accessibility and Screen Recording. Verify them with `cua-driver permissions status`.
 </Callout>
 
 The helper command prints the exact registration snippet for each supported client:
@@ -60,16 +60,38 @@ This registers the server under the key `cua-computer-use` at user scope, so it 
 
 ## Codex
 
-Register the stdio server:
+Print the Codex registration command:
 
 ```bash
-codex mcp add cua-driver -- cua-driver mcp
+cua-driver mcp-config --client codex
+```
+
+It emits a command with the absolute installed binary path, which avoids PATH issues in app-launched Codex sessions:
+
+```bash
+codex mcp add cua-driver -- /Users/you/.local/bin/cua-driver mcp
 ```
 
 Verify:
 
 ```bash
 codex mcp list
+```
+
+Restart Codex or open a fresh Codex session after adding the MCP server so the new tools appear.
+
+For the best experience, also install the Cua Driver skill:
+
+```bash
+cua-driver skills install
+cua-driver skills status
+```
+
+If the Codex agent skills directory is missing, create it and install again:
+
+```bash
+mkdir -p ~/.agents/skills
+cua-driver skills install
 ```
 
 ## Cursor

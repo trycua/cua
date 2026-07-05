@@ -164,7 +164,7 @@ pub fn parse_command() -> Command {
         println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest");
         println!();
         println!("permissions options (macOS):");
-        println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
+        println!("  cua-driver permissions status   Report Accessibility, Screen Recording, and System Events status. Read-only (no prompt).");
         println!("                                  Answers via a running daemon, so the result carries the CuaDriver");
         println!("                                  identity (com.trycua.driver). If no daemon is running it reports");
         println!("                                  `unknown` rather than your terminal's grants. Add --json for the payload.");
@@ -699,7 +699,7 @@ pub fn launch_daemon_and_wait(
 
     anyhow::bail!(
         "daemon did not appear on {socket_path} within {timeout_secs}s. If this \
-         is the first launch, grant Accessibility + Screen Recording to \
+         is the first launch, grant Accessibility, Screen Recording, and System Events to \
          CuaDriver.app in System Settings and retry. Pass --no-daemon-relaunch \
          to stay in-process."
     );
@@ -1750,7 +1750,7 @@ pub fn run_permissions_cmd(
 
 /// Report the CuaDriver daemon's TCC status — reliably, or not at all.
 ///
-/// macOS attributes Accessibility / Screen-Recording to the *responsible
+/// macOS attributes Accessibility / Screen Recording / Automation to the *responsible
 /// process*, so the ONLY process that can read `com.trycua.driver`'s real
 /// grants is the daemon running as its own responsible process. When the
 /// daemon is up we query it and report its
@@ -1795,7 +1795,7 @@ fn run_permissions_status(json: bool) {
     };
 
     let Some(structured) = daemon_status else {
-        // No reliable answer. Emit NO accessibility/screen_recording booleans —
+        // No reliable answer. Emit NO TCC grant booleans —
         // nothing downstream can misread a false `granted: true`.
         if json {
             let payload = serde_json::json!({
@@ -1813,6 +1813,7 @@ fn run_permissions_status(json: bool) {
         }
         println!("Accessibility:    ❓ unknown");
         println!("Screen Recording: ❓ unknown");
+        println!("System Events:    ❓ unknown");
         println!(
             "No CuaDriver daemon is running under the driver's own identity (com.trycua.driver), \
              so its real TCC status can't be read."
@@ -1837,6 +1838,7 @@ fn run_permissions_status(json: bool) {
     let b = |k: &str| structured.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
     let ax = b("accessibility");
     let sr = b("screen_recording");
+    let se = b("system_events");
     let cap = b("screen_recording_capturable");
     let attribution = structured
         .get("source")
@@ -1846,6 +1848,7 @@ fn run_permissions_status(json: bool) {
 
     println!("Accessibility:    {}", if ax { "✅ granted" } else { "❌ not granted" });
     println!("Screen Recording: {}", if sr { "✅ granted" } else { "❌ not granted" });
+    println!("System Events:    {}", if se { "✅ granted" } else { "❌ not granted" });
     if sr && !cap {
         println!(
             "  ⚠️  preflight reports granted, but a live capture probe failed — the grant \
@@ -1853,7 +1856,7 @@ fn run_permissions_status(json: bool) {
         );
     }
     println!("Source: {attribution}");
-    if !(ax && sr) {
+    if !(ax && sr && se) {
         println!("  → To grant for the driver, run: cua-driver permissions grant");
     }
 }
@@ -1871,15 +1874,17 @@ fn run_permissions_grant() {
         } else {
             println!("Launching CuaDriver to request permissions.");
             println!(
-                "A dialog titled \u{201c}Cua Driver\u{201d} will appear — approve Accessibility \
-                 and Screen Recording in System Settings, then this command continues."
+                "Dialogs titled \u{201c}Cua Driver\u{201d} may appear — approve Accessibility, \
+                 Screen Recording, and Automation access to System Events in System Settings, \
+                 then this command continues."
             );
             // Permissions-grant launch never needs the compat screenshot surface.
             if let Err(e) = launch_daemon_and_wait(&socket, 180, false) {
                 eprintln!("\nDidn't detect the CuaDriver daemon: {e}");
                 eprintln!(
-                    "If you haven't yet, grant Accessibility + Screen Recording to CuaDriver \
-                     in System Settings, then re-run `cua-driver permissions grant`."
+                    "If you haven't yet, grant Accessibility, Screen Recording, and Automation \
+                     access to System Events to CuaDriver in System Settings, then re-run \
+                     `cua-driver permissions grant`."
                 );
                 process::exit(1);
             }
@@ -1887,7 +1892,7 @@ fn run_permissions_grant() {
         // Since #1761 the daemon binds its socket IMMEDIATELY — before the
         // permissions gate completes — so the first `check_permissions`
         // query returns "pending" while the grant is still missing. Poll
-        // the daemon until both grants flip true (success) or we time out.
+        // the daemon until all grants flip true (success) or we time out.
         //
         // The gate re-execs the daemon (~every 25s) to pick up an
         // Accessibility grant — `AXIsProcessTrusted` is cached per process
@@ -1904,6 +1909,7 @@ fn run_permissions_grant() {
             std::time::Instant::now() + std::time::Duration::from_secs(180);
         let mut ax = false;
         let mut sr = false;
+        let mut se = false;
         loop {
             if let Some(structured) = crate::serve::send_request(&socket, &req)
                 .ok()
@@ -1913,7 +1919,8 @@ fn run_permissions_grant() {
             {
                 ax = structured.get("accessibility").and_then(|v| v.as_bool()).unwrap_or(false);
                 sr = structured.get("screen_recording").and_then(|v| v.as_bool()).unwrap_or(false);
-                if ax && sr {
+                se = structured.get("system_events").and_then(|v| v.as_bool()).unwrap_or(false);
+                if ax && sr && se {
                     break;
                 }
             }
@@ -1924,15 +1931,20 @@ fn run_permissions_grant() {
             }
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
-        if ax && sr {
-            println!("\n✅ CuaDriver has Accessibility + Screen Recording. You're set.");
+        if ax && sr && se {
+            println!("\n✅ CuaDriver has Accessibility + Screen Recording + System Events. You're set.");
         } else {
-            let missing = match (ax, sr) {
-                (false, false) => "Accessibility + Screen Recording",
-                (false, true) => "Accessibility",
-                (true, false) => "Screen Recording",
-                (true, true) => unreachable!(),
-            };
+            let mut missing_parts = Vec::new();
+            if !ax {
+                missing_parts.push("Accessibility");
+            }
+            if !sr {
+                missing_parts.push("Screen Recording");
+            }
+            if !se {
+                missing_parts.push("System Events");
+            }
+            let missing = missing_parts.join(" + ");
             println!("\n⚠️  Timed out waiting on: {missing}.");
             println!(
                 "Approve CuaDriver for \u{201c}Cua Driver\u{201d} in System Settings \u{2192} \
@@ -2294,7 +2306,7 @@ pub fn run_dump_docs_with_type(registry: &ToolRegistry, pretty: bool, doc_type: 
 /// Mirrors Swift `DiagnoseCommand`. Covers:
 ///   - running process identity (path, pid, version)
 ///   - codesign info (cdhash, team-id, authority) via `codesign -dvvv`
-///   - AX + screen recording TCC status (check_permissions tool)
+///   - TCC status (check_permissions tool)
 ///   - install layout (/Applications/CuaDriver.app, ~/.local/bin/cua-driver)
 ///   - TCC DB rows for com.trycua.driver (sqlite3, best-effort)
 ///   - config + state paths with existence booleans
@@ -2372,10 +2384,10 @@ fn diagnose_tcc_section(registry: std::sync::Arc<ToolRegistry>) -> String {
         .enable_all()
         .build();
 
-    let (ax, sr) = if let Ok(rt) = rt {
+    let (ax, sr, se) = if let Ok(rt) = rt {
         rt.block_on(async {
             let result = registry.invoke("check_permissions",
-                serde_json::Value::Object(Default::default())).await;
+                serde_json::json!({ "prompt": false })).await;
             if let Some(sc) = &result.structured_content {
                 let ax = sc.get("accessibility")
                     .and_then(|v| v.as_bool())
@@ -2383,19 +2395,23 @@ fn diagnose_tcc_section(registry: std::sync::Arc<ToolRegistry>) -> String {
                 let sr = sc.get("screen_recording")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                (ax, sr)
+                let se = sc.get("system_events")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                (ax, sr, se)
             } else {
-                (false, false)
+                (false, false, false)
             }
         })
     } else {
-        (false, false)
+        (false, false, false)
     };
 
     format!(
         "## tcc probes (live process)\n\
          accessibility     (AXIsProcessTrusted): {ax}\n\
-         screen recording  (SCShareableContent):  {sr}\n\n\
+         screen recording  (SCShareableContent):  {sr}\n\
+         system events     (Apple Events):        {se}\n\n\
          if the UI disagrees with these booleans the live process is fine —\n\
          the issue is elsewhere (wrong bundle granted, stale cdhash, etc)."
     )
@@ -2493,7 +2509,7 @@ fn diagnose_tcc_db_section() -> String {
 
     lines.push(String::new());
     lines.push("# auth_value legend: 0=denied  2=allowed".into());
-    lines.push("# services: kTCCServiceAccessibility, kTCCServiceScreenCapture".into());
+    lines.push("# services: kTCCServiceAccessibility, kTCCServiceScreenCapture, kTCCServiceAppleEvents".into());
     lines.join("\n")
 }
 

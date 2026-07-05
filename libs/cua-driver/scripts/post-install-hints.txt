@@ -5,7 +5,7 @@ Next steps:
        {{BINARY}} --version
        {{BINARY}} list-tools
 
-  2. Grant permissions (macOS — Accessibility + Screen Recording):
+  2. Grant permissions (macOS — Accessibility + Screen Recording + System Events):
        {{BINARY}} permissions status   # report status (read-only; tells you which
                                        # identity the grants belong to)
        {{BINARY}} permissions grant    # the correct way to grant — launches CuaDriver

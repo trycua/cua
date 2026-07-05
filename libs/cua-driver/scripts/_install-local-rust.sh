@@ -102,7 +102,7 @@ while [ "$#" -gt 0 ]; do
             echo "                  Linux: systemd --user unit"
             echo "                On macOS this also fixes TCC: a launchd-started daemon"
             echo "                is attributed to com.trycua.driver (not your terminal),"
-            echo "                so you grant Accessibility + Screen Recording once and"
+            echo "                so you grant Accessibility + Screen Recording + System Events once and"
             echo "                every cua-driver call/mcp routes through it correctly."
             echo "  --help        Show this help."
             echo ""
@@ -263,7 +263,7 @@ echo ""
 # --- macOS: stable local code-signing identity (so TCC grants survive rebuilds) ---
 #
 # Ad-hoc signing (`codesign --sign -`) keys the TCC grant
-# (Accessibility / Screen Recording) on the binary's *cdhash*, which changes
+# (Accessibility / Screen Recording / System Events) on the binary's *cdhash*, which changes
 # on EVERY rebuild — so the grant silently invalidates on each install-local
 # and the daemon re-prompts ("I already granted!"). Signing with a certificate
 # keys the grant on the cert identity instead, which is stable across rebuilds.
@@ -309,7 +309,7 @@ ensure_local_signing_identity() {
 
 # --- macOS: wrap the binary in CuaDriver.app for a stable TCC identity ---
 #
-# TCC keys Accessibility / Screen-Recording grants on the bundle
+# TCC keys Accessibility / Screen-Recording / System-Events grants on the bundle
 # identifier (com.trycua.driver), not the bare executable path. A loose
 # binary gets grants attributed to its ad-hoc cdhash, which changes on
 # every rebuild — so permissions silently reset and never appear cleanly
@@ -364,7 +364,7 @@ if [ "$OS" = "Darwin" ]; then
 
     # --- Clear a TCC grant pinned to a PREVIOUS signing identity -----------
     #
-    # TCC pins each Accessibility / Screen-Recording grant to the app's
+    # TCC pins each Accessibility / Screen-Recording / System-Events grant to the app's
     # designated requirement AT GRANT TIME. A user who granted while the app
     # was ad-hoc signed has a grant whose csreq is a bare `cdhash H"..."`
     # (changes every rebuild); a user who granted under a different cert has
@@ -393,7 +393,8 @@ if [ "$OS" = "Darwin" ]; then
                 if [ "$NEW_IDENTITY" != "$OLD_IDENTITY" ]; then
                     tccutil reset Accessibility com.trycua.driver >/dev/null 2>&1 || true
                     tccutil reset ScreenCapture com.trycua.driver >/dev/null 2>&1 || true
-                    echo "${BOLD}cleared any stale Accessibility / Screen-Recording grant pinned to a previous build.${NORMAL}"
+                    tccutil reset AppleEvents com.trycua.driver >/dev/null 2>&1 || true
+                    echo "${BOLD}cleared any stale Accessibility / Screen-Recording / System-Events grant pinned to a previous build.${NORMAL}"
                     echo "  Grant once more (System Settings → Privacy & Security) and it will${BOLD} stick across every future rebuild${NORMAL} — the grant now pins to a stable signing certificate, not the per-build cdhash."
                 fi
                 ;;
@@ -529,7 +530,7 @@ if [ "$INSTALL_AUTOSTART" != true ]; then
         echo "Auto-start (recommended on macOS): re-run with --autostart to register a LaunchAgent."
         echo "  A launchd-started daemon is attributed to com.trycua.driver (not your terminal),"
         echo "  so permission prompts say \"Cua Driver\" and grants stick — grant Accessibility +"
-        echo "  Screen Recording once and every cua-driver call/mcp routes through it correctly."
+        echo "  Screen Recording + System Events once and every cua-driver call/mcp routes through it correctly."
         echo "  (Without it, a prompt raised from a terminal attributes to the terminal instead.)"
     else
         echo "Auto-start (optional): re-run with --autostart to register a systemd user unit."

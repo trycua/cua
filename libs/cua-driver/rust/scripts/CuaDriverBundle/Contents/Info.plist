@@ -8,7 +8,7 @@
     `com.trycua.driver` — the SAME bundle id the Swift cua-driver used.
     The bundle-id and install-path identity means installing the Rust
     port over an existing Swift install is a seamless upgrade: TCC
-    grants (Accessibility, Screen Recording) keyed on
+    grants (Accessibility, Screen Recording, System Events Automation) keyed on
     `com.trycua.driver` transfer to the new binary; LaunchServices
     discovery via `open -n -g -a CuaDriver` keeps working.
 
@@ -27,7 +27,8 @@
     Note on macOS code-signing: TCC pairs the bundle id with the
     binary's cdhash. The Rust binary has a different cdhash from the
     Swift binary, so on first run after the upgrade macOS may surface
-    a one-time re-grant prompt for Accessibility / Screen Recording
+    a one-time re-grant prompt for Accessibility / Screen Recording /
+    System Events Automation
     even though the bundle id is preserved. After that, the grants
     persist.
 

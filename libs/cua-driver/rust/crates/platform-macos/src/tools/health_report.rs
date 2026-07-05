@@ -14,10 +14,11 @@ use cua_driver_core::health_report::{
     CheckData, CheckEntry, HealthCheckProvider, NAME_AX_CAPABILITY, NAME_BINARY_VERSION,
     NAME_BUNDLE_IDENTITY, NAME_PLATFORM_SUPPORTED, NAME_SCREEN_CAPTURE_CAPABILITY,
     NAME_SESSION_ACTIVE, NAME_TCC_ACCESSIBILITY, NAME_TCC_SCREEN_RECORDING,
+    NAME_TCC_SYSTEM_EVENTS,
 };
 
 use crate::permissions::status::{
-    accessibility_granted, current_status, screen_recording_granted,
+    accessibility_granted, current_status, screen_recording_granted, system_events_granted,
 };
 
 /// macOS run order, in the order consumers see them reflected back in
@@ -29,6 +30,7 @@ pub const MACOS_CHECK_NAMES: &[&str] = &[
     NAME_BUNDLE_IDENTITY,
     NAME_TCC_ACCESSIBILITY,
     NAME_TCC_SCREEN_RECORDING,
+    NAME_TCC_SYSTEM_EVENTS,
     NAME_AX_CAPABILITY,
     NAME_SCREEN_CAPTURE_CAPABILITY,
 ];
@@ -58,6 +60,7 @@ impl HealthCheckProvider for MacosHealthProvider {
             NAME_BUNDLE_IDENTITY => check_bundle_identity(),
             NAME_TCC_ACCESSIBILITY => check_tcc_accessibility(),
             NAME_TCC_SCREEN_RECORDING => check_tcc_screen_recording(),
+            NAME_TCC_SYSTEM_EVENTS => check_tcc_system_events(),
             NAME_AX_CAPABILITY => check_ax_capability(),
             NAME_SCREEN_CAPTURE_CAPABILITY => check_screen_capture_capability().await,
             // Defensive: the dispatcher only forwards names in
@@ -184,6 +187,29 @@ fn check_tcc_screen_recording() -> CheckEntry {
         "Grant Screen Recording to CuaDriver.app in System Settings → Privacy & Security → \
          Screen Recording. The grant is attributed to the responsible process — see \
          bundle_identity to confirm the right binary is being prompted.",
+    )
+    .with_data(data)
+}
+
+fn check_tcc_system_events() -> CheckEntry {
+    let granted = system_events_granted();
+    let data = CheckData {
+        bundle_identifier: current_bundle_identifier(),
+        ..Default::default()
+    };
+    if granted {
+        return CheckEntry::pass(
+            NAME_TCC_SYSTEM_EVENTS,
+            "Automation access to System Events is granted.",
+        )
+        .with_data(data);
+    }
+    CheckEntry::fail(
+        NAME_TCC_SYSTEM_EVENTS,
+        "Automation access to System Events is NOT granted for this process.",
+        "Grant CuaDriver.app permission to control System Events in System Settings → \
+         Privacy & Security → Automation. The grant is attributed to the responsible \
+         process — see bundle_identity to confirm the right binary is being prompted.",
     )
     .with_data(data)
 }

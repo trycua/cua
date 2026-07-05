@@ -31,7 +31,8 @@ pub struct AppInfo {
 }
 
 /// Enumerate running apps with NSApplicationActivationPolicyRegular.
-/// Uses `osascript` to query System Events — no Accessibility permission needed.
+/// Uses `osascript` to query System Events, which requires Automation access
+/// to System Events for the responsible process.
 pub fn list_running_apps() -> Vec<AppInfo> {
     // Use `ps` + NSWorkspace via a brief Swift one-liner via swift-sh is heavy;
     // instead use the Obj-C bridge via `osascript`.

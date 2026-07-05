@@ -37,7 +37,8 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 
 use crate::permissions::status::{
-    current_status, request_accessibility, request_screen_recording, PermissionsStatus,
+    current_status, request_accessibility, request_screen_recording, request_system_events,
+    PermissionsStatus,
 };
 
 /// Which TCC grant is missing.  Each variant maps 1:1 to a System Settings
@@ -46,6 +47,7 @@ use crate::permissions::status::{
 pub enum MissingPermission {
     Accessibility,
     ScreenRecording,
+    SystemEvents,
 }
 
 impl MissingPermission {
@@ -54,6 +56,7 @@ impl MissingPermission {
         match self {
             Self::Accessibility => "Accessibility",
             Self::ScreenRecording => "Screen Recording",
+            Self::SystemEvents => "Automation (System Events)",
         }
     }
 
@@ -67,6 +70,9 @@ impl MissingPermission {
             Self::ScreenRecording =>
                 "lets cua-driver capture per-window screenshots so agents can see \
                  the current UI state alongside the tree.",
+            Self::SystemEvents =>
+                "lets cua-driver control System Events for Apple Events-backed \
+                 process inspection and menu automation.",
         }
     }
 
@@ -78,6 +84,8 @@ impl MissingPermission {
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
             Self::ScreenRecording =>
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            Self::SystemEvents =>
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
         }
     }
 }
@@ -91,6 +99,9 @@ pub fn missing_from_status(status: PermissionsStatus) -> Vec<MissingPermission> 
     }
     if !status.screen_recording {
         out.push(MissingPermission::ScreenRecording);
+    }
+    if !status.system_events {
+        out.push(MissingPermission::SystemEvents);
     }
     out
 }
@@ -266,6 +277,9 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
         if missing.contains(&MissingPermission::ScreenRecording) {
             let _ = request_screen_recording();
         }
+        if missing.contains(&MissingPermission::SystemEvents) {
+            let _ = request_system_events();
+        }
     }
 
     // Try to present a native NSPanel before falling back to the
@@ -280,7 +294,7 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
     //   * `ShownDismissed` — user clicked "Continue anyway" or the red
     //     dot; skip the auto-open since the user declined the guided
     //     flow, but still wait so a later manual grant unblocks.
-    //   * `ShownAllGranted` — the panel's poll loop saw both grants
+    //   * `ShownAllGranted` — the panel's poll loop saw all grants
     //     flip green; skip the wait loop entirely.
     let presentation = present_panel_if_available(initial);
     let should_auto_open_settings;
@@ -330,7 +344,7 @@ enum PanelPresentation {
     ShownOpenSettings,
     /// Panel shown; user clicked "Continue anyway" or closed the window.
     ShownDismissed,
-    /// Panel shown; its 1 Hz poll loop saw both grants flip green and
+    /// Panel shown; its 1 Hz poll loop saw all grants flip green and
     /// dismissed automatically. Caller can skip the trailing wait loop.
     ShownAllGranted,
 }
@@ -700,18 +714,21 @@ mod tests {
         let neither = PermissionsStatus {
             accessibility: false,
             screen_recording: false,
+            system_events: false,
         };
         assert_eq!(
             missing_from_status(neither),
             vec![
                 MissingPermission::Accessibility,
-                MissingPermission::ScreenRecording
+                MissingPermission::ScreenRecording,
+                MissingPermission::SystemEvents
             ]
         );
 
         let only_sr = PermissionsStatus {
             accessibility: false,
             screen_recording: true,
+            system_events: true,
         };
         assert_eq!(
             missing_from_status(only_sr),
@@ -721,15 +738,27 @@ mod tests {
         let only_ax = PermissionsStatus {
             accessibility: true,
             screen_recording: false,
+            system_events: true,
         };
         assert_eq!(
             missing_from_status(only_ax),
             vec![MissingPermission::ScreenRecording]
         );
 
+        let only_system_events_missing = PermissionsStatus {
+            accessibility: true,
+            screen_recording: true,
+            system_events: false,
+        };
+        assert_eq!(
+            missing_from_status(only_system_events_missing),
+            vec![MissingPermission::SystemEvents]
+        );
+
         let all = PermissionsStatus {
             accessibility: true,
             screen_recording: true,
+            system_events: true,
         };
         assert!(missing_from_status(all).is_empty());
     }
@@ -746,6 +775,10 @@ mod tests {
         assert_eq!(
             MissingPermission::ScreenRecording.settings_url(),
             "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        );
+        assert_eq!(
+            MissingPermission::SystemEvents.settings_url(),
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"
         );
     }
 }

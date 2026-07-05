@@ -1,7 +1,8 @@
 //! macOS TCC permission checks + first-launch CLI gate.
 //!
 //! Two layers:
-//!   - [`status`] — low-level booleans for Accessibility / Screen Recording.
+//!   - [`status`] — low-level booleans for Accessibility / Screen Recording /
+//!                  System Events Automation.
 //!   - [`gate`]   — startup-time interactive flow that walks the user through
 //!                  granting the missing permissions before `serve` binds.
 //!

@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::permissions::status::{
     accessibility_granted, request_accessibility, request_screen_recording,
-    screen_recording_granted,
+    request_system_events, screen_recording_granted, system_events_granted,
 };
 
 pub struct CheckPermissionsTool;
@@ -27,7 +27,7 @@ fn screen_recording_capturable() -> bool {
 
 /// (B) Which TCC identity the booleans in this response reflect.
 ///
-/// macOS attributes Accessibility / Screen-Recording to the *responsible
+/// macOS attributes Accessibility / Screen Recording / Automation to the *responsible
 /// process* (the LaunchServices launching app), not the executable path.
 /// So `check_permissions` answered in-process reflects:
 ///   - the **CuaDriver daemon** (`com.trycua.driver`) when this process is
@@ -91,13 +91,15 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         // Matches Swift `CheckPermissionsTool.swift` description verbatim.
         name: "check_permissions".into(),
-        description: "Report TCC permission status for Accessibility and Screen Recording. \
+        description: "Report TCC permission status for Accessibility, Screen Recording, \
+            and Automation access to System Events. \
             By default also raises the system permission dialogs for any missing grants — \
             Apple's request APIs are no-ops when the grant is already active, so this is \
             safe to call repeatedly. Pass {\"prompt\": false} for a purely read-only \
             status check.\n\n\
-            Returns: `accessibility` + `screen_recording` (booleans from the TCC \
-            preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit \
+            Returns: `accessibility` + `screen_recording` + `system_events` \
+            (booleans from the TCC preflight APIs), `screen_recording_capturable` \
+            (a live ScreenCaptureKit \
             probe — if it disagrees with `screen_recording`, the preflight grant \
             belongs to a different process), and `source` (which TCC identity the \
             booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). \
@@ -133,9 +135,11 @@ impl Tool for CheckPermissionsTool {
         if should_prompt {
             let _ = request_accessibility();
             let _ = request_screen_recording();
+            let _ = request_system_events();
         }
         let accessibility = accessibility_granted();
         let screen_recording = screen_recording_granted();
+        let system_events = system_events_granted();
         // (A) Authoritative live probe — see `screen_recording_capturable`.
         let screen_recording_capturable = screen_recording_capturable();
         // (B) Which identity the booleans above belong to.
@@ -146,10 +150,14 @@ impl Tool for CheckPermissionsTool {
         //   "✅ Accessibility: granted.\n✅ Screen Recording: granted."
         let ax_prefix  = if accessibility   { "✅" } else { "❌" };
         let sr_prefix  = if screen_recording { "✅" } else { "❌" };
+        let se_prefix  = if system_events { "✅" } else { "❌" };
         let ax_state   = if accessibility   { "granted" } else { "NOT granted" };
         let sr_state   = if screen_recording { "granted" } else { "NOT granted" };
+        let se_state   = if system_events { "granted" } else { "NOT granted" };
         let mut summary = format!(
-            "{ax_prefix} Accessibility: {ax_state}.\n{sr_prefix} Screen Recording: {sr_state}."
+            "{ax_prefix} Accessibility: {ax_state}.\n\
+             {sr_prefix} Screen Recording: {sr_state}.\n\
+             {se_prefix} Automation (System Events): {se_state}."
         );
         // Flag a preflight/probe disagreement (the false-positive tell).
         if screen_recording && !screen_recording_capturable {
@@ -170,6 +178,7 @@ impl Tool for CheckPermissionsTool {
             .with_structured(serde_json::json!({
                 "accessibility":               accessibility,
                 "screen_recording":            screen_recording,
+                "system_events":               system_events,
                 "screen_recording_capturable": screen_recording_capturable,
                 "source":                      source,
             }))

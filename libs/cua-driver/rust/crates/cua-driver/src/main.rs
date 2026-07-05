@@ -309,8 +309,8 @@ fn main() {
             // A Unix socket + tokio accept loop has no main-thread
             // requirement, so serve runs on a background thread. The gate
             // stays on the MAIN thread: its prompt APIs
-            // (`request_accessibility` / `request_screen_recording`) and
-            // the NSPanel must run on main. On grant, the gate's
+            // (`request_accessibility` / `request_screen_recording` /
+            // `request_system_events`) and the NSPanel must run on main. On grant, the gate's
             // `reexec_self()` execvp's the whole daemon — the socket
             // re-binds fast on restart (run_serve unlinks the stale socket
             // file first) and stabilizes once the grant sticks.
@@ -325,7 +325,7 @@ fn main() {
             // Socket is binding/bound now → daemon reachable while we gate.
             //
             // First-launch permissions gate (Swift PermissionsGate parity).
-            // Runs on every `serve` start; no-op when both grants are
+            // Runs on every `serve` start; no-op when all grants are
             // already active.  Honors --no-permissions-gate and
             // CUA_DRIVER_RS_PERMISSIONS_GATE=0 for CI / headless.
             //
@@ -336,7 +336,7 @@ fn main() {
             if let Err(e) = platform_macos::permissions::run_if_needed(gate_opts) {
                 eprintln!("[cua-driver] permissions gate: {e}");
                 eprintln!("[cua-driver] continuing — tool calls touching AX or \
-                           Screen Recording fail until you grant the missing TCC \
+                           Screen Recording, or System Events fail until you grant the missing TCC \
                            permissions.");
             }
 

@@ -8,22 +8,24 @@
 /// Snapshot of which TCC grants are active for the current process.
 ///
 /// Field naming matches the JSON shape used by the `check_permissions`
-/// MCP tool: `accessibility` + `screen_recording`.
+/// MCP tool: `accessibility` + `screen_recording` + `system_events`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PermissionsStatus {
     pub accessibility: bool,
     #[serde(rename = "screen_recording")]
     pub screen_recording: bool,
+    #[serde(rename = "system_events")]
+    pub system_events: bool,
 }
 
 impl PermissionsStatus {
-    /// True when **both** required TCC grants are active.
+    /// True when all required TCC grants are active.
     pub fn all_granted(self) -> bool {
-        self.accessibility && self.screen_recording
+        self.accessibility && self.screen_recording && self.system_events
     }
 }
 
-/// Read the live TCC status for both required grants.  Cheap to call
+/// Read the live TCC status for required grants.  Cheap to call
 /// repeatedly — both probes are quick C-level calls into the system
 /// TCC daemon.
 ///
@@ -37,6 +39,7 @@ pub fn current_status() -> PermissionsStatus {
     PermissionsStatus {
         accessibility: accessibility_granted(),
         screen_recording: screen_recording_granted(),
+        system_events: system_events_granted(),
     }
 }
 
@@ -66,6 +69,17 @@ pub fn screen_recording_granted() -> bool {
     unsafe { CGPreflightScreenCaptureAccess() }
 }
 
+/// Live Automation grant state for controlling System Events.
+///
+/// This is the TCC prompt macOS phrases as:
+/// "CuaDriver wants access to control System Events". We need it for
+/// System Events-backed AppleScript / Apple Events flows such as process
+/// inspection and menu automation. `askUserIfNeeded=false` keeps status
+/// checks read-only.
+pub fn system_events_granted() -> bool {
+    determine_system_events_permission(false)
+}
+
 /// Raise the Accessibility TCC prompt if not yet granted.  No-op when
 /// already active.  Mirrors Swift `Permissions.requestAccessibility()`.
 pub fn request_accessibility() -> bool {
@@ -91,4 +105,68 @@ pub fn request_screen_recording() -> bool {
         fn CGRequestScreenCaptureAccess() -> bool;
     }
     unsafe { CGRequestScreenCaptureAccess() }
+}
+
+/// Raise the Automation → System Events TCC prompt if not yet granted.
+/// No-op when already active.
+pub fn request_system_events() -> bool {
+    determine_system_events_permission(true)
+}
+
+fn determine_system_events_permission(ask_user_if_needed: bool) -> bool {
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    struct AEDesc {
+        descriptor_type: u32,
+        data_handle: *mut c_void,
+    }
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AECreateDesc(
+            type_code: u32,
+            data_ptr: *const c_void,
+            data_size: isize,
+            result: *mut AEDesc,
+        ) -> i32;
+        fn AEDisposeDesc(desc: *mut AEDesc) -> i32;
+        fn AEDeterminePermissionToAutomateTarget(
+            target: *const AEDesc,
+            event_class: u32,
+            event_id: u32,
+            ask_user_if_needed: u8,
+        ) -> i32;
+    }
+
+    // FourCharCode constants from AppleEvents.h.
+    const TYPE_APPLICATION_BUNDLE_ID: u32 = 0x6275_6e64; // 'bund'
+    const TYPE_WILD_CARD: u32 = 0x2a2a_2a2a; // '****'
+
+    let bundle_id = b"com.apple.systemevents";
+    let mut target = AEDesc {
+        descriptor_type: 0,
+        data_handle: std::ptr::null_mut(),
+    };
+
+    unsafe {
+        let create_status = AECreateDesc(
+            TYPE_APPLICATION_BUNDLE_ID,
+            bundle_id.as_ptr().cast::<c_void>(),
+            bundle_id.len() as isize,
+            &mut target,
+        );
+        if create_status != 0 {
+            return false;
+        }
+
+        let status = AEDeterminePermissionToAutomateTarget(
+            &target,
+            TYPE_WILD_CARD,
+            TYPE_WILD_CARD,
+            u8::from(ask_user_if_needed),
+        );
+        let _ = AEDisposeDesc(&mut target);
+        status == 0
+    }
 }

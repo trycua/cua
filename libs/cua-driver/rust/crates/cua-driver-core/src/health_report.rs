@@ -48,6 +48,7 @@ pub const NAME_SESSION_ACTIVE: &str = "session_active";
 pub const NAME_BUNDLE_IDENTITY: &str = "bundle_identity";
 pub const NAME_TCC_ACCESSIBILITY: &str = "tcc_accessibility";
 pub const NAME_TCC_SCREEN_RECORDING: &str = "tcc_screen_recording";
+pub const NAME_TCC_SYSTEM_EVENTS: &str = "tcc_system_events";
 pub const NAME_AX_CAPABILITY: &str = "ax_capability";
 pub const NAME_SCREEN_CAPTURE_CAPABILITY: &str = "screen_capture_capability";
 
@@ -353,7 +354,7 @@ If both are given, `include` wins.
 Canonical check names:
   macOS  : binary_version, platform_supported, session_active,
            bundle_identity, tcc_accessibility, tcc_screen_recording,
-           ax_capability, screen_capture_capability
+           tcc_system_events, ax_capability, screen_capture_capability
   Windows: binary_version, platform_supported, session_active,
            ax_capability (via UIA), screen_capture_capability (via DXGI)
   Linux  : binary_version, platform_supported, session_active,
@@ -496,6 +497,7 @@ mod tests {
             NAME_BUNDLE_IDENTITY,
             NAME_TCC_ACCESSIBILITY,
             NAME_TCC_SCREEN_RECORDING,
+            NAME_TCC_SYSTEM_EVENTS,
             NAME_AX_CAPABILITY,
             NAME_SCREEN_CAPTURE_CAPABILITY,
         ]

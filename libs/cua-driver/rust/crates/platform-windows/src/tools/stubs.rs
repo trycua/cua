@@ -121,7 +121,7 @@ stub_tool!(set_cursor_style_m, SetAgentCursorStyleTool, "set_agent_cursor_style"
     serde_json::json!({"type":"object","properties":{"cursor_id":{"type":"string"},"gradient_colors":{"type":"array","items":{"type":"string"}},"bloom_color":{"type":"string"},"image_path":{"type":"string"}},"additionalProperties":false}));
 
 stub_tool!(check_perms_m, CheckPermissionsTool, "check_permissions",
-    "Check required permissions (Accessibility, Screen Recording).",
+    "Check required platform permissions.",
     serde_json::json!({"type":"object","properties":{"prompt":{"type":"boolean"}},"additionalProperties":false}));
 
 stub_tool!(get_config_m, GetConfigTool, "get_config",

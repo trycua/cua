@@ -109,11 +109,12 @@ Cua Driver's *no-foreground contract* holds for every app it reaches via AX or a
 
 ## Permission boundaries
 
-Cua Driver is constrained by the macOS permission model. Two relevant grants:
+Cua Driver is constrained by the macOS permission model. Three relevant grants:
 
 | Grant | Required for |
 | ----- | ------------ |
 | **Accessibility** (System Settings → Privacy & Security → Accessibility) | Every AX read, every element-indexed click, every keyboard/text primitive. Without it, `check_permissions` returns `accessibility: false` and every tool returns a structured error. |
 | **Screen Recording** | Screenshots. `get_window_state` returns both the accessibility tree and a screenshot by default; without this grant it returns the tree only (no PNG). The tree path still works. |
+| **Automation → System Events** | Apple Events-backed flows that ask System Events for process/menu state. Without it, `check_permissions` returns `system_events: false` and macOS may show “CuaDriver wants access to control System Events.” |
 
 Grants are tied to the `CuaDriver.app` bundle identity (`com.trycua.driver`). The Rust build and installer preserve this identity, so TCC grants persist across rebuilds and updates.

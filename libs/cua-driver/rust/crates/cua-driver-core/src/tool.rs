@@ -242,6 +242,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
             "system.permissions.tcc",
             "system.permissions.tcc.accessibility",
             "system.permissions.tcc.screen_recording",
+            "system.permissions.tcc.system_events",
         ],
         "get_config" => &["system.config.read"],
         "set_config" => &["system.config.write"],
@@ -586,6 +587,7 @@ mod capability_tests {
         "system.permissions.tcc",
         "system.permissions.tcc.accessibility",
         "system.permissions.tcc.screen_recording",
+        "system.permissions.tcc.system_events",
         // config
         "system.config.read",
         "system.config.write",

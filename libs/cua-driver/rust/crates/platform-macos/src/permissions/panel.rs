@@ -20,9 +20,11 @@
 //! │                                             │
 //! │  ✗ Screen Recording                         │
 //! │      lets cua-driver capture per-window …   │
+//! │  ✗ Automation (System Events)               │
+//! │      lets cua-driver control System Events… │
 //! │                                             │
 //! │  ✅ All set. CuaDriver is ready to use.      │
-//! │     (hidden until both grants flip green)   │
+//! │     (hidden until all grants flip green)    │
 //! │                                             │
 //! │  [ Continue anyway ]  [ Open Settings ]     │
 //! └─────────────────────────────────────────────┘
@@ -30,7 +32,7 @@
 //!
 //! A 1 Hz `NSTimer` reads [`current_status`] on every tick and updates
 //! the row icons / heading / subheading / "All set" strip in place.
-//! When both grants flip green and `suppress_auto_close == false` the
+//! When all grants flip green and `suppress_auto_close == false` the
 //! poll callback calls `[NSApp stopModal]` and `show_modal` returns
 //! [`PanelOutcome::AllGranted`] so the caller can skip the trailing
 //! `wait_for_grants` loop.
@@ -219,12 +221,12 @@ fn running_inside_app_bundle() -> bool {
 // ── Layout constants ────────────────────────────────────────────────────
 //
 // Window geometry mirrors Swift's `.frame(width: 460)` plus heights
-// chosen to fit: heading (24) + subheading (40) + 2 rows (76 each) +
+// chosen to fit: heading (24) + subheading (40) + 3 rows (76 each) +
 // "All set" strip (32) + button row (48) + paddings (20·5). Keeping
 // the numbers as a block here so the math is auditable.
 
 const WIN_W: f64 = 460.0;
-const WIN_H: f64 = 360.0;
+const WIN_H: f64 = 444.0;
 const PAD: f64 = 20.0;
 const ROW_H: f64 = 76.0;
 const READY_STRIP_H: f64 = 36.0;
@@ -296,8 +298,9 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
 
     y -= 8.0 + 40.0; // gap + subheading height
 
+    let initial_subheading = subheading_for(opts.initial_status);
     let subheading = build_label(
-        subheading_for(opts.initial_status),
+        &initial_subheading,
         12.0,
         /*bold=*/ false,
         NSPoint { x: PAD, y },
@@ -339,11 +342,22 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
     let _: () = msg_send![content_view, addSubview: sr_row.container];
     y -= ROW_H + 8.0;
 
+    let se_row = build_row(
+        MissingPermission::SystemEvents,
+        opts.initial_status.system_events,
+        NSPoint { x: PAD, y: y - ROW_H },
+        NSSize {
+            width: WIN_W - 2.0 * PAD,
+            height: ROW_H,
+        },
+    );
+    let _: () = msg_send![content_view, addSubview: se_row.container];
+    y -= ROW_H + 8.0;
+
     // ---- Ready strip (initially hidden; shown by poll on all-green) ----
     let ready_strip = build_ready_strip(NSPoint { x: PAD, y: y - READY_STRIP_H }, WIN_W - 2.0 * PAD);
     let _: () = msg_send![content_view, addSubview: ready_strip];
-    let initially_all_green =
-        opts.initial_status.accessibility && opts.initial_status.screen_recording;
+    let initially_all_green = opts.initial_status.all_granted();
     let _: () = msg_send![ready_strip, setHidden: !initially_all_green];
 
     // ---- Buttons across the bottom ----
@@ -383,6 +397,7 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
             ready_strip: ptr_to_usize(ready_strip),
             ax_row,
             sr_row,
+            se_row,
             last_status: opts.initial_status,
         });
     });
@@ -433,6 +448,7 @@ struct PanelHandles {
     ready_strip: usize,
     ax_row: RowHandles,
     sr_row: RowHandles,
+    se_row: RowHandles,
     last_status: PermissionsStatus,
 }
 
@@ -511,13 +527,15 @@ unsafe fn poll_tick_inner() {
         // Update row icons + label color tints.
         update_row(handles.ax_row, status.accessibility);
         update_row(handles.sr_row, status.screen_recording);
+        update_row(handles.se_row, status.system_events);
         // Update heading + subheading copy.
         let new_heading = ns_string(heading_for(status));
         let _: () = msg_send![usize_to_ptr(handles.heading), setStringValue: new_heading];
-        let new_subheading = ns_string(subheading_for(status));
+        let new_subheading_text = subheading_for(status);
+        let new_subheading = ns_string(&new_subheading_text);
         let _: () = msg_send![usize_to_ptr(handles.subheading), setStringValue: new_subheading];
         // Toggle the ready strip.
-        let all_green = status.accessibility && status.screen_recording;
+        let all_green = status.all_granted();
         let _: () = msg_send![usize_to_ptr(handles.ready_strip), setHidden: !all_green];
         handles.last_status = status;
         if all_green {
@@ -558,24 +576,37 @@ unsafe fn update_row(row: RowHandles, granted: bool) {
 // ── Heading / subheading copy (parity with Swift) ────────────────────────
 
 fn heading_for(s: PermissionsStatus) -> &'static str {
-    match (s.accessibility, s.screen_recording) {
-        (true, true) => "CuaDriver is ready",
-        (true, false) | (false, true) => "One more permission",
-        (false, false) => "CuaDriver needs your permission",
+    let missing = missing_permission_labels(s).len();
+    match missing {
+        0 => "CuaDriver is ready",
+        1 => "One more permission",
+        _ => "CuaDriver needs your permission",
     }
 }
 
-fn subheading_for(s: PermissionsStatus) -> &'static str {
-    match (s.accessibility, s.screen_recording) {
-        (true, true) =>
-            "Both permissions are granted. You can close this window whenever you're ready.",
-        (true, false) =>
-            "Accessibility is granted. Now grant Screen Recording in the System Settings window that just opened.",
-        (false, true) =>
-            "Screen Recording is granted. Now grant Accessibility in the System Settings window that just opened.",
-        (false, false) =>
-            "Grant both so CuaDriver can inspect and drive native apps on your behalf. This window closes on its own once each item turns green.",
+fn subheading_for(s: PermissionsStatus) -> String {
+    let missing = missing_permission_labels(s);
+    match missing.as_slice() {
+        [] => "All permissions are granted. You can close this window whenever you're ready.".to_owned(),
+        [one] => format!(
+            "Almost there. Now grant {one} in the System Settings window that just opened."
+        ),
+        _ => "Grant each item so CuaDriver can inspect and drive native apps on your behalf. This window closes on its own once each item turns green.".to_owned(),
     }
+}
+
+fn missing_permission_labels(s: PermissionsStatus) -> Vec<&'static str> {
+    let mut labels = Vec::new();
+    if !s.accessibility {
+        labels.push("Accessibility");
+    }
+    if !s.screen_recording {
+        labels.push("Screen Recording");
+    }
+    if !s.system_events {
+        labels.push("Automation (System Events)");
+    }
+    labels
 }
 
 // ── Helpers: NSString, labels, buttons, icons, rows ──────────────────────
@@ -882,6 +913,7 @@ mod tests {
         let st = |a: bool, sr: bool| PermissionsStatus {
             accessibility: a,
             screen_recording: sr,
+            system_events: true,
         };
         assert_eq!(heading_for(st(true, true)), "CuaDriver is ready");
         assert_eq!(heading_for(st(true, false)), "One more permission");
@@ -897,6 +929,7 @@ mod tests {
         let st = |a: bool, sr: bool| PermissionsStatus {
             accessibility: a,
             screen_recording: sr,
+            system_events: true,
         };
         // Only Accessibility granted → mentions Screen Recording next.
         assert!(subheading_for(st(true, false)).contains("Screen Recording"));

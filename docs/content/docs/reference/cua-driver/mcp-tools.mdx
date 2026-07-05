@@ -668,9 +668,9 @@ All parameters are optional; omit any you do not want to change.
 
 ### `check_permissions`
 
-Report TCC permission status for Accessibility and Screen Recording. By default also raises the system permission dialogs for any missing grants — Apple's request APIs are no-ops when the grant is already active, so this is safe to call repeatedly. Pass &#123;"prompt": false&#125; for a purely read-only status check.
+Report TCC permission status for Accessibility, Screen Recording, and Automation access to System Events. By default also raises the system permission dialogs for any missing grants — Apple's request APIs are no-ops when the grant is already active, so this is safe to call repeatedly. Pass &#123;"prompt": false&#125; for a purely read-only status check.
 
-Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit probe — if it disagrees with `screen_recording`, the preflight grant belongs to a different process), and `source` (which TCC identity the booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). macOS attributes grants to the responsible process, so a standalone call from a terminal reports the terminal's grants, not the driver's.
+Returns: `accessibility` + `screen_recording` + `system_events` (booleans from the TCC preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit probe — if it disagrees with `screen_recording`, the preflight grant belongs to a different process), and `source` (which TCC identity the booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). macOS attributes grants to the responsible process, so a standalone call from a terminal reports the terminal's grants, not the driver's.
 
 **Arguments:**
 
@@ -690,7 +690,7 @@ If both are given, `include` wins.
 Canonical check names:
   macOS  : binary_version, platform_supported, session_active,
            bundle_identity, tcc_accessibility, tcc_screen_recording,
-           ax_capability, screen_capture_capability
+           tcc_system_events, ax_capability, screen_capture_capability
   Windows: binary_version, platform_supported, session_active,
            ax_capability (via UIA), screen_capture_capability (via DXGI)
   Linux  : binary_version, platform_supported, session_active,

@@ -80,7 +80,7 @@ fn get_config_and_check_permissions() {
         assert!(sc["post_message"].as_bool().unwrap_or(false), "post_message should be true: {sc:?}");
         assert!(sc["elevated"].is_boolean(), "elevated should be a boolean: {sc:?}");
     } else {
-        // Returns structured content with accessibility and screen_recording booleans.
+        // Returns structured content with platform permission booleans.
         assert!(resp["result"]["structuredContent"]["accessibility"].is_boolean());
     }
 

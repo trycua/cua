@@ -817,7 +817,7 @@ echo ""
 
 if [[ "${REPLACED_SWIFT:-0}" == "1" ]]; then
     echo "Upgraded the cua-driver bundle that was previously at $APP_DEST."
-    echo "TCC grants (Accessibility, Screen Recording) are keyed on the bundle id"
+    echo "TCC grants (Accessibility, Screen Recording, System Events Automation) are keyed on the bundle id"
     echo "(com.trycua.driver) — which is preserved — so they transfer to the new"
     echo "binary automatically. macOS may surface a one-time re-grant prompt on"
     echo "first action because the new binary's cdhash doesn't match the old"
@@ -846,7 +846,7 @@ fi
 case "$(uname -s)" in
     Darwin)
         echo ""
-        echo "macOS TCC: grant Accessibility + Screen Recording on first run:"
+        echo "macOS TCC: grant Accessibility + Screen Recording + System Events on first run:"
         echo "  open -n -g -a CuaDriver --args serve"
         echo "  $BIN_LINK check_permissions"
         ;;

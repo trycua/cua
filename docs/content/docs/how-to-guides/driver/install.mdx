@@ -17,7 +17,7 @@ Cua Driver supports macOS, Windows, and Linux. Use the same **one-line installer
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
 ```
 
-The installer places `CuaDriver.app` in `/Applications` and creates the `~/.local/bin/cua-driver` symlink. The app bundle uses the `com.trycua.driver` signing identity, so macOS TCC permissions for Accessibility and Screen Recording remain attached across upgrades.
+The installer places `CuaDriver.app` in `/Applications` and creates the `~/.local/bin/cua-driver` symlink. The app bundle uses the `com.trycua.driver` signing identity, so macOS TCC permissions for Accessibility, Screen Recording, and Automation access to System Events remain attached across upgrades.
 
 If `~/.local/bin` is missing from your PATH, the installer detects your shell (`zsh`, `bash`, or `fish`) and adds the matching `export PATH=…` line to your rc file. Reload the shell with `source ~/.zshrc` or open a new terminal window.
 
@@ -93,7 +93,7 @@ Then grant both permissions:
 cua-driver permissions grant
 ```
 
-That command launches CuaDriver through LaunchServices and waits while you approve Accessibility and Screen Recording in the macOS dialogs.
+That command launches CuaDriver through LaunchServices and waits while you approve Accessibility, Screen Recording, and Automation access to System Events in the macOS dialogs.
 
 You can also trigger the prompts yourself:
 
@@ -101,7 +101,7 @@ You can also trigger the prompts yourself:
 cua-driver check_permissions
 ```
 
-macOS opens the Accessibility and Screen Recording prompts. Grant both permissions, then run the check again:
+macOS opens the Accessibility, Screen Recording, and System Events Automation prompts. Grant each permission, then run the check again:
 
 ```bash
 cua-driver permissions status

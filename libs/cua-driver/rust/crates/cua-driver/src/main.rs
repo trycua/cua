@@ -29,6 +29,7 @@ mod bundle;
 mod cli;
 mod doctor;
 mod mcp_http;
+mod mcp_oauth;
 mod proxy;
 mod responsibility;
 mod serve;
@@ -201,6 +202,22 @@ fn main() {
             // Surface 8: machine-readable CLI manifest. Read-only — no
             // registry build needed, no daemon contact.
             cli::run_manifest(pretty);
+            return;
+        }
+        cli::Command::McpOauth { public_url, listen, mcp_upstream, storage_dir, token_ttl_seconds, code_ttl_seconds, require_user_consent } => {
+            let opts = mcp_oauth::Options::new(
+                public_url,
+                listen,
+                mcp_upstream,
+                storage_dir,
+                token_ttl_seconds,
+                code_ttl_seconds,
+                require_user_consent,
+            );
+            if let Err(e) = mcp_oauth::run(opts) {
+                eprintln!("cua-driver mcp-oauth error: {e}");
+                std::process::exit(1);
+            }
             return;
         }
         cli::Command::Call { tool, json_args, screenshot_out_file, socket } => {
@@ -573,6 +590,22 @@ fn main() -> anyhow::Result<()> {
             // Surface 8: machine-readable CLI manifest. Read-only — no
             // registry build needed.
             cli::run_manifest(pretty);
+            return Ok(());
+        }
+        cli::Command::McpOauth { public_url, listen, mcp_upstream, storage_dir, token_ttl_seconds, code_ttl_seconds, require_user_consent } => {
+            let opts = mcp_oauth::Options::new(
+                public_url,
+                listen,
+                mcp_upstream,
+                storage_dir,
+                token_ttl_seconds,
+                code_ttl_seconds,
+                require_user_consent,
+            );
+            if let Err(e) = mcp_oauth::run(opts) {
+                eprintln!("cua-driver mcp-oauth error: {e}");
+                std::process::exit(1);
+            }
             return Ok(());
         }
         cli::Command::Call { tool, json_args, screenshot_out_file, socket } => {

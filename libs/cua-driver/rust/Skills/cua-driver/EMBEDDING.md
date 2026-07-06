@@ -312,12 +312,15 @@ log("get_window_state(Finder) — tree: \(hasTree ? "ok" : "EMPTY"), " +
 
 // 6. Agent-cursor glide — shows the overlay, no real-pointer move.
 log("watch the agent cursor glide now (no real-pointer move)…")
-_ = call("move_agent_cursor", ["x": 200, "y": 200])
+let cursor1 = call("move_cursor", ["x": 200, "y": 200])
 Thread.sleep(forTimeInterval: 2)
-_ = call("move_agent_cursor", ["x": 900, "y": 500])
+let cursor2 = call("move_cursor", ["x": 900, "y": 500])
 Thread.sleep(forTimeInterval: 2)
+let cursorOk = (cursor1["isError"] as? Bool) != true &&
+    (cursor2["isError"] as? Bool) != true
+log("move_cursor — \(cursorOk ? "ok" : "FAILED")")
 
-let pass = attribution == "host" && !images.isEmpty && hasTree
+let pass = attribution == "host" && !images.isEmpty && hasTree && cursorOk
 log(pass ? "DEMO COMPLETE: PASS" : "DEMO COMPLETE: FAIL")
 driver.terminate()
 exit(pass ? 0 : 1)

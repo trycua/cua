@@ -5,7 +5,7 @@ description: Run cua-driver as a direct child of your host app instead of handin
 
 Embedding runs `cua-driver` as a direct child of your host app instead of relaunching or proxying through a standalone daemon. On macOS, this also lets the driver inherit the host app's Accessibility and Screen Recording grants, so users only approve your app. On Windows and Linux, embedded mode keeps driver execution inside the host process tree and avoids daemon handoff.
 
-A complete macOS reference host and demo live in [`libs/cua-driver/rust/examples/embedded-host-macos`](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/examples/embedded-host-macos).
+A complete macOS reference host and demo live in the repo at `libs/cua-driver/rust/examples/embedded-host-macos`.
 
 ## Launch embedded
 
@@ -76,3 +76,5 @@ Call the `check_permissions` MCP tool after starting the embedded driver. On mac
 ```
 
 If `source.attribution` is not `host` on macOS, embedded mode is not active for the process handling your MCP calls. Check that `CUA_DRIVER_EMBEDDED=1` is passed to the child, that the child was spawned directly, and that you are not accidentally talking to an old standalone daemon.
+
+`source.attribution: "host"` means the driver process is running in embedded mode; it does not prove that your GUI app is the responsible process. If a gateway, daemon, or Node process spawned the child, the reported grant state still belongs to that spawner. Spawn `cua-driver` from the app process that owns the macOS grants, or bridge MCP to an app-spawned child.

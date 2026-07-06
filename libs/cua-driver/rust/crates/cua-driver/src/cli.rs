@@ -221,7 +221,7 @@ pub fn parse_command() -> Command {
         println!("  cursor (keyed by session id) that shows where the agent acts without moving the");
         println!("  real pointer. It is removed when the session ends. A pure accessibility (AX)");
         println!("  action snaps the cursor with a brief pulse on its first action instead of a long");
-        println!("  glide, so it can be easy to miss — do a pixel click or move_agent_cursor first");
+        println!("  glide, so it can be easy to miss — do a pixel click or move_cursor first");
         println!("  for a visibly gliding demo. These flags tune the overlay on `serve`/`mcp`:");
         println!("  --no-overlay            Disable the cursor overlay entirely for this daemon.");
         println!("  --cursor-id <id>        Name the default cursor instance (default: 'default').");

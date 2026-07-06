@@ -153,6 +153,8 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Install portal build dependencies
         run: |
           sudo apt-get update
@@ -163,34 +165,31 @@ jobs:
       - name: Determine version
         id: version
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
           else
-            VERSION="${{ inputs.version }}"
+            VERSION="$INPUT_VERSION"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            libs/cua-driver/rust/target
-          key: rust-cua-driver-rs-linux-portal-${{ matrix.arch }}-${{ hashFiles('libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml') }}
-          restore-keys: |
-            rust-cua-driver-rs-linux-portal-${{ matrix.arch }}-
       - name: Build (release, portal-libei)
         working-directory: libs/cua-driver/rust
-        run: cargo build -p cua-driver --release --features portal-libei --target ${{ matrix.target }}
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build -p cua-driver --release --features portal-libei --target "$TARGET"
       - name: Package
         working-directory: libs/cua-driver/rust
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+          TARGET: ${{ matrix.target }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          LABEL="linux-${{ matrix.arch }}-portal"
-          TARGET="${{ matrix.target }}"
+          LABEL="linux-${ARCH}-portal"
           STAGE="cua-driver-rs-${VERSION}-${LABEL}"
           mkdir -p "release/${STAGE}"
           cp "target/${TARGET}/release/cua-driver" "release/${STAGE}/"

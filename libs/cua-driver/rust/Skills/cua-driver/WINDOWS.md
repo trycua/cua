@@ -470,13 +470,14 @@ your prior tool calls earned.
 
 1. **`cua-driver` is on `$PATH`** — `Get-Command cua-driver` or
    `where.exe cua-driver`. Install location:
-   `%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin\cua-driver.exe`,
+   `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin\cua-driver.exe`,
    added to the user PATH by the install script.
    If missing, point the user at:
    ```powershell
-   irm https://github.com/trycua/cua/releases/latest/download/install.ps1 | iex
+   irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
    ```
-   and stop.
+   On rate-limited networks, set `GITHUB_TOKEN` or `GH_TOKEN` before installing.
+   Then stop.
 2. **The daemon must run in an interactive session (Session 1+),
    NOT Session 0.** Windows isolates services into Session 0 with no
    desktop. UIA enumeration, screenshot via PrintWindow, and

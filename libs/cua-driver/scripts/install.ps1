@@ -50,6 +50,9 @@
 #                                    disable GC entirely). Per-target —
 #                                    multi-arch dirs are pruned
 #                                    independently of each other.
+#   $env:GITHUB_TOKEN / GH_TOKEN     optional GitHub API bearer token for
+#                                    rate-limited networks; GITHUB_TOKEN
+#                                    wins over GH_TOKEN.
 #
 # Params:
 #   -Release    release tag to install ("latest" or a bare version like "0.2.0").
@@ -100,6 +103,17 @@ $ProgressPreference = "SilentlyContinue"
 $Repo       = "trycua/cua"
 $TagPrefix  = "cua-driver-rs-v"
 $BinaryName = "cua-driver.exe"
+
+function Get-GitHubApiHeaders {
+    $token = $null
+    if ($env:GITHUB_TOKEN -and $env:GITHUB_TOKEN.Trim()) {
+        $token = $env:GITHUB_TOKEN.Trim()
+    } elseif ($env:GH_TOKEN -and $env:GH_TOKEN.Trim()) {
+        $token = $env:GH_TOKEN.Trim()
+    }
+    if ($token) { return @{ Authorization = "Bearer $token" } }
+    return @{}
+}
 
 # Baked-version constant — kept in lock-step with the latest published
 # cua-driver-rs-v* release tag by the CD workflow's bake-version step
@@ -878,7 +892,7 @@ function Resolve-Version {
     $matches = @()
     for ($page = 1; $page -le 10; $page++) {
         $uri = "https://api.github.com/repos/$Repo/releases?per_page=100&page=$page"
-        $batch = Invoke-RestMethod -Uri $uri -UseBasicParsing
+        $batch = Invoke-RestMethod -Uri $uri -UseBasicParsing -Headers (Get-GitHubApiHeaders)
         if (-not $batch -or $batch.Count -eq 0) { break }
         $matches += @($batch | Where-Object { $_.tag_name -like "$TagPrefix*" })
         if ($batch.Count -lt 100) { break }

@@ -20,10 +20,15 @@
 # Flags:
 #   --bin-dir <path>     install the visible binary/symlink to <path>
 #                        instead of ~/.local/bin
+#   --linux-variant <portable|portal>
+#                        on Linux, install the default portable binary or the
+#                        portal-enabled GNOME/KDE Wayland binary
 #   --no-modify-path     skip auto-appending an `export PATH=...` line
 #
 # Env overrides:
 #   CUA_DRIVER_RS_VERSION=0.1.2          pin a specific release tag
+#   CUA_DRIVER_RS_LINUX_VARIANT=portal  install the portal-enabled Linux binary
+#                                        instead of the portable default
 #   CUA_DRIVER_RS_INSTALL_DIR=PATH       same as --bin-dir; sets the visible
 #                                        binary location
 #   CUA_DRIVER_RS_BIN_DIR=PATH           legacy alias for INSTALL_DIR
@@ -127,6 +132,7 @@ HOME_DIR="${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver}"
 # install is staged so a single rooted home (~/.cua-driver) is left behind.
 LEGACY_HOME_DIR="$HOME/.cua-driver-rs"
 NO_MODIFY_PATH="${CUA_DRIVER_RS_NO_MODIFY_PATH:-0}"
+LINUX_VARIANT="${CUA_DRIVER_RS_LINUX_VARIANT:-portable}"
 # Post-install GC: how many per-version release dirs to retain. Validated
 # below as a non-negative integer; 0 means "never GC". The dir that
 # `current` resolves to is always preserved regardless of cutoff.
@@ -148,6 +154,13 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --bin-dir) BIN_DIR="$2"; shift 2 ;;
         --bin-dir=*) BIN_DIR="${1#*=}"; shift ;;
+        --linux-variant)
+            if [[ -z "${2:-}" || "${2:0:1}" == "-" ]]; then
+                printf 'error: --linux-variant requires a value: portable or portal\n' >&2
+                exit 2
+            fi
+            LINUX_VARIANT="$2"; shift 2 ;;
+        --linux-variant=*) LINUX_VARIANT="${1#*=}"; shift ;;
         --no-modify-path) NO_MODIFY_PATH=1; shift ;;
         *) shift ;;
     esac
@@ -167,6 +180,14 @@ TMP_DIR=$(mktemp -d)
 
 log() { printf '==> %s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; }
+
+case "$LINUX_VARIANT" in
+    portable|portal) ;;
+    *)
+        err "unsupported CUA_DRIVER_RS_LINUX_VARIANT / --linux-variant: $LINUX_VARIANT (expected portable or portal)"
+        exit 2
+        ;;
+esac
 
 # --- Concurrent-install lockfile ---------------------------------------
 #
@@ -490,6 +511,17 @@ case "$OS-$ARCH_RAW" in
         ;;
 esac
 
+INSTALL_TARGET="$TARGET"
+if [[ "$LINUX_VARIANT" == "portal" ]]; then
+    if [[ "$OS" != "Linux" ]]; then
+        err "--linux-variant=portal is only supported on Linux"
+        exit 2
+    fi
+    LABEL="${LABEL}-portal"
+    INSTALL_TARGET="${TARGET}-portal"
+    log "using portal-enabled Linux variant (higher glibc floor; GNOME/KDE Wayland input)"
+fi
+
 for cmd in curl tar; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         err "$cmd not found on PATH"
@@ -702,11 +734,11 @@ else
     PACKAGES_DIR="$HOME_DIR/packages"
     RELEASES_DIR="$PACKAGES_DIR/releases"
     CURRENT_LINK="$PACKAGES_DIR/current"
-    VERSIONED_DIR="$RELEASES_DIR/${VERSION}-${TARGET}"
+    VERSIONED_DIR="$RELEASES_DIR/${VERSION}-${INSTALL_TARGET}"
 
     mkdir -p "$VERSIONED_DIR"
     install -m 0755 "$SRC" "$VERSIONED_DIR/$BINARY_NAME"
-    log "installed $VERSIONED_DIR/$BINARY_NAME (version $VERSION, target $TARGET)"
+    log "installed $VERSIONED_DIR/$BINARY_NAME (version $VERSION, target $INSTALL_TARGET)"
 
     # `ln -sfn` would replace an existing dir-symlink in place but is
     # not atomic on Linux (it unlinks then symlinks). Use a tmp symlink
@@ -715,7 +747,7 @@ else
     TMP_LINK="$PACKAGES_DIR/.current.$$"
     rm -rf "$TMP_LINK"
     # Relative target so the link is portable if $HOME_DIR is moved.
-    ln -s "releases/${VERSION}-${TARGET}" "$TMP_LINK"
+    ln -s "releases/${VERSION}-${INSTALL_TARGET}" "$TMP_LINK"
     # `mv -Tf` is the atomic-rename form on GNU coreutils (Linux). On
     # BSD mv (macOS — which doesn't take this branch in production, but
     # we still want this script to be runnable from a macOS dev shell
@@ -724,7 +756,7 @@ else
         rm -rf "$CURRENT_LINK"
         mv "$TMP_LINK" "$CURRENT_LINK"
     fi
-    log "current -> releases/${VERSION}-${TARGET}"
+    log "current -> releases/${VERSION}-${INSTALL_TARGET}"
 
     # Visible PATH entry: replace whatever was at $BIN_LINK (could be
     # an old plain binary from a pre-versioned-dirs install) with a
@@ -737,7 +769,7 @@ else
     # atomic `current` swap above so the about-to-be-active version is
     # never a deletion candidate (it's both the newest by mtime and
     # exempted via the current-symlink check inside prune_old_releases).
-    prune_old_releases "$RELEASES_DIR" "$CURRENT_LINK" "$TARGET" "$KEEP_VERSIONS"
+    prune_old_releases "$RELEASES_DIR" "$CURRENT_LINK" "$INSTALL_TARGET" "$KEEP_VERSIONS"
 fi
 
 # --- Sweep the legacy ~/.cua-driver-rs home -----------------------------

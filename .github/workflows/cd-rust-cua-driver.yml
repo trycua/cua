@@ -131,6 +131,79 @@ jobs:
           path: libs/cua-driver/rust/release/cua-driver-rs-*-linux-${{ matrix.arch }}*.tar.gz
           if-no-files-found: error
 
+  # Portal-enabled Linux builds for GNOME/KDE Wayland.
+  #
+  # These intentionally do NOT replace the portable linux-* artifacts above:
+  # portal-libei pulls PipeWire/libspa through libspa-sys, which cannot be built
+  # in the Debian 11 container that preserves the GLIBC_2.31 floor. Build the
+  # portal variants on current Ubuntu runners instead and publish them under a
+  # distinct `linux-<arch>-portal` label so install.sh can opt in explicitly.
+  build-linux-portal:
+    name: linux-${{ matrix.arch }}-portal
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - arch: arm64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install portal build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev \
+            libpipewire-0.3-dev libspa-0.2-dev libxkbcommon-dev clang libclang-dev
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            libs/cua-driver/rust/target
+          key: rust-cua-driver-rs-linux-portal-${{ matrix.arch }}-${{ hashFiles('libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml') }}
+          restore-keys: |
+            rust-cua-driver-rs-linux-portal-${{ matrix.arch }}-
+      - name: Build (release, portal-libei)
+        working-directory: libs/cua-driver/rust
+        run: cargo build -p cua-driver --release --features portal-libei --target ${{ matrix.target }}
+      - name: Package
+        working-directory: libs/cua-driver/rust
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          LABEL="linux-${{ matrix.arch }}-portal"
+          TARGET="${{ matrix.target }}"
+          STAGE="cua-driver-rs-${VERSION}-${LABEL}"
+          mkdir -p "release/${STAGE}"
+          cp "target/${TARGET}/release/cua-driver" "release/${STAGE}/"
+          cp ../../LICENSE.md "release/${STAGE}/LICENSE" 2>/dev/null || true
+          (cd release && tar -czf "${STAGE}.tar.gz" "${STAGE}")
+          tar -czf "release/${STAGE}-binary.tar.gz" -C "release/${STAGE}" cua-driver
+          ls -lh "release/${STAGE}.tar.gz" "release/${STAGE}-binary.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-rs-linux-${{ matrix.arch }}-portal
+          path: libs/cua-driver/rust/release/cua-driver-rs-*-linux-${{ matrix.arch }}-portal*.tar.gz
+          if-no-files-found: error
+
   # ── Windows (x86_64 + arm64) ─────────────────────────────────────────────────
   # One matrixed job per Windows target. The arm64 build cross-compiles from
   # the x86_64 windows-latest runner — Rust + MSVC have first-class support
@@ -417,7 +490,7 @@ jobs:
 
   # ── Release ──────────────────────────────────────────────────────────────────
   release:
-    needs: [build-linux, build-windows, build-macos-universal]
+    needs: [build-linux, build-linux-portal, build-windows, build-macos-universal]
     if: startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
     runs-on: ubuntu-latest
     steps:
@@ -595,7 +668,12 @@ jobs:
             The shell installer covers macOS and the Linux pre-release backend
             and installs the Rust implementation by default. Linux artifacts are
             published for early testing and are not yet an official supported
-            release tier.
+            release tier. On GNOME/KDE Wayland, install the portal-enabled Linux
+            artifact explicitly:
+
+            ```bash
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)" -- --linux-variant=portal
+            ```
 
             ### Install (Windows)
 
@@ -616,10 +694,14 @@ jobs:
             - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-universal-binary.tar.gz` — bare universal binary (single file at archive root; **no** .app — bypasses the TCC auto-relaunch path)
 
             **Linux pre-release**
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz` — directory tarball
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-x86_64-binary.tar.gz` — bare binary
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-arm64.tar.gz` — directory tarball (Linux on ARM / aarch64)
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-arm64-binary.tar.gz` — bare binary (Linux on ARM / aarch64)
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz` — portable directory tarball (GLIBC_2.31 floor, no portal-libei)
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-x86_64-binary.tar.gz` — portable bare binary (GLIBC_2.31 floor, no portal-libei)
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-x86_64-portal.tar.gz` — portal-enabled directory tarball for GNOME/KDE Wayland (higher glibc floor)
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-x86_64-portal-binary.tar.gz` — portal-enabled bare binary for GNOME/KDE Wayland (higher glibc floor)
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-arm64.tar.gz` — portable directory tarball (Linux on ARM / aarch64; GLIBC_2.31 floor, no portal-libei)
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-arm64-binary.tar.gz` — portable bare binary (Linux on ARM / aarch64; GLIBC_2.31 floor, no portal-libei)
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-arm64-portal.tar.gz` — portal-enabled directory tarball for GNOME/KDE Wayland (Linux on ARM / aarch64; higher glibc floor)
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-arm64-portal-binary.tar.gz` — portal-enabled bare binary for GNOME/KDE Wayland (Linux on ARM / aarch64; higher glibc floor)
 
             **Windows**
             - `cua-driver-rs-${{ steps.version.outputs.version }}-windows-x86_64.zip` — directory zip

@@ -10,6 +10,9 @@
 #                        ~/.local/bin (e.g. /usr/local/bin — that target needs sudo)
 #   --no-modify-path     skip auto-appending an `export PATH=...` line to your
 #                        shell rc when ~/.local/bin is missing from PATH
+#   --linux-variant <portable|portal>
+#                        forward to the Rust installer; use portal for
+#                        GNOME/KDE Wayland input via xdg-desktop-portal/libei
 #   --backend=rust       explicit Rust backend (no-op; Rust is the only option)
 #   --experimental-rust  legacy alias for --backend=rust (no-op)
 #   --backend=swift      retired Swift backend (no-op; accepted for compat)
@@ -20,6 +23,8 @@
 #   CUA_DRIVER_RS_INSTALL_DIR=PATH same as --bin-dir
 #   CUA_DRIVER_BIN_DIR=PATH        legacy alias for --bin-dir
 #   CUA_DRIVER_NO_MODIFY_PATH=1    same as --no-modify-path
+#   CUA_DRIVER_RS_LINUX_VARIANT=portal
+#                                  install the portal-enabled Linux binary
 #
 # Uninstall:
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)"

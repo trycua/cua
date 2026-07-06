@@ -539,9 +539,11 @@ jobs:
 
           echo "Baked version ${VERSION} into working-tree install scripts:"
           grep -E '^CUA_DRIVER_RS_BAKED_VERSION=' libs/cua-driver/scripts/_install-rust.sh
-          grep -E '^\$Script:CuaDriverRsBakedVersion = ' libs/cua-driver/scripts/install.ps1
+          grep -E "^\\\$Script:CuaDriverRsBakedVersion = " libs/cua-driver/scripts/install.ps1
 
       - name: Stage release files
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir -p release-upload
           find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) \
@@ -579,7 +581,6 @@ jobs:
           # `cua-driver skills install`. The .md files are identical across
           # OS so we publish one asset per release tag. Naming matches the
           # versioned binary tarballs.
-          VERSION="${{ steps.version.outputs.version }}"
           # Asset name keeps the `cua-driver-rs-v*` prefix for backward
           # compat with the URL skills.rs constructs.
           #
@@ -613,18 +614,22 @@ jobs:
             echo '```'
           } > checksums.txt
           checksums=$(cat checksums.txt)
-          echo "checksums<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$checksums" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          {
+            echo "checksums<<EOF"
+            echo "$checksums"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Generate path-filtered release notes
         id: notes
+        env:
+          CURRENT_REF_NAME: ${{ github.ref_name }}
         run: |
           PREV_TAG=$(git tag -l "cua-driver-rs-v*" --sort=-v:refname \
-            | grep -v "^${{ github.ref_name }}$" \
+            | grep -v "^${CURRENT_REF_NAME}$" \
             | head -n 1 || echo "")
           if [ -n "$PREV_TAG" ]; then
-            NOTES=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h) by @%an" -- "libs/cua-driver/rust" | head -50)
+            NOTES=$(git log "${PREV_TAG}..HEAD" --pretty=format:"* %s (%h) by @%an" -- "libs/cua-driver/rust" | head -50)
           else
             NOTES=$(git log --pretty=format:"* %s (%h) by @%an" -- "libs/cua-driver/rust" | head -50)
           fi

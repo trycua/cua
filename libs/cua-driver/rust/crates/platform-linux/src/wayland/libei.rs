@@ -525,63 +525,62 @@ impl EisState {
         match cmd {
             Cmd::Click { x, y, button, .. } => {
                 let (device, rel_x, rel_y) = self.pointer_device_for(*x, *y)?;
-                if let Some(ptr_abs) = device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device) {
-                    device.start_emulating(self.sequence, self.last_serial);
-                    self.sequence = self.sequence.wrapping_add(1);
-                    ptr_abs.motion_absolute(rel_x, rel_y);
-                }
-                if let Some(btn) = device_interface::<reis::ei::Button>(&self.devices, &device) {
-                    btn.button(button.to_evdev(), reis::ei::button::ButtonState::Press);
-                    device.frame(self.last_serial, 0);
-                    btn.button(button.to_evdev(), reis::ei::button::ButtonState::Released);
-                    device.frame(self.last_serial, 1);
-                }
+                let ptr_abs = require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
+                let btn = require_device_interface::<reis::ei::Button>(&self.devices, &device)?;
+
+                device.start_emulating(self.sequence, self.last_serial);
+                self.sequence = self.sequence.wrapping_add(1);
+                ptr_abs.motion_absolute(rel_x, rel_y);
+                btn.button(button.to_evdev(), reis::ei::button::ButtonState::Press);
+                device.frame(self.last_serial, 0);
+                btn.button(button.to_evdev(), reis::ei::button::ButtonState::Released);
+                device.frame(self.last_serial, 1);
                 device.stop_emulating(self.last_serial);
             }
             Cmd::MoveAbsolute { x, y, .. } => {
                 let (device, rel_x, rel_y) = self.pointer_device_for(*x, *y)?;
-                if let Some(ptr_abs) = device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device) {
-                    device.start_emulating(self.sequence, self.last_serial);
-                    self.sequence = self.sequence.wrapping_add(1);
-                    ptr_abs.motion_absolute(rel_x, rel_y);
-                    device.frame(self.last_serial, 0);
-                    device.stop_emulating(self.last_serial);
-                }
+                let ptr_abs = require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
+
+                device.start_emulating(self.sequence, self.last_serial);
+                self.sequence = self.sequence.wrapping_add(1);
+                ptr_abs.motion_absolute(rel_x, rel_y);
+                device.frame(self.last_serial, 0);
+                device.stop_emulating(self.last_serial);
             }
             Cmd::Scroll { dx, dy, .. } => {
                 let device = self.any_pointer_device()
                     .ok_or_else(|| anyhow::anyhow!("no EIS pointer device negotiated yet — wait for handshake"))?;
-                if let Some(scroll) = device_interface::<reis::ei::Scroll>(&self.devices, &device) {
-                    device.start_emulating(self.sequence, self.last_serial);
-                    self.sequence = self.sequence.wrapping_add(1);
-                    scroll.scroll(*dx as f32, *dy as f32);
-                    device.frame(self.last_serial, 0);
-                    device.stop_emulating(self.last_serial);
-                }
+                let scroll = require_device_interface::<reis::ei::Scroll>(&self.devices, &device)?;
+
+                device.start_emulating(self.sequence, self.last_serial);
+                self.sequence = self.sequence.wrapping_add(1);
+                scroll.scroll(*dx as f32, *dy as f32);
+                device.frame(self.last_serial, 0);
+                device.stop_emulating(self.last_serial);
             }
             Cmd::TypeText { text, .. } => {
                 let device = self.any_pointer_device()
                     .ok_or_else(|| anyhow::anyhow!("no EIS device negotiated yet — wait for handshake"))?;
-                if let Some(text_iface) = device_interface::<reis::ei::Text>(&self.devices, &device) {
-                    device.start_emulating(self.sequence, self.last_serial);
-                    self.sequence = self.sequence.wrapping_add(1);
-                    text_iface.utf8(text);
-                    device.frame(self.last_serial, 0);
-                    device.stop_emulating(self.last_serial);
-                }
+                let text_iface = require_device_interface::<reis::ei::Text>(&self.devices, &device)?;
+
+                device.start_emulating(self.sequence, self.last_serial);
+                self.sequence = self.sequence.wrapping_add(1);
+                text_iface.utf8(text);
+                device.frame(self.last_serial, 0);
+                device.stop_emulating(self.last_serial);
             }
             Cmd::PressKey { keycode, .. } => {
                 let device = self.any_pointer_device()
                     .ok_or_else(|| anyhow::anyhow!("no EIS device negotiated yet — wait for handshake"))?;
-                if let Some(kb) = device_interface::<reis::ei::Keyboard>(&self.devices, &device) {
-                    device.start_emulating(self.sequence, self.last_serial);
-                    self.sequence = self.sequence.wrapping_add(1);
-                    kb.key(*keycode, reis::ei::keyboard::KeyState::Press);
-                    device.frame(self.last_serial, 0);
-                    kb.key(*keycode, reis::ei::keyboard::KeyState::Released);
-                    device.frame(self.last_serial, 1);
-                    device.stop_emulating(self.last_serial);
-                }
+                let kb = require_device_interface::<reis::ei::Keyboard>(&self.devices, &device)?;
+
+                device.start_emulating(self.sequence, self.last_serial);
+                self.sequence = self.sequence.wrapping_add(1);
+                kb.key(*keycode, reis::ei::keyboard::KeyState::Press);
+                device.frame(self.last_serial, 0);
+                kb.key(*keycode, reis::ei::keyboard::KeyState::Released);
+                device.frame(self.last_serial, 1);
+                device.stop_emulating(self.last_serial);
             }
             Cmd::Shutdown => {}
         }
@@ -633,6 +632,14 @@ impl EisState {
             ))
             .map(|(d, _)| d.clone())
     }
+}
+
+fn require_device_interface<T: reis::Interface>(
+    devices: &HashMap<reis::ei::Device, DeviceData>,
+    device: &reis::ei::Device,
+) -> anyhow::Result<T> {
+    device_interface::<T>(devices, device)
+        .ok_or_else(|| anyhow::anyhow!("EIS device lacks required {} interface", T::NAME))
 }
 
 fn device_interface<T: reis::Interface>(

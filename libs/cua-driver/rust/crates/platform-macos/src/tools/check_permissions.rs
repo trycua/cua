@@ -44,6 +44,31 @@ fn permission_source() -> serde_json::Value {
         .and_then(|p| std::fs::canonicalize(p).ok())
         .and_then(|p| p.to_str().map(str::to_owned))
         .unwrap_or_default();
+    let disclaimed =
+        std::env::var_os(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV).is_some();
+    // Embedded mode: the driver is a child in a host app's responsibility
+    // chain, so the probes already answer for the host's TCC identity.
+    // This branch only ever downgrades attribution (host, never
+    // driver-daemon), so the caller-controlled env var can't spoof an
+    // elevated identity. `host_bundle_id` is advisory, not a trust signal.
+    if cua_driver_core::embedded_mode() {
+        let host_bundle_id = std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV)
+            .unwrap_or_default();
+        return serde_json::json!({
+            "attribution": "host",
+            "host_bundle_id": host_bundle_id,
+            "embedded": true,
+            "pid": pid,
+            "responsible_ppid": ppid,
+            "executable": exe,
+            "disclaim_env": disclaimed,
+            "note": "Embedded mode: these booleans reflect the HOST app's TCC \
+                     grant (the driver is a child in the host's responsibility \
+                     chain). No separate driver grant exists or is needed. If a \
+                     permission is NOT granted, the host app must request it — \
+                     the driver never raises its own prompt.",
+        });
+    }
     // The trustworthy, non-spoofable signal is the executable path: a caller
     // can't run from inside the code-signed `CuaDriver.app` bundle without
     // controlling that install. The disclaim env var is caller-controlled, so
@@ -54,8 +79,6 @@ fn permission_source() -> serde_json::Value {
     // a caller could pre-set it and spoof the TCC source. Fail closed to
     // "caller" whenever the bundle signal is absent.
     let inside_bundle = exe.contains("/CuaDriver.app/Contents/MacOS/");
-    let disclaimed =
-        std::env::var_os(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV).is_some();
     let is_driver_daemon = inside_bundle && (ppid == 1 || disclaimed);
 
     let (attribution, note) = if is_driver_daemon {
@@ -81,6 +104,7 @@ fn permission_source() -> serde_json::Value {
         "pid": pid,
         "responsible_ppid": ppid,
         "executable": exe,
+        "disclaim_env": disclaimed,
         "note": note,
     })
 }
@@ -129,7 +153,12 @@ impl Tool for CheckPermissionsTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         // Default to prompting — same default + rationale as Swift.
-        let should_prompt = args.bool_or("prompt", true);
+        // Embedded mode hard-disables prompting regardless of the arg (the
+        // host owns the grant flow). This and the startup gate are the only
+        // `request_*` call sites, so both being gated makes prompts
+        // unreachable when embedded.
+        let should_prompt =
+            args.bool_or("prompt", true) && !cua_driver_core::embedded_mode();
         if should_prompt {
             let _ = request_accessibility();
             let _ = request_screen_recording();
@@ -158,7 +187,15 @@ impl Tool for CheckPermissionsTool {
                  the grant likely belongs to a different process, not this one.",
             );
         }
-        // Make the attribution explicit when answering for the caller (not the daemon).
+        // Make the attribution explicit when answering for a host or caller
+        // (not the daemon).
+        if source.get("attribution").and_then(|v| v.as_str()) == Some("host") {
+            summary.push_str(
+                "\nℹ️  Embedded mode: status reflects the HOST app's TCC grant. \
+                 If a permission is missing, the host must request it — the \
+                 driver will not prompt.",
+            );
+        }
         if is_caller {
             summary.push_str(
                 "\nℹ️  Status reflects the launching app's TCC identity, not the CuaDriver \
@@ -180,6 +217,28 @@ impl Tool for CheckPermissionsTool {
 mod tests {
     use super::*;
 
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::permissions::test_env_lock()
+    }
+
+    /// Set/remove `var`, returning the original for restore. Callers must
+    /// hold `env_lock()`.
+    fn swap_env(var: &str, value: Option<&str>) -> Option<std::ffi::OsString> {
+        let original = std::env::var_os(var);
+        match value {
+            Some(v) => std::env::set_var(var, v),
+            None => std::env::remove_var(var),
+        }
+        original
+    }
+
+    fn restore_env(var: &str, original: Option<std::ffi::OsString>) {
+        match original {
+            Some(value) => std::env::set_var(var, value),
+            None => std::env::remove_var(var),
+        }
+    }
+
     #[test]
     fn disclaim_env_var_alone_does_not_grant_daemon_attribution() {
         // The disclaim env var is caller-controlled, so on its own it must not
@@ -187,10 +246,11 @@ mod tests {
         // identity. Daemon attribution additionally requires the binary to live
         // inside the code-signed `CuaDriver.app` bundle — the test runner does
         // not, so even with the env var present we must fail closed to "caller".
+        let _guard = env_lock();
         let name = cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV;
-        let original = std::env::var_os(name);
+        let original = swap_env(name, Some("1"));
+        let embedded = swap_env(cua_driver_core::EMBEDDED_ENV, None);
 
-        std::env::set_var(name, "1");
         let source = permission_source();
         assert_eq!(
             source.get("attribution").and_then(|v| v.as_str()),
@@ -198,9 +258,59 @@ mod tests {
             "env-var presence alone must not yield daemon attribution"
         );
 
-        match original {
-            Some(value) => std::env::set_var(name, value),
-            None => std::env::remove_var(name),
-        }
+        restore_env(cua_driver_core::EMBEDDED_ENV, embedded);
+        restore_env(name, original);
+    }
+
+    #[test]
+    fn embedded_mode_reports_host_attribution() {
+        let _guard = env_lock();
+        let embedded = swap_env(cua_driver_core::EMBEDDED_ENV, Some("1"));
+        let host = swap_env(cua_driver_core::HOST_BUNDLE_ID_ENV, Some("com.example.host"));
+
+        let source = permission_source();
+        assert_eq!(
+            source.get("attribution").and_then(|v| v.as_str()),
+            Some("host"),
+        );
+        assert_eq!(
+            source.get("host_bundle_id").and_then(|v| v.as_str()),
+            Some("com.example.host"),
+        );
+        assert_eq!(source.get("embedded").and_then(|v| v.as_bool()), Some(true));
+
+        restore_env(cua_driver_core::HOST_BUNDLE_ID_ENV, host);
+        restore_env(cua_driver_core::EMBEDDED_ENV, embedded);
+    }
+
+    #[test]
+    fn embedded_plus_disclaim_env_never_yields_daemon_attribution() {
+        // Both caller-controlled env vars together must still not produce
+        // "driver-daemon" — embedded mode may only DOWNGRADE attribution.
+        let _guard = env_lock();
+        let embedded = swap_env(cua_driver_core::EMBEDDED_ENV, Some("1"));
+        let disclaim = swap_env(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV, Some("1"));
+
+        let source = permission_source();
+        assert_eq!(
+            source.get("attribution").and_then(|v| v.as_str()),
+            Some("host"),
+        );
+
+        restore_env(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV, disclaim);
+        restore_env(cua_driver_core::EMBEDDED_ENV, embedded);
+    }
+
+    #[test]
+    fn embedded_env_requires_exact_value_one() {
+        let _guard = env_lock();
+        let embedded = swap_env(cua_driver_core::EMBEDDED_ENV, Some("true"));
+        let source = permission_source();
+        assert_ne!(
+            source.get("attribution").and_then(|v| v.as_str()),
+            Some("host"),
+            "only CUA_DRIVER_EMBEDDED=1 may enable embedded mode"
+        );
+        restore_env(cua_driver_core::EMBEDDED_ENV, embedded);
     }
 }

@@ -1,0 +1,80 @@
+---
+title: Embedding
+description: Run cua-driver as a direct child of your host app instead of handing off to a standalone daemon.
+---
+
+Embedding runs `cua-driver` as a direct child of your host app instead of relaunching or proxying through a standalone daemon. On macOS, this also lets the driver inherit the host app's Accessibility and Screen Recording grants, so users only approve your app. On Windows and Linux, embedded mode keeps driver execution inside the host process tree and avoids daemon handoff.
+
+A complete macOS reference host and demo live in the repo at `libs/cua-driver/rust/examples/embedded-host-macos`.
+
+## Launch embedded
+
+Set embedded mode on the driver process your host spawns:
+
+```sh
+CUA_DRIVER_EMBEDDED=1 \
+CUA_DRIVER_HOST_BUNDLE_ID=com.yourco.yourapp \
+cua-driver mcp
+```
+
+Or use the equivalent flags:
+
+```sh
+cua-driver mcp --embedded --host-bundle-id com.yourco.yourapp
+```
+
+Only the exact value `CUA_DRIVER_EMBEDDED=1` enables embedded mode. The host bundle id is an advisory label echoed in `check_permissions`; trust still comes from macOS's responsibility chain.
+
+## Host requirements
+
+- Spawn `cua-driver` directly from your app, for example with `Process` / `NSTask`, `posix_spawn`, or `fork` / `exec`.
+- Speak MCP over the child's stdin/stdout.
+- On macOS, do not launch the driver with `open(1)` or `NSWorkspace.open`; LaunchServices makes the launched app its own responsible process and breaks permission inheritance.
+- On macOS, request Accessibility and Screen Recording from the host app with `AXIsProcessTrustedWithOptions` and `CGRequestScreenCaptureAccess`.
+
+If macOS grants are added after the driver child has started, restart the child so TCC is re-queried with a fresh per-process cache.
+
+## App + gateway architectures
+
+`--embedded` does not transfer a GUI app's grants to the driver; it only keeps the driver inside its spawner's macOS responsibility chain. If a separate gateway, daemon, or Node process spawns MCP servers, registering `cua-driver mcp --embedded` there makes the driver inherit the gateway's identity, not the app's. Spawn the driver from the app process, or bridge MCP from the gateway to an app-spawned child.
+
+```text
+Wrong (inherits the gateway's identity):        Right:
+
+gateway / node daemon                           YourApp.app
+  └─ cua-driver --embedded                        └─ cua-driver --embedded
+```
+
+## What changes
+
+| Behavior | Standalone | Embedded |
+| --- | --- | --- |
+| Process model | May proxy through a daemon | Direct child / in-process path |
+| Daemon relaunch | May proxy through app daemon | Disabled |
+| macOS TCC identity | `com.trycua.driver` or caller | Host app |
+| macOS permission prompts | Driver may prompt | Driver never prompts |
+| macOS Settings entries | CuaDriver | Host app only |
+| `check_permissions` attribution | `driver-daemon` or `caller` | `host` on macOS embedded runs |
+
+Driver tools, screenshots, AX tree reads, background input, and the agent cursor overlay otherwise behave the same.
+
+## macOS permission check
+
+Call the `check_permissions` MCP tool after starting the embedded driver. On macOS, embedded mode ignores prompt requests and should return `source.attribution: "host"`:
+
+```json
+{
+  "accessibility": true,
+  "screen_recording": true,
+  "screen_recording_capturable": true,
+  "source": {
+    "attribution": "host",
+    "host_bundle_id": "com.yourco.yourapp",
+    "embedded": true
+  }
+}
+```
+
+If `source.attribution` is not `host` on macOS, embedded mode is not active for the process handling your MCP calls. Check that `CUA_DRIVER_EMBEDDED=1` is passed to the child, that the child was spawned directly, and that you are not accidentally talking to an old standalone daemon.
+
+`source.attribution: "host"` means the driver process is running in embedded mode; it does not prove that your GUI app is the responsible process. If a gateway, daemon, or Node process spawned the child, the reported grant state still belongs to that spawner. Spawn `cua-driver` from the app process that owns the macOS grants, or bridge MCP to an app-spawned child.

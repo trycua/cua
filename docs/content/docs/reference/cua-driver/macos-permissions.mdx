@@ -7,7 +7,7 @@ description: The macOS-only `cua-driver permissions` command for inspecting and 
 
 ## `cua-driver permissions` (macOS)
 
-Inspect or request the macOS TCC grants the driver needs (Accessibility and Screen Recording).
+Inspect or request the macOS TCC grants the driver needs (Accessibility and Screen Recording). Embedded-mode hosts do not use `cua-driver permissions grant`; the host app requests these grants itself, as described in [Embedding](/reference/cua-driver/embedding).
 
 ```bash
 cua-driver permissions status   # report grant status; read-only, no prompt

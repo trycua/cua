@@ -149,6 +149,8 @@ Register the stdio server:
 openclaw mcp set cua-driver '{"command":"cua-driver","args":["mcp"]}'
 ```
 
+This registers the driver as a normal gateway-spawned MCP server; on macOS it does **not** inherit OpenClaw.app's permission grants. For that, the app process must spawn `cua-driver --embedded` directly; see [Embedding](/reference/cua-driver/embedding).
+
 Verify: restart OpenClaw and confirm `cua-driver` is available in the MCP server list.
 
 ## OpenCode

@@ -304,7 +304,7 @@ async fn check_wayland_backend() -> CheckEntry {
             );
         }
     };
-    let portal_libei_backend = if crate::wayland::PORTAL_LIBEI_ENABLED {
+    let remote_desktop_portal_reachable = if crate::wayland::PORTAL_LIBEI_ENABLED {
         tokio::task::spawn_blocking(probe_portal_remote_desktop)
             .await
             .ok()
@@ -313,13 +313,17 @@ async fn check_wayland_backend() -> CheckEntry {
     } else {
         false
     };
-    classify_wayland_backend(&snap, crate::wayland::PORTAL_LIBEI_ENABLED, portal_libei_backend)
+    classify_wayland_backend(
+        &snap,
+        crate::wayland::PORTAL_LIBEI_ENABLED,
+        remote_desktop_portal_reachable,
+    )
 }
 
 fn classify_wayland_backend(
     snap: &crate::wayland::WaylandManagers,
     portal_libei_enabled: bool,
-    portal_libei_backend: bool,
+    remote_desktop_portal_reachable: bool,
 ) -> CheckEntry {
     let msg = format!(
         "foreign-toplevel={ftl}, screencopy={cap}, ext-image-copy={ext_cap}, \
@@ -338,14 +342,15 @@ fn classify_wayland_backend(
         );
     }
     if !snap.virtual_pointer {
-        if portal_libei_backend {
+        if remote_desktop_portal_reachable {
             return CheckEntry::pass(
                 NAME_WAYLAND_BACKEND,
                 format!(
-                    "No wlroots virtual-pointer advertised ({msg}), but the \
-                     portal/libei RemoteDesktop backend is compiled in and \
-                     reachable; input will use xdg-desktop-portal + EIS on \
-                     non-wlroots compositors such as GNOME/Mutter and KDE/KWin."
+                    "No wlroots virtual-pointer advertised ({msg}), but this \
+                     portal/libei build can reach the RemoteDesktop portal; \
+                     input will attempt the xdg-desktop-portal + EIS handshake \
+                     on commands for non-wlroots compositors such as \
+                     GNOME/Mutter and KDE/KWin."
                 ),
             );
         }

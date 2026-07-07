@@ -1,8 +1,8 @@
 //! Custom cursor shape — rasterised from SVG / ICO / PNG.
 //!
 //! Used when `--cursor-icon <path>` is passed to the MCP binary, plus the
-//! `teardrop()` built-in (`cursor-up` from svgrepo) selectable via
-//! `--cursor-shape teardrop`. Always produces a 64×64 RGBA pixel buffer.
+//! `teardrop()` and `sky()` built-ins selectable via `--cursor-shape <name>`.
+//! Always produces an RGBA pixel buffer.
 
 use anyhow::{bail, Result};
 
@@ -10,8 +10,8 @@ use anyhow::{bail, Result};
 /// MCP `cursor_icon` field. Used when no `--cursor-icon` custom file overrides
 /// the choice.
 ///
-/// `Teardrop` is the default; opt back into the procedural arrow with
-/// `--cursor-shape arrow` (CLI) or `cursor_icon: "arrow"` (MCP).
+/// `Teardrop` is the default; opt into another built-in with
+/// `--cursor-shape <name>` (CLI) or `cursor_icon: "<name>"` (MCP).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinShape {
     /// Procedural gradient diamond drawn from vector primitives — the
@@ -21,6 +21,9 @@ pub enum BuiltinShape {
     /// Embedded `cursor-up` SVG (teardrop with notched bottom). Rasterised
     /// once into a 52 px RGBA buffer and blitted with a runtime transform.
     Teardrop,
+    /// Embedded Sky kite cursor. Rasterised once into a 64 px RGBA buffer;
+    /// its hotspot is the kite tip at the SVG's translated (3, 3) coordinate.
+    Sky,
 }
 
 impl BuiltinShape {
@@ -30,7 +33,7 @@ impl BuiltinShape {
     /// every platform's MCP `cursor_icon` tool description. Add a built-in here
     /// and all of them pick it up — nothing else hardcodes the name list.
     const TABLE: &'static [(&'static str, Self)] =
-        &[("arrow", Self::Arrow), ("teardrop", Self::Teardrop)];
+        &[("arrow", Self::Arrow), ("teardrop", Self::Teardrop), ("sky", Self::Sky)];
 
     /// Parse the value of `--cursor-shape` / MCP `cursor_icon`. Case-insensitive.
     /// Returns `None` for unknown names so the caller can warn and fall back to
@@ -41,15 +44,16 @@ impl BuiltinShape {
     }
 
     /// The accepted built-in names in declaration order, e.g.
-    /// `["arrow", "teardrop"]`.
+    /// `["arrow", "teardrop", "sky"]`.
     pub fn names() -> impl Iterator<Item = &'static str> {
         Self::TABLE.iter().map(|(name, _)| *name)
     }
 
     /// Human-facing list of built-in names for help / tool-description text,
-    /// e.g. `'arrow' | 'teardrop'`. The single string the CLI `--help` and every
-    /// MCP `cursor_icon` description render from, so the advertised vocabulary
-    /// can never drift from what [`parse`](Self::parse) actually accepts.
+    /// e.g. `'arrow' | 'teardrop' | 'sky'`. The single string the CLI `--help`
+    /// and every MCP `cursor_icon` description render from, so the advertised
+    /// vocabulary can never drift from what [`parse`](Self::parse) actually
+    /// accepts.
     pub fn names_help() -> String {
         Self::names()
             .map(|n| format!("'{n}'"))
@@ -81,7 +85,7 @@ pub enum CursorIconResolution {
 /// Resolve an MCP `cursor_icon` (or CLI) value into a [`CursorIconResolution`].
 ///
 /// - empty string → the configured default built-in ([`BuiltinShape::default`])
-/// - a built-in name (`arrow` / `teardrop`, case-insensitive) → that built-in
+/// - a built-in name (`arrow` / `teardrop` / `sky`, case-insensitive) → that built-in
 /// - anything else → treated as a file path and loaded (`.svg` / `.png` / `.ico`)
 ///
 /// This is the single resolver shared by the CLI flags and every platform's MCP
@@ -97,13 +101,22 @@ pub fn resolve_cursor_icon(value: &str) -> Result<CursorIconResolution> {
     CursorShape::load(value).map(CursorIconResolution::Image)
 }
 
-/// Rasterised cursor shape at 64×64 RGBA.
+/// Rasterised cursor shape.
 #[derive(Debug, Clone)]
 pub struct CursorShape {
     /// Raw RGBA pixels, row-major top-to-bottom, 4 bytes per pixel.
     pub pixels: Vec<u8>,
     pub width: u32,
     pub height: u32,
+    /// Anchor in source pixels that should land at the event coordinate.
+    /// Legacy raster shapes use the centre anchor; Sky overrides this so the
+    /// kite tip, not the pixmap centre, is the pointing coordinate.
+    pub hotspot_x: f32,
+    pub hotspot_y: f32,
+    /// Degrees added at paint time to align the raster's intrinsic tip angle
+    /// with the renderer's heading convention. Teardrop/custom rasters point
+    /// up at rest (+90°); Sky points up-left at rest (+135°).
+    pub intrinsic_rotation_degrees: f32,
 }
 
 /// Source rasterisation size. Sized as 2× the runtime display target
@@ -112,6 +125,16 @@ pub struct CursorShape {
 /// pixmap maps 1:1 to physical pixels for perfect crispness. Non-integer
 /// ratios (e.g. 64→26 = 0.41×) produce visible downscale blur.
 pub const CURSOR_SIZE: u32 = 52;
+
+/// Raster orientation offset for teardrop and user-supplied image assets.
+pub const DEFAULT_RASTER_INTRINSIC_ROTATION_DEGREES: f32 = 90.0;
+
+/// The Sky asset is supplied as a 37.17×37.17 SVG and intentionally rasterised
+/// to a 64×64 buffer so its tip hotspot can be represented precisely.
+pub const SKY_CURSOR_SIZE: u32 = 64;
+
+/// Raster orientation offset for the Sky asset, whose tip points up-left.
+pub const SKY_RASTER_INTRINSIC_ROTATION_DEGREES: f32 = 135.0;
 
 /// User-supplied "cursor-up" silhouette from svgrepo.com — an upward-pointing
 /// teardrop with a notched bottom. Original fill was solid black; we substitute
@@ -128,6 +151,16 @@ const TEARDROP_CURSOR_SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" 
 </linearGradient>
 </defs>
 <path d="M19.87,19.21l-6-15.92a2,2,0,0,0-3.74,0l-6,15.92a2,2,0,0,0,.65,2.3A2.21,2.21,0,0,0,6.17,22a2.24,2.24,0,0,0,1.23-.37L12,18.57l4.6,3.06a2.22,2.22,0,0,0,2.62-.12A2,2,0,0,0,19.87,19.21Z" fill="url(#cursorGrad)" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>"##;
+
+/// Sky kite cursor. The supplied SVG uses `paint-order="stroke"`; encode the
+/// outline as a stroke-only path below a fill-only path so rasterisation does
+/// not depend on renderer support for paint-order.
+const SKY_CURSOR_SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="37.17" height="37.17" viewBox="0 0 18.59 18.59">
+  <g transform="translate(3,3)" opacity="0.8">
+    <path d="M0.68 1.83 L3.63 9.78 Q4.67 12.59 5.3 9.66 L5.44 9.01 Q6.08 6.08 9.01 5.44 L9.66 5.3 Q12.59 4.67 9.78 3.63 L1.83 0.68 Q0 0 0.68 1.83 Z" fill="none" stroke="#FFFFFF" stroke-width="1.7" stroke-linejoin="round"/>
+    <path d="M0.68 1.83 L3.63 9.78 Q4.67 12.59 5.3 9.66 L5.44 9.01 Q6.08 6.08 9.01 5.44 L9.66 5.3 Q12.59 4.67 9.78 3.63 L1.83 0.68 Q0 0 0.68 1.83 Z" fill="#808080"/>
+  </g>
 </svg>"##;
 
 impl CursorShape {
@@ -154,25 +187,59 @@ impl CursorShape {
         })
     }
 
+    /// The built-in Sky kite cursor. Its SVG viewBox places the click tip at
+    /// `(3, 3)`, so the cached shape stores that scaled source-pixel hotspot.
+    pub fn sky() -> &'static Self {
+        static CACHE: std::sync::OnceLock<CursorShape> = std::sync::OnceLock::new();
+        CACHE.get_or_init(|| {
+            let mut shape = Self::load_svg_bytes_at(SKY_CURSOR_SVG, SKY_CURSOR_SIZE)
+                .expect("embedded Sky SVG should parse");
+            let scale = SKY_CURSOR_SIZE as f32 / 18.59;
+            shape.hotspot_x = 3.0 * scale;
+            shape.hotspot_y = 3.0 * scale;
+            shape.intrinsic_rotation_degrees = SKY_RASTER_INTRINSIC_ROTATION_DEGREES;
+            shape
+        })
+    }
+
+    /// True when the shape still uses the legacy centre anchor and therefore
+    /// needs the 16 pt click-position offset used by arrow/teardrop.
+    pub fn has_center_hotspot(&self) -> bool {
+        const EPS: f32 = 0.01;
+        (self.hotspot_x - self.width as f32 / 2.0).abs() < EPS
+            && (self.hotspot_y - self.height as f32 / 2.0).abs() < EPS
+    }
+
     fn load_svg(path: &str) -> Result<Self> {
         let data = std::fs::read(path)?;
         Self::load_svg_bytes(&data)
     }
 
     fn load_svg_bytes(data: &[u8]) -> Result<Self> {
+        Self::load_svg_bytes_at(data, CURSOR_SIZE)
+    }
+
+    fn load_svg_bytes_at(data: &[u8], size: u32) -> Result<Self> {
         let opts = usvg::Options::default();
         let tree = usvg::Tree::from_data(data, &opts)?;
 
-        let mut pixmap = tiny_skia::Pixmap::new(CURSOR_SIZE, CURSOR_SIZE)
-            .ok_or_else(|| anyhow::anyhow!("Failed to create {CURSOR_SIZE}×{CURSOR_SIZE} pixmap"))?;
+        let mut pixmap = tiny_skia::Pixmap::new(size, size)
+            .ok_or_else(|| anyhow::anyhow!("Failed to create {size}×{size} pixmap"))?;
 
-        let sx = CURSOR_SIZE as f32 / tree.size().width();
-        let sy = CURSOR_SIZE as f32 / tree.size().height();
+        let sx = size as f32 / tree.size().width();
+        let sy = size as f32 / tree.size().height();
         resvg::render(&tree, tiny_skia::Transform::from_scale(sx, sy), &mut pixmap.as_mut());
 
         let raw = pixmap.take();
         let pixels = unpremultiply(raw);
-        Ok(Self { pixels, width: CURSOR_SIZE, height: CURSOR_SIZE })
+        Ok(Self {
+            pixels,
+            width: size,
+            height: size,
+            hotspot_x: size as f32 / 2.0,
+            hotspot_y: size as f32 / 2.0,
+            intrinsic_rotation_degrees: DEFAULT_RASTER_INTRINSIC_ROTATION_DEGREES,
+        })
     }
 
     fn load_raster(path: &str) -> Result<Self> {
@@ -187,6 +254,9 @@ impl CursorShape {
             pixels: resized.into_raw(),
             width: CURSOR_SIZE,
             height: CURSOR_SIZE,
+            hotspot_x: CURSOR_SIZE as f32 / 2.0,
+            hotspot_y: CURSOR_SIZE as f32 / 2.0,
+            intrinsic_rotation_degrees: DEFAULT_RASTER_INTRINSIC_ROTATION_DEGREES,
         })
     }
 }
@@ -217,6 +287,9 @@ mod tests {
         assert_eq!(BuiltinShape::parse("teardrop"), Some(BuiltinShape::Teardrop));
         assert_eq!(BuiltinShape::parse("TEARDROP"), Some(BuiltinShape::Teardrop));
         assert_eq!(BuiltinShape::parse("Teardrop"), Some(BuiltinShape::Teardrop));
+        assert_eq!(BuiltinShape::parse("sky"), Some(BuiltinShape::Sky));
+        assert_eq!(BuiltinShape::parse("SKY"), Some(BuiltinShape::Sky));
+        assert_eq!(BuiltinShape::parse("Sky"), Some(BuiltinShape::Sky));
     }
 
     #[test]
@@ -241,7 +314,7 @@ mod tests {
             assert!(help.contains(name), "names_help() missing {name}: {help}");
             assert!(BuiltinShape::parse(name).is_some(), "{name} listed but unparseable");
         }
-        assert_eq!(help, "'arrow' | 'teardrop'");
+        assert_eq!(help, "'arrow' | 'teardrop' | 'sky'");
     }
 
     #[test]
@@ -253,8 +326,55 @@ mod tests {
         // crucially `arrow` stays reachable even though teardrop is the default.
         assert!(matches!(resolve_cursor_icon("arrow").unwrap(), Builtin(BuiltinShape::Arrow)));
         assert!(matches!(resolve_cursor_icon("TEARDROP").unwrap(), Builtin(BuiltinShape::Teardrop)));
+        assert!(matches!(resolve_cursor_icon("sky").unwrap(), Builtin(BuiltinShape::Sky)));
         // A non-name, non-existent path is treated as a file and fails to load.
         assert!(resolve_cursor_icon("/no/such/cursor.png").is_err());
+    }
+
+    #[test]
+    fn sky_raster_has_expected_size_alpha_outline_fill_and_hotspot() {
+        let sky = CursorShape::sky();
+        assert_eq!((sky.width, sky.height), (SKY_CURSOR_SIZE, SKY_CURSOR_SIZE));
+        assert_eq!(sky.pixels.len(), (SKY_CURSOR_SIZE * SKY_CURSOR_SIZE * 4) as usize);
+
+        let mut alpha_pixels = 0usize;
+        let mut near_white_pixels = 0usize;
+        let mut mid_gray_pixels = 0usize;
+        for px in sky.pixels.chunks_exact(4) {
+            let [r, g, b, a]: [u8; 4] = px.try_into().unwrap();
+            if a > 0 {
+                alpha_pixels += 1;
+            }
+            if a > 0 && r >= 240 && g >= 240 && b >= 240 {
+                near_white_pixels += 1;
+            }
+            if a > 0
+                && (112..=144).contains(&r)
+                && (112..=144).contains(&g)
+                && (112..=144).contains(&b)
+            {
+                mid_gray_pixels += 1;
+            }
+        }
+
+        assert!(alpha_pixels > 0, "Sky raster should contain non-transparent pixels");
+        assert!(
+            near_white_pixels > 0,
+            "Sky raster should contain near-white outline pixels"
+        );
+        assert!(
+            mid_gray_pixels > 0,
+            "Sky raster should contain mid-gray fill pixels"
+        );
+
+        let expected_hotspot = 3.0 * SKY_CURSOR_SIZE as f32 / 18.59;
+        assert!((sky.hotspot_x - expected_hotspot).abs() < 0.01);
+        assert!((sky.hotspot_y - expected_hotspot).abs() < 0.01);
+        assert!(!sky.has_center_hotspot());
+        assert_eq!(
+            sky.intrinsic_rotation_degrees,
+            SKY_RASTER_INTRINSIC_ROTATION_DEGREES
+        );
     }
 
     /// `Teardrop` is the default silhouette. If this assertion changes, the

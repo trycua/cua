@@ -358,6 +358,21 @@ impl RenderStateCore {
         }
     }
 
+    fn active_shape_has_center_hotspot(&self) -> bool {
+        match self.shape.as_ref() {
+            Some(shape) => shape.has_center_hotspot(),
+            None => !matches!(self.cfg.builtin_shape, BuiltinShape::Sky),
+        }
+    }
+
+    fn click_offset_points(&self) -> f64 {
+        if self.active_shape_has_center_hotspot() {
+            16.0
+        } else {
+            0.0
+        }
+    }
+
     /// Handle the OverlayCommand variants that are identical across all
     /// three platforms.  Returns `true` if the command was consumed; `false`
     /// for variants the platform must handle itself (e.g. macOS's
@@ -385,14 +400,13 @@ impl RenderStateCore {
                 y,
                 end_heading_radians,
             } => {
-                // Apply click offset (16 pt along end_heading) before planning,
-                // matching Swift `moveTo(point:endAngleRadians:)`:
-                //   tx = clickPoint.x + cos(endAngle) * clickOffset
-                //   ty = clickPoint.y + sin(endAngle) * clickOffset
-                const CLICK_OFFSET: f64 = 16.0;
+                // Centre-anchored shapes keep the legacy 16 pt click offset
+                // before planning; tip-hotspot shapes like Sky land directly
+                // at the event coordinate.
                 let turn_radius = self.motion.turn_radius;
-                let tx = x + end_heading_radians.cos() * CLICK_OFFSET;
-                let ty = y + end_heading_radians.sin() * CLICK_OFFSET;
+                let click_offset = self.click_offset_points();
+                let tx = x + end_heading_radians.cos() * click_offset;
+                let ty = y + end_heading_radians.sin() * click_offset;
 
                 // macOS-only: if the cursor is still at the initial off-screen
                 // sentinel, snap it to the offset target so the path starts on-screen.
@@ -442,12 +456,13 @@ impl RenderStateCore {
                     // macOS: only snap position on first placement (sentinel state).
                     // After that the cursor stays where the animation landed.
                     if self.pos.0 < -50.0 {
-                        // Apply same click offset so tip lands at click point.
-                        const CLICK_OFFSET: f64 = 16.0;
+                        // Apply the same centre-anchor offset as MoveTo; Sky's
+                        // tip hotspot returns zero so its tip lands on the event.
                         let angle = std::f64::consts::FRAC_PI_4;
+                        let click_offset = self.click_offset_points();
                         self.pos = (
-                            x + angle.cos() * CLICK_OFFSET,
-                            y + angle.sin() * CLICK_OFFSET,
+                            x + angle.cos() * click_offset,
+                            y + angle.sin() * click_offset,
                         );
                     }
                 } else {
@@ -763,13 +778,15 @@ pub fn paint_cursor(
     //        rasterises.
     //      - `teardrop`: blit the cached `CursorShape::teardrop()` pixmap
     //        — rasterised once at 2× the display target.
-    //   3. (No other built-ins today.)
+    //      - `sky`: blit the cached `CursorShape::sky()` pixmap, anchored at
+    //        the kite tip so the event coordinate is the click point.
     //
     // Teardrop is the default silhouette; `--cursor-shape arrow` (or
     // `cursor_icon: "arrow"`) selects the procedural arrow instead.
     let shape: Option<&CursorShape> = match (core.shape.as_ref(), core.cfg.builtin_shape) {
         (Some(custom), _) => Some(custom),
         (None, BuiltinShape::Teardrop) => Some(CursorShape::teardrop()),
+        (None, BuiltinShape::Sky) => Some(CursorShape::sky()),
         (None, BuiltinShape::Arrow) => {
             let grad_override = if core.gradient_colors.is_empty() {
                 None
@@ -805,19 +822,19 @@ pub fn paint_cursor(
     if let Some(pix) =
         tiny_skia::PixmapRef::from_bytes(&shape.pixels, shape.width, shape.height)
     {
-        // T = Translate(px, py) * Rotate(angle) * Scale(s) * Translate(-w/2, -h/2)
-        // Centres the source on its own origin, scales to display_size, rotates
-        // around the scaled centre, lands the centre at (px, py).
+        // T = Translate(px, py) * Rotate(angle) * Scale(s) * Translate(-hotspot)
+        // Moves the source hotspot to its own origin, scales to display_size,
+        // rotates around that hotspot, then lands the hotspot at (px, py).
+        // Existing raster shapes use a centre hotspot; Sky stores the SVG tip.
         //
-        // +90° offset compensates for the SVG's intrinsic orientation: the
-        // cursor-up silhouette points UP at rest (CSS y-down angle -π/2),
-        // whereas the procedural arrow's rotation convention assumes the
-        // shape points RIGHT at rest (angle 0). Without the +90°, motion-
-        // right rotation would leave the tip still pointing up.
-        let rotation_deg = heading.to_degrees() as f32 + 180.0 + 90.0;
+        // The intrinsic offset compensates for each raster's source-art angle:
+        // teardrop/custom rasters point up (+90°), while Sky points up-left
+        // (+135°). That keeps Sky unrotated at the FRAC_PI_4 rest heading and
+        // preserves the existing teardrop/custom orientation.
+        let rotation_deg = raster_rotation_degrees(heading, shape);
         let transform = tiny_skia::Transform::from_translate(
-            -(shape.width as f32) / 2.0,
-            -(shape.height as f32) / 2.0,
+            -shape.hotspot_x,
+            -shape.hotspot_y,
         )
         .post_scale(scale, scale)
         .post_rotate(rotation_deg)
@@ -826,6 +843,10 @@ pub fn paint_cursor(
         paint.opacity = alpha_scale;
         pm.draw_pixmap(0, 0, pix, &paint, transform, None);
     }
+}
+
+fn raster_rotation_degrees(heading: f64, shape: &CursorShape) -> f32 {
+    heading.to_degrees() as f32 + 180.0 + shape.intrinsic_rotation_degrees
 }
 
 /// Rasterise the built-in gradient arrow at `(px, py)` rotated by
@@ -988,6 +1009,91 @@ mod glide_duration_tests {
             let long = arrival_secs(0.0, 1400.0, swift);
             assert!(long > short + 0.2, "swift={swift} short={short} long={long}");
         }
+    }
+}
+
+#[cfg(test)]
+mod hotspot_shape_tests {
+    use super::*;
+    use crate::{BuiltinShape, CursorConfig};
+
+    const EPS: f64 = 0.001;
+
+    fn cfg_with_shape(shape: BuiltinShape) -> CursorConfig {
+        let mut cfg = CursorConfig::default();
+        cfg.builtin_shape = shape;
+        cfg
+    }
+
+    fn assert_point_near(actual: (f64, f64), expected: (f64, f64)) {
+        assert!(
+            (actual.0 - expected.0).abs() < EPS && (actual.1 - expected.1).abs() < EPS,
+            "expected {expected:?}, got {actual:?}"
+        );
+    }
+
+    #[test]
+    fn sky_rest_heading_preserves_up_left_source_orientation() {
+        let rotation = raster_rotation_degrees(std::f64::consts::FRAC_PI_4, CursorShape::sky())
+            .rem_euclid(360.0);
+        assert!(
+            rotation.abs() < 0.001,
+            "FRAC_PI_4 rest heading should leave Sky pointing up-left; got {rotation}°"
+        );
+    }
+
+    #[test]
+    fn sky_skips_legacy_click_offset_but_arrow_and_teardrop_keep_it() {
+        let event = (100.0, 200.0);
+        let expected_offset = (
+            event.0 + std::f64::consts::FRAC_PI_4.cos() * 16.0,
+            event.1 + std::f64::consts::FRAC_PI_4.sin() * 16.0,
+        );
+
+        let mut sky = RenderStateCore::new(cfg_with_shape(BuiltinShape::Sky));
+        sky.apply_command_base(
+            OverlayCommand::MoveTo {
+                x: event.0,
+                y: event.1,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+            },
+            true,
+            true,
+        );
+        assert_point_near(sky.pos, event);
+
+        let mut sky_click = RenderStateCore::new(cfg_with_shape(BuiltinShape::Sky));
+        sky_click.apply_command_base(
+            OverlayCommand::ClickPulse {
+                x: event.0,
+                y: event.1,
+            },
+            true,
+            true,
+        );
+        assert_point_near(sky_click.pos, event);
+
+        let mut teardrop = RenderStateCore::new(cfg_with_shape(BuiltinShape::Teardrop));
+        teardrop.apply_command_base(
+            OverlayCommand::ClickPulse {
+                x: event.0,
+                y: event.1,
+            },
+            true,
+            true,
+        );
+        assert_point_near(teardrop.pos, expected_offset);
+
+        let mut arrow = RenderStateCore::new(cfg_with_shape(BuiltinShape::Arrow));
+        arrow.apply_command_base(
+            OverlayCommand::ClickPulse {
+                x: event.0,
+                y: event.1,
+            },
+            true,
+            true,
+        );
+        assert_point_near(arrow.pos, expected_offset);
     }
 }
 

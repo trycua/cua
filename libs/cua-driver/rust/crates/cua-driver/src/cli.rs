@@ -229,7 +229,8 @@ pub fn parse_command() -> Command {
         println!("  --cursor-shape <name>   Built-in silhouette: {} ('teardrop' is the default —",
             cursor_overlay::BuiltinShape::names_help());
         println!("                          embedded cursor-up SVG; 'arrow' is the procedural gradient");
-        println!("                          diamond). Same vocabulary as MCP `cursor_icon`.");
+        println!("                          diamond; 'sky' is the gray kite cursor). Same vocabulary");
+        println!("                          as MCP `cursor_icon`.");
         println!("  --cursor-palette <name> Pick a built-in colour palette for the cursor.");
         println!("  (These are no-ops for one-shot CLI calls like `cua-driver call` — the overlay");
         println!("   needs the long-lived AppKit runloop that only `serve` / `mcp` keep alive.)");

@@ -1,32 +1,20 @@
 ---
 title: Install Lume
-description: Installation instructions for the current version of the Lume CLI.
+description: Install Lume, Cua's local Apple Silicon VM manager for macOS and Linux guests.
 ---
 
-## Quickstart
+import { Callout } from 'fumadocs-ui/components/callout';
 
-Install and run a prebuilt macOS sandbox in two commands:
+Lume is Cua's local VM manager for Apple Silicon Macs. Use it when you want to create, run, or serve macOS and Linux VMs on your own machine. If you want disposable desktops hosted for you, start with [Cua Sandbox](/tutorials/your-first-cloud-sandbox) instead.
 
-```bash
-# Install Lume
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
-# Pull & start a macOS image
-lume run macos-sequoia-vanilla:latest
-```
-
-<Callout title="Security Note">
-  All prebuilt images use the default password `lume`. Change this immediately after your first
-  login using the `passwd` command.
-</Callout>
-
-**System Requirements**:
+## Requirements
 
 - Apple Silicon Mac (M1, M2, M3, etc.)
 - macOS 13.0 or later
 - At least 8GB of RAM (16GB recommended)
 - At least 50GB of free disk space
 
-## Install with Script
+## Install Lume
 
 Install with a single command:
 
@@ -34,7 +22,26 @@ Install with a single command:
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
 ```
 
-### Manual Start (No Background Service)
+## Verify the install
+
+```bash
+lume --version
+```
+
+## Run a prebuilt VM
+
+Pull and start a prebuilt macOS image:
+
+```bash
+lume run macos-sequoia-vanilla:latest
+```
+
+<Callout title="Security Note">
+  Prebuilt images use the default password `lume`. Change this immediately after your first login
+  using the `passwd` command.
+</Callout>
+
+## Start the API service manually
 
 By default, Lume is installed as a background service that starts automatically on login. If you prefer to start the Lume API service manually when needed, you can use the `--no-background-service` option:
 
@@ -44,10 +51,14 @@ By default, Lume is installed as a background service that starts automatically 
 
 <Callout title="Note">
   With this option, you'll need to manually start the Lume API service by running `lume serve` in
-  your terminal whenever you need to use tools or libraries that rely on the Lume API (such as the
-  Computer-Use Agent).
+  your terminal whenever you need tools or libraries that rely on the local Lume HTTP API.
 </Callout>
 
-## Manual Download and Installation
+## Manual download
 
 You can also download the `lume.pkg.tar.gz` archive from the [latest release](https://github.com/trycua/cua/releases?q=lume&expanded=true), extract it, and install the package manually.
+
+## Next steps
+
+- [Lume CLI reference](/reference/lume/cli-reference): inspect every command and option.
+- [Lume HTTP API reference](/reference/lume/http-api): use the local API from tools and scripts.

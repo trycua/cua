@@ -525,7 +525,7 @@ function generateVersionedLumeMDX(
       // Insert old-version callout instead
       result.push('<Callout type="warn">');
       result.push(
-        `  This is documentation for **v${majorMinor}**. [View latest version](/lume/reference/cli-reference).`
+        `  This is documentation for **v${majorMinor}**. [View latest version](/reference/lume/cli-reference).`
       );
       result.push('</Callout>');
       result.push('');

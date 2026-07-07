@@ -4934,23 +4934,13 @@ impl Tool for HotkeyTool {
             // bound the call so a hung provider returns an error instead of
             // blocking the daemon indefinitely. 4 s matches the budget the
             // rest of this file uses for similar UIA scans.
-            let blocking = tokio::task::spawn_blocking(move || {
+            let result = tokio::task::spawn_blocking(move || {
                 crate::uia::windows_enum::try_invoke_accelerator_in_window(
                     hwnd as isize,
                     &accelerator_combo,
                 )
-            });
-            let result =
-                match tokio::time::timeout(std::time::Duration::from_secs(4), blocking).await {
-                    Ok(join_result) => join_result,
-                    Err(_) => {
-                        return ToolResult::error(format!(
-                            "hotkey timed out after 4s while scanning UIA accelerators on pid \
-                         {raw_pid} (hwnd {hwnd}). A UIA provider in this app is likely \
-                         unresponsive."
-                        ));
-                    }
-                };
+            })
+            .await;
             return match result {
                 Ok(Ok((true, _))) => ToolResult::text(format!(
                     "✅ Pressed {key_display_for_result} on pid {raw_pid} via UIA \

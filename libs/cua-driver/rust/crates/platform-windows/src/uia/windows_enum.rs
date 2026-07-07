@@ -18,24 +18,27 @@
 // with a fresh local binding and break the match. Mirrors overlay.rs:12.
 #![allow(non_upper_case_globals)]
 
-use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context};
+use windows::core::{Interface, BSTR};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationTogglePattern, TreeScope_Children, TreeScope_Subtree,
     UIA_AcceleratorKeyPropertyId, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
-    UIA_CONTROLTYPE_ID, UIA_HyperlinkControlTypeId, UIA_InvokePatternId,
-    UIA_ListItemControlTypeId, UIA_MenuItemControlTypeId, UIA_PROPERTY_ID,
-    UIA_RadioButtonControlTypeId, UIA_SplitButtonControlTypeId, UIA_TabItemControlTypeId,
-    UIA_TogglePatternId, UIA_TreeItemControlTypeId,
+    UIA_HyperlinkControlTypeId, UIA_InvokePatternId, UIA_ListItemControlTypeId,
+    UIA_MenuItemControlTypeId, UIA_RadioButtonControlTypeId, UIA_SplitButtonControlTypeId,
+    UIA_TabItemControlTypeId, UIA_TogglePatternId, UIA_TreeItemControlTypeId, UIA_CONTROLTYPE_ID,
+    UIA_PROPERTY_ID,
 };
-use windows::core::{BSTR, Interface};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
 };
@@ -47,49 +50,174 @@ use crate::win32::windows::WindowInfo;
 /// same task, or a library on the same OS thread) picked a different
 /// apartment. Safe to ignore — COM is up either way.
 const RPC_E_CHANGED_MODE: i32 = -2147417850; // 0x80010106
+/// Desktop child enumeration: one wedged provider must not stall list_windows.
+const DESKTOP_CALL_TIMEOUT: Duration = Duration::from_secs(2);
+/// Subtree scans: keep the pre-existing interactive operation budget.
+const SUBTREE_OP_TIMEOUT: Duration = Duration::from_secs(4);
+const DESKTOP_TIMEOUT_FAST_BAIL_AFTER: u32 = 3;
+const DESKTOP_TIMEOUT_COOLDOWN: Duration = Duration::from_secs(30);
 
-thread_local! {
-    /// Per-thread IUIAutomation instance. UIA / COM objects are
-    /// apartment-bound, so we deliberately do NOT share one across threads —
-    /// each OS thread that calls `enumerate_top_level_windows` initializes
-    /// COM as STA exactly once (the first time the cell is `None`) and caches
-    /// its own IUIAutomation. On failure the cell stays `None`, so the next
-    /// call retries from scratch instead of being stuck with a permanent
-    /// "init failed" sentinel.
-    static UIA_THREAD_LOCAL: RefCell<Option<IUIAutomation>> = const { RefCell::new(None) };
+static DESKTOP_ENUM_TIMEOUTS: TimeoutCooldown = TimeoutCooldown::new(
+    DESKTOP_TIMEOUT_FAST_BAIL_AFTER,
+    DESKTOP_TIMEOUT_COOLDOWN.as_millis() as u64,
+);
+
+enum UiaDeadlineError {
+    Timeout,
+    Unavailable,
 }
 
-/// Build or fetch the per-thread IUIAutomation instance.
-///
-/// On the first successful call per OS thread this also initializes COM as
-/// STA (UIA's in-process server requires an STA; `RPC_E_CHANGED_MODE` from a
-/// pre-existing apartment is treated as "already up"). Any failure leaves
-/// the thread-local empty so subsequent calls retry.
+struct TimeoutCooldown {
+    consecutive: AtomicU32,
+    last_timeout_ms: AtomicU64,
+    threshold: u32,
+    cooldown_ms: u64,
+}
+
+impl TimeoutCooldown {
+    const fn new(threshold: u32, cooldown_ms: u64) -> Self {
+        Self {
+            consecutive: AtomicU32::new(0),
+            last_timeout_ms: AtomicU64::new(0),
+            threshold,
+            cooldown_ms,
+        }
+    }
+
+    fn should_attempt(&self, now_ms: u64) -> bool {
+        if self.consecutive.load(Ordering::Acquire) < self.threshold {
+            return true;
+        }
+        let last = self.last_timeout_ms.load(Ordering::Acquire);
+        if now_ms.saturating_sub(last) < self.cooldown_ms {
+            return false;
+        }
+        self.last_timeout_ms
+            .compare_exchange(last, now_ms, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    fn record_timeout(&self, now_ms: u64) {
+        self.last_timeout_ms.store(now_ms, Ordering::Release);
+        let previous = self.consecutive.fetch_add(1, Ordering::AcqRel);
+        if previous + 1 == self.threshold {
+            tracing::warn!(
+                target: "uia_windows_enum",
+                "UIA desktop enumeration hit {} consecutive timeouts; skipping UIA union for {}ms",
+                self.threshold,
+                self.cooldown_ms
+            );
+        }
+    }
+
+    fn record_success(&self) {
+        let previous = self.consecutive.swap(0, Ordering::AcqRel);
+        if previous >= self.threshold {
+            tracing::info!(target: "uia_windows_enum", "UIA desktop enumeration recovered");
+        }
+    }
+
+    #[cfg(test)]
+    fn consecutive(&self) -> u32 {
+        self.consecutive.load(Ordering::Acquire)
+    }
+}
+
+fn now_ms() -> u64 {
+    // Monotonic: cooldown must not depend on wall-clock jumps.
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
+fn run_uia_with_deadline<T, F>(
+    stage: &'static str,
+    timeout: Duration,
+    fallback: &'static str,
+    f: F,
+) -> Result<T, UiaDeadlineError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    run_uia_with_deadline_cancelable(stage, timeout, fallback, |_| f())
+}
+
+fn run_uia_with_deadline_cancelable<T, F>(
+    stage: &'static str,
+    timeout: Duration,
+    fallback: &'static str,
+    f: F,
+) -> Result<T, UiaDeadlineError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
+{
+    let (tx, rx) = mpsc::channel();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let worker_cancelled = Arc::clone(&cancelled);
+    let spawn = thread::Builder::new()
+        .name(format!("cua-uia-{stage}"))
+        .spawn(move || {
+            let result = f(worker_cancelled);
+            let _ = tx.send(result);
+        });
+
+    if let Err(e) = spawn {
+        tracing::warn!(target: "uia_windows_enum", "failed to spawn UIA {stage} thread: {e}");
+        return Err(UiaDeadlineError::Unavailable);
+    }
+
+    match rx.recv_timeout(timeout) {
+        Ok(result) => Ok(result),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            cancelled.store(true, Ordering::Release);
+            tracing::warn!(
+                target: "uia_windows_enum",
+                "UIA {stage} exceeded {}ms; falling back to {fallback}",
+                timeout.as_millis()
+            );
+            Err(UiaDeadlineError::Timeout)
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            tracing::warn!(target: "uia_windows_enum", "UIA {stage} thread exited without a result");
+            Err(UiaDeadlineError::Unavailable)
+        }
+    }
+}
+
+struct ComInit {
+    needs_uninit: bool,
+}
+
+impl ComInit {
+    fn new() -> Self {
+        let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        if hr.is_err() && hr.0 != RPC_E_CHANGED_MODE {
+            tracing::debug!(target: "uia_windows_enum", "CoInitializeEx returned {hr:?}");
+        }
+        Self {
+            needs_uninit: hr.is_ok(),
+        }
+    }
+}
+
+impl Drop for ComInit {
+    fn drop(&mut self) {
+        if self.needs_uninit {
+            unsafe { CoUninitialize() };
+        }
+    }
+}
+
+/// Build an IUIAutomation instance after COM is initialized.
 fn get_uia() -> Option<IUIAutomation> {
-    UIA_THREAD_LOCAL.with(|cell| {
-        if let Some(uia) = cell.borrow().as_ref() {
-            return Some(uia.clone());
+    match unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) } {
+        Ok(a) => Some(a),
+        Err(e) => {
+            tracing::warn!(target: "uia_windows_enum", "CoCreateInstance(CUIAutomation) failed: {e}");
+            None
         }
-        // First (or post-failure) call on this thread: init COM + build UIA.
-        unsafe {
-            let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-            if hr.is_err() && hr.0 != RPC_E_CHANGED_MODE {
-                tracing::debug!(target: "uia_windows_enum", "CoInitializeEx returned {hr:?}");
-            }
-        }
-        let inst: IUIAutomation = match unsafe {
-            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
-        } {
-            Ok(a) => a,
-            Err(e) => {
-                tracing::warn!(target: "uia_windows_enum", "CoCreateInstance(CUIAutomation) failed: {e}");
-                return None;
-            }
-        };
-        let dup = inst.clone();
-        *cell.borrow_mut() = Some(inst);
-        Some(dup)
-    })
+    }
 }
 
 /// Enumerate top-level windows visible to UI Automation.
@@ -102,6 +230,32 @@ fn get_uia() -> Option<IUIAutomation> {
 /// Returns an empty vec on any UIA failure — callers should treat UIA as a
 /// best-effort source and union with `EnumWindows`.
 pub fn enumerate_top_level_windows() -> Vec<WindowInfo> {
+    let now = now_ms();
+    if !DESKTOP_ENUM_TIMEOUTS.should_attempt(now) {
+        return Vec::new();
+    }
+
+    match run_uia_with_deadline(
+        "desktop enumeration",
+        DESKTOP_CALL_TIMEOUT,
+        "Win32-only window list",
+        enumerate_top_level_windows_unbounded,
+    ) {
+        Ok(windows) => {
+            DESKTOP_ENUM_TIMEOUTS.record_success();
+            windows
+        }
+        Err(UiaDeadlineError::Timeout) => {
+            DESKTOP_ENUM_TIMEOUTS.record_timeout(now_ms());
+            Vec::new()
+        }
+        Err(UiaDeadlineError::Unavailable) => Vec::new(),
+    }
+}
+
+fn enumerate_top_level_windows_unbounded() -> Vec<WindowInfo> {
+    // Keep this first so COM interfaces drop before CoUninitialize.
+    let _com = ComInit::new();
     let uia = match get_uia() {
         Some(u) => u,
         None => return Vec::new(),
@@ -215,6 +369,23 @@ fn is_coord_independent_action(elem: &IUIAutomationElement) -> bool {
 }
 
 pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
+    run_uia_with_deadline_cancelable(
+        "window hit-test invoke",
+        SUBTREE_OP_TIMEOUT,
+        "PostMessage click delivery",
+        move |cancelled| try_invoke_in_window_at_point_unbounded(hwnd, sx, sy, &cancelled),
+    )
+    .unwrap_or(false)
+}
+
+fn try_invoke_in_window_at_point_unbounded(
+    hwnd: isize,
+    sx: i32,
+    sy: i32,
+    cancelled: &AtomicBool,
+) -> bool {
+    // Keep this first so COM interfaces drop before CoUninitialize.
+    let _com = ComInit::new();
     if hwnd == 0 {
         return false;
     }
@@ -265,9 +436,7 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
             // returned ✅ but the menu never opened.)
             let has_invoke = elem.GetCurrentPattern(UIA_InvokePatternId).is_ok();
             let has_expand = elem
-                .GetCurrentPattern(
-                    windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
-                )
+                .GetCurrentPattern(windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId)
                 .is_ok();
             if !has_invoke && !has_expand {
                 continue;
@@ -307,6 +476,10 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
                 return false;
             }
         };
+        if cancelled.load(Ordering::Acquire) {
+            tracing::debug!(target: "click", "UIA hit-test invoke cancelled before activation");
+            return false;
+        }
         // Pattern preference for menu items: when both Invoke AND
         // ExpandCollapse are advertised, the element is almost always a
         // top-level MenuItem whose intended click behaviour is "open the
@@ -314,9 +487,7 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
         // in that case. Pure-Invoke leaves (buttons, links, etc.) go
         // through Invoke as before.
         let winner_has_expand = winner
-            .GetCurrentPattern(
-                windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
-            )
+            .GetCurrentPattern(windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId)
             .is_ok();
         let winner_has_invoke = winner.GetCurrentPattern(UIA_InvokePatternId).is_ok();
         // UWP foreground-steal bypass: gate the entire activation block on
@@ -375,10 +546,29 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
 /// their keyboard accelerators are surfaced through UI Automation instead.
 /// This helper keeps that routing narrow by requiring an advertised
 /// AcceleratorKey match before invoking anything.
-pub fn try_invoke_accelerator_in_window(
+pub fn try_invoke_accelerator_in_window(hwnd: isize, combo: &str) -> anyhow::Result<(bool, usize)> {
+    let combo = combo.to_owned();
+    run_uia_with_deadline_cancelable(
+        "accelerator invoke",
+        SUBTREE_OP_TIMEOUT,
+        "keyboard message delivery",
+        move |cancelled| try_invoke_accelerator_in_window_unbounded(hwnd, &combo, &cancelled),
+    )
+    .unwrap_or_else(|_| {
+        Err(anyhow::anyhow!(
+            "UIA accelerator scan exceeded {}ms; a UIA provider in the target app is likely unresponsive",
+            SUBTREE_OP_TIMEOUT.as_millis()
+        ))
+    })
+}
+
+fn try_invoke_accelerator_in_window_unbounded(
     hwnd: isize,
     combo: &str,
+    cancelled: &AtomicBool,
 ) -> anyhow::Result<(bool, usize)> {
+    // Keep this first so COM interfaces drop before CoUninitialize.
+    let _com = ComInit::new();
     if hwnd == 0 {
         bail!("invalid target hwnd 0");
     }
@@ -412,14 +602,17 @@ pub fn try_invoke_accelerator_in_window(
             };
             // Primary match: the UIA AcceleratorKey property — the conventional
             // place a WinUI / XAML control advertises its shortcut.
-            let mut accelerator: Option<String> = read_current_bstr(&elem, UIA_AcceleratorKeyPropertyId);
+            let mut accelerator: Option<String> =
+                read_current_bstr(&elem, UIA_AcceleratorKeyPropertyId);
             // Fallback match: many shipping XAML apps (e.g. modern Notepad)
             // don't set AcceleratorKey at all and instead encode the shortcut
             // in the visible element name as a parenthetical hint like
             // "Bold (Ctrl+B)". Scan the Name property for that pattern so
             // toolbar buttons remain reachable via hotkey.
             if accelerator.is_none() {
-                if let Some(name) = read_current_bstr(&elem, windows::Win32::UI::Accessibility::UIA_NamePropertyId) {
+                if let Some(name) =
+                    read_current_bstr(&elem, windows::Win32::UI::Accessibility::UIA_NamePropertyId)
+                {
                     if let Some(extracted) = extract_shortcut_from_name(&name) {
                         accelerator = Some(extracted);
                     }
@@ -436,6 +629,13 @@ pub fn try_invoke_accelerator_in_window(
                 continue;
             }
 
+            if cancelled.load(Ordering::Acquire) {
+                tracing::debug!(
+                    target: "uia_windows_enum",
+                    "UIA accelerator invoke cancelled before activation"
+                );
+                return Ok((false, count as usize));
+            }
             // Pattern fallback chain. Different XAML controls expose
             // different "activation" patterns: a Save button uses Invoke, a
             // Bold toggle uses Toggle, a list item uses SelectionItem. Try
@@ -519,11 +719,7 @@ fn canonical_accelerator_token(value: &str) -> String {
     if value == " " {
         return "space".to_owned();
     }
-    let compact = value
-        .trim()
-        .to_ascii_lowercase()
-        .replace(' ', "")
-        .replace('-', "");
+    let compact = value.trim().to_ascii_lowercase().replace([' ', '-'], "");
     match compact.as_str() {
         "control" => "ctrl".to_owned(),
         "windows" | "window" | "meta" | "cmd" | "command" => "win".to_owned(),
@@ -603,9 +799,10 @@ fn extract_shortcut_from_name(name: &str) -> Option<String> {
     // parentheticals (e.g. "(2)" or "(beta)").
     let has_modifier = inner.split('+').any(|tok| {
         let t = tok.trim().to_ascii_lowercase();
-        matches!(t.as_str(),
-            "ctrl" | "control" | "shift" | "alt" |
-            "win" | "windows" | "meta" | "cmd" | "command")
+        matches!(
+            t.as_str(),
+            "ctrl" | "control" | "shift" | "alt" | "win" | "windows" | "meta" | "cmd" | "command"
+        )
     });
     if has_modifier {
         Some(inner.to_owned())
@@ -688,6 +885,65 @@ fn window_bounds(hwnd: HWND) -> (i32, i32, i32, i32) {
         if ok.is_err() {
             let _ = GetWindowRect(hwnd, &mut rect);
         }
-        (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+        (
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn uia_deadline_returns_timeout_when_worker_hangs() {
+        let start = Instant::now();
+        let result = run_uia_with_deadline(
+            "test hang",
+            Duration::from_millis(25),
+            "test fallback",
+            || {
+                thread::sleep(Duration::from_secs(60));
+                1usize
+            },
+        );
+
+        assert!(matches!(result, Err(UiaDeadlineError::Timeout)));
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn uia_deadline_returns_worker_result() {
+        let result =
+            run_uia_with_deadline("test ok", Duration::from_secs(1), "test fallback", || {
+                42usize
+            });
+        assert!(matches!(result, Ok(42)));
+    }
+
+    #[test]
+    fn desktop_timeout_cooldown_skips_then_reprobes_and_resets() {
+        let cooldown = TimeoutCooldown::new(3, 100);
+        assert!(cooldown.should_attempt(1_000));
+
+        cooldown.record_timeout(1_000);
+        cooldown.record_timeout(1_010);
+        assert!(cooldown.should_attempt(1_020));
+
+        cooldown.record_timeout(1_020);
+        assert_eq!(cooldown.consecutive(), 3);
+        assert!(!cooldown.should_attempt(1_050));
+
+        assert!(cooldown.should_attempt(1_121));
+        assert!(!cooldown.should_attempt(1_121));
+        assert!(!cooldown.should_attempt(1_150));
+
+        cooldown.record_success();
+        assert_eq!(cooldown.consecutive(), 0);
+        assert!(cooldown.should_attempt(1_122));
     }
 }

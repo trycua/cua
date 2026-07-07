@@ -424,6 +424,11 @@ When a cua-driver call surprises you, diagnose cua-driver first:
   `capture_mode` param is **deprecated and ignored** — it's still accepted
   so old callers don't error, but both the tree and the image come back
   regardless of what you pass.
+- **`list_windows` returns Win32 windows but misses UWP / WebView2
+  windows?** UIA desktop enumeration may be degraded because a provider
+  is unresponsive. `list_windows` falls back to Win32-only output instead
+  of hanging; run `cua-driver doctor` and retry after the provider
+  recovers.
 - **`get_desktop_state` returns `desktop_scope_disabled`?** That's
   intended: full-display capture is a **desktop-scope** operation, gated
   on the global `capture_scope`. It's `"window"` by default — so to verify
@@ -493,8 +498,9 @@ your prior tool calls earned.
    schtasks /Run /TN cua-driver-serve
    ```
 3. **Run `cua-driver doctor`** — reports session ID, COM apartment
-   status, UIA reachability, install paths, version. If anything reads
-   `false` / `error`, fix that before tool-calling.
+   status, UIA desktop-enumeration reachability, install paths,
+   version. If anything reads `false` / `error`, fix that before
+   tool-calling.
 4. **Permissions** — Windows has no TCC equivalent. cua-driver-rs
    needs:
    - No admin elevation for normal use (UIA, PostMessage, UWP
@@ -986,7 +992,7 @@ renderer, so the fallback path works for hyperlinks and buttons.
 - Daemon version and install paths
 - Current session ID (must be ≥1)
 - COM apartment status (STA / MTA / uninitialized)
-- UIA reachability (can we connect to `CUIAutomation`?)
+- UIA reachability (can we create `CUIAutomation` and enumerate desktop children?)
 - AppX broker reachability (for packaged-app activation)
 - PATH state (is `cua-driver` actually on PATH?)
 - Autostart Scheduled Task status

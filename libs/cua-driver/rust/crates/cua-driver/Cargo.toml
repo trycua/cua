@@ -67,10 +67,8 @@ default = []
 # leaves it off. No-op on macOS/Windows builds.
 portal-libei = ["platform-linux/portal-libei"]
 
-[target.'cfg(target_os = "windows")'.build-dependencies]
-# Embed the Windows manifest for DPI awareness (fixes coordinate mismatches
-# at 125%/150%/200% scaling).
-embed-resource = "2"
+[build-dependencies]
+winresource = "0.1"
 
 [dev-dependencies]
 # Shared integration-test harness (MCP/CLI transports, child reaping, paths,

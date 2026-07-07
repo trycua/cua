@@ -506,6 +506,16 @@ your prior tool calls earned.
      may flag the unsigned binary on first run. Click "More info →
      Run anyway" once.
 
+### Troubleshooting: WinError 4551 / Device Guard policy block
+
+If install or first launch reports `WinError 4551` or "blocked by your
+organization's Device Guard policy", the unsigned `cua-driver.exe` is
+being blocked by Smart App Control / WDAC enforcement. Confirm in Event
+Viewer under **Applications and Services Logs → Microsoft → Windows →
+CodeIntegrity → Operational** (events 3033, 3077, or 3118). On managed
+machines, ask an admin for an allowlist exception. Releases are not yet
+Authenticode-signed; see [#2118](https://github.com/trycua/cua/issues/2118).
+
 ## Using cua-driver from the shell
 
 Tool names are `snake_case`, management subcommands are

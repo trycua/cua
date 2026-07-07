@@ -70,6 +70,8 @@
 #               this when you manage PATH out-of-band (chezmoi, a dotfiles
 #               repo, group policy). Idempotent either way: if the dir is
 #               already on PATH, nothing changes.
+#   -SkipVerify skip the post-install `cua-driver --version` smoke test.
+#               Default off.
 #
 # Windows installer for the cross-platform cua-driver Rust implementation.
 
@@ -84,7 +86,8 @@ param(
     # that specifically don't want a scheduled task registered.
     [switch]$AutoStart = $true,
     [switch]$NoAutoStart,
-    [switch]$NoPathUpdate
+    [switch]$NoPathUpdate,
+    [switch]$SkipVerify
 )
 # `-NoAutoStart` is the explicit opt-out and takes precedence over
 # the default-true `-AutoStart`.
@@ -178,6 +181,87 @@ function Write-WarningStep($message) {
 
 function Write-ErrorStep($message) {
     Write-Host "error: $message" -ForegroundColor Red
+}
+
+function Test-CuaDriverAppControlBlock {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)]$ErrorObject)
+
+    $message = ""
+    $nativeErrorCode = $null
+    $current = $null
+
+    if ($ErrorObject -is [System.Management.Automation.ErrorRecord]) {
+        $current = $ErrorObject.Exception
+        $message = [string]$ErrorObject
+    } elseif ($ErrorObject -is [System.Exception]) {
+        $current = $ErrorObject
+        $message = $ErrorObject.Message
+    } else {
+        $message = [string]$ErrorObject
+    }
+
+    while ($null -ne $current) {
+        if ($current.Message) { $message = "$message`n$($current.Message)" }
+        if ($current -is [System.ComponentModel.Win32Exception]) {
+            $nativeErrorCode = $current.NativeErrorCode
+        }
+        $current = $current.InnerException
+    }
+
+    $hasAppControlText = ($message -match 'Application Control' -or $message -match 'Device Guard')
+    return ($nativeErrorCode -eq 4551 -or $message -match '\b4551\b' -or $hasAppControlText)
+}
+
+function Write-CuaDriverAppControlDiagnostic {
+    Write-ErrorStep "Windows Application Control blocked cua-driver.exe."
+    Write-ErrorStep "  Smart App Control / WDAC policy blocks unsigned binaries on this machine."
+    Write-ErrorStep "  This is not a Mark-of-the-Web issue."
+    Write-ErrorStep "  Confirm in Event Viewer: Applications and Services Logs > Microsoft > Windows > CodeIntegrity > Operational."
+    Write-ErrorStep "  Look for Code Integrity events 3033, 3077, or 3118."
+    Write-ErrorStep "  On managed machines, ask an admin for an allowlist exception."
+    Write-ErrorStep "  Releases are not yet Authenticode-signed; see https://github.com/trycua/cua/issues/2118."
+}
+
+function Test-CuaDriverInstalledBinary {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$InstalledBinary,
+        [Parameter(Mandatory = $true)][string]$ExpectedVersion
+    )
+
+    if (-not (Test-Path -LiteralPath $InstalledBinary)) {
+        throw "binary not found at $InstalledBinary"
+    }
+
+    try {
+        $versionOutput = @(& $InstalledBinary --version 2>&1)
+        $exitCode = $LASTEXITCODE
+    }
+    catch {
+        if (Test-CuaDriverAppControlBlock -ErrorObject $_) {
+            Write-CuaDriverAppControlDiagnostic
+            exit 1
+        }
+        throw
+    }
+
+    if ($exitCode -ne 0) {
+        $combined = ($versionOutput | ForEach-Object { [string]$_ }) -join "`n"
+        if (Test-CuaDriverAppControlBlock -ErrorObject "$exitCode`n$combined") {
+            Write-CuaDriverAppControlDiagnostic
+            exit 1
+        }
+        if ($combined) { throw $combined }
+        throw "cua-driver --version failed (exit $exitCode)"
+    }
+
+    $combinedOutput = ($versionOutput | ForEach-Object { [string]$_ }) -join "`n"
+    if ($combinedOutput -notmatch [regex]::Escape($ExpectedVersion)) {
+        throw "cua-driver --version did not report expected version $ExpectedVersion; output: $combinedOutput"
+    }
+
+    Write-Step "verified $InstalledBinary --version ($ExpectedVersion)"
 }
 
 # ---------- Architecture detection -----------------------------------------
@@ -1133,6 +1217,12 @@ if (Test-Path -LiteralPath $installedBinary) {
     catch {
         # Ignore — telemetry must never block install.
     }
+}
+
+if ($SkipVerify) {
+    Write-Step "skipping binary verification (-SkipVerify set)"
+} else {
+    Test-CuaDriverInstalledBinary -InstalledBinary $installedBinary -ExpectedVersion $version
 }
 
 # ---------- PATH update (User scope, idempotent, fallback to manual) ------

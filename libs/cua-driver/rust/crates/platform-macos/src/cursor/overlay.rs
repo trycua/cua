@@ -455,24 +455,59 @@ impl RenderState {
         }
     }
 
-    /// True while the render loop must wake at frame cadence because the next
-    /// tick can change pixels. A brand-new sentinel cursor is deliberately
-    /// quiescent, so `serve` with no agent activity can block on the command
-    /// channel instead of compositing an empty fullscreen pixmap at 60fps.
-    fn needs_frame_tick(&self) -> bool {
+    fn active_animation_or_focus(&self) -> bool {
         self.core.path.is_some()
             || self.core.spring.is_some()
             || self.core.click_t.is_some()
             || self.focus_rect.is_some()
-            || (self.core.motion.idle_hide_ms > 0.0
-                && self.core.visible
-                && self.core.pos.0 >= -100.0
-                && self.core.idle_alpha >= 0.004)
+    }
+
+    fn visible_on_screen(&self) -> bool {
+        self.core.visible && self.core.pos.0 >= -100.0
+    }
+
+    fn idle_fade_in_progress(&self) -> bool {
+        self.core.motion.idle_hide_ms > 0.0
+            && self.visible_on_screen()
+            && self.core.idle_alpha < 1.0
+            && self.core.idle_alpha >= 0.004
+    }
+
+    /// True while the render loop must wake at frame cadence because the next
+    /// tick can change pixels. A fully visible idle-hide dwell is deliberately
+    /// NOT a frame-tick state: pixels are static until fade_start, so the render
+    /// loop can sleep on recv_timeout() instead of compositing at 60fps.
+    fn needs_frame_tick(&self) -> bool {
+        self.active_animation_or_focus() || self.idle_fade_in_progress()
+    }
+
+    /// Remaining dwell time before the idle-hide fade should begin. During
+    /// this interval the last frame is already correct, so no composite is
+    /// needed unless a command arrives first.
+    fn idle_fade_due_in(&self) -> Option<Duration> {
+        if self.active_animation_or_focus()
+            || self.core.motion.idle_hide_ms <= 0.0
+            || !self.visible_on_screen()
+            || self.core.idle_alpha < 1.0
+        {
+            return None;
+        }
+
+        let fade_start = self.core.motion.idle_hide_ms / 1000.0;
+        let remaining = (fade_start - self.core.idle_secs).max(0.0);
+        Some(Duration::from_secs_f64(remaining))
     }
 }
 
 fn render_map_needs_frame_tick(map: &RenderMap) -> bool {
     map.cursors.values().any(RenderState::needs_frame_tick)
+}
+
+fn render_map_idle_fade_due_in(map: &RenderMap) -> Option<Duration> {
+    map.cursors
+        .values()
+        .filter_map(RenderState::idle_fade_due_in)
+        .min()
 }
 
 // ── AppKit / CGImage plumbing ─────────────────────────────────────────────
@@ -606,22 +641,32 @@ fn render_loop(
     let target_frame_ms = Duration::from_millis(16); // ~60 fps while pixels can change
     let mut last_tick = Instant::now();
     let mut frame_tick_needed = false;
+    let mut idle_fade_due_in: Option<Duration> = None;
     // Repin bookkeeping: track last pinned wid and a frame counter for
     // the periodic defensive-repin (every ~60 active frames ≈ 1 s).
     let mut last_pinned: Option<u64> = None;
     let mut repin_frames: u32 = 0;
 
     loop {
-        // When no cursor animation/fade is active, block until the MCP side
-        // sends a command. This is the idle-server fast path: no fullscreen
-        // pixmap allocation, no CGImage conversion, no 60fps wakeup.
-        let first_msg = if frame_tick_needed {
-            None
-        } else {
-            match rx.recv() {
+        // When no cursor animation/fade is active, either block until the MCP
+        // side sends a command or, for an idle-hide dwell, sleep only until the
+        // fade is due. This avoids 60fps fullscreen compositing while the
+        // cursor is fully visible but static.
+        let mut woke_for_idle_fade = false;
+        let first_msg = match (frame_tick_needed, idle_fade_due_in) {
+            (true, _) => None,
+            (false, Some(timeout)) => match rx.recv_timeout(timeout) {
+                Ok(msg) => Some(msg),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    woke_for_idle_fade = true;
+                    None
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            },
+            (false, None) => match rx.recv() {
                 Ok(msg) => Some(msg),
                 Err(_) => break,
-            }
+            },
         };
 
         let woke_from_idle = first_msg.is_some();
@@ -631,6 +676,11 @@ fn render_loop(
             // Do not charge that time to the first animation tick after a command;
             // let the wake-up frame render the newly-applied state at t=0.
             0.0
+        } else if woke_for_idle_fade {
+            // The dwell timeout exists solely to advance idle_secs to fade_start.
+            // Paths/springs/clicks are absent while dwelling, so feeding the full
+            // slept wall-clock duration into tick_idle is safe and intentional.
+            now.duration_since(last_tick).as_secs_f64()
         } else {
             now.duration_since(last_tick).as_secs_f64().min(0.05)
         };
@@ -640,7 +690,15 @@ fn render_loop(
         // `pinned_wid` follows the most-recently-updated cursor: a single
         // NSWindow can occupy only one z-band, so the last-active cursor's
         // target wins. `arrived` collects the keys whose path just ended.
-        let (pinned_wid, arrived, win_w, win_h, had_msg, next_frame_tick_needed) = {
+        let (
+            pinned_wid,
+            arrived,
+            win_w,
+            win_h,
+            had_msg,
+            next_frame_tick_needed,
+            next_idle_fade_due_in,
+        ) = {
             let mut guard = RENDER.lock().unwrap();
             match guard.as_mut() {
                 Some(map) => {
@@ -665,7 +723,7 @@ fn render_loop(
                     // latter lets a just-created path/click/focus rect start on
                     // this frame without waiting for the next 16ms tick.
                     let mut arrived: Vec<CursorKey> = Vec::new();
-                    if frame_tick_needed || had_msg {
+                    if frame_tick_needed || had_msg || woke_for_idle_fade {
                         for (k, rs) in map.cursors.iter_mut() {
                             if rs.tick(dt) {
                                 arrived.push(k.clone());
@@ -678,6 +736,11 @@ fn render_loop(
                         .map(|rs| rs.core.pinned_wid)
                         .unwrap_or(last_pinned);
                     let next_frame_tick_needed = render_map_needs_frame_tick(map);
+                    let next_idle_fade_due_in = if next_frame_tick_needed {
+                        None
+                    } else {
+                        render_map_idle_fade_due_in(map)
+                    };
                     (
                         pinned,
                         arrived,
@@ -685,6 +748,7 @@ fn render_loop(
                         map.win_h,
                         had_msg,
                         next_frame_tick_needed,
+                        next_idle_fade_due_in,
                     )
                 }
                 None => break,
@@ -753,6 +817,7 @@ fn render_loop(
         }
 
         frame_tick_needed = next_frame_tick_needed;
+        idle_fade_due_in = next_idle_fade_due_in;
         if frame_tick_needed {
             // Sleep remainder of frame budget.
             let elapsed = Instant::now().duration_since(last_tick);
@@ -1211,6 +1276,50 @@ mod tests {
         assert!(
             !render_map_needs_frame_tick(&map),
             "fully hidden idle cursor should quiesce"
+        );
+    }
+
+    #[test]
+    fn visible_idle_dwell_sleeps_until_fade_start() {
+        let mut map = empty_map();
+        seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
+
+        {
+            let rs = map.cursors.get_mut("sessA").unwrap();
+            rs.core.path = None;
+            rs.core.spring = None;
+            rs.core.click_t = None;
+            rs.focus_rect = None;
+            rs.core.visible = true;
+            rs.core.pos = (60.0, 60.0);
+            rs.core.motion.idle_hide_ms = 20_000.0;
+            rs.core.idle_secs = 5.0;
+            rs.core.idle_alpha = 1.0;
+        }
+
+        assert!(
+            !render_map_needs_frame_tick(&map),
+            "fully visible dwell should not composite at frame cadence"
+        );
+        let due = render_map_idle_fade_due_in(&map).expect("dwell should arm a fade timeout");
+        assert!(
+            (due.as_secs_f64() - 15.0).abs() < 0.001,
+            "remaining dwell should be 15s, got {due:?}"
+        );
+
+        let rs = map.cursors.get_mut("sessA").unwrap();
+        assert!(
+            !rs.tick(due.as_secs_f64() + 0.01),
+            "dwell sleep must not fire an arrival signal"
+        );
+        assert!(
+            rs.core.idle_alpha < 1.0 && rs.core.idle_alpha >= 0.004,
+            "full slept dwell duration should start the fade, alpha={}",
+            rs.core.idle_alpha
+        );
+        assert!(
+            render_map_needs_frame_tick(&map),
+            "fade in progress should resume frame ticks"
         );
     }
 

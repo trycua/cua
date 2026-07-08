@@ -107,6 +107,28 @@ pub fn is_wayland() -> bool {
         && std::env::var_os("DISPLAY").is_none()
 }
 
+/// True when input tools should attempt the Wayland input path (wlroots
+/// virtual-pointer, falling back to libei/portal via [`with_libei_fallback`]).
+///
+/// Unlike [`is_wayland`] this deliberately does NOT require `DISPLAY` to be
+/// unset. GNOME/Mutter and KDE/KWin always run XWayland, so `DISPLAY` is
+/// essentially always present alongside `WAYLAND_DISPLAY` on those sessions —
+/// which made `is_wayland()` false and left every input tool on the X11 path,
+/// where Mutter/KWin silently drop synthetic XTEST/XSendEvent input (#2105,
+/// #1982, #2022). The right routing signal for *input* is "opted in + a Wayland
+/// compositor is present"; the wlroots-vs-portal decision is then made at
+/// runtime by the compositor-capability probe inside the `wayland::*` input
+/// functions (`open_vptr_session`'s `NO_VPTR_MARKER` → `with_libei_fallback`),
+/// not from environment variables.
+///
+/// Screen capture and `list_windows` intentionally keep using [`is_wayland`]:
+/// on an XWayland-co-present GNOME session the X11 dispatch for those is still
+/// serviceable, whereas the native-Wayland enumeration path depends on
+/// `zwlr_foreign_toplevel_manager_v1`, which Mutter does not expose.
+pub fn wayland_input_enabled() -> bool {
+    wayland_enabled() && std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
 /// Reason string when X11 input injection cannot possibly work, so callers
 /// **fail loudly** instead of falling through to an X11 path that no-ops yet
 /// reports success. Triggers only on a *pure* Wayland session — `WAYLAND_DISPLAY`

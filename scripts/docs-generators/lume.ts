@@ -116,7 +116,7 @@ export interface APIStatusCodeDoc {
 
 const ROOT_DIR = path.resolve(__dirname, '../..');
 const LUME_DIR = path.join(ROOT_DIR, 'libs', 'lume');
-const DOCS_OUTPUT_DIR = path.join(ROOT_DIR, 'docs', 'content', 'docs', 'lume', 'reference');
+const DOCS_OUTPUT_DIR = path.join(ROOT_DIR, 'docs', 'content', 'docs', 'reference', 'lume');
 const TAG_PREFIX = 'lume-v';
 
 // ============================================================================
@@ -157,7 +157,7 @@ export function discoverVersions(currentVersion: string): VersionInfo[] {
   // Add current version (latest)
   versions.push({
     version: currentMajorMinor,
-    href: '/lume/reference/cli-reference',
+    href: '/reference/lume/cli',
     isCurrent: true,
   });
 
@@ -170,7 +170,7 @@ export function discoverVersions(currentVersion: string): VersionInfo[] {
         if (version === currentMajorMinor) continue;
         versions.push({
           version,
-          href: `/lume/reference/${entry.name}/cli-reference`,
+          href: `/reference/lume/${entry.name}/cli`,
           isCurrent: false,
         });
       }
@@ -239,7 +239,7 @@ async function main() {
   const cliMdx = generateCLIReferenceMDX(cliDocs);
   const apiMdx = generateHTTPAPIMDX(apiDocs);
 
-  const cliPath = path.join(DOCS_OUTPUT_DIR, 'cli-reference.mdx');
+  const cliPath = path.join(DOCS_OUTPUT_DIR, 'cli.mdx');
   const apiPath = path.join(DOCS_OUTPUT_DIR, 'http-api.mdx');
 
   if (checkOnly) {
@@ -251,13 +251,13 @@ async function main() {
     if (fs.existsSync(cliPath)) {
       const existingCli = fs.readFileSync(cliPath, 'utf-8');
       if (existingCli !== cliMdx) {
-        console.error('❌ cli-reference.mdx is out of sync with source code');
+        console.error('❌ cli.mdx is out of sync with source code');
         hasDrift = true;
       } else {
-        console.log('✅ cli-reference.mdx is up to date');
+        console.log('✅ cli.mdx is up to date');
       }
     } else {
-      console.error('❌ cli-reference.mdx does not exist');
+      console.error('❌ cli.mdx does not exist');
       hasDrift = true;
     }
 
@@ -351,7 +351,7 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation): string {
   const vmManagement = ['create', 'run', 'stop', 'delete', 'clone'];
   const vmInfo = ['ls', 'get', 'set'];
   const imageManagement = ['images', 'pull', 'push', 'ipsw', 'prune'];
-  const configuration = ['config', 'serve', 'logs', 'setup'];
+  const configuration = ['config', 'serve', 'logs', 'setup', 'check-update', 'update'];
 
   lines.push('## VM Management');
   lines.push('');

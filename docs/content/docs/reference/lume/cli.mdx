@@ -22,6 +22,22 @@ lume run ubuntu-noble-vanilla:latest
   registry](https://github.com/orgs/trycua/packages).
 </Callout>
 
+### Update Lume
+
+```bash
+# Check whether a newer release is available
+lume check-update
+
+# Apply an available update
+lume update --apply
+```
+
+`lume check-update --json` returns the current version, latest version, update availability,
+release notes URL, and install command. `lume update` only applies an update when `--apply` is
+provided.
+
+The MCP server also exposes a read-only `check_for_update` tool with the same update-state payload.
+
 ### Create a Custom VM
 
 ```bash

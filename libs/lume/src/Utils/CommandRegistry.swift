@@ -21,6 +21,8 @@ enum CommandRegistry {
             Prune.self,
             Config.self,
             Logs.self,
+            CheckUpdate.self,
+            Update.self,
             Setup.self,
             DumpDocs.self,
         ]

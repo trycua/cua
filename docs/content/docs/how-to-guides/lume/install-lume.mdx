@@ -34,6 +34,23 @@ Install with a single command:
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
 ```
 
+## Update Lume
+
+Check whether a newer release is available:
+
+```bash
+lume check-update
+```
+
+Apply an available update:
+
+```bash
+lume update --apply
+```
+
+The installer no longer creates scheduled auto-updaters. Older `lume-update` cron jobs and
+LaunchAgents are removed the next time the installer runs.
+
 ### Manual Start (No Background Service)
 
 By default, Lume is installed as a background service that starts automatically on login. If you prefer to start the Lume API service manually when needed, you can use the `--no-background-service` option:

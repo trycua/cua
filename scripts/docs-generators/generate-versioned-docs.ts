@@ -86,10 +86,10 @@ const SDK_CONFIGS: SDKConfig[] = [
     tagPrefix: 'lume-v',
     packageDir: 'libs/lume',
     packageName: 'lume',
-    outputDir: 'lume/reference',
+    outputDir: 'reference/lume',
     extractionType: 'swift-dump-docs',
     minVersion: '0.2',
-    docsBasePath: 'lume/reference',
+    docsBasePath: 'reference/lume',
   },
   {
     name: 'cuabot',
@@ -163,7 +163,7 @@ async function main() {
         await generateVersionDocs(config, latestVersion, majorMinor);
         const files =
           config.extractionType === 'swift-dump-docs'
-            ? 'cli-reference.mdx + http-api.mdx'
+            ? 'cli.mdx + http-api.mdx'
             : 'api.mdx';
         console.log(`   ✅ Generated v${majorMinor}/${files}`);
       } catch (error) {
@@ -399,7 +399,7 @@ async function generateSwiftVersionDocs(
   }
 
   // Write outputs
-  fs.writeFileSync(path.join(outputDir, 'cli-reference.mdx'), cliMdx);
+  fs.writeFileSync(path.join(outputDir, 'cli.mdx'), cliMdx);
   fs.writeFileSync(path.join(outputDir, 'http-api.mdx'), apiMdx);
 
   // Create meta.json
@@ -409,7 +409,7 @@ async function generateSwiftVersionDocs(
       {
         title: `v${majorMinor}`,
         description: `${config.displayName} v${majorMinor} Reference`,
-        pages: ['cli-reference', 'http-api'],
+        pages: ['cli', 'http-api'],
       },
       null,
       2
@@ -525,7 +525,7 @@ function generateVersionedLumeMDX(
       // Insert old-version callout instead
       result.push('<Callout type="warn">');
       result.push(
-        `  This is documentation for **v${majorMinor}**. [View latest version](/lume/reference/cli-reference).`
+        `  This is documentation for **v${majorMinor}**. [View latest version](/reference/lume/cli).`
       );
       result.push('</Callout>');
       result.push('');

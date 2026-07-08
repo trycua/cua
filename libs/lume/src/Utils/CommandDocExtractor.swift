@@ -87,6 +87,8 @@ enum CommandDocExtractor {
             pruneDoc,
             configDoc,
             logsDoc,
+            checkUpdateDoc,
+            updateDoc,
             setupDoc,
         ]
     }
@@ -518,6 +520,38 @@ enum CommandDocExtractor {
                     subcommands: []
                 ),
             ]
+        )
+    }
+
+    // MARK: - Update
+
+    private static var checkUpdateDoc: CommandDoc {
+        CommandDoc(
+            name: "check-update",
+            abstract: "Check whether a newer Lume release is available",
+            discussion: "Read-only update check. Uses GitHub Releases, caches the result briefly, and never installs anything.",
+            arguments: [],
+            options: [],
+            flags: [
+                FlagDoc(name: "json", shortName: nil, help: "Emit the structured update-state payload as JSON", defaultValue: false),
+                FlagDoc(name: "no-cache", shortName: nil, help: "Bypass the local update-check cache", defaultValue: false),
+            ],
+            subcommands: []
+        )
+    }
+
+    private static var updateDoc: CommandDoc {
+        CommandDoc(
+            name: "update",
+            abstract: "Check for a Lume update and optionally apply it",
+            discussion: "Without --apply, this command only checks for a newer release and prints the command to install it. With --apply, it delegates installation to the canonical Lume installer pinned to the discovered version.",
+            arguments: [],
+            options: [],
+            flags: [
+                FlagDoc(name: "apply", shortName: nil, help: "Apply the update by re-running the official installer", defaultValue: false),
+                FlagDoc(name: "json", shortName: nil, help: "Emit the structured update-state payload as JSON", defaultValue: false),
+            ],
+            subcommands: []
         )
     }
 

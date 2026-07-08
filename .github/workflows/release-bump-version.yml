@@ -29,7 +29,6 @@ on:
           - npm/playground
           - npm/cuabot
           - lume
-          - cua-driver
           - cua-driver-rs
           - docker/cuabot
           - docker/kasm
@@ -146,10 +145,6 @@ jobs:
             "lume")
               echo "directory=libs/lume" >> $GITHUB_OUTPUT
               echo "type=lume" >> $GITHUB_OUTPUT
-              ;;
-            "cua-driver")
-              echo "directory=libs/cua-driver" >> $GITHUB_OUTPUT
-              echo "type=cua-driver" >> $GITHUB_OUTPUT
               ;;
             "cua-driver-rs")
               echo "directory=libs/cua-driver/rust" >> $GITHUB_OUTPUT
@@ -472,14 +467,6 @@ jobs:
         run: |
           VERSION=$(grep -oP 'static let current: String = "\K[^"]+' libs/lume/src/Main.swift)
           echo "lume version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Capture bumped cua-driver version
-        if: ${{ inputs.service == 'cua-driver' }}
-        id: cua_driver_version
-        run: |
-          VERSION=$(grep -oP 'public static let version = "\K[^"]+' libs/cua-driver/Sources/CuaDriverCore/CuaDriverCore.swift)
-          echo "cua-driver version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped cua-driver-rs version

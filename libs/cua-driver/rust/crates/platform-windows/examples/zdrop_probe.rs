@@ -13,9 +13,8 @@
 //!   - control: SendInput with a brief SetForegroundWindow swap (the existing
 //!     flash path in `input/mouse.rs::send_click_synthesized`).
 //!   - inject : Track A — pointer/touch injection (InitializeTouchInjection +
-//!     InjectTouchInput), which RE showed has no foreground precondition
-//!     (NtUserInjectMouseInput gates only on per-process injection-enable, not
-//!     GetForegroundWindow — see docs/windows-background-input-re-plan.rs §4.4).
+//!     InjectTouchInput), whose kernel path gates on per-process injection-enable
+//!     rather than `GetForegroundWindow`.
 //!
 //! Usage (run from an interactive desktop session, with a Chrome/WPF/etc window
 //! open in the BACKGROUND and a different window focused in front):

@@ -4393,7 +4393,7 @@ impl Tool for SetConfigTool {
     fn def(&self) -> &ToolDef {
         SCFG_DEF.get_or_init(|| ToolDef {
             name: "set_config".into(),
-            description: "Update cua-driver-rs configuration. capture_mode / \
+            description: "Update cua-driver configuration. capture_mode / \
                 max_image_dimension take effect immediately.\n\n\
                 Two input shapes (both accepted, matching Windows/Swift):\n\
                 - **{key, value}** (preferred): `{\"key\": \"max_image_dimension\", \"value\": 800}` \

@@ -1,4 +1,4 @@
-# cua-driver-rs — Claude Code skill
+# cua-driver — Claude Code skill
 
 A [Claude Code](https://code.claude.com) skill that teaches Claude to
 drive native GUI apps on **macOS, Windows, and Linux** via the
@@ -82,7 +82,7 @@ forbidden-list / launch / click details.
 ### Windows
 
 1. **Windows 10/11** (any edition with PowerShell 5.1+).
-2. **`cua-driver` CLI (Rust port `cua-driver-rs`)** — one-liner:
+2. **`cua-driver` CLI** — one-liner:
    ```powershell
    irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
    ```
@@ -147,12 +147,12 @@ Numbers", "open Calculator and compute 17×23", "navigate to
 trycua.com in Edge". You can also invoke it explicitly:
 
 ```
-/cua-driver-rs
+/cua-driver
 ```
 
-## Claude Code MCP compatibility mode
+## Claude Code MCP setup
 
-For normal skill-driven use, prefer the CLI or the standard MCP server. If you want Claude Code's vision/computer-use-style flow to ground on CuaDriver screenshots, register the compatibility server. The cleanest path is to let `cua-driver` print the right command for your shell:
+For normal skill-driven use, prefer the CLI or the standard MCP server. If you want Claude Code to use the MCP transport, let `cua-driver` print the right command for your shell:
 
 ```bash
 cua-driver mcp-config --client claude
@@ -161,9 +161,7 @@ cua-driver mcp-config --client claude
 
 Under the hood this registers a `cua-computer-use` stdio server that runs `cua-driver mcp --claude-code-computer-use-compat`. The `add-json` form sidesteps a PowerShell arg-parsing quirk that mangles long flags following `--`.
 
-This mode exposes the normal CuaDriver tools and changes only `screenshot`. The compatibility screenshot requires `pid` and `window_id`, captures that window only, and establishes a window-local pixel coordinate frame. It does not call Anthropic APIs or expose Anthropic's native computer-use API tool.
-
-Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots still work as CuaDriver calls, but they do not expose the `mcp__cua-computer-use__screenshot` tool name that Claude Code appears to use as the image-grounding cue.
+Ground on `get_window_state(pid, window_id)`: it returns the accessibility tree and a window-local screenshot by default. The legacy standalone `screenshot` MCP surface was removed; do not plan around `mcp__cua-computer-use__screenshot`.
 
 ## Files
 

@@ -85,5 +85,6 @@ tree, so nothing is orphaned.
 cua-driver assigns each session a cursor colour by name (palette-name sessions
 like `crimson` pick that colour directly). Passing `"session":"<color>"` on each
 `click`/`type_text` call routes it to that session's overlay cursor, which
-glides to the target. Four sessions → four cursors animating at once. See
-`docs/windows-background-input-re-plan.md` for the no-z-raise mechanism.
+glides to the target. Four sessions → four cursors animating at once. Windows
+coordinate-routed input uses the background injection path guarded by the
+driver's no-foreground contract.

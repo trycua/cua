@@ -12,8 +12,7 @@
 //!
 //! Touch injection routes by coordinate through the system input queue (so
 //! Chromium et al. accept it; the OS promotes it to `WM_*BUTTON` for legacy
-//! Win32 windows that don't consume `WM_POINTER`), and — per the RE in
-//! `docs/windows-background-input-re-plan.md` §4.4 — the kernel injection path
+//! Win32 windows that don't consume `WM_POINTER`). The kernel injection path
 //! (`NtUserInjectMouseInput`/`NtUserInjectTouchInput`) gates only on a
 //! per-process injection-enable, NOT on the target being foreground. The one
 //! residual is that a tap on an *inactive* top-level window can still trigger
@@ -537,4 +536,3 @@ pub fn inject_drag_screen(
 // WPF/terminal text) is now reported as `background_unavailable`; the agent
 // escalates to `delivery_mode:"foreground"`, which uses the explicit
 // SetForegroundWindow path (send_key_synthesized / send_text_synthesized).
-

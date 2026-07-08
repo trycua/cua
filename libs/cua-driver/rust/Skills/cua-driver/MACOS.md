@@ -1,4 +1,4 @@
-# cua-driver-rs — macOS specifics
+# cua-driver — macOS specifics
 
 This file holds macOS-only material that used to live in `SKILL.md`.
 The cross-platform core (snapshot invariant, CLI/MCP defaults,

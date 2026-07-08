@@ -29,11 +29,10 @@ pub enum Command {
         /// Override the daemon Unix socket path used by the proxy
         /// fallback. Defaults to `serve::default_socket_path()`.
         socket: Option<String>,
-        /// `--claude-code-computer-use-compat`: register the compat
-        /// `screenshot` tool (window-scoped, JPEG @ 85%, pid + window_id
-        /// both required) instead of the full-featured one. Used when
-        /// the MCP server is wired up as `cua-computer-use` in Claude
-        /// Code, where this is the documented best-practice install.
+        /// `--claude-code-computer-use-compat`: preserve the Claude Code
+        /// computer-use compatibility surface selector. Current grounding
+        /// comes from `get_window_state`, which returns the tree and
+        /// window-local screenshot by default.
         claude_code_compat: bool,
     },
     ListTools,
@@ -61,9 +60,9 @@ pub enum Command {
         no_permissions_gate: bool,
         /// True when `--claude-code-computer-use-compat` is on argv. The MCP
         /// proxy forwards this flag to the daemon it auto-launches (see
-        /// `launch_daemon_and_wait`) so the proxy path registers the compat
-        /// `screenshot` surface, not just the in-process path. Without it the
-        /// flag was a no-op for `cua-driver mcp --claude-code-computer-use-compat`,
+        /// `launch_daemon_and_wait`) so the proxy path preserves the compat
+        /// surface selector, not just the in-process path. Without it the flag
+        /// was a no-op for `cua-driver mcp --claude-code-computer-use-compat`,
         /// which always routes through the proxy on an installed bundle.
         claude_code_compat: bool,
     },
@@ -208,7 +207,7 @@ pub fn parse_command() -> Command {
         println!("  --host-bundle-id <id>   Advisory host bundle id label for check_permissions output.");
         println!("  --socket <path>         Override the daemon UDS path used by the proxy fallback.");
         println!("  --claude-code-computer-use-compat");
-        println!("                          Select the Claude Code computer-use compat surface.");
+        println!("                          Preserve the Claude Code computer-use compat surface selector.");
         println!("                          Now forwarded to the proxy-launched daemon (was a no-op");
         println!("                          on the proxy path — the path you actually run — because");
         println!("                          the daemon hardcoded compat=false). Note: the compat");
@@ -333,8 +332,24 @@ pub fn parse_command() -> Command {
         Some("stop") => Command::Stop { socket },
         Some("status") => Command::Status { socket },
         Some("recording") => {
-            let subcommand = pos.next().unwrap_or("status").to_string();
-            let rest: Vec<String> = pos.map(str::to_owned).collect();
+            let raw_recording_idx = args.iter().position(|a| a == "recording").unwrap_or(0);
+            let raw_after_recording = raw_recording_idx + 1;
+            let subcommand = args
+                .get(raw_after_recording)
+                .filter(|s| !s.starts_with('-'))
+                .map(|s| s.as_str())
+                .unwrap_or("status")
+                .to_string();
+            let rest_start = if subcommand == "status"
+                && args.get(raw_after_recording)
+                    .map(|s| s.starts_with('-'))
+                    .unwrap_or(false)
+            {
+                raw_after_recording
+            } else {
+                raw_after_recording + 1
+            };
+            let rest: Vec<String> = args.iter().skip(rest_start).cloned().collect();
             Command::Recording { subcommand, args: rest, socket }
         }
         Some("dump-docs") => {
@@ -871,7 +886,7 @@ pub fn build_manifest() -> serde_json::Value {
               "args": [
                   { "name": "--no-daemon-relaunch", "type": "flag", "description": "Skip the bundle-based TCC auto-relaunch and stay in-process." },
                   { "name": "--socket", "type": "string", "description": "Override the daemon proxy UDS path." },
-                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Select the Claude Code computer-use compat tool surface." },
+                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Preserve the Claude Code computer-use compatibility surface selector." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
               ] },
@@ -880,7 +895,7 @@ pub fn build_manifest() -> serde_json::Value {
               "args": [
                   { "name": "--socket", "type": "string", "description": "Override the listen socket path." },
                   { "name": "--no-permissions-gate", "type": "flag", "description": "Skip the macOS TCC first-launch gate." },
-                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Forwarded by the MCP proxy when the client asked for the compat surface." },
+                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Forwarded by the MCP proxy when the client asked for the compat surface selector." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
               ] },
@@ -2053,7 +2068,7 @@ fn cli_docs_json() -> serde_json::Value {
                 ],
                 "flags": [
                     {"name":"no-daemon-relaunch","short_name":null,"help":"Stay in-process instead of proxying through a daemon.","default_value":false},
-                    {"name":"claude-code-computer-use-compat","short_name":null,"help":"Expose the Claude Code computer-use compatibility screenshot surface.","default_value":false},
+                    {"name":"claude-code-computer-use-compat","short_name":null,"help":"Preserve the Claude Code computer-use compatibility surface selector; grounding comes from get_window_state.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.","default_value":false}
                 ],
                 "subcommands": no_subcommands

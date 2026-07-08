@@ -18,7 +18,7 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "set_config".into(),
-        description: "Update cua-driver-rs configuration. Changes to \
+        description: "Update cua-driver configuration. Changes to \
             max_image_dimension and capture_scope take effect immediately. The \
             experimental_pip keys are persisted to ~/.cua-driver/config.json and \
             take effect on the next daemon restart (the PiP backend is \

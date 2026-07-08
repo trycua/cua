@@ -1,5 +1,5 @@
 // CuaTestHarness.SwiftUI — deterministic SwiftUI host app for the
-// cua-driver-rs test harness. Mirrors the role of CuaTestHarness.WinUI3
+// cua-driver test harness. Mirrors the role of CuaTestHarness.WinUI3
 // (modern WinUI3 ≈ macOS SwiftUI).
 //
 // Single-file Swift, compiled with swiftc against SwiftUI + AppKit.

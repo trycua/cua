@@ -12,7 +12,10 @@ Usage:
 """
 
 import argparse
+import base64
+import csv
 import hashlib
+import io
 import os
 import platform
 import shutil
@@ -22,6 +25,16 @@ import tarfile
 import urllib.request
 import zipfile
 from pathlib import Path
+
+
+def get_default_version() -> str:
+    """Read the wrapper package version from pyproject.toml."""
+    pyproject = Path(__file__).parent / "pyproject.toml"
+    for line in pyproject.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("version = "):
+            return line.split('"', 2)[1]
+    raise RuntimeError(f"Could not read project version from {pyproject}")
 
 
 def get_platform_info(arch_override: str = None):
@@ -88,6 +101,23 @@ def get_release_url(version: str, platform_name: str, arch: str) -> tuple[str, l
         raise ValueError(f"Unknown platform: {platform_name}")
 
     return f"{base_url}/{filename}", binary_names
+
+
+def get_wheel_tag(platform_name: str, arch: str) -> str:
+    """Return the platform-specific wheel tag for the bundled binary."""
+    if platform_name == "darwin":
+        return "py3-none-macosx_11_0_universal2"
+    if platform_name == "linux":
+        if arch == "x86_64":
+            return "py3-none-manylinux_2_31_x86_64"
+        if arch == "arm64":
+            return "py3-none-manylinux_2_31_aarch64"
+    if platform_name == "windows":
+        if arch == "x86_64":
+            return "py3-none-win_amd64"
+        if arch == "arm64":
+            return "py3-none-win_arm64"
+    raise ValueError(f"Unsupported wheel platform: {platform_name}-{arch}")
 
 
 def verify_sha256(file_path: Path, expected_sha256: str) -> None:
@@ -174,6 +204,8 @@ def extract_binaries(archive_path: Path, binary_names: list[str], dest_dir: Path
     Returns:
         List of paths to extracted binaries
     """
+    if dest_dir.exists():
+        shutil.rmtree(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
     extracted_paths = []
 
@@ -210,11 +242,89 @@ def extract_binaries(archive_path: Path, binary_names: list[str], dest_dir: Path
     return extracted_paths
 
 
-def build_wheel(package_dir: Path, target_arch: str = None) -> None:
+def encode_record_hash(data: bytes) -> str:
+    """Return the PEP 427 RECORD hash for wheel contents."""
+    digest = hashlib.sha256(data).digest()
+    encoded = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return f"sha256={encoded}"
+
+
+def retag_wheel(wheel_path: Path, tag: str) -> Path:
+    """Rewrite a hatchling wheel with the platform tag for the bundled binary."""
+    def clone_info(info: zipfile.ZipInfo) -> zipfile.ZipInfo:
+        cloned = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+        cloned.compress_type = zipfile.ZIP_DEFLATED
+        cloned.comment = info.comment
+        cloned.extra = info.extra
+        cloned.internal_attr = info.internal_attr
+        cloned.external_attr = info.external_attr
+        cloned.create_system = info.create_system
+        return cloned
+
+    with zipfile.ZipFile(wheel_path, "r") as src:
+        wheel_metadata_info = next(
+            info for info in src.infolist() if info.filename.endswith(".dist-info/WHEEL")
+        )
+        record_info = next(
+            info for info in src.infolist() if info.filename.endswith(".dist-info/RECORD")
+        )
+
+        wheel_metadata = src.read(wheel_metadata_info.filename).decode("utf-8")
+        metadata_lines = []
+        for line in wheel_metadata.splitlines():
+            if line.startswith("Root-Is-Purelib:"):
+                metadata_lines.append("Root-Is-Purelib: false")
+            elif not line.startswith("Tag:"):
+                metadata_lines.append(line)
+        metadata_lines.append(f"Tag: {tag}")
+        wheel_metadata = "\n".join(metadata_lines) + "\n"
+
+        entries: list[tuple[zipfile.ZipInfo, bytes]] = []
+        for info in src.infolist():
+            if info.filename == record_info.filename:
+                continue
+            cloned = clone_info(info)
+            if info.filename == wheel_metadata_info.filename:
+                data = wheel_metadata.encode("utf-8")
+            else:
+                data = src.read(info.filename)
+            entries.append((cloned, data))
+
+    record_rows = []
+    for info, data in entries:
+        record_rows.append([info.filename, encode_record_hash(data), str(len(data))])
+    record_rows.append([record_info.filename, "", ""])
+
+    record_buffer = io.StringIO()
+    writer = csv.writer(record_buffer, lineterminator="\n")
+    writer.writerows(record_rows)
+    entries.append((clone_info(record_info), record_buffer.getvalue().encode("utf-8")))
+
+    name_parts = wheel_path.name.split("-")
+    if len(name_parts) != 5:
+        raise ValueError(f"Unexpected wheel filename: {wheel_path.name}")
+    tagged_wheel = wheel_path.with_name("-".join([*name_parts[:2], tag]) + ".whl")
+    tmp_wheel = tagged_wheel.with_suffix(".whl.tmp")
+
+    with zipfile.ZipFile(tmp_wheel, "w", compression=zipfile.ZIP_DEFLATED) as dst:
+        for info, data in entries:
+            dst.writestr(info, data)
+
+    if tagged_wheel.exists():
+        tagged_wheel.unlink()
+    tmp_wheel.replace(tagged_wheel)
+    if tagged_wheel != wheel_path:
+        wheel_path.unlink()
+    print(f"Retagged wheel: {tagged_wheel.name}")
+    return tagged_wheel
+
+
+def build_wheel(package_dir: Path, wheel_tag: str = None, target_arch: str = None) -> None:
     """Build the wheel using hatchling.
 
     Args:
         package_dir: Directory containing pyproject.toml
+        wheel_tag: Optional platform tag to apply after building
         target_arch: Target architecture for cross-compilation (x86_64, arm64)
     """
     print("\nBuilding wheel...")
@@ -239,6 +349,11 @@ def build_wheel(package_dir: Path, target_arch: str = None) -> None:
         env=env,
         check=True,
     )
+    if wheel_tag:
+        wheels = sorted((package_dir / "dist").glob("*.whl"))
+        if len(wheels) != 1:
+            raise RuntimeError(f"Expected exactly one built wheel, found {len(wheels)}")
+        retag_wheel(wheels[0], wheel_tag)
     print("Wheel built successfully!")
 
 
@@ -246,8 +361,7 @@ def main():
     parser = argparse.ArgumentParser(description="Build cua-driver Python wheel with bundled binary")
     parser.add_argument(
         "--version",
-        default="0.7.0",
-        help="cua-driver-rs version to download (default: 0.7.0)",
+        help="cua-driver-rs version to download (default: pyproject.toml version)",
     )
     parser.add_argument(
         "--arch",
@@ -259,6 +373,7 @@ def main():
         help="Skip download and use existing binary in bin/ (for local testing)",
     )
     args = parser.parse_args()
+    version = args.version or get_default_version()
 
     # Determine paths
     script_dir = Path(__file__).parent
@@ -268,14 +383,16 @@ def main():
     if not args.skip_download:
         # Get platform info and download URL
         platform_name, arch = get_platform_info(args.arch)
+        wheel_tag = get_wheel_tag(platform_name, arch)
         print(f"Building for {platform_name}-{arch}")
+        print(f"Wheel tag: {wheel_tag}")
 
-        url, binary_names = get_release_url(args.version, platform_name, arch)
+        url, binary_names = get_release_url(version, platform_name, arch)
         archive_name = url.split("/")[-1]
         archive_path = download_dir / archive_name
 
         # Get expected SHA256 from checksums.txt
-        expected_sha256 = get_expected_sha256(args.version, archive_name)
+        expected_sha256 = get_expected_sha256(version, archive_name)
 
         # Download the release archive (or verify cached)
         if not archive_path.exists():
@@ -291,6 +408,8 @@ def main():
         extract_binaries(archive_path, binary_names, bin_dir)
     else:
         print("Skipping download (using existing binary)")
+        platform_name, arch = get_platform_info(args.arch)
+        wheel_tag = get_wheel_tag(platform_name, arch)
 
     # Verify main binary exists
     expected_binary = "cua-driver.exe" if sys.platform == "win32" else "cua-driver"
@@ -311,7 +430,7 @@ def main():
             print(f"  - {binary.name} ({binary.stat().st_size / 1024 / 1024:.2f} MB)")
 
     # Build the wheel (pass target arch for cross-compilation)
-    build_wheel(script_dir, target_arch=arch if not args.skip_download else None)
+    build_wheel(script_dir, wheel_tag=wheel_tag, target_arch=arch)
 
 
 if __name__ == "__main__":

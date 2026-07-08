@@ -8,15 +8,13 @@ on:
     inputs:
       version:
         description: "cua-driver-rs version to package (without v prefix)"
-        required: true
-        default: "0.5.1"
+        required: false
+        default: ""
   # Auto-trigger when cua-driver-rs releases (after CD workflow completes)
   workflow_run:
     workflows: ["CD: Cua Driver (cross-platform)"]
     types:
       - completed
-    branches:
-      - main
 
 permissions:
   contents: read
@@ -27,8 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main')
+      github.event.workflow_run.conclusion == 'success'
     outputs:
       version: ${{ steps.version.outputs.version }}
       should_publish: ${{ steps.version.outputs.should_publish }}
@@ -40,25 +37,38 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             VERSION="${{ inputs.version }}"
+            if [ -z "$VERSION" ]; then
+              VERSION=$(grep -m1 -oP '^version = "\K[^"]+' libs/cua-driver/rust/Cargo.toml)
+            fi
             SHOULD_PUBLISH="true"
           else
-            # Extract from the tag that triggered the workflow_run
-            # Validate SHA format to prevent injection
-            HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
-            if ! echo "$HEAD_SHA" | grep -qE '^[0-9a-f]{40}$'; then
-              echo "Invalid SHA format: $HEAD_SHA"
-              VERSION="0.0.0"
-              SHOULD_PUBLISH="false"
+            # Release workflow tag pushes expose the tag in head_branch. The
+            # previous implementation filtered workflow_run to main and then
+            # looked for tags pointing at head_sha, so every tag release skipped
+            # publishing the Python wrapper.
+            HEAD_BRANCH="${{ github.event.workflow_run.head_branch }}"
+            if echo "$HEAD_BRANCH" | grep -qE '^cua-driver-rs-v[0-9]+\.[0-9]+\.[0-9]+'; then
+              VERSION="${HEAD_BRANCH#cua-driver-rs-v}"
+              SHOULD_PUBLISH="true"
             else
-              git fetch --tags
-              TAG=$(git tag --points-at "$HEAD_SHA" | grep '^cua-driver-rs-v' | head -1 || echo "")
-              if [ -n "$TAG" ]; then
-                VERSION="${TAG#cua-driver-rs-v}"
-                SHOULD_PUBLISH="true"
-              else
-                # No matching tag, skip
+              # Fallback for older/manual release runs where GitHub does not
+              # report the tag as head_branch.
+              HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+              if ! echo "$HEAD_SHA" | grep -qE '^[0-9a-f]{40}$'; then
+                echo "Invalid SHA format: $HEAD_SHA"
                 VERSION="0.0.0"
                 SHOULD_PUBLISH="false"
+              else
+                git fetch --tags
+                TAG=$(git tag --points-at "$HEAD_SHA" | grep '^cua-driver-rs-v' | head -1 || echo "")
+                if [ -n "$TAG" ]; then
+                  VERSION="${TAG#cua-driver-rs-v}"
+                  SHOULD_PUBLISH="true"
+                else
+                  # No matching tag, skip
+                  VERSION="0.0.0"
+                  SHOULD_PUBLISH="false"
+                fi
               fi
             fi
           fi
@@ -81,6 +91,9 @@ jobs:
           - os: ubuntu-latest
             platform: linux
             arch: x86_64
+          - os: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
           - os: windows-latest
             platform: windows
             arch: x86_64
@@ -152,6 +165,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install twine
+
+      - name: Check wheels
+        run: |
+          python -m twine check dist/*
 
       - name: Publish to PyPI
         env:

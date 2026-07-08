@@ -58,14 +58,9 @@ async with sb.tunnel.forward('chrome_devtools_remote') as t:
   Abstract socket names are Linux-only (Android). On Linux and macOS sandboxes use integer port numbers.
 </Callout>
 
-## TunnelInfo fields
+## Reference
 
-| Field | Type | Description |
-|-------|------|-------------|
-| host | str | Always 'localhost' |
-| port | int | The host-side port assigned |
-| sandbox_port | int or str | The original port/socket inside the sandbox |
-| url | str | Shorthand `http://{host}:{port}` |
+See [Sandbox SDK interfaces](/reference/sandbox-sdk/interfaces) for the full `TunnelInfo` shape.
 
 ## Example: Chrome DevTools Protocol
 

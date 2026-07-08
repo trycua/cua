@@ -47,7 +47,7 @@ fn def() -> &'static ToolDef {
             filtering only trims the rendered Markdown.\n\n\
             Optional `max_elements` / `max_depth` bound the AX walk to mitigate \
             context-window blow-up on Electron / Obsidian / large web apps that \
-            produce 10k+ element trees (#22865). When applied, BOTH the markdown \
+            produce 10k+ element trees. When applied, BOTH the markdown \
             and the structured elements are truncated identically. Omit both for \
             current default behaviour (≤2 000 elements, depth ≤25).".into(),
         input_schema: serde_json::json!({
@@ -70,12 +70,12 @@ fn def() -> &'static ToolDef {
                 "max_elements": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Cap on the total number of AX nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (2 000). Lower this for Electron / Obsidian / large web apps that produce 10k+ element trees and blow context windows (#22865)."
+                    "description": "Cap on the total number of AX nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (2 000). Lower this for Electron / Obsidian / large web apps that produce 10k+ element trees and blow context windows."
                 },
                 "max_depth": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Cap on the AX-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower this for deep menu/Electron trees (#22865)."
+                    "description": "Cap on the AX-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower this for deep menu/Electron trees."
                 }
             },
             "additionalProperties": false

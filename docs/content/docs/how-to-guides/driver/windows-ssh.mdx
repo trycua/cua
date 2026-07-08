@@ -23,7 +23,7 @@ cua-driver call list_windows
   ```
   [warn] interactive session: running in Session 0 (services); window-driving
          tools (list_windows, click, type_text, get_window_state)
-         will return empty results — these APIs need an attached interactive
+         will return empty results. These APIs need an attached interactive
          desktop.
   ```
 </Callout>
@@ -34,7 +34,7 @@ Run a `cua-driver serve` daemon in your **interactive session**, Session 1 or hi
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│  Session 1+ (RDP / console — has interactive desktop)         │
+│  Session 1+ (RDP / console, has interactive desktop)          │
 │                                                               │
 │    cua-driver-serve  (autostart Scheduled Task)               │
 │      ↑                                                        │
@@ -43,7 +43,7 @@ Run a `cua-driver serve` daemon in your **interactive session**, Session 1 or hi
 └──────┼────────────────────────────────────────────────────────┘
        │
 ┌──────┼────────────────────────────────────────────────────────┐
-│  Session 0 (services / SSH — no desktop)                      │
+│  Session 0 (services / SSH, no desktop)                       │
 │      │                                                        │
 │    cua-driver mcp                                             │
 │    cua-driver call list_windows                               │
@@ -106,7 +106,7 @@ Each MCP tool call starts `cua-driver mcp` on the SSH side. That process detects
 
 Check these items before opening an issue:
 
-1. Confirm that `cua-driver --version` on the SSH side reports `0.2.7` or later. Earlier Windows builds do not proxy `mcp`. Upgrade with `irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex`.
+1. Confirm that `cua-driver --version` on the SSH side reports the same current install you expect. Upgrade if needed with `irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex`.
 2. Run `cua-driver status` from SSH and confirm it reports a running daemon. If it does not, use `cua-driver autostart status` to see whether the Scheduled Task is registered.
 3. Run `query session` and confirm your user has a row in `Active` or `Disc` state.
 4. Run `cua-driver doctor` from RDP and confirm it reports `[ok] interactive session: session N has an attached interactive desktop`.

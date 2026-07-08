@@ -54,11 +54,6 @@ Pass a `command` to run a specific program instead of the default login shell:
 session = await sb.terminal.create(command='python3', cols=80, rows=24)
 ```
 
-## Terminal methods
+## Reference
 
-| Method | Description |
-|--------|-------------|
-| create(command=None, cols=80, rows=24) | Open a PTY session; returns a dict with the session `pid`, `cols`, and `rows` |
-| send_input(pid, data) | Send input text to the session |
-| info(pid) | Return session info, or `None` if the session is gone |
-| close(pid) | Kill the session; returns a bool |
+See [Sandbox SDK interfaces](/reference/sandbox-sdk/interfaces) for the full terminal method signatures and return shapes.

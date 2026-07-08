@@ -1,6 +1,6 @@
 ---
 title: Interface Contracts
-description: The cross-cutting contracts behind the CLI and MCP surfaces — transport state, config persistence, capture scope, and how an action is routed.
+description: "The contracts behind the CLI and MCP surfaces: transport state, config persistence, capture scope, and action routing."
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -20,7 +20,7 @@ The CLI (`cua-driver call …`) and the MCP server (`cua-driver serve` / `mcp`) 
 | Agent cursor | none | shown when a `session` is declared |
 
 <Callout type="warn">
-When a daemon is already listening, `cua-driver call` **proxies to it**. A freshly built binary's behavior will not appear through the CLI until that daemon restarts, because the call runs in the daemon, not in the new process. Integration tests avoid this by spawning their own MCP server.
+When a daemon is already listening, `cua-driver call` **proxies to it**. A freshly built binary's behavior appears through the CLI after that daemon restarts, because the call runs in the daemon process. Integration tests avoid this by spawning their own MCP server.
 </Callout>
 
 ---
@@ -32,7 +32,7 @@ When a daemon is already listening, `cua-driver call` **proxies to it**. A fresh
 | Caller | `_session_id` | Effect |
 |---|---|---|
 | `cua-driver config set …`, one-shot `cua-driver call` | absent (anonymous) | writes the global `DriverConfig` and persists to `~/.cua-driver/config.json` |
-| MCP call with a `session` | present | in-memory override for that session only — no disk write, no clobber of the default |
+| MCP call with a `session` | present | in-memory override for that session only; no disk write, no clobber of the default |
 
 Every tool then reads the **effective** value with this precedence:
 
@@ -40,7 +40,7 @@ Every tool then reads the **effective** value with this precedence:
 effective = call-argument  >  session override  >  global default (disk)
 ```
 
-Keys that flow through this: `capture_scope`, `max_image_dimension`. (`capture_mode` is deprecated and ignored — it is still accepted for back-compat but has no effect; `get_window_state` always returns both the tree and a screenshot.) See the [`set_config` reference](/reference/cua-driver/mcp-tools) for the per-session isolation details.
+Keys that flow through this: `capture_scope`, `max_image_dimension`. `capture_mode` is deprecated and ignored. It is still accepted for back-compat but has no effect; `get_window_state` always returns both the tree and a screenshot. See the [`set_config` reference](/reference/cua-driver/mcp-tools) for the per-session isolation details.
 
 ---
 
@@ -74,18 +74,37 @@ Desktop scope is the screen-absolute "Computer-Use 1.0" loop: read the whole scr
 
 ## How an action is routed
 
-Every input tool — `click`, `scroll`, and the keyboard family (`type_text`, `press_key`, `hotkey`) — picks its path from the arguments present:
+Every input tool (`click`, `scroll`, and the keyboard family: `type_text`, `press_key`, `hotkey`) picks its path from the arguments present:
 
 | Arguments | Path | Behavior |
 |---|---|---|
-| `element_index` + `window_id` | accessibility action | UIA Invoke / `AXPerformAction` / AT-SPI — background, no cursor move, no focus steal |
-| `x`, `y` + `pid` | window-local pixel | coordinates are relative to that window's screenshot. For the **keyboard family** this px form pixel-clicks `(x, y)` to establish real renderer focus, then delivers the keystroke(s) to the now-focused element — the one-call path for Chromium/Electron inputs the AX layer can't focus |
+| `element_index` + `window_id` | accessibility action | UIA Invoke / `AXPerformAction` / AT-SPI. Background, no cursor move, no focus steal. |
+| `x`, `y` + `pid` | window-local pixel | coordinates are relative to that window's screenshot. For the **keyboard family** this px form pixel-clicks `(x, y)` to establish real renderer focus, then delivers the keystroke(s) to the now-focused element. Use it for Chromium/Electron inputs the AX layer cannot focus. |
 | `x`, `y`, **no** `pid`/`window_id`, scope `desktop` | screen-absolute | true screen pixels, lands on whatever is frontmost there |
 | `x`, `y`, **no** `pid`/`window_id`, scope `window` | rejected | structured `desktop_scope_disabled` error |
 
-The keyboard family's `x, y` (px) form is mutually exclusive with `element_index` (ax) — pass one or the other, not both.
+The keyboard family's `x, y` (px) form is mutually exclusive with `element_index` (ax). Pass one or the other.
 
 A window-less action is **never silently reinterpreted**. Under window scope it is rejected with a structured `desktop_scope_disabled` error that points the caller at `set_config capture_scope=desktop`, rather than treating screen pixels as window-local pixels.
+
+---
+
+## Valid combinations
+
+`get_window_state` always returns both the accessibility tree and a screenshot by default, so perception is not a matrix axis. The enforced combinations are `capture_scope`, action rung, and delivery mode:
+
+| `capture_scope` | Action rung | `delivery_mode` | Valid? | Why |
+|---|---|---|---|---|
+| `window` | `ax` (`element_index`) | `background` | ✅ | The default. Semantic actions on a background-capable window. |
+| `window` | `ax` (`element_index`) | `foreground` | ✅ | Activate, then act by element. |
+| `window` | `px` (`x`, `y`) | `background` | ✅ | Click a coordinate off the window screenshot without raising the target when the platform/app supports routed delivery. |
+| `window` | `px` (`x`, `y`) | `foreground` | ✅ | Activate, then click by coordinate. |
+| `desktop` | `px` (`x`, `y`) | `foreground` | ✅ | The screen-absolute loop: read the whole desktop, click absolute coordinates on the active desktop. |
+| `desktop` | `ax` (`element_index`) | any | ❌ | A desktop-absolute action has no `window_id`, so there is no element tree to resolve an `element_index` against. |
+| `desktop` | any | `background` | ❌ | Screen-absolute input hits whatever owns those pixels on the active desktop; there is no per-process background route. |
+| `window` | window-less | any | ❌ | A window-less action while scope is `window` returns `desktop_scope_disabled`. |
+
+The rejected combinations are enforced. Desktop scope is foreground and pixel-only by design.
 
 ---
 
@@ -94,8 +113,8 @@ A window-less action is **never silently reinterpreted**. Under window scope it 
 | Capability | Windows | macOS | Linux |
 |---|---|---|---|
 | `get_window_state` returns both tree + screenshot (element ax / px actions) | ✅ | ✅ | ✅ |
-| `dispatch: background` (the [no-foreground contract](/explanation/the-no-foreground-contract)) | ✅ | ✅ | ✅ (X11/AT-SPI; native Wayland input is a gap) |
-| `dispatch: foreground` + `bring_to_front` | ✅ | ✅ explicit activation (input is already background-safe; activation is for focus-proxy surfaces like RDP) | stubbed |
+| `delivery_mode: "background"` (best-effort background) | ✅ | ✅ | ✅ for semantic AT-SPI actions on X11 and Wayland; native-Wayland raw keyboard input remains limited |
+| `delivery_mode: "foreground"` + `bring_to_front` | ✅ explicit activation | ✅ explicit activation (input is already background-capable for most surfaces; activation is for focus-proxy surfaces like RDP) | ✅ X11 EWMH activation (`_NET_ACTIVE_WINDOW` + input focus); Wayland raise is compositor-constrained |
 | `get_desktop_state` (desktop capture) | ✅ | ✅ | ✅ |
 | Window-less desktop click (`click{x,y}`, no `pid`) | ✅ | rolling out | rolling out |
 

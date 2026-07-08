@@ -1,6 +1,6 @@
 ---
 title: "Choose an Action Rung and Dispatch Mode"
-description: "Pick how each action addresses its target — the accessibility (ax) rung or the pixel (px) rung — plus dispatch and scope. Start on the accessibility path, fall back to a pixel action, and escalate to foreground only when you must."
+description: "Pick how each action addresses its target: the accessibility (ax) rung or the pixel (px) rung, plus dispatch and scope. Start on the accessibility path, fall back to a pixel action, and escalate to foreground only when you must."
 ---
 
 # Choose an Action Rung and Dispatch Mode
@@ -9,7 +9,7 @@ This guide shows you how to pick how the agent acts on a target, so each action 
 
 ## When to use this guide
 
-Use this when you are wiring an agent to Cua Driver and deciding what to pass to `click`, `type_text`, `get_window_state`, and friends — `element_index` versus `x, y`, `delivery_mode: background` versus `foreground`, and window versus desktop scope.
+Use this when you are wiring an agent to Cua Driver and deciding what to pass to `click`, `type_text`, `get_window_state`, and related tools: `element_index` versus `x, y`, `delivery_mode: background` versus `foreground`, and window versus desktop scope.
 
 ## Before you start
 
@@ -17,32 +17,32 @@ You should already be connected to the driver and able to launch an app and read
 
 ## Start on the accessibility path (the default)
 
-Default to the **element ax action with `background` dispatch — act by `element_index`.** It is the only rung the driver can verify, it never steals focus, and it works on Windows, macOS, and Linux (X11 and Wayland).
+Default to the **element ax action with `background` dispatch**. Act by `element_index`. It is the only rung the driver can verify, it avoids foregrounding when the target surface supports it, and it works on Windows, macOS, and Linux (X11 and Wayland).
 
 Read the window once, then act on an element from that snapshot. The snapshot already carries the screenshot too, so you never re-capture to switch how you address the target:
 
 ```jsonc
-// 1. snapshot — returns the accessibility tree AND a screenshot by default
+// 1. snapshot: returns the accessibility tree AND a screenshot by default
 get_window_state({ pid, window_id })
 // → elements[], each with an element_index and a frame, plus a grounding screenshot
 
-// 2. act by element_index — the element ax action, background, no focus steal
+// 2. act by element_index: the element ax action, background by default
 click({ pid, window_id, element_index: 12 })
 type_text({ pid, text: "hello" })
 ```
 
-When you are only re-indexing before an element ax action and don't need fresh pixels, pass `include_screenshot: false` to skip the screen grab and get the tree alone — a cheap perf opt-out, not a modality choice. The `ax` versus `px` decision still happens at action time, by how you address the target. To pin the rendered frame to disk instead of inlining it, set `screenshot_out_file`.
+When you are only re-indexing before an element ax action and do not need fresh pixels, pass `include_screenshot: false` to skip the screen grab and get the tree alone. The `ax` versus `px` decision still happens at action time, by how you address the target. To pin the rendered frame to disk instead of inlining it, set `screenshot_out_file`.
 
 ## Follow the escalation ladder
 
-You don't have to guess when the AX path failed — every action response carries the signals that tell you the next rung. Walk the ladder in order, and only step down when the response says to:
+Every action response carries the signals that tell you the next rung. Walk the ladder in order, and only step down when the response says to:
 
-1. **Element ax action, background (the default).** Act by `element_index`. If the response shows `effect: "confirmed"`, you're done — the driver read the result back. If `get_window_state` came back `degraded` (empty AX tree), an action returns `effect: "suspected_noop"` (the AX action dispatched but likely no-op'd), an action returns `effect: "unverifiable"` on an echo-prone surface, or the tree disagrees with the screenshot (an `h:1` or off-viewport row), follow `escalation.recommended`.
+1. **Element ax action, background (the default).** Act by `element_index`. If the response shows `effect: "confirmed"`, the driver read the result back. If `get_window_state` came back `degraded` (empty AX tree), an action returns `effect: "suspected_noop"` (the AX action dispatched but likely no-op'd), an action returns `effect: "unverifiable"` on an echo-prone surface, or the tree disagrees with the screenshot (an `h:1` or off-viewport row), follow `escalation.recommended`.
 
-2. **Element px action, background.** When `escalation.recommended` is `"px"`, pick the target pixel from the screenshot already in the `get_window_state` response and click it — no re-capture to switch rung, because the screenshot was always there. Coordinates are window-relative for a windowed target.
+2. **Element px action, background.** When `escalation.recommended` is `"px"`, pick the target pixel from the screenshot already in the `get_window_state` response and click it. Coordinates are window-relative for a windowed target.
 
    ```jsonc
-   // the screenshot is already in the snapshot above — just read a pixel off it
+   // the screenshot is already in the snapshot above; read a pixel off it
    click({ pid, window_id, x: 320, y: 210 }) // → { path: "cgevent", effect: "unverifiable" }
    ```
 
@@ -57,7 +57,7 @@ You don't have to guess when the AX path failed — every action response carrie
    hotkey({ pid, window_id, x: 320, y: 210, keys: ["cmd", "a"] })
    ```
 
-   On Linux this still avoids synthetic input where it can: the driver resolves the pixel to the element under it and fires that element's action via AT-SPI `doAction` at that point. See [Linux and Wayland](/explanation/linux-and-wayland) for why.
+   On Linux this still avoids synthetic input where it can: the driver resolves the pixel to the element under it and fires that element's action via AT-SPI `doAction` at that point. See [Known limits](/reference/cua-driver/limits) for the remaining Wayland keyboard gap.
 
 3. **Browser-tab DOM.** When `escalation.recommended` is `"page"`, switch to the `page` tool for browser-tab DOM work instead of retrying the AX write.
 
@@ -73,32 +73,32 @@ You don't have to guess when the AX path failed — every action response carrie
    })
    ```
 
-4. **Foreground.** If the response recommends `"foreground"` or the pixel click still doesn't land — DirectInput games, raw-input canvases (Blender, Unity), focus-polling apps — retry with **`delivery_mode: "foreground"`**, which activates the window first.
+4. **Foreground.** If the response recommends `"foreground"` or the pixel click still does not land, retry with **`delivery_mode: "foreground"`**. This activates the window first. Common cases include DirectInput games, raw-input canvases (Blender, Unity), and focus-polling apps.
 
    ```jsonc
    click({ pid, window_id, x: 320, y: 210, delivery_mode: "foreground" })
    // → { path: "cgevent_fg", effect: "unverifiable" }
    ```
 
-   Foreground only for the action that needs it, and only when the user isn't actively working on the machine — it raises the window. See [Known limits](/reference/cua-driver/limits) for the specific apps.
+   Use foreground only for the action that needs it, and only when the user is not actively working on the machine. It raises the window. See [Known limits](/reference/cua-driver/limits) for the specific apps.
 
 ### The escalation signal on the response
 
 Two additive fields make the ladder explicit, so you escalate on data rather than a hunch:
 
-- **`effect`** — `"confirmed"` (the driver verified the result through AX read-back), `"unverifiable"` (the rung fired but only the caller can confirm), or `"suspected_noop"` (an AX action dispatched but almost certainly did nothing).
-- **`escalation`** — present when there's a next rung: `{ recommended: "px" | "foreground" | "page", reason }`. A `degraded` `get_window_state` carries the same hint (recommending `px`).
+- **`effect`**: `"confirmed"` (the driver verified the result through AX read-back), `"unverifiable"` (the rung fired but only the caller can confirm), or `"suspected_noop"` (an AX action dispatched but almost certainly did nothing).
+- **`escalation`**: present when there is a next rung: `{ recommended: "px" | "foreground" | "page", reason }`. A `degraded` `get_window_state` carries the same hint (recommending `px`).
 
 ```jsonc
 click({ pid, window_id, element_index: 12 })
 // → { effect: "suspected_noop", escalation: { recommended: "px", reason: "..." } }
 ```
 
-**Wayland exception.** On a native Wayland session an unfocused window can't be pixel-targeted in the background — there is no global coordinate space and the compositor drops synthetic pointer events. So when an AX action no-ops there, the escalation skips the pixel rung and recommends **`foreground`** directly. See [Linux and Wayland](/explanation/linux-and-wayland).
+**Wayland exception.** On a native Wayland session, raw keyboard input has no universal background path. When an AX keyboard action no-ops there, prefer an accessible field action or run the app under XWayland; otherwise escalate only that action to foreground. See [Known limits](/reference/cua-driver/limits#native-wayland-apps-cant-receive-synthetic-keystrokes).
 
 ## Switch to desktop scope only for screen-absolute work
 
-Reach for **desktop scope** only when the action has no single window — dragging between windows, or clicking absolute screen coordinates. It inherently foregrounds and works on pixels, so it cannot honor the background contract.
+Reach for **desktop scope** only when the action has no single window, such as dragging between windows or clicking absolute screen coordinates. It foregrounds and works on pixels, so it cannot provide best-effort background behavior.
 
 ```jsonc
 set_config({ capture_scope: "desktop" })
@@ -106,7 +106,7 @@ get_desktop_state()                       // full-screen screenshot
 click({ x: 1280, y: 40 })                 // screen-absolute, no window_id
 ```
 
-A window-less click while scope is still `window` is rejected with `desktop_scope_disabled` — that error is the prompt to switch scope.
+A window-less click while scope is still `window` is rejected with `desktop_scope_disabled`. That error is the prompt to switch scope.
 
 ## Confirm the action landed
 
@@ -120,7 +120,7 @@ get_window_state({ pid, window_id })         // confirm the change against tree 
 ## Troubleshooting
 
 **Problem: the call returned success but nothing changed (false success).**
-Don't trust the status code on a `verified: false` action. Re-read the window — the snapshot carries both the tree and the screenshot — and confirm the effect; if it didn't land, switch rung (element ax action → element px action off the same screenshot) or escalate dispatch (background → foreground).
+Do not trust the status code on a `verified: false` action. Re-read the window. The snapshot carries both the tree and the screenshot. Confirm the effect; if it did not land, switch rung (element ax action -> element px action off the same screenshot) or escalate dispatch (background -> foreground).
 
 **Problem: `desktop_scope_disabled` on a window-less click.**
 You're in `window` scope. Either pass a `window_id` (+ `element_index` or `x, y`), or `set_config({ capture_scope: "desktop" })` for genuinely screen-absolute work.
@@ -130,7 +130,7 @@ On native Wayland, raw keys have no background path. Type into accessible fields
 
 ## Related
 
-- [Capture and dispatch modalities](/explanation/capture-and-dispatch-modalities) — the axes and the validity matrix
-- [MCP tools](/reference/cua-driver/mcp-tools) — full parameters for every tool
-- [Known limits](/reference/cua-driver/limits) — targets that need foreground
-- [Linux and Wayland](/explanation/linux-and-wayland) — how the Linux rungs work
+- [Capture and dispatch modalities](/explanation/capture-and-dispatch-modalities): the axes and the validity matrix
+- [MCP tools](/reference/cua-driver/mcp-tools): full parameters for every tool
+- [Known limits](/reference/cua-driver/limits): targets that need foreground
+- [Interface contracts](/reference/cua-driver/contracts): valid combinations and platform support

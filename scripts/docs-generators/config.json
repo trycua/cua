@@ -123,7 +123,8 @@
           "extractCommand": "python3 scripts/docs-generators/extract_python_docs.py"
         }
       ],
-      "enabled": true
+      "enabled": false,
+      "notes": "Disabled while these SDK docs are not part of the public docs nav; prevents docs:generate from resurrecting the old docs/content/docs/cua/reference tree."
     },
     "computer-sdk-typescript": {
       "name": "Computer SDK (TypeScript)",
@@ -178,7 +179,8 @@
           "extractCommand": null
         }
       ],
-      "enabled": true
+      "enabled": false,
+      "notes": "Disabled while cuabot docs are not part of the public docs nav; prevents docs:generate from resurrecting docs/content/docs/cuabot/reference."
     }
   }
 }

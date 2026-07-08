@@ -1,10 +1,16 @@
 import { createMDX } from 'fumadocs-mdx/next';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const withMDX = createMDX();
+const docsRoot = dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
+  turbopack: {
+    root: docsRoot,
+  },
   trailingSlash: false,
   basePath: '/docs',
   assetPrefix: '/docs',
@@ -58,6 +64,36 @@ const config = {
       {
         source: '/cua/reference/agent-sdk/api',
         destination: '/cua/reference/agent-sdk',
+        permanent: true,
+      },
+      {
+        source: '/reference/cua-driver/modality-test-suite',
+        destination: '/reference/cua-driver/limits',
+        permanent: true,
+      },
+      {
+        source: '/reference/cua-driver/modality-test-suite.mdx',
+        destination: '/reference/cua-driver/limits',
+        permanent: true,
+      },
+      {
+        source: '/explanation/linux-and-wayland',
+        destination: '/reference/cua-driver/limits',
+        permanent: true,
+      },
+      {
+        source: '/explanation/linux-and-wayland.mdx',
+        destination: '/reference/cua-driver/limits',
+        permanent: true,
+      },
+      {
+        source: '/tutorials/run-an-agent-in-a-sandbox',
+        destination: '/tutorials/your-first-cloud-sandbox',
+        permanent: true,
+      },
+      {
+        source: '/tutorials/run-an-agent-in-a-sandbox.mdx',
+        destination: '/tutorials/your-first-cloud-sandbox',
         permanent: true,
       },
     ];

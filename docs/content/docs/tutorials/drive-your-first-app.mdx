@@ -22,7 +22,7 @@ Use the same one-line installer on every platform; it picks the right path for t
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
     ```
 
-    Start the daemon through the app bundle so macOS attributes permission prompts to CuaDriver.app — this is what makes the TCC grant stick to the driver:
+    Start the daemon through the app bundle so macOS attributes permission prompts to CuaDriver.app. This is what makes the TCC grant stick to the driver:
 
     ```bash
     open -n -g -a CuaDriver --args serve
@@ -178,7 +178,7 @@ To explore capture and dispatch modes, see [Choose an action rung and dispatch m
 
 ## 5. Confirm what happened
 
-The agent reports 42. Cua Driver kept the calculator in the background the whole time. It never stole your keyboard focus and never moved your cursor. That is the *no-foreground contract*: the agent drives the app while you keep working. See [The no-foreground contract](/explanation/the-no-foreground-contract).
+The agent reports 42. Cua Driver kept the calculator in the background the whole time. It never stole your keyboard focus and never moved your cursor. That is best-effort background: the agent drives the app while you keep working. See [Best-effort background](/explanation/the-no-foreground-contract).
 
 ## What you did
 
@@ -187,5 +187,5 @@ You installed Cua Driver, verified it could see your desktop, connected your age
 ## Next steps
 
 - [Connect your agent](/how-to-guides/driver/connect-your-agent): register Cua Driver with Cursor, Antigravity, OpenCode, OpenClaw, Pi, and more.
-- [The no-foreground contract](/explanation/the-no-foreground-contract): why the agent never steals focus or moves your cursor.
+- [Best-effort background](/explanation/the-no-foreground-contract): how Cua Driver avoids focus and cursor disruption when the target app supports it.
 - [How-to guides](/how-to-guides): keep the driver running, update it, and more.

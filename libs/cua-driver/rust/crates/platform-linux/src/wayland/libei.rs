@@ -409,12 +409,13 @@ fn run_calloop(context: reis::ei::Context, rx: Receiver<Cmd>) -> anyhow::Result<
             .dispatch(Some(std::time::Duration::from_millis(20)), &mut state)
             .map_err(|e| anyhow::anyhow!("calloop dispatch failed: {e}"))?;
 
-        // Run queued commands once a device is negotiated; time stale ones out.
+        // Run each queued command once the device IT needs is negotiated; time
+        // stale ones out. Per-command (not one global gate) so a keyboard-only
+        // session doesn't make keyboard commands wait 20s for a pointer device.
         if !pending.is_empty() {
-            let ready = state.input_ready();
             let mut still = Vec::with_capacity(pending.len());
             for (cmd, queued) in pending.drain(..) {
-                if ready || queued.elapsed() >= READY_TIMEOUT {
+                if state.cmd_ready(&cmd) || queued.elapsed() >= READY_TIMEOUT {
                     state.handle_command(cmd);
                 } else {
                     still.push((cmd, queued));
@@ -648,6 +649,12 @@ impl EisState {
         const XKB_EVDEV_OFFSET: u32 = 8;
         const SHIFT_L: u32 = 0xffe1;
 
+        // Sanity-cap the size from the (trusted, but possibly buggy) compositor
+        // event: real xkb keymaps are a few KiB; refuse absurd values rather
+        // than attempt a multi-GB allocation.
+        if size == 0 || size as usize > 16 * 1024 * 1024 {
+            return;
+        }
         let mut file = std::fs::File::from(fd);
         let mut buf = vec![0u8; size as usize];
         let _ = file.seek(SeekFrom::Start(0));
@@ -692,16 +699,28 @@ impl EisState {
         self.keymap_shift = shift;
     }
 
-    /// True once the EIS handshake has negotiated a usable input device: a
-    /// pointer/keyboard device that has announced its interfaces and been
-    /// `Resumed` by the server. Commands run before this fail with "no EIS
-    /// device negotiated yet", so `run_calloop` queues them until this holds.
-    fn input_ready(&self) -> bool {
-        // Gate on the absolute-pointer device: we always request Keyboard|Pointer,
-        // and Mutter/KWin announce the absolute pointer alongside (typically
-        // after) the keyboard, so once it exists every device a command needs
-        // has arrived. Avoids running a command against a half-negotiated seat.
-        self.resumed && self.device_with_interface("ei_pointer_absolute").is_some()
+    /// True once the device THIS command needs has been negotiated and
+    /// `Resumed`. Gating per-command (rather than on one global pointer check)
+    /// means a keyboard-only session doesn't stall keyboard commands waiting for
+    /// an absolute-pointer device that never arrives — and vice versa. Commands
+    /// run before their device exists fail with "no EIS device negotiated yet",
+    /// so `run_calloop` queues them until this holds (or READY_TIMEOUT elapses).
+    fn cmd_ready(&self, cmd: &Cmd) -> bool {
+        if !self.resumed {
+            return false;
+        }
+        match cmd {
+            Cmd::Click { .. } | Cmd::MoveAbsolute { .. } | Cmd::Drag { .. } => {
+                self.device_with_interface("ei_pointer_absolute").is_some()
+            }
+            Cmd::Scroll { .. } => self.device_with_interface("ei_scroll").is_some(),
+            Cmd::PressKey { .. } => self.device_with_interface("ei_keyboard").is_some(),
+            Cmd::TypeText { .. } => {
+                self.device_with_interface("ei_text").is_some()
+                    || self.device_with_interface("ei_keyboard").is_some()
+            }
+            Cmd::Shutdown => true,
+        }
     }
 
     fn handle_command(&mut self, cmd: Cmd) {
@@ -747,11 +766,18 @@ impl EisState {
                 let ptr_abs =
                     require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
                 let btn = require_device_interface::<reis::ei::Button>(&self.devices, &device)?;
-                // Map the drag end into the same region the start resolved to.
-                let off_x = *from_x as f32 - from_rx;
-                let off_y = *from_y as f32 - from_ry;
-                let to_rx = *to_x as f32 - off_x;
-                let to_ry = *to_y as f32 - off_y;
+                // Map the drag end into the SAME device's region (a single EIS
+                // emulation session can't span devices). Fall back to the start
+                // region's offset when no region of this device contains the end
+                // (single-region device, or a point just off-screen) — this is
+                // correct only within one region, but avoids the cross-monitor
+                // mis-mapping of blindly reusing the start offset.
+                let (to_rx, to_ry) =
+                    self.region_local_on(&device, *to_x, *to_y).unwrap_or_else(|| {
+                        let off_x = *from_x as f32 - from_rx;
+                        let off_y = *from_y as f32 - from_ry;
+                        (*to_x as f32 - off_x, *to_y as f32 - off_y)
+                    });
 
                 device.start_emulating(self.sequence, self.last_serial);
                 self.sequence = self.sequence.wrapping_add(1);
@@ -759,7 +785,10 @@ impl EisState {
                 device.frame(self.last_serial, 0);
                 btn.button(button.to_evdev(), reis::ei::button::ButtonState::Press);
                 device.frame(self.last_serial, 1);
-                let n = (*steps).max(1);
+                // Bound the interpolation: run_command executes synchronously in
+                // the worker loop, so a huge step count would block EIS event
+                // processing (incl. Ping) and balloon the unflushed request queue.
+                let n = (*steps).max(1).min(500);
                 let mut fseq = 2u64;
                 for s in 1..=n {
                     let t = s as f32 / n as f32;
@@ -818,6 +847,7 @@ impl EisState {
                     device.start_emulating(self.sequence, self.last_serial);
                     self.sequence = self.sequence.wrapping_add(1);
                     let mut fseq = 0u64;
+                    let mut skipped = 0usize;
                     for ch in text.chars() {
                         // Prefer the compositor's actual keymap (layout-correct);
                         // fall back to the US-layout table if no keymap arrived.
@@ -827,6 +857,10 @@ impl EisState {
                             .copied()
                             .or_else(|| char_to_evdev(ch));
                         let Some((code, shift)) = mapped else {
+                            // No keycode for this char in the keymap/US table
+                            // (e.g. CJK/emoji via the keycode path). Skip it, but
+                            // don't pretend the whole string was typed.
+                            skipped += 1;
                             continue;
                         };
                         if shift {
@@ -845,6 +879,13 @@ impl EisState {
                             device.frame(self.last_serial, fseq);
                             fseq += 1;
                         }
+                    }
+                    if skipped > 0 {
+                        tracing::warn!(
+                            "libei keycode typing skipped {skipped} char(s) with no \
+                             keycode in the active keymap (e.g. non-Latin/emoji) — \
+                             the ei_text path (libei 1.6+) would type these verbatim"
+                        );
                     }
                     device.stop_emulating(self.last_serial);
                 }
@@ -902,6 +943,17 @@ impl EisState {
         let device = self.device_with_interface("ei_pointer_absolute")
             .ok_or_else(|| anyhow::anyhow!("no EIS absolute-pointer device negotiated yet — wait for handshake"))?;
         Ok((device, x as f32, y as f32))
+    }
+
+    /// Region-local coordinates for absolute `(x, y)` within one of `device`'s
+    /// announced regions, or `None` when no region of that device contains the
+    /// point. Used to map a drag endpoint into the same device the drag start
+    /// resolved to (a single EIS emulation session can't span devices).
+    fn region_local_on(&self, device: &reis::ei::Device, x: f64, y: f64) -> Option<(f32, f32)> {
+        let data = self.devices.get(device)?;
+        data.regions.iter().find(|r| r.contains(x, y)).map(|r| {
+            (x as f32 - r.offset_x, y as f32 - r.offset_y)
+        })
     }
 
     /// The negotiated device that exposes `iface` (e.g. `ei_pointer_absolute`,

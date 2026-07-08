@@ -1573,7 +1573,7 @@ impl Tool for ClickTool {
         // `get_window_state` frames are screen-space, and `window_local_to_screen`
         // — an X11 `translate_coordinates` call — can't run with DISPLAY unset),
         // so use them directly. On X11 the coords are window-local; translate.
-        let glide_target = if crate::wayland::is_wayland() {
+        let glide_target = if crate::wayland::wayland_input_enabled() {
             Some((x, y))
         } else {
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y))
@@ -2283,7 +2283,7 @@ impl Tool for HotkeyTool {
         let deliver_fg = delivery.is_foreground() && !px_focused;
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            if crate::wayland::is_wayland() {
+            if crate::wayland::wayland_input_enabled() {
                 // Native Wayland: route the modifier combo through wtype's
                 // -M/-k/-m sequence — the closest equivalent to the X11
                 // state-mask path. window_id is irrelevant once focused.
@@ -2652,7 +2652,7 @@ impl Tool for DoubleClickTool {
         // `get_window_state` frames are screen-space, and `window_local_to_screen`
         // — an X11 `translate_coordinates` call — can't run with DISPLAY unset),
         // so use them directly. On X11 the coords are window-local; translate.
-        let glide_target = if crate::wayland::is_wayland() {
+        let glide_target = if crate::wayland::wayland_input_enabled() {
             Some((x, y))
         } else {
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y))
@@ -2827,7 +2827,7 @@ impl Tool for RightClickTool {
         // `get_window_state` frames are screen-space, and `window_local_to_screen`
         // — an X11 `translate_coordinates` call — can't run with DISPLAY unset),
         // so use them directly. On X11 the coords are window-local; translate.
-        let glide_target = if crate::wayland::is_wayland() {
+        let glide_target = if crate::wayland::wayland_input_enabled() {
             Some((x, y))
         } else {
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y))
@@ -3965,7 +3965,7 @@ impl Tool for MoveCursorTool {
         // Off-thread because the wayland-client roundtrip is blocking. Best-effort
         // — overlay update + registry write already succeeded; surface a warning
         // only if the warp itself failed.
-        let real_warp_note = if crate::wayland::is_wayland() {
+        let real_warp_note = if crate::wayland::wayland_input_enabled() {
             let xi = x.round() as i32;
             let yi = y.round() as i32;
             match tokio::task::spawn_blocking(move || crate::wayland::move_cursor_absolute(window_id, xi, yi)).await {

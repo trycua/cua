@@ -54,3 +54,6 @@ artifacts = [
     "src/cua_driver/bin/*",
 ]
 pure-python = false
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"

@@ -36,6 +36,7 @@ use std::sync::OnceLock;
 use std::thread;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
+use xkbcommon::xkb;
 
 /// Buttons the public API exposes. Mapped to evdev codes in the worker
 /// thread so the libei surface only sees evdev integers.
@@ -407,6 +408,13 @@ struct EisState {
     /// would fail with "no EIS device negotiated yet"; the worker queues them
     /// until [`EisState::input_ready`] returns true.
     resumed: bool,
+    /// `char -> (evdev keycode, needs_shift)` built from the compositor's active
+    /// xkb keymap (delivered by the `ei_keyboard` device). Lets keycode typing
+    /// follow the user's real layout instead of assuming US. Empty until the
+    /// `Keymap` event arrives; typing then falls back to [`char_to_evdev`].
+    keymap_chars: HashMap<char, (u32, bool)>,
+    /// evdev keycode that produces `Shift_L` in the active keymap (else 42).
+    keymap_shift: Option<u32>,
 }
 
 #[derive(Default)]
@@ -577,8 +585,74 @@ impl EisState {
                     _ => {}
                 }
             }
+            Event::Keyboard(
+                _kb,
+                reis::ei::keyboard::Event::Keymap {
+                    keymap_type,
+                    size,
+                    keymap,
+                },
+            ) => {
+                if keymap_type == reis::ei::keyboard::KeymapType::Xkb {
+                    self.load_xkb_keymap(keymap, size);
+                }
+            }
             _ => {}
         }
+    }
+
+    /// Compile the compositor's xkb keymap (from the `ei_keyboard` `Keymap` fd)
+    /// into a `char -> (evdev keycode, shift)` table + the Shift keycode, so
+    /// keycode typing follows the user's real layout instead of assuming US.
+    /// Best-effort: on any failure the table stays empty and typing falls back
+    /// to [`char_to_evdev`].
+    fn load_xkb_keymap(&mut self, fd: std::os::unix::io::OwnedFd, size: u32) {
+        use std::io::{Read, Seek, SeekFrom};
+        const XKB_EVDEV_OFFSET: u32 = 8;
+        const SHIFT_L: u32 = 0xffe1;
+
+        let mut file = std::fs::File::from(fd);
+        let mut buf = vec![0u8; size as usize];
+        let _ = file.seek(SeekFrom::Start(0));
+        if file.read_exact(&mut buf).is_err() {
+            return;
+        }
+        // The keymap buffer is NUL-terminated text.
+        let text = match buf.iter().position(|&b| b == 0) {
+            Some(n) => String::from_utf8_lossy(&buf[..n]).into_owned(),
+            None => String::from_utf8_lossy(&buf).into_owned(),
+        };
+        let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let keymap = match xkb::Keymap::new_from_string(
+            &ctx,
+            text,
+            xkb::KEYMAP_FORMAT_TEXT_V1,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        ) {
+            Some(k) => k,
+            None => return,
+        };
+
+        let mut chars: HashMap<char, (u32, bool)> = HashMap::new();
+        let mut shift = None;
+        for kc in keymap.min_keycode().raw()..=keymap.max_keycode().raw() {
+            let keycode = xkb::Keycode::new(kc);
+            let evdev = kc.wrapping_sub(XKB_EVDEV_OFFSET);
+            // Level 0 = unshifted, 1 = shifted; scan 0 first so the unshifted
+            // mapping wins when a char is reachable both ways.
+            for level in 0..=1u32 {
+                for sym in keymap.key_get_syms_by_level(keycode, 0, level) {
+                    if shift.is_none() && sym.raw() == SHIFT_L {
+                        shift = Some(evdev);
+                    }
+                    if let Some(ch) = sym.key_char() {
+                        chars.entry(ch).or_insert((evdev, level == 1));
+                    }
+                }
+            }
+        }
+        self.keymap_chars = chars;
+        self.keymap_shift = shift;
     }
 
     /// True once the EIS handshake has negotiated a usable input device: a
@@ -659,20 +733,27 @@ impl EisState {
                     device.stop_emulating(self.last_serial);
                 } else {
                     use reis::ei::keyboard::KeyState;
-                    const KEY_LEFTSHIFT: u32 = 42;
                     let device = self.device_with_interface("ei_keyboard").ok_or_else(|| {
                         anyhow::anyhow!("no EIS keyboard device negotiated yet — wait for handshake")
                     })?;
                     let kb = require_device_interface::<reis::ei::Keyboard>(&self.devices, &device)?;
+                    let shift_code = self.keymap_shift.unwrap_or(42);
                     device.start_emulating(self.sequence, self.last_serial);
                     self.sequence = self.sequence.wrapping_add(1);
                     let mut fseq = 0u64;
                     for ch in text.chars() {
-                        let Some((code, shift)) = char_to_evdev(ch) else {
+                        // Prefer the compositor's actual keymap (layout-correct);
+                        // fall back to the US-layout table if no keymap arrived.
+                        let mapped = self
+                            .keymap_chars
+                            .get(&ch)
+                            .copied()
+                            .or_else(|| char_to_evdev(ch));
+                        let Some((code, shift)) = mapped else {
                             continue;
                         };
                         if shift {
-                            kb.key(KEY_LEFTSHIFT, KeyState::Press);
+                            kb.key(shift_code, KeyState::Press);
                             device.frame(self.last_serial, fseq);
                             fseq += 1;
                         }
@@ -683,7 +764,7 @@ impl EisState {
                         device.frame(self.last_serial, fseq);
                         fseq += 1;
                         if shift {
-                            kb.key(KEY_LEFTSHIFT, KeyState::Released);
+                            kb.key(shift_code, KeyState::Released);
                             device.frame(self.last_serial, fseq);
                             fseq += 1;
                         }

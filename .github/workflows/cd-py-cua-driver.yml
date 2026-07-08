@@ -166,6 +166,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install twine
 
+      - name: Check wheels
+        run: |
+          python -m twine check dist/*
+
       - name: Publish to PyPI
         env:
           TWINE_USERNAME: __token__

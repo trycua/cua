@@ -84,6 +84,15 @@ enum Cmd {
         keycode: u32,
         reply: Sender<anyhow::Result<()>>,
     },
+    Drag {
+        from_x: f64,
+        from_y: f64,
+        to_x: f64,
+        to_y: f64,
+        steps: u32,
+        button: Button,
+        reply: Sender<anyhow::Result<()>>,
+    },
     Shutdown,
 }
 
@@ -181,6 +190,34 @@ pub fn press_key(keycode: u32) -> anyhow::Result<()> {
     ensure_started()?;
     let (tx_r, rx_r) = bounded(1);
     tx()?.send(Cmd::PressKey { keycode, reply: tx_r })
+        .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
+    rx_r.recv().map_err(|e| anyhow::anyhow!("libei reply closed: {e}"))?
+}
+
+/// Press `button` at (from_x, from_y), move through `steps` interpolated points
+/// to (to_x, to_y), then release — a genuine button-held drag (text selection /
+/// drag-and-drop / slider). Coordinates are absolute within the announced
+/// device region, like [`click`].
+pub fn drag(
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+    steps: u32,
+    button: Button,
+) -> anyhow::Result<()> {
+    ensure_started()?;
+    let (tx_r, rx_r) = bounded(1);
+    tx()?
+        .send(Cmd::Drag {
+            from_x,
+            from_y,
+            to_x,
+            to_y,
+            steps,
+            button,
+            reply: tx_r,
+        })
         .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
     rx_r.recv().map_err(|e| anyhow::anyhow!("libei reply closed: {e}"))?
 }
@@ -676,6 +713,7 @@ impl EisState {
             Cmd::Scroll { reply, .. } => { let _ = reply.send(result); }
             Cmd::TypeText { reply, .. } => { let _ = reply.send(result); }
             Cmd::PressKey { reply, .. } => { let _ = reply.send(result); }
+            Cmd::Drag { reply, .. } => { let _ = reply.send(result); }
             Cmd::Shutdown => {}
         }
     }
@@ -694,6 +732,45 @@ impl EisState {
                 device.frame(self.last_serial, 0);
                 btn.button(button.to_evdev(), reis::ei::button::ButtonState::Released);
                 device.frame(self.last_serial, 1);
+                device.stop_emulating(self.last_serial);
+            }
+            Cmd::Drag {
+                from_x,
+                from_y,
+                to_x,
+                to_y,
+                steps,
+                button,
+                ..
+            } => {
+                let (device, from_rx, from_ry) = self.pointer_device_for(*from_x, *from_y)?;
+                let ptr_abs =
+                    require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
+                let btn = require_device_interface::<reis::ei::Button>(&self.devices, &device)?;
+                // Map the drag end into the same region the start resolved to.
+                let off_x = *from_x as f32 - from_rx;
+                let off_y = *from_y as f32 - from_ry;
+                let to_rx = *to_x as f32 - off_x;
+                let to_ry = *to_y as f32 - off_y;
+
+                device.start_emulating(self.sequence, self.last_serial);
+                self.sequence = self.sequence.wrapping_add(1);
+                ptr_abs.motion_absolute(from_rx, from_ry);
+                device.frame(self.last_serial, 0);
+                btn.button(button.to_evdev(), reis::ei::button::ButtonState::Press);
+                device.frame(self.last_serial, 1);
+                let n = (*steps).max(1);
+                let mut fseq = 2u64;
+                for s in 1..=n {
+                    let t = s as f32 / n as f32;
+                    let ix = from_rx + (to_rx - from_rx) * t;
+                    let iy = from_ry + (to_ry - from_ry) * t;
+                    ptr_abs.motion_absolute(ix, iy);
+                    device.frame(self.last_serial, fseq);
+                    fseq += 1;
+                }
+                btn.button(button.to_evdev(), reis::ei::button::ButtonState::Released);
+                device.frame(self.last_serial, fseq);
                 device.stop_emulating(self.last_serial);
             }
             Cmd::MoveAbsolute { x, y, .. } => {

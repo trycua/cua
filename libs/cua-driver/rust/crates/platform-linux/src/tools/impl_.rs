@@ -2969,9 +2969,9 @@ impl Tool for DragTool {
         );
 
         // Native Wayland: emit press + interpolated motion + release as one
-        // virtual-pointer sequence (output-relative coords). Returns early so
-        // we don't fall into the X11 XSendEvent loop below.
-        if crate::wayland::is_wayland() {
+        // virtual-pointer (wlroots) or libei (GNOME/KDE) sequence, output-relative
+        // coords. Returns early so we don't fall into the X11 XSendEvent loop below.
+        if crate::wayland::wayland_input_enabled() {
             let (fxi, fyi) = (from_x.round() as i32, from_y.round() as i32);
             let (txi, tyi) = (to_x.round() as i32, to_y.round() as i32);
             let steps_u32 = steps as u32;

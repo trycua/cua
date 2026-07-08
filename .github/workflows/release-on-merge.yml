@@ -82,6 +82,7 @@ jobs:
             ["libs/qemu-docker/linux/"]="docker/qemu-linux"
             ["libs/qemu-docker/windows/"]="docker/qemu-windows"
             ["libs/lume/"]="lume"
+            ["libs/cua-driver/rust/"]="cua-driver-rs"
           )
 
           # Find all affected services from changed files

@@ -439,30 +439,18 @@ enum CommandDocExtractor {
                 ),
                 CommandDoc(
                     name: "cache",
-                    abstract: "Manage cache settings",
+                    abstract: "Manage image cache settings",
                     discussion: nil,
                     arguments: [],
                     options: [],
                     flags: [],
                     subcommands: [
-                        CommandDoc(name: "get", abstract: "Get current cache directory", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
-                        CommandDoc(name: "set", abstract: "Set cache directory", discussion: nil, arguments: [
-                            ArgumentDoc(name: "path", help: "Path to cache directory", type: "String", isOptional: false),
+                        CommandDoc(name: "status", abstract: "Show cache status and directory", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
+                        CommandDoc(name: "dir", abstract: "Get or set cache directory", discussion: nil, arguments: [
+                            ArgumentDoc(name: "path", help: "Path to cache directory. Omit to show current directory.", type: "String", isOptional: true),
                         ], options: [], flags: [], subcommands: []),
-                    ]
-                ),
-                CommandDoc(
-                    name: "caching",
-                    abstract: "Manage image caching settings",
-                    discussion: nil,
-                    arguments: [],
-                    options: [],
-                    flags: [],
-                    subcommands: [
-                        CommandDoc(name: "get", abstract: "Show current caching status", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
-                        CommandDoc(name: "set", abstract: "Enable or disable image caching", discussion: nil, arguments: [
-                            ArgumentDoc(name: "enabled", help: "Enable or disable caching (true/false)", type: "Bool", isOptional: false),
-                        ], options: [], flags: [], subcommands: []),
+                        CommandDoc(name: "enable", abstract: "Enable image caching", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
+                        CommandDoc(name: "disable", abstract: "Disable image caching", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
                     ]
                 ),
             ]

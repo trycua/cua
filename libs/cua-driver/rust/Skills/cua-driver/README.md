@@ -19,6 +19,11 @@ platform: no focus steal, no cursor warp.
 - `LINUX.md` — Linux carve-out (X11 background input via AT-SPI +
   XSendEvent, recording, Wayland opt-in/preview). Read this when
   driving on Linux.
+- `EMBEDDING.md` — embedding cua-driver inside another macOS app
+  (agent harness) so the driver inherits the host's Accessibility +
+  Screen Recording grants with zero extra prompts. Read this when
+  integrating the driver into your own app rather than running it
+  standalone.
 
 ## What the skill covers
 

@@ -17,12 +17,22 @@ pub fn already_disclaimed() -> bool {
     std::env::var_os(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV).is_some()
 }
 
+/// Split out from [`reexec_disclaimed_if_needed`] so the decision is
+/// testable without spawning. Embedded mode must skip the disclaim:
+/// disclaiming would make the driver its own responsible process and
+/// break TCC inheritance from the host.
+#[cfg(target_os = "macos")]
+fn should_skip_disclaim(embedded: bool, already_disclaimed: bool, inside_bundle: bool) -> bool {
+    embedded || already_disclaimed || inside_bundle
+}
+
 #[cfg(target_os = "macos")]
 pub fn reexec_disclaimed_if_needed() {
-    if already_disclaimed() {
-        return;
-    }
-    if crate::bundle::is_executable_inside_cuadriver_app() {
+    if should_skip_disclaim(
+        cua_driver_core::embedded_mode(),
+        already_disclaimed(),
+        crate::bundle::is_executable_inside_cuadriver_app(),
+    ) {
         return;
     }
 
@@ -163,6 +173,15 @@ pub fn reexec_disclaimed_if_needed() {}
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedded_mode_skips_disclaim_reexec() {
+        assert!(should_skip_disclaim(true, false, false));
+        // A bare standalone binary must still disclaim.
+        assert!(!should_skip_disclaim(false, false, false));
+        assert!(should_skip_disclaim(false, true, false));
+        assert!(should_skip_disclaim(false, false, true));
+    }
 
     #[test]
     fn already_disclaimed_reflects_env_var() {

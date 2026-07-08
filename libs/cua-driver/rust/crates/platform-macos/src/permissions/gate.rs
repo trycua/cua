@@ -165,9 +165,11 @@ impl Default for GateOpts {
 impl GateOpts {
     /// Construct from the standard env-var
     /// (`CUA_DRIVER_RS_PERMISSIONS_GATE` set to `0` / `false` / `no` /
-    /// `off`, case-insensitive, disables the gate) and an explicit
-    /// `--no-permissions-gate` flag.  Either signal is sufficient to opt
-    /// out.
+    /// `off`, case-insensitive, disables the gate), an explicit
+    /// `--no-permissions-gate` flag, and embedded mode
+    /// (`CUA_DRIVER_EMBEDDED=1`).  Any signal is sufficient to opt out.
+    /// Embedded mode opts out because the host app owns the grant flow;
+    /// the driver must never raise its own prompts.
     pub fn from_env_and_flag(no_gate_flag: bool) -> Self {
         // Match the standard list of "off" sentinels case-insensitively so
         // CI scripts can use any of `0`, `false`, `no`, `off`, `FALSE`,
@@ -181,7 +183,7 @@ impl GateOpts {
             })
             .unwrap_or(false);
         Self {
-            opt_out: no_gate_flag || env_disabled,
+            opt_out: no_gate_flag || env_disabled || cua_driver_core::embedded_mode(),
             ..Self::default()
         }
     }
@@ -595,22 +597,11 @@ fn fmt_missing(missing: &[MissingPermission]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
 
-    /// Serializes every test that mutates `CUA_DRIVER_RS_PERMISSIONS_GATE`.
-    /// `cargo test` runs tests in parallel by default and `std::env::set_var`
-    /// / `remove_var` touch a process-global table — without this lock the
-    /// env-var tests race and produce flaky failures.
-    static TEST_ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
-
+    /// Crate-wide env-var test lock — `from_env_and_flag` reads
+    /// `CUA_DRIVER_EMBEDDED`, which the `check_permissions` tests mutate.
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        // `lock()` can only fail if a previous holder panicked.  Recover the
-        // guard and keep going — the env var will be re-set/cleared by this
-        // test anyway, so a poisoned mutex carries no stale invariant.
-        TEST_ENV_MUTEX
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+        crate::permissions::test_env_lock()
     }
 
     #[test]
@@ -652,8 +643,21 @@ mod tests {
     fn neither_flag_nor_env_does_not_opt_out() {
         let _guard = env_lock();
         std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_GATE");
+        std::env::remove_var(cua_driver_core::EMBEDDED_ENV);
         let opts = GateOpts::from_env_and_flag(false);
         assert!(!opts.opt_out);
+    }
+
+    #[test]
+    fn embedded_mode_opts_out_of_gate() {
+        let _guard = env_lock();
+        std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_GATE");
+        std::env::set_var(cua_driver_core::EMBEDDED_ENV, "1");
+        assert!(GateOpts::from_env_and_flag(false).opt_out);
+        // Only the exact value "1" enables embedded mode.
+        std::env::set_var(cua_driver_core::EMBEDDED_ENV, "true");
+        assert!(!GateOpts::from_env_and_flag(false).opt_out);
+        std::env::remove_var(cua_driver_core::EMBEDDED_ENV);
     }
 
     #[test]

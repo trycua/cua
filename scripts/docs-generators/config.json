@@ -49,7 +49,7 @@
       "outputs": [
         {
           "type": "cli",
-          "outputFile": "cli.mdx",
+          "outputFile": "cli-reference.mdx",
           "extractCommand": ".build/release/lume dump-docs --type cli"
         },
         {
@@ -58,7 +58,8 @@
           "extractCommand": ".build/release/lume dump-docs --type api"
         }
       ],
-      "enabled": true
+      "enabled": true,
+      "notes": "Generates cli-reference.mdx + http-api.mdx from the Swift binary's `dump-docs` output. These files live under the Diátaxis Reference tree; task-oriented Lume docs belong under how-to-guides/lume."
     },
     "cua-cli": {
       "name": "Cua CLI",

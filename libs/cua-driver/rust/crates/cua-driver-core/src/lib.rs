@@ -12,6 +12,26 @@
 
 pub const RESPONSIBILITY_DISCLAIMED_ENV: &str = "CUA_DRIVER_RS_RESPONSIBILITY_DISCLAIMED";
 
+/// Embedded mode (`CUA_DRIVER_EMBEDDED=1` / `--embedded`): the driver runs
+/// as a direct child of a host app and stays in its TCC responsibility
+/// chain — no disclaim re-exec, no daemon relaunch, no permission prompts.
+/// See `Skills/cua-driver/EMBEDDING.md`.
+///
+/// Caller-controlled, which is safe only because embedded mode strictly
+/// REMOVES capability claims; it must never feed into the `driver-daemon`
+/// attribution decision (`permission_source` in platform-macos).
+pub const EMBEDDED_ENV: &str = "CUA_DRIVER_EMBEDDED";
+
+/// Advisory label for the embedding host's bundle id, echoed in
+/// `check_permissions` output. NOT a trust signal — trust comes from the
+/// OS responsibility chain.
+pub const HOST_BUNDLE_ID_ENV: &str = "CUA_DRIVER_HOST_BUNDLE_ID";
+
+/// Only the exact value `1` counts — fail-safe for anything else.
+pub fn embedded_mode() -> bool {
+    std::env::var_os(EMBEDDED_ENV).is_some_and(|v| v == "1")
+}
+
 pub mod capture_mode;
 pub mod cdp;
 pub mod element_cache;
@@ -31,6 +51,7 @@ pub mod recording_zoom;
 pub mod server;
 pub mod session;
 pub mod session_tools;
+pub mod socket_io;
 pub mod text_sanitize;
 pub mod tool;
 pub mod tool_schema;

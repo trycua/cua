@@ -163,7 +163,7 @@ async function main() {
         await generateVersionDocs(config, latestVersion, majorMinor);
         const files =
           config.extractionType === 'swift-dump-docs'
-            ? 'cli.mdx + http-api.mdx'
+            ? 'cli-reference.mdx + http-api.mdx'
             : 'api.mdx';
         console.log(`   ✅ Generated v${majorMinor}/${files}`);
       } catch (error) {
@@ -399,7 +399,7 @@ async function generateSwiftVersionDocs(
   }
 
   // Write outputs
-  fs.writeFileSync(path.join(outputDir, 'cli.mdx'), cliMdx);
+  fs.writeFileSync(path.join(outputDir, 'cli-reference.mdx'), cliMdx);
   fs.writeFileSync(path.join(outputDir, 'http-api.mdx'), apiMdx);
 
   // Create meta.json
@@ -409,7 +409,7 @@ async function generateSwiftVersionDocs(
       {
         title: `v${majorMinor}`,
         description: `${config.displayName} v${majorMinor} Reference`,
-        pages: ['cli', 'http-api'],
+        pages: ['cli-reference', 'http-api'],
       },
       null,
       2
@@ -525,7 +525,7 @@ function generateVersionedLumeMDX(
       // Insert old-version callout instead
       result.push('<Callout type="warn">');
       result.push(
-        `  This is documentation for **v${majorMinor}**. [View latest version](/reference/lume/cli).`
+        `  This is documentation for **v${majorMinor}**. [View latest version](/reference/lume/cli-reference).`
       );
       result.push('</Callout>');
       result.push('');

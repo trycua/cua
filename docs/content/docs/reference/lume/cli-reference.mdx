@@ -16,6 +16,22 @@ Documented against Lume **0.3.10**. Run `lume --version` for your installed vers
 
 For installation steps, see [Install Lume](/how-to-guides/lume/install-lume).
 
+## Update Lume
+
+```bash
+# Check whether a newer release is available
+lume check-update
+
+# Apply an available update
+lume update --apply
+```
+
+`lume check-update --json` returns the current version, latest version, update availability,
+release notes URL, and install command. `lume update` only applies an update when `--apply` is
+provided.
+
+The MCP server also exposes a read-only `check_for_update` tool with the same update-state payload.
+
 ## VM Management
 
 ### lume create

@@ -317,6 +317,14 @@ final class LumeMCPServer {
     private var toolDefinitions: [Tool] {
         [
             Tool(
+                name: "check_for_update",
+                description: "Check whether a newer Lume release is available on GitHub. Read-only; never installs. Mirrors `lume check-update --json`.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([:])
+                ])
+            ),
+            Tool(
                 name: "lume_list_vms",
                 description: "List all virtual machines with their status, IP addresses, and resource allocation",
                 inputSchema: .object([
@@ -519,6 +527,8 @@ final class LumeMCPServer {
                 return try await handleExec(params.arguments)
             case "lume_create_vm":
                 return try await handleCreateVM(params.arguments)
+            case "check_for_update":
+                return try await handleCheckForUpdate(params.arguments)
             default:
                 return CallTool.Result(
                     content: [.text("Unknown tool: \(params.name)")],
@@ -534,6 +544,26 @@ final class LumeMCPServer {
     }
 
     // MARK: - Tool Implementations
+
+    private func handleCheckForUpdate(_ args: [String: Value]?) async throws -> CallTool.Result {
+        let state = await LumeVersionCheck.checkUpdateState(noCache: false)
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let json = try encoder.encode(state)
+
+        let summary: String
+        if let error = state.error {
+            summary = "Update check failed: \(error)"
+        } else if state.updateAvailable, let latest = state.latestVersion {
+            summary = "Update available: Lume \(latest) (you have \(state.currentVersion))."
+        } else {
+            summary = "Up to date (Lume \(state.currentVersion))."
+        }
+
+        let payload = String(data: json, encoding: .utf8) ?? "{}"
+        return CallTool.Result(content: [.text("\(summary)\n\n\(payload)")])
+    }
 
     private func handleListVMs(_ args: [String: Value]?) async throws -> CallTool.Result {
         let storage = args?["storage"]?.stringValue

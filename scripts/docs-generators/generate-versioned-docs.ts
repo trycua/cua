@@ -86,10 +86,10 @@ const SDK_CONFIGS: SDKConfig[] = [
     tagPrefix: 'lume-v',
     packageDir: 'libs/lume',
     packageName: 'lume',
-    outputDir: 'lume/reference',
+    outputDir: 'reference/lume',
     extractionType: 'swift-dump-docs',
     minVersion: '0.2',
-    docsBasePath: 'lume/reference',
+    docsBasePath: 'reference/lume',
   },
   {
     name: 'cuabot',

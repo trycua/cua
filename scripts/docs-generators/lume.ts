@@ -328,7 +328,7 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation): string {
   const vmInfo = ['ls', 'get', 'set'];
   const imageManagement = ['images', 'pull', 'push', 'ipsw', 'prune'];
   const guestAccess = ['ssh', 'setup'];
-  const configuration = ['config', 'serve', 'logs'];
+  const configuration = ['config', 'serve', 'logs', 'check-update', 'update'];
 
   lines.push('## VM Management');
   lines.push('');

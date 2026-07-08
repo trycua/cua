@@ -33,6 +33,10 @@ on:
         required: true
       PROVISIONING_PROFILE_BASE64:
         required: true
+      RELEASE_APP_ID:
+        required: false
+      RELEASE_APP_PRIVATE_KEY:
+        required: false
 
 permissions:
   contents: write
@@ -46,6 +50,8 @@ env:
   APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
   DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
   PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+  RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
+  RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
 jobs:
   notarize:
@@ -312,3 +318,39 @@ jobs:
             ```
           generate_release_notes: false
           make_latest: true
+
+      - name: Generate GitHub App token (for bake-version push)
+        id: app-token
+        if: startsWith(github.ref, 'refs/tags/lume-v')
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Bake version into install script (commit + push)
+        if: startsWith(github.ref, 'refs/tags/lume-v')
+        env:
+          VERSION: ${{ steps.set_version.outputs.version }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git config --unset-all "http.https://github.com/.extraheader" || true
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git fetch origin main
+          git checkout -B bake-lume-version origin/main
+
+          sed -i '' \
+            "s/^LUME_BAKED_VERSION=.*/LUME_BAKED_VERSION=\"${VERSION}\"/" \
+            libs/lume/scripts/install.sh
+
+          if git diff --quiet -- libs/lume/scripts/install.sh; then
+            echo "LUME_BAKED_VERSION already ${VERSION}; nothing to commit."
+            exit 0
+          fi
+
+          git config user.name "trycua-release[bot]"
+          git config user.email "trycua-release[bot]@users.noreply.github.com"
+          git add libs/lume/scripts/install.sh
+          git commit -m "chore(lume): bake version ${VERSION} into install script [skip ci]"
+          git push origin bake-lume-version:main

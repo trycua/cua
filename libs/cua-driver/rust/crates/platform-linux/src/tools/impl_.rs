@@ -1853,7 +1853,7 @@ impl Tool for ClickTool {
         // foreground = activate the target window (EWMH) first, then inject,
         // then restore prior active. Mirrors macOS/Windows.
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<&'static str> {
-            if crate::wayland::is_wayland() {
+            if crate::wayland::wayland_input_enabled() {
                 // Vision/pixel click on native Wayland. Mutter drops synthetic
                 // virtual-pointer events (the `wayland::click` warp doesn't land),
                 // so for a plain left single click resolve the screen pixel to the
@@ -2137,7 +2137,7 @@ impl Tool for TypeTextTool {
         // Native Wayland: keys go to the *focused* surface (no pid/window
         // targeting in the protocol). Type via the virtual-keyboard tool; pair
         // with a prior `click`/`activate` to focus the intended window.
-        if crate::wayland::is_wayland() {
+        if crate::wayland::wayland_input_enabled() {
             let text_len = text.chars().count();
             let text_w = text.clone();
             let result =
@@ -2613,7 +2613,7 @@ impl Tool for PressKeyTool {
         }
 
         // Native Wayland: send the key to the focused surface via virtual-keyboard.
-        if crate::wayland::is_wayland() {
+        if crate::wayland::wayland_input_enabled() {
             let key_w = key.clone();
             let result =
                 tokio::task::spawn_blocking(move || crate::wayland::press_key(&key_w)).await;
@@ -3174,6 +3174,9 @@ impl Tool for ScrollTool {
         };
         let cursor_id_for_task = cursor_id.clone();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            if crate::wayland::wayland_input_enabled() {
+                return crate::wayland::scroll(xid, &direction_for_wayland, amount_u32);
+            }
             // foreground: activate the window, then scroll, then restore — for
             // surfaces that only route wheel events to the active window.
             let x11_scroll = || -> anyhow::Result<()> {
@@ -3349,7 +3352,7 @@ impl Tool for DoubleClickTool {
                     let lyi = ly as i32;
                     let cursor_id_for_task = cursor_id.clone();
                     let click_result = tokio::task::spawn_blocking(move || {
-                        if crate::wayland::is_wayland() {
+                        if crate::wayland::wayland_input_enabled() {
                             return crate::wayland::click(xid, lxi, lyi, 2, 1);
                         }
                         if delivery.is_foreground() {
@@ -3429,7 +3432,7 @@ impl Tool for DoubleClickTool {
         let (xi, yi) = (x as i32, y as i32);
         let cursor_id_for_task = cursor_id.clone();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            if crate::wayland::is_wayland() {
+            if crate::wayland::wayland_input_enabled() {
                 return crate::wayland::click(xid, xi, yi, 2, 1);
             }
             if delivery.is_foreground() {
@@ -3561,7 +3564,7 @@ impl Tool for RightClickTool {
                     let lyi = ly as i32;
                     let cursor_id_for_task = cursor_id.clone();
                     let click_result = tokio::task::spawn_blocking(move || {
-                        if crate::wayland::is_wayland() {
+                        if crate::wayland::wayland_input_enabled() {
                             return crate::wayland::click(xid, lxi, lyi, 1, 3);
                         }
                         if delivery.is_foreground() {
@@ -3641,7 +3644,7 @@ impl Tool for RightClickTool {
         let (xi, yi) = (x as i32, y as i32);
         let cursor_id_for_task = cursor_id.clone();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            if crate::wayland::is_wayland() {
+            if crate::wayland::wayland_input_enabled() {
                 return crate::wayland::click(xid, xi, yi, 1, 3);
             }
             if delivery.is_foreground() {
@@ -6044,7 +6047,7 @@ impl Tool for TypeTextCharsTool {
         };
         let text_len = text.chars().count();
         let result = tokio::task::spawn_blocking(move || {
-            if crate::wayland::is_wayland() {
+            if crate::wayland::wayland_input_enabled() {
                 // Per-char `wtype` loop with the requested delay — mirrors the
                 // X11 XSendEvent per-char path. Sleeping here is fine because
                 // we're inside spawn_blocking.

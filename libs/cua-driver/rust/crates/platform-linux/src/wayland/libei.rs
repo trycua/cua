@@ -197,9 +197,31 @@ pub fn shutdown() {
 // the negotiated input region. It runs a calloop event loop that handles
 // both the EIS protocol and the inbound command channel.
 
+/// Owns the resources that must outlive a single libei call so the portal
+/// RemoteDesktop + EIS session stays alive for the whole worker-thread lifetime.
+///
+/// GNOME/Mutter (and KDE) tie the RemoteDesktop session — and therefore the
+/// handed-off EIS fd — to the D-Bus connection that created it. The previous
+/// code dropped the ashpd proxy/session (and the tokio runtime backing their
+/// zbus connection) at the end of `open_eis_context`, before the calloop loop
+/// even started, so the session died immediately on those compositors (#2105).
+/// Holding these for the worker's lifetime keeps the connection — and the
+/// session — open. The `$LIBEI_SOCKET` / cua-compositor fast path has no portal
+/// session, so it carries `None`.
+#[allow(dead_code)] // fields are keep-alive only; never read
+enum PortalKeepAlive {
+    None,
+    Portal {
+        _rt: tokio::runtime::Runtime,
+        _proxy: ashpd::desktop::remote_desktop::RemoteDesktop,
+        _session: ashpd::desktop::Session<ashpd::desktop::remote_desktop::RemoteDesktop>,
+    },
+}
+
 fn worker(rx: Receiver<Cmd>) -> anyhow::Result<()> {
-    // Phase 1 — acquire an EIS context.
-    let context = open_eis_context()
+    // Phase 1 — acquire an EIS context (plus, on the portal path, a keep-alive
+    // that owns the ashpd RemoteDesktop session + its tokio runtime).
+    let (context, _portal_keepalive) = open_eis_context()
         .map_err(|e| anyhow::anyhow!("failed to obtain EIS connection: {e}"))?;
 
     // Phase 2 — handshake. The reis API requires we call context.handshake()
@@ -210,17 +232,19 @@ fn worker(rx: Receiver<Cmd>) -> anyhow::Result<()> {
     // Phase 3 — run the calloop event loop. We use a calloop Generic source
     // wrapping the ei::Context's underlying socket so the loop wakes up on
     // EIS messages. The command channel is polled at the top of each loop
-    // iteration.
+    // iteration. `_portal_keepalive` stays bound until this fn returns — i.e.
+    // across the entire loop — so the portal session is never dropped early (#2105).
     run_calloop(context, rx)
 }
 
 /// Open the EIS context. Fast path: $LIBEI_SOCKET (cua-compositor /
 /// inject mode). Fallback: ashpd portal RemoteDesktop handshake.
-fn open_eis_context() -> anyhow::Result<reis::ei::Context> {
+fn open_eis_context() -> anyhow::Result<(reis::ei::Context, PortalKeepAlive)> {
     if let Some(ctx) = reis::ei::Context::connect_to_env()
         .map_err(|e| anyhow::anyhow!("env ei socket open failed: {e}"))?
     {
-        return Ok(ctx);
+        // $LIBEI_SOCKET / cua-compositor fast path: no portal session to keep alive.
+        return Ok((ctx, PortalKeepAlive::None));
     }
 
     // Portal RemoteDesktop fallback.
@@ -233,12 +257,18 @@ fn open_eis_context() -> anyhow::Result<reis::ei::Context> {
     use ashpd::enumflags2::BitFlags;
     use std::os::unix::net::UnixStream;
 
-    let rt = tokio::runtime::Builder::new_current_thread()
+    // A multi-threaded runtime (1 worker) so the zbus connection backing the
+    // RemoteDesktop session keeps being driven after this fn returns. The
+    // session must stay live for the whole worker lifetime (#2105); a
+    // current-thread runtime would freeze the connection the moment we stop
+    // calling `block_on`, and GNOME/KDE would tear the session down.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
         .enable_all()
         .build()
         .map_err(|e| anyhow::anyhow!("failed to build tokio runtime for ashpd: {e}"))?;
 
-    let fd = rt.block_on(async {
+    let (fd, proxy, session) = rt.block_on(async {
         let proxy = RemoteDesktop::new()
             .await
             .map_err(|e| anyhow::anyhow!("portal RemoteDesktop proxy unreachable: {e}. Install xdg-desktop-portal-gnome / xdg-desktop-portal-kde."))?;
@@ -281,13 +311,13 @@ fn open_eis_context() -> anyhow::Result<reis::ei::Context> {
             .connect_to_eis(&session, ConnectToEISOptions::default())
             .await
             .map_err(|e| anyhow::anyhow!("portal connect_to_eis failed: {e}"))?;
-        anyhow::Ok(fd)
+        anyhow::Ok((fd, proxy, session))
     })?;
 
     let stream = UnixStream::from(fd);
     let ctx = reis::ei::Context::new(stream)
         .map_err(|e| anyhow::anyhow!("reis ei::Context::new failed: {e}"))?;
-    Ok(ctx)
+    Ok((ctx, PortalKeepAlive::Portal { _rt: rt, _proxy: proxy, _session: session }))
 }
 
 // ── calloop dispatch ────────────────────────────────────────────────────
@@ -318,13 +348,21 @@ fn run_calloop(context: reis::ei::Context, rx: Receiver<Cmd>) -> anyhow::Result<
 
     let mut state = EisState::default();
 
-    // Command channel: drain at the top of each loop iteration with a
-    // bounded timeout so the EIS source stays responsive.
+    // Inbound commands can arrive before the EIS handshake has negotiated a
+    // usable input device — seat → device → interface → Resumed is async and
+    // only advances while `dispatch` runs, and the portal consent-and-connect
+    // path (#2105) returns before the device is live. Running a command against
+    // a not-yet-negotiated device fails with "no EIS device negotiated yet". So
+    // queue commands and run each only once `input_ready()`; fail any that wait
+    // longer than READY_TIMEOUT (handle_command then replies with the natural
+    // "no device" error) so a caller blocked on the reply never hangs forever.
+    let mut pending: Vec<(Cmd, std::time::Instant)> = Vec::new();
+    const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
     loop {
-        // Process pending commands.
         match rx.try_recv() {
             Ok(Cmd::Shutdown) => break,
-            Ok(cmd) => state.handle_command(cmd),
+            Ok(cmd) => pending.push((cmd, std::time::Instant::now())),
             Err(crossbeam_channel::TryRecvError::Empty) => {}
             Err(crossbeam_channel::TryRecvError::Disconnected) => break,
         }
@@ -332,6 +370,20 @@ fn run_calloop(context: reis::ei::Context, rx: Receiver<Cmd>) -> anyhow::Result<
         event_loop
             .dispatch(Some(std::time::Duration::from_millis(20)), &mut state)
             .map_err(|e| anyhow::anyhow!("calloop dispatch failed: {e}"))?;
+
+        // Run queued commands once a device is negotiated; time stale ones out.
+        if !pending.is_empty() {
+            let ready = state.input_ready();
+            let mut still = Vec::with_capacity(pending.len());
+            for (cmd, queued) in pending.drain(..) {
+                if ready || queued.elapsed() >= READY_TIMEOUT {
+                    state.handle_command(cmd);
+                } else {
+                    still.push((cmd, queued));
+                }
+            }
+            pending = still;
+        }
 
         // The handle_command path may have queued frame() requests; flush
         // them once per loop iteration so the EIS server sees them.
@@ -350,6 +402,11 @@ struct EisState {
     devices: HashMap<reis::ei::Device, DeviceData>,
     sequence: u32,
     last_serial: u32,
+    /// Set once the server has sent at least one device `Resumed` — the point
+    /// at which emulation is actually accepted. Commands issued before this
+    /// would fail with "no EIS device negotiated yet"; the worker queues them
+    /// until [`EisState::input_ready`] returns true.
+    resumed: bool,
 }
 
 #[derive(Default)]
@@ -421,11 +478,20 @@ impl EisState {
                     handshake.handshake_version(1);
                     handshake.name("cua-driver");
                     handshake.context_type(reis::ei::handshake::ContextType::Sender);
+                    // Advertise the interface set + versions that reis 0.7's own
+                    // EIS client examples use against real compositors. The
+                    // previous list advertised ei_device v2 and omitted
+                    // ei_pingpong, which Mutter rejects — it closes the EIS
+                    // connection immediately after our handshake `finish()`
+                    // (observed: one Handshake event, then read() errors). reis's
+                    // handshaker also requires ei_pingpong / ei_callback /
+                    // ei_connection. See reis 0.7 examples/type-text.rs.
                     for (iface, ver) in [
                         ("ei_callback", 1u32),
                         ("ei_connection", 1),
+                        ("ei_pingpong", 1),
                         ("ei_seat", 1),
-                        ("ei_device", 2),
+                        ("ei_device", 1),
                         ("ei_pointer", 1),
                         ("ei_pointer_absolute", 1),
                         ("ei_button", 1),
@@ -438,11 +504,17 @@ impl EisState {
                     handshake.finish();
                 }
             }
-            Event::Connection(_conn, ev) => {
-                if let reis::ei::connection::Event::Seat { seat } = ev {
+            Event::Connection(_conn, ev) => match ev {
+                reis::ei::connection::Event::Seat { seat } => {
                     self.seats.insert(seat, SeatData::default());
                 }
-            }
+                // The EIS server pings to check liveness; failing to answer
+                // makes it drop the connection. Mirror reis's examples.
+                reis::ei::connection::Event::Ping { ping } => {
+                    ping.done(0);
+                }
+                _ => {}
+            },
             Event::Seat(seat, ev) => {
                 let data = self.seats.entry(seat.clone()).or_default();
                 match ev {
@@ -500,12 +572,25 @@ impl EisState {
                     }
                     reis::ei::device::Event::Resumed { serial } => {
                         self.last_serial = serial;
+                        self.resumed = true;
                     }
                     _ => {}
                 }
             }
             _ => {}
         }
+    }
+
+    /// True once the EIS handshake has negotiated a usable input device: a
+    /// pointer/keyboard device that has announced its interfaces and been
+    /// `Resumed` by the server. Commands run before this fail with "no EIS
+    /// device negotiated yet", so `run_calloop` queues them until this holds.
+    fn input_ready(&self) -> bool {
+        // Gate on the absolute-pointer device: we always request Keyboard|Pointer,
+        // and Mutter/KWin announce the absolute pointer alongside (typically
+        // after) the keyboard, so once it exists every device a command needs
+        // has arrived. Avoids running a command against a half-negotiated seat.
+        self.resumed && self.device_with_interface("ei_pointer_absolute").is_some()
     }
 
     fn handle_command(&mut self, cmd: Cmd) {
@@ -548,8 +633,8 @@ impl EisState {
                 device.stop_emulating(self.last_serial);
             }
             Cmd::Scroll { dx, dy, .. } => {
-                let device = self.any_pointer_device()
-                    .ok_or_else(|| anyhow::anyhow!("no EIS pointer device negotiated yet — wait for handshake"))?;
+                let device = self.device_with_interface("ei_scroll")
+                    .ok_or_else(|| anyhow::anyhow!("no EIS scroll device negotiated yet — wait for handshake"))?;
                 let scroll = require_device_interface::<reis::ei::Scroll>(&self.devices, &device)?;
 
                 device.start_emulating(self.sequence, self.last_serial);
@@ -559,19 +644,56 @@ impl EisState {
                 device.stop_emulating(self.last_serial);
             }
             Cmd::TypeText { text, .. } => {
-                let device = self.any_pointer_device()
-                    .ok_or_else(|| anyhow::anyhow!("no EIS device negotiated yet — wait for handshake"))?;
-                let text_iface = require_device_interface::<reis::ei::Text>(&self.devices, &device)?;
-
-                device.start_emulating(self.sequence, self.last_serial);
-                self.sequence = self.sequence.wrapping_add(1);
-                text_iface.utf8(text);
-                device.frame(self.last_serial, 0);
-                device.stop_emulating(self.last_serial);
+                // Prefer ei_text (libei 1.6+ — a UTF-8 string, layout-correct).
+                // Mutter does NOT advertise ei_text, so fall back to keycode
+                // typing via ei_keyboard: map each char to a US-layout evdev
+                // keycode + shift and emit press/release. Chars with no US-layout
+                // keycode are skipped (a documented limitation — full layout
+                // support needs an xkb keymap, like reis's type-text example).
+                if let Some(device) = self.device_with_interface("ei_text") {
+                    let text_iface = require_device_interface::<reis::ei::Text>(&self.devices, &device)?;
+                    device.start_emulating(self.sequence, self.last_serial);
+                    self.sequence = self.sequence.wrapping_add(1);
+                    text_iface.utf8(text);
+                    device.frame(self.last_serial, 0);
+                    device.stop_emulating(self.last_serial);
+                } else {
+                    use reis::ei::keyboard::KeyState;
+                    const KEY_LEFTSHIFT: u32 = 42;
+                    let device = self.device_with_interface("ei_keyboard").ok_or_else(|| {
+                        anyhow::anyhow!("no EIS keyboard device negotiated yet — wait for handshake")
+                    })?;
+                    let kb = require_device_interface::<reis::ei::Keyboard>(&self.devices, &device)?;
+                    device.start_emulating(self.sequence, self.last_serial);
+                    self.sequence = self.sequence.wrapping_add(1);
+                    let mut fseq = 0u64;
+                    for ch in text.chars() {
+                        let Some((code, shift)) = char_to_evdev(ch) else {
+                            continue;
+                        };
+                        if shift {
+                            kb.key(KEY_LEFTSHIFT, KeyState::Press);
+                            device.frame(self.last_serial, fseq);
+                            fseq += 1;
+                        }
+                        kb.key(code, KeyState::Press);
+                        device.frame(self.last_serial, fseq);
+                        fseq += 1;
+                        kb.key(code, KeyState::Released);
+                        device.frame(self.last_serial, fseq);
+                        fseq += 1;
+                        if shift {
+                            kb.key(KEY_LEFTSHIFT, KeyState::Released);
+                            device.frame(self.last_serial, fseq);
+                            fseq += 1;
+                        }
+                    }
+                    device.stop_emulating(self.last_serial);
+                }
             }
             Cmd::PressKey { keycode, .. } => {
-                let device = self.any_pointer_device()
-                    .ok_or_else(|| anyhow::anyhow!("no EIS device negotiated yet — wait for handshake"))?;
+                let device = self.device_with_interface("ei_keyboard")
+                    .ok_or_else(|| anyhow::anyhow!("no EIS keyboard device negotiated yet — wait for handshake"))?;
                 let kb = require_device_interface::<reis::ei::Keyboard>(&self.devices, &device)?;
 
                 device.start_emulating(self.sequence, self.last_serial);
@@ -602,12 +724,12 @@ impl EisState {
     /// back to the first pointer device with the raw coordinates, which
     /// matches the pre-multi-monitor behaviour.
     fn pointer_device_for(&self, x: f64, y: f64) -> anyhow::Result<(reis::ei::Device, f32, f32)> {
-        let is_pointer = |data: &DeviceData| matches!(
-            data.device_type,
-            Some(reis::ei::device::DeviceType::Virtual) | Some(reis::ei::device::DeviceType::Physical)
-        );
+        // Absolute motion needs the device that actually carries
+        // ei_pointer_absolute — Mutter/KWin split the relative and absolute
+        // pointers onto separate devices, and only one of them accepts an
+        // absolute warp.
         for (device, data) in self.devices.iter() {
-            if !is_pointer(data) {
+            if !data.interfaces.contains_key("ei_pointer_absolute") {
                 continue;
             }
             for region in &data.regions {
@@ -618,20 +740,117 @@ impl EisState {
                 }
             }
         }
-        // Fallback: first pointer device, raw coords (single-region behaviour).
-        let device = self.any_pointer_device()
-            .ok_or_else(|| anyhow::anyhow!("no EIS pointer device negotiated yet — wait for handshake"))?;
+        // Fallback: first absolute-pointer device, raw coords (single-region).
+        let device = self.device_with_interface("ei_pointer_absolute")
+            .ok_or_else(|| anyhow::anyhow!("no EIS absolute-pointer device negotiated yet — wait for handshake"))?;
         Ok((device, x as f32, y as f32))
     }
 
-    fn any_pointer_device(&self) -> Option<reis::ei::Device> {
-        self.devices.iter()
-            .find(|(_, data)| matches!(
-                data.device_type,
-                Some(reis::ei::device::DeviceType::Virtual) | Some(reis::ei::device::DeviceType::Physical)
-            ))
+    /// The negotiated device that exposes `iface` (e.g. `ei_pointer_absolute`,
+    /// `ei_scroll`, `ei_keyboard`, `ei_text`). Mutter/KWin announce one device
+    /// per capability group — a relative pointer, an absolute pointer, a
+    /// keyboard — so a command must pick the device carrying the interface it
+    /// needs, not just "the first virtual device" (which may be the relative
+    /// pointer that has no `ei_pointer_absolute`).
+    fn device_with_interface(&self, iface: &str) -> Option<reis::ei::Device> {
+        self.devices
+            .iter()
+            .find(|(_, data)| data.interfaces.contains_key(iface))
             .map(|(d, _)| d.clone())
     }
+}
+
+/// Map a character to a US-layout evdev keycode + whether Shift is needed.
+/// Used by the keyboard-typing fallback when the compositor's EIS exposes no
+/// `ei_text` interface (e.g. Mutter). Returns `None` for characters outside the
+/// US-ASCII printable set — those are skipped rather than mistyped. Full
+/// layout-correct typing would need an xkb keymap (see reis `type-text` example).
+fn char_to_evdev(c: char) -> Option<(u32, bool)> {
+    // Letter codes follow the QWERTY scancode layout (input-event-codes.h).
+    fn letter(c: char) -> u32 {
+        // KEY_A..KEY_Z follow the QWERTY scancode layout, not the alphabet.
+        match c {
+            'a' => 30,
+            'b' => 48,
+            'c' => 46,
+            'd' => 32,
+            'e' => 18,
+            'f' => 33,
+            'g' => 34,
+            'h' => 35,
+            'i' => 23,
+            'j' => 36,
+            'k' => 37,
+            'l' => 38,
+            'm' => 50,
+            'n' => 49,
+            'o' => 24,
+            'p' => 25,
+            'q' => 16,
+            'r' => 19,
+            's' => 31,
+            't' => 20,
+            'u' => 22,
+            'v' => 47,
+            'w' => 17,
+            'x' => 45,
+            'y' => 21,
+            'z' => 44,
+            _ => 0,
+        }
+    }
+    // (keycode, needs_shift). Digit/symbol codes and their shifted variants
+    // follow the US QWERTY row (input-event-codes.h).
+    Some(match c {
+        'a'..='z' => (letter(c), false),
+        'A'..='Z' => (letter(c.to_ascii_lowercase()), true),
+        '1' => (2, false),
+        '2' => (3, false),
+        '3' => (4, false),
+        '4' => (5, false),
+        '5' => (6, false),
+        '6' => (7, false),
+        '7' => (8, false),
+        '8' => (9, false),
+        '9' => (10, false),
+        '0' => (11, false),
+        '!' => (2, true),
+        '@' => (3, true),
+        '#' => (4, true),
+        '$' => (5, true),
+        '%' => (6, true),
+        '^' => (7, true),
+        '&' => (8, true),
+        '*' => (9, true),
+        '(' => (10, true),
+        ')' => (11, true),
+        ' ' => (57, false),
+        '\n' => (28, false),
+        '\t' => (15, false),
+        '-' => (12, false),
+        '_' => (12, true),
+        '=' => (13, false),
+        '+' => (13, true),
+        '[' => (26, false),
+        '{' => (26, true),
+        ']' => (27, false),
+        '}' => (27, true),
+        '\\' => (43, false),
+        '|' => (43, true),
+        ';' => (39, false),
+        ':' => (39, true),
+        '\'' => (40, false),
+        '"' => (40, true),
+        '`' => (41, false),
+        '~' => (41, true),
+        ',' => (51, false),
+        '<' => (51, true),
+        '.' => (52, false),
+        '>' => (52, true),
+        '/' => (53, false),
+        '?' => (53, true),
+        _ => return None,
+    })
 }
 
 fn require_device_interface<T: reis::Interface>(

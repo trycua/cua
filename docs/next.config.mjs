@@ -128,22 +128,32 @@ const config = {
       },
       {
         source: '/explanation/architecture',
-        destination: '/concepts/how-cua-fits-together',
+        destination: '/concepts',
         permanent: true,
       },
       {
         source: '/explanation/architecture.mdx',
-        destination: '/concepts/how-cua-fits-together',
+        destination: '/concepts',
         permanent: true,
       },
       {
         source: '/concepts/architecture',
-        destination: '/concepts/how-cua-fits-together',
+        destination: '/concepts',
         permanent: true,
       },
       {
         source: '/concepts/architecture.mdx',
-        destination: '/concepts/how-cua-fits-together',
+        destination: '/concepts',
+        permanent: true,
+      },
+      {
+        source: '/concepts/how-cua-fits-together',
+        destination: '/concepts',
+        permanent: true,
+      },
+      {
+        source: '/concepts/how-cua-fits-together.mdx',
+        destination: '/concepts',
         permanent: true,
       },
       {

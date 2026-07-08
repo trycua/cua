@@ -1541,14 +1541,23 @@ fn libei_drag(
 ) -> anyhow::Result<()> {
     // ei_button exposes separate Press/Released states, so the libei worker can
     // hold the button across the interpolated motion — a genuine
-    // press→move→release drag. Clamp both endpoints to the output like
-    // `libei_click`.
+    // press→move→release drag. Clamp both endpoints to the output — but NOT via
+    // `normalize_click_xy`, whose (0,0)→centre convention (for coordinate-free
+    // clicks) is wrong here: a drag endpoint is always explicit and (0,0) is a
+    // valid top-left corner target.
     let btn = cua_button_to_libei(button);
     let (w, h) = output_dimensions()?;
-    let (fx, fy) = normalize_click_xy(from_x, from_y, w, h);
-    let (tx, ty) = normalize_click_xy(to_x, to_y, w, h);
-    libei::drag(fx as f64, fy as f64, tx as f64, ty as f64, steps, btn)?;
-    record_synth_cursor(tx, ty);
+    let cx = |x: i32| x.clamp(0, (w as i32).saturating_sub(1));
+    let cy = |y: i32| y.clamp(0, (h as i32).saturating_sub(1));
+    libei::drag(
+        cx(from_x) as f64,
+        cy(from_y) as f64,
+        cx(to_x) as f64,
+        cy(to_y) as f64,
+        steps,
+        btn,
+    )?;
+    record_synth_cursor(cx(to_x), cy(to_y));
     Ok(())
 }
 

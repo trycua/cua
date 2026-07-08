@@ -124,6 +124,20 @@
               # it hand-launches Xorg, which can't get a VT/seat in the emulated
               # GHA nixos-test VM. It is superseded by the services.xserver test
               # above and kept only for local/real-X manual runs.
+
+              # Electron + CJK input test — verifies cua-driver's Unicode text
+              # pass-through into an Electron (Chromium-based) application window,
+              # covering the scenario from the Qwen Code cua-driver integration
+              # (https://github.com/QwenLM/qwen-code/pull/5051). Uses CDP for
+              # authoritative readback of the typed CJK characters.
+              cua-driver-electron-cjk-input = import ./nix/cua-driver/tests/electron-cjk-input.nix {
+                inherit pkgs;
+                inherit (pkgs) lib;
+                cuaDriverModule = {
+                  imports = [ ./nix/cua-driver/module.nix ];
+                  services.cua-driver.package = cuaDriverPackage;
+                };
+              };
             }
             // pkgs.lib.optionalAttrs (system == "x86_64-linux") (
               # Background GUI input coverage — one independent matrix job per

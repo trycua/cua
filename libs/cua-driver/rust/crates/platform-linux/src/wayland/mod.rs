@@ -1532,25 +1532,24 @@ fn libei_move_absolute(x: i32, y: i32) -> anyhow::Result<()> {
 
 #[cfg(feature = "portal-libei")]
 fn libei_drag(
-    _from_x: i32,
-    _from_y: i32,
-    _to_x: i32,
-    _to_y: i32,
-    _steps: u32,
-    _button: u8,
+    from_x: i32,
+    from_y: i32,
+    to_x: i32,
+    to_y: i32,
+    steps: u32,
+    button: u8,
 ) -> anyhow::Result<()> {
-    // A real drag needs the button HELD across the interpolated motion. The
-    // libei worker only exposes a combined press+release `click`, with no
-    // standalone button-hold (press/release) primitive, so we cannot perform a
-    // genuine press→move→release sequence. Emulating it as move→click-at-end
-    // would hold nothing and silently no-op drag-and-drop / selection / resize
-    // while reporting success — so fail loudly instead. See #1982.
-    anyhow::bail!(
-        "libei fallback cannot perform button-hold drags yet: the libei worker \
-         exposes no standalone button press/release primitive (only a combined \
-         click). Drag is unsupported on this compositor via the libei/portal \
-         backend (#1982)."
-    )
+    // ei_button exposes separate Press/Released states, so the libei worker can
+    // hold the button across the interpolated motion — a genuine
+    // press→move→release drag. Clamp both endpoints to the output like
+    // `libei_click`.
+    let btn = cua_button_to_libei(button);
+    let (w, h) = output_dimensions()?;
+    let (fx, fy) = normalize_click_xy(from_x, from_y, w, h);
+    let (tx, ty) = normalize_click_xy(to_x, to_y, w, h);
+    libei::drag(fx as f64, fy as f64, tx as f64, ty as f64, steps, btn)?;
+    record_synth_cursor(tx, ty);
+    Ok(())
 }
 
 #[cfg(feature = "portal-libei")]

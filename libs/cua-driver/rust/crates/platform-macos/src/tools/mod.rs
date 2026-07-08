@@ -425,10 +425,8 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     registry.register(Box::new(cursor_tools::GetAgentCursorStateTool::new(state.clone())));
     registry.register(Box::new(check_permissions::CheckPermissionsTool));
     // `health_report` — single-call end-to-end diagnostics. Stable
-    // schema_version="1" contract aimed at downstream consumers
-    // (Hermes Agent's `hermes computer-use doctor`, NousResearch/
-    // hermes-agent#47065) who must NOT have to know cua-driver
-    // internals. Provider is platform-specific; tool plumbing is in
+    // schema_version="1" contract aimed at downstream consumers who must
+    // not have to know cua-driver internals. Provider is platform-specific; tool plumbing is in
     // `cua_driver_core::health_report`.
     registry.register(Box::new(cua_driver_core::health_report::HealthReportTool::new(
         Arc::new(health_report::MacosHealthProvider),

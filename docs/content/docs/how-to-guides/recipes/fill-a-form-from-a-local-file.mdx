@@ -8,6 +8,10 @@ import { Steps, Step } from 'fumadocs-ui/components/steps';
 
 Use this recipe when the data already lives on your machine, for example in a PDF resume or a CSV file, and the form lives in a browser on the same desktop. **Cua Driver** drives both, so the **data never has to be uploaded anywhere** because the agent reads it locally and types it into the form.
 
+<Callout type="info">
+  Before you start: [install Cua Driver](/how-to-guides/driver/install), grant host permissions, and [connect your agent](/how-to-guides/driver/connect-your-agent).
+</Callout>
+
 <Steps>
   <Step>
     ### Put the source file on the machine
@@ -21,55 +25,6 @@ Use this recipe when the data already lives on your machine, for example in a PD
     Cua Driver has **no filesystem read tool**. The agent reads local files by opening them in an app it can see, for example Preview, another PDF viewer, or a text editor, then reading the on-screen content with the accessibility tree and screenshots from `get_window_state`.
 
     For a CSV, open the file in a text editor, spreadsheet app, or browser tab. If the file contains many rows, start with one row and name the row or record the agent should use.
-  </Step>
-
-  <Step>
-    ### Install Cua Driver
-
-    Run the one-line installer:
-
-    ```bash
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
-    ```
-
-    Verify the CLI is available:
-
-    ```bash
-    cua-driver --version
-    # cua-driver 0.7.0
-    ```
-  </Step>
-
-  <Step>
-    ### Grant desktop permissions
-
-    On macOS, grant Accessibility and Screen Recording so Cua Driver can inspect windows, click controls, and type into apps.
-
-    ```bash
-    cua-driver permissions grant
-    ```
-
-    Approve both prompts, then run the check again:
-
-    ```bash
-    cua-driver permissions status
-    # Accessibility: granted.
-    # Screen Recording: granted.
-    ```
-
-    For a driver process that survives reboots and keeps the right macOS TCC attribution, see [Keep Cua Driver running](/how-to-guides/driver/keep-running).
-  </Step>
-
-  <Step>
-    ### Register Cua Driver with your MCP client
-
-    For Claude Code, add Cua Driver as a stdio MCP server:
-
-    ```bash
-    claude mcp add --transport stdio cua-driver -- cua-driver mcp
-    ```
-
-    Other MCP clients use the same `cua-driver mcp` command. See [Connect Cua Driver to an MCP client](/how-to-guides/driver/connect-your-agent) for Cursor, Codex, Gemini CLI, and other clients.
   </Step>
 
   <Step>
@@ -102,4 +57,4 @@ Use this recipe when the data already lives on your machine, for example in a PD
 
 One desktop fills one form at a time. To submit many forms in parallel, for example one per CSV row or one per applicant, move the same workflow onto **Cua Sandbox** cloud desktops. Drop each source file into its own sandbox, start one agent job per sandbox, and fan the jobs out.
 
-Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run many jobs concurrently. Use [Choose and build a sandbox image](/how-to-guides/sandbox/images) to stage the source files in an image or mount them into each sandbox. Use [Run an agent in a sandbox](/tutorials/run-an-agent-in-a-sandbox) when you want the same MCP-driven workflow to run inside a disposable cloud desktop.
+Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run many jobs concurrently. Use [Choose and build a sandbox image](/how-to-guides/sandbox/images) to stage the source files in an image or mount them into each sandbox. Use [Your first cloud sandbox](/tutorials/your-first-cloud-sandbox) for the basic SDK lifecycle.

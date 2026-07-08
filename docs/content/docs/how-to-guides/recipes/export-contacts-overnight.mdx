@@ -8,6 +8,10 @@ import { Steps, Step } from 'fumadocs-ui/components/steps';
 
 After a networking event, use Cua Driver on the machine where you already have a logged-in browser. The agent inherits that **real authenticated session** from the browser profile, so there are no credentials in the script and no anti-bot fight. Let it run overnight, then wake up to a CSV.
 
+<Callout type="info">
+  Before you start: [install Cua Driver](/how-to-guides/driver/install), grant host permissions, [connect your agent](/how-to-guides/driver/connect-your-agent), and configure [Keep Cua Driver running](/how-to-guides/driver/keep-running).
+</Callout>
+
 <Steps>
 
 <Step>
@@ -19,52 +23,6 @@ On your own machine, open the browser profile that Cua Driver will drive and log
 <Callout type="warn">
   Keep the machine awake for the whole run. Disable sleep, leave the browser profile available, and keep the network connection up so the overnight run does not pause.
 </Callout>
-
-</Step>
-
-<Step>
-
-### Install Cua Driver
-
-Install `cua-driver` on the same machine:
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
-```
-
-Verify that the CLI is on your PATH:
-
-```bash
-cua-driver --version
-```
-
-</Step>
-
-<Step>
-
-### Grant macOS permissions
-
-On macOS, grant Accessibility and Screen Recording. Then verify the driver can see its permission state:
-
-```bash
-cua-driver permissions status
-```
-
-For overnight runs, keep the daemon running instead of depending on a terminal session. See [Keep Cua Driver running](/how-to-guides/driver/keep-running).
-
-</Step>
-
-<Step>
-
-### Register it with your agent
-
-Add `cua-driver` as a stdio MCP server in your agent. For Claude Code:
-
-```bash
-claude mcp add --transport stdio cua-driver -- cua-driver mcp
-```
-
-For other MCP clients, see [Connect Cua Driver to an MCP client](/how-to-guides/driver/connect-your-agent).
 
 </Step>
 
@@ -109,4 +67,4 @@ Kick off the task before you leave. In the morning, open `~/contacts.csv` and sp
 
 One logged-in browser profile handles one account at a time. To process many accounts, events, or platforms in parallel overnight, move each authenticated session into its own **Cua Sandbox** cloud desktop. Log in once per sandbox, persist the session in the image, then fan the jobs out.
 
-Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run many desktops at once, [Images](/how-to-guides/sandbox/images) to bake the logged-in session into an image, and [Run an agent in a sandbox](/tutorials/run-an-agent-in-a-sandbox) for the agent loop.
+Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run many desktops at once, [Images](/how-to-guides/sandbox/images) to bake the logged-in session into an image, and [Your first cloud sandbox](/tutorials/your-first-cloud-sandbox) for the basic SDK lifecycle.

@@ -88,18 +88,18 @@ mirror pairs into single `cfg!`-branching tests, sharing one `RawDriver`.
 - **Transport** is now a first-class axis: `transport_config_persistence`
   exercises CLI (disk) vs MCP (session) directly; most other tests run over MCP.
 
-### The modality matrix: action target × dispatch × `capture_scope`
+### The modality matrix: action target × delivery mode × `capture_scope`
 
 The user-facing matrix is documented in
-`docs/content/docs/explanation/capture-and-dispatch-modalities.mdx`. `get_window_state`
+`docs/content/docs/concepts/capture-and-delivery-modalities.mdx`. `get_window_state`
 always returns both the accessibility tree and a screenshot; AX vs pixel modality is
 chosen at action time by using `element_index` vs `x,y`. Coverage of its valid cells,
 per platform:
 
-| Cell (`scope`/action target/`dispatch`) | Windows | macOS | Linux |
+| Cell (`scope`/action target/`delivery_mode`) | Windows | macOS | Linux |
 |---|---|---|---|
 | `window`/`element_index`/`background` (default) | `harness_*`, `modality_background` | `harness_{appkit,swiftui}`, `modality_focus`, `modality_capture_mode` | `harness_gtk3`, `modality_capture_mode` |
-| `window`/`element_index`/`foreground` | `harness_wpf` (`dispatch:"foreground"`) | activation differs | activation differs |
+| `window`/`element_index`/`foreground` | `harness_wpf` (`delivery_mode:"foreground"`) | activation differs | activation differs |
 | `window`/`x,y`/`background` | `modality_background`, `modality_capture_mode`, `modality_input_e2e` | `modality_capture_mode` | `modality_capture_mode` |
 | `window`/`x,y`/`foreground` | gap | n/a (no `bring_to_front`) | n/a (stubbed) |
 | `desktop`/`x,y`/`foreground` | `modality_desktop_scope` | rolling out | rolling out |

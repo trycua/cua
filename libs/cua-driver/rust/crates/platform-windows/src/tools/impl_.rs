@@ -716,7 +716,7 @@ impl Tool for GetWindowStateTool {
                 timing out at 4s with per-property RPCs).\n\n\
                 Optional `max_elements` / `max_depth` bound the UIA walk to mitigate \
                 context-window blow-up on Electron / large web apps that produce 10k+ \
-                element trees (#22865). When applied, BOTH the markdown and the structured \
+                element trees. When applied, BOTH the markdown and the structured \
                 elements are truncated identically. Omit both for current default behaviour \
                 (≤5 000 elements, depth ≤25).\n\n\
                 Windows requires no special permissions.".into(),
@@ -728,8 +728,8 @@ impl Tool for GetWindowStateTool {
                 "include_screenshot":{"type":"boolean","description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string","description":"When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead."},
                 "query":{"type":"string","description":"Optional case-insensitive substring. When set, `tree_markdown` only contains lines that match plus their ancestor chain; element indices and `element_count` are unchanged."},
-                "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees (#22865)."},
-                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees (#22865)."}
+                "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees."},
+                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."}
             },"additionalProperties":false}),
             // Swift annotation: idempotent: false (each call is a fresh snapshot).
             read_only: true, destructive: false, idempotent: false, open_world: false,
@@ -7042,8 +7042,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(SetAgentCursorStyleTool { state: state.clone() }));
     r.register(Box::new(CheckPermissionsTool));
     // `health_report` — single-call cross-platform driver diagnostics.
-    // Stable schema_version="1" contract for downstream consumers
-    // (Hermes Agent, NousResearch/hermes-agent#47065). Windows skips
+    // Stable schema_version="1" contract for downstream consumers. Windows skips
     // tcc_* and bundle_identity with "not applicable on Windows".
     r.register(Box::new(cua_driver_core::health_report::HealthReportTool::new(
         std::sync::Arc::new(crate::health_report::WindowsHealthProvider),

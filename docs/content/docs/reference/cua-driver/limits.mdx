@@ -5,7 +5,7 @@ description: Documented behavioral limits of Cua Driver and available workaround
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Cua Driver's *no-foreground contract* holds for every app it reaches via AX or a routed pixel click. A handful of targets and platform quirks fall outside that envelope. The macOS cases come first, followed by the Linux session-stack limits.
+Cua Driver uses best-effort background delivery for every app it can reach via accessibility or routed pixel input. A handful of targets and platform quirks fall outside that envelope. The macOS cases come first, followed by the Linux session-stack limits.
 
 ---
 
@@ -17,8 +17,8 @@ Cua Driver's *no-foreground contract* holds for every app it reaches via AX or a
 
 **Workarounds, in order of preference:**
 
-1. Use `right_click({pid, element_index})` on AX-addressable targets (links, buttons, toolbar items). AX dispatch sidesteps the renderer filter entirely.
-2. For context menus on pure web content (nothing in the AX tree), activate Chrome briefly and fall back to a HID-tap right-click. This breaks the no-foreground-steal promise for that one click.
+1. Use `right_click({pid, element_index})` on AX-addressable targets (links, buttons, toolbar items). AX delivery sidesteps the renderer filter entirely.
+2. For context menus on pure web content (nothing in the AX tree), activate Chrome briefly and fall back to a HID-tap right-click. This interrupts best-effort background behavior for that one click.
 
 <Callout type="info">
   Element-indexed right-click (`right_click` with `element_index`) works fine. The limit is
@@ -33,12 +33,12 @@ Cua Driver's *no-foreground contract* holds for every app it reaches via AX or a
 
 **Symptom:** `click({pid, x, y})` on a Blender viewport silently no-ops. The window is visible and `launch_app` works, but clicks vanish.
 
-**Cause:** These apps only accept events from `cghidEventTap` with a leading `mouseMoved`. They explicitly filter out per-pid-routed events, which is the path Cua Driver uses for backgrounded dispatch. There is no per-pid recipe that reaches them.
+**Cause:** These apps only accept events from `cghidEventTap` with a leading `mouseMoved`. They explicitly filter out per-pid-routed events, which is the path Cua Driver uses for background delivery. There is no per-pid recipe that reaches them.
 
 **Workaround:** Bring the app to the foreground before clicking, then use pixel `click({pid, x, y})`. Where the target exposes AX-addressable controls, prefer `right_click` or element actions, which sidestep the renderer filter without foregrounding.
 
 <Callout type="warn">
-  When automating Blender or a native game, the no-foreground-steal contract does not apply: these apps must be foregrounded to receive clicks, so do this only when the user is not actively working on the machine.
+  When automating Blender or a native game, best-effort background delivery does not apply: these apps must be foregrounded to receive clicks, so do this only when the user is not actively working on the machine.
 </Callout>
 
 ---
@@ -63,13 +63,13 @@ Cua Driver's *no-foreground contract* holds for every app it reaches via AX or a
 
 **Symptom:** `press_key({pid, element_index, key: "return"})` on a text field in a minimized window returns success, but the field doesn't commit. The macOS system-alert beep fires, or nothing happens.
 
-**Cause:** AX reads and AX-dispatched clicks propagate through to minimized windows normally, but keyboard-commit events (Return, Space, Tab) require renderer focus, which AX focus does not confer on a minimized window. This is a macOS-wide behavior.
+**Cause:** AX reads and AX clicks propagate through to minimized windows normally, but keyboard-commit events (Return, Space, Tab) require renderer focus, which AX focus does not confer on a minimized window. This is a macOS-wide behavior.
 
 **Workarounds:**
 
 1. Use `set_value({pid, element_index, value: "..."})` to write the field's value directly. No keyboard event involved; no focus handoff required.
 2. AX-click a commit-equivalent button (Go, Submit, Send, OK) rather than relying on Return.
-3. Un-minimize the window (`hotkey({pid, keys: ["cmd", "m"]})` or click the Dock icon). This breaks the background contract for that window.
+3. Un-minimize the window (`hotkey({pid, keys: ["cmd", "m"]})` or click the Dock icon). This interrupts best-effort background behavior for that window.
 
 <Callout type="info">
   `set_value` is the correct approach 90% of the time. It sidesteps both the minimized-focus issue and the general "which event commits this field" ambiguity.
@@ -81,13 +81,13 @@ Cua Driver's *no-foreground contract* holds for every app it reaches via AX or a
 
 **Affected:** GTK/Qt apps running as native Wayland clients on GNOME Mutter or KDE KWin (no X11 surface).
 
-**Symptom:** `press_key` / `hotkey` — and `type_text` into a field that isn't AT-SPI-editable — return success but the keystroke never reaches the app. Clicks and element actions on the same app work fine.
+**Symptom:** `press_key` / `hotkey`, and `type_text` into a field that is not AT-SPI-editable, return success but the keystroke never reaches the app. Clicks and element actions on the same app work fine.
 
 **Cause:** Wayland blocks one client from synthesizing input into another by design. The compositor-cooperative paths that would re-enable it are not free here: `libei` requires a one-time RemoteDesktop-portal grant, and `wtype` (virtual-keyboard) is wlroots-only, so it fails on Mutter/KWin.
 
 **Workarounds:**
 
-1. Type into accessible text fields with `type_text` — AT-SPI `insertText` writes the field directly, no synthetic key event involved.
+1. Type into accessible text fields with `type_text`. AT-SPI `insertText` writes the field directly, with no synthetic key event involved.
 2. Drive controls by `element_index` (`click`, `set_value`) instead of keyboard shortcuts where an equivalent control exists.
 3. Run the app under XWayland (`GDK_BACKEND=x11` / `QT_QPA_PLATFORM=xcb`). It then exposes an X11 surface and the X11 `XTEST` keyboard path applies.
 
@@ -99,11 +99,11 @@ Cua Driver's *no-foreground contract* holds for every app it reaches via AX or a
 
 ## GTK4 reports (0,0) screen coordinates over AT-SPI (handled)
 
-**Symptom:** none in normal use — element `frame`s, the agent cursor, and vision clicks are correct on GTK4. Documented here because the underlying toolkit bug is real and visible in raw AT-SPI.
+**Symptom:** none in normal use. Element `frame`s, the agent cursor, and vision clicks are correct on GTK4. Documented here because the underlying toolkit bug is real and visible in raw AT-SPI.
 
 **Cause:** GTK4's AT-SPI bridge returns `Component.GetExtents(SCREEN)` as `(0,0)` for every widget (GNOME/gtk issues #1564 / #1739). A naive consumer would collapse every element to the window's top-left corner.
 
-**How Cua Driver handles it:** it queries `CoordType::Window` (which GTK4 *does* report correctly per-widget) and adds the window's screen origin — from `_GTK_FRAME_EXTENTS` on X11, or the `org.cua.WinRects` shell helper on Wayland — to reconstruct true screen coordinates. So no caller action is required; GTK4 frames are reliable.
+**How Cua Driver handles it:** it queries `CoordType::Window` (which GTK4 *does* report correctly per-widget) and adds the window's screen origin from `_GTK_FRAME_EXTENTS` on X11 or the `org.cua.WinRects` shell helper on Wayland. That reconstructs true screen coordinates, so no caller action is required.
 
 ---
 

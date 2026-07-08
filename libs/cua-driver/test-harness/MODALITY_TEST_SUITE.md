@@ -1,7 +1,10 @@
----
-title: Modality Test Suite & Harnesses
-description: How the Cua Driver modality test suite and per-OS app harnesses work — action rungs, scopes, the action matrix, and per-platform results.
----
+# Modality test suite and harnesses
+
+This is an internal contributor runbook for the Cua Driver modality test suite.
+It used to live in the public docs reference tree, but it describes the harness,
+CI lanes, recorder scripts, and regression matrices rather than public product
+behavior. User-facing limits harvested from this page belong in
+`docs/content/docs/reference/cua-driver/limits.mdx`.
 
 This document describes the cua-driver test-harness: a cross-OS, cross-toolkit
 rig that exercises every driver action against a controlled application and

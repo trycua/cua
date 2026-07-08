@@ -1,35 +1,17 @@
 ---
 title: 'Drive a Web Page'
-description: 'Read and act on the page already loaded in a browser or Electron app with the page tool — get text, query the DOM, click, insert text, type keystrokes, run JavaScript.'
+description: 'Read and act on the page already loaded in a browser or Electron app with the page tool: get text, query the DOM, click, insert text, type keystrokes, run JavaScript.'
 ---
 
 # Drive a Web Page
 
-Use the `page` tool on the page already loaded in a running browser or Electron app. It does not navigate; open the URL first, either through `launch_app` or by having the user open it. This is the DOM/CDP path, the same rung that honest-verification `escalation.recommended: 'page'` points to when AX typing echoes but the DOM does not observe it. For the surrounding ladder, see [Choose an action rung and dispatch mode](/how-to-guides/driver/choose-a-modality) and [Capture and dispatch modalities](/explanation/capture-and-dispatch-modalities).
+Use the `page` tool on the page already loaded in a running browser or Electron app. Open the URL first, either through `launch_app` or by having the user open it. This is the DOM/CDP path. Honest-verification `escalation.recommended: 'page'` points here when AX typing echoes but the DOM does not observe it. For the agent-side escalation behavior, see [Agent action policy](/reference/cua-driver/action-selection-policy) and [Capture and delivery modalities](/concepts/capture-and-delivery-modalities).
 
-## Actions
+## When to use it
 
-| Action | What it does |
-|---|---|
-| `get_text` | Extract visible text from the page. Params: `pid`, `window_id`. |
-| `query_dom` | Find elements by CSS selector. Params: `css_selector`, `attributes` (array of attribute names to return). |
-| `click_element` | Click a CSS-selected element (animates the agent cursor). Params: `selector`. |
-| `insert_text` | Set text into the focused field via CDP (fast DOM insert). Params: `text` (required), `cdp_port` (optional), `target_url_contains` (optional). |
-| `type_keystrokes` | Type text as real per-character key events via CDP — fires JS keydown/keyup handlers. Use when `insert_text` does not trigger the app's input logic. Params: `text` (required), `cdp_port` (optional), `target_url_contains` (optional). |
-| `execute_javascript` | Run JS and return the result. Params: `javascript`. |
-| `enable_javascript_apple_events` | macOS only. One-time patch: edits the browser Preferences to allow JS from Apple Events. Requires a browser restart. Params: `bundle_id`, `user_has_confirmed_enabling` (must be true). |
+Use `page` when the target is browser-tab content and the accessibility layer cannot prove the result. It is especially useful after `type_text` returns `effect: "unverifiable"` with `escalation.recommended: "page"`.
 
-## Backend and browser support
-
-| Backend | Support |
-|---|---|
-| Chrome, Brave, Edge | Browser page support, with CDP for JavaScript and typing actions. |
-| Safari | Uses AppleScript on macOS. |
-| Electron | Uses CDP. |
-| Chromium/Firefox on Windows | UIA for read actions; CDP for `execute_javascript` when started with `--remote-debugging-port`. |
-| WKWebView, Tauri, AT-SPI | Fallback paths for page reads where available. |
-
-Read actions (`get_text`, `query_dom`) work broadly, and `execute_javascript` works cross-platform given a CDP endpoint. **`insert_text` and `type_keystrokes` are macOS-only for now** — Windows and Linux don't yet implement the CDP `Input.insertText`/`Input.dispatchKeyEvent` calls these actions need, and return a clear "not implemented" error rather than a silent no-op. Tracked in [trycua/cua#2084](https://github.com/trycua/cua/issues/2084). Where a CDP endpoint is available (macOS), launch Chromium with `--remote-debugging-port=<n>` and pass `cdp_port`, or target a tab with `target_url_contains`.
+Read actions (`get_text`, `query_dom`) work broadly, and `execute_javascript` works cross-platform given a CDP endpoint. `insert_text` and `type_keystrokes` are macOS-only for now; Windows and Linux return a clear "not implemented" error rather than a silent no-op. See the [`page` tool reference](/reference/cua-driver/mcp-tools#page) for the full action list, parameters, and platform notes.
 
 ## insert_text vs type_keystrokes
 
@@ -84,5 +66,5 @@ page({
 ## Related
 
 - [page tool reference](/reference/cua-driver/mcp-tools#page)
-- [Choose an action rung and dispatch mode](/how-to-guides/driver/choose-a-modality)
-- [Capture and dispatch modalities](/explanation/capture-and-dispatch-modalities)
+- [Agent action policy](/reference/cua-driver/action-selection-policy)
+- [Capture and delivery modalities](/concepts/capture-and-delivery-modalities)

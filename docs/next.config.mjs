@@ -1,10 +1,16 @@
 import { createMDX } from 'fumadocs-mdx/next';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const withMDX = createMDX();
+const docsRoot = dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
+  turbopack: {
+    root: docsRoot,
+  },
   trailingSlash: false,
   basePath: '/docs',
   assetPrefix: '/docs',
@@ -58,6 +64,136 @@ const config = {
       {
         source: '/cua/reference/agent-sdk/api',
         destination: '/cua/reference/agent-sdk',
+        permanent: true,
+      },
+      {
+        source: '/reference/cua-driver/modality-test-suite',
+        destination: '/reference/cua-driver/limits',
+        permanent: true,
+      },
+      {
+        source: '/reference/cua-driver/modality-test-suite.mdx',
+        destination: '/reference/cua-driver/limits',
+        permanent: true,
+      },
+      {
+        source: '/explanation/linux-and-wayland',
+        destination: '/reference/cua-driver/limits',
+        permanent: true,
+      },
+      {
+        source: '/explanation/linux-and-wayland.mdx',
+        destination: '/reference/cua-driver/limits',
+        permanent: true,
+      },
+      {
+        source: '/explanation/capture-and-dispatch-modalities',
+        destination: '/concepts/capture-and-delivery-modalities',
+        permanent: true,
+      },
+      {
+        source: '/explanation/capture-and-dispatch-modalities.mdx',
+        destination: '/concepts/capture-and-delivery-modalities',
+        permanent: true,
+      },
+      {
+        source: '/explanation/demonstrations-skills-and-trajectories',
+        destination: '/concepts',
+        permanent: true,
+      },
+      {
+        source: '/explanation/demonstrations-skills-and-trajectories.mdx',
+        destination: '/concepts',
+        permanent: true,
+      },
+      {
+        source: '/explanation/process-model',
+        destination: '/reference/cua-driver/process-model',
+        permanent: true,
+      },
+      {
+        source: '/explanation/process-model.mdx',
+        destination: '/reference/cua-driver/process-model',
+        permanent: true,
+      },
+      {
+        source: '/concepts/process-model',
+        destination: '/reference/cua-driver/process-model',
+        permanent: true,
+      },
+      {
+        source: '/concepts/process-model.mdx',
+        destination: '/reference/cua-driver/process-model',
+        permanent: true,
+      },
+      {
+        source: '/explanation/architecture',
+        destination: '/concepts',
+        permanent: true,
+      },
+      {
+        source: '/explanation/architecture.mdx',
+        destination: '/concepts',
+        permanent: true,
+      },
+      {
+        source: '/concepts/architecture',
+        destination: '/concepts',
+        permanent: true,
+      },
+      {
+        source: '/concepts/architecture.mdx',
+        destination: '/concepts',
+        permanent: true,
+      },
+      {
+        source: '/concepts/how-cua-fits-together',
+        destination: '/concepts',
+        permanent: true,
+      },
+      {
+        source: '/concepts/how-cua-fits-together.mdx',
+        destination: '/concepts',
+        permanent: true,
+      },
+      {
+        source: '/how-to-guides/driver/choose-a-modality',
+        destination: '/reference/cua-driver/action-selection-policy',
+        permanent: true,
+      },
+      {
+        source: '/how-to-guides/driver/choose-a-modality.mdx',
+        destination: '/reference/cua-driver/action-selection-policy',
+        permanent: true,
+      },
+      {
+        source: '/explanation',
+        destination: '/concepts',
+        permanent: true,
+      },
+      {
+        source: '/explanation.mdx',
+        destination: '/concepts',
+        permanent: true,
+      },
+      {
+        source: '/explanation/:path*.mdx',
+        destination: '/concepts/:path*',
+        permanent: true,
+      },
+      {
+        source: '/explanation/:path*',
+        destination: '/concepts/:path*',
+        permanent: true,
+      },
+      {
+        source: '/tutorials/run-an-agent-in-a-sandbox',
+        destination: '/tutorials/your-first-cloud-sandbox',
+        permanent: true,
+      },
+      {
+        source: '/tutorials/run-an-agent-in-a-sandbox.mdx',
+        destination: '/tutorials/your-first-cloud-sandbox',
         permanent: true,
       },
     ];

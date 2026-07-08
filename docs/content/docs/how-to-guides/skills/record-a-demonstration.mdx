@@ -1,13 +1,13 @@
 ---
-title: 'Record a demonstration -> create a skill'
+title: 'Record a demonstration as a skill'
 description: 'Demonstrate a task once over VNC and turn it into a reusable cua skill you can read, replay, and apply with new inputs.'
 ---
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Use `cua skills record` to demonstrate a task once in a VNC session and save it as a **reusable skill**. The result is `~/.cua/skills/<name>/SKILL.md` plus the recorded trajectory assets, which you can inspect, replay as a video, and pass to `ComputerAgent` for similar tasks with new inputs. This is *record-and-replay* in the sense of show-once-get-a-reusable-skill, the cua analog of OpenAI Codex record-and-replay, not verbatim input playback.
+Use `cua skills record` to demonstrate a task once in a VNC session and save it as a **reusable skill**. The result is `~/.cua/skills/<name>/SKILL.md` plus the recorded trajectory assets, which you can inspect, replay as a video, and pass to `ComputerAgent` for similar tasks with new inputs. This is *record-and-replay* in the sense of show-once-get-a-reusable-skill. It does not replay the original input verbatim.
 
 <Callout type='info'>
-This records a HUMAN demonstration into a reusable skill. It is not the Cua Driver agent-trajectory recorder. See [Demonstrations, skills, and trajectories](/explanation/demonstrations-skills-and-trajectories) for how the three recording systems differ.
+This records a human demonstration into a reusable skill. The Cua Driver agent-trajectory recorder is separate.
 </Callout>
 
 ## Prerequisites
@@ -71,7 +71,7 @@ Recording will start automatically when you connect.
 
 3. Stop recording.
 
-   Click `Stop Recording` in the VNC panel. If you did not pass `--name` or `--description`, enter them when prompted. Skill names can contain only letters, numbers, hyphens, and underscores.
+   Click `Stop Recording` in the VNC panel. If you omitted `--name` or `--description`, enter them when prompted. Skill names can contain only letters, numbers, hyphens, and underscores.
 
 4. Inspect the skill.
 

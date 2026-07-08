@@ -1,11 +1,11 @@
 ---
 title: "Computer-Use 2.0"
-description: "Computer-Use 2.0 is how an agent operates a real computer through code, structured tool calls, and the graphical interface."
+description: "What Cua refers to as Computer-Use 2.0: an agent operating a real computer through code, structured tool calls, and the graphical interface."
 ---
 
 # Computer-Use 2.0
 
-Computer-Use 2.0 is the way an AI agent operates a real computer by choosing among three action surfaces: writing and running code, calling tools and APIs, and driving the graphical interface a person would use. The older use of the term, where an agent looks at screenshots and clicks through a GUI, still matters as the UI surface inside a broader model of how agents get work done on computers.
+What we refer to as **Computer-Use 2.0** is an AI agent operating a real computer by choosing among three action surfaces: writing and running code, calling tools and APIs, and driving the graphical interface a person would use. The older screenshot-and-click loop still matters as the UI surface inside a broader model of how agents get work done on computers.
 
 ## Three action surfaces
 
@@ -27,7 +27,7 @@ The observe, decide, act loop belongs specifically to the UI automation surface.
 
 Planning carries the task across changing interface states. A click may open a dialog, a page may reflow after loading, or an application may show an error that changes the next useful action, so the model has to keep track of the goal while the computer responds. Frontier models such as Claude can handle understanding, grounding, and planning together in one call, while grounding-specialist models such as UI-TARS and Moondream can help when coordinate accuracy is the limiting factor.
 
-The narrow origin of computer-use came in October 2024, when Anthropic introduced an agent that operated a GUI through screenshots and input events. Through 2025, coding agents were increasingly recognized as computer-use agents too, with CoAct-1 making the connection explicit, and the field began to converge on Computer-Use 2.0 as a wider concept. Francesco Bonacci traces that arc in [A Story of Computer-Use](https://github.com/trycua/cua/blob/main/blog/clawdbot-computer-use-history.md).
+The narrow origin of computer-use came in October 2024, when Anthropic introduced an agent that operated a GUI through screenshots and input events. Through 2025, coding agents were increasingly recognized as computer-use agents too, with CoAct-1 making the connection explicit. Cua uses **Computer-Use 2.0** as shorthand for that wider model. Francesco Bonacci traces that arc in [A Story of Computer-Use](https://github.com/trycua/cua/blob/main/blog/clawdbot-computer-use-history.md).
 
 ## Where Cua fits
 

@@ -444,7 +444,7 @@ impl Tool for GetWindowStateTool {
                 deprecated and ignored.\n\n\
                 Optional `max_elements` / `max_depth` bound the AT-SPI walk to \
                 mitigate context-window blow-up on Electron / large web apps \
-                that produce 10k+ element trees (#22865). When applied, BOTH \
+                that produce 10k+ element trees. When applied, BOTH \
                 the markdown and the structured elements are truncated \
                 identically. Omit both for current default behaviour.".into(),
             input_schema: json!({"type":"object","required":["pid","window_id"],"properties":{
@@ -457,8 +457,8 @@ impl Tool for GetWindowStateTool {
                 "screenshot_out_file":{"type":"string",
                     "description":"When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output carries screenshot_file_path instead."},
                 "query":{"type":"string"},
-                "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Omit for the default (5 000). Lower for huge web/Electron trees (#22865)."},
-                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps (#22865)."}
+                "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Omit for the default (5 000). Lower for huge web/Electron trees."},
+                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps."}
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
@@ -627,7 +627,7 @@ impl Tool for GetWindowStateTool {
                     structured["_note"] = json!(
                         "Prefer `elements` — `tree_markdown` will continue to work \
                          but new fields will only be added to the structured side. \
-                         Issue #22865: use `max_elements` / `max_depth` to bound the \
+                         Use `max_elements` / `max_depth` to bound the \
                          AT-SPI walk on apps with very large trees."
                     );
                     // Best-effort-background ladder parity with macOS/Windows: an
@@ -4799,7 +4799,7 @@ impl Tool for KillAppTool {
     }
 }
 
-// ── bring_to_front (Linux stub) ──────────────────────────────────────────────
+// ── bring_to_front (Linux) ───────────────────────────────────────────────────
 
 pub struct BringToFrontTool;
 
@@ -4935,8 +4935,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(SetAgentCursorStyleTool { state: state.clone() }));
     r.register(Box::new(CheckPermissionsTool));
     // `health_report` — single-call cross-platform driver diagnostics.
-    // Stable schema_version="1" contract for downstream consumers
-    // (Hermes Agent, NousResearch/hermes-agent#47065). Linux skips
+    // Stable schema_version="1" contract for downstream consumers. Linux skips
     // tcc_* and bundle_identity with "not applicable on Linux".
     r.register(Box::new(cua_driver_core::health_report::HealthReportTool::new(
         std::sync::Arc::new(crate::health_report::LinuxHealthProvider),

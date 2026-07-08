@@ -12,6 +12,10 @@ Numbers is a **macOS-only** app with **no clean automation API** for building a 
   This recipe is macOS-only. Numbers, Keynote, and Pages do not exist on Linux or Windows, so you need a real Mac now, or a cloud macOS desktop later.
 </Callout>
 
+<Callout type="info">
+  Before you start: [install Cua Driver](/how-to-guides/driver/install), grant [macOS permissions](/reference/cua-driver/macos-permissions), and [connect your agent](/how-to-guides/driver/connect-your-agent). For long-running jobs, configure [Keep Cua Driver running](/how-to-guides/driver/keep-running).
+</Callout>
+
 <Steps>
   <Step>
     ### Check Numbers.app
@@ -23,49 +27,6 @@ Numbers is a **macOS-only** app with **no clean automation API** for building a 
     ```
 
     Numbers ships with macOS. If you removed it, install it again from the App Store before continuing.
-  </Step>
-
-  <Step>
-    ### Install Cua Driver
-
-    Install `cua-driver` with the one-line installer:
-
-    ```bash
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
-    ```
-
-    Verify the CLI is available:
-
-    ```bash
-    cua-driver --version
-    # cua-driver 0.7.0
-    ```
-  </Step>
-
-  <Step>
-    ### Grant macOS permissions
-
-    Grant Accessibility and Screen Recording to the driver, then verify both grants:
-
-    ```bash
-    cua-driver permissions status
-    ```
-
-    If either permission is missing, approve it in macOS System Settings, then run the check again.
-
-    For long-running report jobs, configure the daemon so macOS attributes the permissions to the driver process. See [Keep Cua Driver running](/how-to-guides/driver/keep-running).
-  </Step>
-
-  <Step>
-    ### Register the MCP server
-
-    Register `cua-driver` as a stdio MCP server in your agent:
-
-    ```bash
-    claude mcp add --transport stdio cua-driver -- cua-driver mcp
-    ```
-
-    Other MCP clients use the same `cua-driver mcp` command with their own config format. See [Connect Cua Driver to an MCP client](/how-to-guides/driver/connect-your-agent).
   </Step>
 
   <Step>
@@ -111,6 +72,6 @@ Numbers is a **macOS-only** app with **no clean automation API** for building a 
 
 One Mac builds one Numbers report at a time. To generate many reports at once, for example one per ticker, client, or reporting period, move the same workflow onto **Cua Sandbox** cloud macOS desktops and fan them out.
 
-Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run the jobs concurrently, [Choose and build a sandbox image](/how-to-guides/sandbox/images) to bake Numbers and any helper tools into the macOS image, and [Drive a sandbox with the SDK](/tutorials/run-an-agent-in-a-sandbox) to run an agent in each desktop.
+Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run the jobs concurrently, [Choose and build a sandbox image](/how-to-guides/sandbox/images) to bake Numbers and any helper tools into the macOS image, and [Your first cloud sandbox](/tutorials/your-first-cloud-sandbox) for the basic SDK lifecycle.
 
 A cloud macOS desktop is the only way to scale Numbers automation, since Numbers cannot run on Linux containers.

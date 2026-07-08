@@ -7,7 +7,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 # Your first cloud sandbox
 
-In this tutorial, you create an *ephemeral* cloud Linux sandbox, run `uname -a` inside it, and save a screenshot from the sandbox to your current directory.
+In this tutorial, you create an *ephemeral* cloud Linux sandbox, run `uname -a` inside it, touch the sandbox clipboard, and save a screenshot from the sandbox to your current directory.
 
 <Callout type="info">
   Prerequisites: Python 3.12 or 3.13. A free account at cua.ai for cloud sandboxes.
@@ -52,6 +52,10 @@ async def main():
         result = await sb.shell.run("uname -a")
         print(result.stdout)
 
+        await sb.clipboard.set("Hello from the sandbox clipboard")
+        value = await sb.clipboard.get()
+        print(value)
+
         screenshot = await sb.screenshot()
         with open("screenshot.png", "wb") as f:
             f.write(screenshot)
@@ -68,13 +72,13 @@ Run the script from the same directory:
 python first_sandbox.py
 ```
 
-You should see a Linux kernel string printed in your terminal.
+You should see a Linux kernel string and the clipboard value printed in your terminal.
 
 You should also see a new file named `screenshot.png` in the current directory.
 
 ## What just happened
 
-`Sandbox.ephemeral(Image.linux())` created a cloud Linux container. The script ran `uname -a` inside that container, printed the command output, took a screenshot, and wrote it to `screenshot.png`.
+`Sandbox.ephemeral(Image.linux())` created a cloud Linux container. The script ran `uname -a` inside that container, printed the command output, changed and read the sandbox desktop clipboard, took a screenshot, and wrote it to `screenshot.png`.
 
 When the `async with` block exited, **the sandbox destroyed itself**. No cleanup is needed.
 

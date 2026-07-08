@@ -4,9 +4,9 @@
   "pages": [
     "index",
     "driver",
-    "recipes",
     "sandbox",
     "lume",
+    "recipes",
     "skills",
     "agent-context"
   ]

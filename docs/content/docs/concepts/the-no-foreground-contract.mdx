@@ -1,0 +1,54 @@
+---
+title: Best-effort background
+description: How Cua Driver tries to operate apps without taking focus, moving the cursor, or raising windows, and when it must fall back to foreground.
+---
+
+# Best-effort background
+
+Best-effort background means Cua Driver tries to operate a target app while preserving the user's active desktop. The default paths do not move the real pointer, do not raise the target window, and do not switch the user's frontmost app.
+
+This is a best effort rather than an absolute promise. Most app automation can stay in the background through accessibility actions, routed input, and window-specific capture. A small set of apps and OS surfaces only accept real foreground input, so the driver reports that limit and lets the caller choose a foreground escalation for that specific action.
+
+## Why it matters
+
+Traditional GUI automation assumes the automated app owns the desktop. It activates a window, moves the pointer, and repeats. That is fine for unattended jobs or disposable desktops, but it breaks down when a person is using the same machine.
+
+Cua Driver's default path lets the agent operate an app in the background while the developer keeps coding, reading logs, or using another app. The visible agent cursor is an overlay; the real mouse pointer stays where the user left it.
+
+## Platform mechanisms
+
+Each OS splits accessibility, input delivery, capture, and focus policy differently. Cua Driver chooses the most background-capable path the platform and app expose.
+
+### macOS
+
+The Accessibility API can press buttons, set values, and read semantic state even when the app is not frontmost. ScreenCaptureKit can capture a specific window without requiring that window to be raised or visible on the active Space. Cua Driver also uses scoped CoreGraphics and SkyLight delivery for routed input when an app responds better to pointer-like events than accessibility actions.
+
+Some macOS surfaces still need foreground. SwiftUI windows parked on another Space can lose their detailed accessibility tree, and game/canvas surfaces may reject routed input. Those cases are documented in [Known limits](/reference/cua-driver/limits).
+
+### Windows
+
+UI Automation can inspect and operate controls by window handle and automation element while another app is active. For input-like behavior, Cua Driver can post messages to a target window or use foreground escalation when the app only listens to active device input.
+
+Windows also has session boundaries. A daemon running in the interactive user session can see and operate the desktop; a process launched from OpenSSH in Session 0 cannot. See [Process model](/reference/cua-driver/process-model) and [Drive a Windows app over SSH](/how-to-guides/driver/windows-ssh).
+
+### Linux
+
+AT-SPI provides the semantic path on Linux. Element actions call the toolkit's own accessibility action (`Action.DoAction`) and do not need pointer injection or foreground focus. On X11, window-addressable input and capture can also route to a target window. On Wayland, synthetic input is intentionally constrained by the compositor, so the background path depends more heavily on AT-SPI and reconstructed element frames.
+
+The remaining Linux gap is raw keyboard injection into native Wayland apps. Typing into accessible fields can still work through AT-SPI, but shortcuts or raw key events may need XWayland or foreground/user-granted compositor paths. See [Known limits](/reference/cua-driver/limits#native-wayland-apps-cant-receive-synthetic-keystrokes).
+
+## The agent cursor
+
+Cua Driver does not move the user's real pointer to show agent activity. It renders a synthetic cursor overlay for supervision. The user can see where the agent is acting while their own cursor and active app stay untouched.
+
+## How fallback works
+
+The safest ladder is:
+
+1. Act by `element_index` in the background.
+2. If the element path is unavailable or unverifiable, act by `x, y` from the same window screenshot.
+3. If the app still rejects the action, retry that one action with `delivery_mode: "foreground"`.
+
+Foreground escalation is explicit. It is the right answer for apps that only accept focused input, but callers should use it narrowly and only when interrupting the user's desktop is acceptable.
+
+For the agent-side action behavior, see [Agent action policy](/reference/cua-driver/action-selection-policy). For the reference matrix, see [Interface contracts](/reference/cua-driver/contracts).

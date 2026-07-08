@@ -1,0 +1,75 @@
+---
+title: "Capture and Delivery Modalities"
+description: "How Cua Driver observes and acts on an app. Perception returns both the accessibility tree and a screenshot; the action call chooses the ax or px rung, delivery mode, and scope."
+---
+
+# Capture and Delivery Modalities
+
+Every Cua Driver action is shaped by four things: **what the agent observes**, **which rung delivers the action**, **how input is delivered**, and **what coordinate space the action targets**. Most callers use the defaults: background, per-window, accessibility-first automation. The key change from earlier versions is that perception is no longer a mode you pick. `get_window_state` returns *both* the accessibility tree and a screenshot in one call. The action call chooses `ax` or `px` by how it addresses the target.
+
+## The Axes
+
+### 1. Perception: what the agent observes
+
+`get_window_state(pid, window_id)` returns **both the accessibility tree and a screenshot by default**, in one call. There is no capture mode to pick: you ground on the tree and the screenshot together and cross-check one against the other. This matters because the tree *lies* on some surfaces: it can expose useful structure while still echoing a write the app did not apply, omitting the rendered value, or reporting geometry that disagrees with the pixels. A grounding screenshot is always present, so when the tree looks wrong you check the pixels in the *same* response.
+
+The accessibility tree is the ground truth for *what is clickable*: roles, labels, advertised actions, and an `element_index` handle on every actionable element. The screenshot tells you *which one*. It disambiguates repeated or empty labels and shows captions, colors, and layout the tree omits, which is common in Chromium and Electron. They come back together because each catches what the other misses.
+
+> **Performance opt-out: `include_screenshot`.** `include_screenshot` (boolean, default `true`) is the one performance knob. The default returns both. Pass `include_screenshot: false` to skip the screen grab and get the tree only when you are re-indexing before an element ax action and do not need fresh pixels. The `ax`-versus-`px` decision still lives at action time.
+
+> **`capture_mode` is deprecated and ignored.** `get_window_state` still accepts it so old callers do not error, but both the tree and the screenshot come back regardless of what you pass. The old `ax` / `vision` / `som` / `screenshot` values all decode (`som` mapped to `ax`, `screenshot` to `vision`) but none changes what is captured. Perception is always both.
+
+### 2. Action rung: how the target is addressed
+
+You don't pick a capture mode; you pick **how you address the target** on the action call, and that one choice selects the rung:
+
+| Rung | Address with | Delivered through | Properties |
+|---|---|---|---|
+| **element ax action** | `element_index` / `element_token` | the accessibility rung: UIA Invoke (Windows), `AXPerformAction` (macOS), AT-SPI `doAction` (Linux) | Backgroundable, z-order-independent, and the only **driver-verifiable** rung. |
+| **element px action** | `x, y` | the pixel rung, reading the coordinate straight off the screenshot already in the `get_window_state` response | Best-effort; the caller confirms the effect off the screenshot. |
+
+Default to the element ax action because the driver can verify it and often keep it in the background. Drop to an element px action when the tree cannot disambiguate repeated or empty labels, when it is empty (`degraded`, a non-AX surface), when an action came back `suspected_noop`, or when the tree disagrees with the pixels. You never re-capture to switch rungs. The screenshot is already in the snapshot, so you only change *how you address* the target.
+
+Both rungs apply to the **keyboard family** (`type_text`, `press_key`, `hotkey`) as well as the pointer tools. Address by `element_index` (ax) to target a field with no pre-click. Address by `x, y` (px) to pixel-click at `(x, y)`, establish real renderer focus, and deliver the keystroke(s) to the now-focused element. The px form is the one-call path for Chromium/Electron inputs the AX layer cannot focus: `type_text({ pid, window_id, x, y, text })` focuses and types in a single call. The two forms are mutually exclusive. `set_value` is the exception: it stays ax-only because it sets the value of a non-text control like a dropdown, checkbox, or slider.
+
+### 3. Delivery: how input is delivered
+
+Set `delivery_mode` per call on the input family (`click`, `double_click`, `right_click`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`). The same two values work on Windows, macOS, and Linux.
+
+| `delivery_mode` | Behavior |
+|---|---|
+| `background` (default) | Input is routed to the target process/window/element directly. The user's frontmost app, real cursor, and window z-order are untouched when the target surface supports background delivery. See [Best-effort background](/concepts/the-no-foreground-contract). |
+| `foreground` | The target is briefly fronted (pair with `bring_to_front` to avoid a per-call flash), input lands on the now-active window, then the prior frontmost is restored. Use this when a background attempt did not land, or when the app only accepts events while foregrounded (DirectInput games, raw-input canvases). |
+
+Only `background` and `foreground` are valid; the historical `auto` heuristic is removed. At runtime, omitted or unknown values fall back to `background` for safety. Element ax actions (`element_index`) address an element instead of the focused window, so they hold the background path without any `delivery_mode` flag. The delivery axis matters most for the pixel rung (`x, y`), where `background` routes the event to the target and `foreground` raises the window first.
+
+### 4. Capture scope: what coordinate space the action targets
+
+Set with `set_config capture_scope=…`.
+
+| `capture_scope` | Coordinate space | Capture surface |
+|---|---|---|
+| `window` (default) | Per-window. Actions carry `pid` + `window_id`; coordinates are window-relative or addressed by `element_index`. | `get_window_state` |
+| `desktop` | Screen-absolute. Window-less actions (no `pid`/`window_id`) land at absolute screen coordinates via hit-testing (`WindowFromPoint`). | `get_desktop_state` with full display, no downscale |
+
+Desktop scope is the "Computer-Use 1.0" loop: the agent reads the whole screen and clicks absolute coordinates, the way a screenshot-only model expects. Window scope is the default because it is what makes background, concurrent automation possible.
+
+## Response signals: verification, effect, and escalation
+
+Delivery success differs from application state change. The driver can verify an effect only when it can read the changed state back through the accessibility layer. That is why `verified: true` is reserved for AX read-back: it means the driver observed the effect after sending the event. Pixel input, foreground input, and echo-prone AX surfaces can be routed correctly while still leaving confirmation to the caller.
+
+`effect` is the confidence signal that separates those cases. `"confirmed"` means the driver verified the result through AX read-back. `"unverifiable"` means the delivery path ran, but the driver cannot prove the application applied it. `"suspected_noop"` means an AX action ran but almost certainly did not change the target. Treat `effect` as the action outcome.
+
+`escalation` is the machine-readable climb-the-ladder hint. When present, it tells the caller which surface to try next: `"px"` for acting off the screenshot, `"foreground"` for explicitly fronting the target, or `"page"` for the browser-tab DOM path through the `page` tool. See [Agent action policy](/reference/cua-driver/action-selection-policy) for the agent behavior and [MCP tool notes](/reference/cua-driver/mcp-tool-notes#action-response-shape) for the field table.
+
+### When the tree lies
+
+Some accessibility layers echo writes they did not apply. Electron can report an AX value change through its shim while the renderer stays unchanged. Catalyst controls can expose null `AXValue`s. Chromium/WebKit web content can reflect a write through the accessibility bridge without proving the DOM or rendered view changed.
+
+The driver treats those as surface-aware verification cases. It probes at the element level for a web-content surface, including an `AXWebArea` ancestor, so native chrome such as a browser address bar stays trusted while browser-tab content does not get a false confirmation. On those surfaces the driver refuses false `verified: true` responses and returns `verified: false`, `effect: "unverifiable"`, and an `escalation` object instead. Electron app surfaces recommend `"px"` so the caller can act by pixel off the screenshot in the same response; browser-tab web content recommends `"page"` so the caller can switch to DOM/CDP via the `page` tool.
+
+## Where the exact matrix lives
+
+Perception is no longer an axis: every `get_window_state` returns both the tree and a screenshot by default. The enforceable constraints are the combination of **capture scope**, **action rung**, and **delivery mode**.
+
+The exact validity matrix and platform-support table live in [Interface contracts](/reference/cua-driver/contracts). Keep this page as the mental model: observe both tree and pixels, start with the accessibility rung, use the screenshot-backed pixel rung when the tree is insufficient, and escalate to foreground only when the target app requires it.

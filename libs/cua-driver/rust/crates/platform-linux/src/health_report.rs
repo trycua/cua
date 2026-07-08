@@ -347,10 +347,14 @@ fn classify_wayland_backend(
                 NAME_WAYLAND_BACKEND,
                 format!(
                     "No wlroots virtual-pointer advertised ({msg}), but this \
-                     portal/libei build can reach the RemoteDesktop portal; \
-                     input will attempt the xdg-desktop-portal + EIS handshake \
-                     on commands for non-wlroots compositors such as \
-                     GNOME/Mutter and KDE/KWin."
+                     portal/libei build can reach the RemoteDesktop portal \
+                     (proxy reachability only — the full create_session → \
+                     select_devices → start → connect_to_eis handshake is NOT \
+                     exercised here, to avoid a consent prompt on every doctor \
+                     run, so this is not a guarantee that injection succeeds); \
+                     input attempts the full xdg-desktop-portal + EIS handshake \
+                     on commands for non-wlroots compositors such as GNOME/Mutter \
+                     and KDE/KWin."
                 ),
             );
         }

@@ -29,9 +29,9 @@ paths (`os.path.join(_THIS_DIR, "fixtures", "interactive.html")`,
 ```
 libs/cua-driver/rust/tests/integration/
 ├── fixtures/
-│   └── interactive.html      → ../../../../cua-driver-fixtures/interactive.html
+│   └── interactive.html      → ../../../../../cua-driver-fixtures/interactive.html
 └── v2/assets/
-    └── test_page.html        → ../../../../../cua-driver-fixtures/test_page.html
+    └── test_page.html        → ../../../../../../cua-driver-fixtures/test_page.html
 ```
 
 Edits to a fixture now propagate to the driver tests in a single commit.

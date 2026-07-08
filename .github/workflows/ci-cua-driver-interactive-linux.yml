@@ -6,7 +6,7 @@ name: "CI: cua-driver interactive modality suite (Linux)"
 # accessibility bus, and the GTK3 harness app; the rest of CI only compiles them.
 #
 # What runs here:
-#   - modality_capture_mode_test        (ax→tree-only / vision→image-only / som→both)
+#   - modality_capture_mode_test        (include_screenshot:false tree-only + default tree/screenshot capture)
 #   - modality_desktop_scope_linux_test (window-less screen-absolute click via XTest + gate)
 #
 # How the GUI session is provided: Xvfb for the display, a per-job D-Bus session

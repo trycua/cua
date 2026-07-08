@@ -226,12 +226,12 @@ Copy-Item -LiteralPath $BuiltBinary -Destination $DestBinary -Force
 $installedBinary = $DestBinary
 
 # Stage the skill pack alongside the binary. install-local mirrors what
-# install.ps1 does from a release zip — copies Skills/cua-driver-rs/ from
+# install.ps1 does from a release zip — copies Skills/cua-driver/ from
 # the repo into the versioned dir so the `current` junction below
 # transparently exposes it to agents.
-$SourceSkills = Join-Path $RepoRoot "Skills\cua-driver-rs"
+$SourceSkills = Join-Path $RepoRoot "Skills\cua-driver"
 if (Test-Path -LiteralPath $SourceSkills) {
-    $StagedSkills = Join-Path $VersionedDir "Skills\cua-driver-rs"
+    $StagedSkills = Join-Path $VersionedDir "Skills\cua-driver"
     if (Test-Path -LiteralPath $StagedSkills) {
         Remove-Item -LiteralPath $StagedSkills -Recurse -Force
     }

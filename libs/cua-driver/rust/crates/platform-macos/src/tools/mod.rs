@@ -362,10 +362,10 @@ impl Default for ToolState {
     }
 }
 
-/// Register all macOS tools into the registry. `compat=true` swaps the
-/// regular `screenshot` tool for the Claude Code computer-use compat
-/// variant — same name, stricter args, window-scoped JPEG @ 85% + a text
-/// note telling the caller to use pixel-addressed tools.
+/// Register all macOS tools into the registry. `compat=true` is retained as
+/// the Claude Code computer-use compatibility surface selector; the standalone
+/// compat `screenshot` surface was removed in #1692, and grounding now comes
+/// from `get_window_state`.
 pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     let state = Arc::new(ToolState::default());
     // Share the element cache with the recording-hook layer so it can

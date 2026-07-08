@@ -18,7 +18,7 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_config".into(),
-        description: "Return the current cua-driver-rs configuration.".into(),
+        description: "Return the current cua-driver configuration.".into(),
         input_schema: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
         read_only: true,
         destructive: false,
@@ -57,7 +57,7 @@ impl Tool for GetConfigTool {
         // last wrote.
         let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         let capture_scope = self.state.config.read().unwrap().capture_scope.clone();
-        ToolResult::text("cua-driver-rs configuration")
+        ToolResult::text("cua-driver configuration")
             .with_structured(serde_json::json!({
                 "version": env!("CARGO_PKG_VERSION"),
                 "platform": "macos",

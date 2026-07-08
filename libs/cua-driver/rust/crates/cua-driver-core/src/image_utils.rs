@@ -3,8 +3,7 @@
 //! These functions are pure consumers of the [`image`] crate with no
 //! platform-specific dependencies, so they were perfect candidates for
 //! deduplication. Until 2026-05 they lived as near-identical copies in
-//! `platform-{macos,windows,linux}/src/capture.rs` — see
-//! [`CUA_DRIVER_RS_DEDUP_AUDIT.md`] for the full audit trail.
+//! `platform-{macos,windows,linux}/src/capture.rs`.
 //!
 //! Each platform's `capture.rs` still owns its own
 //! `screenshot_window_bytes` / `screenshot_display_bytes` (CGImage on

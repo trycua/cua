@@ -104,12 +104,9 @@
 
               # Multi-cursor (MPX) parallel-drag test on a REAL Xorg brought up
               # by NixOS services.xserver (dummy video + libinput, on a seat via
-              # a display manager). This is the CI-viable replacement for the
-              # hand-launched-Xorg linux-parallel-drag-gif.nix (which timed out
-              # because a self-launched Xorg couldn't get a VT/seat in the
-              # emulated nixos-test VM). Proves uinput slaves enumerate as X
-              # devices, two cursors draw concurrent window-targeted events, and
-              # the shield grab keeps focus off the drag.
+              # a display manager). Proves uinput slaves enumerate as X devices,
+              # two cursors draw concurrent window-targeted events, and the
+              # shield grab keeps focus off the drag.
               cua-driver-linux-parallel-drag-xserver = import ./nix/cua-driver/tests/linux-parallel-drag-xserver.nix {
                 inherit pkgs;
                 inherit (pkgs) lib;
@@ -118,12 +115,6 @@
                   services.cua-driver.package = cuaDriverPackage;
                 };
               };
-
-              # NOTE: cua-driver-linux-parallel-drag-gif (nix/cua-driver/tests/
-              # linux-parallel-drag-gif.nix) is intentionally NOT a flake check —
-              # it hand-launches Xorg, which can't get a VT/seat in the emulated
-              # GHA nixos-test VM. It is superseded by the services.xserver test
-              # above and kept only for local/real-X manual runs.
             }
             // pkgs.lib.optionalAttrs (system == "x86_64-linux") (
               # Background GUI input coverage — one independent matrix job per

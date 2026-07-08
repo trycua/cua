@@ -1,11 +1,9 @@
 # Linux parallel multi-cursor drag test — real Xorg via services.xserver
 #
-# A CI-viable rewrite of linux-parallel-drag-gif.nix. The MPX path needs a
-# REAL Xorg with the libinput input backend so cua-driver's uinput slaves
-# enumerate as X input devices (Xvfb can't; a hand-launched Xorg couldn't get
-# a VT/seat in the emulated nixos-test VM and timed out). Here NixOS's
-# services.xserver brings up Xorg properly on a seat via a display manager,
-# with the `dummy` video driver (software framebuffer, headless) and libinput.
+# The MPX path needs a REAL Xorg with the libinput input backend so cua-driver's
+# uinput slaves enumerate as X input devices. Here NixOS's services.xserver
+# brings up Xorg properly on a seat via a display manager, with the `dummy`
+# video driver (software framebuffer, headless) and libinput.
 # A normal user is auto-logged-in to an icewm session; the session runs
 # `xhost +local:` so the root-run test driver / cua-driver can connect to :0.
 #

@@ -9,7 +9,7 @@ unchanged.
 # macOS — builds appkit + swiftui via xcrun swiftc into .app bundles
 ./macos.sh
 
-# Windows — dotnet publish for wpf/winui3/webview2 + electron-builder for electron
+# Windows — dotnet publish for wpf/winui3/webview2 + Electron dist staging
 .\windows.ps1
 ```
 

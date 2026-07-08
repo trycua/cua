@@ -1,9 +1,9 @@
 ---
-name: cua-driver-rs
+name: cua-driver
 description: Drive a native GUI app (macOS, Windows, Linux) via the cua-driver CLI (default) or MCP server — snapshot its accessibility tree, click/type/scroll by element_index or pixel coords, verify via re-snapshot, all without bringing the target to the foreground. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real application on the host.
 ---
 
-# cua-driver-rs
+# cua-driver
 
 Orchestrates cross-platform app automation via `cua-driver`. Whenever
 a user asks to drive a native app, follow the loop in this skill
@@ -68,30 +68,21 @@ Every reference to `click(...)`, `get_window_state(...)` etc. in this
 skill means `cua-driver click '{...}'` — translate to MCP form only
 when MCP is requested.
 
-### Claude Code computer-use compatibility mode
+### Claude Code MCP setup
 
 For normal Claude Code use, keep the default CLI or `cua-driver` MCP
-server path above. If the user explicitly wants Claude Code's
-vision/computer-use-style flow, they can register:
+server path above. If the user explicitly wants the MCP transport,
+they can register:
 
 ```bash
 cua-driver mcp-config --client claude   # then paste + run the printed line
 ```
 
-Observation: Claude Code vision flows appear to treat a screenshot
-MCP tool as the image-grounding anchor. This compatibility mode keeps
-the normal CuaDriver tools and changes only `screenshot`. The
-compatibility `screenshot` requires `pid` and `window_id`, captures
-only that target window, and returns the window-local pixel
-coordinate frame. Start with `launch_app` or `list_windows`, then
-call `screenshot({pid, window_id})`; do not assume desktop
-coordinates or a full-screen capture.
-
-Use MCP for this Claude Code vision/computer-use-style path. Do not
-shell out to `cua-driver screenshot` as a substitute: CLI screenshots
-still work as CuaDriver calls, but they do not expose the
-`mcp__cua-computer-use__screenshot` tool name that Claude Code
-appears to use as the image-grounding cue.
+Ground on `get_window_state(pid, window_id)`: it returns the
+accessibility tree and a window-local screenshot by default, so the
+coordinate frame you inspect is the same one pixel-addressed actions
+use. The legacy standalone `screenshot` MCP surface was removed; do
+not plan around `mcp__cua-computer-use__screenshot`.
 
 ## Using cua-driver from the shell
 

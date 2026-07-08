@@ -46,7 +46,7 @@ there.
 
    ```
    chown -R cua /opt/cua /home/cua/.cargo /home/cua/.rustup
-   runuser -u cua -- bash /opt/cua/libs/cua-driver/install-local.sh
+   runuser -u cua -- bash /opt/cua/libs/cua-driver/scripts/install-local.sh
    ```
 
 3. **Drive the scenario** (the daemon now self-discovers the session bus, so no

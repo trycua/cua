@@ -1,9 +1,9 @@
 ---
-name: cua-driver-rs-linux
+name: cua-driver-linux
 description: Drive a native Linux app via the cua-driver CLI — snapshot the AT-SPI tree, click by element_index or pixel, type, screenshot, record, verify via re-snapshot. Background by default (no foreground steal, no real-pointer move) on X11. Wayland input/capture is opt-in and still preview.
 ---
 
-# cua-driver-rs — Linux
+# cua-driver — Linux
 
 The Linux backend drives X11 apps **in the background**: clicks and
 keystrokes are injected to the target window without raising it,

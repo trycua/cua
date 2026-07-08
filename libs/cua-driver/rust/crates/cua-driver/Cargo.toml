@@ -37,7 +37,7 @@ semver = "1"
 wait-timeout = "0.2"
 # Tarball extraction for `cua-driver skills install`. The verb fetches a
 # versioned `cua-driver-rs-v<v>-skills.tar.gz` release asset from GitHub
-# and unpacks it under `<HomeDir>/skills/cua-driver-rs/`. `tar` is the
+# and unpacks it under `<HomeDir>/skills/cua-driver/`. `tar` is the
 # canonical streaming TAR reader; `flate2` provides gzip decoding (pulled
 # in transitively by ureq already, but declared explicitly here so the
 # dependency is easy to find).

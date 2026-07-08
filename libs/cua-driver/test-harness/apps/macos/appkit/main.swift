@@ -1,5 +1,5 @@
 // CuaTestHarness.AppKit — deterministic Cocoa AppKit host app for the
-// cua-driver-rs test harness. Mirrors the role of CuaTestHarness.Wpf.
+// cua-driver test harness. Mirrors the role of CuaTestHarness.Wpf.
 //
 // Single-file Swift, compiled with swiftc against AppKit. Wrapped in a
 // minimal .app bundle by build.sh so AX / TCC behaves like a real app.

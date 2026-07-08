@@ -6,8 +6,7 @@
 //! `element_index` back to a native handle without re-walking the
 //! tree. Before this module the three crates each owned a
 //! near-identical `Mutex<HashMap<CacheKey, CachedSnapshot>>` plus
-//! the same insert / lookup / count methods — see
-//! `docs/dedup-audit.md` item #3.
+//! the same insert / lookup / count methods.
 //!
 //! What lives here: the lock + HashMap, generic over the caller's
 //! key type `K` and snapshot type `S`. What stays per-platform:

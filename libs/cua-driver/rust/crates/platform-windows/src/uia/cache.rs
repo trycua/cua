@@ -8,10 +8,9 @@
 //! an extra AddRef from `clone()+forget()` in the walker. `CachedSnapshot::Drop`
 //! calls `Release()` via the kind-appropriate vtable to balance.
 //!
-//! The locked-HashMap plumbing lives in `cua_driver_core::element_cache` — see
-//! `docs/dedup-audit.md` item #3. This module owns the Windows-specific
-//! `CacheKey`, `CachedSnapshot`, and the `Drop` impl that fires COM `Release`
-//! when an entry is replaced or removed.
+//! The locked-HashMap plumbing lives in `cua_driver_core::element_cache`.
+//! This module owns the Windows-specific `CacheKey`, `CachedSnapshot`, and the
+//! `Drop` impl that fires COM `Release` when an entry is replaced or removed.
 
 use super::UiaNode;
 use cua_driver_core::element_cache::ElementCacheCore;
@@ -269,4 +268,3 @@ impl Default for ElementCache {
 #[cfg(test)]
 #[path = "cache_uaf_repro.rs"]
 mod cache_uaf_repro;
-

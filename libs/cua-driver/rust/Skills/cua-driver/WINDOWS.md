@@ -1,12 +1,12 @@
 ---
-name: cua-driver-rs-windows
+name: cua-driver-windows
 description: Drive a native Windows app (Win32, UWP, WebView2/Edge) via the cua-driver CLI or MCP server — snapshot its UIA tree, click/type/scroll by element_index or window-client pixels, verify via re-snapshot, all without bringing the target to the foreground. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real Windows application on the host.
 ---
 
-# cua-driver-rs — Windows
+# cua-driver — Windows
 
 Orchestrates Windows app automation via the `cua-driver` Rust binary
-(`cua-driver-rs` repo, ships as `cua-driver.exe`). Whenever a user
+(ships as `cua-driver.exe`). Whenever a user
 asks to drive a native Windows app, follow the loop in this doc
 rather than calling tools ad-hoc — the snapshot-before-action
 invariant is not optional and silently breaks if you skip it.
@@ -225,7 +225,7 @@ frontmost state:
   family browsers open each URL in a new **window**. Each window has
   its own `window_id`, its own UIA tree, and can be inspected /
   interacted with via `element_index` without activating or switching
-  anything. Tabs are a UX grouping for humans; cua-driver-rs
+  anything. Tabs are a UX grouping for humans; cua-driver
   workflows should default to windows.
 - **Win+key shortcuts owned by the shell** — `Win+E` (Explorer),
   `Win+R` (Run), `Win+S` / `Win+Q` (Search), `Win+number` (taskbar
@@ -470,7 +470,7 @@ your prior tool calls earned.
 
 1. **`cua-driver` is on `$PATH`** — `Get-Command cua-driver` or
    `where.exe cua-driver`. Install location:
-   `%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin\cua-driver.exe`,
+   `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin\cua-driver.exe`,
    added to the user PATH by the install script.
    If missing, point the user at:
    ```powershell
@@ -495,7 +495,7 @@ your prior tool calls earned.
 3. **Run `cua-driver doctor`** — reports session ID, COM apartment
    status, UIA reachability, install paths, version. If anything reads
    `false` / `error`, fix that before tool-calling.
-4. **Permissions** — Windows has no TCC equivalent. cua-driver-rs
+4. **Permissions** — Windows has no TCC equivalent. cua-driver
    needs:
    - No admin elevation for normal use (UIA, PostMessage, UWP
      activation all work from a standard user token).
@@ -1006,10 +1006,10 @@ registered to auto-start at logon AND whether it's currently running:
 ## Recording
 
 Screen recording is **not yet supported on Windows** in
-cua-driver-rs. The `recording start|stop|status` subcommands are
+cua-driver. The `recording start|stop|status` subcommands are
 registered but return "Recording is currently macOS-only" on
-Windows. Tracking: see the cua-driver-rs roadmap in the main repo.
+Windows. Tracking: see the cua-driver roadmap in the main repo.
 
-For now, capture state via `screenshot` (per-window or full-desktop)
-or `get_window_state` (returns a screenshot embedded alongside the
-UIA tree).
+For now, capture state via `get_window_state` (per-window, with a
+screenshot embedded alongside the UIA tree) or `get_desktop_state`
+when you explicitly need the desktop capture surface.

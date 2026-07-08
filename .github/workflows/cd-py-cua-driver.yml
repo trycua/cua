@@ -9,14 +9,12 @@ on:
       version:
         description: "cua-driver-rs version to package (without v prefix)"
         required: true
-        default: "0.5.1"
+        default: "0.7.1"
   # Auto-trigger when cua-driver-rs releases (after CD workflow completes)
   workflow_run:
     workflows: ["CD: Cua Driver (cross-platform)"]
     types:
       - completed
-    branches:
-      - main
 
 permissions:
   contents: read
@@ -27,8 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main')
+      github.event.workflow_run.conclusion == 'success'
     outputs:
       version: ${{ steps.version.outputs.version }}
       should_publish: ${{ steps.version.outputs.should_publish }}
@@ -81,6 +78,9 @@ jobs:
           - os: ubuntu-latest
             platform: linux
             arch: x86_64
+          - os: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
           - os: windows-latest
             platform: windows
             arch: x86_64

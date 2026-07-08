@@ -132,7 +132,7 @@ stub_tool!(get_config_m, GetConfigTool, "get_config",
     serde_json::json!({"type":"object","properties":{},"additionalProperties":false}));
 
 stub_tool!(set_config_m, SetConfigTool, "set_config",
-    "Update cua-driver-rs configuration.",
+    "Update cua-driver configuration.",
     serde_json::json!({"type":"object","properties":{"capture_mode":{"type":"string","enum":["ax","vision"]},"max_image_dimension":{"type":"integer"}},"additionalProperties":false}));
 
 stub_tool!(get_ax_tree_m, GetAccessibilityTreeTool, "get_accessibility_tree",

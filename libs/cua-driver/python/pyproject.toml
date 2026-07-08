@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cua-driver"
-version = "0.7.0"
+version = "0.7.1"
 description = "Python wrapper for cua-driver - cross-platform MCP server for computer-use automation"
 readme = "README.md"
 license = "MIT"

@@ -81,9 +81,8 @@ pub fn screenshot_display() -> anyhow::Result<(String, u32, u32)> {
 
 // PNG/JPEG/resize/crosshair helpers — re-exports of the shared
 // `cua_driver_core::image_utils` module. The previous file-local copies were
-// near-identical to the Windows and Linux versions; the dedup-audit
-// (2026-05) moved them all to one place. See
-// `CUA_DRIVER_RS_DEDUP_AUDIT.md` for the audit trail.
+// near-identical to the Windows and Linux versions before the 2026-05
+// deduplication pass moved them all to one place.
 
 /// Convert raw PNG bytes to JPEG at the given quality (1-95).
 pub fn png_bytes_to_jpeg(png_bytes: &[u8], quality: u8) -> anyhow::Result<Vec<u8>> {

@@ -19,7 +19,7 @@ SPDX-License-Identifier marker in its first 2 KiB.
 
 Typical use:
   scripts/spdx-headers.py                     # apply to libs/cua-driver
-  scripts/spdx-headers.py libs/cua-driver-rs  # apply to a different tree
+  scripts/spdx-headers.py libs/cua-driver/rust  # apply to the Rust workspace only
   scripts/spdx-headers.py --check             # CI gate
   scripts/spdx-headers.py --dry-run           # preview only
 """

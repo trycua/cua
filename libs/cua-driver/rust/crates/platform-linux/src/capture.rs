@@ -93,10 +93,9 @@ pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
 
 // NOTE: the previously-inline `png_dimensions`, `write_uncompressed_png`,
 // `write_png_chunk`, `zlib_store`, `adler32` (and `crc32_ieee` below)
-// were extracted to `cua_driver_core::image_utils` in the 2026-05 dedup
-// audit so all three platforms call the same code. See
-// `CUA_DRIVER_RS_DEDUP_AUDIT.md`. RGBA-encoding callers below now go
-// through `cua_driver_core::image_utils::encode_rgba_to_png`.
+// were extracted to `cua_driver_core::image_utils` in the 2026-05
+// deduplication pass so all three platforms call the same code. RGBA-encoding
+// callers below now go through `cua_driver_core::image_utils::encode_rgba_to_png`.
 
 /// Capture the primary display (root window) as raw PNG bytes.
 ///
@@ -176,8 +175,8 @@ pub fn screenshot_display() -> Result<(String, u32, u32)> {
 
 // PNG/JPEG/resize/crosshair helpers — re-exports of the shared
 // `cua_driver_core::image_utils` module. The previous file-local copies were
-// near-identical to the macOS and Windows versions; the dedup-audit
-// (2026-05) moved them all to one place.
+// near-identical to the macOS and Windows versions before the 2026-05
+// deduplication pass moved them all to one place.
 
 /// Convert PNG bytes to JPEG at the given quality (1–95).
 pub fn png_bytes_to_jpeg(png_bytes: &[u8], quality: u8) -> Result<Vec<u8>> {
@@ -197,4 +196,3 @@ pub fn resize_png_if_needed(png_bytes: &[u8], max_dim: u32) -> Result<Vec<u8>> {
 pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>> {
     cua_driver_core::image_utils::crosshair_png_bytes(png_bytes, cx, cy)
 }
-

@@ -147,6 +147,16 @@ const config = {
         permanent: true,
       },
       {
+        source: '/how-to-guides/driver/choose-a-modality',
+        destination: '/reference/cua-driver/action-selection-policy',
+        permanent: true,
+      },
+      {
+        source: '/how-to-guides/driver/choose-a-modality.mdx',
+        destination: '/reference/cua-driver/action-selection-policy',
+        permanent: true,
+      },
+      {
         source: '/explanation',
         destination: '/concepts',
         permanent: true,

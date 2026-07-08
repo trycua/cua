@@ -21,3 +21,11 @@ def test_wheel_tags_are_platform_specific():
     assert build_wheel.get_wheel_tag("linux", "arm64") == "py3-none-linux_aarch64"
     assert build_wheel.get_wheel_tag("windows", "x86_64") == "py3-none-win_amd64"
     assert build_wheel.get_wheel_tag("windows", "arm64") == "py3-none-win_arm64"
+
+
+def test_license_metadata_stays_legacy_upload_compatible():
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    pyproject_text = pyproject.read_text()
+
+    assert 'license = { text = "MIT" }' in pyproject_text
+    assert 'license = "MIT"' not in pyproject_text

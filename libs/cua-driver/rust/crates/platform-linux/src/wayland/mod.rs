@@ -1446,7 +1446,24 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
         }
         // Last resort under Wayland: an Xwayland app may still have an X11 XID.
     }
-    crate::x11::list_windows(filter_pid)
+    // On an XWayland-co-present Wayland session (GNOME/Mutter, KDE/KWin: DISPLAY
+    // is set, so `is_wayland()` above is false), X11 enumeration only sees
+    // XWayland apps — native Wayland apps have no X11 XID and are otherwise
+    // invisible (#1978). Merge in the AT-SPI registry (keyed by pid), which does
+    // surface native Wayland apps that expose accessibility. Gated on the same
+    // opt-in as the rest of the native-Wayland backend.
+    let mut ws = crate::x11::list_windows(filter_pid);
+    if wayland_enabled() && std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        let seen: std::collections::HashSet<u32> = ws.iter().filter_map(|w| w.pid).collect();
+        for w in crate::atspi::list_windows(filter_pid) {
+            // XWayland apps appear in both lists; keep the X11 entry (real XID +
+            // geometry) and add only AT-SPI windows for pids X11 didn't report.
+            if w.pid.map_or(true, |p| !seen.contains(&p)) {
+                ws.push(w);
+            }
+        }
+    }
+    ws
 }
 
 /// Snapshot of which wlroots manager globals the running compositor advertises.

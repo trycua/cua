@@ -80,10 +80,11 @@ def get_wheel_tag(platform_name: str, arch: str) -> str:
     if platform_name == "darwin":
         return "py3-none-macosx_11_0_universal2"
     if platform_name == "linux":
+        # Rust Linux release binaries are built in debian:11, whose glibc floor is 2.31.
         if arch == "x86_64":
-            return "py3-none-linux_x86_64"
+            return "py3-none-manylinux_2_31_x86_64"
         if arch == "arm64":
-            return "py3-none-linux_aarch64"
+            return "py3-none-manylinux_2_31_aarch64"
     if platform_name == "windows":
         if arch == "x86_64":
             return "py3-none-win_amd64"

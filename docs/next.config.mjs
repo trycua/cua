@@ -107,6 +107,26 @@ const config = {
         permanent: true,
       },
       {
+        source: '/explanation/process-model',
+        destination: '/reference/cua-driver/process-model',
+        permanent: true,
+      },
+      {
+        source: '/explanation/process-model.mdx',
+        destination: '/reference/cua-driver/process-model',
+        permanent: true,
+      },
+      {
+        source: '/concepts/process-model',
+        destination: '/reference/cua-driver/process-model',
+        permanent: true,
+      },
+      {
+        source: '/concepts/process-model.mdx',
+        destination: '/reference/cua-driver/process-model',
+        permanent: true,
+      },
+      {
         source: '/explanation',
         destination: '/concepts',
         permanent: true,

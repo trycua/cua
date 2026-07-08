@@ -1,19 +1,32 @@
 ---
 title: Architecture
-description: "How Cua Driver and Cua Sandbox give an external agent a computer-use interface: one on a real machine, one in a disposable VM."
+description: "How the main Cua pieces fit together: agents, Cua Driver, Cua Sandbox, computer-server, and VM backends."
 ---
 
-Cua has two separate ways to expose a computer to an external agent. In both cases, the agent sends computer-use operations and receives observations such as screenshots, window lists, accessibility trees, and command results. The operating-system details stay behind a driver or server. The agent, model, or orchestration code remains outside that boundary and decides what to do next.
+Cua is a set of computer-use building blocks. The common shape is simple: an agent asks for an observation, chooses an action, and sends that action to a computer. Cua supplies the computer interface. The model, planner, and task policy stay outside that interface.
 
-## Two paths to a computer
+## The ecosystem
 
-The real-machine path uses Cua Driver. The computer is an existing macOS, Windows, or Linux machine. Cua Driver runs on that machine and exposes OS-level operations through MCP over stdio and through a CLI. This path is for operating real native applications in the user's environment.
+Cua has two user-facing entry points.
 
-The disposable-computer path uses Cua Sandbox. The computer is a cloud or local VM or container created for the task. Cua Sandbox starts and controls that environment, then talks to a `computer-server` running inside it over HTTP and WebSocket. This path is for isolated workspaces that can be created, used, and discarded.
+**Cua Driver** runs on an existing macOS, Windows, or Linux machine. It exposes OS-level operations through MCP over stdio and through a CLI. This path is for operating real applications in the user's environment.
 
-These paths are not two backends behind one shared SDK. Cua Driver and Cua Sandbox are separate products. They both provide a computer-use surface, but they use different transports, runtimes, and deployment targets.
+**Cua Sandbox** creates and controls an isolated computer for the task. The computer can run locally or in the cloud, depending on the backend. This path is for workspaces that can be created, used, snapshotted, and discarded.
 
-## Cua Driver: the real machine
+These entry points sit beside the rest of the Cua stack:
+
+| Piece | Role |
+| --- | --- |
+| Agents and models | Decide what to do next from observations. |
+| Cua Driver | Operates the user's real machine through native OS APIs. |
+| Cua Sandbox | Creates and manages disposable computers. |
+| `computer-server` | Runs inside a sandbox and exposes its computer-use API. |
+| Lume and Lumier | Provide macOS VM lifecycle and execution backends. |
+| Backend adapters | Connect sandbox creation to cloud, Windows Sandbox, QEMU, Hyper-V, Docker, or other runtimes. |
+
+Cua Driver and Cua Sandbox are separate products rather than two backends behind one SDK. They both expose a computer-use surface, but they use different transports, runtimes, and deployment targets.
+
+## Real machines
 
 Cua Driver is a single Rust binary that operates a real machine. It exposes operations for window discovery, screenshots, accessibility-tree walking, input delivery, and background operation that does not take over the user's active workspace. Tools can call it through MCP over stdio, or users can call it directly through the CLI.
 
@@ -21,7 +34,9 @@ Under the hood, Cua Driver uses the native platform APIs for each operating syst
 
 Because it runs on the real machine, Cua Driver inherits that machine's installed applications, user session, permissions, displays, and files. That is the main reason to use it. The tradeoff is that the computer is not disposable, so the caller is responsible for choosing operations that are appropriate for the user's active environment.
 
-## Cua Sandbox: a disposable computer
+For the process details behind MCP, CLI, and daemon-backed calls, see [Process model](/reference/cua-driver/process-model).
+
+## Disposable computers
 
 Cua Sandbox creates a disposable cloud or local computer. The environment can be an isolated VM or container, depending on the backend. The Python Sandbox SDK creates and controls that sandbox, then communicates with the `computer-server` running inside it over REST and WebSocket APIs.
 

@@ -9,16 +9,17 @@
 //! - MCP tool calls → `send_command(OverlayCommand)` → `CMD_TX` (SyncSender)
 //! - main thread → `run_on_main_thread()` → drains `CMD_RX` every frame
 //!
-//! The render loop uses a GCD background thread at ~60 fps.  Each tick it
-//! renders the animation state into a `tiny_skia::Pixmap`, converts to a
-//! `CGImage`, and dispatches `CALayer.setContents` back to the main queue.
+//! The render loop uses a background thread at the display refresh cadence only
+//! while pixels can change. Each cursor owns a small nonactivating AppKit panel:
+//! position changes move the panel, and only appearance changes redraw the
+//! small layer bitmap.
 //!
 //! ## Coordinate system
 //!
 //! All coordinates are **screen points** with the **top-left origin**
 //! (matching `OverlayCommand::MoveTo` and AX element coordinates).  The
-//! NSWindow covers `NSScreen.mainScreen.frame` which AppKit places with
-//! a bottom-left origin, so we flip Y when drawing into the Pixmap.
+//! Each cursor panel is positioned in AppKit's bottom-left screen coordinates,
+//! while tiny-skia still paints in the top-left cursor coordinate space.
 //!
 //! ## Cross-platform note (2026-05 dedup audit)
 //!
@@ -81,6 +82,10 @@ static RENDER: Mutex<Option<RenderMap>> = Mutex::new(None);
 /// per-cursor `RenderState` (written once in `run_appkit`).
 struct RenderMap {
     cursors: IndexMap<CursorKey, RenderState>,
+    /// Most recent cursor key touched by an inbound command. Idle-dwell
+    /// timeout selection prefers this cursor so a stale visible cursor cannot
+    /// shorten the dwell of the cursor the user just moved.
+    last_active_key: Option<CursorKey>,
     win_w: f64,
     win_h: f64,
     /// `NSScreen.backingScaleFactor` of the screen the overlay window sits on.
@@ -124,6 +129,9 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
             // must survive every session_end + the daemon lifetime.
             if key != "default" {
                 map.cursors.shift_remove(&key);
+                if map.last_active_key.as_deref() == Some(key.as_str()) {
+                    map.last_active_key = None;
+                }
                 if let Ok(mut guard) = ARRIVAL_TX.lock() {
                     if let Some(m) = guard.as_mut() {
                         m.remove(&key);
@@ -150,6 +158,7 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
                 .entry(key)
                 .or_insert_with(|| render_state_for_key(&template, &k));
             rs.apply_command(cmd);
+            map.last_active_key = Some(k.clone());
             Some(k)
         }
     }
@@ -165,6 +174,7 @@ pub fn init(cfg: CursorConfig) {
     cursors.insert("default".to_owned(), RenderState::new(cfg.clone()));
     *RENDER.lock().unwrap() = Some(RenderMap {
         cursors,
+        last_active_key: None,
         win_w: 0.0,
         win_h: 0.0,
         backing_scale: 1.0, // overwritten in run_appkit() once the NSScreen is known
@@ -284,6 +294,8 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
         }
     }
     rs.core.pos = (sx, sy);
+    rs.core.idle_secs = 0.0;
+    rs.core.idle_alpha = 1.0;
     true
 }
 
@@ -504,10 +516,235 @@ fn render_map_needs_frame_tick(map: &RenderMap) -> bool {
 }
 
 fn render_map_idle_fade_due_in(map: &RenderMap) -> Option<Duration> {
+    if let Some(due) = map
+        .last_active_key
+        .as_ref()
+        .and_then(|key| map.cursors.get(key))
+        .and_then(RenderState::idle_fade_due_in)
+    {
+        return Some(due);
+    }
     map.cursors
         .values()
         .filter_map(RenderState::idle_fade_due_in)
         .min()
+}
+
+fn frame_budget_for_max_fps(max_fps: i64) -> Duration {
+    let fps = if max_fps >= 30 { max_fps } else { 60 };
+    Duration::from_secs_f64(1.0 / fps as f64)
+}
+
+fn repin_frame_interval(frame_budget: Duration) -> u32 {
+    let secs = frame_budget.as_secs_f64();
+    if secs <= 0.0 {
+        return 60;
+    }
+    (1.0 / secs).round().clamp(1.0, 240.0) as u32
+}
+
+const CURSOR_WINDOW_MARGIN_POINTS: f64 = 72.0;
+const FOCUS_RECT_MARGIN_POINTS: f64 = 10.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LogicalRect {
+    left: f64,
+    top: f64,
+    width: f64,
+    height: f64,
+}
+
+impl LogicalRect {
+    fn around(point: (f64, f64), radius: f64) -> Self {
+        Self {
+            left: point.0 - radius,
+            top: point.1 - radius,
+            width: radius * 2.0,
+            height: radius * 2.0,
+        }
+    }
+
+    fn expanded(self, margin: f64) -> Self {
+        Self {
+            left: self.left - margin,
+            top: self.top - margin,
+            width: self.width + margin * 2.0,
+            height: self.height + margin * 2.0,
+        }
+    }
+
+    fn union(self, other: Self) -> Self {
+        let right = (self.left + self.width).max(other.left + other.width);
+        let bottom = (self.top + self.height).max(other.top + other.height);
+        let left = self.left.min(other.left);
+        let top = self.top.min(other.top);
+        Self {
+            left,
+            top,
+            width: right - left,
+            height: bottom - top,
+        }
+    }
+
+    fn pixel_size(self, backing_scale: f64) -> (u32, u32) {
+        let scale = backing_scale.max(1.0);
+        (
+            (self.width * scale).ceil().max(1.0) as u32,
+            (self.height * scale).ceil().max(1.0) as u32,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScreenGeometry {
+    origin_x: f64,
+    origin_y: f64,
+    height: f64,
+    backing_scale: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AppKitRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PanelLevel {
+    Floating,
+    TargetWindow,
+}
+
+impl PanelLevel {
+    fn ns_window_level(self) -> i64 {
+        match self {
+            PanelLevel::Floating => 3,
+            PanelLevel::TargetWindow => 0,
+        }
+    }
+}
+
+fn panel_level_for_pin(pinned_wid: Option<u64>) -> PanelLevel {
+    if pinned_wid.is_some() {
+        PanelLevel::TargetWindow
+    } else {
+        PanelLevel::Floating
+    }
+}
+
+fn appkit_frame_for_rect(rect: LogicalRect, screen: ScreenGeometry) -> AppKitRect {
+    AppKitRect {
+        x: screen.origin_x + rect.left,
+        y: screen.origin_y + screen.height - rect.top - rect.height,
+        width: rect.width,
+        height: rect.height,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AppearanceSignature {
+    heading_millirad: i64,
+    idle_alpha_milli: i64,
+    pressed: bool,
+    click_milli: i64,
+    focus_milli: i64,
+    builtin_shape: u8,
+    custom_shape: Option<(u32, u32)>,
+}
+
+fn quantize(value: f64, scale: f64) -> i64 {
+    (value * scale).round() as i64
+}
+
+fn builtin_shape_code(core: &RenderStateCore) -> u8 {
+    match core.cfg.builtin_shape {
+        cursor_overlay::BuiltinShape::Arrow => 0,
+        cursor_overlay::BuiltinShape::Teardrop => 1,
+        cursor_overlay::BuiltinShape::Sky => 2,
+    }
+}
+
+fn active_shape_rotates_with_heading(rs: &RenderState) -> bool {
+    match rs.core.shape.as_ref() {
+        Some(shape) => shape.rotates_with_heading,
+        None => !matches!(rs.core.cfg.builtin_shape, cursor_overlay::BuiltinShape::Sky),
+    }
+}
+
+fn appearance_signature(rs: &RenderState) -> AppearanceSignature {
+    AppearanceSignature {
+        heading_millirad: if active_shape_rotates_with_heading(rs) {
+            quantize(rs.core.heading, 1000.0)
+        } else {
+            0
+        },
+        idle_alpha_milli: quantize(rs.core.idle_alpha, 1000.0),
+        pressed: rs.core.pressed,
+        click_milli: rs.core.click_t.map(|t| quantize(t, 1000.0)).unwrap_or(-1),
+        focus_milli: if rs.focus_rect.is_some() {
+            quantize(rs.focus_rect_t, 1000.0)
+        } else {
+            -1
+        },
+        builtin_shape: builtin_shape_code(&rs.core),
+        custom_shape: rs
+            .core
+            .shape
+            .as_ref()
+            .map(|shape| (shape.width, shape.height)),
+    }
+}
+
+fn cursor_window_rect(rs: &RenderState) -> Option<LogicalRect> {
+    if !rs.core.visible || rs.core.pos.0 < -100.0 || rs.core.idle_alpha < 0.004 {
+        return None;
+    }
+
+    let mut rect = LogicalRect::around(rs.core.pos, CURSOR_WINDOW_MARGIN_POINTS);
+    if let Some([x, y, w, h]) = rs.focus_rect {
+        let focus = LogicalRect {
+            left: x,
+            top: y,
+            width: w.max(1.0),
+            height: h.max(1.0),
+        }
+        .expanded(FOCUS_RECT_MARGIN_POINTS);
+        rect = rect.union(focus);
+    }
+    Some(rect)
+}
+
+fn cursor_redraw_needed(
+    last_appearance: Option<AppearanceSignature>,
+    last_pixel_size: Option<(u32, u32)>,
+    next_appearance: AppearanceSignature,
+    next_pixel_size: (u32, u32),
+    force: bool,
+    focus_active: bool,
+) -> bool {
+    force
+        || focus_active
+        || last_appearance != Some(next_appearance)
+        || last_pixel_size != Some(next_pixel_size)
+}
+
+fn render_cursor_pixmap(
+    rs: &RenderState,
+    rect: LogicalRect,
+    backing_scale: f64,
+) -> tiny_skia::Pixmap {
+    let scale = backing_scale.max(1.0);
+    let (w, h) = rect.pixel_size(scale);
+    let mut pm =
+        tiny_skia::Pixmap::new(w, h).unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+    let focus = rs.focus_rect.map(|focus_rect| FocusRect {
+        rect: focus_rect,
+        t: rs.focus_rect_t,
+    });
+    cursor_overlay::paint_cursor(&mut pm, &rs.core, rect.left, rect.top, focus, scale as f32);
+    pm
 }
 
 // ── AppKit / CGImage plumbing ─────────────────────────────────────────────
@@ -549,63 +786,14 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         use core_graphics::display::{CGDisplayBounds, CGMainDisplayID};
         let display_id = CGMainDisplayID();
         let bounds = CGDisplayBounds(display_id);
-        backing_scale = crate::tools::get_screen_size::get_backing_scale(
-            display_id,
-            bounds.size.width as i64,
-        );
+        backing_scale =
+            crate::tools::get_screen_size::get_backing_scale(display_id, bounds.size.width as i64);
         if !(backing_scale > 0.0) {
             backing_scale = 1.0;
         }
     }
-
-    // ---- NSWindow: single alloc + initWithContentRect:... ----
-    let win: *mut AnyObject = {
-        let allocated: *mut AnyObject = msg_send![class!(NSWindow), alloc];
-        // NSWindowStyleMaskBorderless = 0
-        // NSBackingStoreBuffered = 2
-        let w: *mut AnyObject = msg_send![allocated,
-            initWithContentRect: screen_frame
-            styleMask: 0u64
-            backing: 2u64
-            defer: false
-        ];
-        w
-    };
-    if win.is_null() {
-        return;
-    }
-
-    let _: () = msg_send![win, setOpaque: false];
-    let clear: *mut AnyObject = msg_send![class!(NSColor), clearColor];
-    let _: () = msg_send![win, setBackgroundColor: clear];
-    let _: () = msg_send![win, setHasShadow: false];
-    let _: () = msg_send![win, setIgnoresMouseEvents: true];
-    // NSNormalWindowLevel = 0.  The overlay lives at the normal window level so
-    // it appears in CGWindowList layer=0 results (which agents inspect via
-    // list_windows).  Z-ordering above the target is managed dynamically via
-    // orderWindow:relativeTo: (see dispatch_pin_above / render_loop repin).
-    let _: () = msg_send![win, setLevel: 0i64];
-    // NSWindowCollectionBehaviorCanJoinAllSpaces(1<<0) | FullScreenAuxiliary(1<<8) | Stationary(1<<4)
-    let _: () = msg_send![win, setCollectionBehavior: (1u64 | (1<<8) | (1<<4))];
-    let _: () = msg_send![win, setReleasedWhenClosed: false];
-    let _: () = msg_send![win, setHidesOnDeactivate: false];
-
-    // ---- Layer-backed content view ----
-    let content_view: *mut AnyObject = msg_send![win, contentView];
-    let _: () = msg_send![content_view, setWantsLayer: true];
-    let layer: *mut AnyObject = msg_send![content_view, layer];
-
-    // Set layer geometry. contentsScale tells Core Animation that the CGImage
-    // we hand to setContents: is already at retina (`backing_scale`×) pixel
-    // density — without this, CA would treat our physical-pixel pixmap as a
-    // 1× asset and bilinear-downsample it back to logical pixels on screen,
-    // re-introducing the blur this pipeline exists to eliminate.
-    let _: () = msg_send![layer, setContentsScale: backing_scale];
-    // kCAGravityTopLeft — the string literal "topLeft"
-    let gravity_ns: *mut AnyObject = msg_send![class!(NSString),
-        stringWithUTF8String: b"topLeft\0".as_ptr()
-    ];
-    let _: () = msg_send![layer, setContentsGravity: gravity_ns];
+    let max_fps: i64 = msg_send![main_screen, maximumFramesPerSecond];
+    let frame_budget = frame_budget_for_max_fps(max_fps);
 
     // ---- Update RenderMap header with screen size (screen-global) ----
     {
@@ -617,35 +805,52 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         }
     }
 
-    // ---- Show the window ----
-    let _: () = msg_send![win, orderFrontRegardless];
-
-    // ---- Render thread (60 fps) ----
-    let layer_ptr = layer as usize;
-    let win_ptr = win as usize;
+    // ---- Render thread (display-rate while animating, quiescent while idle) ----
+    let screen = ScreenGeometry {
+        origin_x: screen_frame.origin.x,
+        origin_y: screen_frame.origin.y,
+        height: win_h,
+        backing_scale,
+    };
     std::thread::spawn(move || {
-        render_loop(layer_ptr, win_ptr, rx, win_w, win_h);
+        render_loop(rx, screen, frame_budget);
     });
 
     // ---- NSApplication run loop (blocks until process exits) ----
     let _: () = msg_send![app, run];
 }
 
-fn render_loop(
-    layer_ptr: usize,
+struct CursorWindowHandle {
     win_ptr: usize,
+    layer_ptr: usize,
+    visible: bool,
+    last_appearance: Option<AppearanceSignature>,
+    last_pixel_size: Option<(u32, u32)>,
+    last_pinned: Option<u64>,
+    last_level: Option<PanelLevel>,
+    repin_frames: u32,
+}
+
+struct CursorWindowUpdate {
+    key: CursorKey,
+    rect: Option<LogicalRect>,
+    appearance: Option<AppearanceSignature>,
+    pixel_size: Option<(u32, u32)>,
+    pixmap: Option<tiny_skia::Pixmap>,
+    pinned_wid: Option<u64>,
+    panel_level: PanelLevel,
+}
+
+fn render_loop(
     rx: std::sync::mpsc::Receiver<OverlayMsg>,
-    _win_w: f64,
-    _win_h: f64,
+    screen: ScreenGeometry,
+    target_frame_ms: Duration,
 ) {
-    let target_frame_ms = Duration::from_millis(16); // ~60 fps while pixels can change
     let mut last_tick = Instant::now();
     let mut frame_tick_needed = false;
     let mut idle_fade_due_in: Option<Duration> = None;
-    // Repin bookkeeping: track last pinned wid and a frame counter for
-    // the periodic defensive-repin (every ~60 active frames ≈ 1 s).
-    let mut last_pinned: Option<u64> = None;
-    let mut repin_frames: u32 = 0;
+    let mut handles: HashMap<CursorKey, CursorWindowHandle> = HashMap::new();
+    let repin_interval_frames = repin_frame_interval(target_frame_ms);
 
     loop {
         // When no cursor animation/fade is active, either block until the MCP
@@ -686,37 +891,23 @@ fn render_loop(
         };
         last_tick = now;
 
-        // ── Phase 1: drain + tick all cursors (one lock acquisition) ──────
-        // `pinned_wid` follows the most-recently-updated cursor: a single
-        // NSWindow can occupy only one z-band, so the last-active cursor's
-        // target wins. `arrived` collects the keys whose path just ended.
-        let (
-            pinned_wid,
-            arrived,
-            win_w,
-            win_h,
-            had_msg,
-            next_frame_tick_needed,
-            next_idle_fade_due_in,
-        ) = {
+        // ── Phase 1: drain + tick all cursors, then prepare small-window updates.
+        // `arrived` collects keys whose path just ended. Position-only motion
+        // updates only the per-cursor panel frame; bitmap redraws are reserved
+        // for appearance changes such as heading, click pulse, focus fade, or
+        // idle fade alpha.
+        let (arrived, had_msg, next_frame_tick_needed, next_idle_fade_due_in, updates) = {
             let mut guard = RENDER.lock().unwrap();
             match guard.as_mut() {
                 Some(map) => {
-                    // Drain via get-or-create; track the last-touched key so we
-                    // can read its pinned_wid after ticking.
-                    let mut last_key: Option<CursorKey> = None;
                     let mut had_msg = false;
                     if let Some(msg) = first_msg {
                         had_msg = true;
-                        if let Some(k) = apply_msg(map, msg) {
-                            last_key = Some(k);
-                        }
+                        let _ = apply_msg(map, msg);
                     }
                     while let Ok(msg) = rx.try_recv() {
                         had_msg = true;
-                        if let Some(k) = apply_msg(map, msg) {
-                            last_key = Some(k);
-                        }
+                        let _ = apply_msg(map, msg);
                     }
                     // Tick every cursor while an animation/fade is in progress
                     // or immediately after a command changed render state. The
@@ -730,25 +921,54 @@ fn render_loop(
                             }
                         }
                     }
-                    let pinned = last_key
-                        .as_ref()
-                        .and_then(|k| map.cursors.get(k))
-                        .map(|rs| rs.core.pinned_wid)
-                        .unwrap_or(last_pinned);
                     let next_frame_tick_needed = render_map_needs_frame_tick(map);
                     let next_idle_fade_due_in = if next_frame_tick_needed {
                         None
                     } else {
                         render_map_idle_fade_due_in(map)
                     };
+
+                    let updates = map
+                        .cursors
+                        .iter()
+                        .map(|(key, rs)| {
+                            let rect = cursor_window_rect(rs);
+                            let (appearance, pixel_size, pixmap) = if let Some(rect) = rect {
+                                let appearance = appearance_signature(rs);
+                                let pixel_size = rect.pixel_size(screen.backing_scale);
+                                let handle = handles.get(key);
+                                let redraw = cursor_redraw_needed(
+                                    handle.and_then(|h| h.last_appearance),
+                                    handle.and_then(|h| h.last_pixel_size),
+                                    appearance,
+                                    pixel_size,
+                                    had_msg,
+                                    rs.focus_rect.is_some(),
+                                );
+                                let pixmap = redraw
+                                    .then(|| render_cursor_pixmap(rs, rect, screen.backing_scale));
+                                (Some(appearance), Some(pixel_size), pixmap)
+                            } else {
+                                (None, None, None)
+                            };
+                            CursorWindowUpdate {
+                                key: key.clone(),
+                                rect,
+                                appearance,
+                                pixel_size,
+                                pixmap,
+                                pinned_wid: rs.core.pinned_wid,
+                                panel_level: panel_level_for_pin(rs.core.pinned_wid),
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
                     (
-                        pinned,
                         arrived,
-                        map.win_w,
-                        map.win_h,
                         had_msg,
                         next_frame_tick_needed,
                         next_idle_fade_due_in,
+                        updates,
                     )
                 }
                 None => break,
@@ -760,61 +980,88 @@ fn render_loop(
             arrival_fire(k);
         }
 
-        // Repin: immediately on target change, then defensive every ~1 s while
-        // the render loop is active. When quiescent, z-order is left unchanged
-        // until the next command wakes the loop.
-        if frame_tick_needed || had_msg {
-            repin_frames += 1;
-            let pin_changed = pinned_wid != last_pinned;
-            last_pinned = pinned_wid;
-            if pinned_wid.is_some() && (pin_changed || repin_frames >= 60) {
-                MacZOrderEnforcer { win_ptr }.reassert(pinned_wid);
-                repin_frames = 0;
-            } else if repin_frames >= 60 {
-                repin_frames = 0;
+        // ── Phase 2: move per-cursor windows and update contents only when needed.
+        for update in updates {
+            match update.rect {
+                Some(rect) => {
+                    let handle = match handles.get_mut(&update.key) {
+                        Some(handle) => handle,
+                        None => {
+                            let Some(new_handle) =
+                                dispatch_create_cursor_window(screen.backing_scale)
+                            else {
+                                continue;
+                            };
+                            handles.insert(update.key.clone(), new_handle);
+                            handles.get_mut(&update.key).unwrap()
+                        }
+                    };
+
+                    let frame = appkit_frame_for_rect(rect, screen);
+                    let was_visible = handle.visible;
+                    let pin_changed = update.pinned_wid != handle.last_pinned;
+                    let level_changed = Some(update.panel_level) != handle.last_level;
+                    dispatch_update_cursor_window(
+                        handle.win_ptr,
+                        handle.layer_ptr,
+                        frame,
+                        update.pixmap,
+                        update.panel_level,
+                        update.pinned_wid,
+                        !was_visible || pin_changed || level_changed,
+                    );
+                    handle.visible = true;
+                    handle.last_appearance = update.appearance;
+                    handle.last_pixel_size = update.pixel_size;
+                    handle.last_level = Some(update.panel_level);
+
+                    if frame_tick_needed || had_msg || !was_visible {
+                        handle.repin_frames += 1;
+                    }
+                    handle.last_pinned = update.pinned_wid;
+                    if update.pinned_wid.is_some() && handle.repin_frames >= repin_interval_frames {
+                        MacZOrderEnforcer {
+                            win_ptr: handle.win_ptr,
+                        }
+                        .reassert(update.pinned_wid);
+                        handle.repin_frames = 0;
+                    } else if handle.repin_frames >= repin_interval_frames {
+                        handle.repin_frames = 0;
+                    }
+                }
+                None => {
+                    if let Some(handle) = handles.get_mut(&update.key) {
+                        if handle.visible {
+                            dispatch_hide_cursor_window(handle.win_ptr);
+                            handle.visible = false;
+                        }
+                        handle.last_appearance = None;
+                        handle.last_pixel_size = None;
+                    }
+                }
             }
         }
 
-        // ── Phase 2: composite every cursor into ONE pixmap ───────────────
-        // Render only when a command arrived or the previous/next tick can
-        // change pixels. A final frame is emitted as animations/fades finish so
-        // the layer is left in the completed/cleared state before blocking.
-        if had_msg || frame_tick_needed || next_frame_tick_needed {
-            let pixmap = {
-                let guard = RENDER.lock().unwrap();
-                if let Some(map) = guard.as_ref() {
-                    // Allocate the pixmap at the screen's PHYSICAL pixel
-                    // dimensions so the cursor rasterises at retina resolution.
-                    // The cursor's logical coordinates are scaled into pixmap
-                    // pixels inside `paint_cursor` (it multiplies px/py/sizes
-                    // by `backing_scale`).
-                    let scale = map.backing_scale.max(1.0);
-                    let w = (win_w * scale).max(1.0) as u32;
-                    let h = (win_h * scale).max(1.0) as u32;
-                    let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
-                        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
-                    let backing_scale_f32 = scale as f32;
-                    for (_k, rs) in &map.cursors {
-                        let focus = rs.focus_rect.map(|rect| FocusRect {
-                            rect,
-                            t: rs.focus_rect_t,
-                        });
-                        cursor_overlay::paint_cursor(
-                            &mut pm, &rs.core, 0.0,
-                            0.0, // macOS uses screen-local coords (no origin offset)
-                            focus,
-                            backing_scale_f32,
-                        );
-                    }
-                    pm
-                } else {
-                    break;
-                }
-            };
-
-            // Convert to CGImage and update layer on the main queue.
-            dispatch_set_layer_contents(layer_ptr, pixmap);
-        }
+        let live_keys = {
+            let guard = RENDER.lock().unwrap();
+            guard
+                .as_ref()
+                .map(|map| {
+                    map.cursors
+                        .keys()
+                        .cloned()
+                        .collect::<std::collections::HashSet<_>>()
+                })
+                .unwrap_or_default()
+        };
+        handles.retain(|key, handle| {
+            if live_keys.contains(key) {
+                true
+            } else {
+                dispatch_close_cursor_window(handle.win_ptr);
+                false
+            }
+        });
 
         frame_tick_needed = next_frame_tick_needed;
         idle_fade_due_in = next_idle_fade_due_in;
@@ -828,26 +1075,122 @@ fn render_loop(
     }
 }
 
-/// Convert a `tiny_skia::Pixmap` to a `CGImage` and set it as the contents
-/// of the given `CALayer` via `dispatch_async(main_queue, ...)`.
-fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
-    // Build the CGImage from the pixmap bytes.
-    let cg_image_ptr = match pixmap_to_cgimage(&pixmap) {
-        Some(p) => p,
-        None => return,
-    };
-
-    // Box the payload for the C callback.
-    let payload = Box::new((layer_ptr, cg_image_ptr));
-
-    // GCD symbols from libdispatch (part of the macOS system library stubs).
-    // `dispatch_get_main_queue()` is an inline C function; the underlying
-    // symbol is `_dispatch_main_q`, a *struct* (not a pointer).
-    // We declare it as `u8` (opaque placeholder) and take its ADDRESS to
-    // obtain the `dispatch_queue_t` (pointer to the struct).
+fn dispatch_create_cursor_window(backing_scale: f64) -> Option<CursorWindowHandle> {
     #[link(name = "dispatch", kind = "dylib")]
     extern "C" {
-        // Opaque placeholder — we only ever take &_dispatch_main_q, never read it.
+        static _dispatch_main_q: u8;
+        fn dispatch_sync_f(
+            queue: *const c_void,
+            context: *mut c_void,
+            work: unsafe extern "C" fn(*mut c_void),
+        );
+    }
+
+    struct Payload {
+        backing_scale: f64,
+        win_ptr: usize,
+        layer_ptr: usize,
+    }
+
+    unsafe extern "C" fn create_cb(ctx: *mut c_void) {
+        use objc2::runtime::AnyObject;
+        use objc2::{class, msg_send};
+        use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+        let payload = &mut *(ctx as *mut Payload);
+        let rect = NSRect {
+            origin: NSPoint {
+                x: -10_000.0,
+                y: -10_000.0,
+            },
+            size: NSSize {
+                width: 1.0,
+                height: 1.0,
+            },
+        };
+
+        let allocated: *mut AnyObject = msg_send![class!(NSPanel), alloc];
+        // NSWindowStyleMaskNonactivatingPanel = 1 << 7.
+        let win: *mut AnyObject = msg_send![allocated,
+            initWithContentRect: rect
+            styleMask: (1u64 << 7)
+            backing: 2u64
+            defer: false
+        ];
+        if win.is_null() {
+            return;
+        }
+
+        let _: () = msg_send![win, setOpaque: false];
+        let clear: *mut AnyObject = msg_send![class!(NSColor), clearColor];
+        let _: () = msg_send![win, setBackgroundColor: clear];
+        let _: () = msg_send![win, setHasShadow: false];
+        let _: () = msg_send![win, setIgnoresMouseEvents: true];
+        // NSFloatingWindowLevel = 3: visible above normal app windows without
+        // activating this accessory app.
+        let _: () = msg_send![win, setLevel: 3i64];
+        // CanJoinAllSpaces | FullScreenAuxiliary | Stationary.
+        let _: () = msg_send![win, setCollectionBehavior: (1u64 | (1 << 8) | (1 << 4))];
+        let _: () = msg_send![win, setReleasedWhenClosed: false];
+        let _: () = msg_send![win, setHidesOnDeactivate: false];
+
+        let content_view: *mut AnyObject = msg_send![win, contentView];
+        let _: () = msg_send![content_view, setWantsLayer: true];
+        let layer: *mut AnyObject = msg_send![content_view, layer];
+        let _: () = msg_send![layer, setContentsScale: payload.backing_scale.max(1.0)];
+        let gravity_ns: *mut AnyObject = msg_send![class!(NSString),
+            stringWithUTF8String: b"topLeft\0".as_ptr()
+        ];
+        let _: () = msg_send![layer, setContentsGravity: gravity_ns];
+        let _: () = msg_send![win, orderOut: std::ptr::null_mut::<AnyObject>()];
+
+        payload.win_ptr = win as usize;
+        payload.layer_ptr = layer as usize;
+    }
+
+    let mut payload = Payload {
+        backing_scale,
+        win_ptr: 0,
+        layer_ptr: 0,
+    };
+    unsafe {
+        let main_queue = &raw const _dispatch_main_q as *const c_void;
+        dispatch_sync_f(
+            main_queue,
+            &mut payload as *mut Payload as *mut c_void,
+            create_cb,
+        );
+    }
+    if payload.win_ptr == 0 || payload.layer_ptr == 0 {
+        None
+    } else {
+        Some(CursorWindowHandle {
+            win_ptr: payload.win_ptr,
+            layer_ptr: payload.layer_ptr,
+            visible: false,
+            last_appearance: None,
+            last_pixel_size: None,
+            last_pinned: None,
+            last_level: None,
+            repin_frames: 0,
+        })
+    }
+}
+
+fn dispatch_update_cursor_window(
+    win_ptr: usize,
+    layer_ptr: usize,
+    frame: AppKitRect,
+    pixmap: Option<tiny_skia::Pixmap>,
+    panel_level: PanelLevel,
+    order_target: Option<u64>,
+    should_order: bool,
+) {
+    let cg_image_ptr = pixmap.as_ref().and_then(pixmap_to_cgimage).unwrap_or(0);
+    drop(pixmap);
+
+    #[link(name = "dispatch", kind = "dylib")]
+    extern "C" {
         static _dispatch_main_q: u8;
         fn dispatch_async_f(
             queue: *const c_void,
@@ -856,28 +1199,101 @@ fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
         );
     }
 
-    unsafe extern "C" fn set_contents_cb(ctx: *mut c_void) {
-        let (layer_ptr, cg_image_ptr): (usize, usize) = *Box::from_raw(ctx as *mut _);
-        let layer = layer_ptr as *mut objc2::runtime::AnyObject;
-        // setContents: expects an `id` (type '@'), not a raw void pointer.
-        // CGImageRef is toll-free bridged to NSObject, so we cast it to *mut AnyObject.
-        let cg_id = cg_image_ptr as *mut objc2::runtime::AnyObject;
-        let _: () = objc2::msg_send![layer, setContents: cg_id];
-        // Release the CGImage ref we retained in pixmap_to_cgimage.
-        CGImageRelease(cg_image_ptr as *mut c_void);
+    struct Payload {
+        win_ptr: usize,
+        layer_ptr: usize,
+        frame: AppKitRect,
+        cg_image_ptr: usize,
+        panel_level: PanelLevel,
+        order_target: Option<u64>,
+        should_order: bool,
+    }
+
+    unsafe extern "C" fn update_cb(ctx: *mut c_void) {
+        use objc2::runtime::AnyObject;
+        use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+        let payload: Payload = *Box::from_raw(ctx as *mut Payload);
+        let win = payload.win_ptr as *mut AnyObject;
+        let layer = payload.layer_ptr as *mut AnyObject;
+        let frame = NSRect {
+            origin: NSPoint {
+                x: payload.frame.x,
+                y: payload.frame.y,
+            },
+            size: NSSize {
+                width: payload.frame.width,
+                height: payload.frame.height,
+            },
+        };
+        let _: () = objc2::msg_send![win, setFrame: frame display: false];
+        let _: () = objc2::msg_send![win, setLevel: payload.panel_level.ns_window_level()];
+        if payload.cg_image_ptr != 0 {
+            let cg_id = payload.cg_image_ptr as *mut AnyObject;
+            let _: () = objc2::msg_send![layer, setContents: cg_id];
+            CGImageRelease(payload.cg_image_ptr as *mut c_void);
+        }
+        if payload.should_order {
+            let relative_to = payload.order_target.unwrap_or(0) as i64;
+            let _: () = objc2::msg_send![win, orderWindow: 1i64 relativeTo: relative_to];
+        }
     }
 
     extern "C" {
         fn CGImageRelease(image: *mut c_void);
     }
 
+    let payload = Box::new(Payload {
+        win_ptr,
+        layer_ptr,
+        frame,
+        cg_image_ptr,
+        panel_level,
+        order_target,
+        should_order,
+    });
     unsafe {
-        // &_dispatch_main_q is the queue pointer (same as dispatch_get_main_queue()).
+        let main_queue = &raw const _dispatch_main_q as *const c_void;
+        dispatch_async_f(main_queue, Box::into_raw(payload) as *mut c_void, update_cb);
+    }
+}
+
+fn dispatch_hide_cursor_window(win_ptr: usize) {
+    dispatch_window_lifecycle(win_ptr, false);
+}
+
+fn dispatch_close_cursor_window(win_ptr: usize) {
+    dispatch_window_lifecycle(win_ptr, true);
+}
+
+fn dispatch_window_lifecycle(win_ptr: usize, close: bool) {
+    #[link(name = "dispatch", kind = "dylib")]
+    extern "C" {
+        static _dispatch_main_q: u8;
+        fn dispatch_async_f(
+            queue: *const c_void,
+            context: *mut c_void,
+            work: unsafe extern "C" fn(*mut c_void),
+        );
+    }
+
+    unsafe extern "C" fn lifecycle_cb(ctx: *mut c_void) {
+        let (win_ptr, close): (usize, bool) = *Box::from_raw(ctx as *mut (usize, bool));
+        let win = win_ptr as *mut objc2::runtime::AnyObject;
+        let _: () =
+            objc2::msg_send![win, orderOut: std::ptr::null_mut::<objc2::runtime::AnyObject>()];
+        if close {
+            let _: () = objc2::msg_send![win, close];
+        }
+    }
+
+    let payload = Box::new((win_ptr, close));
+    unsafe {
         let main_queue = &raw const _dispatch_main_q as *const c_void;
         dispatch_async_f(
             main_queue,
             Box::into_raw(payload) as *mut c_void,
-            set_contents_cb,
+            lifecycle_cb,
         );
     }
 }
@@ -927,12 +1343,9 @@ fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
 /// `orderWindow:relativeTo:` call to the main queue (AppKit must run on
 /// the main thread).
 ///
-/// `target = None` is treated as a no-op here rather than raising to the
-/// front: macOS creates the overlay at `NSNormalWindowLevel` and never
-/// promotes it into an "always-on-top" level the way Windows does with
-/// `HWND_TOPMOST`, so there is no topmost band to escape. Letting the
-/// overlay stay where the user's activations have left it keeps it out
-/// of the way when no agent action is in flight.
+/// `target = None` is treated as a no-op here: free-move visibility is handled
+/// by `PanelLevel::Floating`, while pinned panels are placed at the normal
+/// window level and ordered relative to the target CGWindow id.
 struct MacZOrderEnforcer {
     win_ptr: usize,
 }
@@ -1062,6 +1475,7 @@ mod tests {
         );
         RenderMap {
             cursors,
+            last_active_key: None,
             win_w: 100.0,
             win_h: 100.0,
             backing_scale: 1.0,
@@ -1321,6 +1735,160 @@ mod tests {
             render_map_needs_frame_tick(&map),
             "fade in progress should resume frame ticks"
         );
+    }
+
+    #[test]
+    fn position_only_motion_moves_window_without_redrawing_bitmap() {
+        let mut rs = RenderState::new(CursorConfig::default());
+        rs.core.visible = true;
+        rs.core.pos = (60.0, 60.0);
+        rs.core.idle_alpha = 1.0;
+        rs.core.heading = std::f64::consts::FRAC_PI_4;
+
+        let rect_a = cursor_window_rect(&rs).unwrap();
+        let app_a = appearance_signature(&rs);
+        let size_a = rect_a.pixel_size(2.0);
+
+        rs.core.pos = (90.0, 75.0);
+        let rect_b = cursor_window_rect(&rs).unwrap();
+        let app_b = appearance_signature(&rs);
+        let size_b = rect_b.pixel_size(2.0);
+
+        assert_ne!(
+            appkit_frame_for_rect(
+                rect_a,
+                ScreenGeometry {
+                    origin_x: 0.0,
+                    origin_y: 0.0,
+                    height: 200.0,
+                    backing_scale: 2.0,
+                }
+            )
+            .x,
+            appkit_frame_for_rect(
+                rect_b,
+                ScreenGeometry {
+                    origin_x: 0.0,
+                    origin_y: 0.0,
+                    height: 200.0,
+                    backing_scale: 2.0,
+                }
+            )
+            .x,
+            "window frame should move when the cursor position changes"
+        );
+        assert_eq!(size_a, size_b, "cursor-only canvas size should stay fixed");
+        assert!(
+            !cursor_redraw_needed(Some(app_a), Some(size_a), app_b, size_b, false, false),
+            "position-only movement should not redraw the small bitmap"
+        );
+
+        rs.core.heading += 0.1;
+        let app_c = appearance_signature(&rs);
+        assert!(
+            cursor_redraw_needed(Some(app_b), Some(size_b), app_c, size_b, false, false),
+            "heading changes must redraw rotation frames"
+        );
+
+        let mut sky_cfg = CursorConfig::default();
+        sky_cfg.builtin_shape = cursor_overlay::BuiltinShape::Sky;
+        let mut sky = RenderState::new(sky_cfg);
+        sky.core.visible = true;
+        sky.core.pos = (60.0, 60.0);
+        sky.core.idle_alpha = 1.0;
+        sky.core.heading = 0.0;
+        let sky_rect = cursor_window_rect(&sky).unwrap();
+        let sky_size = sky_rect.pixel_size(2.0);
+        let sky_app_a = appearance_signature(&sky);
+        sky.core.heading = std::f64::consts::PI;
+        let sky_app_b = appearance_signature(&sky);
+        assert!(
+            !cursor_redraw_needed(
+                Some(sky_app_a),
+                Some(sky_size),
+                sky_app_b,
+                sky_size,
+                false,
+                false
+            ),
+            "Sky ignores heading, so mid-glide heading changes must not redraw"
+        );
+    }
+
+    #[test]
+    fn panel_level_follows_pin_state() {
+        assert_eq!(panel_level_for_pin(None), PanelLevel::Floating);
+        assert_eq!(panel_level_for_pin(Some(42)), PanelLevel::TargetWindow);
+        assert_eq!(PanelLevel::Floating.ns_window_level(), 3);
+        assert_eq!(PanelLevel::TargetWindow.ns_window_level(), 0);
+    }
+
+    #[test]
+    fn last_active_arrival_dwell_is_not_shortened_by_stale_cursor() {
+        let mut map = empty_map();
+        {
+            let default = map.cursors.get_mut("default").unwrap();
+            default.core.visible = true;
+            default.core.pos = (20.0, 20.0);
+            default.core.motion.idle_hide_ms = 20_000.0;
+            default.core.idle_secs = 18.0;
+            default.core.idle_alpha = 1.0;
+        }
+        assert!(
+            (map.cursors["default"]
+                .idle_fade_due_in()
+                .unwrap()
+                .as_secs_f64()
+                - 2.0)
+                .abs()
+                < 0.001,
+            "test setup must make the default cursor stale"
+        );
+
+        seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
+        apply_msg(&mut map, move_msg("sessA", 80.0, 80.0));
+        {
+            let sess = map.cursors.get_mut("sessA").unwrap();
+            // Simulate the just-arrived rest state through the same render-map
+            // seam that arms recv_timeout(): no animations, fully visible,
+            // idle accounting freshly reset by MoveTo.
+            sess.core.path = None;
+            sess.core.spring = None;
+            sess.core.click_t = None;
+            sess.focus_rect = None;
+            sess.core.visible = true;
+            sess.core.pos = (80.0, 80.0);
+            sess.core.motion.idle_hide_ms = 20_000.0;
+            sess.core.idle_secs = 0.0;
+            sess.core.idle_alpha = 1.0;
+        }
+
+        assert_eq!(map.last_active_key.as_deref(), Some("sessA"));
+        let due = render_map_idle_fade_due_in(&map).expect("fresh arrival should arm dwell");
+        assert!(
+            (due.as_secs_f64() - 20.0).abs() < 0.001,
+            "fresh arrival must dwell for the full idle_hide_ms despite stale default, got {due:?}"
+        );
+
+        let sess = map.cursors.get_mut("sessA").unwrap();
+        assert!(!sess.tick(19.99));
+        assert_eq!(
+            sess.core.idle_alpha, 1.0,
+            "no tick sequence before fade_start may fade the fresh cursor"
+        );
+        assert!(!sess.tick(0.02));
+        assert!(
+            sess.core.idle_alpha < 1.0,
+            "fade should still start once the full dwell has elapsed"
+        );
+    }
+
+    #[test]
+    fn frame_budget_tracks_screen_refresh_rate() {
+        assert!((frame_budget_for_max_fps(120).as_secs_f64() - (1.0 / 120.0)).abs() < 0.0001);
+        assert!((frame_budget_for_max_fps(60).as_secs_f64() - (1.0 / 60.0)).abs() < 0.0001);
+        assert!((frame_budget_for_max_fps(0).as_secs_f64() - (1.0 / 60.0)).abs() < 0.0001);
+        assert_eq!(repin_frame_interval(frame_budget_for_max_fps(120)), 120);
     }
 
     #[test]

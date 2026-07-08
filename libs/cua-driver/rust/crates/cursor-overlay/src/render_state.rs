@@ -39,8 +39,8 @@
 //!   supplies one via the optional argument).
 
 use crate::{
-    BuiltinShape, CursorConfig, CursorShape, MotionConfig, OverlayCommand, Palette, PathPlanner,
-    PathState, PlannedPath, Spring,
+    shape::CURSOR_DISPLAY_POINTS, BuiltinShape, CursorConfig, CursorShape, MotionConfig,
+    OverlayCommand, Palette, PathPlanner, PathState, PlannedPath, Spring,
 };
 
 /// Platform-agnostic render state shared by macOS / Windows / Linux overlays.
@@ -138,8 +138,7 @@ impl RenderStateCore {
         if let Some(ref p) = self.path {
             let path_len = p.length.max(1.0);
             let path_frac = (self.dist / path_len).clamp(0.0, 1.0);
-            let profile =
-                16.0 * path_frac * path_frac * (1.0 - path_frac) * (1.0 - path_frac);
+            let profile = 16.0 * path_frac * path_frac * (1.0 - path_frac) * (1.0 - path_frac);
             let floor = if path_frac < 0.5 {
                 self.motion.min_start_speed
             } else {
@@ -251,7 +250,11 @@ impl RenderStateCore {
 
             // Smootherstep speed profile (normalised: peak = 1.0).
             let profile = (30.0 * u * u * (1.0 - u) * (1.0 - u)) / 1.875;
-            let floor_speed = if u < 0.5 { MIN_START_SPEED } else { MIN_END_SPEED };
+            let floor_speed = if u < 0.5 {
+                MIN_START_SPEED
+            } else {
+                MIN_END_SPEED
+            };
             let speed_based = floor_speed + (PEAK_SPEED - floor_speed) * profile;
             // Fixed-duration override: when `glide_duration_ms > 0` the move
             // takes exactly that long regardless of distance, so an orchestrator
@@ -337,8 +340,7 @@ impl RenderStateCore {
     fn tick_idle(&mut self, dt: f64) {
         let idle_hide_ms = self.motion.idle_hide_ms;
         if idle_hide_ms > 0.0 {
-            let moving =
-                self.path.is_some() || self.spring.is_some() || self.click_t.is_some();
+            let moving = self.path.is_some() || self.spring.is_some() || self.click_t.is_some();
             if moving {
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
@@ -416,16 +418,8 @@ impl RenderStateCore {
                 let (x0, y0) = self.pos;
                 let th0 = self.heading + std::f64::consts::PI;
                 let th1 = end_heading_radians + std::f64::consts::PI;
-                let plan = PathPlanner::plan(
-                    x0,
-                    y0,
-                    th0,
-                    tx,
-                    ty,
-                    th1,
-                    end_heading_radians,
-                    turn_radius,
-                );
+                let plan =
+                    PathPlanner::plan(x0, y0, th0, tx, ty, th1, end_heading_radians, turn_radius);
                 self.path = Some(plan);
                 self.dist = 0.0;
                 self.spring = None;
@@ -554,8 +548,8 @@ pub fn render_frame(
 ) -> tiny_skia::Pixmap {
     let w = width.max(1);
     let h = height.max(1);
-    let mut pm = tiny_skia::Pixmap::new(w, h)
-        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+    let mut pm =
+        tiny_skia::Pixmap::new(w, h).unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
     paint_cursor(&mut pm, core, origin_x, origin_y, focus_rect, backing_scale);
     pm
 }
@@ -603,6 +597,7 @@ pub fn paint_cursor(
     let (px, py) = ((core.pos.0 - origin_x) * s, (core.pos.1 - origin_y) * s);
     let heading = core.heading;
     let alpha_scale = core.idle_alpha as f32;
+    let sky_builtin = is_active_builtin_sky(core);
 
     // --- Bloom (radial gradient behind the arrow) ---
     let bloom_r: f32 = if core.pressed { 34.0 * sf } else { 22.0 * sf };
@@ -623,38 +618,39 @@ pub fn paint_cursor(
     let bloom_outer = tiny_skia::Color::from_rgba8(or_, og, ob, (26.0 * alpha_scale) as u8);
     let bloom_zero = tiny_skia::Color::from_rgba8(or_, og, ob, 0);
 
-    let bloom_paint = {
-        let mut p = tiny_skia::Paint::default();
-        p.shader = tiny_skia::RadialGradient::new(
-            tiny_skia::Point::from_xy(px as f32, py as f32),
-            tiny_skia::Point::from_xy(px as f32, py as f32), // focal = center
-            bloom_r,
-            vec![
-                tiny_skia::GradientStop::new(0.0, bloom_inner),
-                tiny_skia::GradientStop::new(0.5, bloom_outer),
-                tiny_skia::GradientStop::new(1.0, bloom_zero),
-            ],
-            tiny_skia::SpreadMode::Pad,
-            tiny_skia::Transform::identity(),
-        )
-        .unwrap_or(tiny_skia::Shader::SolidColor(bloom_inner));
-        p.anti_alias = true;
-        p
-    };
+    if draws_decorative_bloom(core) {
+        let bloom_paint = {
+            let mut p = tiny_skia::Paint::default();
+            p.shader = tiny_skia::RadialGradient::new(
+                tiny_skia::Point::from_xy(px as f32, py as f32),
+                tiny_skia::Point::from_xy(px as f32, py as f32), // focal = center
+                bloom_r,
+                vec![
+                    tiny_skia::GradientStop::new(0.0, bloom_inner),
+                    tiny_skia::GradientStop::new(0.5, bloom_outer),
+                    tiny_skia::GradientStop::new(1.0, bloom_zero),
+                ],
+                tiny_skia::SpreadMode::Pad,
+                tiny_skia::Transform::identity(),
+            )
+            .unwrap_or(tiny_skia::Shader::SolidColor(bloom_inner));
+            p.anti_alias = true;
+            p
+        };
 
-    if let Some(r) = tiny_skia::Rect::from_xywh(
-        (px - bloom_r as f64) as f32,
-        (py - bloom_r as f64) as f32,
-        bloom_r * 2.0,
-        bloom_r * 2.0,
-    ) {
-        pm.fill_rect(r, &bloom_paint, tiny_skia::Transform::identity(), None);
+        if let Some(r) = tiny_skia::Rect::from_xywh(
+            (px - bloom_r as f64) as f32,
+            (py - bloom_r as f64) as f32,
+            bloom_r * 2.0,
+            bloom_r * 2.0,
+        ) {
+            pm.fill_rect(r, &bloom_paint, tiny_skia::Transform::identity(), None);
+        }
     }
 
     if core.pressed {
         let [pr, pg, pb, _] = core.palette.cursor_mid;
-        let ring_color =
-            tiny_skia::Color::from_rgba8(pr, pg, pb, (210.0 * alpha_scale) as u8);
+        let ring_color = tiny_skia::Color::from_rgba8(pr, pg, pb, (210.0 * alpha_scale) as u8);
         let mut ring_paint = tiny_skia::Paint::default();
         ring_paint.shader = tiny_skia::Shader::SolidColor(ring_color);
         ring_paint.anti_alias = true;
@@ -662,8 +658,7 @@ pub fn paint_cursor(
             width: 3.0 * sf,
             ..Default::default()
         };
-        let core_fill =
-            tiny_skia::Color::from_rgba8(pr, pg, pb, (110.0 * alpha_scale) as u8);
+        let core_fill = tiny_skia::Color::from_rgba8(pr, pg, pb, (110.0 * alpha_scale) as u8);
         let mut fill_paint = tiny_skia::Paint::default();
         fill_paint.shader = tiny_skia::Shader::SolidColor(core_fill);
         fill_paint.anti_alias = true;
@@ -703,23 +698,21 @@ pub fn paint_cursor(
         let (cr, cg, cb) = (0x5Eu8, 0xC0u8, 0xE8u8);
 
         if let Some(rect) = tiny_skia::Rect::from_xywh(
-            (fx * s) as f32,
-            (fy * s) as f32,
+            ((fx - origin_x) * s) as f32,
+            ((fy - origin_y) * s) as f32,
             (fw * s) as f32,
             (fh * s) as f32,
         ) {
             // Faint fill
             let mut fill_paint = tiny_skia::Paint::default();
-            fill_paint.shader = tiny_skia::Shader::SolidColor(
-                tiny_skia::Color::from_rgba8(cr, cg, cb, fill_a),
-            );
+            fill_paint.shader =
+                tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(cr, cg, cb, fill_a));
             pm.fill_rect(rect, &fill_paint, tiny_skia::Transform::identity(), None);
 
             // Border stroke (2px glow)
             let mut border_paint = tiny_skia::Paint::default();
-            border_paint.shader = tiny_skia::Shader::SolidColor(
-                tiny_skia::Color::from_rgba8(cr, cg, cb, border_a),
-            );
+            border_paint.shader =
+                tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(cr, cg, cb, border_a));
             border_paint.anti_alias = true;
             let stroke = tiny_skia::Stroke {
                 width: 2.5 * sf,
@@ -783,10 +776,15 @@ pub fn paint_cursor(
     //
     // Teardrop is the default silhouette; `--cursor-shape arrow` (or
     // `cursor_icon: "arrow"`) selects the procedural arrow instead.
+    let scaled_sky_shape = if sky_builtin {
+        Some(CursorShape::sky_for_backing_scale(sf))
+    } else {
+        None
+    };
     let shape: Option<&CursorShape> = match (core.shape.as_ref(), core.cfg.builtin_shape) {
         (Some(custom), _) => Some(custom),
         (None, BuiltinShape::Teardrop) => Some(CursorShape::teardrop()),
-        (None, BuiltinShape::Sky) => Some(CursorShape::sky()),
+        (None, BuiltinShape::Sky) => scaled_sky_shape.as_ref(),
         (None, BuiltinShape::Arrow) => {
             let grad_override = if core.gradient_colors.is_empty() {
                 None
@@ -817,28 +815,32 @@ pub fn paint_cursor(
     // rasterises at the destination pixmap's native resolution (e.g. 52 px
     // on a 2× retina display) — Core Animation then maps 1:1 to the screen
     // instead of upsampling a logical-pixel pixmap.
-    let display_size = 26.0_f32 * sf;
+    let display_size = CURSOR_DISPLAY_POINTS * sf;
     let scale = display_size / shape.width as f32;
-    if let Some(pix) =
-        tiny_skia::PixmapRef::from_bytes(&shape.pixels, shape.width, shape.height)
-    {
+    if let Some(pix) = tiny_skia::PixmapRef::from_bytes(&shape.pixels, shape.width, shape.height) {
         // T = Translate(px, py) * Rotate(angle) * Scale(s) * Translate(-hotspot)
         // Moves the source hotspot to its own origin, scales to display_size,
         // rotates around that hotspot, then lands the hotspot at (px, py).
         // Existing raster shapes use a centre hotspot; Sky stores the SVG tip.
         //
-        // The intrinsic offset compensates for each raster's source-art angle:
-        // teardrop/custom rasters point up (+90°), while Sky points up-left
-        // (+135°). That keeps Sky unrotated at the FRAC_PI_4 rest heading and
-        // preserves the existing teardrop/custom orientation.
+        // The intrinsic offset compensates for heading-following raster source
+        // art: teardrop/custom rasters point up (+90°). Sky opts out of
+        // heading-following rotation entirely, so its up-left tip is static
+        // like the real macOS pointer.
         let rotation_deg = raster_rotation_degrees(heading, shape);
-        let transform = tiny_skia::Transform::from_translate(
-            -shape.hotspot_x,
-            -shape.hotspot_y,
-        )
-        .post_scale(scale, scale)
-        .post_rotate(rotation_deg)
-        .post_translate(px as f32, py as f32);
+        let identity_rotation = is_identity_rotation_degrees(rotation_deg);
+        let mut transform =
+            tiny_skia::Transform::from_translate(-shape.hotspot_x, -shape.hotspot_y)
+                .post_scale(scale, scale);
+        if !identity_rotation {
+            transform = transform.post_rotate(rotation_deg);
+        }
+        let (target_x, target_y) = if sky_builtin && identity_rotation {
+            ((px as f32).round(), (py as f32).round())
+        } else {
+            (px as f32, py as f32)
+        };
+        transform = transform.post_translate(target_x, target_y);
         let mut paint = tiny_skia::PixmapPaint::default();
         paint.opacity = alpha_scale;
         pm.draw_pixmap(0, 0, pix, &paint, transform, None);
@@ -846,7 +848,24 @@ pub fn paint_cursor(
 }
 
 fn raster_rotation_degrees(heading: f64, shape: &CursorShape) -> f32 {
-    heading.to_degrees() as f32 + 180.0 + shape.intrinsic_rotation_degrees
+    if shape.rotates_with_heading {
+        heading.to_degrees() as f32 + 180.0 + shape.intrinsic_rotation_degrees
+    } else {
+        0.0
+    }
+}
+
+fn is_active_builtin_sky(core: &RenderStateCore) -> bool {
+    core.shape.is_none() && matches!(core.cfg.builtin_shape, BuiltinShape::Sky)
+}
+
+fn draws_decorative_bloom(core: &RenderStateCore) -> bool {
+    !is_active_builtin_sky(core)
+}
+
+fn is_identity_rotation_degrees(rotation: f32) -> bool {
+    let normalized = rotation.rem_euclid(360.0);
+    normalized.abs() < 0.001 || (360.0 - normalized).abs() < 0.001
 }
 
 /// Rasterise the built-in gradient arrow at `(px, py)` rotated by
@@ -871,9 +890,8 @@ pub fn draw_default_arrow(
     // Rotate by (heading + π) so tip points in the motion direction.
     let angle = heading + std::f64::consts::PI as f32;
     let (sa, ca) = (angle.sin(), angle.cos());
-    let transform_pt = |(vx, vy): (f32, f32)| -> (f32, f32) {
-        (px + ca * vx - sa * vy, py + sa * vx + ca * vy)
-    };
+    let transform_pt =
+        |(vx, vy): (f32, f32)| -> (f32, f32) { (px + ca * vx - sa * vy, py + sa * vx + ca * vy) };
 
     let pts: Vec<(f32, f32)> = verts.iter().map(|&v| transform_pt(v)).collect();
 
@@ -891,24 +909,20 @@ pub fn draw_default_arrow(
     // Gradient fill: start color at tip, end color at tail.
     // Use runtime overrides when available, otherwise fall back to palette.
     let tip = pts[0];
-    let tail = (
-        (pts[1].0 + pts[3].0) / 2.0,
-        (pts[1].1 + pts[3].1) / 2.0,
-    );
+    let tail = ((pts[1].0 + pts[3].0) / 2.0, (pts[1].1 + pts[3].1) / 2.0);
     let (r0, g0, b0) = if let Some(g) = gradient_override.and_then(|g| g.first()) {
         (g[0], g[1], g[2])
     } else {
         let [r, g, b, _] = palette.cursor_start;
         (r, g, b)
     };
-    let (r1, g1, b1) = if let Some(g) =
-        gradient_override.and_then(|g| g.get(1).or_else(|| g.first()))
-    {
-        (g[0], g[1], g[2])
-    } else {
-        let [r, g, b, _] = palette.cursor_mid;
-        (r, g, b)
-    };
+    let (r1, g1, b1) =
+        if let Some(g) = gradient_override.and_then(|g| g.get(1).or_else(|| g.first())) {
+            (g[0], g[1], g[2])
+        } else {
+            let [r, g, b, _] = palette.cursor_mid;
+            (r, g, b)
+        };
     let (r2, g2, b2) = if let Some(g) = gradient_override.and_then(|g| g.last()) {
         (g[0], g[1], g[2])
     } else {
@@ -930,9 +944,9 @@ pub fn draw_default_arrow(
             tiny_skia::SpreadMode::Pad,
             tiny_skia::Transform::identity(),
         )
-        .unwrap_or(tiny_skia::Shader::SolidColor(
-            tiny_skia::Color::from_rgba8(r1, g1, b1, a),
-        ));
+        .unwrap_or(tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(
+            r1, g1, b1, a,
+        )));
         p.anti_alias = true;
         p
     };
@@ -977,14 +991,22 @@ mod glide_duration_tests {
         core.motion.idle_hide_ms = 0.0;
         core.pos = (0.0, 0.0);
         // Aligned headings → an effectively straight path of length ~dist_pts.
-        core.path = Some(PathPlanner::plan(0.0, 0.0, 0.0, dist_pts, 0.0, 0.0, 0.0, 80.0));
+        core.path = Some(PathPlanner::plan(
+            0.0, 0.0, 0.0, dist_pts, 0.0, 0.0, 0.0, 80.0,
+        ));
         core.dist = 0.0;
         let dt = 1.0 / 240.0;
         let mut t = 0.0;
         for _ in 0..200_000 {
-            let arrived = if swift { core.tick_swift_constants(dt) } else { core.tick_motion(dt) };
+            let arrived = if swift {
+                core.tick_swift_constants(dt)
+            } else {
+                core.tick_motion(dt)
+            };
             t += dt;
-            if arrived { break; }
+            if arrived {
+                break;
+            }
         }
         t
     }
@@ -1007,7 +1029,10 @@ mod glide_duration_tests {
         for swift in [false, true] {
             let short = arrival_secs(0.0, 120.0, swift);
             let long = arrival_secs(0.0, 1400.0, swift);
-            assert!(long > short + 0.2, "swift={swift} short={short} long={long}");
+            assert!(
+                long > short + 0.2,
+                "swift={swift} short={short} long={long}"
+            );
         }
     }
 }
@@ -1034,12 +1059,29 @@ mod hotspot_shape_tests {
 
     #[test]
     fn sky_rest_heading_preserves_up_left_source_orientation() {
-        let rotation = raster_rotation_degrees(std::f64::consts::FRAC_PI_4, CursorShape::sky())
-            .rem_euclid(360.0);
-        assert!(
-            rotation.abs() < 0.001,
-            "FRAC_PI_4 rest heading should leave Sky pointing up-left; got {rotation}°"
-        );
+        for heading in [
+            0.0,
+            std::f64::consts::FRAC_PI_4,
+            std::f64::consts::FRAC_PI_2,
+            std::f64::consts::PI,
+        ] {
+            let rotation = raster_rotation_degrees(heading, CursorShape::sky()).rem_euclid(360.0);
+            assert!(
+                rotation.abs() < 0.001,
+                "Sky should ignore heading and stay up-left; heading={heading}, got {rotation}°"
+            );
+        }
+    }
+
+    #[test]
+    fn sky_builtin_skips_decorative_bloom_only() {
+        let sky = RenderStateCore::new(cfg_with_shape(BuiltinShape::Sky));
+        let teardrop = RenderStateCore::new(cfg_with_shape(BuiltinShape::Teardrop));
+        let arrow = RenderStateCore::new(cfg_with_shape(BuiltinShape::Arrow));
+
+        assert!(!draws_decorative_bloom(&sky));
+        assert!(draws_decorative_bloom(&teardrop));
+        assert!(draws_decorative_bloom(&arrow));
     }
 
     #[test]
@@ -1105,10 +1147,7 @@ mod backing_scale_tests {
     /// Count opaque (alpha > 0) pixels in the pixmap — a proxy for the
     /// cursor's on-pixmap footprint that's independent of palette / gradient.
     fn opaque_pixel_count(pm: &tiny_skia::Pixmap) -> u32 {
-        pm.data()
-            .chunks_exact(4)
-            .filter(|px| px[3] > 0)
-            .count() as u32
+        pm.data().chunks_exact(4).filter(|px| px[3] > 0).count() as u32
     }
 
     fn render_at(backing_scale: f32, logical_size: u32) -> tiny_skia::Pixmap {

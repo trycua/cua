@@ -1383,14 +1383,28 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     // invisible (#1978). Merge in the AT-SPI registry (keyed by pid), which does
     // surface native Wayland apps that expose accessibility. Gated on the same
     // opt-in as the rest of the native-Wayland backend.
+    //
+    // Caveats for the merged AT-SPI entries: they carry a synthetic (non-X11)
+    // xid and zero geometry (x/y/w/h = 0), like the existing wlroots AT-SPI
+    // fallback — so `bring_to_front` / `screenshot_window` / pixel translation
+    // against them error cleanly rather than acting (input on GNOME/KDE routes
+    // by pid + screen coords, not xid, so it's unaffected). Dedup is per-pid, so
+    // the rare app owning BOTH an XWayland window and a separate native-Wayland
+    // toplevel would list only the XWayland one.
     let mut ws = crate::x11::list_windows(filter_pid);
     if wayland_enabled() && std::env::var_os("WAYLAND_DISPLAY").is_some() {
         let seen: std::collections::HashSet<u32> = ws.iter().filter_map(|w| w.pid).collect();
-        for w in crate::atspi::list_windows(filter_pid) {
-            // XWayland apps appear in both lists; keep the X11 entry (real XID +
-            // geometry) and add only AT-SPI windows for pids X11 didn't report.
-            if w.pid.map_or(true, |p| !seen.contains(&p)) {
-                ws.push(w);
+        // A specific pid already resolved via X11 needs no AT-SPI walk (a full
+        // D-Bus enumeration of every registered app): it can only add duplicates.
+        let already_covered = filter_pid.map_or(false, |p| seen.contains(&p));
+        if !already_covered {
+            for w in crate::atspi::list_windows(filter_pid) {
+                // XWayland apps appear in both lists; keep the X11 entry (real
+                // XID + geometry) and add only AT-SPI windows for pids X11 didn't
+                // report.
+                if w.pid.map_or(true, |p| !seen.contains(&p)) {
+                    ws.push(w);
+                }
             }
         }
     }

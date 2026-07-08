@@ -8,8 +8,8 @@ on:
     inputs:
       version:
         description: "cua-driver-rs version to package (without v prefix)"
-        required: true
-        default: "0.7.1"
+        required: false
+        default: ""
   # Auto-trigger when cua-driver-rs releases (after CD workflow completes)
   workflow_run:
     workflows: ["CD: Cua Driver (cross-platform)"]
@@ -37,6 +37,9 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             VERSION="${{ inputs.version }}"
+            if [ -z "$VERSION" ]; then
+              VERSION=$(grep -m1 -oP '^version = "\K[^"]+' libs/cua-driver/rust/Cargo.toml)
+            fi
             SHOULD_PUBLISH="true"
           else
             # Extract from the tag that triggered the workflow_run

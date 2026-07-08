@@ -24,6 +24,16 @@ import zipfile
 from pathlib import Path
 
 
+def get_default_version() -> str:
+    """Read the wrapper package version from pyproject.toml."""
+    pyproject = Path(__file__).parent / "pyproject.toml"
+    for line in pyproject.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("version = "):
+            return line.split('"', 2)[1]
+    raise RuntimeError(f"Could not read project version from {pyproject}")
+
+
 def get_platform_info(arch_override: str = None):
     """Determine platform and architecture for binary selection.
 
@@ -246,8 +256,7 @@ def main():
     parser = argparse.ArgumentParser(description="Build cua-driver Python wheel with bundled binary")
     parser.add_argument(
         "--version",
-        default="0.7.1",
-        help="cua-driver-rs version to download (default: 0.7.1)",
+        help="cua-driver-rs version to download (default: pyproject.toml version)",
     )
     parser.add_argument(
         "--arch",
@@ -259,6 +268,7 @@ def main():
         help="Skip download and use existing binary in bin/ (for local testing)",
     )
     args = parser.parse_args()
+    version = args.version or get_default_version()
 
     # Determine paths
     script_dir = Path(__file__).parent
@@ -270,12 +280,12 @@ def main():
         platform_name, arch = get_platform_info(args.arch)
         print(f"Building for {platform_name}-{arch}")
 
-        url, binary_names = get_release_url(args.version, platform_name, arch)
+        url, binary_names = get_release_url(version, platform_name, arch)
         archive_name = url.split("/")[-1]
         archive_path = download_dir / archive_name
 
         # Get expected SHA256 from checksums.txt
-        expected_sha256 = get_expected_sha256(args.version, archive_name)
+        expected_sha256 = get_expected_sha256(version, archive_name)
 
         # Download the release archive (or verify cached)
         if not archive_path.exists():

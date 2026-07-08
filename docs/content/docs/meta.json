@@ -1,5 +1,5 @@
 {
   "title": "Documentation",
   "root": true,
-  "pages": ["index", "---Learn---", "tutorials", "explanation", "---Do---", "how-to-guides", "reference"]
+  "pages": ["index", "---Learn---", "tutorials", "concepts", "---Do---", "how-to-guides", "reference"]
 }

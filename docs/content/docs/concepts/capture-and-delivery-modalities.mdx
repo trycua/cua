@@ -38,7 +38,7 @@ Set `delivery_mode` per call on the input family (`click`, `double_click`, `righ
 
 | `delivery_mode` | Behavior |
 |---|---|
-| `background` (default) | Input is routed to the target process/window/element directly. The user's frontmost app, real cursor, and window z-order are untouched when the target surface supports background delivery. See [Best-effort background](/explanation/the-no-foreground-contract). |
+| `background` (default) | Input is routed to the target process/window/element directly. The user's frontmost app, real cursor, and window z-order are untouched when the target surface supports background delivery. See [Best-effort background](/concepts/the-no-foreground-contract). |
 | `foreground` | The target is briefly fronted (pair with `bring_to_front` to avoid a per-call flash), input lands on the now-active window, then the prior frontmost is restored. Use this when a background attempt did not land, or when the app only accepts events while foregrounded (DirectInput games, raw-input canvases). |
 
 Only `background` and `foreground` are valid; the historical `auto` heuristic is removed. At runtime, omitted or unknown values fall back to `background` for safety. Element ax actions (`element_index`) address an element instead of the focused window, so they hold the background path without any `delivery_mode` flag. The delivery axis matters most for the pixel rung (`x, y`), where `background` routes the event to the target and `foreground` raises the window first.

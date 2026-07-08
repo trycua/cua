@@ -88,22 +88,42 @@ const config = {
       },
       {
         source: '/explanation/capture-and-dispatch-modalities',
-        destination: '/explanation/capture-and-delivery-modalities',
+        destination: '/concepts/capture-and-delivery-modalities',
         permanent: true,
       },
       {
         source: '/explanation/capture-and-dispatch-modalities.mdx',
-        destination: '/explanation/capture-and-delivery-modalities',
+        destination: '/concepts/capture-and-delivery-modalities',
         permanent: true,
       },
       {
         source: '/explanation/demonstrations-skills-and-trajectories',
-        destination: '/explanation',
+        destination: '/concepts',
         permanent: true,
       },
       {
         source: '/explanation/demonstrations-skills-and-trajectories.mdx',
-        destination: '/explanation',
+        destination: '/concepts',
+        permanent: true,
+      },
+      {
+        source: '/explanation',
+        destination: '/concepts',
+        permanent: true,
+      },
+      {
+        source: '/explanation.mdx',
+        destination: '/concepts',
+        permanent: true,
+      },
+      {
+        source: '/explanation/:path*.mdx',
+        destination: '/concepts/:path*',
+        permanent: true,
+      },
+      {
+        source: '/explanation/:path*',
+        destination: '/concepts/:path*',
         permanent: true,
       },
       {

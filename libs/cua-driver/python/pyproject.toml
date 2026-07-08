@@ -7,7 +7,7 @@ name = "cua-driver"
 version = "0.7.1"
 description = "Python wrapper for cua-driver - cross-platform MCP server for computer-use automation"
 readme = "README.md"
-license = "MIT"
+license = { text = "MIT" }
 authors = [
     { name = "TryCua", email = "hello@trycua.com" }
 ]

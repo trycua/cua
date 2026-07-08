@@ -127,6 +127,26 @@ const config = {
         permanent: true,
       },
       {
+        source: '/explanation/architecture',
+        destination: '/concepts/how-cua-fits-together',
+        permanent: true,
+      },
+      {
+        source: '/explanation/architecture.mdx',
+        destination: '/concepts/how-cua-fits-together',
+        permanent: true,
+      },
+      {
+        source: '/concepts/architecture',
+        destination: '/concepts/how-cua-fits-together',
+        permanent: true,
+      },
+      {
+        source: '/concepts/architecture.mdx',
+        destination: '/concepts/how-cua-fits-together',
+        permanent: true,
+      },
+      {
         source: '/explanation',
         destination: '/concepts',
         permanent: true,

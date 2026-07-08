@@ -1,6 +1,6 @@
 ---
-title: Architecture
-description: "How the main Cua pieces fit together: agents, Cua Driver, Cua Sandbox, computer-server, and VM backends."
+title: "How Cua fits together"
+description: "How Cua Driver, Cua Sandbox, agents, and runtime backends fit into one computer-use system."
 ---
 
 Cua is a set of computer-use building blocks. The common shape is simple: an agent asks for an observation, chooses an action, and sends that action to a computer. Cua supplies the computer interface. The model, planner, and task policy stay outside that interface.
@@ -20,8 +20,7 @@ These entry points sit beside the rest of the Cua stack:
 | Agents and models | Decide what to do next from observations. |
 | Cua Driver | Operates the user's real machine through native OS APIs. |
 | Cua Sandbox | Creates and manages disposable computers. |
-| `computer-server` | Runs inside a sandbox and exposes its computer-use API. |
-| Lume and Lumier | Provide macOS VM lifecycle and execution backends. |
+| Lume | Provides local macOS VM lifecycle and execution. |
 | Backend adapters | Connect sandbox creation to cloud, Windows Sandbox, QEMU, Hyper-V, Docker, or other runtimes. |
 
 Cua Driver and Cua Sandbox are separate products rather than two backends behind one SDK. They both expose a computer-use surface, but they use different transports, runtimes, and deployment targets.
@@ -38,14 +37,12 @@ For the process details behind MCP, CLI, and daemon-backed calls, see [Process m
 
 ## Disposable computers
 
-Cua Sandbox creates a disposable cloud or local computer. The environment can be an isolated VM or container, depending on the backend. The Python Sandbox SDK creates and controls that sandbox, then communicates with the `computer-server` running inside it over REST and WebSocket APIs.
+Cua Sandbox creates a disposable cloud or local computer. The environment can be an isolated VM or container, depending on the backend. The Python Sandbox SDK creates and controls that sandbox, then sends computer-use operations to it over REST and WebSocket APIs.
 
-The `computer-server` is the component inside the sandbox that exposes the computer-use surface for that disposable machine. It receives operations over HTTP and WebSocket, performs them inside the VM or container, and returns observations. The Python sandbox stack talks to this server only over HTTP and WebSocket. It does not invoke Cua Driver and it does not use MCP.
-
-Cua Sandbox can target several backends, including Lume and Lumier for macOS VMs, cloud environments, Windows Sandbox, QEMU, Hyper-V, and Docker. The backend determines where the disposable computer runs and what isolation boundary it uses, but the external shape remains the same: create a sandbox, connect to its `computer-server`, operate the computer, then tear it down when the task is finished.
+Cua Sandbox can target several backends, including Lume for local macOS VMs, cloud environments, Windows Sandbox, QEMU, Hyper-V, and Docker. The backend determines where the disposable computer runs and what isolation boundary it uses, but the external shape remains the same: create a sandbox, operate the computer, then snapshot or tear it down when the task is finished.
 
 ## The model boundary
 
-Cua Driver and `computer-server` are model-agnostic. They receive operations and return observations. They do not call language models, plan tasks, decide intent, or choose the next action. Cua does not ship a model.
+Cua Driver and Cua Sandbox are model-agnostic. They receive operations and return observations. They do not call language models, plan tasks, decide intent, or choose the next action. Cua does not ship a model.
 
-That boundary keeps OS interaction separate from reasoning. The user brings an agent or model, and that system decides what operation to send next based on the observations it receives. Cua provides the computer-use interface on either a real machine through Cua Driver, or a disposable machine through Cua Sandbox and `computer-server`.
+That boundary keeps OS interaction separate from reasoning. The user brings an agent or model, and that system decides what operation to send next based on the observations it receives. Cua provides the computer-use interface on either a real machine through Cua Driver, or a disposable machine through Cua Sandbox.

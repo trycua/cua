@@ -52,6 +52,12 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             workflow,
         )
 
+    def test_rust_driver_bump_keeps_python_wrapper_version_synced(self) -> None:
+        config = self.read("libs/cua-driver/rust/.bumpversion.cfg")
+
+        self.assertIn("[bumpversion:file:../python/pyproject.toml]", config)
+        self.assertIn("[bumpversion:file:../python/src/cua_driver/__init__.py]", config)
+
 
 if __name__ == "__main__":
     unittest.main()

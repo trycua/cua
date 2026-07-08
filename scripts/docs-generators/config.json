@@ -35,7 +35,7 @@
       "name": "Lume VM Manager",
       "language": "swift",
       "sourcePath": "libs/lume/src",
-      "docsOutputPath": "docs/content/docs/lume/reference",
+      "docsOutputPath": "docs/content/docs/reference/lume",
       "generatorScript": "scripts/docs-generators/lume.ts",
       "watchPaths": [
         "libs/lume/src/Commands/**/*.swift",
@@ -58,7 +58,8 @@
           "extractCommand": ".build/release/lume dump-docs --type api"
         }
       ],
-      "enabled": true
+      "enabled": true,
+      "notes": "Generates cli-reference.mdx + http-api.mdx from the Swift binary's `dump-docs` output. These files live under the Diátaxis Reference tree; task-oriented Lume docs belong under how-to-guides/lume."
     },
     "cua-cli": {
       "name": "Cua CLI",

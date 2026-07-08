@@ -1,0 +1,64 @@
+---
+title: Install Lume
+description: Install Lume, Cua's local Apple Silicon VM manager for macOS and Linux guests.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Lume is Cua's local VM manager for Apple Silicon Macs. Use it when you want to create, run, or serve macOS and Linux VMs on your own machine. If you want disposable desktops hosted for you, start with [Cua Sandbox](/tutorials/your-first-cloud-sandbox) instead.
+
+## Requirements
+
+- Apple Silicon Mac (M1, M2, M3, etc.)
+- macOS 13.0 or later
+- At least 8GB of RAM (16GB recommended)
+- At least 50GB of free disk space
+
+## Install Lume
+
+Install with a single command:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+```
+
+## Verify the install
+
+```bash
+lume --version
+```
+
+## Run a prebuilt VM
+
+Pull and start a prebuilt macOS image:
+
+```bash
+lume run macos-sequoia-vanilla:latest
+```
+
+<Callout title="Security Note">
+  Prebuilt images use the default password `lume`. Change this immediately after your first login
+  using the `passwd` command.
+</Callout>
+
+## Start the API service manually
+
+By default, Lume is installed as a background service that starts automatically on login. If you prefer to start the Lume API service manually when needed, you can use the `--no-background-service` option:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh) --no-background-service"
+```
+
+<Callout title="Note">
+  With this option, you'll need to manually start the Lume API service by running `lume serve` in
+  your terminal whenever you need tools or libraries that rely on the local Lume HTTP API.
+</Callout>
+
+## Manual download
+
+You can also download the `lume.pkg.tar.gz` archive from the [latest release](https://github.com/trycua/cua/releases?q=lume&expanded=true), extract it, and install the package manually.
+
+## Next steps
+
+- [Lume CLI reference](/reference/lume/cli-reference): inspect every command and option.
+- [Lume HTTP API reference](/reference/lume/http-api): use the local API from tools and scripts.

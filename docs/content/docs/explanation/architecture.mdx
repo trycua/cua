@@ -15,7 +15,7 @@ These paths are not two backends behind one shared SDK. Cua Driver and Cua Sandb
 
 ## Cua Driver: the real machine
 
-Cua Driver is a single Rust binary that operates a real machine. It exposes operations for window discovery, screenshots, accessibility-tree walking, input dispatch, and background operation that does not take over the user's active workspace. Tools can call it through MCP over stdio, or users can call it directly through the CLI.
+Cua Driver is a single Rust binary that operates a real machine. It exposes operations for window discovery, screenshots, accessibility-tree walking, input delivery, and background operation that does not take over the user's active workspace. Tools can call it through MCP over stdio, or users can call it directly through the CLI.
 
 Under the hood, Cua Driver uses the native platform APIs for each operating system. On macOS it uses AX plus CoreGraphics. On Windows it uses UIA. On Linux it uses AT-SPI. Those APIs provide the bridge from a model-agnostic computer-use request to concrete OS behavior, such as finding windows, reading accessibility state, capturing pixels, and sending input.
 

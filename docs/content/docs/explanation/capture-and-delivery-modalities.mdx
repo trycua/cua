@@ -1,11 +1,11 @@
 ---
-title: "Capture and Dispatch Modalities"
-description: "How Cua Driver observes and acts on an app. Perception returns both the accessibility tree and a screenshot; the action call chooses the ax or px rung, dispatch, and scope."
+title: "Capture and Delivery Modalities"
+description: "How Cua Driver observes and acts on an app. Perception returns both the accessibility tree and a screenshot; the action call chooses the ax or px rung, delivery mode, and scope."
 ---
 
-# Capture and Dispatch Modalities
+# Capture and Delivery Modalities
 
-Every Cua Driver action is shaped by four things: **what the agent observes**, **which rung dispatches the action**, **how input is delivered**, and **what coordinate space the action targets**. Most callers use the defaults: background, per-window, accessibility-first automation. The key change from earlier versions is that perception is no longer a mode you pick. `get_window_state` returns *both* the accessibility tree and a screenshot in one call. The action call chooses `ax` or `px` by how it addresses the target.
+Every Cua Driver action is shaped by four things: **what the agent observes**, **which rung delivers the action**, **how input is delivered**, and **what coordinate space the action targets**. Most callers use the defaults: background, per-window, accessibility-first automation. The key change from earlier versions is that perception is no longer a mode you pick. `get_window_state` returns *both* the accessibility tree and a screenshot in one call. The action call chooses `ax` or `px` by how it addresses the target.
 
 ## The Axes
 
@@ -23,7 +23,7 @@ The accessibility tree is the ground truth for *what is clickable*: roles, label
 
 You don't pick a capture mode; you pick **how you address the target** on the action call, and that one choice selects the rung:
 
-| Rung | Address with | Dispatches through | Properties |
+| Rung | Address with | Delivered through | Properties |
 |---|---|---|---|
 | **element ax action** | `element_index` / `element_token` | the accessibility rung: UIA Invoke (Windows), `AXPerformAction` (macOS), AT-SPI `doAction` (Linux) | Backgroundable, z-order-independent, and the only **driver-verifiable** rung. |
 | **element px action** | `x, y` | the pixel rung, reading the coordinate straight off the screenshot already in the `get_window_state` response | Best-effort; the caller confirms the effect off the screenshot. |
@@ -32,7 +32,7 @@ Default to the element ax action because the driver can verify it and often keep
 
 Both rungs apply to the **keyboard family** (`type_text`, `press_key`, `hotkey`) as well as the pointer tools. Address by `element_index` (ax) to target a field with no pre-click. Address by `x, y` (px) to pixel-click at `(x, y)`, establish real renderer focus, and deliver the keystroke(s) to the now-focused element. The px form is the one-call path for Chromium/Electron inputs the AX layer cannot focus: `type_text({ pid, window_id, x, y, text })` focuses and types in a single call. The two forms are mutually exclusive. `set_value` is the exception: it stays ax-only because it sets the value of a non-text control like a dropdown, checkbox, or slider.
 
-### 3. Dispatch: how input is delivered
+### 3. Delivery: how input is delivered
 
 Set `delivery_mode` per call on the input family (`click`, `double_click`, `right_click`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`). The same two values work on Windows, macOS, and Linux.
 
@@ -41,7 +41,7 @@ Set `delivery_mode` per call on the input family (`click`, `double_click`, `righ
 | `background` (default) | Input is routed to the target process/window/element directly. The user's frontmost app, real cursor, and window z-order are untouched when the target surface supports background delivery. See [Best-effort background](/explanation/the-no-foreground-contract). |
 | `foreground` | The target is briefly fronted (pair with `bring_to_front` to avoid a per-call flash), input lands on the now-active window, then the prior frontmost is restored. Use this when a background attempt did not land, or when the app only accepts events while foregrounded (DirectInput games, raw-input canvases). |
 
-Only `background` and `foreground` are valid; the historical `auto` heuristic is removed. At runtime, omitted or unknown values fall back to `background` for safety. Element ax actions (`element_index`) address an element instead of the focused window, so they hold the background path without any `delivery_mode` flag. The dispatch axis matters most for the pixel rung (`x, y`), where `background` routes the event to the target and `foreground` raises the window first.
+Only `background` and `foreground` are valid; the historical `auto` heuristic is removed. At runtime, omitted or unknown values fall back to `background` for safety. Element ax actions (`element_index`) address an element instead of the focused window, so they hold the background path without any `delivery_mode` flag. The delivery axis matters most for the pixel rung (`x, y`), where `background` routes the event to the target and `foreground` raises the window first.
 
 ### 4. Capture scope: what coordinate space the action targets
 
@@ -56,11 +56,11 @@ Desktop scope is the "Computer-Use 1.0" loop: the agent reads the whole screen a
 
 ## Response signals: verification, effect, and escalation
 
-Dispatch success differs from application state change. The driver can verify an effect only when it can read the changed state back through the accessibility layer. That is why `verified: true` is reserved for AX read-back: it means the driver observed the effect after sending the event. Pixel input, foreground input, and echo-prone AX surfaces can be routed correctly while still leaving confirmation to the caller.
+Delivery success differs from application state change. The driver can verify an effect only when it can read the changed state back through the accessibility layer. That is why `verified: true` is reserved for AX read-back: it means the driver observed the effect after sending the event. Pixel input, foreground input, and echo-prone AX surfaces can be routed correctly while still leaving confirmation to the caller.
 
-`effect` is the confidence signal that separates those cases. `"confirmed"` means the driver verified the result through AX read-back. `"unverifiable"` means the dispatch path ran, but the driver cannot prove the application applied it. `"suspected_noop"` means an AX action dispatched but almost certainly did not change the target. Treat `effect` as the action outcome.
+`effect` is the confidence signal that separates those cases. `"confirmed"` means the driver verified the result through AX read-back. `"unverifiable"` means the delivery path ran, but the driver cannot prove the application applied it. `"suspected_noop"` means an AX action ran but almost certainly did not change the target. Treat `effect` as the action outcome.
 
-`escalation` is the machine-readable climb-the-ladder hint. When present, it tells the caller which surface to try next: `"px"` for acting off the screenshot, `"foreground"` for explicitly fronting the target, or `"page"` for the browser-tab DOM path through the `page` tool. See [Choose an action rung and dispatch mode](/how-to-guides/driver/choose-a-modality) for the procedural ladder and [MCP tool notes](/reference/cua-driver/mcp-tool-notes#action-response-shape) for the field table.
+`escalation` is the machine-readable climb-the-ladder hint. When present, it tells the caller which surface to try next: `"px"` for acting off the screenshot, `"foreground"` for explicitly fronting the target, or `"page"` for the browser-tab DOM path through the `page` tool. See [Choose an action rung and delivery mode](/how-to-guides/driver/choose-a-modality) for the procedural ladder and [MCP tool notes](/reference/cua-driver/mcp-tool-notes#action-response-shape) for the field table.
 
 ### When the tree lies
 

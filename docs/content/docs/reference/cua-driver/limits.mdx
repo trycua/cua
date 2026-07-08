@@ -17,7 +17,7 @@ Cua Driver uses best-effort background delivery for every app it can reach via a
 
 **Workarounds, in order of preference:**
 
-1. Use `right_click({pid, element_index})` on AX-addressable targets (links, buttons, toolbar items). AX dispatch sidesteps the renderer filter entirely.
+1. Use `right_click({pid, element_index})` on AX-addressable targets (links, buttons, toolbar items). AX delivery sidesteps the renderer filter entirely.
 2. For context menus on pure web content (nothing in the AX tree), activate Chrome briefly and fall back to a HID-tap right-click. This interrupts best-effort background behavior for that one click.
 
 <Callout type="info">
@@ -33,7 +33,7 @@ Cua Driver uses best-effort background delivery for every app it can reach via a
 
 **Symptom:** `click({pid, x, y})` on a Blender viewport silently no-ops. The window is visible and `launch_app` works, but clicks vanish.
 
-**Cause:** These apps only accept events from `cghidEventTap` with a leading `mouseMoved`. They explicitly filter out per-pid-routed events, which is the path Cua Driver uses for backgrounded dispatch. There is no per-pid recipe that reaches them.
+**Cause:** These apps only accept events from `cghidEventTap` with a leading `mouseMoved`. They explicitly filter out per-pid-routed events, which is the path Cua Driver uses for background delivery. There is no per-pid recipe that reaches them.
 
 **Workaround:** Bring the app to the foreground before clicking, then use pixel `click({pid, x, y})`. Where the target exposes AX-addressable controls, prefer `right_click` or element actions, which sidestep the renderer filter without foregrounding.
 
@@ -63,7 +63,7 @@ Cua Driver uses best-effort background delivery for every app it can reach via a
 
 **Symptom:** `press_key({pid, element_index, key: "return"})` on a text field in a minimized window returns success, but the field doesn't commit. The macOS system-alert beep fires, or nothing happens.
 
-**Cause:** AX reads and AX-dispatched clicks propagate through to minimized windows normally, but keyboard-commit events (Return, Space, Tab) require renderer focus, which AX focus does not confer on a minimized window. This is a macOS-wide behavior.
+**Cause:** AX reads and AX clicks propagate through to minimized windows normally, but keyboard-commit events (Return, Space, Tab) require renderer focus, which AX focus does not confer on a minimized window. This is a macOS-wide behavior.
 
 **Workarounds:**
 

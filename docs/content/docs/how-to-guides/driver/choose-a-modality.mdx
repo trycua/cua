@@ -1,9 +1,9 @@
 ---
-title: "Choose an Action Rung and Dispatch Mode"
-description: "Pick how each action addresses its target: the accessibility (ax) rung or the pixel (px) rung, plus dispatch and scope. Start on the accessibility path, fall back to a pixel action, and escalate to foreground only when you must."
+title: "Choose an Action Rung and Delivery Mode"
+description: "Pick how each action addresses its target: the accessibility (ax) rung or the pixel (px) rung, plus delivery mode and scope. Start on the accessibility path, fall back to a pixel action, and escalate to foreground only when you must."
 ---
 
-# Choose an Action Rung and Dispatch Mode
+# Choose an Action Rung and Delivery Mode
 
 This guide shows you how to pick how the agent acts on a target, so each action lands the first time and stays in the background when it can.
 
@@ -13,11 +13,11 @@ Use this when you are wiring an agent to Cua Driver and deciding what to pass to
 
 ## Before you start
 
-You should already be connected to the driver and able to launch an app and read a window. Perception is no longer a mode you pick: `get_window_state` returns both the accessibility tree and a screenshot in one call by default, and you choose the rung at action time. For the concepts behind the axes, see [Capture and dispatch modalities](/explanation/capture-and-dispatch-modalities); this guide only covers what to call.
+You should already be connected to the driver and able to launch an app and read a window. Perception is no longer a mode you pick: `get_window_state` returns both the accessibility tree and a screenshot in one call by default, and you choose the rung at action time. For the concepts behind the axes, see [Capture and delivery modalities](/explanation/capture-and-delivery-modalities); this guide only covers what to call.
 
 ## Start on the accessibility path (the default)
 
-Default to the **element ax action with `background` dispatch**. Act by `element_index`. It is the only rung the driver can verify, it avoids foregrounding when the target surface supports it, and it works on Windows, macOS, and Linux (X11 and Wayland).
+Default to the **element ax action with background delivery**. Act by `element_index`. It is the only rung the driver can verify, it avoids foregrounding when the target surface supports it, and it works on Windows, macOS, and Linux (X11 and Wayland).
 
 Read the window once, then act on an element from that snapshot. The snapshot already carries the screenshot too, so you never re-capture to switch how you address the target:
 
@@ -37,7 +37,7 @@ When you are only re-indexing before an element ax action and do not need fresh 
 
 Every action response carries the signals that tell you the next rung. Walk the ladder in order, and only step down when the response says to:
 
-1. **Element ax action, background (the default).** Act by `element_index`. If the response shows `effect: "confirmed"`, the driver read the result back. If `get_window_state` came back `degraded` (empty AX tree), an action returns `effect: "suspected_noop"` (the AX action dispatched but likely no-op'd), an action returns `effect: "unverifiable"` on an echo-prone surface, or the tree disagrees with the screenshot (an `h:1` or off-viewport row), follow `escalation.recommended`.
+1. **Element ax action, background (the default).** Act by `element_index`. If the response shows `effect: "confirmed"`, the driver read the result back. If `get_window_state` came back `degraded` (empty AX tree), an action returns `effect: "suspected_noop"` (the AX action ran but likely no-op'd), an action returns `effect: "unverifiable"` on an echo-prone surface, or the tree disagrees with the screenshot (an `h:1` or off-viewport row), follow `escalation.recommended`.
 
 2. **Element px action, background.** When `escalation.recommended` is `"px"`, pick the target pixel from the screenshot already in the `get_window_state` response and click it. Coordinates are window-relative for a windowed target.
 
@@ -86,7 +86,7 @@ Every action response carries the signals that tell you the next rung. Walk the 
 
 Two additive fields make the ladder explicit, so you escalate on data rather than a hunch:
 
-- **`effect`**: `"confirmed"` (the driver verified the result through AX read-back), `"unverifiable"` (the rung fired but only the caller can confirm), or `"suspected_noop"` (an AX action dispatched but almost certainly did nothing).
+- **`effect`**: `"confirmed"` (the driver verified the result through AX read-back), `"unverifiable"` (the rung fired but only the caller can confirm), or `"suspected_noop"` (an AX action ran but almost certainly did nothing).
 - **`escalation`**: present when there is a next rung: `{ recommended: "px" | "foreground" | "page", reason }`. A `degraded` `get_window_state` carries the same hint (recommending `px`).
 
 ```jsonc
@@ -120,7 +120,7 @@ get_window_state({ pid, window_id })         // confirm the change against tree 
 ## Troubleshooting
 
 **Problem: the call returned success but nothing changed (false success).**
-Do not trust the status code on a `verified: false` action. Re-read the window. The snapshot carries both the tree and the screenshot. Confirm the effect; if it did not land, switch rung (element ax action -> element px action off the same screenshot) or escalate dispatch (background -> foreground).
+Do not trust the status code on a `verified: false` action. Re-read the window. The snapshot carries both the tree and the screenshot. Confirm the effect; if it did not land, switch rung (element ax action -> element px action off the same screenshot) or escalate delivery (background -> foreground).
 
 **Problem: `desktop_scope_disabled` on a window-less click.**
 You're in `window` scope. Either pass a `window_id` (+ `element_index` or `x, y`), or `set_config({ capture_scope: "desktop" })` for genuinely screen-absolute work.
@@ -130,7 +130,7 @@ On native Wayland, raw keys have no background path. Type into accessible fields
 
 ## Related
 
-- [Capture and dispatch modalities](/explanation/capture-and-dispatch-modalities): the axes and the validity matrix
+- [Capture and delivery modalities](/explanation/capture-and-delivery-modalities): the axes and the validity matrix
 - [MCP tools](/reference/cua-driver/mcp-tools): full parameters for every tool
 - [Known limits](/reference/cua-driver/limits): targets that need foreground
 - [Interface contracts](/reference/cua-driver/contracts): valid combinations and platform support

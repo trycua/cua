@@ -87,6 +87,26 @@ const config = {
         permanent: true,
       },
       {
+        source: '/explanation/capture-and-dispatch-modalities',
+        destination: '/explanation/capture-and-delivery-modalities',
+        permanent: true,
+      },
+      {
+        source: '/explanation/capture-and-dispatch-modalities.mdx',
+        destination: '/explanation/capture-and-delivery-modalities',
+        permanent: true,
+      },
+      {
+        source: '/explanation/demonstrations-skills-and-trajectories',
+        destination: '/explanation',
+        permanent: true,
+      },
+      {
+        source: '/explanation/demonstrations-skills-and-trajectories.mdx',
+        destination: '/explanation',
+        permanent: true,
+      },
+      {
         source: '/tutorials/run-an-agent-in-a-sandbox',
         destination: '/tutorials/your-first-cloud-sandbox',
         permanent: true,

@@ -40,7 +40,7 @@ Action tools (`click`, `double_click`, `right_click`, `drag`, `scroll`, `type_te
 | Field | Type | Meaning | Value set / presence |
 | ----- | ---- | ------- | -------------------- |
 | `path` | string | Delivery rung that ran. | `"ax"`, `"cgevent"`, `"cgevent_fg"`, `"key_events"`, `"key_events_fg"`, `"pixel"`, `"x11_atspi"`, `"x11_pixel"`, `"x11_pixel_fg"`, `"msaa"`. |
-| `verified` | boolean or absent | AX read-back verification result. `true` means the driver read the effect back through AX; `false` means the action dispatched but is unconfirmed; absent means the tool does not carry this field. | `true`, `false`, or absent. |
+| `verified` | boolean or absent | AX read-back verification result. `true` means the driver read the effect back through AX; `false` means the action ran but is unconfirmed; absent means the tool does not carry this field. | `true`, `false`, or absent. |
 | `effect` | string | Action confidence signal. | `"confirmed"`, `"unverifiable"`, `"suspected_noop"`. |
 | `escalation` | object or absent | Machine-readable next-rung recommendation. Present only when the driver recommends climbing the ladder. | `{ recommended: "px" \| "foreground" \| "page", reason: string }`, or absent. |
 

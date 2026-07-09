@@ -22,7 +22,6 @@ on:
           - pypi/sandbox
           - pypi/sandbox-apps
           - pypi/som
-          - pypi/cloud
           - npm/cli
           - npm/computer
           - npm/core
@@ -117,10 +116,6 @@ jobs:
               ;;
             "pypi/som")
               echo "directory=libs/python/som" >> $GITHUB_OUTPUT
-              echo "type=python" >> $GITHUB_OUTPUT
-              ;;
-            "pypi/cloud")
-              echo "directory=libs/python/cua-cloud" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
               ;;
             "npm/cli")
@@ -423,15 +418,6 @@ jobs:
           cd libs/python/som
           VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
           echo "SOM version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Capture bumped cloud version
-        if: ${{ inputs.service == 'pypi/cloud' }}
-        id: cloud_version
-        run: |
-          cd libs/python/cua-cloud
-          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
-          echo "Cloud version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped npm/cli version

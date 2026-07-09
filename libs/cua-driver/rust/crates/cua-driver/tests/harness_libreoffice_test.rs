@@ -1,4 +1,8 @@
-//! Integration tests against a live LibreOffice Writer instance.
+//! Optional integration tests against a live LibreOffice Writer instance.
+//!
+//! This file is intentionally not part of the canonical Windows run-all path:
+//! it requires LibreOffice to be installed on the machine. Run it explicitly on
+//! images that include LibreOffice.
 //!
 //! Regression-guards the VCL/SAL gaps the vision-only LO Writer flow
 //! surfaced (manually validated during the PR #1708 follow-up
@@ -39,7 +43,7 @@
 //! ## How to run
 //!
 //! Local (requires LibreOffice installed):
-//!   cargo test --test harness_lo_vcl_test -- --ignored --nocapture
+//!   cargo test -p cua-driver --test harness_libreoffice_test -- --ignored --nocapture
 //!
 //! Tests skip cleanly if `swriter.exe` isn't on disk at one of the
 //! standard install locations (override via `LO_SWRITER_EXE`).

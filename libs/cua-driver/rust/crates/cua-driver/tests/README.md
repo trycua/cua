@@ -36,10 +36,15 @@ Staged outputs are read from `../../test-apps/harness-<name>/`.
 ## Running
 
 ```bash
-cargo test -p cua-driver --test protocol_mcp_test
+cargo test -p cua-driver --test protocol_handshake_test
 cargo test -p cua-driver --test harness_appkit_test -- --ignored --nocapture
 cargo test -p cua-driver --test modality_desktop_scope_macos_test -- --ignored --nocapture
 ```
+
+Windows Rust run-all uses
+`../../../../tests/runners/windows/run-all.ps1`. It builds repo-local fixtures
+and runs the default, guard, harness, and modality suites. It intentionally
+excludes optional external-app suites.
 
 Legacy Windows Sandbox runs use
 `../../../../tests/runners/windows-sandbox/run-tests-in-sandbox.ps1`, which
@@ -52,3 +57,28 @@ Windows GUI modality tests require a foreground interactive desktop where
 scheduled tasks, and PsExec-launched commands can enter the right user session
 while still exposing no foreground desktop; those tests self-skip in that state
 because the focus oracle would otherwise report meaningless pid-0 results.
+
+The Windows probe distinguishes two no-foreground states:
+
+- `input_desktop=Default, foreground_hwnd=0`: the desktop is usable but idle.
+  Tests now launch `focus-monitor-win` and require that sentinel HWND to become
+  foreground before assertions start.
+- `input_desktop` is not `Default` or cannot be opened: the session is usually
+  locked/disconnected, for example after an RDP client drops. Reconnect, use
+  `tscon /dest:console` on a disposable GUI VM, or boot the VM into an unlocked
+  console session before running ignored GUI tests.
+
+Set `CUA_REQUIRE_GUI=1` on dedicated GUI runners to turn these desktop
+self-skips into hard failures with the full desktop-state diagnostic.
+
+## Optional External Apps
+
+These suites are Rust source-of-truth coverage for real installed apps, but they
+are not part of the canonical run-all path because they depend on software or
+desktop state outside the repo-local fixtures:
+
+- `harness_libreoffice_test.rs`: Windows LibreOffice Writer/Calc. Requires
+  LibreOffice installed, or `LO_SWRITER_EXE` / `LO_SCALC_EXE` pointing at the
+  executables.
+- `modality_launch_focus_macos_test.rs`: macOS Calculator/TextEdit launch focus
+  checks. Requires a logged-in GUI session and usable System Events scripting.

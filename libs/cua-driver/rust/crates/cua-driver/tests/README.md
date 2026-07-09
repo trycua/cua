@@ -41,8 +41,11 @@ cargo test -p cua-driver --test harness_appkit_test -- --ignored --nocapture
 cargo test -p cua-driver --test modality_desktop_scope_macos_test -- --ignored --nocapture
 ```
 
-Windows Sandbox runs use `../../sandbox/run-tests-in-sandbox.ps1`, which builds
-the Windows harness apps and maps them into the sandbox.
+Legacy Windows Sandbox runs use
+`../../../../tests/runners/windows-sandbox/run-tests-in-sandbox.ps1`, which
+builds selected Windows harness apps and maps them into the sandbox. The current
+Windows GUI validation path should use a real user desktop session through RDP
+or an interactive scheduled task.
 
 Windows GUI modality tests require a user desktop where the focus sentinel can
 become the foreground window. SSH-launched commands start in Session 0 and

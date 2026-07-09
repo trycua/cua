@@ -20,7 +20,7 @@
 //! the action under test.
 //!
 //! Run in sandbox via:
-//!   .\sandbox\run-tests-in-sandbox.ps1 ux_guard
+//!   ..\tests\runners\windows-sandbox\run-tests-in-sandbox.ps1 guard_ux
 
 #![cfg(target_os = "windows")]
 

@@ -1,6 +1,6 @@
 //! UX-guard integration tests for Windows.
 //!
-//! These mirror the macOS Python tests in libs/cua-driver/Tests/integration/:
+//! These mirror the Python e2e tests in libs/cua-driver/tests/e2e/:
 //!   - test_background_focus.py
 //!   - test_click_opens_new_window.py
 //!   - test_launch_app_visible.py
@@ -10,9 +10,9 @@
 //!   The agent must be able to click, type, and launch apps in background
 //!   windows WITHOUT stealing focus from the user's foreground window.
 //!
-//! Background target: desktop-test-app-electron (prebuilt binary at
-//!   test-apps/desktop-test-app-electron.0.1.0.exe).  Notepad is used only
-//!   as a secondary fallback check.
+//! Background target: the repo-local Electron harness staged at
+//!   test-apps/harness-electron/CuaTestHarness.Electron.exe. Notepad is used
+//!   only as a secondary fallback check.
 //!
 //! All tests:
 //!   1. Launch focus-monitor-win (the "user's foreground window").
@@ -61,22 +61,22 @@ fn focus_monitor_path() -> PathBuf {
 fn test_app_path() -> PathBuf {
     // In sandbox, sandbox-runner.ps1 copies the exe to %TEMP% to avoid the
     // ShellExecuteW zone-security dialog that blocks on mapped-folder exes.
-    if let Ok(p) = std::env::var("TEST_APP_EXE") {
+    if let Ok(p) = std::env::var("HARNESS_ELECTRON_EXE") {
         let pb = PathBuf::from(p);
         if pb.exists() {
             return pb;
         }
     }
-    workspace_root().join("test-apps/desktop-test-app-electron.0.1.0.exe")
+    workspace_root().join("test-apps/harness-electron/CuaTestHarness.Electron.exe")
 }
 
-/// Launch the electron test app in the background (tied to the driver's reaper)
-/// and return its pid. Waits up to 10s for the app's HTTP health endpoint to
-/// respond. Returns None if the binary doesn't exist or the app fails to start.
+/// Launch the Electron harness in the background (tied to the driver's reaper)
+/// and return its pid. Returns None if the binary doesn't exist or the app
+/// fails to start.
 fn launch_test_app(driver: &mut McpDriver) -> Option<u32> {
     let exe = test_app_path();
     if !exe.exists() {
-        eprintln!("desktop-test-app-electron not found at {exe:?} — skipping");
+        eprintln!("CuaTestHarness.Electron not found at {exe:?} - skipping");
         return None;
     }
     let child = spawn_in_job(
@@ -87,22 +87,8 @@ fn launch_test_app(driver: &mut McpDriver) -> Option<u32> {
     .ok()?;
     let pid = child.id();
     driver.reaper().push(child);
-    // Poll the HTTP health endpoint until it responds or timeout.
-    // Allow extra time for cold-start in sandbox (no cached Electron DLLs).
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
-    loop {
-        if std::time::Instant::now() > deadline {
-            eprintln!("desktop-test-app-electron HTTP /health did not respond within 10s");
-            return Some(pid);
-        }
-        if let Ok(stream) = std::net::TcpStream::connect("127.0.0.1:6769") {
-            drop(stream);
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-    // Extra settle time for the window to appear.
-    std::thread::sleep(Duration::from_millis(500));
+    // Cold-start in sandbox can take a few seconds.
+    std::thread::sleep(Duration::from_secs(3));
     Some(pid)
 }
 
@@ -216,7 +202,7 @@ fn test_background_click_and_type_no_focus_steal() {
     //! Equivalent of macOS test_background_focus.py.
     //!
     //! 1. Launch FocusMonitorWin (simulates the user's active window).
-    //! 2. Launch desktop-test-app-electron in the background.
+    //! 2. Launch the Electron harness in the background.
     //! 3. Click inside the app and type text via cua-driver.
     //! 4. Assert act_losses on FocusMonitorWin stayed at 0.
 
@@ -272,7 +258,7 @@ fn test_background_click_and_type_no_focus_steal() {
     assert_ux_guard(
         losses_before,
         0,
-        "background click + type_text into desktop-test-app-electron",
+        "background click + type_text into CuaTestHarness.Electron",
     );
 
     fm_proc.kill().ok();
@@ -326,7 +312,10 @@ fn test_launch_app_no_focus_steal() {
             if let Some(p) = procs.iter().find(|p| {
                 p["name"]
                     .as_str()
-                    .map(|n| n.to_lowercase().contains("desktop-test-app"))
+                    .map(|n| {
+                        let n = n.to_lowercase();
+                        n.contains("cuatestharness.electron") || n.contains("electron")
+                    })
                     .unwrap_or(false)
             }) {
                 app_pid = p["pid"].as_i64();
@@ -335,17 +324,17 @@ fn test_launch_app_no_focus_steal() {
         }
     }
     if app_pid.is_none() {
-        eprintln!("desktop-test-app not found in process list after launch_app — skipping");
+        eprintln!("CuaTestHarness.Electron not found in process list after launch_app - skipping");
         fm_proc.kill().ok();
         return;
     }
 
     // ux_guard: FocusMonitorWin must not have lost activation.
-    assert_ux_guard(losses_before, 0, "launch_app desktop-test-app-electron");
+    assert_ux_guard(losses_before, 0, "launch_app CuaTestHarness.Electron");
 
     // Kill the launched app by exe name.
     Command::new("taskkill")
-        .args(["/F", "/T", "/IM", "desktop-test-app-electron.0.1.0.exe"])
+        .args(["/F", "/T", "/IM", "CuaTestHarness.Electron.exe"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -361,7 +350,7 @@ fn test_launch_app_no_focus_steal() {
 fn test_background_hotkey_no_focus_steal() {
     //! Equivalent of macOS test_background_menu_shortcut.py.
     //!
-    //! Send Ctrl+A to a background desktop-test-app-electron window.
+    //! Send Ctrl+A to a background Electron harness window.
     //! FocusMonitorWin must never lose activation.
 
     if !driver_binary().exists() {
@@ -404,7 +393,7 @@ fn test_background_hotkey_no_focus_steal() {
     assert_ux_guard(
         losses_before,
         0,
-        "background hotkey ctrl+a to desktop-test-app-electron",
+        "background hotkey ctrl+a to CuaTestHarness.Electron",
     );
 
     fm_proc.kill().ok();
@@ -419,7 +408,7 @@ fn test_background_click_opens_new_window_focus_preserved() {
     //! Equivalent of macOS test_click_opens_new_window.py.
     //!
     //! 1. FocusMonitorWin is foreground.
-    //! 2. Click a link in desktop-test-app-electron — a new window/tab may appear.
+    //! 2. Click in CuaTestHarness.Electron - a new window/tab may appear.
     //! 3. FocusMonitorWin must remain active throughout (UX guard).
     //!
     //! Verifies PostMessage doesn't inadvertently activate any new window that
@@ -468,7 +457,7 @@ fn test_background_click_opens_new_window_focus_preserved() {
     assert_ux_guard(
         losses_before,
         0,
-        "background click in desktop-test-app-electron (may open new window)",
+        "background click in CuaTestHarness.Electron (may open new window)",
     );
 
     // Verify FocusMonitorWin is still alive.
@@ -525,7 +514,7 @@ fn test_background_screenshot_no_focus_steal() {
     assert_ux_guard(
         losses_before,
         0,
-        "screenshot of background desktop-test-app-electron",
+        "screenshot of background CuaTestHarness.Electron",
     );
 
     fm_proc.kill().ok();

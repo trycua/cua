@@ -38,7 +38,7 @@ built helper made the integration tests flaky to bootstrap on a
 fresh runner — Finder removes that dependency.)
 
 Run:
-    cd libs/cua-driver/rust/tests/integration
+    cd libs/cua-driver/tests/e2e
     python3 -m unittest test_focus_steal_parity -v
 """
 

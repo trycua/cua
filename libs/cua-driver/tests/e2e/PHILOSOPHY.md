@@ -1,4 +1,4 @@
-# cua-driver v2 Integration Test Philosophy
+# cua-driver Python E2E Test Philosophy
 
 ## Core Principle
 
@@ -65,12 +65,12 @@ fails with a list of every incident.
 
 | App | Primary oracle | Cross-check |
 |-----|---------------|-------------|
-| Safari | AX tree text values | — |
-| Chrome | AX tree text values | — |
-| Electron | AX tree text values | HTTP API on port 6769 |
-| Tauri | AX tree text values | HTTP API on port 6769 |
+| Safari | AX tree text values | - |
+| Chrome | AX tree text values | - |
+| Electron | AX tree text values from shared DOM | - |
+| Tauri | AX tree text values from shared DOM | - |
 | Blender | Screenshot + NCC template match | AX tree window title |
-| Calculator | AX tree static text | — |
+| Calculator | AX tree static text | - |
 
 For browser apps the test page (`assets/test_page.html`) provides a
 self-contained oracle: every interactive element reflects its state back into
@@ -95,28 +95,13 @@ assert cv.diff_ratio(before_crop, after_crop) > 0.001
 
 ---
 
-## Tauri / Electron HTTP API
-
-The HTTP API is a **cross-check**, not the primary assertion:
-
-```python
-# Primary: AX tree
-after = get_window_state(tauri_pid, wid)
-assert ax_value(after.tree, field_idx) == "tauri test"
-
-# Cross-check: HTTP event log
-events = requests.get("http://localhost:6769/events").json()
-assert any(e["type"] == "key_down" for e in events)
-```
-
----
-
 ## Test File Structure
 
 ```
-v2/
+tests/e2e/
   PHILOSOPHY.md         ← this file
   conftest.py           ← pytest fixtures (driver, ux_guard, sentinel, html_server, ...)
+  driver_client.py      ← raw MCP client wrapper
   harness/
     __init__.py
     monitor.py          ← UXMonitor (5 ms PyObjC thread)
@@ -126,12 +111,13 @@ v2/
   assets/
     test_page.html      ← all-elements test page for browser tests
     blender/
-      bboxes.json       ← pre-measured bounding boxes for template targets
+      toolbar_ref.png   ← stored template target
   test_safari.py
   test_chrome.py
   test_electron.py
   test_tauri.py
   test_blender.py
+  test_*.py             ← older e2e coverage kept here until audited/ported
 ```
 
 ---
@@ -139,8 +125,8 @@ v2/
 ## Running
 
 ```bash
-cd tests/integration/v2
-export CUA_DRIVER_BINARY=../../../target/debug/cua-driver
+cd libs/cua-driver/tests/e2e
+export CUA_DRIVER_BINARY=../../rust/target/debug/cua-driver
 
 # Single file
 python3 -m pytest test_safari.py -v

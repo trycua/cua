@@ -18,19 +18,6 @@ Log "sandbox-runner.ps1 starting"
 $env:CARGO_MANIFEST_DIR = "C:\cua-driver-rs\crates\cua-driver"
 Log "CARGO_MANIFEST_DIR = $env:CARGO_MANIFEST_DIR"
 
-# ── copy test-app exe to %TEMP% so ShellExecuteW doesn't hit a zone dialog ──
-# Files on Sandbox-mapped folders are Zone 3 (Internet); ShellExecuteW blocks
-# on the "Do you want to run this file?" dialog.  A local %TEMP% copy is Zone 1.
-$testAppSrc = "C:\cua-driver-rs\test-apps\desktop-test-app-electron.0.1.0.exe"
-$testAppDst = "$env:TEMP\desktop-test-app-electron.0.1.0.exe"
-if (Test-Path $testAppSrc) {
-    Copy-Item $testAppSrc $testAppDst -Force
-    $env:TEST_APP_EXE = $testAppDst
-    Log "test-app copied to $testAppDst (TEST_APP_EXE=$testAppDst)"
-} else {
-    Log "WARNING: test-app not found at $testAppSrc"
-}
-
 $driverExe = "C:\cua-driver-rs\target\debug\cua-driver.exe"
 if (-not (Test-Path $driverExe)) {
     Log "ERROR: $driverExe not found"
@@ -57,7 +44,8 @@ $harnessRoots = @(
     @{ Src = "C:\cua-driver-rs\test-apps\harness-wpf";      EnvVar = "HARNESS_WPF_EXE";      Exe = "CuaTestHarness.Wpf.exe" },
     @{ Src = "C:\cua-driver-rs\test-apps\harness-winui3";   EnvVar = "HARNESS_WINUI3_EXE";   Exe = "CuaTestHarness.WinUI3.exe" },
     @{ Src = "C:\cua-driver-rs\test-apps\harness-webview";  EnvVar = "HARNESS_WEBVIEW_EXE";  Exe = "CuaTestHarness.WebView.exe" },
-    @{ Src = "C:\cua-driver-rs\test-apps\harness-electron"; EnvVar = "HARNESS_ELECTRON_EXE"; Exe = "CuaTestHarness.Electron.exe" }
+    @{ Src = "C:\cua-driver-rs\test-apps\harness-electron"; EnvVar = "HARNESS_ELECTRON_EXE"; Exe = "CuaTestHarness.Electron.exe" },
+    @{ Src = "C:\cua-driver-rs\test-apps\harness-tauri";    EnvVar = "HARNESS_TAURI_EXE";    Exe = "CuaTestHarness.Tauri.exe" }
 )
 foreach ($h in $harnessRoots) {
     if (-not (Test-Path $h.Src)) {

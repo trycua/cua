@@ -1,22 +1,23 @@
 # test-harness build scripts
 
-Run `macos.sh` or `windows.ps1` to build every harness app for that host
-OS. Outputs are staged into `../../rust/test-apps/harness-<name>/` so
-the Rust integration tests and the Windows Sandbox runner pick them up
-unchanged.
+These host-specific scripts stage source-built harness apps into
+`../../rust/test-apps/harness-<name>/`.
+
+| Script | Host | Builds |
+| --- | --- | --- |
+| `macos.sh` | macOS | AppKit, SwiftUI, WKWebView, Electron, Tauri |
+| `linux.sh` | Linux | GTK3, Electron, Tauri |
+| `windows.ps1` | Windows | WPF, WinUI3, WebView2, Electron, Tauri |
+
+Each script supports skipping one target while iterating locally:
 
 ```bash
-# macOS — builds appkit + swiftui via xcrun swiftc into .app bundles
-./macos.sh
-
-# Windows — dotnet publish for wpf/winui3/webview2 + electron-builder for electron
-.\windows.ps1
+./macos.sh --skip electron
+./linux.sh --skip tauri
 ```
 
-Both scripts accept a `--skip` / `-Skip` argument to build one app at a
-time during local iteration; see the file headers for the full surface.
+```powershell
+.\windows.ps1 -Skip webview
+```
 
-Cross-platform Electron is built by `windows.ps1` today (which runs
-`apps/cross-platform/electron/build.ps1`). When a non-Windows test path
-needs the Electron host, lift the staging step into `macos.sh` (or
-`linux.sh`).
+Build products are local artifacts. Rebuild them instead of committing them.

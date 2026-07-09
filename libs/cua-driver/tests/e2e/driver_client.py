@@ -153,6 +153,7 @@ def default_binary_path() -> str:
             os.path.dirname(os.path.abspath(__file__)),
             "..",
             "..",
+            "rust",
             "target",
             "debug",
             "cua-driver",

@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Sync this host checkout to verification VMs and pull logs/artifacts back.
+#
+# Source changes should flow from this host to VMs. The guarded pull-code mode
+# exists only for recovering intentional VM-side edits.
 set -euo pipefail
 
 usage() {

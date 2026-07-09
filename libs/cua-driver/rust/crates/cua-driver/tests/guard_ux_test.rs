@@ -1,10 +1,11 @@
 //! UX-guard integration tests for Windows.
 //!
-//! These mirror the Python e2e tests in libs/cua-driver/tests/e2e/:
-//!   - test_background_focus.py
-//!   - test_click_opens_new_window.py
-//!   - test_launch_app_visible.py
-//!   - test_background_menu_shortcut.py
+//! These cover the UX-guard scenarios previously exercised by the legacy
+//! Python suite:
+//!   - background focus preservation
+//!   - new-window click delivery
+//!   - visible app launch
+//!   - background menu shortcuts
 //!
 //! Invariant under test (the "UX guard"):
 //!   The agent must be able to click, type, and launch apps in background
@@ -299,7 +300,7 @@ fn assert_ux_guard(before: u32, max_allowed: u32, context: &str) {
 
 #[test]
 fn test_background_click_and_type_no_focus_steal() {
-    //! Equivalent of macOS test_background_focus.py.
+    //! Background focus-preservation coverage.
     //!
     //! 1. Launch the Electron harness.
     //! 2. Foreground FocusMonitorWin (simulates the user's active window).
@@ -388,7 +389,7 @@ fn test_background_click_and_type_no_focus_steal() {
 
 #[test]
 fn test_launch_app_minimized_no_focus_steal() {
-    //! Equivalent of macOS test_launch_app_visible.py.
+    //! Visible app-launch coverage.
     //!
     //! launch_app with start_minimized=true is the strict Windows background
     //! launch mode: the app starts without displacing FocusMonitorWin.
@@ -470,7 +471,7 @@ fn test_launch_app_minimized_no_focus_steal() {
 
 #[test]
 fn test_background_hotkey_no_focus_steal() {
-    //! Equivalent of macOS test_background_menu_shortcut.py.
+    //! Background menu-shortcut coverage.
     //!
     //! Send Ctrl+A to a background Electron harness window.
     //! FocusMonitorWin must never lose activation.
@@ -515,7 +516,7 @@ fn test_background_hotkey_no_focus_steal() {
 
 #[test]
 fn test_background_click_opens_new_window_focus_preserved() {
-    //! Equivalent of macOS test_click_opens_new_window.py.
+    //! New-window click-delivery coverage.
     //!
     //! 1. FocusMonitorWin is foreground.
     //! 2. Click the CuaTestHarness.Electron child-window button.

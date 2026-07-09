@@ -26,4 +26,4 @@ Adding a new app:
 2. Reuse `shared/scenarios.json` and `shared/web/index.html` instead of copying
    private ids.
 3. Stage into `rust/test-apps/harness-<toolkit>/`.
-4. Add or update the matching Rust/Python tests and this table.
+4. Add or update the matching Rust tests and this table.

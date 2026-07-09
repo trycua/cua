@@ -102,6 +102,12 @@ fn read_count(p: &Path) -> u32 {
         .and_then(|s| s.trim().parse::<u32>().ok())
         .unwrap_or(0)
 }
+fn read_focus_hwnd() -> u64 {
+    fs::read_to_string(focus_hwnd_file())
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0)
+}
 
 fn window_ids(driver: &mut McpDriver) -> HashSet<u64> {
     let r = driver.call("list_windows", serde_json::json!({}));
@@ -111,27 +117,68 @@ fn window_ids(driver: &mut McpDriver) -> HashSet<u64> {
         .unwrap_or_default()
 }
 
-fn require_interactive_desktop(context: &str) -> bool {
-    if platform_windows::diagnostics::current_session_id() == Some(0) {
-        eprintln!(
-            "{context}: running in Windows Session 0; skipping GUI modality e2e. \
-             Re-run from an interactive logon session (RDP/console)."
-        );
-        return false;
-    }
+fn gui_required() -> bool {
+    std::env::var("CUA_REQUIRE_GUI")
+        .ok()
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+}
 
-    match platform_windows::diagnostics::interactive_desktop_check() {
-        Ok(true) => true,
-        Ok(false) => {
-            eprintln!("{context}: no foreground interactive desktop; skipping GUI modality e2e");
-            false
+fn skip_desktop(context: &str, reason: String) -> bool {
+    let msg = format!("{context}: {reason}; skipping GUI modality e2e");
+    if gui_required() {
+        panic!("{msg}");
+    }
+    eprintln!("{msg}");
+    false
+}
+
+fn require_seedable_desktop(context: &str) -> bool {
+    let state = platform_windows::diagnostics::desktop_state();
+    if state.session_id == Some(0) {
+        return skip_desktop(
+            context,
+            format!(
+                "running in Windows Session 0 ({}) - re-run from RDP/console/scheduled task in user session",
+                state.summary()
+            ),
+        );
+    }
+    if !state.has_process_window_station {
+        return skip_desktop(
+            context,
+            format!("no attached process window station ({})", state.summary()),
+        );
+    }
+    if !state.input_desktop_is_default() {
+        return skip_desktop(
+            context,
+            format!(
+                "input desktop is not the user Default desktop ({})",
+                state.summary()
+            ),
+        );
+    }
+    true
+}
+
+fn require_focus_monitor_foreground(context: &str, expected_hwnd: u64) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let state = platform_windows::diagnostics::desktop_state();
+        if state.foreground_hwnd == Some(expected_hwnd as usize) {
+            return true;
         }
-        Err(e) => {
-            eprintln!(
-                "{context}: interactive desktop check failed ({e}); skipping GUI modality e2e"
+        if Instant::now() >= deadline {
+            return skip_desktop(
+                context,
+                format!(
+                    "focus monitor did not become foreground (expected HWND 0x{expected_hwnd:x}; {})",
+                    state.summary()
+                ),
             );
-            false
         }
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -148,7 +195,7 @@ struct E2eFixture {
 /// belongs to a child pid) → sentinel (grabs foreground, pushing the app to
 /// the background) → reset counters.
 fn setup(target_exe: &Path, _title_hint: &str) -> Option<E2eFixture> {
-    if !require_interactive_desktop("modality_input_e2e_test") {
+    if !require_seedable_desktop("modality_input_e2e_test") {
         return None;
     }
 
@@ -238,12 +285,7 @@ fn setup(target_exe: &Path, _title_hint: &str) -> Option<E2eFixture> {
     }
     let sdeadline = Instant::now() + Duration::from_secs(10);
     loop {
-        let ok = read_count(&focus_pid_file()) != 0
-            && fs::read_to_string(focus_hwnd_file())
-                .ok()
-                .and_then(|s| s.trim().parse::<u64>().ok())
-                .unwrap_or(0)
-                != 0;
+        let ok = read_count(&focus_pid_file()) != 0 && read_focus_hwnd() != 0;
         if ok {
             break;
         }
@@ -254,6 +296,9 @@ fn setup(target_exe: &Path, _title_hint: &str) -> Option<E2eFixture> {
         std::thread::sleep(Duration::from_millis(100));
     }
     std::thread::sleep(Duration::from_millis(400));
+    if !require_focus_monitor_foreground("modality_input_e2e_test sentinel", read_focus_hwnd()) {
+        return None;
+    }
     let _ = fs::write(loss_file(), "0");
     let _ = fs::write(key_loss_file(), "0");
 

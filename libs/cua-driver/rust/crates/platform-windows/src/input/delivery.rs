@@ -307,6 +307,46 @@ pub fn background_unavailable_error(
     }))
 }
 
+/// Build a structured background refusal while preserving the concrete
+/// actuator failure. This is used after a background coordinate-injection
+/// fallback was attempted and failed, so callers can distinguish a true
+/// occlusion miss from a generic class-level refusal.
+pub fn background_unavailable_error_with_cause(
+    hwnd: u64,
+    kind: EventKind,
+    cause: impl Into<String>,
+) -> cua_driver_core::protocol::ToolResult {
+    let class = read_class_name(hwnd);
+    let cause = cause.into();
+    let cause_lower = cause.to_ascii_lowercase();
+    let code = if cause_lower.contains("occluded") {
+        "background_occluded"
+    } else if cause_lower.contains("uipi") || cause_lower.contains("higher-integrity") {
+        "background_uipi_blocked"
+    } else {
+        "background_unavailable"
+    };
+    let text = format!(
+        "Background delivery is not available for target window class \
+         '{class}' on this event kind ({}): {cause}",
+        kind.name()
+    );
+    cua_driver_core::protocol::ToolResult::error(text).with_structured(serde_json::json!({
+        "code": code,
+        "target_class": class,
+        "event_kind": kind.name(),
+        "cause": cause,
+        "suggestion":
+            "Either call bring_to_front then retry with delivery_mode:\"foreground\", \
+             or accept the foreground swap by setting delivery_mode:\"foreground\" directly.",
+        "escalation": {
+            "recommended": "foreground",
+            "reason": "background input could not be delivered by the coordinate actuator — \
+                       re-call delivery_mode:\"foreground\" (or bring_to_front first).",
+        },
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,6 +389,46 @@ mod tests {
         assert_eq!(
             DeliveryMode::from_args(&serde_json::json!({"delivery_mode": null})),
             DeliveryMode::Background
+        );
+    }
+
+    #[test]
+    fn background_unavailable_with_cause_preserves_actuator_failure() {
+        let result = background_unavailable_error_with_cause(
+            0,
+            EventKind::MouseClick,
+            "target point is occluded by another window",
+        );
+        let structured = result.structured_content.as_ref().expect("structured");
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            structured["code"].as_str(),
+            Some("background_occluded")
+        );
+        assert_eq!(structured["event_kind"].as_str(), Some("mouse_click"));
+        assert!(
+            structured["cause"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("occluded")
+        );
+
+        let text = match &result.content[0] {
+            cua_driver_core::protocol::Content::Text { text, .. } => text,
+            _ => panic!("expected text content"),
+        };
+        assert!(text.contains("occluded"), "result text lost cause: {text}");
+
+        let uipi = background_unavailable_error_with_cause(
+            0,
+            EventKind::MouseClick,
+            "blocked by UIPI higher-integrity target",
+        );
+        assert_eq!(
+            uipi.structured_content
+                .as_ref()
+                .and_then(|v| v["code"].as_str()),
+            Some("background_uipi_blocked")
         );
     }
 }

@@ -2367,7 +2367,7 @@ impl Tool for ClickTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use crate::input::delivery::{background_unavailable_error, DeliveryMode, EventKind};
+        use crate::input::delivery::{DeliveryMode, EventKind};
         use crate::uia::cache::SnapshotKind;
         use cua_driver_core::tool_args::ArgsExt;
         let cursor_key = resolve_cursor_key(&args);
@@ -2860,7 +2860,7 @@ impl Tool for ClickTool {
                         Ok(()) => return Ok(format!(
                             "✅ Injected click on [{idx}] (screen ({cx},{cy}), background, no foreground swap)."
                         )),
-                        Err(_) => anyhow::bail!("__CUA_BG_UNAVAILABLE_CLICK__"),
+                        Err(e) => anyhow::bail!("__CUA_BG_UNAVAILABLE_CLICK__{e}"),
                     }
                 }
                 crate::input::post_click_screen(hwnd, cx, cy, count, &btn)?;
@@ -2881,7 +2881,14 @@ impl Tool for ClickTool {
                     json!({ "path": "ax", "verified": false, "effect": "unverifiable" }),
                 ),
                 Ok(Err(e)) if e.to_string().contains("__CUA_BG_UNAVAILABLE_CLICK__") => {
-                    background_unavailable_error(hwnd, EventKind::MouseClick)
+                    let cause = e
+                        .to_string()
+                        .replace("__CUA_BG_UNAVAILABLE_CLICK__", "");
+                    crate::input::delivery::background_unavailable_error_with_cause(
+                        hwnd,
+                        EventKind::MouseClick,
+                        cause,
+                    )
                 }
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -3051,7 +3058,11 @@ impl Tool for ClickTool {
                         ))
                         .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" }))
                     }
-                    Ok(Err(_)) => background_unavailable_error(hwnd, EventKind::MouseClick),
+                    Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
+                        hwnd,
+                        EventKind::MouseClick,
+                        e.to_string(),
+                    ),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
@@ -3200,7 +3211,7 @@ impl Tool for TypeTextTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use crate::input::delivery::{background_unavailable_error, DeliveryMode, EventKind};
+        use crate::input::delivery::{DeliveryMode, EventKind};
         use cua_driver_core::tool_args::ArgsExt;
         let raw_pid = match args.require_i64("pid") {
             Ok(v) => v,
@@ -3328,7 +3339,10 @@ impl Tool for TypeTextTool {
         if delivery == DeliveryMode::Background
             && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::TextInput)
         {
-            return background_unavailable_error(hwnd, EventKind::TextInput);
+            return crate::input::delivery::background_unavailable_error(
+                hwnd,
+                EventKind::TextInput,
+            );
         }
         // delivery_mode:"foreground" — explicit SendInput Unicode with a brief
         // foreground swap (send_text_synthesized), symmetric with press_key's
@@ -3394,7 +3408,10 @@ impl Tool for TypeTextTool {
         //    contract forbids in background. Surface background_unavailable; the
         //    agent escalates to delivery_mode:"foreground".
         if crate::terminal::is_terminal_hwnd(hwnd) {
-            return background_unavailable_error(hwnd, EventKind::TextInput);
+            return crate::input::delivery::background_unavailable_error(
+                hwnd,
+                EventKind::TextInput,
+            );
         }
 
         // CUA-543 routing: PostMessage WM_CHAR doesn't reach modern
@@ -3550,7 +3567,10 @@ impl Tool for TypeTextTool {
         //    never raises); otherwise surface background_unavailable so the agent
         //    escalates to delivery_mode:"foreground".
         if elem_idx.is_none() && crate::input::delivery::is_wpf_target_window(hwnd) {
-            return background_unavailable_error(hwnd, EventKind::TextInput);
+            return crate::input::delivery::background_unavailable_error(
+                hwnd,
+                EventKind::TextInput,
+            );
         }
 
         // 3. Legacy Win32 / GDI / Chromium-IME — PostMessage WM_CHAR, no focus steal.
@@ -3622,8 +3642,8 @@ impl Tool for TypeTextTool {
                         },
                     })),
                     _ => ToolResult::text(format!(
-                        "✅ Typed {text_len} char(s) on pid {raw_pid} via PostMessage \
-                         ({_delay_ms}ms delay; delivered, not verified — could not read \
+                        "📨 Sent {text_len} char(s) to pid {raw_pid} via PostMessage \
+                         ({_delay_ms}ms delay; not verified — could not read \
                          the focused field back, e.g. the target isn't foreground or \
                          exposes no ValuePattern). If it didn't land, retry with \
                          delivery_mode:\"foreground\"."
@@ -3771,7 +3791,7 @@ impl Tool for PressKeyTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use crate::input::delivery::{background_unavailable_error, DeliveryMode, EventKind};
+        use crate::input::delivery::{DeliveryMode, EventKind};
         use cua_driver_core::tool_args::ArgsExt;
         let raw_pid = match args.require_i64("pid") {
             Ok(v) => v,
@@ -3893,7 +3913,7 @@ impl Tool for PressKeyTool {
             // combos) and the only way to land it is a foreground/focus grab —
             // which background must not do. Surface background_unavailable so the
             // agent escalates to delivery_mode:"foreground" (which may front).
-            return background_unavailable_error(hwnd, event_kind);
+            return crate::input::delivery::background_unavailable_error(hwnd, event_kind);
         }
         // Foreground: send_key_synthesized takes the SetForegroundWindow path.
         // Skipped when px-focus already fronted/clicked the target — the key then
@@ -3918,8 +3938,22 @@ impl Tool for PressKeyTool {
         })
         .await;
         match result {
-            // Match Swift's text format 1:1: `"✅ Pressed KEY on pid X."`.
-            Ok(Ok(())) => ToolResult::text(format!("✅ Pressed {key_display} on pid {raw_pid}.")),
+            Ok(Ok(())) => ToolResult::text(format!(
+                "📨 Sent {key_display} to pid {raw_pid} via PostMessage (not verified). \
+                 If it didn't land, retry with delivery_mode:\"foreground\"."
+            ))
+            .with_structured(serde_json::json!({
+                "path": "key_events",
+                "key": key_display,
+                "verified": false,
+                "verify": "unreadable",
+                "effect": "unverifiable",
+                "escalation": {
+                    "recommended": "foreground",
+                    "reason": "background key delivery could not be confirmed — re-call \
+                               with delivery_mode:\"foreground\" if a screenshot shows the key didn't land."
+                },
+            })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
@@ -3993,7 +4027,7 @@ impl Tool for HotkeyTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use crate::input::delivery::{background_unavailable_error, DeliveryMode, EventKind};
+        use crate::input::delivery::{DeliveryMode, EventKind};
         use cua_driver_core::tool_args::ArgsExt;
         let hwnd_opt = args.opt_u64("window_id");
         let raw_pid = match args.require_i64("pid") {
@@ -4194,7 +4228,7 @@ impl Tool for HotkeyTool {
             // Chromium key-combos) and only a foreground/focus grab lands it —
             // which background must not do. Surface background_unavailable; the
             // agent escalates to delivery_mode:"foreground".
-            return background_unavailable_error(hwnd, event_kind);
+            return crate::input::delivery::background_unavailable_error(hwnd, event_kind);
         }
         // delivery_mode:"foreground" — explicit SendInput swap (the path that
         // unblocks TranslateAccelerator-style apps). A Background call that
@@ -4473,7 +4507,7 @@ impl Tool for ScrollTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use crate::input::delivery::{background_unavailable_error, DeliveryMode, EventKind};
+        use crate::input::delivery::{DeliveryMode, EventKind};
         use cua_driver_core::tool_args::ArgsExt;
         // `direction` is required in both the pid path and the window-less
         // desktop path, so resolve it before the pid check.
@@ -4605,7 +4639,10 @@ impl Tool for ScrollTool {
         if delivery == DeliveryMode::Background
             && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseScroll)
         {
-            return background_unavailable_error(hwnd, EventKind::MouseScroll);
+            return crate::input::delivery::background_unavailable_error(
+                hwnd,
+                EventKind::MouseScroll,
+            );
         }
         // delivery_mode:"foreground" — SendInput MOUSEEVENTF_WHEEL at the target
         // window's screen center (send_wheel_synthesized). The wheel routes to
@@ -4937,7 +4974,7 @@ impl Tool for DoubleClickTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use crate::input::delivery::{background_unavailable_error, DeliveryMode, EventKind};
+        use crate::input::delivery::{DeliveryMode, EventKind};
         // Swift error wording 1:1.
         let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(p) => p,
@@ -5074,7 +5111,11 @@ impl Tool for DoubleClickTool {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Injected double-click to [{idx}] at screen ({cx},{cy}) (background, no foreground swap)."
                     )),
-                    Ok(Err(_)) => background_unavailable_error(hwnd, EventKind::MouseClick),
+                    Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
+                        hwnd,
+                        EventKind::MouseClick,
+                        e.to_string(),
+                    ),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
@@ -5172,7 +5213,11 @@ impl Tool for DoubleClickTool {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Injected double-click to pid {pid} at screen ({sx_i},{sy_i}) (background, no foreground swap)."
                     )),
-                    Ok(Err(_)) => background_unavailable_error(hwnd, EventKind::MouseClick),
+                    Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
+                        hwnd,
+                        EventKind::MouseClick,
+                        e.to_string(),
+                    ),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
@@ -5267,7 +5312,7 @@ impl Tool for RightClickTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use crate::input::delivery::{background_unavailable_error, DeliveryMode, EventKind};
+        use crate::input::delivery::{DeliveryMode, EventKind};
         // Swift error wording 1:1.
         let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(p) => p,
@@ -5399,7 +5444,11 @@ impl Tool for RightClickTool {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Injected right-click to [{idx}] at screen ({cx},{cy}) (background, no foreground swap)."
                     )),
-                    Ok(Err(_)) => background_unavailable_error(hwnd, EventKind::MouseClick),
+                    Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
+                        hwnd,
+                        EventKind::MouseClick,
+                        e.to_string(),
+                    ),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
@@ -5494,7 +5543,11 @@ impl Tool for RightClickTool {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Injected right-click to pid {pid} at screen ({sx_i},{sy_i}) (background, no foreground swap)."
                     )),
-                    Ok(Err(_)) => background_unavailable_error(hwnd, EventKind::MouseClick),
+                    Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
+                        hwnd,
+                        EventKind::MouseClick,
+                        e.to_string(),
+                    ),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }

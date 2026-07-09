@@ -14,7 +14,7 @@
 //!                        track of in-window flyouts.
 //!
 //! Run via:
-//!   .\sandbox\run-tests-in-sandbox.ps1 harness_winui3
+//!   ..\tests\runners\windows-sandbox\run-tests-in-sandbox.ps1 harness_winui3
 //! or locally:
 //!   cargo test --test harness_winui3_test -- --ignored --nocapture
 

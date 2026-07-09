@@ -1,7 +1,9 @@
 # run-tests-in-sandbox.ps1  - host-side launcher with live log streaming
 #
-# Usage (from workspace root):
-#   .\sandbox\run-tests-in-sandbox.ps1 [<test-filter>]
+# Legacy Windows Sandbox runner.
+#
+# Usage (from libs/cua-driver):
+#   .\tests\runners\windows-sandbox\run-tests-in-sandbox.ps1 [<test-filter>]
 #
 # Steps:
 #   1. cargo build + cargo test --no-run
@@ -31,11 +33,15 @@ function Close-Sandbox {
     Write-Host "  Sandbox closed." -ForegroundColor Green
 }
 
-$sandboxDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$wsRoot     = Split-Path -Parent $sandboxDir
+$runnerDir     = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$runnersDir    = Split-Path -Parent $runnerDir
+$testsDir      = Split-Path -Parent $runnersDir
+$cuaDriverRoot = Split-Path -Parent $testsDir
+$rustRoot      = Join-Path $cuaDriverRoot "rust"
 
-Write-Host "=== cua-driver-rs Windows Sandbox Test Runner ===" -ForegroundColor Cyan
-Write-Host "Workspace: $wsRoot"
+Write-Host "=== cua-driver Windows Sandbox Test Runner ===" -ForegroundColor Cyan
+Write-Host "cua-driver root: $cuaDriverRoot"
+Write-Host "Rust workspace : $rustRoot"
 
 # -- Pre-flight: fail fast if a sandbox is already running --------------------
 $running = Get-Process "WindowsSandboxClient","WindowsSandbox" -ErrorAction SilentlyContinue
@@ -54,35 +60,35 @@ if ($running) {
 }
 
 # -- 1. Build ------------------------------------------------------------------
-Push-Location $wsRoot
+Push-Location $rustRoot
 try {
     Write-Host "`n[BUILD] cargo build..." -ForegroundColor Yellow
-    cargo build
+    cargo build -p cua-driver
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 
-    Write-Host "`n[BUILD] cargo test --no-run (mcp_protocol_test)..." -ForegroundColor Yellow
-    cargo test --test mcp_protocol_test --no-run
-    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (mcp_protocol_test) failed" }
+    Write-Host "`n[BUILD] cargo test --no-run (protocol_handshake_test)..." -ForegroundColor Yellow
+    cargo test -p cua-driver --test protocol_handshake_test --no-run
+    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (protocol_handshake_test) failed" }
 
-    Write-Host "`n[BUILD] cargo test --no-run (ux_guard_test)..." -ForegroundColor Yellow
-    cargo test --test ux_guard_test --no-run
-    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (ux_guard_test) failed" }
+    Write-Host "`n[BUILD] cargo test --no-run (guard_ux_test)..." -ForegroundColor Yellow
+    cargo test -p cua-driver --test guard_ux_test --no-run
+    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (guard_ux_test) failed" }
 
     Write-Host "`n[BUILD] cargo test --no-run (harness_wpf_test)..." -ForegroundColor Yellow
-    cargo test --test harness_wpf_test --no-run
+    cargo test -p cua-driver --test harness_wpf_test --no-run
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_wpf_test) failed" }
 
     Write-Host "`n[BUILD] cargo test --no-run (harness_winui3_test)..." -ForegroundColor Yellow
-    cargo test --test harness_winui3_test --no-run
+    cargo test -p cua-driver --test harness_winui3_test --no-run
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_winui3_test) failed" }
 
     Write-Host "`n[BUILD] cargo test --no-run (harness_web_test)..." -ForegroundColor Yellow
-    cargo test --test harness_web_test --no-run
+    cargo test -p cua-driver --test harness_web_test --no-run
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_web_test) failed" }
 
-    Write-Host "`n[BUILD] cargo test --no-run (harness_bg_modality_test)..." -ForegroundColor Yellow
-    cargo test --test harness_bg_modality_test --no-run
-    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_bg_modality_test) failed" }
+    Write-Host "`n[BUILD] cargo test --no-run (modality_input_e2e_test)..." -ForegroundColor Yellow
+    cargo test -p cua-driver --test modality_input_e2e_test --no-run
+    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (modality_input_e2e_test) failed" }
 } finally { Pop-Location }
 
 # -- 1.5. Build the test fixtures if dependencies are on PATH ------------------
@@ -91,7 +97,7 @@ try {
 # a dependency isn't available - the smoke tests degrade to "skipped" inside
 # the sandbox rather than failing the whole run.
 if (Get-Command dotnet -ErrorAction SilentlyContinue) {
-    $harnessBuild = Join-Path $wsRoot "..\tests\fixtures\build\windows.ps1"
+    $harnessBuild = Join-Path $cuaDriverRoot "tests\fixtures\build\windows.ps1"
     if (Test-Path $harnessBuild) {
         Write-Host "`n[BUILD] test fixtures (dotnet publish)..." -ForegroundColor Yellow
         # build.ps1 sets $ErrorActionPreference=Stop and throws on
@@ -112,14 +118,14 @@ if (Get-Command dotnet -ErrorAction SilentlyContinue) {
     Write-Host "`n[SKIP] dotnet CLI not on PATH - test fixture build skipped, harness tests will degrade." -ForegroundColor Yellow
 }
 
-$mcpBin = Get-ChildItem "$wsRoot\target\debug\deps\mcp_protocol_test-*.exe" |
+$protocolBin = Get-ChildItem "$rustRoot\target\debug\deps\protocol_handshake_test-*.exe" |
           Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if (-not $mcpBin) { throw "mcp_protocol_test-*.exe not found" }
-Write-Host "mcp_protocol_test: $($mcpBin.Name)"
+if (-not $protocolBin) { throw "protocol_handshake_test-*.exe not found" }
+Write-Host "protocol_handshake_test: $($protocolBin.Name)"
 
-$uxBin = Get-ChildItem "$wsRoot\target\debug\deps\ux_guard_test-*.exe" |
+$guardBin = Get-ChildItem "$rustRoot\target\debug\deps\guard_ux_test-*.exe" |
          Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if ($uxBin) { Write-Host "ux_guard_test    : $($uxBin.Name)" } else { Write-Host "ux_guard_test    : (not found, will skip)" }
+if ($guardBin) { Write-Host "guard_ux_test    : $($guardBin.Name)" } else { Write-Host "guard_ux_test    : (not found, will skip)" }
 
 # -- 2. Prepare shared output folder ------------------------------------------
 $outputDir = "$env:TEMP\cua-sandbox-output"
@@ -132,8 +138,8 @@ $wsbContent = @"
 <Configuration>
   <MappedFolders>
     <MappedFolder>
-      <HostFolder>$wsRoot</HostFolder>
-      <SandboxFolder>C:\cua-driver-rs</SandboxFolder>
+      <HostFolder>$cuaDriverRoot</HostFolder>
+      <SandboxFolder>C:\cua-driver</SandboxFolder>
       <ReadOnly>true</ReadOnly>
     </MappedFolder>
     <MappedFolder>
@@ -143,7 +149,7 @@ $wsbContent = @"
     </MappedFolder>
   </MappedFolders>
   <LogonCommand>
-    <Command>powershell -ExecutionPolicy Bypass -NonInteractive -File C:\cua-driver-rs\sandbox\sandbox-runner.ps1</Command>
+    <Command>powershell -ExecutionPolicy Bypass -NonInteractive -File C:\cua-driver\tests\runners\windows-sandbox\sandbox-runner.ps1</Command>
   </LogonCommand>
 </Configuration>
 "@

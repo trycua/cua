@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run cua-driver-rs integration tests.
+# Run cua-driver Python e2e tests.
 #
 # Usage:
 #   ./run_tests.sh                        # run all tests (Rust binary)
@@ -11,7 +11,7 @@
 # CUA_DRIVER_BINARY is already set in the environment.
 #
 # Options:
-#   -v / --verbose  Pass -v to unittest for verbose output.
+#   -v / --verbose  Pass -v to pytest for verbose output.
 #   --release       Build with --release (sets CUA_DRIVER_BINARY to release binary).
 #   --parity        Run test_api_parity.py against both Swift and Rust binaries.
 #                   Requires CUA_SWIFT_BINARY or ~/.local/bin/cua-driver.
@@ -19,7 +19,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+CUA_DRIVER_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+RUST_ROOT="$CUA_DRIVER_ROOT/rust"
 
 VERBOSE=""
 PROFILE="debug"
@@ -41,8 +42,8 @@ if [ -z "${CUA_DRIVER_BINARY:-}" ]; then
     echo "==> Building cua-driver ($PROFILE)..."
     CARGO_FLAGS=""
     [ "$PROFILE" = "release" ] && CARGO_FLAGS="--release"
-    (cd "$WORKSPACE_ROOT" && cargo build $CARGO_FLAGS -p cua-driver 2>&1)
-    export CUA_DRIVER_BINARY="$WORKSPACE_ROOT/target/$PROFILE/cua-driver"
+    (cd "$RUST_ROOT" && cargo build $CARGO_FLAGS -p cua-driver 2>&1)
+    export CUA_DRIVER_BINARY="$RUST_ROOT/target/$PROFILE/cua-driver"
 fi
 
 echo "==> Using Rust binary: $CUA_DRIVER_BINARY"
@@ -72,7 +73,7 @@ cd "$SCRIPT_DIR"
 
 if [ "$PARITY_MODE" -eq 1 ]; then
     echo "==> Running parity suite against both binaries..."
-    python3 -m unittest ${VERBOSE} test_api_parity
+    python3 -m pytest ${VERBOSE} test_api_parity.py
     exit $?
 fi
 
@@ -84,4 +85,13 @@ fi
 echo "==> Running ${#MODULES[@]} test module(s): ${MODULES[*]}"
 echo ""
 
-python3 -m unittest ${VERBOSE} "${MODULES[@]}"
+FILES=()
+for module in "${MODULES[@]}"; do
+    if [[ "$module" == *.py ]]; then
+        FILES+=("$module")
+    else
+        FILES+=("$module.py")
+    fi
+done
+
+python3 -m pytest ${VERBOSE} "${FILES[@]}"

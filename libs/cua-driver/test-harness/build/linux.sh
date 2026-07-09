@@ -1,27 +1,54 @@
 #!/usr/bin/env bash
-# Stage the Linux GTK3 test-harness app into ../../rust/test-apps/harness-gtk3/ —
-# the Linux peer of macos.sh (AppKit/SwiftUI) and windows.ps1 (WPF/WinUI3).
+# Stage Linux-runnable test-harness apps into ../../rust/test-apps/harness-*/.
 #
-# The app is PyGObject (GTK3): a real GTK3 widget tree (identical AT-SPI exposure
-# to a C app), so there's no compile step — we stage main.py plus an executable
-# launcher named CuaTestHarness.Gtk3 (matching scenarios.json's exe_relative_path).
+# GTK3 is PyGObject: a real GTK3 widget tree (identical AT-SPI exposure to a C
+# app), so there's no compile step. Electron and Tauri are shared cross-platform
+# harnesses built from apps/cross-platform/.
 #
-# Runtime deps (NOT installed here): python3-gi, gir1.2-gtk-3.0, at-spi2-core.
-#   apt-get install -y python3-gi gir1.2-gtk-3.0 at-spi2-core
+# Runtime deps (NOT installed here): python3-gi, gir1.2-gtk-3.0, at-spi2-core,
+# Node.js/npm for Electron, Rust + WebKitGTK build deps for Tauri.
 #
-# Usage: ./linux.sh [--clean]
+# Usage:
+#   ./linux.sh
+#   ./linux.sh --skip gtk3       # skip one target (gtk3|electron|tauri)
+#   ./linux.sh --clean
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-STAGE="$(cd "$HARNESS_DIR/../rust/test-apps" && pwd)/harness-gtk3"
+TEST_APPS_DIR="$(cd "$HARNESS_DIR/../rust/test-apps" && pwd)"
+STAGE="$TEST_APPS_DIR/harness-gtk3"
 SRC="$HARNESS_DIR/apps/linux/gtk3"
+SKIP="none"
+CLEAN=0
 
-rm -rf "$STAGE"
-mkdir -p "$STAGE"
-cp "$SRC/main.py" "$STAGE/main.py"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --skip)
+            SKIP="${2:-}"
+            shift 2
+            ;;
+        --clean)
+            CLEAN=1
+            shift
+            ;;
+        *)
+            echo "Usage: $0 [--skip gtk3|electron|tauri] [--clean]" >&2
+            exit 2
+            ;;
+    esac
+done
 
-cat > "$STAGE/CuaTestHarness.Gtk3" <<'LAUNCHER'
+if [[ "$CLEAN" == "1" ]]; then
+    rm -rf "$TEST_APPS_DIR/harness-gtk3" "$TEST_APPS_DIR/harness-electron" "$TEST_APPS_DIR/harness-tauri"
+fi
+
+if [[ "$SKIP" != "gtk3" ]]; then
+    rm -rf "$STAGE"
+    mkdir -p "$STAGE"
+    cp "$SRC/main.py" "$STAGE/main.py"
+
+    cat > "$STAGE/CuaTestHarness.Gtk3" <<'LAUNCHER'
 #!/usr/bin/env bash
 # Force the X11 backend so the window is enumerable via cua-driver's X11
 # list_windows (_NET_CLIENT_LIST) — under a Wayland session this routes through
@@ -29,11 +56,20 @@ cat > "$STAGE/CuaTestHarness.Gtk3" <<'LAUNCHER'
 export GDK_BACKEND=x11
 exec python3 "$(dirname "$(readlink -f "$0")")/main.py" "$@"
 LAUNCHER
-chmod +x "$STAGE/CuaTestHarness.Gtk3"
+    chmod +x "$STAGE/CuaTestHarness.Gtk3"
 
-echo "==> Staged GTK3 harness → $STAGE/CuaTestHarness.Gtk3"
-if python3 -c "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk" 2>/dev/null; then
-    echo "==> PyGObject/GTK3 present"
-else
-    echo "WARNING: PyGObject/GTK3 not importable — install python3-gi gir1.2-gtk-3.0 at-spi2-core" >&2
+    echo "==> Staged GTK3 harness -> $STAGE/CuaTestHarness.Gtk3"
+    if python3 -c "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk" 2>/dev/null; then
+        echo "==> PyGObject/GTK3 present"
+    else
+        echo "WARNING: PyGObject/GTK3 not importable - install python3-gi gir1.2-gtk-3.0 at-spi2-core" >&2
+    fi
+fi
+
+if [[ "$SKIP" != "electron" ]]; then
+    "$HARNESS_DIR/apps/cross-platform/electron/build.sh"
+fi
+
+if [[ "$SKIP" != "tauri" ]]; then
+    "$HARNESS_DIR/apps/cross-platform/tauri/build.sh"
 fi

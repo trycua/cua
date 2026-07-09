@@ -1,6 +1,6 @@
 # windows.ps1 - publish the cua-driver test harness binaries.
 #
-# Outputs land in libs/cua-driver/rust/test-apps/harness-{wpf,winui3,webview,electron}/
+# Outputs land in libs/cua-driver/rust/test-apps/harness-{wpf,winui3,webview,electron,tauri}/
 # so the existing sandbox runner picks them up via its mapped folder.
 #
 # Usage:
@@ -8,10 +8,10 @@
 #   .\windows.ps1 -Skip wpf  # skip WPF
 #   .\windows.ps1 -Skip winui3
 #
-# Requires: .NET 8 SDK on PATH (Node.js + npm for the Electron app).
+# Requires: .NET 8 SDK on PATH (Node.js + npm for Electron, Rust for Tauri).
 
 param(
-    [ValidateSet("none","wpf","winui3","webview","electron")]
+    [ValidateSet("none","wpf","winui3","webview","electron","tauri")]
     [string]$Skip = "none"
 )
 
@@ -90,6 +90,23 @@ if ($Skip -ne "electron") {
         }
     } else {
         Write-Host "[SKIP] Electron project not present yet - skipping." -ForegroundColor Yellow
+    }
+}
+if ($Skip -ne "tauri") {
+    $tauriBuild = Join-Path $harnessDir "apps\cross-platform\tauri\build.ps1"
+    if (Test-Path $tauriBuild) {
+        Write-Host ""
+        Write-Host "[BUILD] tauri -> $testAppsDir\harness-tauri\" -ForegroundColor Cyan
+        try {
+            & $tauriBuild
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "[WARN] Tauri build failed (exit $LASTEXITCODE)" -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "[WARN] Tauri build errored: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "[SKIP] Tauri project not present yet - skipping." -ForegroundColor Yellow
     }
 }
 

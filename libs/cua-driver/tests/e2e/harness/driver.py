@@ -1,4 +1,4 @@
-"""Typed MCP driver wrapper for v2 integration tests.
+"""Typed MCP driver wrapper for Python e2e tests.
 
 Wraps DriverClient with:
 - Typed WindowState return value
@@ -23,11 +23,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-# Allow importing from parent directory (old driver_client.py).
+# Allow importing from the e2e root.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_V2_DIR = os.path.dirname(_HERE)
-_INTEG_DIR = os.path.dirname(_V2_DIR)
-sys.path.insert(0, _INTEG_DIR)
+_E2E_DIR = os.path.dirname(_HERE)
+sys.path.insert(0, _E2E_DIR)
 
 from driver_client import DriverClient, default_binary_path, MCPCallError  # noqa: E402
 

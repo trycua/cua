@@ -1,4 +1,4 @@
-"""pytest fixtures for cua-driver v2 integration tests.
+"""pytest fixtures for cua-driver Python e2e tests.
 
 Fixtures:
   binary           → str — path to cua-driver binary
@@ -6,7 +6,7 @@ Fixtures:
   focus_monitor    → (proc, pid) — FocusMonitorApp running as frontmost sentinel
   ux_guard         → UXMonitor — started before the test, assert_clean() after
   html_server      → str — base URL of a local HTTP server serving assets/
-  tauri_app        → (proc, pid, base_url) — Tauri desktop-test-app
+  tauri_app        → (proc, pid, base_url) — repo-local Tauri harness
   electron_app     → (proc, pid, base_url) — repo-local Electron harness
 """
 
@@ -17,20 +17,18 @@ import subprocess
 import sys
 import time
 import threading
-import urllib.request
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
 import pytest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_INTEG_DIR = os.path.dirname(_HERE)
-_TESTS_DIR = os.path.dirname(_INTEG_DIR)
-_DRIVER_RS_ROOT = os.path.dirname(_TESTS_DIR)
-_LIBS_ROOT = os.path.dirname(_DRIVER_RS_ROOT)
-_CUA_DRIVER_ROOT = os.path.join(_LIBS_ROOT, "cua-driver")
+_TESTS_ROOT = os.path.dirname(_HERE)
+_CUA_DRIVER_ROOT = os.path.dirname(_TESTS_ROOT)
+_DRIVER_RS_ROOT = os.path.join(_CUA_DRIVER_ROOT, "rust")
+_LIBS_ROOT = os.path.dirname(_CUA_DRIVER_ROOT)
 _TEST_HARNESS_ROOT = os.path.join(_CUA_DRIVER_ROOT, "test-harness")
 
-sys.path.insert(0, _INTEG_DIR)
+sys.path.insert(0, _HERE)
 from driver_client import default_binary_path  # noqa: E402
 
 _ASSETS_DIR = os.path.join(_HERE, "assets")
@@ -39,16 +37,20 @@ _FOCUS_APP_DIR = os.path.join(_LIBS_ROOT, "cua-driver", "Tests", "FocusMonitorAp
 _FOCUS_APP_BUNDLE = os.path.join(_FOCUS_APP_DIR, "FocusMonitorApp.app")
 _FOCUS_APP_EXE = os.path.join(_FOCUS_APP_BUNDLE, "Contents", "MacOS", "FocusMonitorApp")
 
-# Tauri app download config
-# Tauri releases a raw Mach-O binary (no .app bundle, no zip).
-_TAURI_VERSION = "v0.2.2"
-_TAURI_BINARY_NAME = "desktop-test-app-macos-arm64"
-_TAURI_DOWNLOAD_URL = (
-    f"https://github.com/trycua/desktop-test-app/releases/download/"
-    f"{_TAURI_VERSION}/{_TAURI_BINARY_NAME}"
+# Tauri is built from the repo-local shared harness rather than downloaded.
+_TAURI_HARNESS_DIR = os.path.join(
+    _TEST_HARNESS_ROOT, "apps", "cross-platform", "tauri"
 )
-_TAURI_APP_DIR = os.path.join(_HERE, "assets", "tauri")
-_TAURI_BINARY_PATH = os.path.join(_TAURI_APP_DIR, _TAURI_BINARY_NAME)
+_TAURI_BUILD_SCRIPT = os.path.join(_TAURI_HARNESS_DIR, "build.sh")
+_TAURI_APP_BUNDLE = os.path.join(
+    _DRIVER_RS_ROOT,
+    "test-apps",
+    "harness-tauri",
+    "CuaTestHarness.Tauri.app",
+)
+_TAURI_APP_EXE = os.path.join(
+    _TAURI_APP_BUNDLE, "Contents", "MacOS", "CuaTestHarness.Tauri"
+)
 
 # Electron is built from the repo-local shared harness rather than downloaded.
 _ELECTRON_HARNESS_DIR = os.path.join(
@@ -201,42 +203,39 @@ def html_server():
     server.shutdown()
 
 
-# ── Tauri / Electron helpers ──────────────────────────────────────────────────
-
-
-def _download_binary(url: str, dest_path: str) -> None:
-    """Download a raw binary; skip if it already exists."""
-    if os.path.exists(dest_path):
-        return
-    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-    print(f"\n  Downloading {url} …")
-    urllib.request.urlretrieve(url, dest_path)
-    os.chmod(dest_path, 0o755)
-
-
 # ── Tauri app ─────────────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="session")
 def tauri_app():
-    """Download, launch, and yield (proc, pid, base_url) for the Tauri test app.
+    """Build, launch, and yield (proc, pid, base_url) for the Tauri harness.
 
-    The Tauri release ships a raw Mach-O binary (no .app bundle, no zip).
-    We launch it directly via subprocess.Popen.
+    This uses test-harness/apps/cross-platform/tauri, the same shared DOM
+    harness used by the Electron/WebView/WKWebView harnesses. It does not
+    download a prebuilt Tauri app release.
     """
-    _download_binary(_TAURI_DOWNLOAD_URL, _TAURI_BINARY_PATH)
+    if not os.path.exists(_TAURI_APP_EXE):
+        if not os.path.exists(_TAURI_BUILD_SCRIPT):
+            pytest.skip("repo-local Tauri harness build script not found")
+        try:
+            subprocess.run([_TAURI_BUILD_SCRIPT], check=True)
+        except (OSError, subprocess.CalledProcessError) as e:
+            pytest.skip(f"Tauri harness build failed: {e}")
 
-    subprocess.run(["pkill", "-f", _TAURI_BINARY_NAME], check=False)
+    if not os.path.exists(_TAURI_APP_EXE):
+        pytest.skip("Tauri harness app not found after build")
+
+    subprocess.run(["pkill", "-f", "CuaTestHarness.Tauri"], check=False)
     time.sleep(0.5)
 
     proc = subprocess.Popen(
-        [_TAURI_BINARY_PATH],
+        [_TAURI_APP_EXE],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     pid = proc.pid
     time.sleep(3.0)
 
-    base_url = "http://localhost:6769"
+    base_url = "file://shared-web-harness"
     yield proc, pid, base_url
 
     proc.terminate()
@@ -244,7 +243,7 @@ def tauri_app():
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
-    subprocess.run(["pkill", "-f", _TAURI_BINARY_NAME], check=False)
+    subprocess.run(["pkill", "-f", "CuaTestHarness.Tauri"], check=False)
 
 
 # ── Electron app ──────────────────────────────────────────────────────────────

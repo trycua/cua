@@ -53,18 +53,6 @@ if ($running) {
     Write-Host "[OK] Existing sandbox closed. Proceeding." -ForegroundColor Green
 }
 
-# ── 0. Download test-app binaries if missing ─────────────────────────────────
-$testAppExe = "$wsRoot\test-apps\desktop-test-app-electron.0.1.0.exe"
-if (-not (Test-Path $testAppExe)) {
-    Write-Host "`n[FETCH] Downloading desktop-test-app-electron..." -ForegroundColor Yellow
-    New-Item -ItemType Directory -Force "$wsRoot\test-apps" | Out-Null
-    $url = "https://github.com/trycua/desktop-test-app-electron/releases/download/v0.1.0/desktop-test-app-electron.0.1.0.exe"
-    Invoke-WebRequest -Uri $url -OutFile $testAppExe -UseBasicParsing
-    Write-Host "  Downloaded: $testAppExe" -ForegroundColor Green
-} else {
-    Write-Host "`n[FETCH] test-app already present: $testAppExe" -ForegroundColor Green
-}
-
 # ── 1. Build ──────────────────────────────────────────────────────────────────
 Push-Location $wsRoot
 try {
@@ -97,10 +85,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_bg_modality_test) failed" }
 } finally { Pop-Location }
 
-# ── 1.5. Build the .NET test-harness if dotnet is on PATH ────────────────────
-# The harness produces test-apps/harness-{wpf,winui3}/ which the sandbox
+# ── 1.5. Build the test-harness if dependencies are on PATH ──────────────────
+# The harness produces test-apps/harness-*/ which the sandbox
 # runner picks up via the existing mapped-folder route. Skip silently if
-# dotnet isn't available — the smoke tests degrade to "skipped" inside
+# a dependency isn't available — the smoke tests degrade to "skipped" inside
 # the sandbox rather than failing the whole run.
 if (Get-Command dotnet -ErrorAction SilentlyContinue) {
     $harnessBuild = Join-Path $wsRoot "..\test-harness\build\windows.ps1"

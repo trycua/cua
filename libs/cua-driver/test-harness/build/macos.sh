@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Build the macOS test-harness apps (AppKit + SwiftUI + WKWebView + Electron)
+# Build the macOS test-harness apps (AppKit + SwiftUI + WKWebView + Electron + Tauri)
 # into app bundles under ../../rust/test-apps/harness-* —
 # matching the convention used by windows.ps1 for the Windows WPF + WinUI3 +
 # WebView2 apps. WKWebView is the Apple-WebKit host; Electron is the shared
-# Chromium harness used across Windows, Linux, and macOS.
+# Chromium harness used across Windows, Linux, and macOS. Tauri is the shared
+# native-webview harness used across Windows, Linux, and macOS.
 #
 # Usage:
 #   ./macos.sh                  # build all macOS-runnable harnesses
-#   ./macos.sh --skip swiftui   # skip one target (appkit|swiftui|wkwebview|electron)
+#   ./macos.sh --skip swiftui   # skip one target (appkit|swiftui|wkwebview|electron|tauri)
 #   ./macos.sh --clean          # remove staged outputs first
 set -euo pipefail
 
@@ -28,8 +29,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$CLEAN" == "1" ]]; then
-    rm -rf "$STAGE_DIR/harness-appkit" "$STAGE_DIR/harness-swiftui" "$STAGE_DIR/harness-wkwebview" "$STAGE_DIR/harness-electron"
-    mkdir -p "$STAGE_DIR/harness-appkit" "$STAGE_DIR/harness-swiftui" "$STAGE_DIR/harness-wkwebview" "$STAGE_DIR/harness-electron"
+    rm -rf "$STAGE_DIR/harness-appkit" "$STAGE_DIR/harness-swiftui" "$STAGE_DIR/harness-wkwebview" "$STAGE_DIR/harness-electron" "$STAGE_DIR/harness-tauri"
+    mkdir -p "$STAGE_DIR/harness-appkit" "$STAGE_DIR/harness-swiftui" "$STAGE_DIR/harness-wkwebview" "$STAGE_DIR/harness-electron" "$STAGE_DIR/harness-tauri"
     echo "==> Cleaned stage dirs"
 fi
 
@@ -106,6 +107,10 @@ fi
 
 if [[ "$SKIP" != "electron" ]]; then
     "$HARNESS_DIR/apps/cross-platform/electron/build.sh"
+fi
+
+if [[ "$SKIP" != "tauri" ]]; then
+    "$HARNESS_DIR/apps/cross-platform/tauri/build.sh"
 fi
 
 echo ""

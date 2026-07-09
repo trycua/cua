@@ -17,17 +17,28 @@ use std::process::Command;
 pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
     let tmp_path = format!("/tmp/cua-driver-rs-capture-{}.png", window_id);
 
-    let status = Command::new("screencapture")
+    let output = Command::new("screencapture")
         .args([
-            "-l", &window_id.to_string(),
-            "-x",  // no sound
-            "-o",  // no shadow
+            "-l",
+            &window_id.to_string(),
+            "-x", // no sound
+            "-o", // no shadow
             &tmp_path,
         ])
-        .status()?;
+        .output()?;
 
-    if !status.success() {
-        anyhow::bail!("screencapture failed for window {window_id}");
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if stderr.is_empty() {
+            anyhow::bail!(
+                "screencapture failed for window {window_id} with status {}",
+                output.status
+            );
+        }
+        anyhow::bail!(
+            "screencapture failed for window {window_id} with status {}: {stderr}",
+            output.status
+        );
     }
 
     let bytes = std::fs::read(&tmp_path)?;
@@ -54,12 +65,22 @@ pub fn screenshot_display_bytes() -> anyhow::Result<Vec<u8>> {
     // Use a pid-unique path so concurrent cua-driver processes don't step on each other.
     let tmp_path = format!("/tmp/cua-driver-rs-display-{}.png", std::process::id());
 
-    let status = Command::new("screencapture")
+    let output = Command::new("screencapture")
         .args(["-x", &*tmp_path])
-        .status()?;
+        .output()?;
 
-    if !status.success() {
-        anyhow::bail!("screencapture failed for main display");
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if stderr.is_empty() {
+            anyhow::bail!(
+                "screencapture failed for main display with status {}",
+                output.status
+            );
+        }
+        anyhow::bail!(
+            "screencapture failed for main display with status {}: {stderr}",
+            output.status
+        );
     }
 
     let bytes = std::fs::read(&tmp_path)?;
@@ -101,12 +122,7 @@ pub fn resize_png_if_needed(png_bytes: &[u8], max_dim: u32) -> anyhow::Result<Ve
 /// `path`. Used by `click`'s `debug_image_out` param to verify
 /// coordinate spaces. The crosshair uses top-left-origin coords
 /// matching the click tool's convention.
-pub fn write_crosshair_png(
-    png_bytes: &[u8],
-    cx: f64,
-    cy: f64,
-    path: &str,
-) -> anyhow::Result<()> {
+pub fn write_crosshair_png(png_bytes: &[u8], cx: f64, cy: f64, path: &str) -> anyhow::Result<()> {
     cua_driver_core::image_utils::write_crosshair_png(png_bytes, cx, cy, path)
 }
 

@@ -183,6 +183,17 @@ struct HarnessRootView: View {
                         .accessibilityIdentifier(kMenuActionAID)
                 }
 
+                section("popover")
+                HStack(spacing: 12) {
+                    Button("Open popover") { showPopover.toggle() }
+                        .accessibilityIdentifier(kPopupTriggerAID)
+                        .popover(isPresented: $showPopover) {
+                            Text("Popover body. Marker: \(kPopupMarker)")
+                                .padding()
+                                .accessibilityIdentifier(kPopupTextAID)
+                        }
+                }
+
                 // scroll_target — tall ScrollView; offset tracked via GeometryReader.
                 section("scroll_target")
                 Text("scroll_offset=\(scrollOffset)")
@@ -206,17 +217,6 @@ struct HarnessRootView: View {
                 .frame(width: 400, height: 160)
                 .border(Color.secondary)
                 .accessibilityIdentifier(kScrollerAID)
-
-                section("popover")
-                HStack(spacing: 12) {
-                    Button("Open popover") { showPopover.toggle() }
-                        .accessibilityIdentifier(kPopupTriggerAID)
-                        .popover(isPresented: $showPopover) {
-                            Text("Popover body. Marker: \(kPopupMarker)")
-                                .padding()
-                                .accessibilityIdentifier(kPopupTextAID)
-                        }
-                }
 
                 Spacer(minLength: 24)
                 Button("Exit") { NSApp.terminate(nil) }

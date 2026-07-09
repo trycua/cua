@@ -53,12 +53,12 @@ pub enum EventKind {
 impl EventKind {
     pub fn name(self) -> &'static str {
         match self {
-            Self::MouseClick  => "mouse_click",
-            Self::MouseMove   => "mouse_move",
+            Self::MouseClick => "mouse_click",
+            Self::MouseMove => "mouse_move",
             Self::MouseScroll => "mouse_scroll",
-            Self::Keystroke   => "keystroke",
-            Self::KeyCombo    => "key_combo",
-            Self::TextInput   => "text_input",
+            Self::Keystroke => "keystroke",
+            Self::KeyCombo => "key_combo",
+            Self::TextInput => "text_input",
         }
     }
 }
@@ -99,7 +99,9 @@ impl DeliveryMode {
         Self::parse(args.get("delivery_mode").and_then(|v| v.as_str()))
     }
 
-    pub fn is_foreground(self) -> bool { matches!(self, Self::Foreground) }
+    pub fn is_foreground(self) -> bool {
+        matches!(self, Self::Foreground)
+    }
 }
 
 /// JSON-schema fragment for the `delivery_mode` field. Include this in every
@@ -144,15 +146,15 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
         return matches!(kind, MouseClick | MouseMove | MouseScroll | KeyCombo);
     }
     if is_wpf_target_window(hwnd) {
-        // WPF ignores PostMessage mouse (its input manager drops mouse messages
-        // unless the live system cursor is over the window — verified: posted
-        // WM_MOUSE* raise no WPF events). It must be driven by coordinate-routed
-        // system-queue input. We use a PERSISTENT synthetic touch digitizer
-        // (see inject::TOUCH_DEV): WPF's stylus stack binds to the standing
-        // device and consumes the contact as touch/stylus — promoting to mouse
-        // internally, with NO OS cursor movement. WM_CHAR keystrokes still work,
-        // so flag only the pointer-class events.
-        return matches!(kind, MouseClick | MouseMove | MouseScroll);
+        // WPF ignores posted pointer messages (its input manager drops
+        // WM_MOUSE* unless the live system cursor is over the window). It must
+        // be driven by coordinate-routed system-queue input for clicks/moves.
+        //
+        // Do not classify WM_VSCROLL/WM_HSCROLL here: the scroll tool posts the
+        // scrollbar messages directly to the top-level HWND, and WPF hosts that
+        // explicitly handle those messages (including our harness hook) can
+        // consume them without a foreground swap.
+        return matches!(kind, MouseClick | MouseMove);
     }
     // NB: WinUI3 (`WinUIDesktopWin32WindowClass`) is deliberately NOT flagged
     // here. It looks WPF-like, but its composition input-site does NOT consume
@@ -288,22 +290,21 @@ pub fn background_unavailable_error(
          swap directly by setting delivery_mode:\"foreground\".",
         kind.name()
     );
-    cua_driver_core::protocol::ToolResult::error(text)
-        .with_structured(serde_json::json!({
-            "code": "background_unavailable",
-            "target_class": class,
-            "event_kind": kind.name(),
-            "suggestion":
-                "Either call bring_to_front then retry with delivery_mode:\"foreground\", \
-                 or accept the foreground swap by setting delivery_mode:\"foreground\" directly.",
-            // Windows analog of the macOS escalation signal: this surface drops
-            // background input, so the deliberate next rung is foreground delivery.
-            "escalation": {
-                "recommended": "foreground",
-                "reason": "background input is dropped by this surface — re-call \
-                           delivery_mode:\"foreground\" (or bring_to_front first).",
-            },
-        }))
+    cua_driver_core::protocol::ToolResult::error(text).with_structured(serde_json::json!({
+        "code": "background_unavailable",
+        "target_class": class,
+        "event_kind": kind.name(),
+        "suggestion":
+            "Either call bring_to_front then retry with delivery_mode:\"foreground\", \
+             or accept the foreground swap by setting delivery_mode:\"foreground\" directly.",
+        // Windows analog of the macOS escalation signal: this surface drops
+        // background input, so the deliberate next rung is foreground delivery.
+        "escalation": {
+            "recommended": "foreground",
+            "reason": "background input is dropped by this surface — re-call \
+                       delivery_mode:\"foreground\" (or bring_to_front first).",
+        },
+    }))
 }
 
 #[cfg(test)]
@@ -313,10 +314,19 @@ mod tests {
     #[test]
     fn delivery_mode_parses_known_values() {
         let j = |s: &str| serde_json::json!({"delivery_mode": s});
-        assert_eq!(DeliveryMode::from_args(&j("background")), DeliveryMode::Background);
-        assert_eq!(DeliveryMode::from_args(&j("foreground")), DeliveryMode::Foreground);
+        assert_eq!(
+            DeliveryMode::from_args(&j("background")),
+            DeliveryMode::Background
+        );
+        assert_eq!(
+            DeliveryMode::from_args(&j("foreground")),
+            DeliveryMode::Foreground
+        );
         // Case-insensitive, matching macOS DeliveryMode::parse.
-        assert_eq!(DeliveryMode::from_args(&j("Foreground")), DeliveryMode::Foreground);
+        assert_eq!(
+            DeliveryMode::from_args(&j("Foreground")),
+            DeliveryMode::Foreground
+        );
     }
 
     #[test]
@@ -324,7 +334,10 @@ mod tests {
         // Missing field, garbage value, null, and the removed legacy "auto"
         // all resolve to Background. This is the cua-driver no-foreground-by-
         // default contract: an unrecognised value never silently fronts.
-        assert_eq!(DeliveryMode::from_args(&serde_json::json!({})), DeliveryMode::Background);
+        assert_eq!(
+            DeliveryMode::from_args(&serde_json::json!({})),
+            DeliveryMode::Background
+        );
         assert_eq!(
             DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "garbage"})),
             DeliveryMode::Background

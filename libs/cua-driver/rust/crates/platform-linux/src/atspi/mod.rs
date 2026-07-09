@@ -71,8 +71,15 @@ pub fn walk_tree_bounded(
             // keep waiting on the degenerate case, and accept it anyway on the
             // final attempt rather than discarding a (minimal) valid result.
             if !raw_md.is_empty() && (nodes.len() > 1 || attempt == MAX_ATTEMPTS - 1) {
-                let md = if let Some(q) = query { filter_tree(&raw_md, q) } else { raw_md };
-                return AtspiTreeResult { tree_markdown: md, nodes };
+                let md = if let Some(q) = query {
+                    filter_tree(&raw_md, q)
+                } else {
+                    raw_md
+                };
+                return AtspiTreeResult {
+                    tree_markdown: md,
+                    nodes,
+                };
             }
         }
         if attempt < MAX_ATTEMPTS - 1 {
@@ -131,7 +138,8 @@ pub fn perform_action_at_screen_point(
 /// Returns Ok if an editable was found and text was set, Err otherwise.
 pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
     let safe_text = text.replace('\\', "\\\\").replace('\'', "\\'");
-    let script = format!(r#"
+    let script = format!(
+        r#"
 import pyatspi, sys
 
 def find_editable(acc, depth=0):
@@ -178,9 +186,15 @@ try:
 except Exception as e:
     print(f"ERROR: {{e}}", file=sys.stderr)
     sys.exit(1)
-"#, pid = pid, safe_text = safe_text);
+"#,
+        pid = pid,
+        safe_text = safe_text
+    );
 
-    let out = std::process::Command::new("python3").arg("-c").arg(&script).output()?;
+    let out = std::process::Command::new("python3")
+        .arg("-c")
+        .arg(&script)
+        .output()?;
     if !out.status.success() {
         anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr).trim().to_owned());
     }
@@ -229,13 +243,16 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
 
 /// Minimal X11 property-based tree (fallback when AT-SPI is unavailable).
 fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
-    use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::*;
     use x11rb::rust_connection::RustConnection;
 
     let (conn, _) = match RustConnection::connect(None) {
         Ok(r) => r,
-        Err(_) => return AtspiTreeResult { tree_markdown: String::new(), nodes: vec![] },
+        Err(_) => {
+            return AtspiTreeResult {
+                tree_markdown: String::new(),
+                nodes: vec![],
+            }
+        }
     };
 
     let window = xid as u32;
@@ -252,15 +269,26 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
     let root_node = AtspiNode {
         element_index: Some(0),
         role: "window".into(),
-        name: if title.is_empty() { None } else { Some(title.clone()) },
+        name: if title.is_empty() {
+            None
+        } else {
+            Some(title.clone())
+        },
         value: None,
-        description: if wm_class.is_empty() { None } else { Some(wm_class.clone()) },
+        description: if wm_class.is_empty() {
+            None
+        } else {
+            Some(wm_class.clone())
+        },
         actions: vec!["activate".into()],
         element_key: xid,
         depth: 0,
         parent_element_index: None,
     };
-    md.push_str(&format!("- [0] window \"{}\" [actions=[activate]]\n", title));
+    md.push_str(&format!(
+        "- [0] window \"{}\" [actions=[activate]]\n",
+        title
+    ));
     nodes.push(root_node);
 
     let raw_md = md;
@@ -270,26 +298,51 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         raw_md
     };
 
-    AtspiTreeResult { tree_markdown, nodes }
+    AtspiTreeResult {
+        tree_markdown,
+        nodes,
+    }
 }
 
 fn get_x11_title(conn: &x11rb::rust_connection::RustConnection, window: u32) -> Option<String> {
     use x11rb::protocol::xproto::*;
     // Try _NET_WM_NAME first.
-    let net_wm_name = conn.intern_atom(false, b"_NET_WM_NAME").ok()?.reply().ok()?.atom;
-    let utf8_string = conn.intern_atom(false, b"UTF8_STRING").ok()?.reply().ok()?.atom;
-    if let Ok(reply) = conn.get_property(false, window, net_wm_name, utf8_string, 0, 1024).ok()?.reply() {
+    let net_wm_name = conn
+        .intern_atom(false, b"_NET_WM_NAME")
+        .ok()?
+        .reply()
+        .ok()?
+        .atom;
+    let utf8_string = conn
+        .intern_atom(false, b"UTF8_STRING")
+        .ok()?
+        .reply()
+        .ok()?
+        .atom;
+    if let Ok(reply) = conn
+        .get_property(false, window, net_wm_name, utf8_string, 0, 1024)
+        .ok()?
+        .reply()
+    {
         if !reply.value.is_empty() {
             return Some(String::from_utf8_lossy(&reply.value).into_owned());
         }
     }
-    let reply = conn.get_property(false, window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 1024).ok()?.reply().ok()?;
+    let reply = conn
+        .get_property(false, window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 1024)
+        .ok()?
+        .reply()
+        .ok()?;
     Some(String::from_utf8_lossy(&reply.value).into_owned())
 }
 
 fn get_x11_wm_class(conn: &x11rb::rust_connection::RustConnection, window: u32) -> Option<String> {
     use x11rb::protocol::xproto::*;
-    let reply = conn.get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 512).ok()?.reply().ok()?;
+    let reply = conn
+        .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 512)
+        .ok()?
+        .reply()
+        .ok()?;
     let s = String::from_utf8_lossy(&reply.value);
     // WM_CLASS is two NUL-separated strings: instance_name\0class_name\0
     Some(s.trim_end_matches('\0').replace('\0', "."))
@@ -304,13 +357,22 @@ fn filter_tree(markdown: &str, query: &str) -> String {
 
     for line in &lines {
         let depth = line.chars().take_while(|c| *c == ' ').count() / 2;
-        while ancestors.len() <= depth { ancestors.push(""); last_emitted.push(None); }
-        for d in (depth+1)..ancestors.len() { last_emitted[d] = None; }
+        while ancestors.len() <= depth {
+            ancestors.push("");
+            last_emitted.push(None);
+        }
+        for d in (depth + 1)..ancestors.len() {
+            last_emitted[d] = None;
+        }
         ancestors[depth] = line;
         if line.to_lowercase().contains(&needle) {
             for d in 0..depth {
-                if ancestors[d].is_empty() { continue; }
-                if last_emitted[d] == Some(ancestors[d]) { continue; }
+                if ancestors[d].is_empty() {
+                    continue;
+                }
+                if last_emitted[d] == Some(ancestors[d]) {
+                    continue;
+                }
                 last_emitted[d] = Some(ancestors[d]);
                 output.push(ancestors[d]);
             }
@@ -318,6 +380,10 @@ fn filter_tree(markdown: &str, query: &str) -> String {
             output.push(line);
         }
     }
-    if output.is_empty() { return String::new(); }
-    let mut r = output.join("\n"); r.push('\n'); r
+    if output.is_empty() {
+        return String::new();
+    }
+    let mut r = output.join("\n");
+    r.push('\n');
+    r
 }

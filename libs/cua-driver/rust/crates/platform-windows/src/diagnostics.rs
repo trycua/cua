@@ -19,8 +19,6 @@
 //! the user's session) instead of debugging a non-bug.
 
 #[cfg(target_os = "windows")]
-use windows::core::PCWSTR;
-#[cfg(target_os = "windows")]
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
     COINIT_APARTMENTTHREADED,
@@ -28,9 +26,7 @@ use windows::Win32::System::Com::{
 #[cfg(target_os = "windows")]
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 #[cfg(target_os = "windows")]
-use windows::Win32::System::StationsAndDesktops::{
-    CloseWindowStation, OpenWindowStationW,
-};
+use windows::Win32::System::StationsAndDesktops::GetProcessWindowStation;
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Threading::GetCurrentProcessId;
 #[cfg(target_os = "windows")]
@@ -58,26 +54,35 @@ pub fn current_session_id() -> Option<u32> {
 /// Whether the calling process has an attached interactive desktop.
 ///
 /// Two-step check:
-///   1. `OpenWindowStationW(L"WinSta0", ...)` — succeeds when the
-///      interactive window station exists and we can open a handle.
+///   1. Session id is not `0` (services). SSH-launched Windows processes
+///      normally land in Session 0 and cannot drive the user's desktop.
 ///   2. `GetForegroundWindow()` — returns a non-null HWND when a desktop
 ///      with a foreground window is actually attached (i.e. an
 ///      interactive logon session is active, not just a locked screen
 ///      with no foreground app).
 ///
-/// `Ok(true)` only when both succeed. `Ok(false)` when `OpenWindowStationW`
-/// succeeded but `GetForegroundWindow` returned null (locked desktop or
-/// transient state). `Err` when `OpenWindowStationW` failed outright.
+/// `Ok(true)` only when both succeed. `Ok(false)` when there is a non-service
+/// session with an attached window station but `GetForegroundWindow` returned
+/// null (locked desktop or transient state). `Err` when the process is in
+/// Session 0 or has no attached window station.
 #[cfg(target_os = "windows")]
 pub fn interactive_desktop_check() -> Result<bool, String> {
     unsafe {
-        let name: Vec<u16> = "WinSta0\0".encode_utf16().collect();
-        // 0 access mask = read-only probe; we never actually need to read
-        // or modify the station, just confirm a handle is openable.
-        let h = OpenWindowStationW(PCWSTR(name.as_ptr()), false, 0)
-            .map_err(|e| format!("OpenWindowStationW(WinSta0): {e}"))?;
+        if current_session_id() == Some(0) {
+            return Err("running in Windows Session 0".to_owned());
+        }
+
+        // Probe the window station already attached to this process. Opening
+        // WinSta0 by name can be denied for an otherwise valid RDP-launched
+        // scheduled task, while GetProcessWindowStation still confirms the
+        // process has a desktop context.
+        let h = GetProcessWindowStation()
+            .map_err(|e| format!("GetProcessWindowStation: {e}"))?;
+        if h.0.is_null() {
+            return Err("GetProcessWindowStation returned null".to_owned());
+        }
+
         let fg = GetForegroundWindow();
-        let _ = CloseWindowStation(h);
         Ok(fg.0 != std::ptr::null_mut())
     }
 }

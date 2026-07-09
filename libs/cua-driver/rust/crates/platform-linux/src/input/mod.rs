@@ -16,6 +16,8 @@
 pub mod delivery;
 
 use anyhow::{anyhow, bail, Context, Result};
+use evdev::uinput::VirtualDevice;
+use evdev::{AttributeSet, EventType, InputEvent, Key, RelativeAxisType};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fs;
@@ -24,8 +26,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::sleep;
 use std::time::Duration;
-use evdev::uinput::VirtualDevice;
-use evdev::{AttributeSet, EventType, InputEvent, Key, RelativeAxisType};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
@@ -65,7 +65,12 @@ fn path_cumulative(path: &[(i32, i32)]) -> (Vec<f64>, f64) {
 /// waypoints. Evaluated with meval (sin/cos/^/etc.); non-finite outputs
 /// (ln of a negative, 1/0, …) are dropped. Errors on a bad expression or
 /// fewer than 2 finite points.
-pub fn sample_function(expr: &str, x_from: f64, x_to: f64, samples: u64) -> Result<Vec<(f64, f64)>> {
+pub fn sample_function(
+    expr: &str,
+    x_from: f64,
+    x_to: f64,
+    samples: u64,
+) -> Result<Vec<(f64, f64)>> {
     let parsed: meval::Expr = expr
         .parse()
         .map_err(|e| anyhow!("invalid fn '{expr}': {e}"))?;
@@ -93,10 +98,11 @@ fn point_on_path(path: &[(i32, i32)], cum: &[f64], total: f64, t: f64) -> (i32, 
         return *path.last().unwrap();
     }
     let d = t.clamp(0.0, 1.0) * total;
-    let mut i = match cum.binary_search_by(|v| v.partial_cmp(&d).unwrap_or(std::cmp::Ordering::Less)) {
-        Ok(i) => i,
-        Err(i) => i.saturating_sub(1),
-    };
+    let mut i =
+        match cum.binary_search_by(|v| v.partial_cmp(&d).unwrap_or(std::cmp::Ordering::Less)) {
+            Ok(i) => i,
+            Err(i) => i.saturating_sub(1),
+        };
     if i >= path.len() - 1 {
         i = path.len() - 2;
     }
@@ -110,12 +116,13 @@ fn point_on_path(path: &[(i32, i32)], cum: &[f64], total: f64, t: f64) -> (i32, 
 #[derive(Clone, Copy, Debug)]
 struct MasterPointerIds {
     pointer_id: i32,
-    keyboard_id: i32,
-    slave_pointer_id: i32,
+    _keyboard_id: i32,
+    _slave_pointer_id: i32,
 }
 
 static MPX_POINTERS: OnceLock<Mutex<HashMap<String, MasterPointerIds>>> = OnceLock::new();
-static UINPUT_POINTERS: OnceLock<Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>>>> = OnceLock::new();
+static UINPUT_POINTERS: OnceLock<Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>>>> =
+    OnceLock::new();
 static XLIB_THREADS_READY: OnceLock<Result<(), String>> = OnceLock::new();
 static MPX_NAME_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -163,11 +170,10 @@ fn open_display() -> Result<*mut x11::xlib::Display> {
     Ok(display)
 }
 
-fn xi2_query_devices(
-    display: *mut x11::xlib::Display,
-) -> Result<Vec<(i32, i32, String)>> {
+fn xi2_query_devices(display: *mut x11::xlib::Display) -> Result<Vec<(i32, i32, String)>> {
     let mut count = 0;
-    let ptr = unsafe { x11::xinput2::XIQueryDevice(display, x11::xinput2::XIAllDevices, &mut count) };
+    let ptr =
+        unsafe { x11::xinput2::XIQueryDevice(display, x11::xinput2::XIAllDevices, &mut count) };
     if ptr.is_null() {
         bail!("XIQueryDevice returned null");
     }
@@ -177,7 +183,9 @@ fn xi2_query_devices(
         let name = if info.name.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(info.name) }.to_string_lossy().into_owned()
+            unsafe { CStr::from_ptr(info.name) }
+                .to_string_lossy()
+                .into_owned()
         };
         out.push((info.deviceid, info._use, name));
     }
@@ -190,7 +198,9 @@ fn x_server_vendor(display: *mut x11::xlib::Display) -> String {
     if ptr.is_null() {
         return String::new();
     }
-    unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned()
+    unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn supports_parallel_pointer_injection(display: *mut x11::xlib::Display) -> Result<()> {
@@ -308,7 +318,8 @@ pub fn real_pointer_input_available() -> bool {
     let Ok(display) = open_display() else {
         return false;
     };
-    let supported = supports_parallel_pointer_injection(display).is_ok() && !is_xvfb_process_running();
+    let supported =
+        supports_parallel_pointer_injection(display).is_ok() && !is_xvfb_process_running();
     unsafe { x11::xlib::XCloseDisplay(display) };
     supported
 }
@@ -363,8 +374,10 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
         }
     }
 
-    let pointer_id = pointer_id.ok_or_else(|| anyhow!("failed to locate created master pointer for '{cursor_id}'"))?;
-    let keyboard_id = keyboard_id.ok_or_else(|| anyhow!("failed to locate created master keyboard for '{cursor_id}'"))?;
+    let pointer_id = pointer_id
+        .ok_or_else(|| anyhow!("failed to locate created master pointer for '{cursor_id}'"))?;
+    let keyboard_id = keyboard_id
+        .ok_or_else(|| anyhow!("failed to locate created master keyboard for '{cursor_id}'"))?;
 
     let device_name = slave_pointer_name(&base);
     let uinput_device = create_uinput_pointer(&device_name)?;
@@ -373,8 +386,15 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
     set_flat_pointer_accel(display, slave_pointer_id);
     unsafe { x11::xlib::XCloseDisplay(display) };
 
-    let ids = MasterPointerIds { pointer_id, keyboard_id, slave_pointer_id };
-    mpx_pointers().lock().unwrap().insert(cursor_id.to_owned(), ids);
+    let ids = MasterPointerIds {
+        pointer_id,
+        _keyboard_id: keyboard_id,
+        _slave_pointer_id: slave_pointer_id,
+    };
+    mpx_pointers()
+        .lock()
+        .unwrap()
+        .insert(cursor_id.to_owned(), ids);
     uinput_pointers()
         .lock()
         .unwrap()
@@ -407,7 +427,9 @@ pub fn forget_master_pointer(cursor_id: &str) {
         }
     }
 
-    let (Some(return_pointer), Some(return_keyboard)) = (virtual_core_pointer, virtual_core_keyboard) else {
+    let (Some(return_pointer), Some(return_keyboard)) =
+        (virtual_core_pointer, virtual_core_keyboard)
+    else {
         unsafe { x11::xlib::XCloseDisplay(display) };
         return;
     };
@@ -441,13 +463,11 @@ fn create_uinput_pointer(name: &str) -> Result<VirtualDevice> {
     rel_axes.insert(RelativeAxisType::REL_WHEEL);
     rel_axes.insert(RelativeAxisType::REL_HWHEEL);
 
-    Ok(
-        evdev::uinput::VirtualDeviceBuilder::new()?
-            .name(name)
-            .with_keys(&keys)?
-            .with_relative_axes(&rel_axes)?
-            .build()?,
-    )
+    Ok(evdev::uinput::VirtualDeviceBuilder::new()?
+        .name(name)
+        .with_keys(&keys)?
+        .with_relative_axes(&rel_axes)?
+        .build()?)
 }
 
 fn wait_for_slave_pointer_id(display: *mut x11::xlib::Display, device_name: &str) -> Result<i32> {
@@ -465,7 +485,11 @@ fn wait_for_slave_pointer_id(display: *mut x11::xlib::Display, device_name: &str
     }
 }
 
-fn attach_slave_to_master(display: *mut x11::xlib::Display, slave_pointer_id: i32, master_pointer_id: i32) -> Result<()> {
+fn attach_slave_to_master(
+    display: *mut x11::xlib::Display,
+    slave_pointer_id: i32,
+    master_pointer_id: i32,
+) -> Result<()> {
     let mut change = x11::xinput2::XIAnyHierarchyChangeInfo::default();
     unsafe {
         let attach = change.attach();
@@ -537,7 +561,12 @@ fn set_flat_pointer_accel(display: *mut x11::xlib::Display, slave_pointer_id: i3
     }
 }
 
-fn warp_master_pointer(display: *mut x11::xlib::Display, ids: MasterPointerIds, x: i32, y: i32) -> Result<()> {
+fn warp_master_pointer(
+    display: *mut x11::xlib::Display,
+    ids: MasterPointerIds,
+    x: i32,
+    y: i32,
+) -> Result<()> {
     let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
     let rc = unsafe {
         x11::xinput2::XIWarpPointer(
@@ -622,7 +651,7 @@ fn install_shield_grab(
             device_id,
             button as std::os::raw::c_int,
             window,
-            0, // cursor: None
+            0,                             // cursor: None
             x11::xinput2::XIGrabModeSync,  // freeze the pointer on press
             x11::xinput2::XIGrabModeAsync, // leave the paired keyboard alone
             x11::xlib::False,              // owner_events: deliver to us
@@ -638,14 +667,26 @@ fn install_shield_grab(
     Ok(())
 }
 
-fn remove_shield_grab(display: *mut x11::xlib::Display, device_id: i32, window: x11::xlib::Window, button: u8) {
+fn remove_shield_grab(
+    display: *mut x11::xlib::Display,
+    device_id: i32,
+    window: x11::xlib::Window,
+    button: u8,
+) {
     let mut mods = x11::xinput2::XIGrabModifiers {
         modifiers: XI_ANY_MODIFIER,
         status: 0,
     };
     unsafe {
         let prev = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
-        x11::xinput2::XIUngrabButton(display, device_id, button as std::os::raw::c_int, window, 1, &mut mods);
+        x11::xinput2::XIUngrabButton(
+            display,
+            device_id,
+            button as std::os::raw::c_int,
+            window,
+            1,
+            &mut mods,
+        );
         x11::xlib::XSync(display, 0);
         x11::xlib::XSetErrorHandler(prev);
     }
@@ -687,7 +728,12 @@ fn replay_shielded_presses(
             let time = unsafe { (*de).time };
             if pending_devices.remove(&device_id) {
                 unsafe {
-                    x11::xinput2::XIAllowEvents(display, device_id, x11::xinput2::XIReplayDevice, time);
+                    x11::xinput2::XIAllowEvents(
+                        display,
+                        device_id,
+                        x11::xinput2::XIReplayDevice,
+                        time,
+                    );
                     x11::xlib::XSync(display, 0);
                 }
             }
@@ -698,11 +744,7 @@ fn replay_shielded_presses(
 
 fn ewmh_active_window(display: *mut x11::xlib::Display) -> Option<x11::xlib::Window> {
     unsafe {
-        let atom = x11::xlib::XInternAtom(
-            display,
-            c"_NET_ACTIVE_WINDOW".as_ptr(),
-            x11::xlib::True,
-        );
+        let atom = x11::xlib::XInternAtom(display, c"_NET_ACTIVE_WINDOW".as_ptr(), x11::xlib::True);
         if atom == 0 {
             return None;
         }
@@ -761,12 +803,8 @@ fn x_server_time(display: *mut x11::xlib::Display) -> x11::xlib::Time {
         x11::xlib::XSync(display, 0);
         let mut time: x11::xlib::Time = x11::xlib::CurrentTime;
         let mut ev: x11::xlib::XEvent = std::mem::zeroed();
-        while x11::xlib::XCheckWindowEvent(
-            display,
-            win,
-            x11::xlib::PropertyChangeMask,
-            &mut ev,
-        ) != 0
+        while x11::xlib::XCheckWindowEvent(display, win, x11::xlib::PropertyChangeMask, &mut ev)
+            != 0
         {
             if ev.get_type() == x11::xlib::PropertyNotify {
                 time = ev.property.time;
@@ -784,11 +822,7 @@ fn ewmh_activate_window(
     current_active: x11::xlib::Window,
 ) {
     unsafe {
-        let atom = x11::xlib::XInternAtom(
-            display,
-            c"_NET_ACTIVE_WINDOW".as_ptr(),
-            x11::xlib::True,
-        );
+        let atom = x11::xlib::XInternAtom(display, c"_NET_ACTIVE_WINDOW".as_ptr(), x11::xlib::True);
         if atom == 0 {
             return;
         }
@@ -799,7 +833,8 @@ fn ewmh_activate_window(
         ev.message_type = atom;
         ev.format = 32;
         ev.data.set_long(0, 2); // source indication: pager/tool
-        ev.data.set_long(1, x_server_time(display) as std::os::raw::c_long);
+        ev.data
+            .set_long(1, x_server_time(display) as std::os::raw::c_long);
         ev.data.set_long(2, current_active as std::os::raw::c_long);
         x11::xlib::XSendEvent(
             display,
@@ -835,7 +870,9 @@ pub fn with_x11_foreground<T>(
     }
     let prior = ewmh_active_window(display);
     ewmh_activate_window(display, xid as x11::xlib::Window, prior.unwrap_or(0));
-    unsafe { x11::xlib::XSync(display, 0); }
+    unsafe {
+        x11::xlib::XSync(display, 0);
+    }
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
@@ -863,9 +900,13 @@ pub fn with_x11_foreground<T>(
     // Restore the prior active window (brief swap, like macOS/Windows).
     if let Some(p) = prior {
         ewmh_activate_window(display, p, xid as x11::xlib::Window);
-        unsafe { x11::xlib::XSync(display, 0); }
+        unsafe {
+            x11::xlib::XSync(display, 0);
+        }
     }
-    unsafe { x11::xlib::XCloseDisplay(display); }
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
     result
 }
 
@@ -876,11 +917,21 @@ pub fn with_x11_foreground<T>(
 pub fn x11_activate_window_persistent(xid: u64) -> Result<Option<u64>> {
     let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
     if display.is_null() {
-        bail!("cannot activate window: no X display (DISPLAY={:?})", std::env::var("DISPLAY").ok());
+        bail!(
+            "cannot activate window: no X display (DISPLAY={:?})",
+            std::env::var("DISPLAY").ok()
+        );
     }
     let prior = ewmh_active_window(display).map(|w| w as u64);
-    ewmh_activate_window(display, xid as x11::xlib::Window, prior.unwrap_or(0) as x11::xlib::Window);
-    unsafe { x11::xlib::XSync(display, 0); x11::xlib::XCloseDisplay(display); }
+    ewmh_activate_window(
+        display,
+        xid as x11::xlib::Window,
+        prior.unwrap_or(0) as x11::xlib::Window,
+    );
+    unsafe {
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XCloseDisplay(display);
+    }
     Ok(prior)
 }
 
@@ -895,17 +946,29 @@ fn button_code(button: u8) -> Result<Key> {
 
 fn emit_button(device: &mut VirtualDevice, button: u8, press: bool) -> Result<()> {
     let code = button_code(button)?;
-    device.emit(&[InputEvent::new(EventType::KEY, code.0, if press { 1 } else { 0 })])?;
+    device.emit(&[InputEvent::new(
+        EventType::KEY,
+        code.0,
+        if press { 1 } else { 0 },
+    )])?;
     Ok(())
 }
 
 fn emit_relative_motion(device: &mut VirtualDevice, dx: i32, dy: i32) -> Result<()> {
     let mut events = Vec::with_capacity(2);
     if dx != 0 {
-        events.push(InputEvent::new(EventType::RELATIVE, RelativeAxisType::REL_X.0, dx));
+        events.push(InputEvent::new(
+            EventType::RELATIVE,
+            RelativeAxisType::REL_X.0,
+            dx,
+        ));
     }
     if dy != 0 {
-        events.push(InputEvent::new(EventType::RELATIVE, RelativeAxisType::REL_Y.0, dy));
+        events.push(InputEvent::new(
+            EventType::RELATIVE,
+            RelativeAxisType::REL_Y.0,
+            dy,
+        ));
     }
     if events.is_empty() {
         return Ok(());
@@ -927,9 +990,7 @@ fn emit_scroll(device: &mut VirtualDevice, horizontal: bool, value: i32) -> Resu
     Ok(())
 }
 
-pub fn send_parallel_virtual_pointer_drags(
-    drags: &[(String, VirtualPointerDrag)],
-) -> Result<()> {
+pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)]) -> Result<()> {
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
     let xi_opcode = xinput_opcode(display);
@@ -1160,9 +1221,8 @@ pub fn send_virtual_pointer_click(cursor_id: &str, click: &VirtualPointerClick) 
             .get(cursor_id)
             .cloned()
             .ok_or_else(|| anyhow!("missing uinput pointer for '{cursor_id}'"))?;
-        let opcode = xi_opcode.ok_or_else(|| {
-            anyhow!("no-focus-steal click requires XInput/XI2 shield grabs")
-        })?;
+        let opcode = xi_opcode
+            .ok_or_else(|| anyhow!("no-focus-steal click requires XInput/XI2 shield grabs"))?;
 
         let window = click.target_window as x11::xlib::Window;
         install_shield_grab(display, ids.pointer_id, window, click.button)
@@ -1332,8 +1392,7 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
                 if attempt >= 2 {
                     if let Some(now_win) = now {
                         unsafe {
-                            let prev_handler =
-                                x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+                            let prev_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
                             x11::xlib::XSetInputFocus(
                                 display,
                                 now_win,
@@ -1569,7 +1628,11 @@ pub fn send_drag(
     let (conn, _) = connect_x11_for_input()?;
     let root = conn.setup().roots[0].root;
     let steps = steps.max(1);
-    let step_delay_ms = if steps > 1 { duration_ms / steps as u64 } else { duration_ms };
+    let step_delay_ms = if steps > 1 {
+        duration_ms / steps as u64
+    } else {
+        duration_ms
+    };
     let press_target = resolve_event_target(&conn, xid, from_x, from_y)?;
 
     // ButtonPress at start.
@@ -1578,9 +1641,13 @@ pub fn send_drag(
         detail: button,
         sequence: 0,
         time: x11rb::CURRENT_TIME,
-        root, event: press_target.window, child: x11rb::NONE,
-        root_x: press_target.root_x, root_y: press_target.root_y,
-        event_x: press_target.local_x, event_y: press_target.local_y,
+        root,
+        event: press_target.window,
+        child: x11rb::NONE,
+        root_x: press_target.root_x,
+        root_y: press_target.root_y,
+        event_x: press_target.local_x,
+        event_y: press_target.local_y,
         state: KeyButMask::from(0u16),
         same_screen: true,
     };
@@ -1599,9 +1666,13 @@ pub fn send_drag(
             detail: Motion::NORMAL,
             sequence: 0,
             time: x11rb::CURRENT_TIME,
-            root, event: target.window, child: x11rb::NONE,
-            root_x: target.root_x, root_y: target.root_y,
-            event_x: target.local_x, event_y: target.local_y,
+            root,
+            event: target.window,
+            child: x11rb::NONE,
+            root_x: target.root_x,
+            root_y: target.root_y,
+            event_x: target.local_x,
+            event_y: target.local_y,
             state: button_state_mask(button),
             same_screen: true,
         };
@@ -1619,13 +1690,22 @@ pub fn send_drag(
         detail: button,
         sequence: 0,
         time: x11rb::CURRENT_TIME,
-        root, event: release_target.window, child: x11rb::NONE,
-        root_x: release_target.root_x, root_y: release_target.root_y,
-        event_x: release_target.local_x, event_y: release_target.local_y,
+        root,
+        event: release_target.window,
+        child: x11rb::NONE,
+        root_x: release_target.root_x,
+        root_y: release_target.root_y,
+        event_x: release_target.local_x,
+        event_y: release_target.local_y,
         state: button_state_mask(button),
         same_screen: true,
     };
-    conn.send_event(false, release_target.window, EventMask::BUTTON_RELEASE, &release)?;
+    conn.send_event(
+        false,
+        release_target.window,
+        EventMask::BUTTON_RELEASE,
+        &release,
+    )?;
     conn.flush()?;
     Ok(())
 }
@@ -1670,7 +1750,9 @@ pub fn send_motion(xid: u64, x: i32, y: i32, button: Option<u8>) -> Result<()> {
         root_y: target.root_y,
         event_x: target.local_x,
         event_y: target.local_y,
-        state: button.map(button_state_mask).unwrap_or_else(|| KeyButMask::from(0u16)),
+        state: button
+            .map(button_state_mask)
+            .unwrap_or_else(|| KeyButMask::from(0u16)),
         same_screen: true,
     };
     conn.send_event(false, target.window, EventMask::POINTER_MOTION, &motion)?;
@@ -1721,15 +1803,24 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
         let Some((keycode, needs_shift)) = char_to_keycode_shift(&mapping, ch as u32) else {
             continue;
         };
-        let state = if needs_shift { KeyButMask::SHIFT } else { KeyButMask::from(0u16) };
+        let state = if needs_shift {
+            KeyButMask::SHIFT
+        } else {
+            KeyButMask::from(0u16)
+        };
 
         let press = KeyPressEvent {
             response_type: KEY_PRESS_EVENT,
             detail: keycode,
             sequence: 0,
             time: x11rb::CURRENT_TIME,
-            root, event: window, child: x11rb::NONE,
-            root_x: 0, root_y: 0, event_x: 0, event_y: 0,
+            root,
+            event: window,
+            child: x11rb::NONE,
+            root_x: 0,
+            root_y: 0,
+            event_x: 0,
+            event_y: 0,
             state,
             same_screen: true,
         };
@@ -1738,8 +1829,13 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
             detail: keycode,
             sequence: 0,
             time: x11rb::CURRENT_TIME,
-            root, event: window, child: x11rb::NONE,
-            root_x: 0, root_y: 0, event_x: 0, event_y: 0,
+            root,
+            event: window,
+            child: x11rb::NONE,
+            root_x: 0,
+            root_y: 0,
+            event_x: 0,
+            event_y: 0,
             state,
             same_screen: true,
         };
@@ -1959,8 +2055,10 @@ pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
         root,
         event: window,
         child: x11rb::NONE,
-        root_x: 0, root_y: 0,
-        event_x: 0, event_y: 0,
+        root_x: 0,
+        root_y: 0,
+        event_x: 0,
+        event_y: 0,
         state,
         same_screen: true,
     };
@@ -1973,8 +2071,10 @@ pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
         root,
         event: window,
         child: x11rb::NONE,
-        root_x: 0, root_y: 0,
-        event_x: 0, event_y: 0,
+        root_x: 0,
+        root_y: 0,
+        event_x: 0,
+        event_y: 0,
         state,
         same_screen: true,
     };
@@ -2039,19 +2139,41 @@ fn key_name_to_keysym(key: &str) -> Result<u32> {
         "down" => 0xFF54,
         "left" => 0xFF51,
         "right" => 0xFF53,
-        "f1" => 0xFFBE, "f2" => 0xFFBF, "f3" => 0xFFC0, "f4" => 0xFFC1,
-        "f5" => 0xFFC2, "f6" => 0xFFC3, "f7" => 0xFFC4, "f8" => 0xFFC5,
-        "f9" => 0xFFC6, "f10" => 0xFFC7, "f11" => 0xFFC8, "f12" => 0xFFC9,
-        "shift" => 0xFFE1, "ctrl" | "control" => 0xFFE3, "alt" => 0xFFE9, "super" | "meta" | "win" => 0xFFEB,
-        "capslock" => 0xFFE5, "numlock" => 0xFF7F,
+        "f1" => 0xFFBE,
+        "f2" => 0xFFBF,
+        "f3" => 0xFFC0,
+        "f4" => 0xFFC1,
+        "f5" => 0xFFC2,
+        "f6" => 0xFFC3,
+        "f7" => 0xFFC4,
+        "f8" => 0xFFC5,
+        "f9" => 0xFFC6,
+        "f10" => 0xFFC7,
+        "f11" => 0xFFC8,
+        "f12" => 0xFFC9,
+        "shift" => 0xFFE1,
+        "ctrl" | "control" => 0xFFE3,
+        "alt" => 0xFFE9,
+        "super" | "meta" | "win" => 0xFFEB,
+        "capslock" => 0xFFE5,
+        "numlock" => 0xFF7F,
         // Common X keysym names for punctuation. The single-char branch below
         // already resolves the literal glyph ("+", "=", "*", "/"), but callers
         // that speak the X keysym-name vocabulary may pass the spelled-out name.
         // For the ASCII range the keysym value equals the codepoint.
-        "plus" => 0x2B, "minus" | "dash" => 0x2D, "equal" | "equals" => 0x3D,
-        "asterisk" | "star" => 0x2A, "slash" => 0x2F, "backslash" => 0x5C,
-        "period" | "dot" => 0x2E, "comma" => 0x2C, "semicolon" => 0x3B,
-        "colon" => 0x3A, "underscore" => 0x5F, "parenleft" => 0x28, "parenright" => 0x29,
+        "plus" => 0x2B,
+        "minus" | "dash" => 0x2D,
+        "equal" | "equals" => 0x3D,
+        "asterisk" | "star" => 0x2A,
+        "slash" => 0x2F,
+        "backslash" => 0x5C,
+        "period" | "dot" => 0x2E,
+        "comma" => 0x2C,
+        "semicolon" => 0x3B,
+        "colon" => 0x3A,
+        "underscore" => 0x5F,
+        "parenleft" => 0x28,
+        "parenright" => 0x29,
         s if s.len() == 1 => s.chars().next().unwrap() as u32,
         _ => anyhow::bail!("Unknown key: {key}"),
     };
@@ -2185,7 +2307,10 @@ pub fn inject_tk_send(text: &str) -> Result<bool> {
     // Tcl's `send` command: `send <target-app-name> <tcl-command>`.
     // We target "cua-tk-target" (the name the test app registers with) and
     // insert at the entry widget's current cursor position.
-    let tcl_text = text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}");
+    let tcl_text = text
+        .replace("\\", "\\\\")
+        .replace("{", "\\{")
+        .replace("}", "\\}");
 
     // Tk's `send` is synchronous: it blocks the sender until the *target's* Tcl
     // event loop services the request and replies. If the target is wedged, or
@@ -2220,10 +2345,11 @@ exit 0"#,
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .spawn() {
-            Ok(c) => c,
-            Err(_) => return Ok(false),
-        };
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return Ok(false),
+    };
 
     if let Some(mut stdin) = child.stdin.take() {
         // Ignore write errors: if wish already exited we observe it via wait().

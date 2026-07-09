@@ -101,8 +101,8 @@ struct SSH: AsyncParsableCommand {
                 timeout: TimeInterval(timeout)
             )
 
-            if !result.output.isEmpty {
-                print(result.output)
+            if !result.outputData.isEmpty {
+                FileHandle.standardOutput.write(result.outputData)
             }
 
             if result.exitCode != 0 {
@@ -129,8 +129,8 @@ struct SSH: AsyncParsableCommand {
                 timeout: TimeInterval(timeout)
             )
 
-            if !result.output.isEmpty {
-                print(result.output)
+            if !result.outputData.isEmpty {
+                FileHandle.standardOutput.write(result.outputData)
             }
 
             if result.exitCode != 0 {

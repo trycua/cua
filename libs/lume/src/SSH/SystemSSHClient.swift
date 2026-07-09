@@ -61,7 +61,6 @@ public final class SystemSSHClient: Sendable {
 
         let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
         let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: stdoutData, encoding: .utf8) ?? ""
         let errorOutput = String(data: stderrData, encoding: .utf8) ?? ""
 
         // Filter out SSH warnings from stderr (known_hosts, etc.)
@@ -73,11 +72,14 @@ public final class SystemSSHClient: Sendable {
             }
             .joined(separator: "\n")
 
-        let combinedOutput = filteredError.isEmpty ? output : output + filteredError
+        var outputData = stdoutData
+        if !filteredError.isEmpty, let errorData = filteredError.data(using: .utf8) {
+            outputData.append(errorData)
+        }
 
         return SSHResult(
             exitCode: process.terminationStatus,
-            output: combinedOutput
+            outputData: outputData
         )
     }
 

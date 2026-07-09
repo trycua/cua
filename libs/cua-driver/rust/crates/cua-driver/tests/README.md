@@ -20,15 +20,15 @@ Build harness apps before running ignored tests:
 
 ```bash
 # macOS
-../../../../test-harness/build/macos.sh
+../../../../tests/fixtures/build/macos.sh
 
 # Linux
-../../../../test-harness/build/linux.sh
+../../../../tests/fixtures/build/linux.sh
 ```
 
 ```powershell
 # Windows
-..\..\..\..\test-harness\build\windows.ps1
+..\..\..\..\tests\fixtures\build\windows.ps1
 ```
 
 Staged outputs are read from `../../test-apps/harness-<name>/`.

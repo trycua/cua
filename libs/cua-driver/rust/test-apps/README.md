@@ -1,8 +1,8 @@
 # test-apps
 
-Local staging directory for cua-driver test harness applications.
+Local staging directory for cua-driver test fixture applications.
 
-Build scripts under `../test-harness/build/` write `harness-<name>/`
+Build scripts under `../tests/fixtures/build/` write `harness-<name>/`
 directories here. The staged outputs are intentionally git-ignored; rebuild
 them from source instead of committing binaries.
 
@@ -21,10 +21,10 @@ Common outputs:
 Run the host build script for your platform:
 
 ```bash
-../../test-harness/build/macos.sh
-../../test-harness/build/linux.sh
+../../tests/fixtures/build/macos.sh
+../../tests/fixtures/build/linux.sh
 ```
 
 ```powershell
-..\..\test-harness\build\windows.ps1
+..\..\tests\fixtures\build\windows.ps1
 ```

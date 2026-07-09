@@ -1,14 +1,14 @@
-# cua-driver test harness
+# cua-driver test fixtures
 
 Deterministic host apps and shared fixtures used to verify cua-driver across
-Windows, macOS, and Linux. The harness is source-first: build scripts stage
-local outputs into `../rust/test-apps/harness-<name>/`; binaries are not
+Windows, macOS, and Linux. The fixtures are source-first: build scripts stage
+local outputs into `libs/cua-driver/rust/test-apps/harness-<name>/`; binaries are not
 committed.
 
 ## Layout
 
 ```text
-test-harness/
+tests/fixtures/
 ├── shared/
 │   ├── scenarios.json       # scenario ids, titles, and expected controls
 │   └── web/index.html       # shared DOM for webview-style harnesses
@@ -38,21 +38,21 @@ load `shared/web/index.html`, either directly or through a build-staged copy.
 
 ## Build
 
-Build scripts stage outputs into `../rust/test-apps/`.
+Build scripts stage outputs into `libs/cua-driver/rust/test-apps/`.
 
 ```bash
 # macOS: AppKit, SwiftUI, WKWebView, Electron, Tauri
-libs/cua-driver/test-harness/build/macos.sh
-libs/cua-driver/test-harness/build/macos.sh --skip electron
+libs/cua-driver/tests/fixtures/build/macos.sh
+libs/cua-driver/tests/fixtures/build/macos.sh --skip electron
 
 # Linux: GTK3, Electron, Tauri
-libs/cua-driver/test-harness/build/linux.sh
-libs/cua-driver/test-harness/build/linux.sh --skip tauri
+libs/cua-driver/tests/fixtures/build/linux.sh
+libs/cua-driver/tests/fixtures/build/linux.sh --skip tauri
 ```
 
 ```powershell
 # Windows: WPF, WinUI3, WebView2, Electron, Tauri
-cd libs\cua-driver\test-harness
+cd libs\cua-driver\tests\fixtures
 .\build\windows.ps1
 .\build\windows.ps1 -Skip winui3
 ```
@@ -66,7 +66,7 @@ Host requirements:
 
 ## Test Mapping
 
-Rust tests under `../rust/crates/cua-driver/tests/` consume the staged
+Rust tests under `libs/cua-driver/rust/crates/cua-driver/tests/` consume the staged
 `rust/test-apps/harness-<name>/` outputs:
 
 - `harness_<toolkit>_test.rs`: toolkit-specific app coverage, usually ignored.
@@ -74,7 +74,7 @@ Rust tests under `../rust/crates/cua-driver/tests/` consume the staged
   modality coverage, ignored/manual or VM-backed.
 - `protocol_*_test.rs` and schema tests: headless protocol coverage, default.
 
-The Python e2e suite under `../tests/e2e/` drives real apps and the shared
+The Python e2e suite under `libs/cua-driver/tests/e2e/` drives real apps and the shared
 Electron/Tauri harnesses through the public MCP interface.
 
 ## App Coverage

@@ -1,4 +1,4 @@
-# windows.ps1 - publish the cua-driver test harness binaries.
+# windows.ps1 - publish the cua-driver test fixture binaries.
 #
 # Outputs land in libs/cua-driver/rust/test-apps/harness-{wpf,winui3,webview,electron,tauri}/
 # so the existing sandbox runner picks them up via its mapped folder.
@@ -20,7 +20,8 @@ $ErrorActionPreference = "Stop"
 
 $buildDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $harnessDir = Split-Path -Parent $buildDir
-$cuaDriverDir = Split-Path -Parent $harnessDir
+$testsDir = Split-Path -Parent $harnessDir
+$cuaDriverDir = Split-Path -Parent $testsDir
 $testAppsDir = Join-Path $cuaDriverDir "rust\test-apps"
 
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {

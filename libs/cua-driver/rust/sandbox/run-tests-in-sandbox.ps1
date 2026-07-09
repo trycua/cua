@@ -85,31 +85,31 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_bg_modality_test) failed" }
 } finally { Pop-Location }
 
-# -- 1.5. Build the test-harness if dependencies are on PATH ------------------
+# -- 1.5. Build the test fixtures if dependencies are on PATH ------------------
 # The harness produces test-apps/harness-*/ which the sandbox
 # runner picks up via the existing mapped-folder route. Skip silently if
 # a dependency isn't available - the smoke tests degrade to "skipped" inside
 # the sandbox rather than failing the whole run.
 if (Get-Command dotnet -ErrorAction SilentlyContinue) {
-    $harnessBuild = Join-Path $wsRoot "..\test-harness\build\windows.ps1"
+    $harnessBuild = Join-Path $wsRoot "..\tests\fixtures\build\windows.ps1"
     if (Test-Path $harnessBuild) {
-        Write-Host "`n[BUILD] test-harness (dotnet publish)..." -ForegroundColor Yellow
+        Write-Host "`n[BUILD] test fixtures (dotnet publish)..." -ForegroundColor Yellow
         # build.ps1 sets $ErrorActionPreference=Stop and throws on
         # `dotnet publish` failure - wrap so the throw doesn't abort
         # the whole sandbox runner before we can log the skip.
         try {
             & $harnessBuild
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "[WARN] test-harness build failed (exit $LASTEXITCODE) - harness tests will skip." -ForegroundColor Yellow
+                Write-Host "[WARN] test fixture build failed (exit $LASTEXITCODE) - harness tests will skip." -ForegroundColor Yellow
             }
         } catch {
-            Write-Host "[WARN] test-harness build errored: $($_.Exception.Message) - harness tests will skip." -ForegroundColor Yellow
+            Write-Host "[WARN] test fixture build errored: $($_.Exception.Message) - harness tests will skip." -ForegroundColor Yellow
         }
     } else {
-        Write-Host "`n[SKIP] test-harness/build/windows.ps1 not found - harness tests will skip." -ForegroundColor Yellow
+        Write-Host "`n[SKIP] tests/fixtures/build/windows.ps1 not found - harness tests will skip." -ForegroundColor Yellow
     }
 } else {
-    Write-Host "`n[SKIP] dotnet CLI not on PATH - test-harness build skipped, harness tests will degrade." -ForegroundColor Yellow
+    Write-Host "`n[SKIP] dotnet CLI not on PATH - test fixture build skipped, harness tests will degrade." -ForegroundColor Yellow
 }
 
 $mcpBin = Get-ChildItem "$wsRoot\target\debug\deps\mcp_protocol_test-*.exe" |

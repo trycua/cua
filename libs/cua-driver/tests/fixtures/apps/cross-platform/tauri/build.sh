@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Stage the Tauri test harness for cua-driver tests on Linux and macOS.
+# Stage the Tauri test fixture app for cua-driver tests on Linux and macOS.
 #
 # The app embeds the same shared/web/index.html DOM used by Electron,
 # WebView2, and WKWebView. Build output is copied into
-# rust/test-apps/harness-tauri/ with deterministic executable names.
+# libs/cua-driver/rust/test-apps/harness-tauri/ with deterministic executable names.
 set -euo pipefail
 
 tauriDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 crossDir="$(dirname "$tauriDir")"
 appsDir="$(dirname "$crossDir")"
 harnessDir="$(dirname "$appsDir")"
-cuaDriverDir="$(dirname "$harnessDir")"
+cuaDriverDir="$(cd "$harnessDir/../.." && pwd)"
 outDir="$cuaDriverDir/rust/test-apps/harness-tauri"
 platform="$(uname -s)"
 

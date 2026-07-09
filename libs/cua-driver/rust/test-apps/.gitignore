@@ -7,7 +7,7 @@
 *.AppImage
 *.deb
 
-# Locally-built .NET test harness output (see ../../test-harness/build.ps1).
+# Locally-built .NET test fixture output (see ../../tests/fixtures/build/windows.ps1).
 # These dirs are produced by `dotnet publish -o ...` and contain the
 # CuaTestHarness.{Wpf,WinUI3} binaries + their self-contained runtime
 # (several thousand files, ~150 MB). Always rebuilt locally.

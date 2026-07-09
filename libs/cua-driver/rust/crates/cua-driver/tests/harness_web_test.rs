@@ -1,6 +1,6 @@
 //! Integration tests against the CuaTestHarness.WebView (WPF + WebView2)
 //! and CuaTestHarness.Electron hosts. Both load the same
-//! `test-harness/shared/web/index.html`, so the same `page` tool flows
+//! `tests/fixtures/shared/web/index.html`, so the same `page` tool flows
 //! are exercised against two Chromium-based hosts.
 //!
 //! Run via:
@@ -77,7 +77,7 @@ where
     F: FnOnce(i64, u64, &mut McpDriver),
 {
     if !host_exe.exists() {
-        eprintln!("{label} host exe not found at {host_exe:?} — run test-harness/build/windows.ps1");
+        eprintln!("{label} host exe not found at {host_exe:?} — run tests/fixtures/build/windows.ps1");
         return;
     }
     // A prior test's host may still hold this fixed CDP port — wait for it to

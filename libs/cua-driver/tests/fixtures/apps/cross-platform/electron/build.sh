@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build.sh — stage the Electron test harness for cua-driver tests / modality
+# build.sh — stage the Electron test fixture app for cua-driver tests / modality
 # recordings on Linux and macOS.
 #
 # On Linux we run the app straight from node_modules (electron's prebuilt
@@ -15,7 +15,7 @@ elecDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 crossDir="$(dirname "$elecDir")"
 appsDir="$(dirname "$crossDir")"
 harnessDir="$(dirname "$appsDir")"
-cuaDriverDir="$(dirname "$harnessDir")"
+cuaDriverDir="$(cd "$harnessDir/../.." && pwd)"
 outDir="$cuaDriverDir/rust/test-apps/harness-electron"
 platform="$(uname -s)"
 

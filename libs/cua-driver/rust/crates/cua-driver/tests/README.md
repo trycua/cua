@@ -43,3 +43,9 @@ cargo test -p cua-driver --test modality_desktop_scope_macos_test -- --ignored -
 
 Windows Sandbox runs use `../../sandbox/run-tests-in-sandbox.ps1`, which builds
 the Windows harness apps and maps them into the sandbox.
+
+Windows GUI modality tests require a foreground interactive desktop where
+`GetForegroundWindow` returns a real user window. SSH-launched commands,
+scheduled tasks, and PsExec-launched commands can enter the right user session
+while still exposing no foreground desktop; those tests self-skip in that state
+because the focus oracle would otherwise report meaningless pid-0 results.

@@ -1,4 +1,4 @@
-# sandbox-runner.ps1 — runs INSIDE Windows Sandbox as LogonCommand
+# sandbox-runner.ps1 - runs INSIDE Windows Sandbox as LogonCommand
 # Streams test output live to C:\sandbox-output\ so the host can tail it.
 
 $ErrorActionPreference = "Continue"
@@ -14,7 +14,7 @@ function Log($msg) {
 
 Log "sandbox-runner.ps1 starting"
 
-# ── set env so binary_path() resolves cua-driver.exe correctly ─────────────
+# -- set env so binary_path() resolves cua-driver.exe correctly -------------
 $env:CARGO_MANIFEST_DIR = "C:\cua-driver-rs\crates\cua-driver"
 Log "CARGO_MANIFEST_DIR = $env:CARGO_MANIFEST_DIR"
 
@@ -27,7 +27,7 @@ if (-not (Test-Path $driverExe)) {
 }
 Log "cua-driver   : $driverExe"
 
-# ── find test binaries ───────────────────────────────────────────────────────
+# -- find test binaries -------------------------------------------------------
 # Run mcp_protocol_test first, then ux_guard_test (UX guard needs a real
 # desktop session and spawns visible windows, so it runs second).
 $testSuites = @(
@@ -39,7 +39,7 @@ $testSuites = @(
     @{ Pattern = "harness_bg_modality_test-*.exe";Label = "harness_bg_modality_test";Extra = @("--ignored") }
 )
 
-# ── stage harness binaries to %TEMP% (same Zone-3 ShellExecute workaround) ──
+# -- stage harness binaries to %TEMP% (same Zone-3 ShellExecute workaround) --
 $harnessRoots = @(
     @{ Src = "C:\cua-driver-rs\test-apps\harness-wpf";      EnvVar = "HARNESS_WPF_EXE";      Exe = "CuaTestHarness.Wpf.exe" },
     @{ Src = "C:\cua-driver-rs\test-apps\harness-winui3";   EnvVar = "HARNESS_WINUI3_EXE";   Exe = "CuaTestHarness.WinUI3.exe" },
@@ -49,24 +49,24 @@ $harnessRoots = @(
 )
 foreach ($h in $harnessRoots) {
     if (-not (Test-Path $h.Src)) {
-        Log "harness $($h.Exe) not built — $($h.EnvVar) tests will skip"
+        Log "harness $($h.Exe) not built - $($h.EnvVar) tests will skip"
         continue
     }
     $dst = Join-Path $env:TEMP (Split-Path $h.Src -Leaf)
     Copy-Item $h.Src $dst -Recurse -Force
     # Confirm the publish output actually contains the exe before exporting
-    # the env var — a partial publish would otherwise turn an expected skip
+    # the env var - a partial publish would otherwise turn an expected skip
     # into a hard launch failure inside the Rust test.
     $stagedExe = Join-Path $dst $h.Exe
     if (-not (Test-Path $stagedExe)) {
-        Log "WARNING: staged harness exe missing at $stagedExe — $($h.EnvVar) tests will skip"
+        Log "WARNING: staged harness exe missing at $stagedExe - $($h.EnvVar) tests will skip"
         continue
     }
     Set-Item "Env:$($h.EnvVar)" $stagedExe
     Log "$($h.Exe) staged to $dst (env $($h.EnvVar)=$stagedExe)"
 }
 
-# ── optional test filter ────────────────────────────────────────────────────
+# -- optional test filter ----------------------------------------------------
 $filterSuite = ""
 if (Test-Path "C:\sandbox-output\test-filter.txt") {
     $filterSuite = (Get-Content "C:\sandbox-output\test-filter.txt" -Raw).Trim()

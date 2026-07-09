@@ -1,4 +1,4 @@
-# run-tests-in-sandbox.ps1  — host-side launcher with live log streaming
+# run-tests-in-sandbox.ps1  - host-side launcher with live log streaming
 #
 # Usage (from workspace root):
 #   .\sandbox\run-tests-in-sandbox.ps1 [<test-filter>]
@@ -37,7 +37,7 @@ $wsRoot     = Split-Path -Parent $sandboxDir
 Write-Host "=== cua-driver-rs Windows Sandbox Test Runner ===" -ForegroundColor Cyan
 Write-Host "Workspace: $wsRoot"
 
-# ── Pre-flight: fail fast if a sandbox is already running ────────────────────
+# -- Pre-flight: fail fast if a sandbox is already running --------------------
 $running = Get-Process "WindowsSandboxClient","WindowsSandbox" -ErrorAction SilentlyContinue
 if ($running) {
     Write-Host "`n[ERROR] Windows Sandbox is already running (pid $($running.Id -join ','))." -ForegroundColor Red
@@ -53,7 +53,7 @@ if ($running) {
     Write-Host "[OK] Existing sandbox closed. Proceeding." -ForegroundColor Green
 }
 
-# ── 1. Build ──────────────────────────────────────────────────────────────────
+# -- 1. Build ------------------------------------------------------------------
 Push-Location $wsRoot
 try {
     Write-Host "`n[BUILD] cargo build..." -ForegroundColor Yellow
@@ -85,31 +85,31 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_bg_modality_test) failed" }
 } finally { Pop-Location }
 
-# ── 1.5. Build the test-harness if dependencies are on PATH ──────────────────
+# -- 1.5. Build the test-harness if dependencies are on PATH ------------------
 # The harness produces test-apps/harness-*/ which the sandbox
 # runner picks up via the existing mapped-folder route. Skip silently if
-# a dependency isn't available — the smoke tests degrade to "skipped" inside
+# a dependency isn't available - the smoke tests degrade to "skipped" inside
 # the sandbox rather than failing the whole run.
 if (Get-Command dotnet -ErrorAction SilentlyContinue) {
     $harnessBuild = Join-Path $wsRoot "..\test-harness\build\windows.ps1"
     if (Test-Path $harnessBuild) {
         Write-Host "`n[BUILD] test-harness (dotnet publish)..." -ForegroundColor Yellow
         # build.ps1 sets $ErrorActionPreference=Stop and throws on
-        # `dotnet publish` failure — wrap so the throw doesn't abort
+        # `dotnet publish` failure - wrap so the throw doesn't abort
         # the whole sandbox runner before we can log the skip.
         try {
             & $harnessBuild
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "[WARN] test-harness build failed (exit $LASTEXITCODE) — harness tests will skip." -ForegroundColor Yellow
+                Write-Host "[WARN] test-harness build failed (exit $LASTEXITCODE) - harness tests will skip." -ForegroundColor Yellow
             }
         } catch {
-            Write-Host "[WARN] test-harness build errored: $($_.Exception.Message) — harness tests will skip." -ForegroundColor Yellow
+            Write-Host "[WARN] test-harness build errored: $($_.Exception.Message) - harness tests will skip." -ForegroundColor Yellow
         }
     } else {
-        Write-Host "`n[SKIP] test-harness/build/windows.ps1 not found — harness tests will skip." -ForegroundColor Yellow
+        Write-Host "`n[SKIP] test-harness/build/windows.ps1 not found - harness tests will skip." -ForegroundColor Yellow
     }
 } else {
-    Write-Host "`n[SKIP] dotnet CLI not on PATH — test-harness build skipped, harness tests will degrade." -ForegroundColor Yellow
+    Write-Host "`n[SKIP] dotnet CLI not on PATH - test-harness build skipped, harness tests will degrade." -ForegroundColor Yellow
 }
 
 $mcpBin = Get-ChildItem "$wsRoot\target\debug\deps\mcp_protocol_test-*.exe" |
@@ -121,13 +121,13 @@ $uxBin = Get-ChildItem "$wsRoot\target\debug\deps\ux_guard_test-*.exe" |
          Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ($uxBin) { Write-Host "ux_guard_test    : $($uxBin.Name)" } else { Write-Host "ux_guard_test    : (not found, will skip)" }
 
-# ── 2. Prepare shared output folder ──────────────────────────────────────────
+# -- 2. Prepare shared output folder ------------------------------------------
 $outputDir = "$env:TEMP\cua-sandbox-output"
 New-Item -ItemType Directory -Force $outputDir | Out-Null
 Get-ChildItem $outputDir -ErrorAction SilentlyContinue | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
 $TestFilter | Out-File "$outputDir\test-filter.txt" -Encoding utf8 -NoNewline
 
-# ── 3. Generate .wsb and launch ───────────────────────────────────────────────
+# -- 3. Generate .wsb and launch -----------------------------------------------
 $wsbContent = @"
 <Configuration>
   <MappedFolders>
@@ -158,7 +158,7 @@ if ($preLaunchCheck) {
 }
 Start-Process $wsbPath
 
-# ── 4. Stream logs live ────────────────────────────────────────────────────────
+# -- 4. Stream logs live --------------------------------------------------------
 Write-Host "[STREAM] Tailing logs (Ctrl-C to abort)..." -ForegroundColor Yellow
 
 $doneFile     = "$outputDir\done.txt"

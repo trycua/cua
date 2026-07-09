@@ -74,8 +74,8 @@ Rust tests under `libs/cua-driver/rust/crates/cua-driver/tests/` consume the sta
   modality coverage, ignored/manual or VM-backed.
 - `protocol_*_test.rs` and schema tests: headless protocol coverage, default.
 
-The Python e2e suite under `libs/cua-driver/tests/e2e/` drives real apps and the shared
-Electron/Tauri harnesses through the public MCP interface.
+Rust integration tests under `libs/cua-driver/rust/crates/cua-driver/tests/` drive
+the shared Electron/Tauri harnesses through the public MCP interface.
 
 ## App Coverage
 
@@ -99,5 +99,5 @@ Electron/Tauri harnesses through the public MCP interface.
   tests.
 - Keep platform-specific quirks in the relevant Rust test or app source, not in
   the shared fixture.
-- If a recorder finding graduates into an invariant, move it into a Rust or
-  Python test and summarize it here.
+- If a recorder finding graduates into an invariant, move it into a Rust test
+  and summarize it here.

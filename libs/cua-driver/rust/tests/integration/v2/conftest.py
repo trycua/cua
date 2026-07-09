@@ -7,7 +7,7 @@ Fixtures:
   ux_guard         → UXMonitor — started before the test, assert_clean() after
   html_server      → str — base URL of a local HTTP server serving assets/
   tauri_app        → (proc, pid, base_url) — Tauri desktop-test-app
-  electron_app     → (proc, pid, base_url) — Electron desktop-test-app
+  electron_app     → (proc, pid, base_url) — repo-local Electron harness
 """
 
 from __future__ import annotations
@@ -17,10 +17,8 @@ import subprocess
 import sys
 import time
 import threading
-import zipfile
 import urllib.request
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-from typing import Optional
 
 import pytest
 
@@ -29,6 +27,8 @@ _INTEG_DIR = os.path.dirname(_HERE)
 _TESTS_DIR = os.path.dirname(_INTEG_DIR)
 _DRIVER_RS_ROOT = os.path.dirname(_TESTS_DIR)
 _LIBS_ROOT = os.path.dirname(_DRIVER_RS_ROOT)
+_CUA_DRIVER_ROOT = os.path.join(_LIBS_ROOT, "cua-driver")
+_TEST_HARNESS_ROOT = os.path.join(_CUA_DRIVER_ROOT, "test-harness")
 
 sys.path.insert(0, _INTEG_DIR)
 from driver_client import default_binary_path  # noqa: E402
@@ -39,7 +39,7 @@ _FOCUS_APP_DIR = os.path.join(_LIBS_ROOT, "cua-driver", "Tests", "FocusMonitorAp
 _FOCUS_APP_BUNDLE = os.path.join(_FOCUS_APP_DIR, "FocusMonitorApp.app")
 _FOCUS_APP_EXE = os.path.join(_FOCUS_APP_BUNDLE, "Contents", "MacOS", "FocusMonitorApp")
 
-# Tauri / Electron app download config
+# Tauri app download config
 # Tauri releases a raw Mach-O binary (no .app bundle, no zip).
 _TAURI_VERSION = "v0.2.2"
 _TAURI_BINARY_NAME = "desktop-test-app-macos-arm64"
@@ -50,14 +50,20 @@ _TAURI_DOWNLOAD_URL = (
 _TAURI_APP_DIR = os.path.join(_HERE, "assets", "tauri")
 _TAURI_BINARY_PATH = os.path.join(_TAURI_APP_DIR, _TAURI_BINARY_NAME)
 
-# Electron releases a zip containing a proper .app bundle.
-_ELECTRON_VERSION = "v0.1.0"
-_ELECTRON_APP_NAME = "desktop-test-app-electron.app"
-_ELECTRON_DOWNLOAD_URL = (
-    f"https://github.com/trycua/desktop-test-app-electron/releases/download/"
-    f"{_ELECTRON_VERSION}/desktop-test-app-electron-{_ELECTRON_VERSION[1:]}-arm64-mac.zip"
+# Electron is built from the repo-local shared harness rather than downloaded.
+_ELECTRON_HARNESS_DIR = os.path.join(
+    _TEST_HARNESS_ROOT, "apps", "cross-platform", "electron"
 )
-_ELECTRON_APP_DIR = os.path.join(_HERE, "assets", "electron")
+_ELECTRON_BUILD_SCRIPT = os.path.join(_ELECTRON_HARNESS_DIR, "build.sh")
+_ELECTRON_APP_BUNDLE = os.path.join(
+    _DRIVER_RS_ROOT,
+    "test-apps",
+    "harness-electron",
+    "CuaTestHarness.Electron.app",
+)
+_ELECTRON_APP_EXE = os.path.join(
+    _ELECTRON_APP_BUNDLE, "Contents", "MacOS", "Electron"
+)
 
 
 # ── binary ────────────────────────────────────────────────────────────────────
@@ -197,25 +203,6 @@ def html_server():
 
 # ── Tauri / Electron helpers ──────────────────────────────────────────────────
 
-def _download_and_extract(url: str, dest_dir: str, marker_path: str) -> None:
-    """Download a zip and extract it; skip if marker_path already exists.
-
-    Uses the system `unzip` command to preserve symlinks (Python's zipfile
-    module does not handle macOS zip symlinks correctly, which breaks
-    framework bundles like Electron Framework.framework).
-    """
-    if os.path.exists(marker_path):
-        return
-    os.makedirs(dest_dir, exist_ok=True)
-    zip_path = os.path.join(dest_dir, "_download.zip")
-    print(f"\n  Downloading {url} …")
-    urllib.request.urlretrieve(url, zip_path)
-    # Use system unzip to preserve symlinks and executable bits.
-    subprocess.run(["unzip", "-q", "-o", zip_path, "-d", dest_dir], check=True)
-    # Remove quarantine attribute (Gatekeeper blocks downloaded apps).
-    subprocess.run(["xattr", "-cr", dest_dir], check=False)
-    os.remove(zip_path)
-
 
 def _download_binary(url: str, dest_path: str) -> None:
     """Download a raw binary; skip if it already exists."""
@@ -263,45 +250,38 @@ def tauri_app():
 # ── Electron app ──────────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="session")
-def electron_app(html_server):
-    """Download, launch, and yield (proc, pid, base_url) for the Electron test app.
+def electron_app():
+    """Build, launch, and yield (proc, pid, base_url) for the Electron harness.
 
-    The Electron release ships a zip containing a proper .app bundle.
-    We launch the binary directly (not via `open -a`) so that CUA_LOAD_URL
-    env var is inherited by the app process.
+    This uses test-harness/apps/cross-platform/electron, the same shared DOM
+    harness used by the Rust harness tests. It does not download a prebuilt
+    Electron app release.
     """
-    app_path = os.path.join(_ELECTRON_APP_DIR, _ELECTRON_APP_NAME)
-    _download_and_extract(_ELECTRON_DOWNLOAD_URL, _ELECTRON_APP_DIR, app_path)
+    if not os.path.exists(_ELECTRON_APP_EXE):
+        if not os.path.exists(_ELECTRON_BUILD_SCRIPT):
+            pytest.skip("repo-local Electron harness build script not found")
+        try:
+            subprocess.run([_ELECTRON_BUILD_SCRIPT], check=True)
+        except (OSError, subprocess.CalledProcessError) as e:
+            pytest.skip(f"Electron harness build failed: {e}")
 
-    if not os.path.exists(app_path):
-        pytest.skip("Electron app not found after download")
+    if not os.path.exists(_ELECTRON_APP_EXE):
+        pytest.skip("Electron harness app not found after build")
 
-    test_page_url = f"{html_server}/test_page.html"
-
-    subprocess.run(["pkill", "-f", "desktop-test-app-electron"], check=False)
+    subprocess.run(["pkill", "-f", "CuaTestHarness.Electron"], check=False)
+    subprocess.run(["pkill", "-f", "Electron.app/Contents/MacOS/Electron"], check=False)
     time.sleep(0.5)
 
-    # Set CUA_LOAD_URL via launchctl so `open -a` picks it up.
-    subprocess.run(
-        ["launchctl", "setenv", "CUA_LOAD_URL", test_page_url],
-        check=False,
-    )
-
     proc = subprocess.Popen(
-        ["open", "-a", app_path, "--args", "--force-renderer-accessibility"],
+        [_ELECTRON_APP_EXE, "--force-renderer-accessibility"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     time.sleep(4.0)  # Electron takes a bit longer with AX enabled
 
-    # Get the real pid of the launched app.
-    out = subprocess.run(
-        ["pgrep", "-f", "desktop-test-app-electron"],
-        capture_output=True, text=True,
-    ).stdout.strip()
-    pid = int(out.split("\n")[0]) if out else 0
+    pid = proc.pid
 
-    base_url = "http://localhost:6769"
+    base_url = "file://shared-web-harness"
     yield proc, pid, base_url
 
     proc.terminate()
@@ -309,4 +289,5 @@ def electron_app(html_server):
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
-    subprocess.run(["pkill", "-f", "desktop-test-app-electron"], check=False)
+    subprocess.run(["pkill", "-f", "CuaTestHarness.Electron"], check=False)
+    subprocess.run(["pkill", "-f", "Electron.app/Contents/MacOS/Electron"], check=False)

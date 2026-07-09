@@ -24,7 +24,7 @@ test-harness/
 │       ├── winui3/          # CuaTestHarness.WinUI3   (.NET 8 WinUI3 unpackaged)
 │       └── webview2/        # CuaTestHarness.WebView  (WPF + Microsoft.Edge.WebView2)
 ├── build/                   # host-OS build scripts (publish into ../rust/test-apps/)
-│   ├── macos.sh             # builds appkit + swiftui
+│   ├── macos.sh             # builds appkit + swiftui + wkwebview + electron
 │   └── windows.ps1          # builds wpf + winui3 + webview2 + electron
 └── smoke/                   # host-OS per-tool CLI smoke runners
     ├── macos.sh             # spawns appkit harness, iterates every tool
@@ -111,11 +111,12 @@ macOS:
 
 ## Build
 
-macOS (requires Xcode CLT for `xcrun swiftc`):
+macOS (requires Xcode CLT for `xcrun swiftc`; Node.js + npm for Electron):
 
 ```bash
-libs/cua-driver/test-harness/build/macos.sh                # both apps
-libs/cua-driver/test-harness/build/macos.sh --skip swiftui # AppKit only
+libs/cua-driver/test-harness/build/macos.sh                 # all macOS-runnable harnesses
+libs/cua-driver/test-harness/build/macos.sh --skip swiftui  # skip one target
+libs/cua-driver/test-harness/build/macos.sh --skip electron # skip Electron / npm
 libs/cua-driver/test-harness/build/macos.sh --clean        # nuke stage dirs first
 ```
 
@@ -125,6 +126,13 @@ Windows (requires .NET 8 SDK on PATH; Node.js + npm for the Electron app):
 cd libs\cua-driver\test-harness
 .\build\windows.ps1                  # all four apps
 .\build\windows.ps1 -Skip winui3     # skip a specific one
+```
+
+Linux (requires Node.js + npm for the Electron app):
+
+```bash
+cd libs/cua-driver/test-harness/apps/cross-platform/electron
+./build.sh
 ```
 
 ## Run the integration tests

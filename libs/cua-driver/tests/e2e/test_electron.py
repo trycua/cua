@@ -1,7 +1,7 @@
 """Electron shared-harness background automation tests — v2 harness.
 
-The Electron test app is built from test-harness/apps/cross-platform/electron
-and loads test-harness/shared/web/index.html, the same DOM used by the WebView2
+The Electron test app is built from tests/fixtures/apps/cross-platform/electron
+and loads tests/fixtures/shared/web/index.html, the same DOM used by the WebView2
 and Rust Electron harness tests.
 
 Run: python3 -m pytest test_electron.py -v

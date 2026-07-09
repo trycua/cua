@@ -1,6 +1,6 @@
 # build.ps1 - stage the Tauri test harness for cua-driver tests on Windows.
 #
-# Output: ../../../../rust/test-apps/harness-tauri/CuaTestHarness.Tauri.exe
+# Output: libs/cua-driver/rust/test-apps/harness-tauri/CuaTestHarness.Tauri.exe
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -9,7 +9,8 @@ $tauriDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $crossDir = Split-Path -Parent $tauriDir
 $appsDir = Split-Path -Parent $crossDir
 $harnessDir = Split-Path -Parent $appsDir
-$cuaDriverDir = Split-Path -Parent $harnessDir
+$testsDir = Split-Path -Parent $harnessDir
+$cuaDriverDir = Split-Path -Parent $testsDir
 $testAppsDir = Join-Path $cuaDriverDir "rust\test-apps"
 $outDir = Join-Path $testAppsDir "harness-tauri"
 

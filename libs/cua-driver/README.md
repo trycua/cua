@@ -10,12 +10,12 @@ Background computer-use driver for any agents. Speaks MCP over stdio; drives nat
 | --- | --- |
 | `rust/` | Cargo workspace for the driver daemon, platform crates, and Rust tests |
 | `python/` | Python package wrapper and package tests |
-| `test-harness/` | Source-built GUI harness apps and shared fixtures |
+| `tests/fixtures/` | Source-built GUI harness apps and shared fixtures |
 | `tests/e2e/` | Manual Python e2e tests against real apps and harness apps |
 | `scripts/` | Install, uninstall, local build, and VM sync helpers |
 | `docs/` | Small repo-local specs that are not part of the hosted docs site |
 
-Start with `rust/README.md`, `test-harness/README.md`, and
+Start with `rust/README.md`, `tests/fixtures/README.md`, and
 `tests/e2e/README.md` when changing driver behavior or tests.
 
 ## Claude Code computer-use compatibility

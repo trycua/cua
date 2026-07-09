@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 
 use cua_driver_testkit::{harness_app, Driver, McpDriver};
 
-/// WPF harness app (built by `test-harness/build/windows.ps1`). Path mirrors
+/// WPF harness app (built by `tests/fixtures/build/windows.ps1`). Path mirrors
 /// `shared/scenarios.json`'s `wpf.exe_relative_path`.
 fn harness_wpf_exe() -> std::path::PathBuf {
     harness_app("harness-wpf", "CuaTestHarness.Wpf.exe")

@@ -1,7 +1,7 @@
-# test-harness CLI smoke runners
+# test fixture CLI smoke runners
 
 Per-OS broad PASS / FAIL / SKIP probes across the full cua-driver tool
-surface. Complements the Rust integration tests under `../../rust/crates/cua-driver/tests/`:
+surface. Complements the Rust integration tests under `libs/cua-driver/rust/crates/cua-driver/tests/`:
 
 - Integration tests drive cua-driver through the MCP stdio loop and
   assert on specific UIA / AX state changes.
@@ -23,6 +23,6 @@ diff results/macos.txt /tmp/run.txt
 ```
 
 Prereqs (macOS):
-- `../build/macos.sh` must have produced `../../rust/test-apps/harness-appkit/`
-- `../../rust/target/release/cua-driver` built (debug works too)
+- `../build/macos.sh` must have produced `libs/cua-driver/rust/test-apps/harness-appkit/`
+- `libs/cua-driver/rust/target/release/cua-driver` built (debug works too)
 - TCC Accessibility granted to the cua-driver binary

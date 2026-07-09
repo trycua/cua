@@ -5,7 +5,7 @@
 # the electron runtime + our app resources, with electron.exe renamed to
 # CuaTestHarness.Electron.exe so tests get a deterministic exe name.
 #
-# Output:  ../../../../rust/test-apps/harness-electron/
+# Output: libs/cua-driver/rust/test-apps/harness-electron/
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -14,7 +14,8 @@ $elecDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $crossDir = Split-Path -Parent $elecDir
 $appsDir = Split-Path -Parent $crossDir
 $harnessDir = Split-Path -Parent $appsDir
-$cuaDriverDir = Split-Path -Parent $harnessDir
+$testsDir = Split-Path -Parent $harnessDir
+$cuaDriverDir = Split-Path -Parent $testsDir
 $testAppsDir = Join-Path $cuaDriverDir "rust\test-apps"
 $outDir = Join-Path $testAppsDir "harness-electron"
 

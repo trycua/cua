@@ -26,7 +26,7 @@ _TESTS_ROOT = os.path.dirname(_HERE)
 _CUA_DRIVER_ROOT = os.path.dirname(_TESTS_ROOT)
 _DRIVER_RS_ROOT = os.path.join(_CUA_DRIVER_ROOT, "rust")
 _LIBS_ROOT = os.path.dirname(_CUA_DRIVER_ROOT)
-_TEST_HARNESS_ROOT = os.path.join(_CUA_DRIVER_ROOT, "test-harness")
+_TEST_HARNESS_ROOT = os.path.join(_TESTS_ROOT, "fixtures")
 
 sys.path.insert(0, _HERE)
 from driver_client import default_binary_path  # noqa: E402
@@ -209,7 +209,7 @@ def html_server():
 def tauri_app():
     """Build, launch, and yield (proc, pid, base_url) for the Tauri harness.
 
-    This uses test-harness/apps/cross-platform/tauri, the same shared DOM
+    This uses tests/fixtures/apps/cross-platform/tauri, the same shared DOM
     harness used by the Electron/WebView/WKWebView harnesses. It does not
     download a prebuilt Tauri app release.
     """
@@ -252,7 +252,7 @@ def tauri_app():
 def electron_app():
     """Build, launch, and yield (proc, pid, base_url) for the Electron harness.
 
-    This uses test-harness/apps/cross-platform/electron, the same shared DOM
+    This uses tests/fixtures/apps/cross-platform/electron, the same shared DOM
     harness used by the Rust harness tests. It does not download a prebuilt
     Electron app release.
     """

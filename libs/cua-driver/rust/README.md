@@ -42,7 +42,7 @@ cargo test -p cua-driver --test protocol_mcp_test
 ```
 
 GUI and VM-backed tests are marked `#[ignore]` and require harness apps from
-`../test-harness/build/` plus a real interactive desktop session:
+`../tests/fixtures/build/` plus a real interactive desktop session:
 
 ```bash
 cargo test -p cua-driver --test harness_appkit_test -- --ignored --nocapture

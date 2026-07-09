@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage Linux-runnable test-harness apps into ../../rust/test-apps/harness-*/.
+# Stage Linux-runnable test fixture apps into libs/cua-driver/rust/test-apps/harness-*/.
 #
 # GTK3 is PyGObject: a real GTK3 widget tree (identical AT-SPI exposure to a C
 # app), so there's no compile step. Electron and Tauri are shared cross-platform
@@ -16,7 +16,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TEST_APPS_DIR="$(cd "$HARNESS_DIR/../rust/test-apps" && pwd)"
+TEST_APPS_DIR="$(cd "$HARNESS_DIR/../../rust/test-apps" && pwd)"
 STAGE="$TEST_APPS_DIR/harness-gtk3"
 SRC="$HARNESS_DIR/apps/linux/gtk3"
 SKIP="none"

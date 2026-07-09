@@ -14,7 +14,7 @@
 //!
 //! Requires a real Linux desktop with AT-SPI running + a display (Xwayland is
 //! fine — the launcher forces `GDK_BACKEND=x11`), GTK3 + PyGObject, and the app
-//! built via `test-harness/build/linux.sh`. `#[ignore]`; run explicitly:
+//! built via `tests/fixtures/build/linux.sh`. `#[ignore]`; run explicitly:
 //!   cargo test -p cua-driver --test harness_gtk3_test -- --ignored --nocapture --test-threads=1
 
 #![cfg(target_os = "linux")]
@@ -39,7 +39,7 @@ fn harness_exe() -> std::path::PathBuf {
 fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
     let exe = harness_exe();
     if !exe.exists() {
-        eprintln!("GTK3 harness not built at {exe:?} — run test-harness/build/linux.sh");
+        eprintln!("GTK3 harness not built at {exe:?} — run tests/fixtures/build/linux.sh");
         return None;
     }
     driver

@@ -31,8 +31,8 @@ builds `libs/cua-driver/rust` and uses `rust/target/debug/cua-driver`.
 
 `test_electron.py` and `test_tauri.py` use repo-local shared harnesses:
 
-- `test-harness/apps/cross-platform/electron`
-- `test-harness/apps/cross-platform/tauri`
+- `tests/fixtures/apps/cross-platform/electron`
+- `tests/fixtures/apps/cross-platform/tauri`
 
 The fixtures build missing staged apps on demand with each harness `build.sh`.
 They no longer download prebuilt app releases.

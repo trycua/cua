@@ -2,7 +2,7 @@
 //
 // A minimal AppKit NSWindow hosting a WKWebView (Apple WebKit, NOT Chromium)
 // that loads the SAME shared web DOM as the WebView2 / Electron harnesses
-// (test-harness/shared/web/index.html). The build script copies that shared
+// (tests/fixtures/shared/web/index.html). The build script copies that shared
 // file into the app bundle's Resources/web/ so the harness is self-contained
 // and reuses the canonical web content rather than duplicating it in source.
 //

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build the macOS test-harness apps (AppKit + SwiftUI + WKWebView + Electron + Tauri)
-# into app bundles under ../../rust/test-apps/harness-* —
+# Build the macOS test fixture apps (AppKit + SwiftUI + WKWebView + Electron + Tauri)
+# into app bundles under libs/cua-driver/rust/test-apps/harness-* —
 # matching the convention used by windows.ps1 for the Windows WPF + WinUI3 +
 # WebView2 apps. WKWebView is the Apple-WebKit host; Electron is the shared
 # Chromium harness used across Windows, Linux, and macOS. Tauri is the shared
@@ -14,7 +14,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-STAGE_DIR="$(cd "$HARNESS_DIR/../rust/test-apps" && pwd)"
+STAGE_DIR="$(cd "$HARNESS_DIR/../../rust/test-apps" && pwd)"
 
 SKIP=""
 CLEAN=0

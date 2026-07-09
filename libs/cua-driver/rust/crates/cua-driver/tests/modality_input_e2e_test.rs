@@ -18,7 +18,7 @@
 //! held ports. Broker-spawned window pids (packaged apps / Electron) are
 //! tree-killed via `reaper().track_pid`.
 //!
-//! Targets (repo-local harness apps staged by `test-harness/build/windows.ps1`):
+//! Targets (repo-local harness apps staged by `tests/fixtures/build/windows.ps1`):
 //!   - Electron (Chromium content) — `CuaTestHarness.Electron.exe`.
 //!   - Tauri (WebView2 content)    — `CuaTestHarness.Tauri.exe`.
 //!   - Win32 baseline              — `notepad.exe`.

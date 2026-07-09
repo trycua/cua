@@ -1,4 +1,4 @@
-# test-harness apps
+# test fixture apps
 
 Each subdirectory is one deterministic host app cua-driver can drive. Apps
 share fixtures through `../shared/scenarios.json` and, for webview hosts,
@@ -16,7 +16,7 @@ share fixtures through `../shared/scenarios.json` and, for webview hosts,
 | `windows/winui3` | Windows | WinUI3/XAML controls and popups |
 | `windows/webview2` | Windows | WebView2 loading the shared DOM |
 
-Built outputs land in `../../rust/test-apps/harness-<name>/` via
+Built outputs land in `libs/cua-driver/rust/test-apps/harness-<name>/` via
 `../build/<host>`.
 
 Adding a new app:

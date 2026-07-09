@@ -1,7 +1,7 @@
 """Tauri shared-harness background automation tests.
 
-The Tauri test app is built from test-harness/apps/cross-platform/tauri
-and loads test-harness/shared/web/index.html, the same DOM used by the
+The Tauri test app is built from tests/fixtures/apps/cross-platform/tauri
+and loads tests/fixtures/shared/web/index.html, the same DOM used by the
 Electron, WebView2, and WKWebView harnesses.
 
 Run: python3 -m pytest test_tauri.py -v

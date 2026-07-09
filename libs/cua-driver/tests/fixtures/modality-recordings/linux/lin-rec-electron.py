@@ -14,7 +14,7 @@ import json, os, subprocess, sys, time, glob, re
 MODE = sys.argv[1] if len(sys.argv) > 1 else "ax-bg"
 HOME = os.path.expanduser("~")
 DRV = f"{HOME}/cua/libs/cua-driver/rust/target/release/cua-driver"
-ELECTRON_DIR = f"{HOME}/cua/libs/cua-driver/test-harness/apps/cross-platform/electron"
+ELECTRON_DIR = f"{HOME}/cua/libs/cua-driver/tests/fixtures/apps/cross-platform/electron"
 ELECTRON_BIN = f"{ELECTRON_DIR}/node_modules/electron/dist/electron"
 DASH = "/tmp/lin-dash.py"
 DASH_HTML = "/tmp/lin-dashboard-electron.html"

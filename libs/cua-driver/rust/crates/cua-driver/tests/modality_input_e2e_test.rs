@@ -111,6 +111,30 @@ fn window_ids(driver: &mut McpDriver) -> HashSet<u64> {
         .unwrap_or_default()
 }
 
+fn require_interactive_desktop(context: &str) -> bool {
+    if platform_windows::diagnostics::current_session_id() == Some(0) {
+        eprintln!(
+            "{context}: running in Windows Session 0; skipping GUI modality e2e. \
+             Re-run from an interactive logon session (RDP/console)."
+        );
+        return false;
+    }
+
+    match platform_windows::diagnostics::interactive_desktop_check() {
+        Ok(true) => true,
+        Ok(false) => {
+            eprintln!("{context}: no foreground interactive desktop; skipping GUI modality e2e");
+            false
+        }
+        Err(e) => {
+            eprintln!(
+                "{context}: interactive desktop check failed ({e}); skipping GUI modality e2e"
+            );
+            false
+        }
+    }
+}
+
 // ── fixture ───────────────────────────────────────────────────────────────────
 
 struct E2eFixture {
@@ -124,6 +148,10 @@ struct E2eFixture {
 /// belongs to a child pid) → sentinel (grabs foreground, pushing the app to
 /// the background) → reset counters.
 fn setup(target_exe: &Path, _title_hint: &str) -> Option<E2eFixture> {
+    if !require_interactive_desktop("modality_input_e2e_test") {
+        return None;
+    }
+
     let fm_bin = focus_monitor_binary();
     if !fm_bin.exists() {
         eprintln!("[e2e] focus-monitor-win.exe not built — skipping");

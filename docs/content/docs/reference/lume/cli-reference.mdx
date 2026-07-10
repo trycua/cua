@@ -55,16 +55,16 @@ Create a new virtual machine
 | `--display` | String | 1024x768 | Display resolution (e.g., 1024x768) |
 | `--ipsw` | String | - | Path to IPSW file or 'latest' for macOS VMs |
 | `--storage` | String | - | VM storage location to use |
-| `--unattended` | String | - | [Preview] Preset name or path to YAML config file for unattended macOS Setup Assistant automation. Built-in presets: sequoia, tahoe. Only supported for macOS VMs. |
-| `--debug-dir` | String | - | Custom directory for debug screenshots during unattended setup (defaults to unique folder in system temp) |
-| `--vnc-port` | Int | 0 | Port to use for the VNC server during unattended setup. Defaults to 0 (auto-assign) |
+| `--unattended` | String | - | Prepare macOS unattended setup offline after install. Preset name or YAML path is accepted for compatibility. Built-in presets: sequoia, tahoe. Only supported for macOS VMs. |
+| `--debug-dir` | String | - | Compatibility option; ignored by offline setup. |
+| `--vnc-port` | Int | 0 | Port to use for the temporary verification VNC server. Defaults to 0 (auto-assign). |
 
 **Flags:**
 
 | Name | Default | Description |
 | ---- | ------- | ----------- |
-| `--debug` | false | Enable debug mode for unattended setup - saves screenshots with click coordinates |
-| `--no-display` | false | Do not open the VNC client during unattended setup (default: true for unattended) |
+| `--debug` | false | Compatibility flag; ignored by offline setup. |
+| `--no-display` | false | Compatibility flag; offline setup verifies headlessly. |
 
 ### lume clone
 
@@ -205,7 +205,7 @@ List virtual machines
 
 ### lume pull
 
-Pull a macOS image from GitHub Container Registry
+Pull a prebuilt or custom macOS image from an OCI-compatible registry
 
 **Arguments:**
 
@@ -224,7 +224,7 @@ Pull a macOS image from GitHub Container Registry
 
 ### lume push
 
-Push a macOS VM to GitHub Container Registry
+Push a macOS VM to an OCI-compatible registry
 
 **Arguments:**
 
@@ -293,7 +293,7 @@ Connect to a VM via SSH or execute commands remotely
 
 ### lume setup
 
-[Preview] Run unattended Setup Assistant automation on a macOS VM
+Prepare unattended macOS setup
 
 **Arguments:**
 
@@ -305,17 +305,17 @@ Connect to a VM via SSH or execute commands remotely
 
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--unattended` | String | - | Preset name or path to YAML config file for unattended macOS Setup Assistant automation. Built-in presets: sequoia, tahoe. |
+| `--unattended` | String | tahoe | Defaults to tahoe. Preset name or YAML path for compatibility and optional post-SSH commands. Built-in presets: sequoia, tahoe. |
 | `--storage` | String | - | VM storage location to use or direct path to VM location |
-| `--vnc-port` | Int | 0 | Port to use for the VNC server. Defaults to 0 (auto-assign) |
-| `--debug-dir` | String | - | Custom directory for debug screenshots (defaults to unique folder in system temp) |
+| `--vnc-port` | Int | 0 | Port to use for the temporary verification VNC server. Defaults to 0 (auto-assign) |
+| `--debug-dir` | String | - | Compatibility option; ignored by offline setup |
 
 **Flags:**
 
 | Name | Default | Description |
 | ---- | ------- | ----------- |
-| `--no-display` | false | Do not open the VNC client automatically |
-| `--debug` | false | Enable debug mode - saves screenshots with click coordinates |
+| `--no-display` | false | Compatibility flag; offline setup verifies headlessly |
+| `--debug` | false | Compatibility flag; ignored by offline setup |
 
 ## Configuration and Server
 

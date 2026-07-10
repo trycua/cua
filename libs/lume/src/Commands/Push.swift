@@ -3,7 +3,7 @@ import Foundation
 
 struct Push: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Push a macOS VM to GitHub Container Registry"
+        abstract: "Push a macOS VM to an OCI-compatible registry"
     )
 
     @Argument(help: "Name of the VM to push")
@@ -15,7 +15,7 @@ struct Push: AsyncParsableCommand {
     @Option(parsing: .upToNextOption, help: "Additional tags to push the same image to")
     var additionalTags: [String] = []
 
-    @Option(help: "Github Container Registry to push to. Defaults to ghcr.io")
+    @Option(help: "Container registry to push to. Defaults to ghcr.io")
     var registry: String = "ghcr.io"
 
     @Option(help: "Organization to push to. Defaults to trycua")
@@ -88,4 +88,4 @@ struct Push: AsyncParsableCommand {
             legacy: legacy
         )
     }
-} 
+}

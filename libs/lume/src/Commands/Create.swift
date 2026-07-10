@@ -46,30 +46,30 @@ struct Create: AsyncParsableCommand {
 
     @Option(
         name: .customLong("unattended"),
-        help: "[Preview] Preset name or path to YAML config file for unattended macOS Setup Assistant automation. Built-in presets: sequoia, tahoe. Only supported for macOS VMs.",
+        help: "Prepare macOS unattended setup offline after install. Preset name or YAML path is accepted for compatibility. Built-in presets: sequoia, tahoe. Only supported for macOS VMs.",
         completion: .file(extensions: ["yml", "yaml"])
     )
     var unattended: String?
 
     @Flag(
         name: .customLong("debug"),
-        help: "Enable debug mode for unattended setup - saves screenshots with click coordinates")
+        help: "Compatibility flag; ignored by offline setup.")
     var debug: Bool = false
 
     @Option(
         name: .customLong("debug-dir"),
-        help: "Custom directory for debug screenshots (defaults to unique folder in system temp)",
+        help: "Compatibility option; ignored by offline setup.",
         completion: .directory)
     var debugDir: String?
 
     @Flag(
         name: .customLong("no-display"),
-        help: "Do not open the VNC client during unattended setup (default: true for unattended)")
+        help: "Compatibility flag; offline setup verifies headlessly.")
     var noDisplay: Bool = false
 
     @Option(
         name: .customLong("vnc-port"),
-        help: "Port to use for the VNC server during unattended setup. Defaults to 0 (auto-assign)")
+        help: "Port to use for the temporary verification VNC server. Defaults to 0 (auto-assign).")
     var vncPort: Int = 0
 
     @Option(
@@ -108,12 +108,11 @@ struct Create: AsyncParsableCommand {
         // Load unattended config if provided
         var unattendedConfig: UnattendedConfig?
         if let unattendedArg = unattended {
-            Logger.info("[Preview] Unattended setup is an experimental feature")
             let isPreset = UnattendedConfig.isPreset(name: unattendedArg)
             unattendedConfig = try UnattendedConfig.load(from: unattendedArg)
             Logger.info("Loaded unattended config", metadata: [
                 "source": isPreset ? "preset:\(unattendedArg)" : unattendedArg,
-                "commands": "\(unattendedConfig?.bootCommands.count ?? 0)"
+                "config_boot_commands": "\(unattendedConfig?.bootCommands.count ?? 0)"
             ])
         }
 

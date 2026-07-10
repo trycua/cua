@@ -568,7 +568,7 @@ const data = await response.json();
 
 ---
 
-### Pull a VM image from a container registry
+### Pull a prebuilt or custom VM image from a container registry
 
 Pull a VM image from a container registry
 
@@ -592,7 +592,7 @@ Pull a VM image from a container registry
 curl -X POST "http://localhost:7777/lume/pull" \
   -H "Content-Type: application/json" \
   -d '{
-  "image": "macos-tahoe-vanilla:latest"
+  "image": "my-macos-snapshot:latest"
 }'
 ```
   </Tab>
@@ -601,7 +601,7 @@ curl -X POST "http://localhost:7777/lume/pull" \
 import requests
 
 data = {
-    "image": "macos-tahoe-vanilla:latest",
+    "image": "my-macos-snapshot:latest",
 }
 
 response = requests.post("http://localhost:7777/lume/pull", json=data)
@@ -614,7 +614,7 @@ const response = await fetch(`http://localhost:7777/lume/pull`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
-    image: "macos-tahoe-vanilla:latest",
+    image: "my-macos-snapshot:latest",
   }),
 });
 const data = await response.json();

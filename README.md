@@ -143,8 +143,10 @@ Create and manage macOS/Linux VMs with near-native performance on Apple Silicon 
 # Install Lume
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
 
-# Pull & start a macOS VM
-lume run macos-sequoia-vanilla:latest
+# Create and start a vanilla macOS VM from an Apple restore image
+curl -L "$(lume ipsw | tail -n 1)" -o ~/Downloads/macos.ipsw
+lume create macos-sequoia --ipsw ~/Downloads/macos.ipsw --unattended sequoia
+lume run macos-sequoia
 ```
 
 **[Get Started](https://cua.ai/docs/lume)** | **[FAQ](https://cua.ai/docs/lume/guide/getting-started/faq)** | **[CLI Reference](https://cua.ai/docs/lume/reference/cli-reference)**

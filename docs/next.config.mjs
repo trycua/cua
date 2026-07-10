@@ -207,10 +207,6 @@ const config = {
       },
       {
         protocol: 'https',
-        hostname: 'starchart.cc',
-      },
-      {
-        protocol: 'https',
         hostname: 'github.com',
       },
     ],

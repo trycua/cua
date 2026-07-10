@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   default:
@@ -205,6 +206,8 @@ jobs:
           path: artifacts
       - name: Publish matrix summary
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           summary_path=matrix-summary.md
           {
@@ -223,6 +226,45 @@ jobs:
           if [[ "$found" == 0 ]]; then
             echo "No lane summary artifact was produced." >> "$summary_path"
           fi
+
+          artifacts_json=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100")
+          {
+            echo
+            echo "## Trajectory videos"
+            echo
+            echo "Full-desktop MP4s are retained for 14 days inside each lane artifact."
+            echo
+            echo "| Lane | Videos | Artifact |"
+            echo "| --- | ---: | --- |"
+          } >> "$summary_path"
+          while IFS='|' read -r lane artifact; do
+            recording_dir="artifacts/$artifact/recordings"
+            if [[ -d "$recording_dir" ]]; then
+              video_count=$(find "$recording_dir" -type f -name recording.mp4 | wc -l | tr -d ' ')
+            else
+              video_count=0
+            fi
+            artifact_id=$(jq -r --arg name "$artifact" \
+              '.artifacts[] | select(.name == $name) | .id' <<< "$artifacts_json" | head -n 1)
+            if [[ -n "$artifact_id" && "$artifact_id" != "null" ]]; then
+              artifact_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts/$artifact_id"
+              artifact_link="[Download $artifact]($artifact_url)"
+            else
+              artifact_link="Not produced in this dispatch"
+            fi
+            echo "| $lane | $video_count | $artifact_link |" >> "$summary_path"
+          done <<'EOF'
+          Default Rust|rust-windows-default
+          UX guards|rust-windows-guard
+          Electron + Tauri|rust-windows-shared
+          WPF + WinUI3 + WebView2|rust-windows-native
+          Modality input|rust-windows-modality
+          EOF
+          {
+            echo
+            echo "Each artifact stores videos under \`recordings/<test-name>/recording.mp4\` with a matching \`trajectory.json\`."
+          } >> "$summary_path"
           cat "$summary_path" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload matrix summary
         if: always()

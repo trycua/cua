@@ -43,10 +43,40 @@
   </fieldset>
 
   <fieldset>
+    <legend>calculator_task</legend>
+    <div class="row">
+      <button id="calc-1" data-cua-id="calc-1" aria-label="calc-1 1">1</button>
+      <button id="calc-2" data-cua-id="calc-2" aria-label="calc-2 2">2</button>
+      <button id="calc-4" data-cua-id="calc-4" aria-label="calc-4 4">4</button>
+      <button id="calc-plus" data-cua-id="calc-plus" aria-label="calc-plus plus">+</button>
+      <button id="calc-equals" data-cua-id="calc-equals" aria-label="calc-equals equals">=</button>
+      <span class="mirror" id="calc-display" data-cua-id="calc-display">display=0</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
     <legend>text_input</legend>
     <div class="row">
       <input type="text" id="txt-input" data-cua-id="txt-input" placeholder="type here" />
       <span class="mirror" id="lbl-input-mirror" data-cua-id="lbl-input-mirror">mirror=</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>keyboard_task</legend>
+    <div class="row">
+      <input type="text" id="keyboard-input" data-cua-id="keyboard-input" autofocus
+             aria-label="keyboard-input" placeholder="keyboard input" />
+      <span class="mirror" id="keyboard-status" data-cua-id="keyboard-status">key_state=none</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>text_editor_task</legend>
+    <div class="row">
+      <textarea id="editor-document" data-cua-id="editor-document" aria-label="editor-document" rows="3" cols="42">Initial conformance text.\nStatus: DRAFT\n</textarea>
+      <button id="editor-save" data-cua-id="editor-save" aria-label="editor-save Save">Save</button>
+      <span class="mirror" id="editor-status" data-cua-id="editor-status">editor_status=draft</span>
     </div>
   </fieldset>
 
@@ -60,11 +90,21 @@
   </fieldset>
 
   <fieldset>
+    <legend>drag_task</legend>
+    <div class="row">
+      <div id="drag-source" data-cua-id="drag-source" aria-label="drag-source" style="position:fixed;left:40px;top:80px;width:220px;height:100px;display:flex;align-items:center;justify-content:center;background:#1268d6;color:white;user-select:none;touch-action:none;z-index:10;">Drag source</div>
+      <div id="drop-target" data-cua-id="drop-target" aria-label="drop-target" style="position:fixed;left:520px;top:520px;width:220px;height:100px;display:flex;align-items:center;justify-content:center;background:#178a38;color:white;z-index:10;">Drop target</div>
+      <span class="mirror" id="drag-status" data-cua-id="drag-status">drag_status=idle</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
     <legend>scroll_target</legend>
     <div class="row">
-      <div id="scroll-tall" data-cua-id="scroll-tall"
+      <div id="scroll-tall" data-cua-id="scroll-tall" aria-label="scroll-tall"
            style="height:120px;width:260px;overflow-y:auto;border:1px solid #ccc;padding:4px;">
         <div id="scroll-top" data-cua-id="scroll-top">SCROLL_TOP_MARKER_v1</div>
+        <div data-cua-id="scroll-target-label">scroll-tall</div>
         <div id="scroll-lines"></div>
         <div id="scroll-bottom" data-cua-id="scroll-bottom">SCROLL_BOTTOM_MARKER_v1</div>
       </div>
@@ -125,6 +165,7 @@
   // ----- state -----
   let counter = 0;
   let clickCount = 0;
+  let calculatorExpression = '';
 
   function $(id) { return document.getElementById(id); }
   function updateChkState() {
@@ -142,8 +183,42 @@
     $('lbl-counter').textContent = 'counter=0';
   });
 
+  // Calculator task oracle: the visible display is application state, not a
+  // driver response. It intentionally uses separate buttons so both AX and
+  // pixel-coordinate delivery can be tested against the same result.
+  ['1', '2', '4'].forEach(digit => {
+    $('calc-' + digit).addEventListener('click', () => {
+      calculatorExpression += digit;
+      $('calc-display').textContent = `display=${calculatorExpression}`;
+    });
+  });
+  $('calc-plus').addEventListener('click', () => {
+    calculatorExpression += '+';
+    $('calc-display').textContent = `display=${calculatorExpression}`;
+  });
+  $('calc-equals').addEventListener('click', () => {
+    const parts = calculatorExpression.split('+').map(Number);
+    const result = parts.length === 2 && parts.every(Number.isFinite) ? parts[0] + parts[1] : 'error';
+    calculatorExpression = String(result);
+    $('calc-display').textContent = `display=${calculatorExpression}`;
+  });
+
+  $('editor-save').addEventListener('click', () => {
+    const value = $('editor-document').value;
+    localStorage.setItem('cua-editor-document', value);
+    $('editor-status').textContent = `editor_status=saved:${value.endsWith('\\n') ? 'newline' : 'exact'}`;
+  });
+
   $('txt-input').addEventListener('input', e => {
     $('lbl-input-mirror').textContent = `mirror=${e.target.value}`;
+  });
+
+  $('keyboard-input').addEventListener('keydown', e => {
+    if (e.ctrlKey && e.shiftKey && e.code === 'Digit7') {
+      $('keyboard-status').textContent = 'key_state=hotkey';
+    } else if (e.key === 'Enter') {
+      $('keyboard-status').textContent = 'key_state=enter';
+    }
   });
 
   $('sld-value').addEventListener('input', e => {
@@ -160,6 +235,27 @@
     }
     $('scroll-tall').addEventListener('scroll', e => {
       $('lbl-scroll-offset').textContent = `scroll_offset=${Math.round(e.target.scrollTop)}`;
+    });
+  })();
+
+  (function () {
+    const source = $('drag-source');
+    const target = $('drop-target');
+    let dragging = false;
+    source.addEventListener('pointerdown', event => {
+      dragging = true;
+      source.setPointerCapture(event.pointerId);
+      $('drag-status').textContent = 'drag_status=started';
+    });
+    source.addEventListener('pointermove', event => {
+      if (dragging) $('drag-status').textContent = 'drag_status=moved';
+    });
+    source.addEventListener('pointerup', event => {
+      dragging = false;
+      const rect = target.getBoundingClientRect();
+      const inside = event.clientX >= rect.left && event.clientX <= rect.right &&
+        event.clientY >= rect.top && event.clientY <= rect.bottom;
+      $('drag-status').textContent = inside ? 'drag_status=dropped' : 'drag_status=outside';
     });
   })();
 

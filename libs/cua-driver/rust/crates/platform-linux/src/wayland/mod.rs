@@ -10,10 +10,10 @@
 //! `wayland-protocols-wlr`; until then `screenshot_window_dispatch` returns a
 //! typed error on pure Wayland.
 
+pub mod ext_screencopy;
+pub mod overlay;
 pub mod persistent_vptr;
 pub mod portal_screenshot;
-pub mod overlay;
-pub mod ext_screencopy;
 pub mod shell_helper;
 // `portal_screencast` (PipeWire per-window capture) and `libei` (GNOME/KDE
 // input via xdg-desktop-portal RemoteDesktop) need libpipewire-0.3 and reis
@@ -23,9 +23,9 @@ pub mod shell_helper;
 // Nix build (which already has modern PipeWire + libei from nixpkgs)
 // enables it. Wlroots screencopy + virtual-pointer remain unconditional.
 #[cfg(feature = "portal-libei")]
-pub mod portal_screencast;
-#[cfg(feature = "portal-libei")]
 pub mod libei;
+#[cfg(feature = "portal-libei")]
+pub mod portal_screencast;
 
 /// Whether this binary was compiled with the `portal-libei` feature — the
 /// xdg-desktop-portal RemoteDesktop + libei input path. It is the ONLY input
@@ -137,7 +137,10 @@ fn wl_sockets(dir: &str) -> std::collections::HashSet<String> {
         .flatten()
         .flatten()
         .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| n.strip_prefix("wayland-").is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())))
+        .filter(|n| {
+            n.strip_prefix("wayland-")
+                .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        })
         .collect()
 }
 
@@ -185,7 +188,9 @@ pub fn ensure_nested_session() {
                         break;
                     }
                     if std::time::Instant::now() >= deadline {
-                        tracing::error!("cua nested compositor '{comp}': no Wayland socket appeared");
+                        tracing::error!(
+                            "cua nested compositor '{comp}': no Wayland socket appeared"
+                        );
                         break;
                     }
                     std::thread::sleep(std::time::Duration::from_millis(200));
@@ -245,24 +250,38 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             if interface == ZwlrForeignToplevelManagerV1::interface().name {
                 let v = version.min(3);
-                state.manager = Some(registry.bind::<ZwlrForeignToplevelManagerV1, _, _>(name, v, qh, ()));
+                state.manager =
+                    Some(registry.bind::<ZwlrForeignToplevelManagerV1, _, _>(name, v, qh, ()));
             } else if interface == WlSeat::interface().name {
                 let v = version.min(7);
                 state.seat = Some(registry.bind::<WlSeat, _, _>(name, v, qh, ()));
             } else if interface == ZwlrVirtualPointerManagerV1::interface().name {
-                state.vptr_manager =
-                    Some(registry.bind::<ZwlrVirtualPointerManagerV1, _, _>(name, version.min(2), qh, ()));
+                state.vptr_manager = Some(registry.bind::<ZwlrVirtualPointerManagerV1, _, _>(
+                    name,
+                    version.min(2),
+                    qh,
+                    (),
+                ));
             } else if interface == WlOutput::interface().name {
                 let out = registry.bind::<WlOutput, _, _>(name, version.min(4), qh, ());
                 if state.output.is_none() {
                     state.output = Some(out);
                 }
             } else if interface == ZwlrScreencopyManagerV1::interface().name {
-                state.scrcopy_manager =
-                    Some(registry.bind::<ZwlrScreencopyManagerV1, _, _>(name, version.min(3), qh, ()));
+                state.scrcopy_manager = Some(registry.bind::<ZwlrScreencopyManagerV1, _, _>(
+                    name,
+                    version.min(3),
+                    qh,
+                    (),
+                ));
             } else if interface == WlShm::interface().name {
                 state.shm = Some(registry.bind::<WlShm, _, _>(name, version.min(1), qh, ()));
             }
@@ -386,7 +405,12 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            scrcopy_frame::Event::Buffer { format, width, height, stride } => {
+            scrcopy_frame::Event::Buffer {
+                format,
+                width,
+                height,
+                stride,
+            } => {
                 if let WEnum::Value(fmt) = format {
                     state.capture.format = Some(fmt as u32);
                 }
@@ -481,7 +505,15 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
         } else {
             format!("{} [{}]", tl.title, tl.app_id)
         };
-        out.push(WindowInfo { xid: *id as u64, pid: None, title, x: 0, y: 0, width: 0, height: 0 });
+        out.push(WindowInfo {
+            xid: *id as u64,
+            pid: None,
+            title,
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        });
     }
     Ok(out)
 }
@@ -507,7 +539,9 @@ pub fn screenshot_bytes() -> anyhow::Result<Vec<u8>> {
 /// Shell out to `grim -t png -` — the wlroots reference screenshot tool. Kept
 /// as the last-resort fallback for compositors that hide screencopy.
 fn capture_via_grim() -> anyhow::Result<Vec<u8>> {
-    let out = std::process::Command::new("grim").args(["-t", "png", "-"]).output()?;
+    let out = std::process::Command::new("grim")
+        .args(["-t", "png", "-"])
+        .output()?;
     if !out.status.success() {
         anyhow::bail!("grim failed: {}", String::from_utf8_lossy(&out.stderr));
     }
@@ -614,7 +648,11 @@ fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
         let raw = unsafe { std::slice::from_raw_parts(mmap_ptr as *const u8, mmap_len) };
         let mut rgba = Vec::with_capacity((w as usize) * (h as usize) * 4);
         for row in 0..(h as usize) {
-            let src_row = if state.capture.y_invert { (h as usize) - 1 - row } else { row };
+            let src_row = if state.capture.y_invert {
+                (h as usize) - 1 - row
+            } else {
+                row
+            };
             let base = src_row * stride;
             for col in 0..(w as usize) {
                 let px = &raw[base + col * 4..base + col * 4 + 4];
@@ -655,7 +693,10 @@ pub(crate) fn anon_shm(size: usize) -> anyhow::Result<(i32, *mut libc::c_void)> 
     let name = b"cua-scrcopy\0";
     let fd = unsafe { libc::memfd_create(name.as_ptr() as *const libc::c_char, libc::MFD_CLOEXEC) };
     if fd < 0 {
-        return Err(anyhow::anyhow!("memfd_create failed: {}", std::io::Error::last_os_error()));
+        return Err(anyhow::anyhow!(
+            "memfd_create failed: {}",
+            std::io::Error::last_os_error()
+        ));
     }
     let rc = unsafe { libc::ftruncate(fd, size as libc::off_t) };
     if rc != 0 {
@@ -788,8 +829,8 @@ pub fn screenshot_window_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
 /// pointer op (click, scroll, drag) needs. Returned by [`open_vptr_session`].
 pub struct VptrSession {
     pub conn: Connection,
-    pub queue: wayland_client::EventQueue<State>,
-    pub state: State,
+    queue: wayland_client::EventQueue<State>,
+    state: State,
     pub seat: WlSeat,
     pub vptr: ZwlrVirtualPointerV1,
     pub output_w: u32,
@@ -817,10 +858,9 @@ pub fn open_vptr_session(activate_window_id: Option<u32>) -> anyhow::Result<Vptr
         queue.roundtrip(&mut state)?;
     }
 
-    let seat = state
-        .seat
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("compositor exposed no wl_seat for virtual-pointer input"))?;
+    let seat = state.seat.clone().ok_or_else(|| {
+        anyhow::anyhow!("compositor exposed no wl_seat for virtual-pointer input")
+    })?;
     let mgr = state.vptr_manager.clone().ok_or_else(|| {
         if PORTAL_LIBEI_ENABLED {
             anyhow::anyhow!("compositor does not expose zwlr_virtual_pointer_manager_v1")
@@ -850,7 +890,15 @@ pub fn open_vptr_session(activate_window_id: Option<u32>) -> anyhow::Result<Vptr
 
     let vptr = mgr.create_virtual_pointer(Some(&seat), &qh, ());
     let (output_w, output_h) = (state.output_w.max(1), state.output_h.max(1));
-    Ok(VptrSession { conn, queue, state, seat, vptr, output_w, output_h })
+    Ok(VptrSession {
+        conn,
+        queue,
+        state,
+        seat,
+        vptr,
+        output_w,
+        output_h,
+    })
 }
 
 /// Map a cua/X11 pointer button (1=left / 2=middle / 3=right) to its evdev
@@ -953,7 +1001,8 @@ fn record_synth_cursor(x: i32, y: i32) {
 /// the moment the user moves their physical mouse. Callers should surface
 /// `source: "synthetic"` in the structured payload.
 pub fn last_synth_cursor_pos() -> Option<(i32, i32)> {
-    SYNTH_CURSOR_POS.get_or_init(|| std::sync::Mutex::new(None))
+    SYNTH_CURSOR_POS
+        .get_or_init(|| std::sync::Mutex::new(None))
         .lock()
         .ok()
         .and_then(|g| *g)
@@ -1061,9 +1110,14 @@ pub fn type_text(text: &str) -> anyhow::Result<()> {
 /// Press a single named key into the focused Wayland surface via `wtype -k`.
 pub fn press_key(key: &str) -> anyhow::Result<()> {
     let keysym = key_to_keysym(key);
-    let out = std::process::Command::new("wtype").args(["-k", &keysym]).output()?;
+    let out = std::process::Command::new("wtype")
+        .args(["-k", &keysym])
+        .output()?;
     if !out.status.success() {
-        anyhow::bail!("wtype -k {keysym} failed: {}", String::from_utf8_lossy(&out.stderr));
+        anyhow::bail!(
+            "wtype -k {keysym} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
     Ok(())
 }
@@ -1115,9 +1169,10 @@ fn partition_modifiers(keys: &[String]) -> anyhow::Result<(Vec<String>, String)>
             _ => non_mods.push(k.clone()),
         }
     }
-    let final_key = non_mods.last().cloned().ok_or_else(|| {
-        anyhow::anyhow!("hotkey requires at least one non-modifier key")
-    })?;
+    let final_key = non_mods
+        .last()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("hotkey requires at least one non-modifier key"))?;
     Ok((mods, final_key))
 }
 
@@ -1154,7 +1209,9 @@ fn key_to_keysym(key: &str) -> String {
 
 /// The control socket path, when running against the EIS nested compositor.
 pub fn inject_socket_path() -> Option<String> {
-    std::env::var("CUA_INJECT_SOCKET").ok().filter(|s| !s.is_empty())
+    std::env::var("CUA_INJECT_SOCKET")
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 /// True when input should be routed through the EIS compositor's control socket
@@ -1171,11 +1228,15 @@ fn inject_send(lines: &[String]) -> anyhow::Result<()> {
     let mut stream = None;
     for _ in 0..60 {
         match UnixStream::connect(&path) {
-            Ok(s) => { stream = Some(s); break; }
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
             Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
         }
     }
-    let mut s = stream.ok_or_else(|| anyhow::anyhow!("could not connect to inject socket {path}"))?;
+    let mut s =
+        stream.ok_or_else(|| anyhow::anyhow!("could not connect to inject socket {path}"))?;
     let mut buf = String::new();
     for l in lines {
         buf.push_str(l);
@@ -1250,13 +1311,7 @@ pub fn inject_press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
 
 /// Focus-free click into the window's surface via the nested EIS compositor.
 /// Coordinates are window-local, matching the rest of the inject protocol.
-pub fn inject_click(
-    window_id: u64,
-    x: f64,
-    y: f64,
-    count: u32,
-    button: u8,
-) -> anyhow::Result<()> {
+pub fn inject_click(window_id: u64, x: f64, y: f64, count: u32, button: u8) -> anyhow::Result<()> {
     let app = app_id_for_window(window_id)
         .ok_or_else(|| anyhow::anyhow!("no Wayland app_id for window {window_id}"))?;
     let btn = evdev_button(button as u32);
@@ -1306,8 +1361,10 @@ fn resample(path: &[(f64, f64)], steps: usize) -> Vec<(f64, f64)> {
         for (i, &l) in seglen.iter().enumerate() {
             if acc + l >= target || i == seglen.len() - 1 {
                 let f = if l > 0.0 { (target - acc) / l } else { 0.0 };
-                pt = (path[i].0 + (path[i + 1].0 - path[i].0) * f,
-                      path[i].1 + (path[i + 1].1 - path[i].1) * f);
+                pt = (
+                    path[i].0 + (path[i + 1].0 - path[i].0) * f,
+                    path[i].1 + (path[i + 1].1 - path[i].1) * f,
+                );
                 break;
             }
             acc += l;
@@ -1324,15 +1381,22 @@ pub fn inject_parallel_drags(drags: &[InjectDrag]) -> anyhow::Result<()> {
     if drags.is_empty() {
         return Ok(());
     }
-    let resampled: Vec<Vec<(f64, f64)>> =
-        drags.iter().map(|d| resample(&d.path, d.steps.max(1))).collect();
+    let resampled: Vec<Vec<(f64, f64)>> = drags
+        .iter()
+        .map(|d| resample(&d.path, d.steps.max(1)))
+        .collect();
     let max_steps = resampled.iter().map(|p| p.len()).max().unwrap_or(0);
     let mut lines = Vec::new();
     // Press each cursor at its start point.
     for (d, pts) in drags.iter().zip(&resampled) {
         let (x, y) = pts[0];
         lines.push(format!("m {} {} {x:.1} {y:.1}", d.app_id, d.idx));
-        lines.push(format!("b {} {} {} 1", d.app_id, d.idx, evdev_button(d.x_button)));
+        lines.push(format!(
+            "b {} {} {} 1",
+            d.app_id,
+            d.idx,
+            evdev_button(d.x_button)
+        ));
     }
     // Glide all cursors together, one interleaved step at a time.
     for s in 1..max_steps {
@@ -1343,7 +1407,12 @@ pub fn inject_parallel_drags(drags: &[InjectDrag]) -> anyhow::Result<()> {
     }
     // Release each cursor.
     for (d, _) in drags.iter().zip(&resampled) {
-        lines.push(format!("b {} {} {} 0", d.app_id, d.idx, evdev_button(d.x_button)));
+        lines.push(format!(
+            "b {} {} {} 0",
+            d.app_id,
+            d.idx,
+            evdev_button(d.x_button)
+        ));
     }
     inject_send(&lines)
 }

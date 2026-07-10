@@ -21,12 +21,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+use cursor_overlay::ZOrderEnforcer;
 use cursor_overlay::{
     CursorConfig, CursorKey, KeyedOverlayCommand, OverlayCommand, OverlayMsg, Palette,
     RenderStateCore,
 };
-#[cfg(target_os = "linux")]
-use cursor_overlay::ZOrderEnforcer;
 
 // ── Global channel ────────────────────────────────────────────────────────
 
@@ -127,7 +127,10 @@ pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
     if key.is_empty() {
         return;
     }
-    let msg = OverlayMsg::Cmd(KeyedOverlayCommand { key: key.clone(), cmd: cmd.clone() });
+    let msg = OverlayMsg::Cmd(KeyedOverlayCommand {
+        key: key.clone(),
+        cmd: cmd.clone(),
+    });
     if let Some(tx) = CMD_TX.get() {
         let _ = tx.try_send(msg.clone());
     }
@@ -163,7 +166,9 @@ pub fn is_enabled() -> bool {
 }
 
 pub fn is_enabled_for(key: &str) -> bool {
-    RENDER.lock().ok()
+    RENDER
+        .lock()
+        .ok()
         .and_then(|g| {
             g.as_ref().and_then(|m| {
                 m.cursors
@@ -180,15 +185,23 @@ pub fn current_position() -> (f64, f64) {
 }
 
 pub fn current_position_for(key: &str) -> (f64, f64) {
-    RENDER.lock().ok()
-        .and_then(|g| g.as_ref().and_then(|m| m.cursors.get(key)).map(|rs| rs.core.pos))
+    RENDER
+        .lock()
+        .ok()
+        .and_then(|g| {
+            g.as_ref()
+                .and_then(|m| m.cursors.get(key))
+                .map(|rs| rs.core.pos)
+        })
         .unwrap_or((-200.0, -200.0))
 }
 
 fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     const SEED_OFFSET: f64 = 140.0;
     let mut guard = RENDER.lock().unwrap();
-    let Some(map) = guard.as_mut() else { return false };
+    let Some(map) = guard.as_mut() else {
+        return false;
+    };
     if map.ended.contains(key) {
         return false;
     }
@@ -236,11 +249,14 @@ pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     arrival_register(key.clone(), tx);
 
-    send_command_for(key, OverlayCommand::MoveTo {
-        x,
-        y,
-        end_heading_radians: std::f64::consts::FRAC_PI_4,
-    });
+    send_command_for(
+        key,
+        OverlayCommand::MoveTo {
+            x,
+            y,
+            end_heading_radians: std::f64::consts::FRAC_PI_4,
+        },
+    );
 
     let _ = rx.await;
 }
@@ -330,10 +346,10 @@ impl RenderState {
 fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMsg>) {
     use x11rb::connection::Connection;
     use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
+    use x11rb::protocol::xproto::ConnectionExt as XprotoConnectionExt;
     use x11rb::protocol::xproto::{
         AtomEnum, ColormapAlloc, CreateWindowAux, EventMask, PropMode, WindowClass,
     };
-    use x11rb::protocol::xproto::ConnectionExt as XprotoConnectionExt;
     use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 
     // Connect to X11.
@@ -346,9 +362,9 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     };
 
     let screen = &conn.setup().roots[screen_num];
-    let root   = screen.root;
-    let scr_w  = screen.width_in_pixels as u32;
-    let scr_h  = screen.height_in_pixels as u32;
+    let root = screen.root;
+    let scr_w = screen.width_in_pixels as u32;
+    let scr_h = screen.height_in_pixels as u32;
 
     // Update render state with screen size.
     {
@@ -361,13 +377,17 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
 
     // Find 32-bit ARGB visual for compositing.
     // Falls back to the default visual if XComposite 32-bit isn't available.
-    let (visual_id, depth, colormap) = find_argb_visual(&conn, screen)
-        .unwrap_or((screen.root_visual, screen.root_depth, screen.default_colormap));
+    let (visual_id, depth, colormap) = find_argb_visual(&conn, screen).unwrap_or((
+        screen.root_visual,
+        screen.root_depth,
+        screen.default_colormap,
+    ));
 
     // Create a matching colormap if we got a non-default visual.
     let colormap = if visual_id != screen.root_visual {
         let cm = conn.generate_id().unwrap();
-        conn.create_colormap(ColormapAlloc::NONE, cm, root, visual_id).ok();
+        conn.create_colormap(ColormapAlloc::NONE, cm, root, visual_id)
+            .ok();
         cm
     } else {
         colormap
@@ -385,24 +405,32 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         .event_mask(EventMask::NO_EVENT);
 
     conn.create_window(
-        depth, win, root,
-        0, 0, scr_w as u16, scr_h as u16,
+        depth,
+        win,
+        root,
+        0,
+        0,
+        scr_w as u16,
+        scr_h as u16,
         0,
         WindowClass::INPUT_OUTPUT,
         visual_id,
         &win_aux,
-    ).ok();
+    )
+    .ok();
 
     // Set window title (identifies our overlay, matches Windows convention).
     // `Cua.` namespace mirrors the Windows class-name + install-path
     // convention; was `TropeCUA.` (leaked codename from an early C# ref).
     let title = format!("Cua.AgentCursorOverlay.{}", cfg.cursor_id);
     conn.change_property8(
-        PropMode::REPLACE, win,
+        PropMode::REPLACE,
+        win,
         AtomEnum::WM_NAME,
         AtomEnum::STRING,
         title.as_bytes(),
-    ).ok();
+    )
+    .ok();
 
     // Make the window fully click-through using the Shape extension (empty input region).
     // This is the X11 equivalent of WS_EX_TRANSPARENT on Windows. Note that
@@ -413,9 +441,11 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         SK::INPUT,
         x11rb::protocol::xproto::ClipOrdering::UNSORTED,
         win,
-        0, 0,
+        0,
+        0,
         &[],
-    ).ok();
+    )
+    .ok();
 
     conn.map_window(win).ok();
     conn.flush().ok();
@@ -428,7 +458,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
 
     loop {
         let now = Instant::now();
-        let dt  = now.duration_since(last_tick).as_secs_f64().min(0.05);
+        let dt = now.duration_since(last_tick).as_secs_f64().min(0.05);
         last_tick = now;
 
         // Drain commands and tick.
@@ -518,7 +548,9 @@ struct X11ZOrderEnforcer<'a, C: x11rb::connection::Connection> {
 #[cfg(target_os = "linux")]
 impl<'a, C: x11rb::connection::Connection> ZOrderEnforcer for X11ZOrderEnforcer<'a, C> {
     fn reassert(&self, target: Option<u64>) {
-        use x11rb::protocol::xproto::{ConfigureWindowAux, ConnectionExt as XprotoConnectionExt, StackMode};
+        use x11rb::protocol::xproto::{
+            ConfigureWindowAux, ConnectionExt as XprotoConnectionExt, StackMode,
+        };
 
         // Per the ZOrderEnforcer trait contract, a stale `target` (window
         // gone) should fall back to the `None` behavior — top of the
@@ -554,13 +586,15 @@ impl<'a, C: x11rb::connection::Connection> ZOrderEnforcer for X11ZOrderEnforcer<
 
 #[cfg(target_os = "linux")]
 fn find_argb_visual(
-    conn: &impl x11rb::connection::Connection,
+    _conn: &impl x11rb::connection::Connection,
     screen: &x11rb::protocol::xproto::Screen,
 ) -> Option<(u32, u8, u32)> {
     use x11rb::protocol::xproto::VisualClass;
     // Walk all depth entries looking for a 32-bit ARGB visual.
     for depth_entry in &screen.allowed_depths {
-        if depth_entry.depth != 32 { continue; }
+        if depth_entry.depth != 32 {
+            continue;
+        }
         for visual in &depth_entry.visuals {
             if visual.class == VisualClass::TRUE_COLOR {
                 return Some((visual.visual_id, 32, screen.default_colormap));
@@ -576,13 +610,16 @@ fn find_argb_visual(
 fn paint_x11(
     conn: &impl x11rb::connection::Connection,
     win: u32,
-    w: u32, h: u32,
+    w: u32,
+    h: u32,
     depth: u8,
     _visual_id: u32,
     pm: &tiny_skia::Pixmap,
 ) {
     use x11rb::protocol::xproto::{ConnectionExt as XprotoConnectionExt, CreateGCAux, ImageFormat};
-    if pm.width() == 0 || pm.height() == 0 { return; }
+    if pm.width() == 0 || pm.height() == 0 {
+        return;
+    }
 
     // Create a GC for the window if we don't have one.
     // (Simplified: we recreate it every frame which is safe but not optimal.)
@@ -591,7 +628,9 @@ fn paint_x11(
         Err(_) => return,
     };
     let gc_aux = CreateGCAux::new();
-    if conn.create_gc(gc_id, win, &gc_aux).is_err() { return; }
+    if conn.create_gc(gc_id, win, &gc_aux).is_err() {
+        return;
+    }
 
     // Convert RGBA premult → BGRA premult for X11.
     let src = pm.data();
@@ -608,8 +647,10 @@ fn paint_x11(
         ImageFormat::Z_PIXMAP,
         win,
         gc_id,
-        w as u16, h as u16,
-        0, 0,
+        w as u16,
+        h as u16,
+        0,
+        0,
         0,
         depth,
         &bgra,

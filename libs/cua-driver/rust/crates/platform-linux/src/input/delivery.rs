@@ -58,7 +58,9 @@ impl DeliveryMode {
         Self::parse(args.get("delivery_mode").and_then(|v| v.as_str()))
     }
 
-    pub fn is_foreground(self) -> bool { matches!(self, Self::Foreground) }
+    pub fn is_foreground(self) -> bool {
+        matches!(self, Self::Foreground)
+    }
 }
 
 /// JSON-schema fragment for the `delivery_mode` field. Include this in every
@@ -93,20 +95,29 @@ pub enum BackgroundUnavailable {
     /// No libei backend (built without `portal-libei`, or the portal session
     /// was denied / unavailable). Input has no actuator at all.
     NoLibeiBackend,
+    /// X11/Chromium does not accept a key chord addressed to an unfocused
+    /// renderer without briefly moving focus, which background delivery forbids.
+    ChromiumHotkey,
 }
 
 impl BackgroundUnavailable {
     fn code(self) -> &'static str {
         match self {
             Self::NoLibeiBackend => "background_unavailable",
+            Self::ChromiumHotkey => "background_unavailable",
         }
     }
     fn detail(self) -> &'static str {
         match self {
-            Self::NoLibeiBackend =>
+            Self::NoLibeiBackend => {
                 "no libei input backend on this Wayland compositor (built without \
                  portal-libei, or the xdg-desktop-portal RemoteDesktop session was \
-                 unavailable/denied): synthetic input has no actuator",
+                 unavailable/denied): synthetic input has no actuator"
+            }
+            Self::ChromiumHotkey => {
+                "Chromium/Electron does not accept a key chord addressed to an \
+                 unfocused renderer through X11 background injection"
+            }
         }
     }
 }
@@ -114,7 +125,9 @@ impl BackgroundUnavailable {
 /// Build the structured `background_unavailable` error returned when a
 /// `delivery_mode:"background"` injection has no Wayland backend. Mirrors the
 /// Windows silent-drop error so callers branch on `code` identically.
-pub fn background_unavailable_error(reason: BackgroundUnavailable) -> cua_driver_core::protocol::ToolResult {
+pub fn background_unavailable_error(
+    reason: BackgroundUnavailable,
+) -> cua_driver_core::protocol::ToolResult {
     let detail = reason.detail();
     cua_driver_core::protocol::ToolResult::error(format!(
         "Background delivery is not available: {detail}. Either call bring_to_front \
@@ -137,26 +150,52 @@ mod tests {
     #[test]
     fn delivery_mode_parses_known_values() {
         let j = |s: &str| serde_json::json!({"delivery_mode": s});
-        assert_eq!(DeliveryMode::from_args(&j("background")), DeliveryMode::Background);
-        assert_eq!(DeliveryMode::from_args(&j("foreground")), DeliveryMode::Foreground);
+        assert_eq!(
+            DeliveryMode::from_args(&j("background")),
+            DeliveryMode::Background
+        );
+        assert_eq!(
+            DeliveryMode::from_args(&j("foreground")),
+            DeliveryMode::Foreground
+        );
         // Case-insensitive, matching macOS / Windows.
-        assert_eq!(DeliveryMode::from_args(&j("Foreground")), DeliveryMode::Foreground);
+        assert_eq!(
+            DeliveryMode::from_args(&j("Foreground")),
+            DeliveryMode::Foreground
+        );
     }
 
     #[test]
     fn delivery_mode_defaults_to_background() {
         // Missing field, garbage value, null, and the removed legacy "auto" all
         // resolve to Background — the no-foreground-by-default contract.
-        assert_eq!(DeliveryMode::from_args(&serde_json::json!({})), DeliveryMode::Background);
-        assert_eq!(DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "garbage"})), DeliveryMode::Background);
-        assert_eq!(DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "auto"})), DeliveryMode::Background);
-        assert_eq!(DeliveryMode::from_args(&serde_json::json!({"delivery_mode": null})), DeliveryMode::Background);
+        assert_eq!(
+            DeliveryMode::from_args(&serde_json::json!({})),
+            DeliveryMode::Background
+        );
+        assert_eq!(
+            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "garbage"})),
+            DeliveryMode::Background
+        );
+        assert_eq!(
+            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "auto"})),
+            DeliveryMode::Background
+        );
+        assert_eq!(
+            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": null})),
+            DeliveryMode::Background
+        );
     }
 
     #[test]
     fn delivery_mode_schema_advertises_two_modes() {
         let s = delivery_mode_schema();
-        let en: Vec<&str> = s["enum"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+        let en: Vec<&str> = s["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
         assert_eq!(en, vec!["background", "foreground"]);
         assert_eq!(s["default"], "background");
     }

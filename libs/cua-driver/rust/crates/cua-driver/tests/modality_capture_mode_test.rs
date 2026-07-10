@@ -33,6 +33,16 @@ use cua_driver_testkit::{harness_app, Driver, McpDriver, ToolResponse};
 /// (WPF AutomationId / AppKit AX identifier / GTK3 AT-SPI accessible name).
 const TREE_MARKER: &str = "btn-increment";
 
+#[cfg(target_os = "macos")]
+fn spawn_driver() -> Option<McpDriver> {
+    McpDriver::spawn_macos_daemon_proxy()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn spawn_driver() -> Option<McpDriver> {
+    McpDriver::spawn()
+}
+
 /// Does the response carry a screenshot? Checks both the MCP `image` content
 /// entry and the canonical `screenshot_png_b64` structured field (the CLI path
 /// surfaces only the latter), so the oracle is transport-agnostic.
@@ -92,7 +102,9 @@ fn snapshot_settled_default(driver: &mut McpDriver, pid: u32, wid: u64) -> ToolR
     let args = serde_json::json!({ "pid": pid as i64, "window_id": wid });
     let mut resp = driver.call("get_window_state", args.clone());
     for _ in 0..16 {
-        if tree_has_marker(&resp) { break; }
+        if tree_has_marker(&resp) {
+            break;
+        }
         std::thread::sleep(Duration::from_millis(500));
         resp = driver.call("get_window_state", args.clone());
     }
@@ -102,10 +114,13 @@ fn snapshot_settled_default(driver: &mut McpDriver, pid: u32, wid: u64) -> ToolR
 /// Snapshot with `include_screenshot:false` (the perf opt-out), retrying until
 /// the tree settles.
 fn snapshot_settled_tree_only(driver: &mut McpDriver, pid: u32, wid: u64) -> ToolResponse {
-    let args = serde_json::json!({ "pid": pid as i64, "window_id": wid, "include_screenshot": false });
+    let args =
+        serde_json::json!({ "pid": pid as i64, "window_id": wid, "include_screenshot": false });
     let mut resp = driver.call("get_window_state", args.clone());
     for _ in 0..16 {
-        if tree_has_marker(&resp) { break; }
+        if tree_has_marker(&resp) {
+            break;
+        }
         std::thread::sleep(Duration::from_millis(500));
         resp = driver.call("get_window_state", args.clone());
     }
@@ -150,7 +165,11 @@ fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
 
 /// Spawn `exe` under the driver's reaper and resolve the window of the *new*
 /// instance (its pid was not among the harness windows before the spawn).
-fn launch_new_instance(driver: &mut McpDriver, exe: &std::path::Path, title: &str) -> Option<(u32, u64)> {
+fn launch_new_instance(
+    driver: &mut McpDriver,
+    exe: &std::path::Path,
+    title: &str,
+) -> Option<(u32, u64)> {
     if !exe.exists() {
         eprintln!("[capture_mode] harness not built ({exe:?}) — skipping");
         return None;
@@ -158,7 +177,11 @@ fn launch_new_instance(driver: &mut McpDriver, exe: &std::path::Path, title: &st
     let before = harness_pids(driver, title);
     driver
         .reaper()
-        .spawn(Command::new(exe).stdout(Stdio::null()).stderr(Stdio::null()))
+        .spawn(
+            Command::new(exe)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        )
         .ok()?;
     resolve_new_window(driver, title, &before)
 }
@@ -217,11 +240,19 @@ fn resolve_new_window(
 #[test]
 #[ignore]
 fn default_returns_tree_and_screenshot() {
-    let Some(mut driver) = McpDriver::spawn() else { return };
-    let Some((pid, wid)) = launch(&mut driver) else { return };
+    let Some(mut driver) = spawn_driver() else {
+        return;
+    };
+    let Some((pid, wid)) = launch(&mut driver) else {
+        return;
+    };
 
     let resp = snapshot_settled_default(&mut driver, pid, wid);
-    assert!(!resp.is_error(), "get_window_state(default) errored: {}", resp.text());
+    assert!(
+        !resp.is_error(),
+        "get_window_state(default) errored: {}",
+        resp.text()
+    );
 
     let tree = tree_has_marker(&resp);
     let img = has_image(&resp);
@@ -244,11 +275,19 @@ fn default_returns_tree_and_screenshot() {
 #[test]
 #[ignore]
 fn include_screenshot_false_returns_tree_only() {
-    let Some(mut driver) = McpDriver::spawn() else { return };
-    let Some((pid, wid)) = launch(&mut driver) else { return };
+    let Some(mut driver) = spawn_driver() else {
+        return;
+    };
+    let Some((pid, wid)) = launch(&mut driver) else {
+        return;
+    };
 
     let resp = snapshot_settled_tree_only(&mut driver, pid, wid);
-    assert!(!resp.is_error(), "get_window_state(include_screenshot:false) errored: {}", resp.text());
+    assert!(
+        !resp.is_error(),
+        "get_window_state(include_screenshot:false) errored: {}",
+        resp.text()
+    );
 
     if !tree_has_marker(&resp) {
         eprintln!("[capture_mode] tree-only: no {TREE_MARKER:?} — accessibility grant likely missing; skipping");
@@ -267,11 +306,19 @@ fn include_screenshot_false_returns_tree_only() {
 #[test]
 #[ignore]
 fn deprecated_capture_mode_is_ignored() {
-    let Some(mut driver) = McpDriver::spawn() else { return };
-    let Some((pid, wid)) = launch(&mut driver) else { return };
+    let Some(mut driver) = spawn_driver() else {
+        return;
+    };
+    let Some((pid, wid)) = launch(&mut driver) else {
+        return;
+    };
 
     let resp = snapshot_settled(&mut driver, pid, wid, "vision");
-    assert!(!resp.is_error(), "get_window_state(capture_mode=vision) errored: {}", resp.text());
+    assert!(
+        !resp.is_error(),
+        "get_window_state(capture_mode=vision) errored: {}",
+        resp.text()
+    );
 
     // The legacy "vision" value must NOT suppress the tree anymore.
     if has_image(&resp) && tree_has_marker(&resp) {
@@ -284,6 +331,8 @@ fn deprecated_capture_mode_is_ignored() {
     if tree_has_marker(&resp) {
         println!("✅ capture_mode=vision ignored: tree still present (image grant may be missing)");
     } else {
-        eprintln!("[capture_mode] vision: no tree marker — accessibility grant likely missing; skipping");
+        eprintln!(
+            "[capture_mode] vision: no tree marker — accessibility grant likely missing; skipping"
+        );
     }
 }

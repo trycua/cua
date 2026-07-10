@@ -206,7 +206,7 @@ final class UnattendedInstaller {
         /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeTouchIDSetup -bool true
         /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeTrueToneSetup -bool true
         /bin/launchctl enable system/com.openssh.sshd
-        /bin/ls -lan /var/db/.AppleSetupDone
+        /usr/bin/stat -f 'MARKER_OWNER=%u:%g' /var/db/.AppleSetupDone
         """
         let encodedScript = Data(script.utf8).base64EncodedString()
         let command = "printf '%s\\n' '\(escapedPassword)' | /usr/bin/sudo -S /bin/sh -c '/bin/echo \(encodedScript) | /usr/bin/base64 -D | /bin/sh'"
@@ -215,6 +215,12 @@ final class UnattendedInstaller {
         guard result.exitCode == 0 else {
             throw UnattendedError.commandExecutionFailed(
                 "Guest system finalization failed with exit code \(result.exitCode): \(result.output)"
+            )
+        }
+
+        guard result.output.contains("MARKER_OWNER=0:0") else {
+            throw UnattendedError.commandExecutionFailed(
+                "Guest setup marker has unexpected ownership: \(result.output)"
             )
         }
 

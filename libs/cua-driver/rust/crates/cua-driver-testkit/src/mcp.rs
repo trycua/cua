@@ -31,6 +31,11 @@ impl McpDriver {
     /// Returns `None` (with a skip message) if the binary isn't built — the
     /// caller's test should early-return so an un-built binary skips, not fails.
     pub fn spawn() -> Option<Self> {
+        Self::spawn_with_env(&[])
+    }
+
+    /// Spawn the driver with extra environment variables set on the child.
+    pub fn spawn_with_env(env: &[(&str, &str)]) -> Option<Self> {
         let bin = driver_binary();
         if !bin.exists() {
             eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
@@ -38,14 +43,16 @@ impl McpDriver {
         }
 
         let mut reaper = ChildReaper::new();
-        let mut driver = spawn_in_job(
-            Command::new(&bin)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null()),
-        )
-        .inspect_err(|e| eprintln!("[testkit] driver spawn failed: {e}"))
-        .ok()?;
+        let mut cmd = Command::new(&bin);
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        let mut driver = spawn_in_job(&mut cmd)
+            .inspect_err(|e| eprintln!("[testkit] driver spawn failed: {e}"))
+            .ok()?;
         let stdin = driver.stdin.take().unwrap();
         let stdout = driver.stdout.take().unwrap();
         reaper.push(driver);
@@ -67,9 +74,35 @@ impl McpDriver {
             }
         });
 
-        let mut d = McpDriver { reaper, stdin, rx, next_id: 2 };
+        let mut d = McpDriver {
+            reaper,
+            stdin,
+            rx,
+            next_id: 2,
+        };
         d.initialize();
         Some(d)
+    }
+
+    /// macOS GUI harness tests need the installed, TCC-authorized daemon path.
+    ///
+    /// A raw `target/debug/cua-driver` MCP process initializes AppKit for the
+    /// cursor overlay and can lose Screen Recording-attributed window titles even
+    /// when the shell's one-shot `cua-driver call` path can see them. The installed
+    /// daemon is the product path agents use, so ignored GUI tests proxy through an
+    /// already-running daemon and skip with a clear note when it is absent.
+    #[cfg(target_os = "macos")]
+    pub fn spawn_macos_daemon_proxy() -> Option<Self> {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        let socket = format!("{home}/Library/Caches/cua-driver/cua-driver.sock");
+        if std::os::unix::net::UnixStream::connect(&socket).is_err() {
+            eprintln!(
+                "[testkit] CuaDriver daemon not listening at {socket} — \
+                 run `./scripts/install-local.sh` and `open -n -g -a CuaDriver --args serve`; skipping"
+            );
+            return None;
+        }
+        Self::spawn_with_env(&[("CUA_DRIVER_RS_MCP_FORCE_PROXY", "1")])
     }
 
     fn initialize(&mut self) {

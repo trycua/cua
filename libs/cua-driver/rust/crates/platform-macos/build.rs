@@ -30,22 +30,61 @@ fn main() {
     if !sdk_root.is_empty() {
         println!("cargo:rustc-link-search={sdk_root}/usr/lib/system");
         println!("cargo:rustc-link-search={sdk_root}/usr/lib");
+        println!("cargo:rustc-link-search=framework={sdk_root}/System/Library/Frameworks");
     }
 
     // The ScreenCaptureKit bindings pull in Swift runtime libraries such as
     // libswift_Concurrency.dylib. The cua-driver binary emits these rpaths in
     // its own build.rs, but platform-macos' unit-test binary is linked from
     // this package, so it needs the same runtime search paths here.
+    emit_swift_runtime_link_args();
+}
+
+fn emit_swift_runtime_link_args() {
+    use std::collections::BTreeSet;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
-    if let Ok(out) = std::process::Command::new("xcode-select").arg("-p").output() {
+
+    let mut dirs = BTreeSet::new();
+
+    if let Ok(out) = Command::new("xcode-select").arg("-p").output() {
         if out.status.success() {
             let xcode_path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let developer_dir = PathBuf::from(xcode_path);
             for sub in [
                 "Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx",
                 "Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.5/macosx",
+                "Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-6.2/macosx",
+                "usr/lib/swift/macosx",
+                "usr/lib/swift-5.5/macosx",
+                "usr/lib/swift-6.2/macosx",
             ] {
-                println!("cargo:rustc-link-arg=-Wl,-rpath,{xcode_path}/{sub}");
+                dirs.insert(developer_dir.join(sub));
             }
+        }
+    }
+
+    if let Ok(out) = Command::new("xcrun").args(["--find", "swiftc"]).output() {
+        if out.status.success() {
+            let swiftc = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim().to_string());
+            if let Some(usr_dir) = swiftc.parent().and_then(Path::parent) {
+                for sub in [
+                    "lib/swift/macosx",
+                    "lib/swift-5.5/macosx",
+                    "lib/swift-6.2/macosx",
+                ] {
+                    dirs.insert(usr_dir.join(sub));
+                }
+            }
+        }
+    }
+
+    for dir in dirs {
+        if dir.is_dir() {
+            println!("cargo:rustc-link-search=native={}", dir.display());
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
         }
     }
 }

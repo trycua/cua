@@ -35,6 +35,17 @@ case "$SUITE" in
 esac
 
 mkdir -p "${REPO_ROOT}/artifacts/cua-driver/linux"
+RESULTS_FILE="${REPO_ROOT}/artifacts/cua-driver/linux/results.jsonl"
+SUMMARY_FILE="${REPO_ROOT}/artifacts/cua-driver/linux/summary.md"
+: > "${RESULTS_FILE}"
+cat > "${SUMMARY_FILE}" <<'EOF'
+# CUA Rust Linux E2E matrix
+
+| Platform | Host/lane | Scenario | Status | Duration | Details |
+| --- | --- | --- | --- | --- | --- |
+EOF
+export CUA_E2E_RESULTS_FILE="${RESULTS_FILE}"
+export CUA_E2E_SUMMARY_FILE="${SUMMARY_FILE}"
 export CUA_TEST_WORKSPACE_ROOT="${RUST_ROOT}"
 export CUA_TEST_DRIVER_BIN="${RUST_ROOT}/target/release/cua-driver"
 export CUA_TEST_APPS_ROOT="${RUST_ROOT}/test-apps"
@@ -55,11 +66,28 @@ if [[ ! -x "${CUA_TEST_APPS_ROOT}/harness-electron/CuaTestHarness.Electron" ]]; 
   exit 1
 fi
 
+FAILURE_COUNT=0
+
 run_test() {
   local name="$1"
   shift
   echo "[RUN] ${name}"
+  set +e
   (cd "${RUST_ROOT}" && "$@") 2>&1 | tee "${REPO_ROOT}/artifacts/cua-driver/linux/${name}.log"
+  local exit_code=${PIPESTATUS[0]}
+  set -e
+  local status="PASS"
+  if [[ "${exit_code}" != 0 ]]; then
+    status="FAIL"
+    FAILURE_COUNT=$((FAILURE_COUNT + 1))
+  fi
+  local details="-"
+  if [[ "${exit_code}" != 0 ]]; then
+    details="exit code ${exit_code}"
+  fi
+  printf '{"schema":"cua-e2e-result/v1","platform":"linux","host":"lane","scenario":"%s","status":"%s","message":"%s"}\n' \
+    "${name}" "${status}" "${details}" >> "${RESULTS_FILE}"
+  printf '| Linux | lane | %s | %s | n/a | %s |\n' "${name}" "${status}" "${details}" >> "${SUMMARY_FILE}"
 }
 
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
@@ -75,6 +103,11 @@ if [[ "${SUITE}" == modality || "${SUITE}" == all ]]; then
   run_test modality-desktop-scope \
     cargo test -p cua-driver --test modality_desktop_scope_linux_test -- \
       --ignored --nocapture --test-threads=1
+fi
+
+if [[ "${FAILURE_COUNT}" != 0 ]]; then
+  echo "Linux Rust e2e suite had ${FAILURE_COUNT} failing lane(s)" >&2
+  exit 1
 fi
 
 echo "Linux Rust e2e suite completed: ${SUITE}"

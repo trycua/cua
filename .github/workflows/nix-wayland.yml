@@ -4,27 +4,14 @@ name: CUA Driver Native-Wayland TDD Suite
 # sessions (XFCE on labwc/sway, plus KDE and GNOME). The cursor-click-gif and
 # background-terminal-gif tests use the EIS-backed cua-compositor injection path
 # for deterministic keyboard delivery without relying on compositor focus policy.
-# The triggers mirror the X11 nix-build.yml workflow (PRs/pushes touching
-# nix/flake/driver, plus manual dispatch). These jobs are BLOCKING
-# (no continue-on-error): a red cell fails the PR.
+# These jobs are maintainer-dispatched desktop diagnostics. They are BLOCKING
+# within a dispatched run, but do not charge every PR with the full compositor
+# matrix.
 # Artifacts (screenshots, GIFs, logs) are uploaded so you can see exactly what
 # each compositor does.
 on:
-  pull_request:
-    paths:
-      - 'nix/**'
-      - 'flake.nix'
-      - 'flake.lock'
-      - 'libs/cua-driver/rust/**'
-      - '.github/workflows/nix-wayland.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'nix/**'
-      - 'flake.nix'
-      - 'flake.lock'
-      - 'libs/cua-driver/rust/**'
-      - '.github/workflows/nix-wayland.yml'
+  # Native-compositor checks are maintainer-dispatched because they are
+  # desktop e2e coverage, not cheap pull-request unit checks.
   workflow_dispatch:
 
 permissions:

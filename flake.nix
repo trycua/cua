@@ -49,6 +49,12 @@
           checks =
             {
               cua-driver-build = cuaDriverPackage;
+              # Source-built, headless Rust checks. The desktop behavioral
+              # matrix remains an explicit maintainer-dispatched e2e lane.
+              cua-driver-linux-rust-unit = import ./nix/cua-driver/tests/rust-unit.nix {
+                inherit pkgs;
+                src = rustSrc;
+              };
             }
             // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
               # NixOS container integration test (x86_64-linux only)

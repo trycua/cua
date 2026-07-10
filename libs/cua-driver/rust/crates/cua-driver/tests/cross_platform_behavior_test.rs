@@ -127,6 +127,12 @@ struct Fixture {
 
 fn launch_host(spec: &HostSpec) -> Option<Fixture> {
     if !spec.path.exists() {
+        if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
+            panic!(
+                "{} fixture is required but was not staged at {:?}",
+                spec.name, spec.path
+            );
+        }
         eprintln!(
             "[{}] fixture not staged at {:?}; skipping",
             spec.name, spec.path
@@ -134,7 +140,12 @@ fn launch_host(spec: &HostSpec) -> Option<Fixture> {
         return None;
     }
 
-    let mut driver = spawn_driver()?;
+    let Some(mut driver) = spawn_driver() else {
+        if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
+            panic!("cua-driver could not be started for the required {} fixture", spec.name);
+        }
+        return None;
+    };
     let mut command = Command::new(&spec.path);
     command
         .args(&spec.args)

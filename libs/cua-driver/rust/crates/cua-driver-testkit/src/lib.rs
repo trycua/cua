@@ -24,6 +24,14 @@
 //! [`ChildReaper`] kills every spawned child on drop. On Windows it also assigns
 //! them to a `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` job, so the OS reaps the whole
 //! tree even on panic / SIGKILL / Ctrl-C — no orphaned windows or held ports.
+//!
+//! ## Relocated runners
+//!
+//! The testkit normally discovers the driver and staged apps under the Cargo
+//! workspace. CI runners that build those artifacts in an immutable or remote
+//! workspace can override the paths with `CUA_TEST_DRIVER_BIN`,
+//! `CUA_TEST_APPS_ROOT`, and `CUA_TEST_WORKSPACE_ROOT`. These variables affect
+//! tests only; they are never read by the shipped driver.
 
 pub mod ax;
 mod driver;

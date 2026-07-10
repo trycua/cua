@@ -2,7 +2,7 @@
 # Scenario definitions and assertions stay in the Rust integration test.
 param(
     [switch]$NoBuild,
-    [ValidateSet("shared", "native", "all")]
+    [ValidateSet("default", "guard", "shared", "native", "modality", "all")]
     [string]$Suite = "shared",
     [switch]$RequireGui
 )
@@ -43,6 +43,11 @@ if (-not $NoBuild) {
     & (Join-Path $scriptDir "build-harnesses.ps1")
 }
 
+if ($Suite -in @("default", "guard", "modality", "all")) {
+    & cargo build -p focus-monitor-win --manifest-path (Join-Path $rustRoot "Cargo.toml")
+    if ($LASTEXITCODE -ne 0) { throw "Focus monitor build failed" }
+}
+
 if (-not (Test-Path $env:CUA_TEST_DRIVER_BIN)) {
     throw "Driver binary not found: $($env:CUA_TEST_DRIVER_BIN)"
 }
@@ -62,6 +67,32 @@ function Invoke-CargoTest {
         $output = & cargo @Arguments 2>&1
         $exitCode = $LASTEXITCODE
         $output | Tee-Object -FilePath $logPath
+        foreach ($line in $output) {
+            $match = [regex]::Match(
+                [string]$line,
+                '^\s*test\s+(?<name>\S+)\s+\.\.\.\s+(?<status>ok|FAILED|ignored)\s*$'
+            )
+            if (-not $match.Success) { continue }
+
+            $testStatus = switch ($match.Groups["status"].Value) {
+                "ok" { "PASS" }
+                "FAILED" { "FAIL" }
+                default { "SKIP" }
+            }
+            $testName = $match.Groups["name"].Value
+            $testMessage = if ($testStatus -eq "FAIL") { "test case failed; see lane log" } else { "" }
+            $testRecord = [ordered]@{
+                schema = "cua-e2e-result/v1"
+                platform = "windows"
+                host = "cargo"
+                scenario = $testName
+                status = $testStatus
+                message = $testMessage
+            } | ConvertTo-Json -Compress
+            Add-Content -Path $resultsPath -Value $testRecord
+            $testDetails = if ($testMessage) { $testMessage } else { "-" }
+            Add-Content -Path $summaryPath -Value "| Windows | cargo | $testName | $testStatus | n/a | $testDetails |"
+        }
         $status = if ($exitCode -eq 0) { "PASS" } else { "FAIL" }
         $record = [ordered]@{
             schema = "cua-e2e-result/v1"
@@ -91,13 +122,38 @@ if ($Suite -in @("shared", "all")) {
     )
 }
 
+if ($Suite -in @("default", "all")) {
+    Invoke-CargoTest "default Rust tests" @(
+        "test", "-p", "cua-driver", "-p", "platform-windows", "--",
+        "--nocapture", "--test-threads=1"
+    )
+}
+
+if ($Suite -in @("guard", "all")) {
+    Invoke-CargoTest "guard UX" @(
+        "test", "-p", "cua-driver", "--test", "guard_ux_test", "--",
+        "--nocapture", "--test-threads=1"
+    )
+}
+
 if ($Suite -in @("native", "all")) {
     Invoke-CargoTest "Windows native harnesses" @(
         "test", "-p", "cua-driver", "--test", "harness_wpf_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
+    Invoke-CargoTest "WinUI3 harnesses" @(
+        "test", "-p", "cua-driver", "--test", "harness_winui3_test", "--",
+        "--ignored", "--nocapture", "--test-threads=1"
+    )
     Invoke-CargoTest "Windows web harnesses" @(
         "test", "-p", "cua-driver", "--test", "harness_web_test", "--",
+        "--ignored", "--nocapture", "--test-threads=1"
+    )
+}
+
+if ($Suite -in @("modality", "all")) {
+    Invoke-CargoTest "Windows modality input e2e" @(
+        "test", "-p", "cua-driver", "--test", "modality_input_e2e_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
 }

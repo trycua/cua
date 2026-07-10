@@ -6,8 +6,10 @@ selects the lane and publishes its results.
 ## Workflow UI
 
 The Linux and Windows manual workflows split the expensive suites into
-independent jobs. The workflow summary job collects their artifacts and writes
-one Markdown table to the GitHub Actions run summary.
+independent jobs. On Windows, `suite=all` covers the default Rust tests, UX
+guards, shared Electron/Tauri behavior, WPF/WinUI3/WebView2 harnesses, and
+modality-input E2E. The workflow summary job collects their artifacts and
+writes one Markdown table to the GitHub Actions run summary.
 
 This means a failure in the shared Electron/Tauri lane does not prevent the
 native or modality lane from running. The workflow still fails when a required
@@ -31,8 +33,9 @@ object per host and scenario:
 ```
 
 When `CUA_E2E_SUMMARY_FILE` is set, the same test writes a Markdown row for the
-GitHub summary. Native and modality scripts add lane-level rows to the same
-files and retain their full logs alongside them.
+GitHub summary. The CI scripts also parse each Cargo `test ... ok/FAILED` line,
+so native, guard, default, and modality suites appear as individual test rows
+as well as lane-level rows. Full logs are retained alongside them.
 
 Statuses are deliberately explicit:
 

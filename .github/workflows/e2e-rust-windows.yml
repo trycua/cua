@@ -11,7 +11,7 @@ on:
         description: "Rust desktop suite"
         required: true
         type: choice
-        options: [shared, native, all]
+        options: [default, guard, shared, native, modality, all]
         default: shared
       runner:
         description: "Runner label; use the Azure RDP runner label for VM e2e"
@@ -22,6 +22,54 @@ permissions:
   contents: read
 
 jobs:
+  default:
+    if: inputs.suite == 'default' || inputs.suite == 'all'
+    name: "Windows / default Rust tests"
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Run default Rust tests
+        shell: pwsh
+        run: .\scripts\ci\windows\run-rust-e2e.ps1 -Suite default -RequireGui
+      - name: Collect logs
+        if: always()
+        shell: pwsh
+        run: .\scripts\ci\windows\collect-artifacts.ps1
+      - name: Upload default results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: rust-windows-default
+          path: artifacts/cua-driver/windows
+          if-no-files-found: ignore
+
+  guard:
+    if: inputs.suite == 'guard' || inputs.suite == 'all'
+    name: "Windows / UX guards"
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Run UX guard tests
+        shell: pwsh
+        run: .\scripts\ci\windows\run-rust-e2e.ps1 -Suite guard -RequireGui
+      - name: Collect logs
+        if: always()
+        shell: pwsh
+        run: .\scripts\ci\windows\collect-artifacts.ps1
+      - name: Upload guard results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: rust-windows-guard
+          path: artifacts/cua-driver/windows
+          if-no-files-found: ignore
+
   shared:
     if: inputs.suite == 'shared' || inputs.suite == 'all'
     name: "Windows / shared Electron + Tauri"
@@ -70,9 +118,33 @@ jobs:
           path: artifacts/cua-driver/windows
           if-no-files-found: ignore
 
+  modality:
+    if: inputs.suite == 'modality' || inputs.suite == 'all'
+    name: "Windows / modality input E2E"
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Run modality input E2E
+        shell: pwsh
+        run: .\scripts\ci\windows\run-rust-e2e.ps1 -Suite modality -RequireGui
+      - name: Collect logs
+        if: always()
+        shell: pwsh
+        run: .\scripts\ci\windows\collect-artifacts.ps1
+      - name: Upload modality results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: rust-windows-modality
+          path: artifacts/cua-driver/windows
+          if-no-files-found: ignore
+
   summary:
     if: always()
-    needs: [shared, native]
+    needs: [default, guard, shared, native, modality]
     name: "Windows / matrix summary"
     runs-on: ubuntu-latest
     timeout-minutes: 10

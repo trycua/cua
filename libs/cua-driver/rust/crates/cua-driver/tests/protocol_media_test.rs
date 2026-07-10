@@ -14,7 +14,9 @@ use cua_driver_testkit::RawDriver;
 #[test]
 #[cfg(target_os = "windows")]
 fn screenshot() {
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
@@ -35,14 +37,21 @@ fn screenshot() {
         "params":{"name":"screenshot","arguments":{"format":"jpeg","quality":70}}
     }));
     let resp = d.recv();
-    assert!(resp["error"].is_null(), "Protocol error from screenshot jpeg: {resp:?}");
+    assert!(
+        resp["error"].is_null(),
+        "Protocol error from screenshot jpeg: {resp:?}"
+    );
     if !resp["result"]["isError"].as_bool().unwrap_or(false) {
         let content = resp["result"]["content"].as_array().expect("content array");
         let has_jpeg = content.iter().any(|c| {
-            c["type"] == "image" && c["mimeType"].as_str().unwrap_or("") == "image/jpeg"
+            c["type"] == "image"
+                && c["mimeType"].as_str().unwrap_or("") == "image/jpeg"
                 && c["data"].as_str().map(|s| s.len() > 10).unwrap_or(false)
         });
-        assert!(has_jpeg, "Expected image/jpeg in screenshot response: {content:?}");
+        assert!(
+            has_jpeg,
+            "Expected image/jpeg in screenshot response: {content:?}"
+        );
         let sc = &resp["result"]["structuredContent"];
         assert!(sc["width"].as_f64().unwrap_or(0.0) > 0.0);
         assert!(sc["height"].as_f64().unwrap_or(0.0) > 0.0);
@@ -54,7 +63,9 @@ fn screenshot() {
 #[cfg(target_os = "macos")]
 fn screenshot_no_window_id() {
     //! Call screenshot without window_id — should capture the full display and return image content.
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
@@ -64,16 +75,24 @@ fn screenshot_no_window_id() {
         "params":{"name":"screenshot","arguments":{}}
     }));
     let resp = d.recv();
-    assert!(resp["error"].is_null(), "Protocol error from screenshot: {resp:?}");
+    assert!(
+        resp["error"].is_null(),
+        "Protocol error from screenshot: {resp:?}"
+    );
     let content = resp["result"]["content"].as_array().expect("content array");
-    assert!(!content.is_empty(), "screenshot should return at least one content item");
+    assert!(
+        !content.is_empty(),
+        "screenshot should return at least one content item"
+    );
 }
 
 #[test]
 #[cfg(target_os = "macos")]
 fn screenshot_jpeg_format() {
     //! Call screenshot with format=jpeg — should return a JPEG image.
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
@@ -83,20 +102,37 @@ fn screenshot_jpeg_format() {
         "params":{"name":"screenshot","arguments":{"format":"jpeg","quality":70}}
     }));
     let resp = d.recv();
-    assert!(resp["error"].is_null(), "Protocol error from screenshot: {resp:?}");
+    assert!(
+        resp["error"].is_null(),
+        "Protocol error from screenshot: {resp:?}"
+    );
     let content = resp["result"]["content"].as_array().expect("content array");
     let is_error = resp["result"]["isError"].as_bool().unwrap_or(false);
     if !is_error {
         let has_jpeg = content.iter().any(|c| {
-            c["type"] == "image" && c["mimeType"].as_str().unwrap_or("") == "image/jpeg"
+            c["type"] == "image"
+                && c["mimeType"].as_str().unwrap_or("") == "image/jpeg"
                 && c["data"].as_str().map(|s| s.len() > 10).unwrap_or(false)
         });
-        assert!(has_jpeg, "Expected image/jpeg in screenshot response, got: {content:?}");
+        assert!(
+            has_jpeg,
+            "Expected image/jpeg in screenshot response, got: {content:?}"
+        );
         // Verify structured content has width and height.
         let sc = &resp["result"]["structuredContent"];
-        assert!(sc["width"].as_f64().unwrap_or(0.0) > 0.0, "Expected positive width in structuredContent");
-        assert!(sc["height"].as_f64().unwrap_or(0.0) > 0.0, "Expected positive height in structuredContent");
-        assert_eq!(sc["format"].as_str().unwrap_or(""), "jpeg", "Expected format=jpeg");
+        assert!(
+            sc["width"].as_f64().unwrap_or(0.0) > 0.0,
+            "Expected positive width in structuredContent"
+        );
+        assert!(
+            sc["height"].as_f64().unwrap_or(0.0) > 0.0,
+            "Expected positive height in structuredContent"
+        );
+        assert_eq!(
+            sc["format"].as_str().unwrap_or(""),
+            "jpeg",
+            "Expected format=jpeg"
+        );
     }
 }
 
@@ -105,7 +141,9 @@ fn screenshot_jpeg_format() {
 fn zoom_tool_returns_jpeg() {
     //! Call zoom on a visible window and verify the result contains a JPEG image.
     //! Skips gracefully if no windows are visible (headless environment).
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
@@ -124,8 +162,12 @@ fn zoom_tool_returns_jpeg() {
     // Try windows until one captures successfully.
     let mut found_jpeg = false;
     let mut tried = 0usize;
+    let mut zoom_errors: Vec<String> = Vec::new();
+    let mut successful_without_jpeg = false;
     for win in windows.iter().take(5) {
-        let Some(wid) = win["window_id"].as_u64() else { continue; };
+        let Some(wid) = win["window_id"].as_u64() else {
+            continue;
+        };
         tried += 1;
 
         d.send(&serde_json::json!({
@@ -138,19 +180,39 @@ fn zoom_tool_returns_jpeg() {
         let r = d.recv();
         if r["result"]["isError"].as_bool().unwrap_or(false) {
             // This window might be off-screen or not capturable — try the next.
+            let text = r["result"]["content"]
+                .as_array()
+                .and_then(|items| items.iter().find_map(|c| c["text"].as_str()))
+                .unwrap_or("<no error text>")
+                .to_owned();
+            zoom_errors.push(format!("window_id={wid}: {text}"));
             continue;
         }
         let content = r["result"]["content"].as_array().expect("content array");
         found_jpeg = content.iter().any(|c| {
-            c["type"] == "image" && c["mimeType"].as_str().unwrap_or("") == "image/jpeg"
+            c["type"] == "image"
+                && c["mimeType"].as_str().unwrap_or("") == "image/jpeg"
                 && c["data"].as_str().map(|s| s.len() > 10).unwrap_or(false)
         });
+        if !found_jpeg {
+            successful_without_jpeg = true;
+        }
         if found_jpeg {
             // Also verify structuredContent.
             let sc = &r["result"]["structuredContent"];
-            assert!(sc["width"].as_f64().unwrap_or(0.0) > 0.0, "Expected positive width: {sc:?}");
-            assert!(sc["height"].as_f64().unwrap_or(0.0) > 0.0, "Expected positive height: {sc:?}");
-            assert_eq!(sc["format"].as_str().unwrap_or(""), "jpeg", "Expected format=jpeg: {sc:?}");
+            assert!(
+                sc["width"].as_f64().unwrap_or(0.0) > 0.0,
+                "Expected positive width: {sc:?}"
+            );
+            assert!(
+                sc["height"].as_f64().unwrap_or(0.0) > 0.0,
+                "Expected positive height: {sc:?}"
+            );
+            assert_eq!(
+                sc["format"].as_str().unwrap_or(""),
+                "jpeg",
+                "Expected format=jpeg: {sc:?}"
+            );
             break;
         }
     }
@@ -159,7 +221,26 @@ fn zoom_tool_returns_jpeg() {
         eprintln!("No on-screen windows found — skipping zoom test");
         return;
     }
-    assert!(found_jpeg, "Expected at least one window to return a valid JPEG from zoom");
+    if !found_jpeg
+        && !successful_without_jpeg
+        && cfg!(target_os = "macos")
+        && !zoom_errors.is_empty()
+        && zoom_errors
+            .iter()
+            .all(|e| e.contains("screencapture failed"))
+    {
+        eprintln!(
+            "No visible windows were capturable by the raw unbundled test process — skipping zoom test. \
+             Errors: {}",
+            zoom_errors.join(" | ")
+        );
+        return;
+    }
+    assert!(
+        found_jpeg,
+        "Expected at least one window to return a valid JPEG from zoom. Errors: {}",
+        zoom_errors.join(" | ")
+    );
 }
 
 #[test]
@@ -169,7 +250,9 @@ fn zoom_from_zoom_click_round_trip() {
     //! 1. click(from_zoom=true) with no zoom context returns the expected error.
     //! 2. zoom() stores context; subsequent click(from_zoom=true) does NOT return
     //!    that error (translation succeeded, even if the click itself may fail).
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
@@ -180,7 +263,10 @@ fn zoom_from_zoom_click_round_trip() {
         "params":{"name":"list_windows","arguments":{"on_screen_only":true}}
     }));
     let resp = d.recv();
-    let wins = resp["result"]["structuredContent"]["windows"].as_array().cloned().unwrap_or_default();
+    let wins = resp["result"]["structuredContent"]["windows"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let Some(win) = wins.iter().find(|w| w["pid"].as_i64().is_some()) else {
         eprintln!("No on-screen windows — skipping from_zoom test");
         return;
@@ -196,8 +282,14 @@ fn zoom_from_zoom_click_round_trip() {
     let resp = d.recv();
     let is_err = resp["result"]["isError"].as_bool().unwrap_or(false);
     let err_text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
-    assert!(is_err, "Expected error when from_zoom=true with no context, got: {resp:?}");
-    assert!(err_text.contains("no zoom context"), "Expected 'no zoom context' error, got: {err_text}");
+    assert!(
+        is_err,
+        "Expected error when from_zoom=true with no context, got: {resp:?}"
+    );
+    assert!(
+        err_text.contains("no zoom context"),
+        "Expected 'no zoom context' error, got: {err_text}"
+    );
 
     // Step 2: call zoom on that window to store context.
     d.send(&serde_json::json!({
@@ -213,7 +305,10 @@ fn zoom_from_zoom_click_round_trip() {
     if !cfg!(target_os = "windows") {
         // Verify zoom returned structured content with width/height.
         let sc = &resp["result"]["structuredContent"];
-        assert!(sc["width"].as_u64().unwrap_or(0) > 0, "zoom should return positive width: {sc:?}");
+        assert!(
+            sc["width"].as_u64().unwrap_or(0) > 0,
+            "zoom should return positive width: {sc:?}"
+        );
     }
 
     // Step 3: click with from_zoom=true — should NOT return the "no zoom context" error.
@@ -224,17 +319,22 @@ fn zoom_from_zoom_click_round_trip() {
     let resp = d.recv();
     let err_text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
     // Translation should succeed — if click fails it's for another reason (target app state), not missing context.
-    assert!(!err_text.contains("no zoom context"),
-        "After zoom(), from_zoom click should not say 'no zoom context', got: {err_text}");
+    assert!(
+        !err_text.contains("no zoom context"),
+        "After zoom(), from_zoom click should not say 'no zoom context', got: {err_text}"
+    );
 }
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn recording_session() {
     //! Enable recording, invoke a non-read-only tool (recorded), disable, verify action.json written.
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
-    let tmp_dir = std::env::temp_dir().join(format!("cua-driver-rs-rec-test-{}", std::process::id()));
+    let tmp_dir =
+        std::env::temp_dir().join(format!("cua-driver-rs-rec-test-{}", std::process::id()));
     let tmp_str = tmp_dir.to_string_lossy().to_string();
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
@@ -246,8 +346,13 @@ fn recording_session() {
         "params":{"name":"start_recording","arguments":{"output_dir":tmp_str,"record_video":false}}
     }));
     let resp = d.recv();
-    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false), "start_recording failed: {resp:?}");
-    assert!(resp["result"]["structuredContent"]["enabled"].as_bool().unwrap_or(false));
+    assert!(
+        !resp["result"]["isError"].as_bool().unwrap_or(false),
+        "start_recording failed: {resp:?}"
+    );
+    assert!(resp["result"]["structuredContent"]["enabled"]
+        .as_bool()
+        .unwrap_or(false));
 
     // Invoke a non-read-only tool — should be recorded.
     if cfg!(target_os = "windows") {
@@ -269,7 +374,9 @@ fn recording_session() {
         "params":{"name":"get_recording_state","arguments":{}}
     }));
     let resp = d.recv();
-    let next_turn = resp["result"]["structuredContent"]["next_turn"].as_u64().unwrap_or(0);
+    let next_turn = resp["result"]["structuredContent"]["next_turn"]
+        .as_u64()
+        .unwrap_or(0);
     assert!(next_turn >= 2, "expected next_turn >= 2, got {next_turn}");
 
     // Disable recording.
@@ -278,7 +385,9 @@ fn recording_session() {
         "params":{"name":"stop_recording","arguments":{}}
     }));
     let resp = d.recv();
-    assert!(!resp["result"]["structuredContent"]["enabled"].as_bool().unwrap_or(true));
+    assert!(!resp["result"]["structuredContent"]["enabled"]
+        .as_bool()
+        .unwrap_or(true));
     drop(d);
 
     // Small sync wait for the write to flush.
@@ -287,14 +396,16 @@ fn recording_session() {
     // Verify turn-00001/action.json was written.
     let action_path = tmp_dir.join("turn-00001").join("action.json");
     assert!(action_path.exists(), "Expected {action_path:?} to exist");
-    let content: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(&action_path).unwrap()
-    ).unwrap();
+    let content: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&action_path).unwrap()).unwrap();
     if cfg!(target_os = "windows") {
         assert_eq!(content["tool"].as_str().unwrap_or(""), "move_cursor");
         assert_eq!(content["arguments"]["x"].as_f64().unwrap_or(0.0), 100.0);
     } else {
-        assert_eq!(content["tool"].as_str().unwrap_or(""), "set_agent_cursor_enabled");
+        assert_eq!(
+            content["tool"].as_str().unwrap_or(""),
+            "set_agent_cursor_enabled"
+        );
         assert_eq!(content["arguments"]["enabled"].as_bool(), Some(false));
     }
 
@@ -306,7 +417,9 @@ fn recording_session() {
 fn recording_screenshot_capture() {
     //! When recording is active and a tool call includes a window_id, a screenshot.png
     //! should appear alongside action.json in the turn folder.
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     let tmp_dir = std::env::temp_dir().join(format!("cua-driver-rs-rec-ss-{}", std::process::id()));
     let tmp_str = tmp_dir.to_string_lossy().to_string();
@@ -320,9 +433,13 @@ fn recording_screenshot_capture() {
         "params":{"name":"list_windows","arguments":{"on_screen_only":true}}
     }));
     let resp = d.recv();
-    let wins = resp["result"]["structuredContent"]["windows"].as_array().cloned().unwrap_or_default();
+    let wins = resp["result"]["structuredContent"]["windows"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     // Prefer windows with non-empty titles (more likely capturable).
-    let win = wins.iter()
+    let win = wins
+        .iter()
         .find(|w| w["pid"].as_i64().is_some() && !w["title"].as_str().unwrap_or("").is_empty())
         .or_else(|| wins.iter().find(|w| w["pid"].as_i64().is_some()));
     let Some(win) = win else {
@@ -338,7 +455,10 @@ fn recording_screenshot_capture() {
         "params":{"name":"start_recording","arguments":{"output_dir":tmp_str,"record_video":false}}
     }));
     let resp = d.recv();
-    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false), "start_recording failed: {resp:?}");
+    assert!(
+        !resp["result"]["isError"].as_bool().unwrap_or(false),
+        "start_recording failed: {resp:?}"
+    );
 
     // Invoke click (non-read-only) with window_id + pid — recording should capture screenshot.
     d.send(&serde_json::json!({
@@ -360,10 +480,12 @@ fn recording_screenshot_capture() {
     // action.json must exist.
     let turn_dir = tmp_dir.join("turn-00001");
     let action_path = turn_dir.join("action.json");
-    assert!(action_path.exists(), "Expected action.json at {action_path:?}");
-    let content: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(&action_path).unwrap()
-    ).unwrap();
+    assert!(
+        action_path.exists(),
+        "Expected action.json at {action_path:?}"
+    );
+    let content: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&action_path).unwrap()).unwrap();
     assert_eq!(content["tool"].as_str().unwrap_or(""), "click");
 
     // screenshot.png should exist if screencapture succeeded for this window.
@@ -373,7 +495,11 @@ fn recording_screenshot_capture() {
     } else {
         let ss_bytes = std::fs::read(&ss_path).unwrap();
         assert!(!ss_bytes.is_empty(), "screenshot.png should not be empty");
-        assert_eq!(&ss_bytes[..4], b"\x89PNG", "screenshot.png should be a valid PNG");
+        assert_eq!(
+            &ss_bytes[..4],
+            b"\x89PNG",
+            "screenshot.png should be a valid PNG"
+        );
 
         // click.png should also exist (click at 0,0 with crosshair marker).
         let click_path = turn_dir.join("click.png");
@@ -382,7 +508,11 @@ fn recording_screenshot_capture() {
         } else {
             let click_bytes = std::fs::read(&click_path).unwrap();
             assert!(!click_bytes.is_empty(), "click.png should not be empty");
-            assert_eq!(&click_bytes[..4], b"\x89PNG", "click.png should be a valid PNG");
+            assert_eq!(
+                &click_bytes[..4],
+                b"\x89PNG",
+                "click.png should be a valid PNG"
+            );
         }
     }
 
@@ -399,7 +529,9 @@ fn start_recording_record_video_flag_accepted() {
     //! session enters the enabled state. Full video lifecycle is
     //! covered by the manual demo + the per-platform smoke when
     //! ffmpeg is installed.
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     let tmp_dir = std::env::temp_dir().join(format!("cua-driver-rs-recvid-{}", std::process::id()));
     let tmp_str = tmp_dir.to_string_lossy().to_string();
@@ -415,9 +547,15 @@ fn start_recording_record_video_flag_accepted() {
         }}
     }));
     let resp = d.recv();
-    assert!(resp["error"].is_null(), "Expected no JSON-RPC error, got: {resp:?}");
+    assert!(
+        resp["error"].is_null(),
+        "Expected no JSON-RPC error, got: {resp:?}"
+    );
     let is_err = resp["result"]["isError"].as_bool().unwrap_or(false);
-    assert!(!is_err, "start_recording with record_video:false should succeed: {resp:?}");
+    assert!(
+        !is_err,
+        "start_recording with record_video:false should succeed: {resp:?}"
+    );
 
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
@@ -432,15 +570,19 @@ fn start_recording_record_video_flag_accepted() {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn replay_trajectory() {
     //! Write a minimal trajectory (one move_cursor turn), replay it, verify succeeded=1.
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
-    let traj_dir = std::env::temp_dir().join(format!("cua-driver-rs-replay-{}", std::process::id()));
+    let traj_dir =
+        std::env::temp_dir().join(format!("cua-driver-rs-replay-{}", std::process::id()));
     let turn_dir = traj_dir.join("turn-00001");
     std::fs::create_dir_all(&turn_dir).unwrap();
     std::fs::write(
         turn_dir.join("action.json"),
         r#"{"tool":"move_cursor","arguments":{"x":50.0,"y":60.0}}"#,
-    ).unwrap();
+    )
+    .unwrap();
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
@@ -453,10 +595,21 @@ fn replay_trajectory() {
         }}
     }));
     let resp = d.recv();
-    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false), "replay error: {resp:?}");
+    assert!(
+        !resp["result"]["isError"].as_bool().unwrap_or(false),
+        "replay error: {resp:?}"
+    );
     let sc = &resp["result"]["structuredContent"];
-    assert_eq!(sc["attempted"].as_u64().unwrap_or(0), 1, "expected attempted=1");
-    assert_eq!(sc["succeeded"].as_u64().unwrap_or(0), 1, "expected succeeded=1");
+    assert_eq!(
+        sc["attempted"].as_u64().unwrap_or(0),
+        1,
+        "expected attempted=1"
+    );
+    assert_eq!(
+        sc["succeeded"].as_u64().unwrap_or(0),
+        1,
+        "expected succeeded=1"
+    );
     assert_eq!(sc["failed"].as_u64().unwrap_or(99), 0, "expected failed=0");
 
     drop(d);
@@ -468,7 +621,9 @@ fn replay_trajectory() {
 fn click_debug_image_out() {
     //! click with debug_image_out writes a PNG crosshair file and then proceeds.
     //! Verifies the debug capture path works end-to-end.
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
@@ -480,16 +635,19 @@ fn click_debug_image_out() {
     let resp = d.recv();
     let wins = resp["result"]["structuredContent"]["windows"].as_array();
     // Prefer a window with a non-empty title to avoid uncapturable overlay/system windows.
-    let Some(win) = wins.and_then(|a| a.iter().find(|w| {
-        w["pid"].as_i64().is_some() && !w["title"].as_str().unwrap_or("").is_empty()
-    }).or_else(|| a.iter().find(|w| w["pid"].as_i64().is_some()))) else {
+    let Some(win) = wins.and_then(|a| {
+        a.iter()
+            .find(|w| w["pid"].as_i64().is_some() && !w["title"].as_str().unwrap_or("").is_empty())
+            .or_else(|| a.iter().find(|w| w["pid"].as_i64().is_some()))
+    }) else {
         eprintln!("No on-screen windows — skipping debug_image_out test");
         return;
     };
     let pid = win["pid"].as_i64().unwrap();
     let wid = win["window_id"].as_u64().unwrap();
 
-    let dbg_path = std::env::temp_dir().join(format!("cua-driver-rs-dbg-{}.png", std::process::id()));
+    let dbg_path =
+        std::env::temp_dir().join(format!("cua-driver-rs-dbg-{}.png", std::process::id()));
     let dbg_path_str = dbg_path.to_string_lossy().to_string();
 
     // Click with debug_image_out — should write the PNG and then proceed.
@@ -502,7 +660,10 @@ fn click_debug_image_out() {
         }}
     }));
     let resp = d.recv();
-    assert!(resp["error"].is_null(), "Protocol error from click+debug_image_out: {resp:?}");
+    assert!(
+        resp["error"].is_null(),
+        "Protocol error from click+debug_image_out: {resp:?}"
+    );
 
     // The tool may return isError if screencapture can't capture this particular window
     // (e.g., overlay windows, system windows). If that happens, skip the PNG check.
@@ -514,9 +675,15 @@ fn click_debug_image_out() {
     }
 
     // Verify the PNG was actually written.
-    assert!(dbg_path.exists(), "debug_image_out PNG was not written to {dbg_path:?}");
+    assert!(
+        dbg_path.exists(),
+        "debug_image_out PNG was not written to {dbg_path:?}"
+    );
     let meta = std::fs::metadata(&dbg_path).expect("metadata");
-    assert!(meta.len() > 100, "debug_image_out PNG is suspiciously small");
+    assert!(
+        meta.len() > 100,
+        "debug_image_out PNG is suspiciously small"
+    );
 
     let _ = std::fs::remove_file(&dbg_path);
 }
@@ -526,7 +693,9 @@ fn click_debug_image_out() {
 fn set_config_screenshot_resize() {
     //! set_config(max_image_dimension=200) then screenshot — returned image must
     //! have both dimensions ≤ 200. Verifies the ResizeRegistry pipeline end-to-end.
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
@@ -538,7 +707,10 @@ fn set_config_screenshot_resize() {
     }));
     let resp = d.recv();
     assert!(resp["error"].is_null(), "set_config failed: {resp:?}");
-    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false), "set_config returned error: {resp:?}");
+    assert!(
+        !resp["result"]["isError"].as_bool().unwrap_or(false),
+        "set_config returned error: {resp:?}"
+    );
 
     // Capture full display; must be ≤ 200 px in both dimensions.
     d.send(&serde_json::json!({
@@ -562,8 +734,14 @@ fn set_config_screenshot_resize() {
         eprintln!("screenshot returned no dimensions — skipping resize assertion: {resp:?}");
         return;
     };
-    assert!(w <= 200, "screenshot width {w} should be ≤ 200 after max_image_dimension=200");
-    assert!(h <= 200, "screenshot height {h} should be ≤ 200 after max_image_dimension=200");
+    assert!(
+        w <= 200,
+        "screenshot width {w} should be ≤ 200 after max_image_dimension=200"
+    );
+    assert!(
+        h <= 200,
+        "screenshot height {h} should be ≤ 200 after max_image_dimension=200"
+    );
 
     // get_config should reflect the updated value.
     d.send(&serde_json::json!({
@@ -572,5 +750,9 @@ fn set_config_screenshot_resize() {
     }));
     let resp = d.recv();
     let dim = resp["result"]["structuredContent"]["max_image_dimension"].as_u64();
-    assert_eq!(dim, Some(200), "get_config should reflect max_image_dimension=200");
+    assert_eq!(
+        dim,
+        Some(200),
+        "get_config should reflect max_image_dimension=200"
+    );
 }

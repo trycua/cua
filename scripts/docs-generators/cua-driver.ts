@@ -280,7 +280,7 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation, releasedVersion:
   lines.push('');
   lines.push('```sh');
   lines.push(
-    'curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash'
+    'curl -fsSL https://cua.ai/driver/install.sh | bash'
   );
   lines.push('```');
   lines.push('');

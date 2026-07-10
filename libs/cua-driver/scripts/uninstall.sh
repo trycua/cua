@@ -52,7 +52,7 @@
 # --keep-tcc to preserve grants across uninstall/reinstall.
 #
 # Usage:
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)"
+#   /bin/bash -c "$(curl -fsSL https://cua.ai/driver/uninstall.sh)"
 #
 # Env overrides (mirror install side):
 #   CUA_DRIVER_RS_HOME    Rust package home to remove (default ~/.cua-driver-rs)

@@ -107,7 +107,7 @@ fi
 if [[ "$USE_CLOUD" == "false" ]]; then
   if ! command -v lume &> /dev/null; then
     echo "📦 Installing Lume CLI..."
-    curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh | bash
+    curl -fsSL https://cua.ai/lume/install.sh | bash
     
     # Add lume to PATH for this session if it's not already there
     if ! command -v lume &> /dev/null; then

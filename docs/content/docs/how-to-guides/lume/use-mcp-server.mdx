@@ -1,0 +1,56 @@
+---
+title: Use Lume with MCP
+description: Connect an MCP client to Lume for local VM management.
+---
+
+Lume can expose its VM management tools through the Model Context Protocol
+(MCP). The MCP server uses stdio, so the client starts one Lume process and
+communicates with it directly on the host.
+
+## Configure an MCP client
+
+Add a server entry using the path returned by `which lume`:
+
+```json
+{
+  "mcpServers": {
+    "lume": {
+      "command": "/Users/your-name/.local/bin/lume",
+      "args": ["serve", "--mcp"]
+    }
+  }
+}
+```
+
+Replace the command path with the result of:
+
+```bash
+which lume
+```
+
+Restart the MCP client after saving its configuration. The client can then
+list VMs, create Tahoe guests, run and stop VMs, clone disks, and execute SSH
+commands inside unattended guests.
+
+## Test the server
+
+Use the MCP Inspector to test the connection:
+
+```bash
+npx @modelcontextprotocol/inspector lume serve --mcp
+```
+
+The server uses stdio for the MCP protocol. Keep its standard output reserved
+for MCP messages when embedding it in another client.
+
+## Choose MCP or HTTP
+
+Use MCP when an AI client should manage VMs through tool calls. Use the [Lume
+HTTP API](/reference/lume/http-api) when a script or service should make HTTP
+requests. Both interfaces control the same local VM store.
+
+## Security
+
+The MCP server can create, delete, start, stop, clone, and access VMs through
+SSH. Configure it only for clients you trust, and use a dedicated vanilla VM
+for agent tasks when the guest may be modified.

@@ -1,0 +1,104 @@
+---
+title: Manage local Lume VMs
+description: Run, inspect, clone, share files with, and remove local Lume VMs.
+---
+
+Use this guide after you have created a VM and need the everyday lifecycle and
+storage commands.
+
+## Inspect VMs
+
+List all VMs:
+
+```bash
+lume ls
+```
+
+Get details for one VM:
+
+```bash
+lume get macos-tahoe
+```
+
+The details include the VM state, IP address, display session, resources, and
+SSH availability when the VM is running.
+
+## Run and stop a VM
+
+Run Tahoe with a display:
+
+```bash
+lume run macos-tahoe
+```
+
+Run it headlessly:
+
+```bash
+lume run --no-display macos-tahoe
+```
+
+Stop it when you are finished:
+
+```bash
+lume stop macos-tahoe
+```
+
+Only one `lume run` process can hold a VM's auxiliary storage at a time. If a
+second process reports that auxiliary storage is locked, stop the existing
+process before starting the VM again.
+
+## Share a host directory
+
+Pass a host directory when you run the VM:
+
+```bash
+lume run macos-tahoe --shared-dir ~/Projects
+```
+
+The directory appears in the guest at `/Volumes/My Shared Files`. Use a
+read-only mount when the guest only needs to read the files:
+
+```bash
+lume run macos-tahoe --shared-dir ~/Projects:ro
+```
+
+## Store VMs on another volume
+
+Add a named storage location and make it the default:
+
+```bash
+lume config storage add external /Volumes/External/lume
+lume config storage list
+lume config storage default external
+```
+
+Commands also accept a storage name directly:
+
+```bash
+lume create macos-tahoe \
+  --ipsw ~/Downloads/macos-tahoe.ipsw \
+  --unattended tahoe \
+  --storage external
+lume run macos-tahoe --storage external
+```
+
+The default VM directory is `~/.lume`. Run Lume as the same user that owns this
+directory; `sudo lume` uses a different home directory and cannot see those
+VMs.
+
+## Clone and remove VMs
+
+Clone a VM before making changes or using it as a reusable starting point:
+
+```bash
+lume clone macos-tahoe macos-tahoe-backup
+```
+
+Remove a VM and its disk when you no longer need it:
+
+```bash
+lume delete macos-tahoe-backup
+```
+
+macOS VM disks can be sparse. The configured capacity and the host space used
+by the disk can therefore differ.

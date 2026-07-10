@@ -38,6 +38,7 @@ mod driver;
 pub mod e2e;
 mod mcp;
 mod cli;
+pub mod observer;
 mod paths;
 mod raw;
 mod reaper;

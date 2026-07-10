@@ -18,6 +18,8 @@ pub mod input;
 pub mod cursor;
 #[cfg(target_os = "macos")]
 pub mod capture;
+
+pub mod display_state;
 #[cfg(target_os = "macos")]
 pub mod browser;
 #[cfg(target_os = "macos")]

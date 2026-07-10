@@ -184,6 +184,10 @@ impl Tool for GetWindowStateTool {
         // screenshot_out_file). With `screenshot_out_file` set, write to disk and
         // surface the path instead of embedding base64; otherwise embed base64.
         let max_dim = effective_max_dim;
+        // Why the screenshot is missing, when it is — surfaced to the caller so
+        // a capture failure (permissions, display asleep, WindowServer refusal)
+        // is never silent while `escalation` tells the agent to act off it.
+        let mut screenshot_error: Option<String> = None;
         // Returns (b64_or_path, final_w, final_h, Option<original_w>, is_file_path)
         let screenshot = if should_capture {
             let out_file = screenshot_out_file.clone();
@@ -215,10 +219,12 @@ impl Tool for GetWindowStateTool {
                 }
                 Ok(Err(e)) => {
                     tracing::warn!("Screenshot failed for window {window_id}: {e}");
+                    screenshot_error = Some(e.to_string());
                     None
                 }
                 Err(e) => {
                     tracing::warn!("Screenshot task error for window {window_id}: {e}");
+                    screenshot_error = Some(e.to_string());
                     None
                 }
             }
@@ -251,13 +257,23 @@ impl Tool for GetWindowStateTool {
             content.push(Content::text(summary));
         } else if let Some(ref r) = tree_result {
             let element_count = self.state.element_cache.element_count(pid, window_id);
+            let capture_note = screenshot_error
+                .as_ref()
+                .map(|e| format!("\n\n⚠️ screenshot unavailable: {e}"))
+                .unwrap_or_default();
             content.push(Content::text(format!(
-                "window_id={window_id} pid={pid} elements={element_count}\n\n{}",
+                "window_id={window_id} pid={pid} elements={element_count}{capture_note}\n\n{}",
                 r.tree_markdown
             )));
         }
 
         if content.is_empty() {
+            if crate::display_state::main_display_asleep() {
+                return ToolResult::error(format!(
+                    "No content produced (neither AX tree nor screenshot succeeded) — {}",
+                    crate::display_state::ASLEEP_CAPTURE_HINT
+                ));
+            }
             return ToolResult::error("No content produced (neither AX tree nor screenshot succeeded)");
         }
 
@@ -334,6 +350,9 @@ impl Tool for GetWindowStateTool {
                 "reason": "non-AX surface — act by pixel (x,y) off the screenshot \
                            in this response (an element px action)."
             });
+        }
+        if let Some(ref err) = screenshot_error {
+            structured["screenshot_error"] = serde_json::json!(err);
         }
         if let Some((sw, sh)) = screenshot_dims {
             structured["screenshot_width"] = serde_json::json!(sw);

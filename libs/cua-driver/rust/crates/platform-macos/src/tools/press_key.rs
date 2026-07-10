@@ -214,8 +214,9 @@ impl Tool for PressKeyTool {
                     });
                 }
                 ToolResult::text(format!(
-                    "✅ Pressed {display_key} on pid {pid}{label}.{}",
-                    changes.result_suffix()
+                    "✅ Pressed {display_key} on pid {pid}{label}.{}{}",
+                    changes.result_suffix(),
+                    crate::display_state::asleep_suffix()
                 )).with_structured(structured)
             }
             Ok(Err(e)) => ToolResult::error(format!("press_key failed: {e}")),

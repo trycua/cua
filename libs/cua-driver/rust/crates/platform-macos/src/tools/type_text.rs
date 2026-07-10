@@ -285,8 +285,9 @@ impl Tool for TypeTextTool {
                       and re-call with delivery_mode:\"foreground\" if it didn't.".to_string())
                 };
                 ToolResult::text(format!(
-                    "{mark} {char_count} char(s){detail}.{note}{}",
-                    changes.result_suffix()
+                    "{mark} {char_count} char(s){detail}.{note}{}{}",
+                    changes.result_suffix(),
+                    crate::display_state::asleep_suffix()
                 ))
                 .with_structured({
                     // `effect` mirrors `verified`'s read-back tri-state: a TRUSTED

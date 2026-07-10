@@ -207,8 +207,9 @@ impl Tool for HotkeyTool {
                     });
                 }
                 ToolResult::text(format!(
-                    "Pressed {key_display} on pid {pid}{label}.{}",
-                    changes.result_suffix()
+                    "Pressed {key_display} on pid {pid}{label}.{}{}",
+                    changes.result_suffix(),
+                    crate::display_state::asleep_suffix()
                 )).with_structured(structured)
             }
             Ok(Err(e)) => ToolResult::error(format!("hotkey failed: {e}")),

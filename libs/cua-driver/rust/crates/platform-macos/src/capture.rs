@@ -27,6 +27,12 @@ pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
         .status()?;
 
     if !status.success() {
+        if crate::display_state::main_display_asleep() {
+            anyhow::bail!(
+                "screencapture failed for window {window_id}: {}",
+                crate::display_state::ASLEEP_CAPTURE_HINT
+            );
+        }
         anyhow::bail!("screencapture failed for window {window_id}");
     }
 
@@ -59,6 +65,12 @@ pub fn screenshot_display_bytes() -> anyhow::Result<Vec<u8>> {
         .status()?;
 
     if !status.success() {
+        if crate::display_state::main_display_asleep() {
+            anyhow::bail!(
+                "screencapture failed for main display: {}",
+                crate::display_state::ASLEEP_CAPTURE_HINT
+            );
+        }
         anyhow::bail!("screencapture failed for main display");
     }
 

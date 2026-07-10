@@ -59,7 +59,7 @@ forbidden-list / launch / click details.
    that were stabilized in Sonoma.
 2. **`cua-driver` CLI + `CuaDriver.app`** — installable one-liner:
    ```bash
-   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+   /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
    ```
    Or from a clone of `trycua/cua`:
    ```bash
@@ -84,7 +84,7 @@ forbidden-list / launch / click details.
 1. **Windows 10/11** (any edition with PowerShell 5.1+).
 2. **`cua-driver` CLI (Rust port `cua-driver-rs`)** — one-liner:
    ```powershell
-   irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
+   irm https://cua.ai/driver/install.ps1 | iex
    ```
    No TCC equivalent; no UAC elevation required for the default
    per-user install. See `WINDOWS.md` for Session 0 vs Session 1+
@@ -99,7 +99,7 @@ The full tool surface is supported on X11 (background input via AT-SPI
 opt-in and still preview. See `LINUX.md`. Install:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
 ```
 
 (On Linux the canonical installer auto-detects the non-macOS host and

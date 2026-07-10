@@ -144,9 +144,9 @@ Create and manage macOS/Linux VMs with near-native performance on Apple Silicon 
 /bin/bash -c "$(curl -fsSL https://cua.ai/lume/install.sh)"
 
 # Create and start a vanilla macOS VM from an Apple restore image
-curl -L "$(lume ipsw | tail -n 1)" -o ~/Downloads/macos.ipsw
-lume create macos-sequoia --ipsw ~/Downloads/macos.ipsw --unattended sequoia
-lume run macos-sequoia
+curl -L "$(lume ipsw | tail -n 1)" -o ~/Downloads/macos-tahoe.ipsw
+lume create macos-tahoe --ipsw ~/Downloads/macos-tahoe.ipsw --unattended tahoe
+lume run macos-tahoe
 ```
 
 The `--unattended` option prepares the installed guest offline. The built-in

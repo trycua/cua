@@ -3,8 +3,6 @@ title: Install and run Lume
 description: Install Lume, Cua's local Apple Silicon VM manager for macOS and Linux guests.
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
-
 Lume is Cua's local VM manager for Apple Silicon Macs. Use it when you want to create, run, or serve macOS and Linux VMs on your own machine. It can provide local VM substrate for Cua workflows, but the primary product choice is still [Cua Driver](/tutorials/drive-your-first-app) for an existing machine or [Cua Sandbox](/tutorials/your-first-cloud-sandbox) for a fresh isolated desktop.
 
 ## Requirements
@@ -45,61 +43,16 @@ lume update --apply
 The installer no longer creates scheduled auto-updaters. Older `lume-update` cron jobs and
 LaunchAgents are removed the next time the installer runs.
 
-## Create a vanilla macOS VM
-
-Download the latest supported Apple restore image, then let Lume prepare the VM
-offline. This skips Setup Assistant, creates the `lume` user, enables SSH and
-autologin, and disables screen-lock sleep settings:
-
-```bash
-IPSW_URL="$(lume ipsw | tail -n 1)"
-curl -L "$IPSW_URL" -o ~/Downloads/macos.ipsw
-lume create macos-sequoia --ipsw ~/Downloads/macos.ipsw --unattended sequoia
-lume run macos-sequoia
-```
-
-The built-in `sequoia` and `tahoe` presets create the `lume` user, enable SSH,
-configure autologin, and disable sleep and screen locking without GUI
-automation. The default SSH credentials are `lume` / `lume`.
-
-The Tahoe flow is E2E verified from a local IPSW. Sequoia can still present
-the Accessibility step of Setup Assistant on its first display boot; see
-[issue #2155](https://github.com/trycua/cua/issues/2155).
-
-<Callout title="Security Note">
-  The unattended VM uses `lume`/`lume` for initial SSH and login access. Change
-  the password immediately with the `passwd` command.
-</Callout>
-
-## Use a registry image
-
-Lume can also pull and run prebuilt or custom VM snapshots from an OCI-compatible
-registry. Registry images are optional; they are useful when you need a prepared
-snapshot or want to share a customized VM.
-
-```bash
-lume pull <image>:<tag>
-lume run <image>:<tag>
-```
-
-## Start the API service manually
-
-By default, Lume is installed as a background service that starts automatically on login. If you prefer to start the Lume API service manually when needed, you can use the `--no-background-service` option:
-
-```bash
-/bin/bash -c "$(curl -fsSL https://cua.ai/lume/install.sh) --no-background-service"
-```
-
-<Callout title="Note">
-  With this option, you'll need to manually start the Lume API service by running `lume serve` in
-  your terminal whenever you need tools or libraries that rely on the local Lume HTTP API.
-</Callout>
-
-## Manual download
+## Manual installation
 
 You can also download the `lume.pkg.tar.gz` archive from the [latest release](https://github.com/trycua/cua/releases?q=lume&expanded=true), extract it, and install the package manually.
 
 ## Next steps
 
+- [Create your first local VM](/tutorials/create-your-first-lume-vm): follow the Tahoe happy path from IPSW to SSH.
+- [Create a vanilla Tahoe VM](/how-to-guides/lume/create-vanilla-vm): create, run, inspect, and remove a local VM.
+- [Manage local VMs](/how-to-guides/lume/manage-vms): share files, use storage locations, and clone disks.
+- [Serve the Lume API](/how-to-guides/lume/serve-api): run the local HTTP API for tools and scripts.
+- [Use Lume with MCP](/how-to-guides/lume/use-mcp-server): connect an AI client to local VM tools.
 - [Lume CLI reference](/reference/lume/cli-reference): inspect every command and option.
 - [Lume HTTP API reference](/reference/lume/http-api): use the local API from tools and scripts.

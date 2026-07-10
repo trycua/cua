@@ -85,7 +85,7 @@ struct CreateVMRequest: Codable {
     let display: String
     let ipsw: String?
     let storage: String?
-    /// Preset name or path to YAML config file for unattended macOS Setup Assistant automation
+    /// Preset name or YAML path for offline unattended macOS setup
     let unattended: String?
     /// Network mode: "nat" (default), "bridged", or "bridged:<interface>"
     let network: String?

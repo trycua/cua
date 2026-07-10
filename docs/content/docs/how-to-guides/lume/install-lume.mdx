@@ -45,18 +45,42 @@ lume update --apply
 The installer no longer creates scheduled auto-updaters. Older `lume-update` cron jobs and
 LaunchAgents are removed the next time the installer runs.
 
-## Run a prebuilt VM
+## Create a vanilla macOS VM
 
-Pull and start a prebuilt macOS image:
+Download the latest supported Apple restore image, then let Lume prepare the VM
+offline. This skips Setup Assistant, creates the `lume` user, enables SSH and
+autologin, and disables screen-lock sleep settings:
 
 ```bash
-lume run macos-sequoia-vanilla:latest
+IPSW_URL="$(lume ipsw | tail -n 1)"
+curl -L "$IPSW_URL" -o ~/Downloads/macos.ipsw
+lume create macos-sequoia --ipsw ~/Downloads/macos.ipsw --unattended sequoia
+lume run macos-sequoia
 ```
 
+The built-in `sequoia` and `tahoe` presets create the `lume` user, enable SSH,
+configure autologin, and disable sleep and screen locking without GUI
+automation. The default SSH credentials are `lume` / `lume`.
+
+The Tahoe flow is E2E verified from a local IPSW. Sequoia can still present
+the Accessibility step of Setup Assistant on its first display boot; see
+[issue #2155](https://github.com/trycua/cua/issues/2155).
+
 <Callout title="Security Note">
-  Prebuilt images use the default password `lume`. Change this immediately after your first login
-  using the `passwd` command.
+  The unattended VM uses `lume`/`lume` for initial SSH and login access. Change
+  the password immediately with the `passwd` command.
 </Callout>
+
+## Use a registry image
+
+Lume can also pull and run prebuilt or custom VM snapshots from an OCI-compatible
+registry. Registry images are optional; they are useful when you need a prepared
+snapshot or want to share a customized VM.
+
+```bash
+lume pull <image>:<tag>
+lume run <image>:<tag>
+```
 
 ## Start the API service manually
 

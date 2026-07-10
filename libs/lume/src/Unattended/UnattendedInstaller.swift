@@ -1,31 +1,92 @@
 import Foundation
-import Virtualization
 
 /// Orchestrates unattended macOS installation
 @MainActor
 final class UnattendedInstaller {
 
-    /// Run agent-based setup using Claude computer-use API
-    func installWithAgent(
+    /// Run unattended setup on a VM by patching the installed macOS disk offline.
+    func install(
         vm: VM,
-        apiKey: String,
-        model: String = "claude-sonnet-4-6",
-        maxIterations: Int = 100,
-        systemPrompt: String? = nil,
+        config: UnattendedConfig,
         vncPort: Int = 0,
         noDisplay: Bool = false,
         debug: Bool = false,
         debugDir: String? = nil
     ) async throws {
-        Logger.info("Starting agent-based setup", metadata: [
+        Logger.info("Starting offline unattended installation", metadata: [
             "vm": vm.name,
-            "model": model,
-            "maxIterations": "\(maxIterations)",
-            "debug": "\(debug)"
+            "configBootCommandCount": "\(config.bootCommands.count)",
+            "postSshCommandCount": "\(config.postSshCommands?.count ?? 0)",
+            "verifyVncPort": "\(vncPort)",
+            "compatNoDisplayFlag": "\(noDisplay)",
+            "compatDebugFlag": "\(debug)",
+            "compatDebugDir": debugDir ?? "default"
         ])
 
-        // Start the VM (same retry logic as preset mode)
-        Logger.info("Starting VM for agent setup (background task)")
+        try await materializeFirstBootState(vm: vm, vncPort: vncPort)
+
+        let patcher = MacOSOfflineSetupPatcher()
+        try patcher.patch(vm: vm)
+
+        try await verifySetup(vm: vm, config: config, vncPort: vncPort)
+    }
+
+    private func materializeFirstBootState(vm: VM, vncPort: Int) async throws {
+        Logger.info("Starting VM once to materialize first-boot state before offline patch", metadata: [
+            "vm": vm.name
+        ])
+
+        var vmStartError: Error?
+        let vmTask = Task {
+            do {
+                try await vm.run(
+                    noDisplay: true,
+                    sharedDirectories: [],
+                    mount: nil,
+                    vncPort: vncPort,
+                    recoveryMode: false,
+                    usbMassStoragePaths: []
+                )
+            } catch {
+                vmStartError = error
+                throw error
+            }
+        }
+
+        try await Task.sleep(nanoseconds: 2_000_000_000)
+
+        if let error = vmStartError {
+            Logger.error("VM failed to start during first-boot materialization", metadata: [
+                "error": error.localizedDescription
+            ])
+            throw error
+        }
+
+        do {
+            let vmIP = try await waitForIPAddress(vm: vm, timeoutSeconds: 120)
+            Logger.info("First-boot state materialized enough for offline patch", metadata: [
+                "vm": vm.name,
+                "ip": vmIP
+            ])
+        } catch {
+            vmTask.cancel()
+            try? await vm.stop()
+            throw error
+        }
+
+        try await Task.sleep(nanoseconds: 10_000_000_000)
+
+        Logger.info("Stopping VM before offline patch", metadata: ["vm": vm.name])
+        vmTask.cancel()
+        try? await vm.stop()
+        try await Task.sleep(nanoseconds: 3_000_000_000)
+    }
+
+    private func verifySetup(vm: VM, config: UnattendedConfig, vncPort: Int) async throws {
+        Logger.info("Starting VM to verify offline unattended setup", metadata: [
+            "vm": vm.name
+        ])
+
         var vmStartError: Error?
         let vmTask = Task {
             var attempts = 0
@@ -33,7 +94,7 @@ final class UnattendedInstaller {
             while attempts < maxAttempts {
                 do {
                     try await vm.run(
-                        noDisplay: noDisplay,
+                        noDisplay: true,
                         sharedDirectories: [],
                         mount: nil,
                         vncPort: vncPort,
@@ -50,7 +111,7 @@ final class UnattendedInstaller {
                                 "attempt": "\(attempts)/\(maxAttempts)",
                                 "waitTime": "5s"
                             ])
-                            try await Task.sleep(nanoseconds: 5_000_000_000)
+                            try await Task.sleep(nanoseconds: 5_000_000_000)  // Wait 5 seconds before retry
                             continue
                         }
                     }
@@ -60,7 +121,6 @@ final class UnattendedInstaller {
             }
         }
 
-        // Give the VM a moment to start
         try await Task.sleep(nanoseconds: 2_000_000_000)
 
         if let error = vmStartError {
@@ -68,65 +128,54 @@ final class UnattendedInstaller {
             throw error
         }
 
-        // Wait for boot (agent mode uses a fixed 60s boot wait)
-        let bootWait: UInt64 = 60
-        Logger.info("Waiting for VM to boot", metadata: ["bootWait": "\(bootWait)s"])
-        try await Task.sleep(nanoseconds: bootWait * 1_000_000_000)
-
-        // Connect VNC input client
-        Logger.info("Connecting VNC input client for agent automation")
-        try await vm.vncService.connectInputClient()
-
-        // Get display dimensions from VNC framebuffer
-        let framebufferSize = await vm.vncService.getFrameBufferSize() ?? (width: 1920, height: 1440)
-        let displayWidth = Int(framebufferSize.width)
-        let displayHeight = Int(framebufferSize.height)
-
-        Logger.info("VNC framebuffer size", metadata: [
-            "width": "\(displayWidth)",
-            "height": "\(displayHeight)"
-        ])
-
-        // Create SSH reachability check closure
-        let macAddress = vm.vmDirContext.config.macAddress
-        let sshCheck: (() async -> Bool)? = macAddress != nil ? {
-            guard let ip = DHCPLeaseParser.getIPAddress(forMAC: macAddress!) else {
-                return false
-            }
-            Logger.info("Checking SSH reachability", metadata: ["ip": ip])
-            let runner = HealthCheckRunner()
-            let check = HealthCheck(type: "ssh", user: "lume", password: "lume", timeout: 5, retries: 1, retryDelay: 0)
-            return (try? await runner.run(check: check, vmIP: ip)) ?? false
-        } : nil
-
-        // Create and run the agent
-        let debugDirectory: URL? = debugDir.map { URL(fileURLWithPath: $0) }
-        let agent = AgentSetupRunner(
-            vncService: vm.vncService,
-            apiKey: apiKey,
-            model: model,
-            displayWidth: displayWidth,
-            displayHeight: displayHeight,
-            maxIterations: maxIterations,
-            debug: debug,
-            debugDirectory: debugDirectory,
-            sshCheck: sshCheck
-        )
-
         do {
-            try await agent.run(systemPrompt: systemPrompt)
-            Logger.info("Agent setup completed successfully")
+            let vmIP = try await waitForIPAddress(vm: vm, timeoutSeconds: 300)
+            let healthCheck = config.healthCheck ?? HealthCheck(
+                type: "ssh",
+                user: "lume",
+                password: "lume",
+                timeout: 5,
+                retries: 60,
+                retryDelay: 5
+            )
 
-            vm.vncService.disconnectInputClient()
+            Logger.info("Running offline setup health check", metadata: [
+                "type": healthCheck.type,
+                "ip": vmIP
+            ])
 
-            // Stop the VM
-            Logger.info("Agent setup finished - stopping VM")
+            let runner = HealthCheckRunner()
+            let passed = try await runner.run(check: healthCheck, vmIP: vmIP)
+
+            guard passed else {
+                throw UnattendedError.healthCheckFailed("Health check '\(healthCheck.type)' failed")
+            }
+
+            try await finalizeGuestSystemSetup(
+                vmIP: vmIP,
+                user: healthCheck.user ?? "lume",
+                password: healthCheck.password ?? "lume"
+            )
+
+            if let postCommands = config.postSshCommands, !postCommands.isEmpty {
+                Logger.info("Running post-SSH commands", metadata: ["count": "\(postCommands.count)"])
+                try await runner.runPostSshCommands(
+                    commands: postCommands,
+                    vmIP: vmIP,
+                    user: healthCheck.user ?? "lume",
+                    password: healthCheck.password ?? "lume"
+                )
+                Logger.info("Post-SSH commands completed")
+            }
+
+            Logger.info("Offline unattended setup verified - stopping VM")
             vmTask.cancel()
             try? await vm.stop()
             Logger.info("VM stopped", metadata: ["name": vm.name])
         } catch {
-            Logger.error("Agent setup failed", metadata: ["error": error.localizedDescription])
-            vm.vncService.disconnectInputClient()
+            Logger.error("Offline unattended setup verification failed", metadata: [
+                "error": error.localizedDescription
+            ])
             vmTask.cancel()
             try? await vm.stop()
             Logger.info("VM stopped after failure", metadata: ["name": vm.name])
@@ -134,168 +183,68 @@ final class UnattendedInstaller {
         }
     }
 
-    /// Run unattended setup on a VM using preset commands
-    func install(
-        vm: VM,
-        config: UnattendedConfig,
-        vncPort: Int = 0,
-        noDisplay: Bool = false,
-        debug: Bool = false,
-        debugDir: String? = nil
-    ) async throws {
-        Logger.info("Starting unattended installation", metadata: [
-            "vm": vm.name,
-            "bootWait": "\(config.bootWait)s",
-            "commandCount": "\(config.bootCommands.count)",
-            "noDisplay": "\(noDisplay)",
-            "debug": "\(debug)",
-            "debugDir": debugDir ?? "default"
+    private func finalizeGuestSystemSetup(vmIP: String, user: String, password: String) async throws {
+        Logger.info("Finalizing guest system setup via SSH", metadata: [
+            "host": vmIP,
+            "user": user
         ])
 
-        // Parse all boot commands first to catch any syntax errors
-        let parser = BootCommandParser()
-        let commands = try parser.parseAll(config.bootCommands)
+        let sshClient = SSHClient(host: vmIP, port: 22, user: user, password: password)
+        let escapedPassword = password.replacingOccurrences(of: "'", with: "'\\''")
+        let script = """
+        set -e
+        /usr/bin/touch /var/db/.AppleSetupDone
+        /usr/sbin/chown root:wheel /var/db/.AppleSetupDone
+        /bin/chmod 644 /var/db/.AppleSetupDone
+        /usr/bin/defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser -string lume
+        /usr/bin/defaults write /Library/Preferences/com.apple.loginwindow GuestEnabled -bool false
+        /usr/bin/defaults write /Library/Preferences/com.apple.loginwindow lastUser -string loggedIn
+        /usr/bin/defaults write /Library/Preferences/com.apple.loginwindow lastUserName -string lume
+        /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeCloudSetup -bool true
+        /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeePrivacy -bool true
+        /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeSiriSetup -bool true
+        /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeTouchIDSetup -bool true
+        /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeTrueToneSetup -bool true
+        /bin/launchctl enable system/com.openssh.sshd
+        /usr/bin/stat -f 'MARKER_OWNER=%u:%g' /var/db/.AppleSetupDone
+        """
+        let encodedScript = Data(script.utf8).base64EncodedString()
+        let command = "printf '%s\\n' '\(escapedPassword)' | /usr/bin/sudo -S /bin/sh -c '/bin/echo \(encodedScript) | /usr/bin/base64 -D | /bin/sh'"
+        let result = try await sshClient.execute(command: command, timeout: 60)
 
-        Logger.info("Parsed boot commands", metadata: ["count": "\(commands.count)"])
-
-        // Start the VM in a background task (vm.run() blocks forever on success)
-        // We use retry logic to handle cases where auxiliary storage is still locked
-        // from a previous IPSW installation (race condition with VZVirtualMachine deallocation)
-        Logger.info("Starting VM for unattended setup (background task)")
-        var vmStartError: Error?
-        let vmTask = Task {
-            var attempts = 0
-            let maxAttempts = 3
-            while attempts < maxAttempts {
-                do {
-                    try await vm.run(
-                        noDisplay: noDisplay,
-                        sharedDirectories: [],
-                        mount: nil,
-                        vncPort: vncPort,
-                        recoveryMode: false,
-                        usbMassStoragePaths: []
-                    )
-                    return  // VM started successfully
-                } catch {
-                    let errorDescription = error.localizedDescription
-                    // Check if this is the auxiliary storage lock error
-                    if errorDescription.contains("auxiliary storage") || errorDescription.contains("Failed to lock") {
-                        attempts += 1
-                        if attempts < maxAttempts {
-                            Logger.info("VM start failed due to auxiliary storage lock, retrying", metadata: [
-                                "attempt": "\(attempts)/\(maxAttempts)",
-                                "waitTime": "5s"
-                            ])
-                            try await Task.sleep(nanoseconds: 5_000_000_000)  // Wait 5 seconds before retry
-                            continue
-                        }
-                    }
-                    // For other errors or after max retries, store and rethrow
-                    vmStartError = error
-                    throw error
-                }
-            }
+        guard result.exitCode == 0 else {
+            throw UnattendedError.commandExecutionFailed(
+                "Guest system finalization failed with exit code \(result.exitCode): \(result.output)"
+            )
         }
 
-        // Give the VM a moment to start up and check for early failures
-        try await Task.sleep(nanoseconds: 2_000_000_000)  // 2 seconds
-
-        // Check if VM start failed early (e.g., auxiliary storage lock error)
-        if let error = vmStartError {
-            Logger.error("VM failed to start", metadata: ["error": error.localizedDescription])
-            throw error
+        guard result.output.contains("MARKER_OWNER=0:0") else {
+            throw UnattendedError.commandExecutionFailed(
+                "Guest setup marker has unexpected ownership: \(result.output)"
+            )
         }
 
-        // Wait for initial boot
-        Logger.info("Waiting for VM to boot", metadata: ["bootWait": "\(config.bootWait)s"])
-        try await Task.sleep(nanoseconds: UInt64(config.bootWait) * 1_000_000_000)
+        Logger.info("Guest system setup finalized via SSH", metadata: ["host": vmIP])
+    }
 
-        // Connect VNC input client for sending mouse/keyboard events
-        Logger.info("Connecting VNC input client for automation")
-        try await vm.vncService.connectInputClient()
+    private func waitForIPAddress(vm: VM, timeoutSeconds: Int) async throws -> String {
+        guard let macAddress = vm.vmDirContext.config.macAddress else {
+            throw UnattendedError.healthCheckFailed("VM MAC address not available")
+        }
 
-        // Get display dimensions from VNC framebuffer (actual resolution)
-        // This is the resolution the VNC server expects for input coordinates
-        let (vncWidth, vncHeight) = await vm.vncService.getFrameBufferSize() ?? (1920, 1440)
-        let displayWidth = CGFloat(vncWidth)
-        let displayHeight = CGFloat(vncHeight)
-
-        Logger.info("VNC framebuffer size", metadata: [
-            "width": "\(Int(displayWidth))",
-            "height": "\(Int(displayHeight))"
-        ])
-
-        // Create VNC automation engine
-        let debugDirectory: URL? = debugDir.map { URL(fileURLWithPath: $0) }
-        let automation = VNCAutomation(
-            vncService: vm.vncService,
-            displayWidth: displayWidth,
-            displayHeight: displayHeight,
-            debug: debug,
-            debugDirectory: debugDirectory
-        )
-
-        // Execute boot commands
-        Logger.info("Executing boot commands for Setup Assistant automation")
-
-        do {
-            try await automation.executeAll(commands)
-            Logger.info("Unattended setup completed successfully")
-
-            // Disconnect VNC input client (no longer needed for automation)
-            vm.vncService.disconnectInputClient()
-
-            // Run health check if configured
-            if let healthCheck = config.healthCheck {
-                Logger.info("Running health check", metadata: ["type": healthCheck.type])
-
-                // Get VM IP address from MAC address
-                guard let macAddress = vm.vmDirContext.config.macAddress,
-                      let vmIP = DHCPLeaseParser.getIPAddress(forMAC: macAddress) else {
-                    Logger.error("Cannot run health check - VM IP address not available")
-                    throw UnattendedError.healthCheckFailed("VM IP address not available")
-                }
-
-                let runner = HealthCheckRunner()
-                let passed = try await runner.run(check: healthCheck, vmIP: vmIP)
-
-                if passed {
-                    Logger.info("Health check passed ✓", metadata: ["type": healthCheck.type])
-
-                    // Run post-SSH commands if configured (more reliable than VNC typing)
-                    if let postCommands = config.postSshCommands, !postCommands.isEmpty {
-                        Logger.info("Running post-SSH commands", metadata: ["count": "\(postCommands.count)"])
-                        try await runner.runPostSshCommands(
-                            commands: postCommands,
-                            vmIP: vmIP,
-                            user: healthCheck.user ?? "lume",
-                            password: healthCheck.password ?? "lume"
-                        )
-                        Logger.info("Post-SSH commands completed ✓")
-                    }
-                } else {
-                    Logger.error("Health check failed ✗", metadata: ["type": healthCheck.type])
-                    throw UnattendedError.healthCheckFailed("Health check '\(healthCheck.type)' failed")
-                }
+        let deadline = Date().addingTimeInterval(TimeInterval(timeoutSeconds))
+        while Date() < deadline {
+            if let ip = DHCPLeaseParser.getIPAddress(forMAC: macAddress) {
+                Logger.info("Found VM IP for offline setup verification", metadata: [
+                    "vm": vm.name,
+                    "ip": ip
+                ])
+                return ip
             }
 
-            // Success - stop the VM
-            Logger.info("Unattended setup finished successfully - stopping VM")
-            vmTask.cancel()
-            try? await vm.stop()
-            Logger.info("VM stopped", metadata: ["name": vm.name])
-        } catch {
-            Logger.error("Unattended setup failed", metadata: [
-                "error": error.localizedDescription
-            ])
-            // Disconnect VNC input client
-            vm.vncService.disconnectInputClient()
-            // Cancel VM task and stop
-            vmTask.cancel()
-            try? await vm.stop()
-            Logger.info("VM stopped after failure", metadata: ["name": vm.name])
-            throw error
+            try await Task.sleep(nanoseconds: 5_000_000_000)
         }
+
+        throw UnattendedError.healthCheckFailed("VM IP address not available after \(timeoutSeconds)s")
     }
 }

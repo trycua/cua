@@ -111,13 +111,13 @@ enum CommandDocExtractor {
                 OptionDoc(name: "display", shortName: nil, help: "Display resolution (e.g., 1024x768)", type: "String", defaultValue: "1024x768", isOptional: false),
                 OptionDoc(name: "ipsw", shortName: nil, help: "Path to IPSW file or 'latest' for macOS VMs", type: "String", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
-                OptionDoc(name: "unattended", shortName: nil, help: "[Preview] Preset name or path to YAML config file for unattended macOS Setup Assistant automation. Built-in presets: sequoia, tahoe. Only supported for macOS VMs.", type: "String", defaultValue: nil, isOptional: true),
-                OptionDoc(name: "debug-dir", shortName: nil, help: "Custom directory for debug screenshots during unattended setup (defaults to unique folder in system temp)", type: "String", defaultValue: nil, isOptional: true),
-                OptionDoc(name: "vnc-port", shortName: nil, help: "Port to use for the VNC server during unattended setup. Defaults to 0 (auto-assign)", type: "Int", defaultValue: "0", isOptional: true),
+                OptionDoc(name: "unattended", shortName: nil, help: "Prepare macOS unattended setup offline after install. Preset name or YAML path is accepted for compatibility. Built-in presets: sequoia, tahoe. Only supported for macOS VMs.", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "debug-dir", shortName: nil, help: "Compatibility option; ignored by offline setup.", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "vnc-port", shortName: nil, help: "Port to use for the temporary verification VNC server. Defaults to 0 (auto-assign).", type: "Int", defaultValue: "0", isOptional: true),
             ],
             flags: [
-                FlagDoc(name: "debug", shortName: nil, help: "Enable debug mode for unattended setup - saves screenshots with click coordinates", defaultValue: false),
-                FlagDoc(name: "no-display", shortName: nil, help: "Do not open the VNC client during unattended setup (default: true for unattended)", defaultValue: false),
+                FlagDoc(name: "debug", shortName: nil, help: "Compatibility flag; ignored by offline setup.", defaultValue: false),
+                FlagDoc(name: "no-display", shortName: nil, help: "Compatibility flag; offline setup verifies headlessly.", defaultValue: false),
             ],
             subcommands: []
         )
@@ -128,7 +128,7 @@ enum CommandDocExtractor {
     private static var pullDoc: CommandDoc {
         CommandDoc(
             name: "pull",
-            abstract: "Pull a macOS image from GitHub Container Registry",
+            abstract: "Pull a prebuilt or custom macOS image from an OCI-compatible registry",
             discussion: nil,
             arguments: [
                 ArgumentDoc(name: "image", help: "Image to pull (format: name:tag)", type: "String", isOptional: false),
@@ -149,7 +149,7 @@ enum CommandDocExtractor {
     private static var pushDoc: CommandDoc {
         CommandDoc(
             name: "push",
-            abstract: "Push a macOS VM to GitHub Container Registry",
+            abstract: "Push a macOS VM to an OCI-compatible registry",
             discussion: nil,
             arguments: [
                 ArgumentDoc(name: "name", help: "Name of VM to push", type: "String", isOptional: false),
@@ -548,20 +548,20 @@ enum CommandDocExtractor {
     private static var setupDoc: CommandDoc {
         CommandDoc(
             name: "setup",
-            abstract: "[Preview] Run unattended Setup Assistant automation on a macOS VM",
-            discussion: "This is an experimental feature. Unattended configurations are specific to macOS versions and may not work across different releases.",
+            abstract: "Prepare unattended macOS setup",
+            discussion: "Lume prepares the macOS disk offline, skips Setup Assistant, enables autologin and SSH, disables screensaver lock, verifies SSH, then stops the VM.",
             arguments: [
                 ArgumentDoc(name: "name", help: "Name of the virtual machine", type: "String", isOptional: false),
             ],
             options: [
-                OptionDoc(name: "unattended", shortName: nil, help: "Preset name or path to YAML config file for unattended macOS Setup Assistant automation. Built-in presets: sequoia, tahoe.", type: "String", defaultValue: nil, isOptional: false),
+                OptionDoc(name: "unattended", shortName: nil, help: "Defaults to tahoe. Preset name or YAML path for compatibility and optional post-SSH commands. Built-in presets: sequoia, tahoe.", type: "String", defaultValue: "tahoe", isOptional: true),
                 OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use or direct path to VM location", type: "String", defaultValue: nil, isOptional: true),
-                OptionDoc(name: "vnc-port", shortName: nil, help: "Port to use for the VNC server. Defaults to 0 (auto-assign)", type: "Int", defaultValue: "0", isOptional: true),
-                OptionDoc(name: "debug-dir", shortName: nil, help: "Custom directory for debug screenshots (defaults to unique folder in system temp)", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "vnc-port", shortName: nil, help: "Port to use for the temporary verification VNC server. Defaults to 0 (auto-assign)", type: "Int", defaultValue: "0", isOptional: true),
+                OptionDoc(name: "debug-dir", shortName: nil, help: "Compatibility option; ignored by offline setup", type: "String", defaultValue: nil, isOptional: true),
             ],
             flags: [
-                FlagDoc(name: "no-display", shortName: nil, help: "Do not open the VNC client automatically", defaultValue: false),
-                FlagDoc(name: "debug", shortName: nil, help: "Enable debug mode - saves screenshots with click coordinates", defaultValue: false),
+                FlagDoc(name: "no-display", shortName: nil, help: "Compatibility flag; offline setup verifies headlessly", defaultValue: false),
+                FlagDoc(name: "debug", shortName: nil, help: "Compatibility flag; ignored by offline setup", defaultValue: false),
             ],
             subcommands: []
         )

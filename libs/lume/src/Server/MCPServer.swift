@@ -2,7 +2,7 @@ import Foundation
 import MCP
 
 /// MCP (Model Context Protocol) server for Lume VM management
-/// Allows AI agents like Claude to manage VMs through MCP tools
+/// Allows MCP clients to manage VMs through tools
 @MainActor
 final class LumeMCPServer {
     private let controller: LumeController
@@ -140,11 +140,11 @@ final class LumeMCPServer {
         ```
 
         ### 2. Create a New VM (if needed)
-        Creating a VM takes 15-30 minutes. Use `unattended: "tahoe"` for automatic setup with SSH enabled:
+        Creating a VM takes 15-30 minutes. Use `unattended: "tahoe"` for offline setup with autologin and SSH enabled:
         ```
         lume_create_vm(name: "sandbox", unattended: "tahoe")
         ```
-        The tool returns immediately. Poll `lume_list_vms` to monitor progress—status changes from `provisioning (ipsw_install)` → `running` (during unattended setup) → `stopped`.
+        The tool returns immediately. Poll `lume_list_vms` to monitor progress—status changes from `provisioning (ipsw_install)` → `running` (during SSH verification) → `stopped`.
 
         ### 3. Start the VM
         Start with optional shared directory for file access:
@@ -197,7 +197,7 @@ final class LumeMCPServer {
         | `stopped` | Ready to start |
         | `running` | VM is active |
         | `provisioning (ipsw_install)` | Installing macOS |
-        | `running` | VM is running (including during unattended setup) |
+        | `running` | VM is running (including during unattended SSH verification) |
 
         ## Limitations
         - Max 2 macOS VMs running simultaneously (Apple licensing)
@@ -259,7 +259,7 @@ final class LumeMCPServer {
                 messages: [
                     .user("""
                         Create a new macOS sandbox VM named '\(vmName)' with these requirements:
-                        1. Use unattended setup (tahoe preset) for automatic configuration
+                        1. Use unattended setup (tahoe preset) for offline configuration
                         2. The VM should have SSH enabled with credentials lume/lume
                         3. Monitor the provisioning status until complete
                         4. Once ready, start the VM in headless mode

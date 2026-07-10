@@ -718,13 +718,12 @@ final class LumeController {
         // Run unattended setup if config is provided
         if let config = unattendedConfig, os.lowercased() == "macos" {
             // Note: We don't write a provisioning marker for unattended setup.
-            // The VM has disk + nvram at this point, so it's "running" during
-            // the setup automation, not "provisioning".
+            // The finalized VM is patched offline, then booted briefly for SSH verification.
 
             // Wait for the installation VZVirtualMachine to fully release auxiliary storage locks.
             Logger.info("Waiting for installation resources to be released before unattended setup")
             try await Task.sleep(nanoseconds: 3_000_000_000)  // 3 seconds
-            Logger.info("Starting unattended Setup Assistant automation", metadata: ["name": name])
+            Logger.info("Starting offline unattended setup", metadata: ["name": name])
 
             // Load the finalized VM
             let finalVM = try get(name: name, storage: storage)
@@ -754,12 +753,12 @@ final class LumeController {
                 throw error
             }
 
-            Logger.info("Unattended setup completed", metadata: ["name": name])
+            Logger.info("Offline unattended setup completed", metadata: ["name": name])
         }
     }
 
 
-    /// Run unattended Setup Assistant automation on an existing macOS VM
+    /// Run offline unattended setup on an existing macOS VM
     @MainActor
     public func setup(
         name: String,
@@ -776,8 +775,8 @@ final class LumeController {
             metadata: [
                 "name": normalizedName,
                 "storage": storage ?? "home",
-                "bootWait": "\(config.bootWait)s",
-                "commands": "\(config.bootCommands.count)",
+                "config_boot_wait": "\(config.bootWait)s",
+                "config_boot_commands": "\(config.bootCommands.count)",
                 "debug": "\(debug)",
                 "debugDir": debugDir ?? "default"
             ])
@@ -798,57 +797,6 @@ final class LumeController {
             Logger.info("Unattended setup completed", metadata: ["name": normalizedName])
         } catch {
             Logger.error("Failed to run unattended setup", metadata: ["error": error.localizedDescription])
-            throw error
-        }
-    }
-
-    /// Run agent-based Setup Assistant automation using Claude computer-use API
-    @MainActor
-    public func setupWithAgent(
-        name: String,
-        apiKey: String,
-        model: String = "claude-sonnet-4-6",
-        maxIterations: Int = 100,
-        systemPrompt: String? = nil,
-        storage: String? = nil,
-        vncPort: Int = 0,
-        noDisplay: Bool = false,
-        debug: Bool = false,
-        debugDir: String? = nil
-    ) async throws {
-        let normalizedName = normalizeVMName(name: name)
-        Logger.info(
-            "Running agent-based setup",
-            metadata: [
-                "name": normalizedName,
-                "model": model,
-                "maxIterations": "\(maxIterations)",
-                "debug": "\(debug)"
-            ])
-
-        do {
-            let vm = try get(name: normalizedName, storage: storage)
-
-            guard vm.config.os.lowercased() == "macos" else {
-                throw VMError.unsupportedOS("Unattended setup is only supported for macOS VMs, got: \(vm.config.os)")
-            }
-
-            let installer = UnattendedInstaller()
-            try await installer.installWithAgent(
-                vm: vm,
-                apiKey: apiKey,
-                model: model,
-                maxIterations: maxIterations,
-                systemPrompt: systemPrompt,
-                vncPort: vncPort,
-                noDisplay: noDisplay,
-                debug: debug,
-                debugDir: debugDir
-            )
-
-            Logger.info("Agent-based setup completed", metadata: ["name": normalizedName])
-        } catch {
-            Logger.error("Failed to run agent-based setup", metadata: ["error": error.localizedDescription])
             throw error
         }
     }

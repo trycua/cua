@@ -143,9 +143,19 @@ Create and manage macOS/Linux VMs with near-native performance on Apple Silicon 
 # Install Lume
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
 
-# Pull & start a macOS VM
-lume run macos-sequoia-vanilla:latest
+# Create and start a vanilla macOS VM from an Apple restore image
+curl -L "$(lume ipsw | tail -n 1)" -o ~/Downloads/macos.ipsw
+lume create macos-sequoia --ipsw ~/Downloads/macos.ipsw --unattended sequoia
+lume run macos-sequoia
 ```
+
+The `--unattended` option prepares the installed guest offline. The built-in
+`sequoia` and `tahoe` presets create the `lume` user, enable SSH, configure
+autologin, and disable sleep and screen locking. The default credentials are
+`lume` / `lume`.
+
+The Tahoe flow is E2E verified. Sequoia may still open the Accessibility step
+of Setup Assistant on its first display boot; see [issue #2155](https://github.com/trycua/cua/issues/2155).
 
 **[Get Started](https://cua.ai/docs/lume)** | **[FAQ](https://cua.ai/docs/lume/guide/getting-started/faq)** | **[CLI Reference](https://cua.ai/docs/lume/reference/cli-reference)**
 

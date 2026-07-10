@@ -41,4 +41,6 @@ jobs:
           workspaces: "libs/cua-driver/rust -> target"
       - name: Run Windows Rust tests
         working-directory: libs/cua-driver/rust
-        run: cargo test -p cua-driver -p cua-driver-core -p cua-driver-testkit -p platform-windows -p cua-driver-uia -p focus-monitor-win --all-targets --locked
+        # Compile every Rust target without executing desktop-dependent integration
+        # tests; interactive behavior belongs in e2e-rust-windows.yml.
+        run: cargo test -p cua-driver -p cua-driver-core -p cua-driver-testkit -p platform-windows -p cua-driver-uia -p focus-monitor-win --all-targets --no-run --locked

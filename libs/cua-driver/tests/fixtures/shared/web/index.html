@@ -45,7 +45,8 @@
   <fieldset>
     <legend>text_input</legend>
     <div class="row">
-      <input type="text" id="txt-input" data-cua-id="txt-input" placeholder="type here" />
+      <input type="text" id="txt-input" data-cua-id="txt-input"
+             aria-label="txt-input" placeholder="type here" />
       <span class="mirror" id="lbl-input-mirror" data-cua-id="lbl-input-mirror">mirror=</span>
     </div>
   </fieldset>
@@ -103,7 +104,8 @@
   <fieldset>
     <legend>click_target</legend>
     <div class="row">
-      <span id="click-target" data-cua-id="border-click-target">Click target (left / right / double)</span>
+      <span id="click-target" data-cua-id="border-click-target" role="button"
+            tabindex="0" aria-label="border-click-target">Click target (left / right / double)</span>
     </div>
     <div class="row">
       <span class="mirror" id="lbl-last-action" data-cua-id="lbl-last-action">last_action=none</span>

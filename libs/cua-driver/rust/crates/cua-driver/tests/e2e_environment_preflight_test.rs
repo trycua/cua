@@ -226,6 +226,33 @@ fn run_preflight() {
         .status()
         .expect("ffprobe is required for canonical E2E");
     assert!(probe.success(), "ffprobe rejected the preflight video");
+
+    let frame = recording_dir.join("preflight-frame.png");
+    let extracted = Command::new("ffmpeg")
+        .args(["-y", "-sseof", "-0.2", "-i"])
+        .arg(&video)
+        .args(["-frames:v", "1"])
+        .arg(&frame)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("ffmpeg is required for canonical E2E");
+    assert!(
+        extracted.success(),
+        "could not extract preflight video frame"
+    );
+    let frame = image::open(&frame)
+        .expect("preflight video frame is not a readable image")
+        .to_rgb8();
+    let non_dark_pixels = frame
+        .pixels()
+        .filter(|pixel| pixel.0.iter().copied().max().unwrap_or(0) > 30)
+        .count();
+    assert!(
+        non_dark_pixels * 1_000 >= frame.pixels().len(),
+        "preflight video is effectively blank: {non_dark_pixels}/{} non-dark pixels",
+        frame.pixels().len()
+    );
 }
 
 fn panic_message(payload: &Box<dyn Any + Send>) -> String {

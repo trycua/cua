@@ -152,8 +152,7 @@ where
     let started = Instant::now();
     let mut evidence = Evidence::default();
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
-        let mut fixture = launch_host(spec, &case.cell_id)?;
-        evidence = fixture.evidence();
+        let mut fixture = launch_host_with_evidence(spec, &case.cell_id, &mut evidence)?;
         let mut observation = test(&mut fixture);
         observation.evidence = evidence.clone();
         Some(observation)
@@ -207,33 +206,38 @@ struct Fixture {
     name: &'static str,
 }
 
-impl Fixture {
-    fn evidence(&self) -> Evidence {
-        let Some(recording_dir) = self.driver.recording_dir() else {
-            return Evidence::default();
-        };
-        let relative_dir = std::env::var_os("CUA_E2E_RECORDINGS_ROOT")
-            .map(PathBuf::from)
-            .and_then(|root| recording_dir.strip_prefix(root).ok().map(PathBuf::from))
-            .unwrap_or_else(|| {
-                recording_dir
-                    .file_name()
-                    .map(PathBuf::from)
-                    .unwrap_or_default()
-            });
-        let artifact_dir = PathBuf::from("recordings").join(relative_dir);
-        let artifact_path =
-            |name: &str| artifact_dir.join(name).to_string_lossy().replace('\\', "/");
-        Evidence {
-            video: Some(artifact_path("recording.mp4")),
-            trajectory: Some(artifact_path("trajectory.json")),
-            screenshot: None,
-            log: None,
-        }
+fn evidence_for_driver(driver: &McpDriver) -> Evidence {
+    let Some(recording_dir) = driver.recording_dir() else {
+        return Evidence::default();
+    };
+    let relative_dir = std::env::var_os("CUA_E2E_RECORDINGS_ROOT")
+        .map(PathBuf::from)
+        .and_then(|root| recording_dir.strip_prefix(root).ok().map(PathBuf::from))
+        .unwrap_or_else(|| {
+            recording_dir
+                .file_name()
+                .map(PathBuf::from)
+                .unwrap_or_default()
+        });
+    let artifact_dir = PathBuf::from("recordings").join(relative_dir);
+    let artifact_path = |name: &str| artifact_dir.join(name).to_string_lossy().replace('\\', "/");
+    Evidence {
+        video: Some(artifact_path("recording.mp4")),
+        trajectory: Some(artifact_path("trajectory.json")),
+        screenshot: None,
+        log: None,
     }
 }
 
 fn launch_host(spec: &HostSpec, scenario: &str) -> Option<Fixture> {
+    launch_host_with_evidence(spec, scenario, &mut Evidence::default())
+}
+
+fn launch_host_with_evidence(
+    spec: &HostSpec,
+    scenario: &str,
+    evidence: &mut Evidence,
+) -> Option<Fixture> {
     if !spec.path.exists() {
         if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
             panic!(
@@ -258,6 +262,7 @@ fn launch_host(spec: &HostSpec, scenario: &str) -> Option<Fixture> {
         }
         return None;
     };
+    *evidence = evidence_for_driver(&driver);
     let mut command = Command::new(&spec.path);
     command
         .args(&spec.args)
@@ -383,6 +388,8 @@ fn require_element(snapshot: &ToolResponse, id: &str) -> u64 {
     // label fallback handles adapters that omit both forms.
     let visible_label = match id {
         "editor-document" | "editor-save" | "scroll-tall" => id,
+        "border-click-target" => "Click target (left / right / double)",
+        "txt-input" => "type here",
         "keyboard-input" => "keyboard-input",
         "drag-source" => "Drag source",
         "drop-target" => "Drop target",

@@ -100,6 +100,15 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
     native::perform_action(pid, idx)
 }
 
+/// Give an indexed AT-SPI element keyboard focus without activating its window.
+pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
+    native::focus_element(pid, idx)
+}
+
+pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> Result<()> {
+    native::scroll_element(pid, idx, direction, amount)
+}
+
 /// Enumerate top-level windows from the AT-SPI registry. The window-listing
 /// fallback for Wayland compositors without `zwlr_foreign_toplevel_management`
 /// (GNOME Mutter / KDE KWin), where native apps have no X11 XID. Returns one

@@ -2344,6 +2344,29 @@ impl Tool for PressKeyTool {
         // background path (the focus-click already handled fronting when fg). Pass x,y
         // (no element_index) for Chromium/Electron surfaces the AX path can't focus.
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+
+        // An element-addressed keypress needs to establish the target's
+        // focus before the window-level X11 key event is sent. AT-SPI's
+        // primary action is the focus-free route for editable web controls;
+        // resolving the element only for its window ID silently loses the key
+        // on Chromium inputs whose window is backgrounded.
+        if let Some(element_index) = element_index_arg {
+            let focused = tokio::task::spawn_blocking(move || {
+                crate::atspi::focus_element(pid, element_index)
+            })
+            .await;
+            match focused {
+                Ok(Ok(true)) => {}
+                Ok(Ok(false)) => {
+                    return ToolResult::error(format!(
+                        "AT-SPI Component.GrabFocus returned false for element {element_index}"
+                    ))
+                }
+                Ok(Err(e)) => return ToolResult::error(e.to_string()),
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            }
+        }
+
         let px_focused = {
             let px = args.get("x").and_then(|v| v.as_f64());
             let py = args.get("y").and_then(|v| v.as_f64());
@@ -2775,6 +2798,62 @@ impl Tool for ScrollTool {
             }
         };
 
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        if !delivery.is_foreground() {
+            if let cua_driver_core::element_token::ResolvedElement::Element {
+                element_index, ..
+            } = &resolved
+            {
+                let idx = *element_index;
+                let direction_for_ax = direction.clone();
+                let ax_result = tokio::task::spawn_blocking(move || {
+                    crate::atspi::scroll_element(pid, idx, &direction_for_ax, amount)
+                })
+                .await;
+                if matches!(ax_result, Ok(Ok(()))) {
+                    return ToolResult::text(format!(
+                        "Scrolled {direction} {amount} ticks via AT-SPI (delivery_mode:background)."
+                    ))
+                    .with_structured(json!({
+                        "path": "atspi",
+                        "verified": false,
+                        "delivery_mode": "background"
+                    }));
+                }
+            }
+        }
+
+        // An element-addressed scroll must land over the element. The old
+        // fallback used (0, 0) in the window, which can report success while
+        // Chromium/GTK routes the wheel to the toplevel instead of the
+        // requested scroll region.
+        let element_point = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
+                let idx = *element_index;
+                match tokio::task::spawn_blocking(move || {
+                    resolve_element_local_coords(pid, idx, Some(xid))
+                })
+                .await
+                {
+                    Ok(Ok((_resolved_xid, local_x, local_y))) => {
+                        let screen = window_local_to_screen(xid, local_x, local_y).ok();
+                        Some(((local_x, local_y), screen))
+                    }
+                    Ok(Err(e)) => {
+                        return ToolResult::error(format!(
+                            "Could not resolve scroll element [{idx}] coordinates: {e}"
+                        ))
+                    }
+                    Err(e) => {
+                        return ToolResult::error(format!(
+                            "Scroll element coordinate task failed: {e}"
+                        ))
+                    }
+                }
+            }
+            cua_driver_core::element_token::ResolvedElement::None => None,
+        };
+
         // X11 scroll buttons: 4=up, 5=down, 6=left, 7=right
         // Note: "page" scroll is still per-click on X11; send more ticks for page.
         let button: u8 = match direction.as_str() {
@@ -2786,7 +2865,6 @@ impl Tool for ScrollTool {
         let direction_for_wayland = direction.clone();
         let amount_u32 = amount as u32;
         let cursor_id_for_task = cursor_id.clone();
-        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::is_wayland() {
                 return crate::wayland::scroll(xid, &direction_for_wayland, amount_u32);
@@ -2802,7 +2880,11 @@ impl Tool for ScrollTool {
                 // Button4-7 path on Xvfb / unsupported servers.
                 // Button → axis/sign: 4=up(+v) 5=down(-v) 6=left(-h) 7=right(+h).
                 if crate::input::real_pointer_input_available() {
-                    if let Ok((cx, cy)) = window_screen_center(xid) {
+                    let pointer_point = element_point
+                        .and_then(|(_, screen)| screen)
+                        .map(|(x, y)| (x as i32, y as i32))
+                        .or_else(|| window_screen_center(xid).ok());
+                    if let Some((cx, cy)) = pointer_point {
                         let horizontal = matches!(button, 6 | 7);
                         let ticks = match button {
                             4 | 7 => amount as i32,
@@ -2823,7 +2905,9 @@ impl Tool for ScrollTool {
                         }
                     }
                 }
-                crate::input::send_click(xid, 0, 0, amount, button)
+                let (local_x, local_y) =
+                    element_point.map(|(local, _)| local).unwrap_or((0.0, 0.0));
+                crate::input::send_click(xid, local_x as i32, local_y as i32, amount, button)
             };
             if delivery.is_foreground() {
                 crate::input::with_x11_foreground(xid, 80, x11_scroll)

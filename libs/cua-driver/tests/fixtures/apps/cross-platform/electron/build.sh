@@ -36,9 +36,72 @@ if [ "$platform" = "Darwin" ]; then
 else
   electronBin="$elecDir/node_modules/electron/dist/electron"
 fi
-if [ ! -x "$electronBin" ]; then
+electron_install_complete() {
+  if [ "$platform" = "Darwin" ]; then
+    [ -x "$electronBin" ] &&
+      [ -d "$elecDir/node_modules/electron/dist/Electron.app/Contents/Frameworks" ] &&
+      [ -f "$elecDir/node_modules/electron/dist/version" ] &&
+      [ -f "$elecDir/node_modules/electron/path.txt" ]
+  else
+    [ -x "$electronBin" ] &&
+      [ -f "$elecDir/node_modules/electron/dist/version" ] &&
+      [ -f "$elecDir/node_modules/electron/path.txt" ]
+  fi
+}
+
+if ! electron_install_complete; then
   echo "[INSTALL] npm install (first run)..."
   npm install --silent
+fi
+
+# npm 11 can leave package lifecycle scripts pending approval. In that case
+# npm reports success but Electron's postinstall has not downloaded the real
+# runtime. Run the pinned package installer explicitly after verifying the
+# runtime shape so a tiny executable stub cannot be staged as a harness.
+if ! electron_install_complete; then
+  echo "[INSTALL] Electron runtime incomplete; running the pinned installer..."
+  rm -rf "$elecDir/node_modules/electron/dist"
+  node "$elecDir/node_modules/electron/install.js"
+fi
+
+# Node 26 + the current extract-zip dependency can still leave the macOS
+# Frameworks payload out while returning success. Fall back to extracting the
+# same official artifact downloaded by @electron/get; this is deterministic
+# and works with the zip layout used by the pinned Electron version.
+if ! electron_install_complete; then
+  echo "[INSTALL] Electron helper produced an incomplete archive; extracting the official artifact..."
+  electron_platform="linux"
+  electron_path="electron"
+  if [ "$platform" = "Darwin" ]; then
+    electron_platform="darwin"
+    electron_path="Electron.app/Contents/MacOS/Electron"
+  fi
+  electron_zip="$({
+    ELECTRON_PLATFORM="$electron_platform" node <<'NODE'
+const { downloadArtifact } = require('@electron/get');
+const platform = process.env.ELECTRON_PLATFORM;
+downloadArtifact({
+  version: require('./node_modules/electron/package.json').version,
+  artifactName: 'electron',
+  platform,
+  arch: process.arch,
+}).then(path => process.stdout.write(path)).catch(error => {
+  console.error(error.stack || error);
+  process.exit(1);
+});
+NODE
+  })"
+  rm -rf "$elecDir/node_modules/electron/dist"
+  mkdir -p "$elecDir/node_modules/electron/dist"
+  unzip -q "$electron_zip" -d "$elecDir/node_modules/electron/dist"
+  printf '%s' "$electron_path" > "$elecDir/node_modules/electron/path.txt"
+  printf 'v%s' "$(node -p "require('./node_modules/electron/package.json').version")" \
+    > "$elecDir/node_modules/electron/dist/version"
+fi
+
+if ! electron_install_complete; then
+  echo "[ERROR] Electron runtime is incomplete after install" >&2
+  exit 1
 fi
 
 rm -rf "$outDir"

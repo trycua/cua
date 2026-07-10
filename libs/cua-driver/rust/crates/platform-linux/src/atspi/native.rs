@@ -991,6 +991,110 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
     )
 }
 
+/// Invoke an indexed scroll target's directional AT-SPI action.
+///
+/// Chromium exposes scrollable web regions as named actions such as
+/// `scrollDown`/`scrollForward`; using that accessibility route avoids the
+/// X11 `Button5` event path that Chromium silently drops in background mode.
+pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> Result<()> {
+    bounded(
+        async {
+            let conn = AccessibilityConnection::new()
+                .await
+                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
+            let visited = collect_visited(&conn, pid)
+                .await?
+                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+            let target = visited
+                .iter()
+                .filter(|v| is_indexable(v))
+                .nth(idx)
+                .ok_or_else(|| anyhow!("element {idx} not found (total: {})", visited.len()))?;
+            let proxies = target
+                .acc
+                .proxies()
+                .await
+                .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
+            let action = proxies
+                .action()
+                .await
+                .map_err(|e| anyhow!("Action interface unavailable: {e}"))?;
+            let wanted = match direction {
+                "up" => ["scrollup", "scrollbackward"],
+                "left" => ["scrollleft", "scrollbackward"],
+                "right" => ["scrollright", "scrollforward"],
+                _ => ["scrolldown", "scrollforward"],
+            };
+            let count = call(action.n_actions())
+                .await
+                .and_then(|result| result.ok())
+                .unwrap_or(0);
+            let mut selected = None;
+            for action_index in 0..count {
+                if let Some(Ok(name)) = call(action.get_name(action_index)).await {
+                    let normalized: String = name
+                        .chars()
+                        .filter(|ch| ch.is_ascii_alphanumeric())
+                        .flat_map(|ch| ch.to_lowercase())
+                        .collect();
+                    if wanted.iter().any(|candidate| *candidate == normalized) {
+                        selected = Some(action_index);
+                        break;
+                    }
+                }
+            }
+            let action_index = selected.ok_or_else(|| {
+                anyhow!("element {idx} exposes no directional scroll action for {direction}")
+            })?;
+            for _ in 0..amount.max(1) {
+                match call(action.do_action(action_index)).await {
+                    Some(Ok(true)) => {}
+                    Some(Ok(false)) => return Err(anyhow!("scroll action returned false")),
+                    Some(Err(e)) => return Err(anyhow!("scroll action failed: {e}")),
+                    None => return Err(anyhow!("scroll action timed out")),
+                }
+            }
+            Ok(())
+        },
+        || Err(anyhow!("scroll_element timed out for pid {pid}")),
+    )
+}
+
+/// Give an indexed element keyboard focus through AT-SPI Component.GrabFocus
+/// without activating or raising its toplevel window.
+pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
+    bounded(
+        async {
+            let conn = AccessibilityConnection::new()
+                .await
+                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
+            let visited = collect_visited(&conn, pid)
+                .await?
+                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+            let target = visited
+                .iter()
+                .filter(|v| is_indexable(v))
+                .nth(idx)
+                .ok_or_else(|| anyhow!("element {idx} not found (total: {})", visited.len()))?;
+            let proxies = target
+                .acc
+                .proxies()
+                .await
+                .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
+            let component = proxies
+                .component()
+                .await
+                .map_err(|e| anyhow!("Component interface unavailable: {e}"))?;
+            match call(component.grab_focus()).await {
+                Some(Ok(focused)) => Ok(focused),
+                Some(Err(e)) => Err(anyhow!("Component.GrabFocus failed for element {idx}: {e}")),
+                None => Err(anyhow!("Component.GrabFocus timed out for element {idx}")),
+            }
+        },
+        || Err(anyhow!("focus_element timed out for pid {pid}")),
+    )
+}
+
 /// Resolve a window-local pixel `(win_x, win_y)` to the deepest actionable
 /// AT-SPI element covering it and perform its primary action.
 ///

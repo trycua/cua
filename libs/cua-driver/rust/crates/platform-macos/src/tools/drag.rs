@@ -8,22 +8,27 @@
 //! recent zoom crop context, same as click/double_click.
 
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 use std::sync::Arc;
 
+use super::ToolState;
 use crate::apps;
 use crate::focus_guard;
 use crate::input::mouse::DragButton;
 use crate::window_change_detector::WindowChangeDetector;
-use super::ToolState;
 
 pub struct DragTool {
     pub state: Arc<ToolState>,
 }
 
 impl DragTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -98,11 +103,16 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for DragTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        let pid = match args.require_i32("pid") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         // delivery_mode: foreground briefly fronts the window before the
         // press-drag-release gesture (the explicit last resort for surfaces
         // that drop background CGEvents), via the same skylight assist click
@@ -112,7 +122,8 @@ impl Tool for DragTool {
 
         // Coerce integer or float from JSON for coordinate fields.
         let coerce = |key: &str| -> Option<f64> {
-            args.opt_f64(key).or_else(|| args.opt_i64(key).map(|i| i as f64))
+            args.opt_f64(key)
+                .or_else(|| args.opt_i64(key).map(|i| i as f64))
         };
 
         let mut from_x = match coerce("from_x") {
@@ -132,20 +143,22 @@ impl Tool for DragTool {
             None => return ToolResult::error("Missing required parameter: to_y"),
         };
 
-        let window_id   = args.opt_u64("window_id").map(|v| v as u32);
+        let window_id = args.opt_u64("window_id").map(|v| v as u32);
         let duration_ms = args.u64_or("duration_ms", 500);
-        let steps       = args.u64_or("steps", 20) as usize;
-        let from_zoom   = args.bool_or("from_zoom", false);
-        let button_str  = args.str_or("button", "left");
+        let steps = args.u64_or("steps", 20) as usize;
+        let from_zoom = args.bool_or("from_zoom", false);
+        let button_str = args.str_or("button", "left");
         let modifiers: Vec<String> = args.str_array("modifier");
 
         let button = match button_str.to_lowercase().as_str() {
-            "left"   => DragButton::Left,
-            "right"  => DragButton::Right,
+            "left" => DragButton::Left,
+            "right" => DragButton::Right,
             "middle" => DragButton::Middle,
-            other    => return ToolResult::error(format!(
-                "Unknown button \"{other}\" — expected left, right, or middle."
-            )),
+            other => {
+                return ToolResult::error(format!(
+                    "Unknown button \"{other}\" — expected left, right, or middle."
+                ))
+            }
         };
 
         // from_zoom: translate from last zoom crop context.
@@ -154,47 +167,76 @@ impl Tool for DragTool {
                 Some(ctx) => {
                     let (wx, wy) = ctx.zoom_to_window(from_x, from_y);
                     let (wx2, wy2) = ctx.zoom_to_window(to_x, to_y);
-                    from_x = wx; from_y = wy;
-                    to_x   = wx2; to_y   = wy2;
+                    from_x = wx;
+                    from_y = wy;
+                    to_x = wx2;
+                    to_y = wy2;
                 }
-                None => return ToolResult::error(format!(
-                    "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
-                )),
+                None => {
+                    return ToolResult::error(format!(
+                        "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
+                    ))
+                }
             }
         } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
-            from_x *= ratio; from_y *= ratio;
-            to_x   *= ratio; to_y   *= ratio;
+            from_x *= ratio;
+            from_y *= ratio;
+            to_x *= ratio;
+            to_y *= ratio;
         }
 
         // Translate window-local screenshot pixels → screen coordinates.
         // Also compute window-local logical coords for CGEventSetWindowLocation.
-        let (from_sx, from_sy, from_lx, from_ly,
-             to_sx,   to_sy,   to_lx,   to_ly) = if let Some(wid) = window_id {
-            let result = tokio::task::spawn_blocking(move || {
-                let bounds = crate::windows::window_bounds_by_id(wid);
-                let scale: f64 = if let Some(ref b) = bounds {
-                    if let Ok(png) = crate::capture::screenshot_window_bytes(wid) {
-                        if png.len() >= 24 {
-                            let pw = u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
-                            let lw = b.width;
-                            if lw > 0.0 && pw > lw { pw / lw } else { 1.0 }
-                        } else { 1.0 }
-                    } else { 1.0 }
-                } else { 1.0 };
-                (bounds, scale)
-            }).await.unwrap_or((None, 1.0));
+        let (from_sx, from_sy, from_lx, from_ly, to_sx, to_sy, to_lx, to_ly) =
+            if let Some(wid) = window_id {
+                let result = tokio::task::spawn_blocking(move || {
+                    let bounds = crate::windows::window_bounds_by_id(wid);
+                    let scale: f64 = if let Some(ref b) = bounds {
+                        if let Ok(png) = crate::capture::screenshot_window_bytes(wid) {
+                            if png.len() >= 24 {
+                                let pw =
+                                    u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
+                                let lw = b.width;
+                                if lw > 0.0 && pw > lw {
+                                    pw / lw
+                                } else {
+                                    1.0
+                                }
+                            } else {
+                                1.0
+                            }
+                        } else {
+                            1.0
+                        }
+                    } else {
+                        1.0
+                    };
+                    (bounds, scale)
+                })
+                .await
+                .unwrap_or((None, 1.0));
 
-            if let (Some(b), scale) = result {
-                let flx = from_x / scale; let fly = from_y / scale;
-                let tlx = to_x   / scale; let tly = to_y   / scale;
-                (b.x + flx, b.y + fly, flx, fly,
-                 b.x + tlx, b.y + tly, tlx, tly)
+                if let (Some(b), scale) = result {
+                    let flx = from_x / scale;
+                    let fly = from_y / scale;
+                    let tlx = to_x / scale;
+                    let tly = to_y / scale;
+                    (
+                        b.x + flx,
+                        b.y + fly,
+                        flx,
+                        fly,
+                        b.x + tlx,
+                        b.y + tly,
+                        tlx,
+                        tly,
+                    )
+                } else {
+                    (from_x, from_y, from_x, from_y, to_x, to_y, to_x, to_y)
+                }
             } else {
                 (from_x, from_y, from_x, from_y, to_x, to_y, to_x, to_y)
-            }
-        } else {
-            (from_x, from_y, from_x, from_y, to_x, to_y, to_x, to_y)
-        };
+            };
 
         // Animate agent cursor along drag path (start → end).
         if let Some(wid) = window_id {
@@ -226,21 +268,28 @@ impl Tool for DragTool {
                         let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
                         crate::input::mouse::drag_at_xy(
                             pid,
-                            from_sx, from_sy,
-                            to_sx,   to_sy,
+                            from_sx,
+                            from_sy,
+                            to_sx,
+                            to_sy,
                             Some((from_lx, from_ly)),
-                            Some((to_lx,   to_ly)),
+                            Some((to_lx, to_ly)),
                             window_id,
                             duration_ms,
                             steps,
                             &m,
                             button,
+                            fg,
                         )
                     };
                     // Foreground rung: brief front → drag → restore prior frontmost.
                     match (fg, window_id) {
                         (true, Some(wid)) => {
-                            crate::input::skylight::with_foreground_assist(pid as libc::pid_t, wid, do_it)?;
+                            crate::input::skylight::with_foreground_assist(
+                                pid as libc::pid_t,
+                                wid,
+                                do_it,
+                            )?;
                             Ok(())
                         }
                         _ => do_it(),
@@ -267,11 +316,17 @@ impl Tool for DragTool {
         } else {
             format!(" with {}", modifiers.join("+"))
         };
-        let btn_suffix = if button_str == "left" { String::new() } else {
+        let btn_suffix = if button_str == "left" {
+            String::new()
+        } else {
             format!(" ({button_str} button)")
         };
 
-        let mode_label = if fg { " (delivery_mode:foreground)" } else { "" };
+        let mode_label = if fg {
+            " (delivery_mode:foreground)"
+        } else {
+            ""
+        };
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
                 "✅ Posted drag{btn_suffix}{mod_suffix} to pid {pid} \

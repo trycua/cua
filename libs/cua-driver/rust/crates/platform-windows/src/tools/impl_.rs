@@ -2881,9 +2881,7 @@ impl Tool for ClickTool {
                     json!({ "path": "ax", "verified": false, "effect": "unverifiable" }),
                 ),
                 Ok(Err(e)) if e.to_string().contains("__CUA_BG_UNAVAILABLE_CLICK__") => {
-                    let cause = e
-                        .to_string()
-                        .replace("__CUA_BG_UNAVAILABLE_CLICK__", "");
+                    let cause = e.to_string().replace("__CUA_BG_UNAVAILABLE_CLICK__", "");
                     crate::input::delivery::background_unavailable_error_with_cause(
                         hwnd,
                         EventKind::MouseClick,
@@ -3770,15 +3768,15 @@ impl Tool for PressKeyTool {
                 end, pageup, pagedown, f1-f12, plus any letter or digit. Optional `modifiers` \
                 array takes ctrl/shift/alt/win. For true combinations (ctrl+c), `hotkey` is a \
                 cleaner surface.\n\n\
-                Note: `element_index` is accepted for cross-platform parity with macOS but \
-                currently no-op on Windows (no UIA SetFocus path wired up yet).".into(),
+                `element_index` focuses the cached UIA element before sending the key; the \
+                top-level window remains backgrounded when delivery_mode is background.".into(),
             input_schema: json!({
                 "type":"object","required":["pid","key"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer","description":"Target process ID."},
                     "key":{"type":"string","description":"Key name (return, tab, escape, up, down, left, right, space, delete, home, end, pageup, pagedown, f1-f12, letter, digit)."},
                     "modifiers":{"type":"array","items":{"type":"string"},"description":"Optional modifier names held while the key is pressed (ctrl/shift/alt/win)."},
-                    "element_index":{"type":"integer","description":"Optional element_index. Accepted for parity; currently no-op on Windows."},
+                    "element_index":{"type":"integer","description":"Optional element_index from the last get_window_state; focuses that UIA element before the key is delivered."},
                     "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                     "x":{"type":"number","description":"Window-local screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the UIA path can't focus. Pass with y, no element_index."},
                     "y":{"type":"number","description":"Window-local screenshot-pixel Y (see x)."},
@@ -3893,6 +3891,29 @@ impl Tool for PressKeyTool {
                 }
             }
         };
+
+        // W1: an element-addressed key needs the control's actual focus
+        // target, not merely its owning top-level HWND. Keep background
+        // delivery non-activating while UIA establishes child focus.
+        let _noact = if elem_idx.is_some() && delivery == DeliveryMode::Background {
+            Some(crate::input::NoActivateGuard::arm(
+                windows::Win32::Foundation::HWND(hwnd as *mut _),
+            ))
+        } else {
+            None
+        };
+        if let Some(idx) = elem_idx {
+            let state = self.state.clone();
+            let focused = tokio::task::spawn_blocking(move || {
+                state.element_cache.focus_element(pid, hwnd, idx as usize)
+            })
+            .await;
+            match focused {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => return ToolResult::error(e.to_string()),
+                Err(e) => return ToolResult::error(format!("UIA focus task failed: {e}")),
+            }
+        }
         let key_display = key.clone();
         // Background mode: plain keystrokes (no modifiers) go through Chromium
         // and GTK fine — would_be_silently_dropped returns false for the
@@ -4100,10 +4121,9 @@ impl Tool for HotkeyTool {
         let key_display = full_keys.join("+");
 
         // px form: pixel-click to focus, then the combo acts on the focused field
-        // (e.g. Ctrl+V into a Chromium input). After it, deliver the combo via the
-        // plain background PostMessage path (the focus-click already fronted if
-        // foreground), so skip the XAML-accelerator walk, the background_unavailable
-        // check, and the foreground SendInput swap below. Mirrors macOS hotkey.
+        // (e.g. Ctrl+V into a Chromium input). A background pixel focus does not
+        // make Chromium's modifier PostMessage path reliable, so it still goes
+        // through the capability guard below; foreground remains explicit.
         let px_focus = {
             let px = args.get("x").and_then(|v| v.as_f64());
             let py = args.get("y").and_then(|v| v.as_f64());
@@ -4219,9 +4239,8 @@ impl Tool for HotkeyTool {
         } else {
             EventKind::Keystroke
         };
-        if !px_focus
-            && delivery == DeliveryMode::Background
-            && crate::input::delivery::would_be_silently_dropped(hwnd, event_kind)
+        if delivery == DeliveryMode::Background
+            && (px_focus || crate::input::delivery::would_be_silently_dropped(hwnd, event_kind))
         {
             // macOS-aligned: a `background` hotkey never fronts. This combo would
             // be silently dropped (VCL/classic-Win32 TranslateAccelerator, or
@@ -4629,6 +4648,42 @@ impl Tool for ScrollTool {
                 }
             }
         };
+
+        // WebView2/Tauri hosts can expose the indexed scroll container through
+        // UIA while their top-level HWND ignores WM_VSCROLL. Prefer the
+        // accessibility channel for an indexed target; the message path below
+        // remains the fallback for native Win32 scrollbars.
+        if let Some(idx) = elem_idx {
+            let state = self.state.clone();
+            let direction_for_uia = direction.clone();
+            let uia_result = tokio::task::spawn_blocking(move || {
+                let retained = state
+                    .element_cache
+                    .get_element_retained(pid, hwnd, idx as usize)
+                    .ok_or_else(|| anyhow::anyhow!("element [{idx}] is not in the UIA cache"))?;
+                if !retained.is_uia() {
+                    anyhow::bail!("element [{idx}] is not a UIA scroll element");
+                }
+                unsafe {
+                    crate::uia::scroll::scroll_element(
+                        retained.as_ptr(),
+                        &direction_for_uia,
+                        amount,
+                    )
+                }
+            })
+            .await;
+            if matches!(uia_result, Ok(Ok(()))) {
+                return ToolResult::text(format!(
+                    "Scrolled {direction} {amount} ticks via UIA (delivery_mode:background)."
+                ))
+                .with_structured(serde_json::json!({
+                    "path": "uia",
+                    "verified": false,
+                    "delivery_mode": "background"
+                }));
+            }
+        }
 
         // delivery_mode:"background" — WM_VSCROLL/HSCROLL is silently dropped by
         // Chromium and may be by GTK. Surface the standard structured

@@ -544,8 +544,9 @@ fn e2e_electron_background_type_text_no_z_raise() {
     }
 }
 
-/// Electron key-combo (Ctrl+A): the dropped-PostMessage keyboard path now uses
-/// cloaked focus + SendInput. Hard invariant: no z-raise.
+/// Electron key-combo (Ctrl+A): background Chromium key-combos are currently
+/// outside the safe delivery capability. The contract is an explicit refusal,
+/// with no z-raise or silent partial chord.
 #[test]
 #[ignore]
 fn e2e_electron_background_keycombo_no_z_raise() {
@@ -568,10 +569,11 @@ fn e2e_electron_background_keycombo_no_z_raise() {
         errored = r.is_error();
         last_text = r.text().to_string();
     });
-    // Capability-first: the combo must be DELIVERED, not refused.
+    // W2: refuse honestly instead of claiming delivery through a route that
+    // cannot preserve the background/no-focus contract for Chromium.
     assert!(
-        !errored && !last_text.contains("background_unavailable"),
-        "Ctrl+A must be delivered (capability over UX), got: {last_text:?}"
+        !errored && last_text.contains("Background delivery is not available"),
+        "Ctrl+A must return a structured background capability refusal, got: {last_text:?}"
     );
-    println!("electron Ctrl+A delivered: {last_text:?}");
+    println!("electron Ctrl+A refused honestly: {last_text:?}");
 }

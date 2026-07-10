@@ -58,6 +58,14 @@ lume create macos-sequoia --ipsw ~/Downloads/macos.ipsw --unattended sequoia
 lume run macos-sequoia
 ```
 
+The built-in `sequoia` and `tahoe` presets create the `lume` user, enable SSH,
+configure autologin, and disable sleep and screen locking without GUI
+automation. The default SSH credentials are `lume` / `lume`.
+
+The Tahoe flow is E2E verified from a local IPSW. Sequoia can still present
+the Accessibility step of Setup Assistant on its first display boot; see
+[issue #2155](https://github.com/trycua/cua/issues/2155).
+
 <Callout title="Security Note">
   The unattended VM uses `lume`/`lume` for initial SSH and login access. Change
   the password immediately with the `passwd` command.

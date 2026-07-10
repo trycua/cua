@@ -208,6 +208,16 @@ pub(crate) fn resolve_cursor_key(args: &Value) -> String {
     NO_CURSOR.to_owned()
 }
 
+fn window_screen_center(
+    windows: &[crate::win32::WindowInfo],
+    hwnd: u64,
+) -> Option<(i32, i32)> {
+    windows
+        .iter()
+        .find(|w| w.hwnd == hwnd)
+        .map(|w| (w.x + w.width / 2, w.y + w.height / 2))
+}
+
 /// Returns `true` when a click/scroll invocation should take the **window-less
 /// screen-absolute** branch: the caller gave numeric `x` AND `y`, gave NO `pid`
 /// and NO `window_id`, and the effective `capture_scope` is `"desktop"`.
@@ -4038,6 +4048,7 @@ impl Tool for ScrollTool {
             None    => return ToolResult::error("Missing required string field direction."),
         };
         let amount = args.u64_or("amount", 3).clamp(1, 50) as u32;
+        let cursor_key = resolve_cursor_key(&args);
 
         // ── Window-less screen-absolute branch (capture_scope="desktop") ──────
         // No pid/window_id + numeric x,y + desktop scope → synthesize a wheel
@@ -4076,6 +4087,11 @@ impl Tool for ScrollTool {
                 )),
             };
             let ticks = sign * amount as i32;
+            overlay_glide_to(&cursor_key, sx as f64, sy as f64).await;
+            crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse {
+                x: sx as f64,
+                y: sy as f64,
+            });
             let dir_disp = direction.clone();
             let result = tokio::task::spawn_blocking(move || {
                 crate::input::send_wheel_synthesized(sx, sy, ticks, horizontal)
@@ -4139,6 +4155,18 @@ impl Tool for ScrollTool {
             }
         };
 
+        let center = tokio::task::spawn_blocking(move || {
+            window_screen_center(&crate::win32::list_windows(Some(pid)), hwnd)
+        }).await.ok().flatten();
+        if let Some((cx, cy)) = center {
+            pin_overlay_above(&cursor_key, hwnd);
+            overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
+            crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse {
+                x: cx as f64,
+                y: cy as f64,
+            });
+        }
+
         // delivery_mode:"background" — WM_VSCROLL/HSCROLL is silently dropped by
         // Chromium and may be by GTK. Surface the standard structured
         // background_unavailable error: its remediation (bring_to_front +
@@ -4168,13 +4196,6 @@ impl Tool for ScrollTool {
             };
             let per: i32 = if by == "page" { 3 } else { 1 };
             let ticks = sign * (amount as i32) * per;
-            // Target the window's screen center so the wheel lands on it.
-            let center = tokio::task::spawn_blocking(move || {
-                crate::win32::list_windows(Some(pid))
-                    .into_iter()
-                    .find(|w| w.hwnd == hwnd)
-                    .map(|w| (w.x + w.width / 2, w.y + w.height / 2))
-            }).await.ok().flatten();
             let (cx, cy) = match center {
                 Some(c) => c,
                 None => return ToolResult::error(format!(
@@ -7110,6 +7131,53 @@ mod cursor_key_resolution_tests {
         assert_eq!(a, "calc-2plus1");
         assert_eq!(b, "calc-5plus6");
         assert_ne!(a, b);
+    }
+}
+
+#[cfg(test)]
+mod window_screen_center_tests {
+    use super::window_screen_center;
+    use crate::win32::WindowInfo;
+
+    #[test]
+    fn resolves_center_for_matching_hwnd() {
+        let windows = vec![
+            WindowInfo {
+                hwnd: 0x10,
+                pid: 7,
+                title: "ignored".into(),
+                x: 10,
+                y: 20,
+                width: 40,
+                height: 60,
+            },
+            WindowInfo {
+                hwnd: 0x20,
+                pid: 7,
+                title: "target".into(),
+                x: 100,
+                y: 200,
+                width: 51,
+                height: 41,
+            },
+        ];
+
+        assert_eq!(window_screen_center(&windows, 0x20), Some((125, 220)));
+    }
+
+    #[test]
+    fn returns_none_when_hwnd_is_missing() {
+        let windows = vec![WindowInfo {
+            hwnd: 0x10,
+            pid: 7,
+            title: "only".into(),
+            x: 10,
+            y: 20,
+            width: 40,
+            height: 60,
+        }];
+
+        assert_eq!(window_screen_center(&windows, 0x20), None);
     }
 }
 

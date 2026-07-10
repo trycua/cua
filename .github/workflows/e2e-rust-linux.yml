@@ -13,6 +13,10 @@ on:
         type: choice
         options: [shared, native, modality, all]
         default: all
+      cell_filter:
+        description: "Optional shared cell id or substring for focused debugging"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -42,6 +46,7 @@ jobs:
         env:
           NO_AT_BRIDGE: "0"
           GTK_A11Y: "1"
+          CUA_E2E_CELL_FILTER: ${{ inputs.cell_filter }}
         run: |
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \

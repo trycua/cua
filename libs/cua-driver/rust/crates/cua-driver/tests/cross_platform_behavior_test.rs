@@ -738,10 +738,22 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
     )
 }
 
+fn cell_selected(case: &CaseSpec) -> bool {
+    let Ok(filter) = std::env::var("CUA_E2E_CELL_FILTER") else {
+        return true;
+    };
+    filter
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .any(|part| case.cell_id == part || case.cell_id.contains(part))
+}
+
 #[test]
 #[ignore]
 fn shared_web_action_matrix_is_state_verified() {
     let mut failure = None;
+    let mut selected = 0usize;
     for spec in host_specs() {
         for (action, tool, marker, addressing, delivery) in [
             (
@@ -802,6 +814,10 @@ fn shared_web_action_matrix_is_state_verified() {
             ),
         ] {
             let case = shared_case(&spec, action, addressing, delivery);
+            if !cell_selected(&case) {
+                continue;
+            }
+            selected += 1;
             let result = run_host_case_with_outcome(case, &spec, |fixture| {
                 run_pointer_action(fixture, tool, addressing, delivery, marker)
             });
@@ -860,6 +876,10 @@ fn shared_web_action_matrix_is_state_verified() {
             ),
         ] {
             let case = shared_case(&spec, action, addressing, delivery);
+            if !cell_selected(&case) {
+                continue;
+            }
+            selected += 1;
             let result = run_host_case_with_outcome(case, &spec, |fixture| {
                 run(fixture, addressing, delivery)
             });
@@ -869,6 +889,10 @@ fn shared_web_action_matrix_is_state_verified() {
         }
         for delivery in ["background", "foreground"] {
             let case = shared_case(&spec, "drag", "px", delivery);
+            if !cell_selected(&case) {
+                continue;
+            }
+            selected += 1;
             let result = run_host_case_with_outcome(case, &spec, |fixture| {
                 run_drag_action(fixture, delivery)
             });
@@ -877,13 +901,20 @@ fn shared_web_action_matrix_is_state_verified() {
             }
         }
         let case = shared_case(&spec, "editor_save", "ax", "background");
-        let result = run_host_case_with_outcome(case, &spec, |fixture| {
-            run_editor_save_action(fixture, "background")
-        });
-        if failure.is_none() {
-            failure = result;
+        if cell_selected(&case) {
+            selected += 1;
+            let result = run_host_case_with_outcome(case, &spec, |fixture| {
+                run_editor_save_action(fixture, "background")
+            });
+            if failure.is_none() {
+                failure = result;
+            }
         }
     }
+    assert!(
+        std::env::var_os("CUA_E2E_CELL_FILTER").is_none() || selected > 0,
+        "CUA_E2E_CELL_FILTER matched no shared E2E cells"
+    );
     resume_first_failure(failure);
 }
 

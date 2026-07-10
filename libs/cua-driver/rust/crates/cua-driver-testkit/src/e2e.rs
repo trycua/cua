@@ -462,9 +462,9 @@ impl ValidationSummary {
             self.delivered, self.refused, self.failed, self.skipped
         );
         output.push_str(
-            "| Cell | Platform | Harness | Action | Targeting | Delivery | Expected | Observed | Status | Duration | Evidence |\n",
+            "| Cell | Platform | Harness | Action | Targeting | Delivery | Scope | Route | Oracles | Expected | Observed | Status | Duration | Evidence | Details |\n",
         );
-        output.push_str("| --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: | --- |\n");
+        output.push_str("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: | --- | --- |\n");
         for result in results {
             let evidence = result
                 .evidence
@@ -472,8 +472,20 @@ impl ValidationSummary {
                 .as_deref()
                 .or(result.evidence.trajectory.as_deref())
                 .unwrap_or("-");
+            let oracles = result
+                .case
+                .oracles
+                .iter()
+                .map(|oracle| format!("{oracle:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let details = if result.message.is_empty() {
+                "-".to_owned()
+            } else {
+                result.message.replace('|', "\\|").replace('\n', " ")
+            };
             output.push_str(&format!(
-                "| {} | {:?}/{:?} | {} | {} | {:?} | {:?} | {:?} | {:?} | {:?} | {} ms | {} |\n",
+                "| {} | {:?}/{:?} | {} | {} | {:?} | {:?} | {:?} | {:?} | {} | {:?} | {:?} | {:?} | {} ms | {} | {} |\n",
                 result.case.cell_id,
                 result.case.platform,
                 result.case.display_server,
@@ -481,11 +493,15 @@ impl ValidationSummary {
                 result.case.action,
                 result.case.targeting,
                 result.case.delivery,
+                result.case.scope,
+                result.case.driver_route,
+                oracles,
                 result.case.expected_behavior,
                 result.observed_behavior,
                 result.test_status,
                 result.duration_ms,
                 evidence,
+                details,
             ));
         }
         output
@@ -566,6 +582,12 @@ pub fn validate_catalog(
     let mut summary = ValidationSummary::default();
     for result in results {
         let cell_id = &result.case.cell_id;
+        if result.schema != RESULT_SCHEMA {
+            errors.push(format!(
+                "unsupported result schema for {cell_id}: {}",
+                result.schema
+            ));
+        }
         if !observed.insert(cell_id.clone()) {
             errors.push(format!("duplicate result: {cell_id}"));
             continue;
@@ -756,6 +778,22 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.contains("missing video evidence")));
+    }
+
+    #[test]
+    fn validator_rejects_unknown_result_schema() {
+        let case = delivered_case("unknown-schema");
+        let mut result = CaseResult::evaluate(
+            case.clone(),
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default()),
+            Duration::from_millis(1),
+        );
+        result.schema = "cua-e2e-result/v999".to_owned();
+        let errors = validate_catalog(&[case], &[result], None, false)
+            .expect_err("unknown result schema should fail");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("unsupported result schema")));
     }
 
     #[test]

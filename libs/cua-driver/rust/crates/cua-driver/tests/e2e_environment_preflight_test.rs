@@ -105,6 +105,17 @@ fn run_preflight() {
         .expect("CUA_E2E_RECORDINGS_ROOT is required for canonical E2E");
 
     let mut driver = spawn_driver();
+    let config = driver.call("get_config", serde_json::json!({}));
+    assert!(
+        !config.is_error(),
+        "connected driver get_config failed: {}",
+        config.text()
+    );
+    assert_eq!(
+        config.structured()["version"].as_str(),
+        Some(env!("CARGO_PKG_VERSION")),
+        "connected driver version does not match the source build"
+    );
     let recording_dir = driver
         .recording_dir()
         .expect("preflight video recording did not start")

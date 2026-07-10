@@ -405,11 +405,11 @@ For free-form text entry into web inputs, prefer `type_text_chars` which synthes
 
 Scroll the target pid. Two paths, picked by how you address the scroll:
 
-• **Pixel-wheel path (targeted)** — when you pass a target, either `element_index`/`element_token` (preferred) or window-local `x, y` pixels: the driver synthesizes a real mouse-wheel event (CGEventCreateScrollWheelEvent, pixel units) AT that screen point. The renderer hit-tests the wheel at the cursor, so the scroll lands on whatever element is under the point — exactly like physically rolling the wheel over it. This is the ONLY way to scroll a nested `overflow:auto` region (e.g. a scrollable &lt;div&gt; with no tabindex): such regions never take keyboard focus, so the keystroke path below no-ops on them. Use this for inner/nested scrollers in web views.
+• **Targeted wheel path** — when you pass a target, either `element_index`/`element_token` (preferred) or window-local `x, y` pixels: the driver synthesizes a real mouse-wheel event (CGEventCreateScrollWheelEvent, at that screen point. The renderer hit-tests the wheel at the cursor, so the scroll lands on whatever element is under the point — exactly like physically rolling the wheel over it. This is the ONLY way to scroll a nested `overflow:auto` region (e.g. a scrollable &lt;div&gt; with no tabindex): such regions never take keyboard focus, so the keystroke path below no-ops on them. Use this for inner/nested scrollers in web views.
 
 • **Keystroke path (focused region)** — when you pass NO target (just pid + direction): synthesizes PageDown/PageUp (by='page') or Down/Up arrows (by='line'); horizontal uses Left/Right arrows. Drives the focused / page scroller only.
 
-Mapping: by='page' → larger step; by='line' → smaller step; amount = number of wheel notches (pixel path) or keystroke repetitions (keystroke path).
+Mapping: by='page' → larger step; by='line' → smaller step; amount = number of wheel notches (targeted path) or keystroke repetitions (keystroke path).
 
 **Arguments:**
 

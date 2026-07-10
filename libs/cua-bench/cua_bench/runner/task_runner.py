@@ -868,15 +868,32 @@ class TaskRunner:
         if max_steps:
             env_vars["CUA_MAX_STEPS"] = str(max_steps)
 
+        # Pass through debug flags so instrumentation in the agent loop can be
+        # toggled from the host without rebuilding the image.
+        for dbg in ("CUA_DEBUG_IMAGES",):
+            val = os.environ.get(dbg)
+            if val:
+                env_vars[dbg] = val
+
         # Pass through API keys from host
         api_keys = [
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
             "OPENAI_ENDPOINT",
+            # OpenAI-compatible base URL — routes litellm openai/* models to a
+            # custom endpoint (e.g. Meta Model API for Muse Spark).
+            "OPENAI_BASE_URL",
+            "OPENAI_API_BASE",
             "GOOGLE_API_KEY",
             "GOOGLE_CLOUD_PROJECT",
             "AZURE_OPENAI_API_KEY",
             "AZURE_OPENAI_ENDPOINT",
+            # AWS credentials for Bedrock-hosted models (litellm bedrock/*)
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "AWS_REGION",
+            "AWS_DEFAULT_REGION",
         ]
         for key in api_keys:
             value = os.environ.get(key)
@@ -925,8 +942,21 @@ class TaskRunner:
                     pip_cmd = f"pip install --force-reinstall --no-deps /tmp/dev_{i}"
                 else:
                     pip_cmd = f"pip install --force-reinstall --no-deps /tmp/dev_{i} 2>&1 | tail -1"
+                # We install --no-deps to avoid re-resolving heavy transitive deps
+                # (torch, playwright, …). But a stale baked-in image can hold a
+                # dependency version the mounted source has since re-pinned — most
+                # importantly litellm, where 1.80.0 silently drops images from
+                # Bedrock tool messages while the source pins the fixed 1.86.2.
+                # Re-sync any pinned litellm from the mounted pyproject so the
+                # dev source runs against the deps it actually declares.
+                sync_dep = (
+                    f"L=$(grep -oE 'litellm==[0-9.]+' /tmp/dev_{i}/pyproject.toml 2>/dev/null "
+                    f"| head -1); if [ -n \"$L\" ]; then echo \"[--with] syncing $L\" && "
+                    f"pip install -q -U \"$L\" 2>&1 | tail -1; fi"
+                )
                 install_parts.append(
-                    f"(echo '[--with] installing {dev_path}' && cp -r {container_path} /tmp/dev_{i} && {pip_cmd})"
+                    f"(echo '[--with] installing {dev_path}' && cp -r {container_path} /tmp/dev_{i} "
+                    f"&& {pip_cmd} && {sync_dep})"
                 )
             dev_install_cmd = " && ".join(install_parts) + " && "
 

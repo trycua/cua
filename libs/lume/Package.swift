@@ -10,13 +10,14 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.1"),
-        .package(url: "https://github.com/apple/swift-format.git", branch: ("release/5.10")),
+        .package(url: "https://github.com/apple/swift-format.git", branch: ("release/6.0")),
         .package(url: "https://github.com/apple/swift-atomics.git", .upToNextMajor(from: "1.2.0")),
         .package(url: "https://github.com/mhdhejazi/Dynamic", branch: "master"),
         .package(url: "https://github.com/jpsim/Yams.git", from: "5.0.0"),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.0"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.81.0"),
-        .package(url: "https://github.com/apple/swift-nio-ssh.git", from: "0.12.0")
+        .package(url: "https://github.com/apple/swift-nio-ssh.git", from: "0.12.0"),
+        .package(url: "https://github.com/swiftlang/swift-testing.git", exact: "0.99.0")
     ],
     targets: [
         .systemLibrary(
@@ -45,7 +46,8 @@ let package = Package(
         .testTarget(
             name: "lumeTests",
             dependencies: [
-                "lume"
+                "lume",
+                .product(name: "Testing", package: "swift-testing")
             ],
             path: "tests")
     ]

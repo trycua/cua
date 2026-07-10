@@ -5,6 +5,10 @@
 
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
+const sentinelMode = process.env.CUA_E2E_SENTINEL === '1';
+if (process.env.CUA_E2E_USER_DATA_DIR) {
+  app.setPath('userData', process.env.CUA_E2E_USER_DATA_DIR);
+}
 
 // Validate CUA_ELECTRON_CDP_PORT before forwarding to Chromium —
 // remote-debugging-port=0 means "pick an ephemeral port" which would
@@ -23,16 +27,22 @@ app.commandLine.appendSwitch('remote-debugging-port', CDP_PORT);
 let mainWindow;
 
 function createWindow() {
-  const fixedTitle = `CuaTestHarness Electron [cdp=${CDP_PORT}]`;
+  const fixedTitle = sentinelMode
+    ? `CuaTestHarness Sentinel [cdp=${CDP_PORT}]`
+    : `CuaTestHarness Electron [cdp=${CDP_PORT}]`;
   mainWindow = new BrowserWindow({
-    width: 940,
-    height: 780,
+    width: sentinelMode ? 1280 : 940,
+    height: sentinelMode ? 900 : 780,
+    x: sentinelMode ? 0 : undefined,
+    y: sentinelMode ? 0 : undefined,
     title: fixedTitle,
     show: false,
+    alwaysOnTop: sentinelMode,
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
     },
   });
 
@@ -66,7 +76,14 @@ function createWindow() {
       // our fixedTitle and break the harness-window-discovery test.
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setTitle(fixedTitle);
-        mainWindow.showInactive();
+        if (sentinelMode) {
+          mainWindow.setAlwaysOnTop(true);
+          mainWindow.maximize();
+          mainWindow.show();
+          mainWindow.focus();
+        } else {
+          mainWindow.showInactive();
+        }
       }
     })
     .catch(err => {

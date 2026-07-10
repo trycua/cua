@@ -1340,7 +1340,6 @@ docs-scripts = [
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "sentence-transformers", specifier = ">=2.2.0" },
 ]
-examples = []
 test = [
     { name = "aioresponses", specifier = ">=0.7.4" },
     { name = "pytest", specifier = ">=8.0.0" },

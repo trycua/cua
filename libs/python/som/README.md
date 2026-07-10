@@ -79,24 +79,6 @@ for elem in result.elements:
 
 - [Configuration](http://localhost:8090/docs/libraries/som/configuration)
 
-## Development
-
-### Test Data
-
-- Place test screenshots in `examples/test_data/`
-- Not tracked in git to keep repository size manageable
-- Default test image: `test_screen.png` (1920x1080)
-
-### Running Tests
-
-```bash
-# Run benchmark with no OCR
-python examples/omniparser_examples.py examples/test_data/test_screen.png --runs 5 --ocr none
-
-# Run benchmark with OCR
-python examples/omniparser_examples.py examples/test_data/test_screen.png --runs 5 --ocr easyocr
-```
-
 ## License
 
 MIT License - See LICENSE file for details.

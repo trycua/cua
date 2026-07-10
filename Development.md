@@ -107,35 +107,6 @@ This installs all dependencies in the virtual environment `.venv`. Each Cua pack
 
 The `.venv` environment is configured as the default VS Code Python interpreter in [`.vscode/settings.json`](.vscode/settings.json).
 
-### Running Python Scripts
-
-Use `uv run` to execute Python scripts:
-
-```bash
-uv run python examples/agent_examples.py
-```
-
-Alternatively, activate the virtual environment manually:
-
-```bash
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-python examples/agent_examples.py
-```
-
-### Running Examples
-
-The Python workspace includes launch configurations for running examples:
-
-- "Run Computer Examples" - Runs computer examples
-- "Run Agent Examples" - Runs agent examples
-- "SOM" configurations - Various settings for running SOM
-- "Run Computer Examples + Server" - Runs both Computer Examples and Server simultaneously
-
-To run examples from VS Code/Cursor:
-
-1. Press F5 or use the Run/Debug view
-2. Select the desired configuration
-
 ## Code Formatting
 
 The Cua project follows strict code formatting standards to ensure consistency across all packages.
@@ -239,7 +210,6 @@ uv run mypy .
 
 # JavaScript/TypeScript checks
 pnpm prettier:check
-node ./scripts/typescript-typecheck.js
 ```
 
 </details>
@@ -269,11 +239,6 @@ pnpm install
 
   ```bash
   pnpm prettier:format
-  ```
-
-- **TypeScript type checking**:
-  ```bash
-  node ./scripts/typescript-typecheck.js
   ```
 
 #### VS Code Integration

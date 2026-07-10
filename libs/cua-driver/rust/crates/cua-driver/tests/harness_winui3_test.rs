@@ -14,7 +14,7 @@
 //!                        track of in-window flyouts.
 //!
 //! Run via:
-//!   .\sandbox\run-tests-in-sandbox.ps1 harness_winui3
+//!   ..\tests\runners\windows-sandbox\run-tests-in-sandbox.ps1 harness_winui3
 //! or locally:
 //!   cargo test --test harness_winui3_test -- --ignored --nocapture
 
@@ -44,7 +44,7 @@ fn harness_winui3_exe() -> PathBuf {
 fn launch_winui3(driver: &mut McpDriver) -> Option<u32> {
     let exe = harness_winui3_exe();
     if !exe.exists() {
-        eprintln!("WinUI3 harness exe not found at {exe:?} — run test-harness/build/windows.ps1");
+        eprintln!("WinUI3 harness exe not found at {exe:?} — run tests/fixtures/build/windows.ps1");
         return None;
     }
     let child = spawn_in_job(Command::new(&exe).stdout(Stdio::null()).stderr(Stdio::null())).ok()?;

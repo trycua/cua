@@ -36,7 +36,7 @@ fn harness_exe() -> std::path::PathBuf {
 fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
     let exe = harness_exe();
     if !exe.exists() {
-        eprintln!("[desktop-linux] GTK3 harness not built ({exe:?}) — run test-harness/build/linux.sh; skipping");
+        eprintln!("[desktop-linux] GTK3 harness not built ({exe:?}) — run tests/fixtures/build/linux.sh; skipping");
         return None;
     }
     driver

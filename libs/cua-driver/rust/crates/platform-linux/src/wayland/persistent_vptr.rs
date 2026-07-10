@@ -32,13 +32,10 @@ use std::sync::OnceLock;
 use std::thread;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use wayland_client::{
-    protocol::wl_pointer::ButtonState,
-    Connection, Proxy,
-};
+use wayland_client::{protocol::wl_pointer::ButtonState, Connection};
 use wayland_protocols_wlr::virtual_pointer::v1::client::zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1;
 
-use super::{open_vptr_session, evdev_pointer_button};
+use super::{evdev_pointer_button, open_vptr_session};
 
 /// One in-flight command from the public API to the owner thread.
 enum Cmd {
@@ -99,15 +96,31 @@ fn owner_thread(rx: Receiver<Cmd>) {
     let mut active: HashMap<String, ActivePointer> = HashMap::new();
     while let Ok(cmd) = rx.recv() {
         match cmd {
-            Cmd::Press { cursor_id, window_id, x, y, button, reply } => {
+            Cmd::Press {
+                cursor_id,
+                window_id,
+                x,
+                y,
+                button,
+                reply,
+            } => {
                 let r = handle_press(&mut active, &cursor_id, window_id, x, y, button);
                 let _ = reply.send(r);
             }
-            Cmd::MoveTo { cursor_id, x, y, reply } => {
+            Cmd::MoveTo {
+                cursor_id,
+                x,
+                y,
+                reply,
+            } => {
                 let r = handle_move(&mut active, &cursor_id, x, y);
                 let _ = reply.send(r);
             }
-            Cmd::Release { cursor_id, button, reply } => {
+            Cmd::Release {
+                cursor_id,
+                button,
+                reply,
+            } => {
                 let r = handle_release(&mut active, &cursor_id, button);
                 let _ = reply.send(r);
             }
@@ -158,7 +171,15 @@ fn handle_press(
 
     let mut held = HashSet::new();
     held.insert(btn);
-    active.insert(cursor_id.to_string(), ActivePointer { vptr, held, out_w: w, out_h: h });
+    active.insert(
+        cursor_id.to_string(),
+        ActivePointer {
+            vptr,
+            held,
+            out_w: w,
+            out_h: h,
+        },
+    );
     Ok(())
 }
 
@@ -169,11 +190,15 @@ fn handle_move(
     y: i32,
 ) -> anyhow::Result<()> {
     let entry = active.get_mut(cursor_id).ok_or_else(|| {
-        anyhow::anyhow!("no held mouse button for cursor '{cursor_id}'; call mouse_button_down first")
+        anyhow::anyhow!(
+            "no held mouse button for cursor '{cursor_id}'; call mouse_button_down first"
+        )
     })?;
     let px = x.clamp(0, entry.out_w as i32 - 1) as u32;
     let py = y.clamp(0, entry.out_h as i32 - 1) as u32;
-    entry.vptr.motion_absolute(0, px, py, entry.out_w, entry.out_h);
+    entry
+        .vptr
+        .motion_absolute(0, px, py, entry.out_w, entry.out_h);
     entry.vptr.frame();
     roundtrip_on_persistent(cursor_id)?;
     Ok(())
@@ -186,9 +211,9 @@ fn handle_release(
 ) -> anyhow::Result<()> {
     let btn = evdev_pointer_button(button);
     let drop_entry = {
-        let entry = active.get_mut(cursor_id).ok_or_else(|| {
-            anyhow::anyhow!("no held mouse button for cursor '{cursor_id}'")
-        })?;
+        let entry = active
+            .get_mut(cursor_id)
+            .ok_or_else(|| anyhow::anyhow!("no held mouse button for cursor '{cursor_id}'"))?;
         entry.vptr.button(0, btn, ButtonState::Released);
         entry.vptr.frame();
         roundtrip_on_persistent(cursor_id)?;
@@ -219,20 +244,27 @@ thread_local! {
 
 fn persist_conn(cursor_id: &str, conn: Connection) {
     let queue = conn.new_event_queue::<super::State>();
-    CONNS.with(|c| { c.borrow_mut().insert(cursor_id.to_string(), (conn, queue)); });
+    CONNS.with(|c| {
+        c.borrow_mut().insert(cursor_id.to_string(), (conn, queue));
+    });
 }
 
 fn forget_conn(cursor_id: &str) {
-    CONNS.with(|c| { c.borrow_mut().remove(cursor_id); });
+    CONNS.with(|c| {
+        c.borrow_mut().remove(cursor_id);
+    });
 }
 
 fn roundtrip_on_persistent(cursor_id: &str) -> anyhow::Result<()> {
     CONNS.with(|c| {
         let mut b = c.borrow_mut();
-        let (_conn, queue) = b.get_mut(cursor_id)
+        let (_conn, queue) = b
+            .get_mut(cursor_id)
             .ok_or_else(|| anyhow::anyhow!("no persistent connection for cursor '{cursor_id}'"))?;
         let mut tmp = super::State::default();
-        queue.roundtrip(&mut tmp).map_err(|e| anyhow::anyhow!("compositor roundtrip failed: {e}"))?;
+        queue
+            .roundtrip(&mut tmp)
+            .map_err(|e| anyhow::anyhow!("compositor roundtrip failed: {e}"))?;
         Ok(())
     })
 }
@@ -248,10 +280,15 @@ pub fn press(cursor_id: &str, window_id: u64, x: i32, y: i32, button: u8) -> any
     let (tx_r, rx_r) = bounded(1);
     tx().send(Cmd::Press {
         cursor_id: cursor_id.to_string(),
-        window_id, x, y, button,
+        window_id,
+        x,
+        y,
+        button,
         reply: tx_r,
-    }).map_err(|e| anyhow::anyhow!("cua-persistent-vptr thread is dead: {e}"))?;
-    rx_r.recv().map_err(|e| anyhow::anyhow!("reply channel closed: {e}"))?
+    })
+    .map_err(|e| anyhow::anyhow!("cua-persistent-vptr thread is dead: {e}"))?;
+    rx_r.recv()
+        .map_err(|e| anyhow::anyhow!("reply channel closed: {e}"))?
 }
 
 /// Emit motion_absolute on the held cursor's virtual-pointer. Errors if there
@@ -259,9 +296,14 @@ pub fn press(cursor_id: &str, window_id: u64, x: i32, y: i32, button: u8) -> any
 pub fn move_to(cursor_id: &str, x: i32, y: i32) -> anyhow::Result<()> {
     let (tx_r, rx_r) = bounded(1);
     tx().send(Cmd::MoveTo {
-        cursor_id: cursor_id.to_string(), x, y, reply: tx_r,
-    }).map_err(|e| anyhow::anyhow!("cua-persistent-vptr thread is dead: {e}"))?;
-    rx_r.recv().map_err(|e| anyhow::anyhow!("reply channel closed: {e}"))?
+        cursor_id: cursor_id.to_string(),
+        x,
+        y,
+        reply: tx_r,
+    })
+    .map_err(|e| anyhow::anyhow!("cua-persistent-vptr thread is dead: {e}"))?;
+    rx_r.recv()
+        .map_err(|e| anyhow::anyhow!("reply channel closed: {e}"))?
 }
 
 /// Release `button` on the held cursor. If no other buttons remain held the
@@ -269,9 +311,13 @@ pub fn move_to(cursor_id: &str, x: i32, y: i32) -> anyhow::Result<()> {
 pub fn release(cursor_id: &str, button: u8) -> anyhow::Result<()> {
     let (tx_r, rx_r) = bounded(1);
     tx().send(Cmd::Release {
-        cursor_id: cursor_id.to_string(), button, reply: tx_r,
-    }).map_err(|e| anyhow::anyhow!("cua-persistent-vptr thread is dead: {e}"))?;
-    rx_r.recv().map_err(|e| anyhow::anyhow!("reply channel closed: {e}"))?
+        cursor_id: cursor_id.to_string(),
+        button,
+        reply: tx_r,
+    })
+    .map_err(|e| anyhow::anyhow!("cua-persistent-vptr thread is dead: {e}"))?;
+    rx_r.recv()
+        .map_err(|e| anyhow::anyhow!("reply channel closed: {e}"))?
 }
 
 /// Drop the entry for `cursor_id` without emitting any Wayland events.
@@ -281,7 +327,10 @@ pub fn release(cursor_id: &str, button: u8) -> anyhow::Result<()> {
 pub fn forget(cursor_id: &str) -> anyhow::Result<()> {
     let (tx_r, rx_r) = bounded(1);
     tx().send(Cmd::Forget {
-        cursor_id: cursor_id.to_string(), reply: tx_r,
-    }).map_err(|e| anyhow::anyhow!("cua-persistent-vptr thread is dead: {e}"))?;
-    rx_r.recv().map_err(|e| anyhow::anyhow!("reply channel closed: {e}"))?
+        cursor_id: cursor_id.to_string(),
+        reply: tx_r,
+    })
+    .map_err(|e| anyhow::anyhow!("cua-persistent-vptr thread is dead: {e}"))?;
+    rx_r.recv()
+        .map_err(|e| anyhow::anyhow!("reply channel closed: {e}"))?
 }

@@ -46,19 +46,27 @@ fn harness_exe() -> std::path::PathBuf {
 fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
     let exe = harness_exe();
     if !exe.exists() {
-        eprintln!("[desktop-mac] AppKit harness not built ({exe:?}) — run test-harness/build/macos.sh; skipping");
+        eprintln!("[desktop-mac] AppKit harness not built ({exe:?}) — run tests/fixtures/build/macos.sh; skipping");
         return None;
     }
     driver
         .reaper()
-        .spawn(Command::new(&exe).stdout(Stdio::null()).stderr(Stdio::null()))
+        .spawn(
+            Command::new(&exe)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        )
         .ok()?;
     let deadline = Instant::now() + Duration::from_secs(14);
     while Instant::now() < deadline {
         let r = driver.call("list_windows", serde_json::json!({}));
         if let Some(wins) = r.structured()["windows"].as_array() {
             for w in wins {
-                if w["title"].as_str().unwrap_or("").contains("CuaTestHarness AppKit") {
+                if w["title"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("CuaTestHarness AppKit")
+                {
                     let pid = w["pid"].as_u64().unwrap_or(0) as u32;
                     let wid = w["window_id"].as_u64().unwrap_or(0);
                     if pid != 0 && wid != 0 {
@@ -70,7 +78,9 @@ fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
         }
         std::thread::sleep(Duration::from_millis(400));
     }
-    eprintln!("[desktop-mac] harness window never appeared — graphical session available? skipping");
+    eprintln!(
+        "[desktop-mac] harness window never appeared — graphical session available? skipping"
+    );
     None
 }
 
@@ -91,10 +101,18 @@ fn increment_center(snap: &serde_json::Value) -> Option<(i64, i64)> {
     let els = snap["elements"].as_array()?;
     let btn = els.iter().find(|e| {
         e["role"].as_str() == Some("AXButton")
-            && e["label"].as_str().map(|l| l.trim().eq_ignore_ascii_case("increment")).unwrap_or(false)
+            && e["label"]
+                .as_str()
+                .map(|l| l.trim().eq_ignore_ascii_case("increment"))
+                .unwrap_or(false)
     })?;
     let f = &btn["frame"];
-    let (x, y, w, h) = (f["x"].as_f64()?, f["y"].as_f64()?, f["w"].as_f64()?, f["h"].as_f64()?);
+    let (x, y, w, h) = (
+        f["x"].as_f64()?,
+        f["y"].as_f64()?,
+        f["w"].as_f64()?,
+        f["h"].as_f64()?,
+    );
     Some(((x + w / 2.0) as i64, (y + h / 2.0) as i64))
 }
 
@@ -104,7 +122,10 @@ fn increment_center(snap: &serde_json::Value) -> Option<(i64, i64)> {
 fn counter(snap: &serde_json::Value) -> Option<u64> {
     let tree = snap["tree_markdown"].as_str()?;
     let idx = tree.find("counter=")? + "counter=".len();
-    let digits: String = tree[idx..].chars().take_while(|c| c.is_ascii_digit()).collect();
+    let digits: String = tree[idx..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     digits.parse().ok()
 }
 
@@ -135,8 +156,12 @@ fn activate_pid(pid: u32) {
 #[test]
 #[ignore]
 fn desktop_scope_windowless_click_lands_on_control() {
-    let Some(mut driver) = McpDriver::spawn() else { return };
-    let Some((pid, wid)) = launch(&mut driver) else { return };
+    let Some(mut driver) = McpDriver::spawn_macos_daemon_proxy() else {
+        return;
+    };
+    let Some((pid, wid)) = launch(&mut driver) else {
+        return;
+    };
 
     // Settle for the AppKit AX tree to register the button + its frame.
     let mut snap = ax_snapshot(&mut driver, pid, wid);
@@ -158,8 +183,15 @@ fn desktop_scope_windowless_click_lands_on_control() {
     activate_pid(pid);
 
     // Window-less screen-absolute click — no pid, no window_id; scope per-call.
-    let clicked = driver.call("click", serde_json::json!({ "x": cx, "y": cy, "scope": "desktop", "session": SESSION }));
-    assert!(!clicked.is_error(), "desktop-scope click errored: {}", clicked.text());
+    let clicked = driver.call(
+        "click",
+        serde_json::json!({ "x": cx, "y": cy, "scope": "desktop", "session": SESSION }),
+    );
+    assert!(
+        !clicked.is_error(),
+        "desktop-scope click errored: {}",
+        clicked.text()
+    );
     assert!(
         clicked.text().to_lowercase().contains("desktop scope"),
         "click not reported as desktop-scope: {}",
@@ -193,9 +225,14 @@ fn desktop_scope_windowless_click_lands_on_control() {
 #[test]
 #[ignore]
 fn window_scope_rejects_windowless_click() {
-    let Some(mut driver) = McpDriver::spawn() else { return };
+    let Some(mut driver) = McpDriver::spawn_macos_daemon_proxy() else {
+        return;
+    };
     // Default scope is "window" — a window-less click must be rejected.
-    let r = driver.call("click", serde_json::json!({ "x": 100, "y": 100, "scope": "window", "session": SESSION }));
+    let r = driver.call(
+        "click",
+        serde_json::json!({ "x": 100, "y": 100, "scope": "window", "session": SESSION }),
+    );
     let txt = r.text().to_lowercase();
     assert!(
         r.is_error() || txt.contains("desktop scope") || txt.contains("desktop_scope_disabled"),

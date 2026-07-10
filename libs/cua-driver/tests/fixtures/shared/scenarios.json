@@ -1,0 +1,614 @@
+{
+ "version": 1,
+ "description": "Single source of truth for the cua-driver Windows test harness. Consumed by both the C# host apps (at startup, to set window titles / AutomationIds) and by Rust integration tests (to assert expected tree shape without hardcoding strings).",
+ "wpf": {
+  "process_name": "CuaTestHarness.Wpf",
+  "exe_relative_path": "test-apps/harness-wpf/CuaTestHarness.Wpf.exe",
+  "main_window": {
+   "title": "CuaTestHarness WPF",
+   "automation_id": "wnd-main",
+   "expected_class_prefix": "HwndWrapper"
+  },
+  "scenarios": [
+   {
+    "id": "counter",
+    "kind": "click_counter",
+    "description": "Plain button increments a counter. Tests UIA Invoke pattern + label refresh.",
+    "controls": {
+     "increment_button_aid": "btn-increment",
+     "counter_label_aid": "lbl-counter",
+     "reset_button_aid": "btn-reset"
+    }
+   },
+   {
+    "id": "text_body",
+    "kind": "static_text",
+    "description": "Multi-line TextBlock with a known content hash. Tests get_window_state text extraction and screenshot OCR-ability.",
+    "controls": {
+     "text_block_aid": "txt-body"
+    },
+    "expected_text_marker": "HARNESS_TEXT_MARKER_v1"
+   },
+   {
+    "id": "message_box",
+    "kind": "modal_messagebox",
+    "description": "MessageBox.Show with OK/Cancel. Tests modal-dialog detection and popup-window enumeration.",
+    "controls": {
+     "open_button_aid": "btn-open-msgbox"
+    },
+    "expected_dialog_title": "Harness MessageBox"
+   },
+   {
+    "id": "bottom_strip",
+    "kind": "save_cancel_strip",
+    "description": "Bottom button strip (Save/Cancel) mimicking LO Document Recovery. Tests GetWindowRect-vs-GetClientRect capture boundary (previously cropped the strip).",
+    "controls": {
+     "save_button_aid": "btn-save",
+     "cancel_button_aid": "btn-cancel"
+    }
+   },
+   {
+    "id": "child_hwnd",
+    "kind": "native_win32_child",
+    "description": "Native Win32 child HWND (CreateWindowEx BUTTON) hosted inside the WPF window via HwndHost. Tests UIA descent into non-WPF child HWNDs.",
+    "controls": {
+     "child_button_text": "Native Win32 Child"
+    }
+   },
+   {
+    "id": "owned_popup",
+    "kind": "owned_popup",
+    "description": "Owned secondary Window (Owner set). Tests window enumeration follows ownership chain and capture targets the right HWND.",
+    "controls": {
+     "open_button_aid": "btn-open-owned",
+     "owned_window_title": "Harness Owned Popup",
+     "owned_window_aid": "wnd-owned"
+    }
+   },
+   {
+    "id": "layered_popup",
+    "kind": "layered_transparent",
+    "description": "WS_EX_LAYERED window with alpha. Tests PrintWindow against layered windows (some surfaces render black without WGC fallback).",
+    "controls": {
+     "open_button_aid": "btn-open-layered",
+     "layered_window_title": "Harness Layered Popup"
+    }
+   },
+   {
+    "id": "accelerator",
+    "kind": "keyboard_accelerator",
+    "description": "Ctrl+Shift+H increments the counter via KeyBinding. Tests press_key / hotkey delivering to background windows.",
+    "controls": {
+     "label_aid": "lbl-accel-count"
+    },
+    "expected_chord": "ctrl+shift+h"
+   },
+   {
+    "id": "text_input",
+    "kind": "text_box_mirror",
+    "description": "TextBox whose content is mirrored to a label. Tests type_text via AXSetAttribute / SendKeys to a backgrounded input.",
+    "controls": {
+     "textbox_aid": "txt-input",
+     "mirror_label_aid": "lbl-input-mirror"
+    }
+   },
+   {
+    "id": "click_target",
+    "kind": "right_double_click",
+    "description": "Target Border that records left-click count, double-click, and right-click via separate labels. Tests right_click and double_click tools.",
+    "controls": {
+     "target_aid": "border-click-target",
+     "last_action_label_aid": "lbl-last-action",
+     "click_count_label_aid": "lbl-click-count"
+    }
+   },
+   {
+    "id": "slider",
+    "kind": "slider_drag",
+    "description": "WPF Slider with ValuePattern. Drives the drag tool (from thumb to a target X) and set_value tool (UIA RangeValue / Value).",
+    "controls": {
+     "slider_aid": "sld-value",
+     "value_label_aid": "lbl-slider-value"
+    }
+   },
+   {
+    "id": "checkable_controls",
+    "kind": "checkbox_radio",
+    "description": "CheckBox + RadioButton group. Drives click via UIA Invoke / TogglePattern. State mirrored to a label.",
+    "controls": {
+     "checkbox_aid": "chk-agreed",
+     "radio_low_aid": "rdo-low",
+     "radio_med_aid": "rdo-med",
+     "radio_high_aid": "rdo-high",
+     "state_label_aid": "lbl-chk-state"
+    }
+   },
+   {
+    "id": "combo_box",
+    "kind": "selection",
+    "description": "ComboBox with named items. Drives selection via click + set_value.",
+    "controls": {
+     "combo_aid": "cbo-color",
+     "value_label_aid": "lbl-combo-value"
+    }
+   },
+   {
+    "id": "list_box",
+    "kind": "list_selection",
+    "description": "ListBox with named items. Tests UIA SelectionPattern.",
+    "controls": {
+     "list_aid": "lst-items",
+     "value_label_aid": "lbl-list-value"
+    }
+   },
+   {
+    "id": "menus",
+    "kind": "menu_and_context",
+    "description": "Top-level Menu + a Button with ContextMenu. Drives MenuItem invocation via click; right-click target for ContextMenu opening.",
+    "controls": {
+     "menu_file_aid": "menu-file",
+     "menu_file_new_aid": "menu-file-new",
+     "menu_edit_copy_aid": "menu-edit-copy",
+     "context_target_aid": "btn-context-target",
+     "ctx_copy_aid": "ctx-copy",
+     "action_label_aid": "lbl-menu-action"
+    }
+   },
+   {
+    "id": "scroll_target",
+    "kind": "scroll_viewer",
+    "description": "ScrollViewer with a tall body and a label that reflects VerticalOffset. Tests scroll tool delivery to a backgrounded window.",
+    "controls": {
+     "scroller_aid": "scroll-tall",
+     "offset_label_aid": "lbl-scroll-offset",
+     "bottom_marker_text": "SCROLL_BOTTOM_MARKER_v1"
+    }
+   },
+   {
+    "id": "exit",
+    "kind": "exit_button",
+    "description": "Exit button for clean teardown.",
+    "controls": {
+     "exit_button_aid": "btn-exit"
+    }
+   }
+  ]
+ },
+ "webview": {
+  "process_name": "CuaTestHarness.WebView",
+  "exe_relative_path": "test-apps/harness-webview/CuaTestHarness.WebView.exe",
+  "default_cdp_port": 9222,
+  "main_window": {
+   "title": "CuaTestHarness WebView",
+   "automation_id": "wnd-main"
+  },
+  "description": "WPF host with Microsoft.Edge.WebView2 control. Loads shared/web/index.html. Exposes Chromium DevTools Protocol at default_cdp_port for cua-driver's `page` tool.",
+  "shared_dom_aids": [
+   "btn-increment",
+   "btn-reset",
+   "lbl-counter",
+   "calc-1",
+   "calc-2",
+   "calc-4",
+   "calc-plus",
+   "calc-equals",
+   "calc-display",
+   "txt-input",
+   "lbl-input-mirror",
+   "editor-document",
+   "editor-save",
+   "editor-status",
+   "sld-value",
+   "lbl-slider-value",
+   "drag-source",
+   "drop-target",
+   "drag-status",
+   "border-click-target",
+   "lbl-last-action",
+   "lbl-click-count",
+   "chk-agreed",
+   "rdo-low",
+   "rdo-med",
+   "rdo-high",
+   "lbl-chk-state",
+   "cbo-color",
+   "lbl-combo-value",
+   "lnk-anchor",
+   "lbl-nav-state",
+   "section-target"
+  ]
+ },
+ "electron": {
+  "process_name": "CuaTestHarness.Electron",
+  "exe_relative_path": "test-apps/harness-electron/CuaTestHarness.Electron.exe",
+  "default_cdp_port": 9223,
+  "main_window": {
+   "title": "CuaTestHarness Electron"
+  },
+  "description": "Electron host loading the same shared/web/index.html as the WebView harness. Exposes CDP at default_cdp_port via --remote-debugging-port."
+ },
+ "winui3": {
+  "process_name": "CuaTestHarness.WinUI3",
+  "exe_relative_path": "test-apps/harness-winui3/CuaTestHarness.WinUI3.exe",
+  "main_window": {
+   "title": "CuaTestHarness WinUI3",
+   "automation_id": "wnd-main",
+   "expected_class_prefix": "WinUIDesktopWin32WindowClass"
+  },
+  "scenarios": [
+   {
+    "id": "counter",
+    "kind": "click_counter",
+    "controls": {
+     "increment_button_aid": "btn-increment",
+     "counter_label_aid": "lbl-counter",
+     "reset_button_aid": "btn-reset"
+    }
+   },
+   {
+    "id": "text_body",
+    "kind": "static_text",
+    "controls": {
+     "text_block_aid": "txt-body"
+    },
+    "expected_text_marker": "HARNESS_TEXT_MARKER_v1"
+   },
+   {
+    "id": "text_input",
+    "kind": "text_box_mirror",
+    "controls": {
+     "textbox_aid": "txt-input",
+     "mirror_label_aid": "lbl-input-mirror"
+    }
+   },
+   {
+    "id": "click_target",
+    "kind": "right_double_click",
+    "description": "WinUI3 Button that records left-click count, double-click, and right-click via separate labels. Tests the right_click and double_click tools (Click fires per tap; timing promotes the second to double_click, RightTapped covers secondary clicks).",
+    "controls": {
+     "target_aid": "border-click-target",
+     "last_action_label_aid": "lbl-last-action",
+     "click_count_label_aid": "lbl-click-count"
+    }
+   },
+   {
+    "id": "scroll_target",
+    "kind": "scroll_viewer",
+    "description": "ScrollViewer with a tall body and a label that reflects VerticalOffset. The window subclasses its HWND to translate the driver's posted WM_VSCROLL into ChangeView (WinUI3 composition input does not consume WM_VSCROLL natively). Tests the scroll tool against a backgrounded window.",
+    "controls": {
+     "scroller_aid": "scroll-tall",
+     "offset_label_aid": "lbl-scroll-offset",
+     "bottom_marker_text": "SCROLL_BOTTOM_MARKER_v1"
+    }
+   },
+   {
+    "id": "command_bar_flyout",
+    "kind": "command_bar_flyout",
+    "description": "CommandBarFlyout (popup with command items). Tests flyout enumeration on WinUI3 with DirectComposition rendering.",
+    "controls": {
+     "trigger_button_aid": "btn-open-flyout",
+     "copy_item_aid": "flyout-copy",
+     "paste_item_aid": "flyout-paste"
+    }
+   },
+   {
+    "id": "xaml_popup",
+    "kind": "xaml_popup",
+    "description": "Popup (XAML primitive, NOT a separate HWND). Tests UIA descent into XAML popup hosted in the same window.",
+    "controls": {
+     "open_button_aid": "btn-open-popup",
+     "popup_text_aid": "txt-popup-body"
+    }
+   },
+   {
+    "id": "exit",
+    "kind": "exit_button",
+    "controls": {
+     "exit_button_aid": "btn-exit"
+    }
+   }
+  ]
+ },
+ "appkit": {
+  "process_name": "CuaTestHarness.AppKit",
+  "app_bundle_relative_path": "test-apps/harness-appkit/CuaTestHarness.AppKit.app",
+  "exe_relative_path": "test-apps/harness-appkit/CuaTestHarness.AppKit.app/Contents/MacOS/CuaTestHarness.AppKit",
+  "bundle_id": "com.trycua.harness.appkit",
+  "main_window": {
+   "title": "CuaTestHarness AppKit",
+   "ax_identifier": "wnd-main"
+  },
+  "scenarios": [
+   {
+    "id": "counter",
+    "kind": "click_counter",
+    "description": "NSButton increments NSTextField counter. Tests AXPress on a Cocoa NSButton (no flash, background-dispatch).",
+    "controls": {
+     "increment_button_aid": "btn-increment",
+     "counter_label_aid": "lbl-counter",
+     "reset_button_aid": "btn-reset"
+    }
+   },
+   {
+    "id": "text_body",
+    "kind": "static_text",
+    "description": "NSTextField (label mode) with a shared marker. Tests get_window_state text extraction from a Cocoa label.",
+    "controls": {
+     "text_block_aid": "txt-body"
+    },
+    "expected_text_marker": "HARNESS_TEXT_MARKER_v1"
+   },
+   {
+    "id": "text_input",
+    "kind": "text_box_mirror",
+    "description": "Editable NSTextField with a mirror label. Tests type_text and set_value via AXValue on AppKit.",
+    "controls": {
+     "textbox_aid": "txt-input",
+     "mirror_label_aid": "lbl-input-mirror"
+    }
+   },
+   {
+    "id": "click_target",
+    "kind": "right_double_click",
+    "description": "Real NSButton (AX-addressable) records click / double_click / right_click. AXPress (element_index) fires the single-click path; a pixel double-click sets double_click; right-click sets right_click. last_action= + clicks= labels.",
+    "controls": {
+     "target_aid": "btn-clicktarget",
+     "last_action_label_aid": "lbl-last-action",
+     "click_count_label_aid": "lbl-click-count"
+    }
+   },
+   {
+    "id": "slider",
+    "kind": "range_value",
+    "description": "Horizontal NSSlider (0..100). Tests drag / set_value via AXValue. slider_value= label.",
+    "controls": {
+     "slider_aid": "sld-value",
+     "value_label_aid": "lbl-slider-value"
+    }
+   },
+   {
+    "id": "checkable_controls",
+    "kind": "toggle",
+    "description": "NSButton checkbox. Tests click toggling AXValue. agreed= label.",
+    "controls": {
+     "checkbox_aid": "chk-agree",
+     "state_label_aid": "lbl-chk-state"
+    }
+   },
+   {
+    "id": "context_menu",
+    "kind": "context_menu",
+    "description": "NSButton with an attached NSMenu (Cut/Copy/Paste). Right-click opens the native context menu; selecting an item sets menu_action=. menu_action= label.",
+    "controls": {
+     "button_aid": "btn-context",
+     "action_label_aid": "lbl-menu-action"
+    }
+   },
+   {
+    "id": "scroll_target",
+    "kind": "scroll_viewer",
+    "description": "NSScrollView with a tall NSTextView body between SCROLL_TOP/BOTTOM markers and an offset label. Tests scroll tool delivery. scroll_offset= label.",
+    "controls": {
+     "scroller_aid": "scroll-tall",
+     "offset_label_aid": "lbl-scroll-offset",
+     "top_marker_text": "SCROLL_TOP_MARKER_v1",
+     "bottom_marker_text": "SCROLL_BOTTOM_MARKER_v1"
+    }
+   },
+   {
+    "id": "ns_menubar",
+    "kind": "menubar_item",
+    "description": "Mac-specific: app menu item with a known title. Tests menubar enumeration via AX (the macOS main menu lives in the menubar, not the window's UIA tree).",
+    "controls": {
+     "menu_item_aid": "menu-test-item",
+     "expected_menu_item_title": "Harness Test Item"
+    }
+   },
+   {
+    "id": "exit",
+    "kind": "exit_button",
+    "controls": {
+     "exit_button_aid": "btn-exit"
+    }
+   }
+  ]
+ },
+ "swiftui": {
+  "process_name": "CuaTestHarness.SwiftUI",
+  "app_bundle_relative_path": "test-apps/harness-swiftui/CuaTestHarness.SwiftUI.app",
+  "exe_relative_path": "test-apps/harness-swiftui/CuaTestHarness.SwiftUI.app/Contents/MacOS/CuaTestHarness.SwiftUI",
+  "bundle_id": "com.trycua.harness.swiftui",
+  "main_window": {
+   "title": "CuaTestHarness SwiftUI"
+  },
+  "scenarios": [
+   {
+    "id": "counter",
+    "kind": "click_counter",
+    "controls": {
+     "increment_button_aid": "btn-increment",
+     "counter_label_aid": "lbl-counter",
+     "reset_button_aid": "btn-reset"
+    }
+   },
+   {
+    "id": "text_body",
+    "kind": "static_text",
+    "controls": {
+     "text_block_aid": "txt-body"
+    },
+    "expected_text_marker": "HARNESS_TEXT_MARKER_v1"
+   },
+   {
+    "id": "text_input",
+    "kind": "text_box_mirror",
+    "controls": {
+     "textbox_aid": "txt-input",
+     "mirror_label_aid": "lbl-input-mirror"
+    }
+   },
+   {
+    "id": "popover",
+    "kind": "swiftui_popover",
+    "description": "SwiftUI .popover() \u2014 SwiftUI's analogue of WinUI3 CommandBarFlyout / XAML Popup. Tests popover/flyout enumeration via AX (a separate AX subtree, but same NSWindow).",
+    "controls": {
+     "open_button_aid": "btn-open-popover",
+     "popover_text_aid": "txt-popover-body",
+     "expected_marker": "POPOVER_MARKER_v1"
+    }
+   },
+   {
+    "id": "click_target",
+    "kind": "right_double_click",
+    "description": "SwiftUI Button (AX-addressable). Tap fires click; a pixel double-tap sets double_click. NOTE: SwiftUI/AX has no distinct right-press action, so right_click on the button coerces to a normal AXPress (records click) — right-click semantics are covered by the dedicated context_menu scenario. last_action= + clicks= labels.",
+    "controls": {
+     "target_aid": "btn-clicktarget",
+     "last_action_label_aid": "lbl-last-action",
+     "click_count_label_aid": "lbl-click-count"
+    }
+   },
+   {
+    "id": "slider",
+    "kind": "range_value",
+    "description": "SwiftUI Slider (0..100). Tests drag / set_value via AXValue. slider_value= label.",
+    "controls": {
+     "slider_aid": "sld-value",
+     "value_label_aid": "lbl-slider-value"
+    }
+   },
+   {
+    "id": "checkable_controls",
+    "kind": "toggle",
+    "description": "SwiftUI Toggle (.checkbox style). Tests click toggling AXValue. agreed= label.",
+    "controls": {
+     "checkbox_aid": "chk-agree",
+     "state_label_aid": "lbl-chk-state"
+    }
+   },
+   {
+    "id": "context_menu",
+    "kind": "context_menu",
+    "description": "SwiftUI Button with .contextMenu (Cut/Copy/Paste). Right-click opens the context menu; selecting an item sets menu_action=. menu_action= label.",
+    "controls": {
+     "button_aid": "btn-context",
+     "action_label_aid": "lbl-menu-action"
+    }
+   },
+   {
+    "id": "scroll_target",
+    "kind": "scroll_viewer",
+    "description": "SwiftUI ScrollView with a tall body between SCROLL_TOP/BOTTOM markers and a GeometryReader-tracked offset label. Tests scroll tool delivery. scroll_offset= label.",
+    "controls": {
+     "scroller_aid": "scroll-tall",
+     "offset_label_aid": "lbl-scroll-offset",
+     "top_marker_text": "SCROLL_TOP_MARKER_v1",
+     "bottom_marker_text": "SCROLL_BOTTOM_MARKER_v1"
+    }
+   },
+   {
+    "id": "exit",
+    "kind": "exit_button",
+    "controls": {
+     "exit_button_aid": "btn-exit"
+    }
+   }
+  ]
+ },
+ "gtk3": {
+  "process_name": "CuaTestHarness.Gtk3",
+  "exe_relative_path": "test-apps/harness-gtk3/CuaTestHarness.Gtk3",
+  "main_window": {
+   "title": "CuaTestHarness GTK3"
+  },
+  "id_contract": "atspi_accessible_name",
+  "id_contract_note": "Linux AT-SPI exposes element NAME (rendered as `[idx] role \"name\"`), not an AutomationId/AX-id. Each actionable control sets its accessible NAME to the aid below; marker labels carry their marker text. Tests match on name via ax::element_index_containing, not ax::has_id.",
+  "scenarios": [
+   {
+    "id": "counter",
+    "kind": "click_counter",
+    "controls": {
+     "increment_button_aid": "btn-increment",
+     "counter_label_text": "counter=",
+     "reset_button_aid": "btn-reset"
+    }
+   },
+   {
+    "id": "text_body",
+    "kind": "static_text",
+    "controls": {
+     "text_block_marker": "HARNESS_TEXT_MARKER_v1"
+    },
+    "expected_text_marker": "HARNESS_TEXT_MARKER_v1"
+   },
+   {
+    "id": "text_input",
+    "kind": "text_box_mirror",
+    "controls": {
+     "textbox_aid": "txt-input",
+     "mirror_label_prefix": "mirror="
+    }
+   },
+   {
+    "id": "popover",
+    "kind": "gtk_popover",
+    "description": "GtkPopover \u2014 GTK analogue of SwiftUI .popover() / WinUI3 CommandBarFlyout. Tests popover enumeration via AT-SPI.",
+    "controls": {
+     "open_button_aid": "btn-open-popover",
+     "expected_marker": "POPOVER_MARKER_v1"
+    }
+   },
+   {
+    "id": "exit",
+    "kind": "exit_button",
+    "controls": {
+     "exit_button_aid": "btn-exit"
+    }
+   },
+   {
+    "id": "click_target",
+    "kind": "click_target",
+    "description": "Button recording left/right/double clicks. last_action= + clicks= labels.",
+    "controls": {
+     "button_aid": "btn-clicktarget",
+     "status_label_text": "last_action="
+    }
+   },
+   {
+    "id": "slider",
+    "kind": "range_value",
+    "description": "Horizontal GtkScale. slider_value= label. NOTE: GtkScale role not surfaced by cua-driver Linux get_window_state \u2014 drive via pixel coords.",
+    "controls": {
+     "slider_aid": "sld-value",
+     "status_label_text": "slider_value="
+    }
+   },
+   {
+    "id": "checkable_controls",
+    "kind": "toggle",
+    "description": "Checkbox. agreed= label.",
+    "controls": {
+     "checkbox_aid": "chk-agree",
+     "status_label_text": "agreed="
+    }
+   },
+   {
+    "id": "context_menu",
+    "kind": "context_menu",
+    "description": "Right-click opens a GtkMenu (Cut/Copy/Paste). menu_action= label.",
+    "controls": {
+     "button_aid": "btn-context",
+     "status_label_text": "menu_action="
+    }
+   },
+   {
+    "id": "scroll_target",
+    "kind": "scroll",
+    "description": "Tall GtkScrolledWindow between SCROLL_TOP/BOTTOM markers. scroll_offset= label. NOTE: ScrolledWindow role not surfaced by Linux get_window_state \u2014 drive via pixel coords.",
+    "controls": {
+     "scroller_aid": "scroll-tall",
+     "status_label_text": "scroll_offset="
+    }
+   }
+  ]
+ }
+}

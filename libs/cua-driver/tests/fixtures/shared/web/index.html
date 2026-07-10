@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>cua-driver Web Harness</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+    fieldset { margin-bottom: 12px; padding: 10px 14px; border-radius: 6px; border: 1px solid #ccc; }
+    legend { font-weight: 600; padding: 0 6px; }
+    label { display: inline-block; min-width: 120px; }
+    .row { display: flex; align-items: center; gap: 10px; margin: 6px 0; flex-wrap: wrap; }
+    .mirror, .state { font-family: Consolas, monospace; color: #555; }
+    input[type="range"] { width: 280px; }
+    #click-target {
+      display: inline-block;
+      padding: 8px 18px;
+      background: #eaeaff;
+      border: 1px solid #88a;
+      border-radius: 4px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .marker { font-family: Consolas, monospace; }
+  </style>
+</head>
+<body>
+  <h2 data-cua-id="page-heading">cua-driver Web Harness</h2>
+  <p data-cua-id="page-marker" class="marker">WEB_HARNESS_MARKER_v1</p>
+
+  <fieldset>
+    <legend>counter</legend>
+    <div class="row">
+      <button id="btn-increment"  data-cua-id="btn-increment">Increment</button>
+      <button id="btn-reset"      data-cua-id="btn-reset">Reset</button>
+      <span class="mirror" id="lbl-counter" data-cua-id="lbl-counter">counter=0</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>calculator_task</legend>
+    <div class="row">
+      <button id="calc-1" data-cua-id="calc-1" aria-label="calc-1 1">1</button>
+      <button id="calc-2" data-cua-id="calc-2" aria-label="calc-2 2">2</button>
+      <button id="calc-4" data-cua-id="calc-4" aria-label="calc-4 4">4</button>
+      <button id="calc-plus" data-cua-id="calc-plus" aria-label="calc-plus plus">+</button>
+      <button id="calc-equals" data-cua-id="calc-equals" aria-label="calc-equals equals">=</button>
+      <span class="mirror" id="calc-display" data-cua-id="calc-display">display=0</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>text_input</legend>
+    <div class="row">
+      <input type="text" id="txt-input" data-cua-id="txt-input" placeholder="type here" />
+      <span class="mirror" id="lbl-input-mirror" data-cua-id="lbl-input-mirror">mirror=</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>keyboard_task</legend>
+    <div class="row">
+      <input type="text" id="keyboard-input" data-cua-id="keyboard-input" autofocus
+             aria-label="keyboard-input" placeholder="keyboard input" />
+      <span class="mirror" id="keyboard-status" data-cua-id="keyboard-status">key_state=none</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>text_editor_task</legend>
+    <div class="row">
+      <textarea id="editor-document" data-cua-id="editor-document" aria-label="editor-document" rows="3" cols="42">Initial conformance text.\nStatus: DRAFT\n</textarea>
+      <button id="editor-save" data-cua-id="editor-save" aria-label="editor-save Save">Save</button>
+      <span class="mirror" id="editor-status" data-cua-id="editor-status">editor_status=draft</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>slider</legend>
+    <div class="row">
+      <input type="range" min="0" max="100" value="0"
+             id="sld-value" data-cua-id="sld-value" />
+      <span class="mirror" id="lbl-slider-value" data-cua-id="lbl-slider-value">slider_value=0</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>drag_task</legend>
+    <div class="row">
+      <div id="drag-source" data-cua-id="drag-source" aria-label="drag-source" style="position:fixed;left:40px;top:80px;width:220px;height:100px;display:flex;align-items:center;justify-content:center;background:#1268d6;color:white;user-select:none;touch-action:none;z-index:10;">Drag source</div>
+      <div id="drop-target" data-cua-id="drop-target" aria-label="drop-target" style="position:fixed;left:520px;top:520px;width:220px;height:100px;display:flex;align-items:center;justify-content:center;background:#178a38;color:white;z-index:10;">Drop target</div>
+      <span class="mirror" id="drag-status" data-cua-id="drag-status">drag_status=idle</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>scroll_target</legend>
+    <div class="row">
+      <div id="scroll-tall" data-cua-id="scroll-tall" aria-label="scroll-tall"
+           style="height:120px;width:260px;overflow-y:auto;border:1px solid #ccc;padding:4px;">
+        <div id="scroll-top" data-cua-id="scroll-top">SCROLL_TOP_MARKER_v1</div>
+        <div data-cua-id="scroll-target-label">scroll-tall</div>
+        <div id="scroll-lines"></div>
+        <div id="scroll-bottom" data-cua-id="scroll-bottom">SCROLL_BOTTOM_MARKER_v1</div>
+      </div>
+      <span class="mirror" id="lbl-scroll-offset" data-cua-id="lbl-scroll-offset">scroll_offset=0</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>click_target</legend>
+    <div class="row">
+      <span id="click-target" data-cua-id="border-click-target">Click target (left / right / double)</span>
+    </div>
+    <div class="row">
+      <span class="mirror" id="lbl-last-action" data-cua-id="lbl-last-action">last_action=none</span>
+      <span class="mirror" id="lbl-click-count"  data-cua-id="lbl-click-count">clicks=0</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>checkable_controls</legend>
+    <div class="row">
+      <label><input type="checkbox" id="chk-agreed" data-cua-id="chk-agreed" /> I agree</label>
+    </div>
+    <div class="row">
+      <label><input type="radio" name="prio" value="Low"    id="rdo-low"  data-cua-id="rdo-low" checked /> Low</label>
+      <label><input type="radio" name="prio" value="Medium" id="rdo-med"  data-cua-id="rdo-med" /> Medium</label>
+      <label><input type="radio" name="prio" value="High"   id="rdo-high" data-cua-id="rdo-high" /> High</label>
+    </div>
+    <div class="row">
+      <span class="state" id="lbl-chk-state" data-cua-id="lbl-chk-state">agreed=false, prio=Low</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>combo_box</legend>
+    <div class="row">
+      <select id="cbo-color" data-cua-id="cbo-color">
+        <option value="red"    data-cua-id="cbo-item-red">red</option>
+        <option value="green"  data-cua-id="cbo-item-green" selected>green</option>
+        <option value="blue"   data-cua-id="cbo-item-blue">blue</option>
+        <option value="orange" data-cua-id="cbo-item-orange">orange</option>
+      </select>
+      <span class="mirror" id="lbl-combo-value" data-cua-id="lbl-combo-value">color=green</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>navigation</legend>
+    <div class="row">
+      <a id="lnk-anchor" data-cua-id="lnk-anchor" href="#section-target">Jump to section</a>
+      <span class="mirror" id="lbl-nav-state" data-cua-id="lbl-nav-state">hash=</span>
+    </div>
+    <div style="height: 100px"></div>
+    <h3 id="section-target" data-cua-id="section-target">SECTION_TARGET_MARKER_v1</h3>
+  </fieldset>
+
+  <fieldset>
+    <legend>child_window</legend>
+    <div class="row">
+      <button id="btn-open-child-window" data-cua-id="btn-open-child-window">Open child window</button>
+      <span class="mirror" id="lbl-child-window-state" data-cua-id="lbl-child-window-state">child_windows=0</span>
+    </div>
+  </fieldset>
+
+  <script>
+  // ----- state -----
+  let counter = 0;
+  let clickCount = 0;
+  let calculatorExpression = '';
+
+  function $(id) { return document.getElementById(id); }
+  function updateChkState() {
+    const agreed = $('chk-agreed').checked;
+    const prio = document.querySelector('input[name="prio"]:checked')?.value ?? '?';
+    $('lbl-chk-state').textContent = `agreed=${agreed}, prio=${prio}`;
+  }
+
+  $('btn-increment').addEventListener('click', () => {
+    counter++;
+    $('lbl-counter').textContent = `counter=${counter}`;
+  });
+  $('btn-reset').addEventListener('click', () => {
+    counter = 0;
+    $('lbl-counter').textContent = 'counter=0';
+  });
+
+  // Calculator task oracle: the visible display is application state, not a
+  // driver response. It intentionally uses separate buttons so both AX and
+  // pixel-coordinate delivery can be tested against the same result.
+  ['1', '2', '4'].forEach(digit => {
+    $('calc-' + digit).addEventListener('click', () => {
+      calculatorExpression += digit;
+      $('calc-display').textContent = `display=${calculatorExpression}`;
+    });
+  });
+  $('calc-plus').addEventListener('click', () => {
+    calculatorExpression += '+';
+    $('calc-display').textContent = `display=${calculatorExpression}`;
+  });
+  $('calc-equals').addEventListener('click', () => {
+    const parts = calculatorExpression.split('+').map(Number);
+    const result = parts.length === 2 && parts.every(Number.isFinite) ? parts[0] + parts[1] : 'error';
+    calculatorExpression = String(result);
+    $('calc-display').textContent = `display=${calculatorExpression}`;
+  });
+
+  $('editor-save').addEventListener('click', () => {
+    const value = $('editor-document').value;
+    localStorage.setItem('cua-editor-document', value);
+    $('editor-status').textContent = `editor_status=saved:${value.endsWith('\\n') ? 'newline' : 'exact'}`;
+  });
+
+  $('txt-input').addEventListener('input', e => {
+    $('lbl-input-mirror').textContent = `mirror=${e.target.value}`;
+  });
+
+  $('keyboard-input').addEventListener('keydown', e => {
+    if (e.ctrlKey && e.shiftKey && e.code === 'Digit7') {
+      $('keyboard-status').textContent = 'key_state=hotkey';
+    } else if (e.key === 'Enter') {
+      $('keyboard-status').textContent = 'key_state=enter';
+    }
+  });
+
+  $('sld-value').addEventListener('input', e => {
+    $('lbl-slider-value').textContent = `slider_value=${e.target.value}`;
+  });
+
+  // scroll_target — tall scrollable region; scroll_offset= updates on scroll.
+  (function () {
+    const lines = $('scroll-lines');
+    for (let i = 2; i <= 41; i++) {
+      const d = document.createElement('div');
+      d.textContent = 'line ' + String(i).padStart(2, '0');
+      lines.appendChild(d);
+    }
+    $('scroll-tall').addEventListener('scroll', e => {
+      $('lbl-scroll-offset').textContent = `scroll_offset=${Math.round(e.target.scrollTop)}`;
+    });
+  })();
+
+  (function () {
+    const source = $('drag-source');
+    const target = $('drop-target');
+    let dragging = false;
+    source.addEventListener('pointerdown', event => {
+      dragging = true;
+      source.setPointerCapture(event.pointerId);
+      $('drag-status').textContent = 'drag_status=started';
+    });
+    source.addEventListener('pointermove', event => {
+      if (dragging) $('drag-status').textContent = 'drag_status=moved';
+    });
+    source.addEventListener('pointerup', event => {
+      dragging = false;
+      const rect = target.getBoundingClientRect();
+      const inside = event.clientX >= rect.left && event.clientX <= rect.right &&
+        event.clientY >= rect.top && event.clientY <= rect.bottom;
+      $('drag-status').textContent = inside ? 'drag_status=dropped' : 'drag_status=outside';
+    });
+  })();
+
+  const target = $('click-target');
+  target.addEventListener('mousedown', e => {
+    clickCount++;
+    if (e.detail >= 2) {
+      $('lbl-last-action').textContent = 'last_action=double_click';
+    } else if (e.button === 2) {
+      $('lbl-last-action').textContent = 'last_action=right_click';
+    } else {
+      $('lbl-last-action').textContent = 'last_action=left_click';
+    }
+    $('lbl-click-count').textContent = `clicks=${clickCount}`;
+  });
+  target.addEventListener('contextmenu', e => {
+    e.preventDefault();   // suppress browser default so right-click registers cleanly
+    $('lbl-last-action').textContent = 'last_action=right_click';
+  });
+  target.addEventListener('dblclick', () => {
+    $('lbl-last-action').textContent = 'last_action=double_click';
+  });
+
+  $('chk-agreed').addEventListener('change', updateChkState);
+  document.querySelectorAll('input[name="prio"]').forEach(r => r.addEventListener('change', updateChkState));
+
+  $('cbo-color').addEventListener('change', e => {
+    $('lbl-combo-value').textContent = `color=${e.target.value}`;
+  });
+
+  $('lnk-anchor').addEventListener('click', () => {
+    // Defer so the browser has applied the hash by the time we read it.
+    setTimeout(() => {
+      $('lbl-nav-state').textContent = `hash=${location.hash}`;
+    }, 30);
+  });
+
+  let childWindowCount = 0;
+  $('btn-open-child-window').addEventListener('click', () => {
+    childWindowCount++;
+    $('lbl-child-window-state').textContent = `child_windows=${childWindowCount}`;
+    const child = window.open('', `cua-harness-child-${childWindowCount}`, 'width=320,height=220');
+    if (child) {
+      child.document.write(`<!doctype html><title>Cua child ${childWindowCount}</title><p>CHILD_WINDOW_MARKER_v1</p>`);
+      child.document.close();
+    }
+  });
+  </script>
+</body>
+</html>

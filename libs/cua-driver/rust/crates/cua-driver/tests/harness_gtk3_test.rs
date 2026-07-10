@@ -14,7 +14,7 @@
 //!
 //! Requires a real Linux desktop with AT-SPI running + a display (Xwayland is
 //! fine — the launcher forces `GDK_BACKEND=x11`), GTK3 + PyGObject, and the app
-//! built via `test-harness/build/linux.sh`. `#[ignore]`; run explicitly:
+//! built via `tests/fixtures/build/linux.sh`. `#[ignore]`; run explicitly:
 //!   cargo test -p cua-driver --test harness_gtk3_test -- --ignored --nocapture --test-threads=1
 
 #![cfg(target_os = "linux")]
@@ -39,12 +39,16 @@ fn harness_exe() -> std::path::PathBuf {
 fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
     let exe = harness_exe();
     if !exe.exists() {
-        eprintln!("GTK3 harness not built at {exe:?} — run test-harness/build/linux.sh");
+        eprintln!("GTK3 harness not built at {exe:?} — run tests/fixtures/build/linux.sh");
         return None;
     }
     driver
         .reaper()
-        .spawn(Command::new(&exe).stdout(Stdio::null()).stderr(Stdio::null()))
+        .spawn(
+            Command::new(&exe)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        )
         .ok()?;
     // GTK app cold-start + window map + AT-SPI registration.
     std::thread::sleep(Duration::from_millis(1500));
@@ -58,7 +62,11 @@ fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
         let r = driver.call("list_windows", serde_json::json!({}));
         if let Some(wins) = r.structured()["windows"].as_array() {
             for w in wins {
-                if w["title"].as_str().unwrap_or("").contains("CuaTestHarness GTK3") {
+                if w["title"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("CuaTestHarness GTK3")
+                {
                     let pid = w["pid"].as_u64().unwrap_or(0) as u32;
                     let wid = w["window_id"].as_u64().unwrap_or(0);
                     if pid != 0 && wid != 0 {
@@ -91,8 +99,12 @@ fn ax_empty(text: &str) -> bool {
 #[test]
 #[ignore]
 fn harness_gtk3_smoke() {
-    let Some(mut driver) = McpDriver::spawn() else { return };
-    let Some((pid, wid)) = launch(&mut driver) else { return };
+    let Some(mut driver) = McpDriver::spawn() else {
+        return;
+    };
+    let Some((pid, wid)) = launch(&mut driver) else {
+        return;
+    };
     println!("gtk3 harness pid={pid} wid={wid}");
 
     let text = snapshot(&mut driver, pid, wid);
@@ -103,12 +115,31 @@ fn harness_gtk3_smoke() {
     println!("snapshot:\n{text}");
 
     // Actionable controls expose their aid as the AT-SPI accessible name.
-    for name in ["btn-increment", "btn-reset", "txt-input", "btn-open-popover", "btn-exit"] {
-        assert!(text.contains(name), "missing control named {name:?} in GTK3 AT-SPI tree");
+    for name in [
+        "btn-increment",
+        "btn-reset",
+        "txt-input",
+        "btn-open-popover",
+        "btn-exit",
+    ] {
+        assert!(
+            text.contains(name),
+            "missing control named {name:?} in GTK3 AT-SPI tree"
+        );
     }
     // Marker label + counter label carry their text as the accessible name.
-    assert!(text.contains("HARNESS_TEXT_MARKER_v1"), "text_body marker not in tree");
-    assert!(text.contains("counter=0"), "initial counter label not in tree");
+    assert!(
+        text.contains("HARNESS_TEXT_MARKER_v1"),
+        "text_body marker not in tree"
+    );
+    assert!(
+        text.contains("counter=0"),
+        "initial counter label not in tree"
+    );
+    assert!(
+        text.contains("popover_open=False"),
+        "initial popover state not in tree"
+    );
 
     println!("✅ harness_gtk3_smoke: all scenarios present in AT-SPI tree");
 }
@@ -116,8 +147,12 @@ fn harness_gtk3_smoke() {
 #[test]
 #[ignore]
 fn harness_gtk3_counter_click() {
-    let Some(mut driver) = McpDriver::spawn() else { return };
-    let Some((pid, wid)) = launch(&mut driver) else { return };
+    let Some(mut driver) = McpDriver::spawn() else {
+        return;
+    };
+    let Some((pid, wid)) = launch(&mut driver) else {
+        return;
+    };
 
     let pre = snapshot(&mut driver, pid, wid);
     if ax_empty(&pre) {
@@ -142,7 +177,10 @@ fn harness_gtk3_counter_click() {
     assert!(
         post.contains("counter=1"),
         "counter did not advance after clicking btn-increment. counter lines: {}",
-        post.lines().filter(|l| l.contains("counter=")).collect::<Vec<_>>().join(" / ")
+        post.lines()
+            .filter(|l| l.contains("counter="))
+            .collect::<Vec<_>>()
+            .join(" / ")
     );
     println!("✅ harness_gtk3_counter_click: counter advanced via AT-SPI click");
 }
@@ -150,15 +188,22 @@ fn harness_gtk3_counter_click() {
 #[test]
 #[ignore]
 fn harness_gtk3_popover() {
-    let Some(mut driver) = McpDriver::spawn() else { return };
-    let Some((pid, wid)) = launch(&mut driver) else { return };
+    let Some(mut driver) = McpDriver::spawn() else {
+        return;
+    };
+    let Some((pid, wid)) = launch(&mut driver) else {
+        return;
+    };
 
     let pre = snapshot(&mut driver, pid, wid);
     if ax_empty(&pre) {
         eprintln!("AT-SPI empty — skipping");
         return;
     }
-    assert!(!pre.contains("POPOVER_MARKER_v1"), "popover body present BEFORE open");
+    assert!(
+        pre.contains("popover_open=False"),
+        "popover state not initially closed"
+    );
 
     let idx = match ax::element_index_containing(&pre, "btn-open-popover") {
         Some(i) => i,
@@ -175,14 +220,25 @@ fn harness_gtk3_popover() {
 
     // GtkPopover may surface as a separate top-level; check the main window
     // first, then any new window of this pid.
-    let mut found = snapshot(&mut driver, pid, wid).contains("POPOVER_MARKER_v1");
+    let post = snapshot(&mut driver, pid, wid);
+    assert!(
+        post.contains("popover_open=True"),
+        "popover state did not flip open after click. Popover lines: {}",
+        post.lines()
+            .filter(|l| l.contains("popover_open="))
+            .collect::<Vec<_>>()
+            .join(" / ")
+    );
+    let mut found = post.contains("POPOVER_MARKER_v1");
     if !found {
         let r = driver.call("list_windows", serde_json::json!({}));
         if let Some(wins) = r.structured()["windows"].as_array() {
             for w in wins {
                 if w["pid"].as_u64() == Some(pid as u64) {
                     if let Some(other) = w["window_id"].as_u64() {
-                        if other != wid && snapshot(&mut driver, pid, other).contains("POPOVER_MARKER_v1") {
+                        if other != wid
+                            && snapshot(&mut driver, pid, other).contains("POPOVER_MARKER_v1")
+                        {
                             found = true;
                             break;
                         }
@@ -191,6 +247,9 @@ fn harness_gtk3_popover() {
             }
         }
     }
-    assert!(found, "popover body marker POPOVER_MARKER_v1 not found after open");
+    assert!(
+        found,
+        "popover body marker POPOVER_MARKER_v1 not found after open"
+    );
     println!("✅ harness_gtk3_popover: popover body enumerated after open");
 }

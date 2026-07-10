@@ -101,6 +101,48 @@ pub unsafe fn scroll_into_view_and_recenter(
     result
 }
 
+/// Scroll a cached UIA scroll container in the requested direction.
+///
+/// WebView2/Tauri content can expose a real `ScrollPattern` even though its
+/// top-level host HWND ignores `WM_VSCROLL`. Keeping this on the UIA channel
+/// makes indexed background scrolls reach that container without activating
+/// the host window.
+pub unsafe fn scroll_element(
+    element_ptr: usize,
+    direction: &str,
+    amount: u32,
+) -> anyhow::Result<()> {
+    if element_ptr == 0 {
+        anyhow::bail!("cached UIA scroll element is null");
+    }
+    let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    let elem: IUIAutomationElement = IUIAutomationElement::from_raw(element_ptr as *mut _);
+    let pattern = elem
+        .GetCurrentPattern(UIA_ScrollPatternId)
+        .map_err(|e| anyhow::anyhow!("UIA ScrollPattern unavailable: {e}"))?;
+    let scroll = pattern
+        .cast::<IUIAutomationScrollPattern>()
+        .map_err(|e| anyhow::anyhow!("UIA ScrollPattern cast failed: {e}"))?;
+    let vertical = match direction {
+        "up" => ScrollAmount_LargeDecrement,
+        "down" => ScrollAmount_LargeIncrement,
+        "left" => ScrollAmount_LargeDecrement,
+        "right" => ScrollAmount_LargeIncrement,
+        other => anyhow::bail!("unknown scroll direction {other:?}"),
+    };
+    let horizontal = matches!(direction, "left" | "right");
+    for _ in 0..amount.max(1) {
+        let result = if horizontal {
+            scroll.Scroll(vertical, ScrollAmount_NoAmount)
+        } else {
+            scroll.Scroll(ScrollAmount_NoAmount, vertical)
+        };
+        result.map_err(|e| anyhow::anyhow!("UIA scroll failed: {e}"))?;
+    }
+    std::mem::forget(elem);
+    Ok(())
+}
+
 /// Strategy 1: `ScrollItemPattern::ScrollIntoView` on the element itself.
 unsafe fn scroll_item_into_view(host_hwnd: u64, elem: &IUIAutomationElement) -> Option<(i32, i32)> {
     let pattern = elem.GetCurrentPattern(UIA_ScrollItemPatternId).ok()?;
@@ -132,7 +174,10 @@ unsafe fn scroll_ancestor_into_view(
     for _ in 0..16 {
         if let Ok(p) = cur.GetCurrentPattern(UIA_ScrollPatternId) {
             if let Ok(sp) = p.cast::<IUIAutomationScrollPattern>() {
-                let scrollable = sp.CurrentVerticallyScrollable().map(|b| b.as_bool()).unwrap_or(false);
+                let scrollable = sp
+                    .CurrentVerticallyScrollable()
+                    .map(|b| b.as_bool())
+                    .unwrap_or(false);
                 if scrollable {
                     container = Some(cur.clone());
                     scroll_pat = Some(sp);

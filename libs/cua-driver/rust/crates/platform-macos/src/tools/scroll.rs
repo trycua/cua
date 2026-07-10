@@ -39,10 +39,10 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "scroll".into(),
         description: "Scroll the target pid. Two paths, picked by how you address the scroll:\n\n\
-            • **Pixel-wheel path (targeted)** — when you pass a target, either \
+            • **Targeted wheel path** — when you pass a target, either \
             `element_index`/`element_token` (preferred) or window-local `x, y` pixels: \
             the driver synthesizes a real mouse-wheel event (CGEventCreateScrollWheelEvent, \
-            pixel units) AT that screen point. The renderer hit-tests the wheel at the \
+            at that screen point. The renderer hit-tests the wheel at the \
             cursor, so the scroll lands on whatever element is under the point — exactly \
             like physically rolling the wheel over it. This is the ONLY way to scroll a \
             nested `overflow:auto` region (e.g. a scrollable <div> with no tabindex): such \
@@ -53,7 +53,7 @@ fn def() -> &'static ToolDef {
             (by='line'); horizontal uses Left/Right arrows. Drives the focused / page \
             scroller only.\n\n\
             Mapping: by='page' → larger step; by='line' → smaller step; amount = number of \
-            wheel notches (pixel path) or keystroke repetitions (keystroke path).".into(),
+            wheel notches (targeted path) or keystroke repetitions (keystroke path).".into(),
         input_schema: serde_json::json!({
             "type": "object",
             // `pid` conditionally required (validated in code), not pinned in the
@@ -155,7 +155,7 @@ impl Tool for ScrollTool {
             }
         }
 
-        // ── Pixel-wheel path (targeted scroll) ───────────────────────────────
+        // ── Targeted wheel path ─────────────────────────────────────────────
         // A target — element (preferred) OR window-local x,y — routes the scroll
         // through a synthesized mouse-wheel event at that screen point, so the
         // renderer's hit-test delivers it to whatever element is under the
@@ -165,7 +165,7 @@ impl Tool for ScrollTool {
         let x_arg = args.opt_f64("x").or_else(|| args.opt_i64("x").map(|v| v as f64));
         let y_arg = args.opt_f64("y").or_else(|| args.opt_i64("y").map(|v| v as f64));
 
-        // Per-notch pixel step + direction→delta mapping (sign convention lives
+        // Per-notch step + direction→delta mapping (sign convention lives
         // here; the mouse primitive stays sign-agnostic). macOS: +y reveals
         // content ABOVE, -y reveals BELOW; +x reveals LEFT, -x reveals RIGHT.
         let step = if by == "page" { WHEEL_STEP_PAGE_PX } else { WHEEL_STEP_LINE_PX };
@@ -184,6 +184,18 @@ impl Tool for ScrollTool {
             // Retina scaling is needed here.
             let wid = window_id;
             tokio::task::spawn_blocking(move || {
+                // Web content can be present in AX while its frame is below
+                // the outer page viewport. Ask the accessibility hierarchy to
+                // reveal the target before taking the screen-space center;
+                // otherwise the wheel is posted outside the rendered window
+                // and nested overflow regions never receive it.
+                unsafe {
+                    let _ = crate::ax::bindings::perform_action(
+                        element_ptr as AXUIElementRef,
+                        "AXScrollToVisible",
+                    );
+                }
+                std::thread::sleep(std::time::Duration::from_millis(40));
                 let center = unsafe { element_screen_center(element_ptr as AXUIElementRef) };
                 center.map(|(cx, cy)| {
                     let win_local = wid

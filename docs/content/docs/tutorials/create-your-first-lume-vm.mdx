@@ -1,0 +1,75 @@
+---
+title: Create your first local macOS VM with Lume
+description: Install Lume and create a vanilla macOS Tahoe VM from an Apple restore image.
+---
+
+This tutorial walks through one complete local VM setup on an Apple Silicon Mac.
+You will install Lume, download a Tahoe restore image, create a vanilla VM, and
+connect to it over SSH.
+
+## Before you start
+
+You need an Apple Silicon Mac with macOS 13 or later, 8GB of available memory,
+and at least 50GB of free disk space. The restore image requires additional
+download and VM disk space.
+
+## Install Lume
+
+Run the installer:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+```
+
+Check the installed version:
+
+```bash
+lume --version
+```
+
+## Download the Tahoe restore image
+
+Ask Lume for the latest supported restore image URL and download it locally:
+
+```bash
+IPSW_URL="$(lume ipsw | tail -n 1)"
+curl -L "$IPSW_URL" -o ~/Downloads/macos-tahoe.ipsw
+```
+
+## Create the VM
+
+The Tahoe preset prepares the installed guest offline. It creates the `lume`
+user, enables SSH, configures autologin, and disables sleep and screen locking.
+
+```bash
+lume create macos-tahoe \
+  --ipsw ~/Downloads/macos-tahoe.ipsw \
+  --unattended tahoe
+```
+
+Creation includes a temporary boot, offline disk setup, and an SSH health check.
+The VM is stopped when creation finishes.
+
+## Run the VM
+
+Start the VM with its display:
+
+```bash
+lume run macos-tahoe
+```
+
+The default guest credentials are `lume` / `lume`. In another terminal, verify
+the guest account over SSH:
+
+```bash
+lume ssh macos-tahoe 'id -un'
+```
+
+The command prints `lume`. Change the password before using the VM for anything
+sensitive.
+
+## Next steps
+
+- [Create a vanilla Tahoe VM](/how-to-guides/lume/create-vanilla-vm) for lifecycle commands and troubleshooting.
+- [Serve the Lume API](/how-to-guides/lume/serve-api) for local tools and scripts.
+- [Read the CLI reference](/reference/lume/cli-reference) for every command and option.

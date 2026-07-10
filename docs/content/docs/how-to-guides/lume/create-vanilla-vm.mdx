@@ -1,0 +1,68 @@
+---
+title: Create a vanilla Tahoe VM
+description: Create and manage a vanilla macOS Tahoe VM from a local Apple restore image.
+---
+
+Use this guide when you already have Lume installed and need a repeatable local
+Tahoe VM. The offline unattended setup does not drive Setup Assistant through
+the display.
+
+## Download an IPSW
+
+Use the latest supported Apple restore image, or provide an IPSW you already
+downloaded:
+
+```bash
+IPSW_URL="$(lume ipsw | tail -n 1)"
+curl -L "$IPSW_URL" -o ~/Downloads/macos-tahoe.ipsw
+```
+
+## Create the VM
+
+```bash
+lume create macos-tahoe \
+  --ipsw ~/Downloads/macos-tahoe.ipsw \
+  --unattended tahoe
+```
+
+The `tahoe` preset creates the `lume` user, enables SSH, configures autologin,
+and disables sleep and screen locking. The default credentials are
+`lume` / `lume`.
+
+## Run and inspect it
+
+```bash
+lume run macos-tahoe
+lume ls
+lume ssh macos-tahoe 'sw_vers; id -un'
+```
+
+Use `lume run` with no `--no-display` flag when you want the VNC display. Use
+`lume run --no-display macos-tahoe` for a headless boot.
+
+## Stop or remove it
+
+```bash
+lume stop macos-tahoe
+lume delete macos-tahoe
+```
+
+Deletion removes the VM disk and its configuration. Clone the VM first if you
+need a reusable copy:
+
+```bash
+lume clone macos-tahoe macos-tahoe-backup
+```
+
+## Troubleshoot common failures
+
+Run Lume as the same user that owns its VM directory. `sudo lume` uses a
+different home directory and cannot see VMs created under your account.
+
+If Lume reports that auxiliary storage is locked, another `lume run` process is
+still using the VM. Stop that process or run `lume stop macos-tahoe` before
+starting it again.
+
+Tahoe is the verified unattended preset. Sequoia may still show the
+Accessibility step of Setup Assistant on its first display boot; track that
+behavior in [issue #2155](https://github.com/trycua/cua/issues/2155).

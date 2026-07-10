@@ -156,19 +156,28 @@ jobs:
       - name: Publish matrix summary
         shell: bash
         run: |
+          summary_path=matrix-summary.md
           {
             echo "# CUA Rust Windows E2E matrix"
             echo
             echo "The lane jobs above are independent; a failure in one lane does not hide the others."
             echo
-          } >> "$GITHUB_STEP_SUMMARY"
+          } > "$summary_path"
           found=0
           while IFS= read -r summary; do
             found=1
-            echo "## $(basename "$(dirname "$summary")")" >> "$GITHUB_STEP_SUMMARY"
-            cat "$summary" >> "$GITHUB_STEP_SUMMARY"
-            echo >> "$GITHUB_STEP_SUMMARY"
+            echo "## $(basename "$(dirname "$summary")")" >> "$summary_path"
+            cat "$summary" >> "$summary_path"
+            echo >> "$summary_path"
           done < <(find artifacts -type f -name summary.md -print | sort)
           if [[ "$found" == 0 ]]; then
-            echo "No lane summary artifact was produced." >> "$GITHUB_STEP_SUMMARY"
+            echo "No lane summary artifact was produced." >> "$summary_path"
           fi
+          cat "$summary_path" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload matrix summary
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: rust-windows-matrix-summary
+          path: matrix-summary.md
+          if-no-files-found: error

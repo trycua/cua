@@ -1,0 +1,46 @@
+name: "CI: Rust Windows unit"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/rust/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/crates/cua-driver/**"
+      - "libs/cua-driver/rust/crates/cua-driver-core/**"
+      - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
+      - "libs/cua-driver/rust/crates/platform-windows/**"
+      - "libs/cua-driver/rust/crates/cua-driver-uia/**"
+      - "libs/cua-driver/rust/crates/focus-monitor-win/**"
+      - "libs/cua-driver/tests/fixtures/**"
+      - ".github/workflows/ci-rust-windows.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-driver/rust/**"
+      - "libs/cua-driver/tests/fixtures/**"
+      - ".github/workflows/ci-rust-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-rust-windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Rust Windows unit and compile
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+      - name: Run Windows Rust tests
+        working-directory: libs/cua-driver/rust
+        # Compile every Rust target without executing desktop-dependent integration
+        # tests; interactive behavior belongs in e2e-rust-windows.yml.
+        run: cargo test -p cua-driver -p cua-driver-core -p cua-driver-testkit -p platform-windows -p cua-driver-uia -p focus-monitor-win --all-targets --no-run --locked

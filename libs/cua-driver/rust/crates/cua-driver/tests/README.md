@@ -33,6 +33,14 @@ Build harness apps before running ignored tests:
 
 Staged outputs are read from `../../test-apps/harness-<name>/`.
 
+The canonical cross-platform matrix is
+`cross_platform_behavior_test.rs`. It runs the same external-state scenarios
+against Electron and Tauri on each supported host. CI and VM runners set
+`CUA_TEST_DRIVER_BIN`, `CUA_TEST_APPS_ROOT`, and
+`CUA_TEST_WORKSPACE_ROOT` when artifacts are built outside Cargo's default
+workspace paths. They also set `CUA_TEST_REQUIRE_FIXTURES=1`, turning a missing
+fixture into a failure instead of a silent skip.
+
 ## Running
 
 ```bash
@@ -52,11 +60,11 @@ builds selected Windows harness apps and maps them into the sandbox. The current
 Windows GUI validation path should use a real user desktop session through RDP
 or an interactive scheduled task.
 
-Windows GUI modality tests require a foreground interactive desktop where
-`GetForegroundWindow` returns a real user window. SSH-launched commands,
-scheduled tasks, and PsExec-launched commands can enter the right user session
-while still exposing no foreground desktop; those tests self-skip in that state
-because the focus oracle would otherwise report meaningless pid-0 results.
+Windows GUI modality tests require a user desktop where the focus sentinel can
+become the foreground window. SSH-launched commands start in Session 0 and
+cannot drive the user's desktop directly; launch GUI tests through an
+interactive scheduled task (`/IT`) or equivalent so they run in the logged-on
+user session.
 
 The Windows probe distinguishes two no-foreground states:
 
@@ -70,6 +78,17 @@ The Windows probe distinguishes two no-foreground states:
 
 Set `CUA_REQUIRE_GUI=1` on dedicated GUI runners to turn these desktop
 self-skips into hard failures with the full desktop-state diagnostic.
+
+The repository-level runners are the preferred entrypoints for the canonical
+matrix:
+
+```bash
+scripts/ci/linux/run-rust-e2e.sh --suite shared
+```
+
+```powershell
+.\scripts\ci\windows\run-rust-e2e.ps1 -Suite shared -RequireGui
+```
 
 ## Optional External Apps
 

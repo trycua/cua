@@ -44,9 +44,13 @@ impl McpDriver {
 
         let mut reaper = ChildReaper::new();
         let mut cmd = Command::new(&bin);
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(
+            if std::env::var_os("CUA_TEST_DRIVER_STDERR").is_some() {
+                Stdio::inherit()
+            } else {
+                Stdio::null()
+            },
+        );
         for (key, value) in env {
             cmd.env(key, value);
         }

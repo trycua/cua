@@ -87,11 +87,11 @@ fn host_specs() -> Vec<HostSpec> {
             ],
             title: "CuaTestHarness Electron",
         });
-        // WebKitGTK's AT-SPI tree is not exposed reliably by the headless
-        // Xvfb lane even though the Tauri window itself launches. Keep that
-        // lane available for a real Linux desktop with
-        // CUA_INCLUDE_TAURI_LINUX=1, while the default browser-equivalent
-        // matrix remains deterministic.
+        // WebKitGTK's AT-SPI tree is exposed through a separate WebProcess;
+        // the Rust walker handles that reference shape, but headless Xvfb
+        // still does not provide a reliable input-delivery contract for the
+        // Tauri renderer. Keep this strict lane opt-in until that renderer
+        // path is fixed, while the Electron matrix remains deterministic.
         if std::env::var_os("CUA_INCLUDE_TAURI_LINUX").is_some() {
             hosts.push(HostSpec {
                 name: "tauri",
@@ -405,6 +405,18 @@ fn shared_web_keyboard_routes_are_state_verified() {
                 || hotkey
                     .text()
                     .contains("Background delivery is not available")
+            {
+                println!(
+                    "✅ {} keyboard AX route: background hotkey refused honestly",
+                    fixture.name
+                );
+                continue;
+            }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if hotkey.is_error()
+                && hotkey.structured()["code"].as_str() == Some("background_unavailable")
             {
                 println!(
                     "✅ {} keyboard AX route: background hotkey refused honestly",

@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use atspi::connection::AccessibilityConnection;
+use atspi::connection::{AccessibilityConnection, P2P};
 use atspi::proxy::accessible::AccessibleProxy;
 use atspi::proxy::proxy_ext::ProxyExt;
 use atspi::{CoordType, Interface, State};
@@ -130,23 +130,83 @@ fn is_document_role(role: &str) -> bool {
 /// unaffected (they already tolerate `GetAll`), and the sub-interface proxies
 /// from `proxies()` already use `CacheProperties::No`.
 async fn accessible_for<'a>(
-    conn: &'a atspi::zbus::Connection,
-    oref: &atspi::ObjectRefOwned,
+    conn: &'a AccessibilityConnection,
+    oref: &RawObjectRef,
 ) -> Result<AccessibleProxy<'a>> {
-    let dest = oref
-        .name_as_str()
-        .ok_or_else(|| anyhow!("object has no bus name"))?
-        .to_owned();
-    let path = oref.path_as_str().to_owned();
-    AccessibleProxy::builder(conn)
+    // Keep the atspi crate's peer-to-peer path for normal AT-SPI unique names.
+    // Electron/Chromium uses this path for focused-child input delivery. The
+    // raw string path below is only needed for WebKitGTK's well-known
+    // WebProcess references, which cannot be represented as ObjectRef names.
+    if oref.name.starts_with(':') {
+        let name = atspi::zbus::names::UniqueName::try_from(oref.name.clone())
+            .map_err(|e| anyhow!("bad a11y unique name: {e}"))?;
+        let path = atspi::zbus::zvariant::ObjectPath::try_from(oref.path.clone())
+            .map_err(|e| anyhow!("bad a11y path: {e}"))?;
+        let object = atspi::ObjectRef::new_owned(name, path);
+        // `object_as_accessible` chooses a P2P peer when the toolkit exposes
+        // one and falls back to the shared accessibility bus otherwise.
+        return conn
+            .object_as_accessible(&object)
+            .await
+            .map_err(|e| anyhow!("AccessibleProxy build failed: {e}"));
+    }
+    AccessibleProxy::builder(conn.connection())
         .cache_properties(atspi::zbus::proxy::CacheProperties::No)
-        .destination(dest)
+        .destination(oref.name.clone())
         .map_err(|e| anyhow!("bad a11y destination: {e}"))?
-        .path(path)
+        .path(oref.path.clone())
         .map_err(|e| anyhow!("bad a11y path: {e}"))?
         .build()
         .await
         .map_err(|e| anyhow!("AccessibleProxy build failed: {e}"))
+}
+
+/// AT-SPI's `(so)` object references are documented as unique bus names, but
+/// WebKitGTK uses its well-known WebProcess name for the embedded web tree.
+/// Keep the wire values as strings while walking so zbus does not reject that
+/// validly addressable well-known name before we can call it.
+#[derive(Clone, Debug)]
+struct RawObjectRef {
+    name: String,
+    path: String,
+}
+
+impl RawObjectRef {
+    fn from_atspi(oref: &atspi::ObjectRefOwned) -> Option<Self> {
+        Some(Self {
+            name: oref.name_as_str()?.to_owned(),
+            path: oref.path_as_str().to_owned(),
+        })
+    }
+}
+
+/// Read Accessible.GetChildren without deserializing the bus-name field as a
+/// `UniqueName`. WebKitGTK's embedded WebProcess exposes a well-known name
+/// containing a UUID; D-Bus can address it, but the stricter AT-SPI wrapper
+/// rejects it as an invalid unique name.
+async fn raw_children(
+    conn: &atspi::zbus::Connection,
+    oref: &RawObjectRef,
+) -> Result<Vec<RawObjectRef>> {
+    let proxy = atspi::zbus::Proxy::new(
+        conn,
+        oref.name.as_str(),
+        oref.path.as_str(),
+        "org.a11y.atspi.Accessible",
+    )
+    .await
+    .map_err(|e| anyhow!("Accessible proxy unavailable: {e}"))?;
+    let refs: Vec<(String, atspi::zbus::zvariant::OwnedObjectPath)> = proxy
+        .call("GetChildren", &())
+        .await
+        .map_err(|e| anyhow!("Accessible.GetChildren failed: {e}"))?;
+    Ok(refs
+        .into_iter()
+        .map(|(name, path)| RawObjectRef {
+            name,
+            path: path.to_string(),
+        })
+        .collect())
 }
 
 /// Resolve the process id behind an application accessible's D-Bus name.
@@ -209,7 +269,11 @@ async fn app_for_pid<'a>(
         };
         dlog!("  app bus={:?} pid={:?}", child.name_as_str(), cpid);
         if cpid == Some(pid) {
-            return match call(accessible_for(zconn, &child)).await {
+            let child = match RawObjectRef::from_atspi(&child) {
+                Some(child) => child,
+                None => continue,
+            };
+            return match call(accessible_for(conn, &child)).await {
                 Some(r) => r.map(Some),
                 None => {
                     dlog!("  accessible_for timed out for pid {pid}");
@@ -254,10 +318,10 @@ async fn collect_visited_bounded<'a>(
     // push children reversed so siblings pop left-to-right and each subtree
     // completes before the next sibling (pre-order). `in_web_doc` is inherited
     // from ancestors so editables in page content can be told from chrome.
-    let mut stack: Vec<(atspi::ObjectRefOwned, usize, bool)> = match call(app.get_children()).await
-    {
+    let mut stack: Vec<(RawObjectRef, usize, bool)> = match call(app.get_children()).await {
         Some(Ok(children)) => children
             .into_iter()
+            .filter_map(|child| RawObjectRef::from_atspi(&child))
             .rev()
             .map(|r| (r, 0usize, false))
             .collect(),
@@ -301,9 +365,12 @@ async fn collect_visited_bounded<'a>(
         // otherwise the loop never returns to the deadline check at the top and
         // the walk stalls past OP_TIMEOUT for callers without an outer guard
         // (get_all_element_bounds, insert_text). That was the residual #1936 hang.
-        let acc = match call(accessible_for(zconn, &oref)).await {
+        let acc = match call(accessible_for(conn, &oref)).await {
             Some(Ok(a)) => a,
-            Some(Err(_)) => continue,
+            Some(Err(error)) => {
+                dlog!("  accessible_for failed: {error:#}");
+                continue;
+            }
             None => {
                 consecutive_timeouts += 1;
                 if consecutive_timeouts >= 3 {
@@ -325,7 +392,10 @@ async fn collect_visited_bounded<'a>(
                 i
             }
             // A completed-but-errored call is node-specific; keep walking.
-            Some(Err(_)) => continue,
+            Some(Err(error)) => {
+                dlog!("  get_interfaces failed: {error:#}");
+                continue;
+            }
             // A timeout means the app didn't answer in CALL_TIMEOUT. A run of
             // these means the whole app is wedged — bail so callers fall back.
             None => {
@@ -353,7 +423,7 @@ async fn collect_visited_bounded<'a>(
             call(acc.get_role_name()),
             call(acc.name()),
             call(acc.get_state()),
-            call(acc.get_children()),
+            call(raw_children(zconn, &oref)),
         );
         let role = match role_r {
             Some(Ok(r)) => r,
@@ -423,10 +493,14 @@ async fn collect_visited_bounded<'a>(
         // would exceed the cap.
         let descend = max_depth.map(|d| depth + 1 <= d).unwrap_or(true);
         if descend {
-            if let Some(Ok(children)) = children_r {
-                for c in children.into_iter().rev() {
-                    stack.push((c, depth + 1, child_in_web_doc));
+            match children_r {
+                Some(Ok(children)) => {
+                    for c in children.into_iter().rev() {
+                        stack.push((c, depth + 1, child_in_web_doc));
+                    }
                 }
+                Some(Err(error)) => dlog!("  get_children failed: {error:#}"),
+                None => dlog!("  get_children timed out"),
             }
         }
 
@@ -629,7 +703,11 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
                         continue;
                     }
                 }
-                let app = match call(accessible_for(zconn, &app_ref)).await {
+                let app_ref = match RawObjectRef::from_atspi(&app_ref) {
+                    Some(app_ref) => app_ref,
+                    None => continue,
+                };
+                let app = match call(accessible_for(&conn, &app_ref)).await {
                     Some(Ok(a)) => a,
                     _ => continue,
                 };
@@ -643,7 +721,11 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
                 };
                 let mut emitted = 0usize;
                 for (i, frame_ref) in frames.iter().enumerate() {
-                    let frame = match call(accessible_for(zconn, frame_ref)).await {
+                    let frame_ref = match RawObjectRef::from_atspi(frame_ref) {
+                        Some(frame_ref) => frame_ref,
+                        None => continue,
+                    };
+                    let frame = match call(accessible_for(&conn, &frame_ref)).await {
                         Some(Ok(f)) => f,
                         _ => continue,
                     };
@@ -975,13 +1057,11 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
                 .action()
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
+            let action = target.actions.first().cloned().unwrap_or_default();
             ap.do_action(0)
                 .await
                 .map_err(|e| anyhow!("doAction failed: {e}"))?;
-            Ok((
-                target.actions.first().cloned().unwrap_or_default(),
-                suspected_noop,
-            ))
+            Ok((action, suspected_noop))
         },
         || {
             Err(anyhow!(

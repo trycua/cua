@@ -2033,8 +2033,28 @@ pub fn send_click_xtest_desktop(x: i32, y: i32, button: u8, count: usize) -> Res
 
 /// Send a named key press to a window.
 pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
+    send_key_to_target(xid, None, key, modifiers)
+}
+
+/// Send a named key to the deepest child at window-local coordinates without
+/// activating the window. Coordinate keyboard actions use this so embedded
+/// Chromium renderers receive the event on their input surface rather than on
+/// the native top-level wrapper.
+pub fn send_key_at(xid: u64, x: i32, y: i32, key: &str, modifiers: &[&str]) -> Result<()> {
+    send_key_to_target(xid, Some((x, y)), key, modifiers)
+}
+
+fn send_key_to_target(
+    xid: u64,
+    point: Option<(i32, i32)>,
+    key: &str,
+    modifiers: &[&str],
+) -> Result<()> {
     let (conn, _) = connect_x11_for_input()?;
-    let window = xid as u32;
+    let target = point
+        .map(|(x, y)| resolve_event_target(&conn, xid, x, y))
+        .transpose()?;
+    let window = target.map(|target| target.window).unwrap_or(xid as u32);
     let root = conn.setup().roots[0].root;
 
     // Resolve the named key to a keysym, then to a keycode. On sparse/headless
@@ -2045,43 +2065,66 @@ pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
     let keysym = key_name_to_keysym(key)?;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
     let (keycode, remap_guard) = keycode_for_keysym(&conn, &mapping, keysym, key)?;
-    let state = modifiers_to_state(modifiers);
 
-    let press = KeyPressEvent {
-        response_type: KEY_PRESS_EVENT,
-        detail: keycode,
-        sequence: 0,
-        time: x11rb::CURRENT_TIME,
-        root,
-        event: window,
-        child: x11rb::NONE,
-        root_x: 0,
-        root_y: 0,
-        event_x: 0,
-        event_y: 0,
-        state,
-        same_screen: true,
+    // XSendEvent's state mask describes modifiers for one key event, but does
+    // not update Chromium's internal modifier state by itself. Emit the
+    // modifier transitions as part of the background chord so web handlers see
+    // the same ordered sequence as physical input without activating the
+    // target window.
+    let mut remap_guards = Vec::new();
+    let mut modifier_keycodes = Vec::new();
+    for modifier in modifiers {
+        let modifier_keysym = key_name_to_keysym(modifier)?;
+        let (modifier_keycode, guard) =
+            keycode_for_keysym(&conn, &mapping, modifier_keysym, modifier)?;
+        if let Some(guard) = guard {
+            remap_guards.push(guard);
+        }
+        modifier_keycodes.push((modifier_keycode, modifiers_to_state(&[*modifier])));
+    }
+
+    let send_key_event = |response_type, detail, state, event_mask| {
+        let event = KeyPressEvent {
+            response_type,
+            detail,
+            sequence: 0,
+            time: x11rb::CURRENT_TIME,
+            root,
+            event: window,
+            child: x11rb::NONE,
+            root_x: target.map(|target| target.root_x).unwrap_or(0),
+            root_y: target.map(|target| target.root_y).unwrap_or(0),
+            event_x: target.map(|target| target.local_x).unwrap_or(0),
+            event_y: target.map(|target| target.local_y).unwrap_or(0),
+            state,
+            same_screen: true,
+        };
+        conn.send_event(false, window, event_mask, &event)
     };
 
-    let release = KeyReleaseEvent {
-        response_type: KEY_RELEASE_EVENT,
-        detail: keycode,
-        sequence: 0,
-        time: x11rb::CURRENT_TIME,
-        root,
-        event: window,
-        child: x11rb::NONE,
-        root_x: 0,
-        root_y: 0,
-        event_x: 0,
-        event_y: 0,
-        state,
-        same_screen: true,
-    };
-
-    conn.send_event(false, window, EventMask::KEY_PRESS, &press)?;
+    let mut state_bits = 0u16;
+    for &(modifier_keycode, modifier_mask) in &modifier_keycodes {
+        send_key_event(
+            KEY_PRESS_EVENT,
+            modifier_keycode,
+            KeyButMask::from(state_bits),
+            EventMask::KEY_PRESS,
+        )?;
+        state_bits |= u16::from(modifier_mask);
+    }
+    let state = KeyButMask::from(state_bits);
+    send_key_event(KEY_PRESS_EVENT, keycode, state, EventMask::KEY_PRESS)?;
     sleep(Duration::from_millis(KEY_DELAY_MS));
-    conn.send_event(false, window, EventMask::KEY_RELEASE, &release)?;
+    send_key_event(KEY_RELEASE_EVENT, keycode, state, EventMask::KEY_RELEASE)?;
+    for &(modifier_keycode, modifier_mask) in modifier_keycodes.iter().rev() {
+        send_key_event(
+            KEY_RELEASE_EVENT,
+            modifier_keycode,
+            KeyButMask::from(state_bits),
+            EventMask::KEY_RELEASE,
+        )?;
+        state_bits &= !u16::from(modifier_mask);
+    }
     conn.flush()?;
 
     // If we borrowed a spare keycode for this keysym, give the target client a
@@ -2090,7 +2133,7 @@ pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
     // eagerly would race delivery. A server round-trip (which only returns once
     // our queued requests have been processed) plus a short settle keeps that
     // race closed; the guard then reinstates the original keysyms on drop.
-    if remap_guard.is_some() {
+    if remap_guard.is_some() || !remap_guards.is_empty() {
         let _ = conn.get_input_focus()?.reply();
         sleep(Duration::from_millis(KEY_DELAY_MS));
     }

@@ -2367,7 +2367,7 @@ impl Tool for PressKeyTool {
             }
         }
 
-        let px_focused = {
+        let px_target = {
             let px = args.get("x").and_then(|v| v.as_f64());
             let py = args.get("y").and_then(|v| v.as_f64());
             if let (Some(cx), Some(cy)) = (px, py) {
@@ -2391,9 +2391,9 @@ impl Tool for PressKeyTool {
                 {
                     return e;
                 }
-                true
+                Some((cx.round() as i32, cy.round() as i32))
             } else {
-                false
+                None
             }
         };
 
@@ -2429,7 +2429,7 @@ impl Tool for PressKeyTool {
         let key_for_task = key.clone();
         // px-focus already clicked (and fronted, when fg) the target → deliver via
         // the plain background path. Otherwise honor the requested delivery_mode.
-        let deliver_fg = delivery.is_foreground() && !px_focused;
+        let deliver_fg = delivery.is_foreground() && px_target.is_none();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if mods.is_empty() && key_for_task.eq_ignore_ascii_case("enter") {
                 if inject_terminal_input(pid, xid, "\n")? {
@@ -2447,7 +2447,11 @@ impl Tool for PressKeyTool {
                     crate::input::send_key_xtest(&key_for_task, &m)
                 });
             }
-            crate::input::send_key(xid, &key_for_task, &m)
+            if let Some((x, y)) = px_target {
+                crate::input::send_key_at(xid, x, y, &key_for_task, &m)
+            } else {
+                crate::input::send_key(xid, &key_for_task, &m)
+            }
         })
         .await;
         let mode_label = if deliver_fg {
@@ -2562,11 +2566,25 @@ impl Tool for HotkeyTool {
         let mods_for_wayland = mods.clone();
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
 
+        // X11 can address an unfocused native window with synthetic events, but
+        // Chromium's renderer only processes modifier chords for its focused
+        // input surface. Do not report the XSendEvent attempt as success: the
+        // explicit foreground rung is the only truthful fallback unless an
+        // EIS compositor can target the surface without focus.
+        if !delivery.is_foreground()
+            && is_chromium_embedder(pid)
+            && !crate::wayland::is_inject_mode()
+        {
+            return crate::input::delivery::background_unavailable_error(
+                crate::input::delivery::BackgroundUnavailable::ChromiumHotkey,
+            );
+        }
+
         // ── px form: pixel-click to focus, then the combo acts on the focused field ──
         // (e.g. Ctrl+V into a Chromium input). Reuses click's translation +
         // delivery_mode; after it, deliver the combo via the plain background path
         // (the focus-click already fronted when fg).
-        let px_focused = {
+        let px_target = {
             let px = args.get("x").and_then(|v| v.as_f64());
             let py = args.get("y").and_then(|v| v.as_f64());
             if let (Some(cx), Some(cy)) = (px, py) {
@@ -2585,12 +2603,12 @@ impl Tool for HotkeyTool {
                 {
                     return e;
                 }
-                true
+                Some((cx.round() as i32, cy.round() as i32))
             } else {
-                false
+                None
             }
         };
-        let deliver_fg = delivery.is_foreground() && !px_focused;
+        let deliver_fg = delivery.is_foreground() && px_target.is_none();
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::is_wayland() {
@@ -2611,7 +2629,11 @@ impl Tool for HotkeyTool {
                     crate::input::send_key_xtest(&key, &m)
                 });
             }
-            crate::input::send_key(xid, &key, &m)
+            if let Some((x, y)) = px_target {
+                crate::input::send_key_at(xid, x, y, &key, &m)
+            } else {
+                crate::input::send_key(xid, &key, &m)
+            }
         })
         .await;
         let mode_label = if deliver_fg {

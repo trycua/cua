@@ -64,6 +64,10 @@ exclude_args=(
   --exclude=__pycache__/
   --exclude='*.pyc'
   --exclude=dist/
+  # VM-built fixture binaries are platform-specific build outputs. Keep them
+  # on the verification host; this Mac checkout cannot authoritatively sync
+  # Linux/Windows test-apps and --delete would otherwise remove them.
+  --exclude=libs/cua-driver/rust/test-apps/
 )
 
 tar_exclude_args=(
@@ -76,6 +80,7 @@ tar_exclude_args=(
   --exclude '*/__pycache__'
   --exclude '*.pyc'
   --exclude ./dist
+  --exclude ./libs/cua-driver/rust/test-apps
 )
 
 remote_mkdir() {

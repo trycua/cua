@@ -41,6 +41,14 @@ against Electron and Tauri on each supported host. CI and VM runners set
 workspace paths. They also set `CUA_TEST_REQUIRE_FIXTURES=1`, turning a missing
 fixture into a failure instead of a silent skip.
 
+The canonical Windows and Linux runners also set
+`CUA_E2E_RECORDINGS_ROOT`. Every testkit `McpDriver` then records its full
+desktop trajectory to a unique directory containing `recording.mp4`, cursor
+samples, action JSON, per-turn screenshots, and a `trajectory.json` test-label
+manifest. Windows and Linux require
+FFmpeg; macOS uses the installed driver's ScreenCaptureKit backend. The runner
+validates each MP4 with `ffprobe` before reporting success.
+
 ## Running
 
 ```bash

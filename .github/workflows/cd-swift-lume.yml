@@ -314,7 +314,7 @@ jobs:
             ### Installation with script
 
             ```bash
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+            /bin/bash -c "$(curl -fsSL https://cua.ai/lume/install.sh)"
             ```
           generate_release_notes: false
           make_latest: true

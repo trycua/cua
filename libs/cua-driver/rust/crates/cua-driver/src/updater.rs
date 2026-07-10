@@ -28,10 +28,10 @@ use std::process::{Command, ExitStatus};
 /// constant from triggering `dead_code` on the platform that doesn't use it.
 #[cfg(not(windows))]
 const CANONICAL_INSTALL_SH: &str =
-    "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh";
+    "https://cua.ai/driver/install.sh";
 #[cfg(windows)]
 const CANONICAL_INSTALL_PS1: &str =
-    "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1";
+    "https://cua.ai/driver/install.ps1";
 
 /// The env var both scripts honour to pin the target release tag. Set to a
 /// bare version like `"0.2.18"` (no `cua-driver-rs-v` prefix). See

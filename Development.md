@@ -29,7 +29,7 @@ All Python packages are part of a [uv workspace](https://docs.astral.sh/uv/conce
 1. **Install Lume CLI** (required for local VM management):
 
    ```bash
-   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+   /bin/bash -c "$(curl -fsSL https://cua.ai/lume/install.sh)"
    ```
 
 2. **Clone the repository**:

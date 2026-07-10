@@ -3,7 +3,7 @@ set -e
 
 # Lume Uninstaller
 # This script removes Lume from your system
-# Usage: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/uninstall.sh)"
+# Usage: /bin/bash -c "$(curl -fsSL https://cua.ai/lume/uninstall.sh)"
 
 # Define colors for output
 BOLD=$(tput bold 2>/dev/null || echo "")
@@ -207,6 +207,6 @@ if [ "$PURGE_DATA" = false ]; then
   echo ""
   echo "Note: Your VMs and configuration were preserved."
   echo "To also remove all data, run with ${BOLD}--purge${NORMAL}:"
-  echo "  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/uninstall.sh)\" -- --purge"
+  echo "  /bin/bash -c \"\$(curl -fsSL https://cua.ai/lume/uninstall.sh)\" -- --purge"
 fi
 echo ""

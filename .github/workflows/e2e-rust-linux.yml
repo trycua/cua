@@ -18,8 +18,9 @@ permissions:
   contents: read
 
 jobs:
-  e2e:
-    name: Linux interactive Rust suite
+  shared:
+    if: inputs.suite == 'shared' || inputs.suite == 'all'
+    name: "Linux / shared Electron"
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -35,16 +36,83 @@ jobs:
             libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
             libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
             libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
-            libayatana-appindicator3-dev librsvg2-dev
-      - name: Run canonical Rust matrix
+            libayatana-appindicator3-dev librsvg2-dev ffmpeg
+      - name: Run shared Rust behavior matrix
         run: |
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
-            "scripts/ci/linux/run-rust-e2e.sh --suite '${{ inputs.suite }}'"
-      - name: Upload logs
+            "scripts/ci/linux/run-rust-e2e.sh --suite shared"
+      - name: Upload shared results
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         with:
-          name: rust-linux-e2e-artifacts
+          name: rust-linux-shared
           path: artifacts/cua-driver/linux
           if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 14
+
+  modality:
+    if: inputs.suite == 'modality' || inputs.suite == 'all'
+    name: "Linux / modality and desktop scope"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install GUI and Rust build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb dbus-x11 at-spi2-core openbox python3-gi gir1.2-gtk-3.0 \
+            libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
+            libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
+            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
+            libayatana-appindicator3-dev librsvg2-dev ffmpeg
+      - name: Run modality Rust matrix
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            dbus-run-session -- bash -lc \
+            "scripts/ci/linux/run-rust-e2e.sh --suite modality"
+      - name: Upload modality results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: rust-linux-modality
+          path: artifacts/cua-driver/linux
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 14
+
+  summary:
+    if: always()
+    needs: [shared, modality]
+    name: "Linux / matrix summary"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download lane results
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4
+        with:
+          path: artifacts
+      - name: Publish matrix summary
+        shell: bash
+        run: |
+          {
+            echo "# CUA Rust Linux E2E matrix"
+            echo
+            echo "The lane jobs above are independent; a failure in one lane does not hide the others."
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          found=0
+          while IFS= read -r summary; do
+            found=1
+            echo "## $(basename "$(dirname "$summary")")" >> "$GITHUB_STEP_SUMMARY"
+            cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+            echo >> "$GITHUB_STEP_SUMMARY"
+          done < <(find artifacts -type f -name summary.md -print | sort)
+          if [[ "$found" == 0 ]]; then
+            echo "No lane summary artifact was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi

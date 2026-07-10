@@ -19,22 +19,25 @@
 //! the user's session) instead of debugging a non-bug.
 
 #[cfg(target_os = "windows")]
+use std::sync::mpsc;
+#[cfg(target_os = "windows")]
+use std::thread;
+#[cfg(target_os = "windows")]
+use std::time::Duration;
+#[cfg(target_os = "windows")]
 use windows::core::PCWSTR;
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-    COINIT_APARTMENTTHREADED,
+    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 #[cfg(target_os = "windows")]
-use windows::Win32::System::StationsAndDesktops::{
-    CloseWindowStation, OpenWindowStationW,
-};
+use windows::Win32::System::StationsAndDesktops::{CloseWindowStation, OpenWindowStationW};
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Threading::GetCurrentProcessId;
 #[cfg(target_os = "windows")]
-use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
+use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation, TreeScope_Children};
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
@@ -82,41 +85,57 @@ pub fn interactive_desktop_check() -> Result<bool, String> {
     }
 }
 
-/// Probe whether `CoCreateInstance(CUIAutomation)` succeeds — the same
-/// COM call used by `get_window_state` / `list_windows` element-walks.
+/// Probe whether UI Automation can perform a desktop child enumeration.
 ///
-/// Initialises COM (apartment-threaded) for the duration of the probe
-/// and uninitialises before returning so the rest of the doctor run is
-/// unaffected.
-///
-/// **COM lifecycle invariant** — the IUIAutomation interface produced by
-/// CoCreateInstance must be released BEFORE CoUninitialize tears down
-/// the apartment, or `IUnknown::Release` will dereference freed COM
-/// infrastructure and segfault (0xC0000005 ACCESS_VIOLATION). We flatten
-/// the probe result into a plain `Result<(), String>` first so the
-/// `IUIAutomation` is dropped at the end of the statement, then call
-/// CoUninitialize on the next line.
+/// Runs on a throwaway MTA thread with a deadline because this is the same
+/// cross-process UIA call shape used by window enumeration.
 #[cfg(target_os = "windows")]
 pub fn ui_automation_available() -> Result<(), String> {
+    const TIMEOUT: Duration = Duration::from_secs(2);
+
+    let (tx, rx) = mpsc::channel();
+    thread::Builder::new()
+        .name("cua-uia-health".to_owned())
+        .spawn(move || {
+            let result = ui_automation_available_unbounded();
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("failed to spawn UIA health probe thread: {e}"))?;
+
+    match rx.recv_timeout(TIMEOUT) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
+            "UI Automation desktop enumeration exceeded {}ms; a UIA provider may be hung. \
+             Window tools will fall back to Win32-only enumeration until the provider recovers.",
+            TIMEOUT.as_millis()
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err("UI Automation health probe exited without a result".to_owned())
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn ui_automation_available_unbounded() -> Result<(), String> {
     unsafe {
-        // Failure here means COM is already initialised in this thread
-        // (likely apartment-threaded too); we only call CoUninitialize
-        // when our CoInitializeEx actually paired with a fresh init.
-        let init_result = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let init_result = CoInitializeEx(None, COINIT_MULTITHREADED);
         let need_uninit = init_result.is_ok();
 
-        // Bind to `_` immediately so the IUIAutomation interface is
-        // dropped (and `Release()` runs while COM is still up) before
-        // we proceed to CoUninitialize. Holding the binding past
-        // CoUninitialize and letting Drop run at function return
-        // causes a use-after-free in the COM apartment.
-        let result = CoCreateInstance::<_, IUIAutomation>(
-            &CUIAutomation,
-            None,
-            CLSCTX_INPROC_SERVER,
-        )
-        .map(|_| ())
-        .map_err(|e| format!("{e}"));
+        let result = (|| {
+            let automation: IUIAutomation =
+                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+                    .map_err(|e| format!("{e}"))?;
+            let root = automation
+                .GetRootElement()
+                .map_err(|e| format!("GetRootElement: {e}"))?;
+            let condition = automation
+                .CreateTrueCondition()
+                .map_err(|e| format!("CreateTrueCondition: {e}"))?;
+            let _children = root
+                .FindAll(TreeScope_Children, &condition)
+                .map_err(|e| format!("FindAll(TreeScope_Children): {e}"))?;
+            Ok(())
+        })();
 
         if need_uninit {
             CoUninitialize();
@@ -191,8 +210,8 @@ mod tests {
         match ui_automation_available() {
             Ok(()) => {}
             Err(e) => {
-                let non_interactive = current_session_id() == Some(0)
-                    || is_non_interactive_error(&e);
+                let non_interactive =
+                    current_session_id() == Some(0) || is_non_interactive_error(&e);
                 assert!(
                     non_interactive,
                     "ui_automation_available failed in what looks like an interactive session: {e}",

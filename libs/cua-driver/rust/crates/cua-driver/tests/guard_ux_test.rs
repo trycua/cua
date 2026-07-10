@@ -146,12 +146,14 @@ fn launch_driver_and_test_app() -> Option<(McpDriver, u32, u64)> {
         eprintln!("test app not available — skipping");
         return None;
     };
-    let Some(app_wid) = find_window_for_pid(&mut driver, app_pid as i64) else {
+    let Some((window_pid, app_wid)) = find_window_for_pid(&mut driver, app_pid as i64) else {
         eprintln!("test app window not found — skipping");
         return None;
     };
 
-    Some((driver, app_pid, app_wid))
+    // Electron may create the visible window in a Chromium child process.
+    // Actions must use the PID that owns the HWND, not the launcher parent.
+    Some((driver, window_pid, app_wid))
 }
 
 fn kill_process_tree_by_image(image: &str) {
@@ -250,7 +252,7 @@ fn launch_focus_monitor() -> Option<(Child, u64, u32)> {
 }
 
 /// Find the first on-screen window belonging to the given pid.
-fn find_window_for_pid(driver: &mut McpDriver, pid: i64) -> Option<u64> {
+fn find_window_for_pid(driver: &mut McpDriver, pid: i64) -> Option<(u32, u64)> {
     let resp = driver.call(
         "list_windows",
         serde_json::json!({"pid": pid, "on_screen_only": true}),
@@ -258,7 +260,7 @@ fn find_window_for_pid(driver: &mut McpDriver, pid: i64) -> Option<u64> {
     resp.structured()["windows"]
         .as_array()?
         .iter()
-        .find_map(|w| w["window_id"].as_u64())
+        .find_map(|w| Some((w["pid"].as_u64()? as u32, w["window_id"].as_u64()?)))
 }
 
 fn window_ids(driver: &mut McpDriver) -> HashSet<u64> {

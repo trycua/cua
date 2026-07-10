@@ -161,6 +161,14 @@
     <h3 id="section-target" data-cua-id="section-target">SECTION_TARGET_MARKER_v1</h3>
   </fieldset>
 
+  <fieldset>
+    <legend>child_window</legend>
+    <div class="row">
+      <button id="btn-open-child-window" data-cua-id="btn-open-child-window">Open child window</button>
+      <span class="mirror" id="lbl-child-window-state" data-cua-id="lbl-child-window-state">child_windows=0</span>
+    </div>
+  </fieldset>
+
   <script>
   // ----- state -----
   let counter = 0;
@@ -291,6 +299,17 @@
     setTimeout(() => {
       $('lbl-nav-state').textContent = `hash=${location.hash}`;
     }, 30);
+  });
+
+  let childWindowCount = 0;
+  $('btn-open-child-window').addEventListener('click', () => {
+    childWindowCount++;
+    $('lbl-child-window-state').textContent = `child_windows=${childWindowCount}`;
+    const child = window.open('', `cua-harness-child-${childWindowCount}`, 'width=320,height=220');
+    if (child) {
+      child.document.write(`<!doctype html><title>Cua child ${childWindowCount}</title><p>CHILD_WINDOW_MARKER_v1</p>`);
+      child.document.close();
+    }
   });
   </script>
 </body>

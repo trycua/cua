@@ -28,6 +28,7 @@ function createWindow() {
     width: 940,
     height: 780,
     title: fixedTitle,
+    show: false,
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
@@ -41,6 +42,21 @@ function createWindow() {
   // 'cua-driver Web Harness' (the page's title).
   mainWindow.on('page-title-updated', e => e.preventDefault());
   mainWindow.setTitle(fixedTitle);
+  mainWindow.webContents.setWindowOpenHandler(() => ({
+    action: 'allow',
+    overrideBrowserWindowOptions: {
+      width: 320,
+      height: 220,
+      show: false,
+      autoHideMenuBar: true,
+      title: 'CuaTestHarness Child Window',
+    },
+  }));
+  mainWindow.webContents.on('did-create-window', child => {
+    child.once('ready-to-show', () => {
+      child.showInactive();
+    });
+  });
 
   mainWindow
     .loadFile(path.join(__dirname, 'web', 'index.html'))
@@ -50,6 +66,7 @@ function createWindow() {
       // our fixedTitle and break the harness-window-discovery test.
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setTitle(fixedTitle);
+        mainWindow.showInactive();
       }
     })
     .catch(err => {

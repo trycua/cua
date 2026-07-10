@@ -162,14 +162,24 @@ impl ElementCache {
     }
 
     fn update_with_kind(&self, pid: u32, hwnd: u64, nodes: &[UiaNode], kind: SnapshotKind) {
-        let actionable: Vec<&UiaNode> = nodes.iter().filter(|n| n.element_index.is_some()).collect();
+        let actionable: Vec<&UiaNode> =
+            nodes.iter().filter(|n| n.element_index.is_some()).collect();
         let elements: Vec<usize> = actionable.iter().map(|n| n.element_ptr).collect();
-        let centers: Vec<(i32, i32)> = actionable.iter().map(|n| (n.center_x, n.center_y)).collect();
+        let centers: Vec<(i32, i32)> = actionable
+            .iter()
+            .map(|n| (n.center_x, n.center_y))
+            .collect();
         let rects: Vec<Option<(i32, i32, i32, i32)>> = actionable.iter().map(|n| n.rect).collect();
         let msaa_roles: Vec<Option<i32>> = actionable.iter().map(|n| n.msaa_role).collect();
         self.core.insert(
             CacheKey { pid, hwnd },
-            CachedSnapshot { kind, elements, centers, rects, msaa_roles },
+            CachedSnapshot {
+                kind,
+                elements,
+                centers,
+                rects,
+                msaa_roles,
+            },
         );
     }
 
@@ -221,18 +231,50 @@ impl ElementCache {
             .flatten()
     }
 
-    pub fn get_element_center(&self, pid: u32, hwnd: u64, element_index: usize) -> Option<(i32, i32)> {
+    pub fn get_element_center(
+        &self,
+        pid: u32,
+        hwnd: u64,
+        element_index: usize,
+    ) -> Option<(i32, i32)> {
         self.core
-            .with_snapshot(&CacheKey { pid, hwnd }, |s| s.centers.get(element_index).copied())
+            .with_snapshot(&CacheKey { pid, hwnd }, |s| {
+                s.centers.get(element_index).copied()
+            })
             .flatten()
+    }
+
+    /// Focus a cached UIA element without activating its top-level window.
+    /// The caller owns the no-activation guard for background delivery.
+    pub fn focus_element(&self, pid: u32, hwnd: u64, element_index: usize) -> anyhow::Result<()> {
+        let retained = self
+            .get_element_retained(pid, hwnd, element_index)
+            .ok_or_else(|| anyhow::anyhow!("element [{element_index}] is not in the UIA cache"))?;
+        if !retained.is_uia() {
+            anyhow::bail!("element [{element_index}] is an MSAA element, not a UIA element");
+        }
+        let ptr = retained.as_ptr();
+        let element: IUIAutomationElement =
+            unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
+        let result = unsafe { element.SetFocus() };
+        // `retained` owns the AddRef; `from_raw` borrows that same pointer.
+        std::mem::forget(element);
+        result.map_err(|e| anyhow::anyhow!("UIA SetFocus failed: {e}"))
     }
 
     /// Cached screen rect for the element. Used by the click tool to
     /// compute the right-edge dispatch point for `action:"expand"` on
     /// MSAA BUTTONDROPDOWN.
-    pub fn get_element_rect(&self, pid: u32, hwnd: u64, element_index: usize) -> Option<(i32, i32, i32, i32)> {
+    pub fn get_element_rect(
+        &self,
+        pid: u32,
+        hwnd: u64,
+        element_index: usize,
+    ) -> Option<(i32, i32, i32, i32)> {
         self.core
-            .with_snapshot(&CacheKey { pid, hwnd }, |s| s.rects.get(element_index).copied().flatten())
+            .with_snapshot(&CacheKey { pid, hwnd }, |s| {
+                s.rects.get(element_index).copied().flatten()
+            })
             .flatten()
     }
 
@@ -269,4 +311,3 @@ impl Default for ElementCache {
 #[cfg(test)]
 #[path = "cache_uaf_repro.rs"]
 mod cache_uaf_repro;
-

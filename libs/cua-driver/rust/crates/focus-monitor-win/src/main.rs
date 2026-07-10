@@ -22,9 +22,9 @@ fn main() {
 
 #[cfg(target_os = "windows")]
 mod win {
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use windows::Win32::Foundation::*;
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::System::Threading::GetCurrentProcessId;
@@ -32,14 +32,22 @@ mod win {
 
     // ── global loss counters ─────────────────────────────────────────────────
     static ACTIVATE_LOSSES: AtomicU32 = AtomicU32::new(0);
-    static ACTIVATE_GAINS:  AtomicU32 = AtomicU32::new(0);
-    static KEY_LOSSES:      AtomicU32 = AtomicU32::new(0);
-    static KEY_GAINS:       AtomicU32 = AtomicU32::new(0);
+    static ACTIVATE_GAINS: AtomicU32 = AtomicU32::new(0);
+    static KEY_LOSSES: AtomicU32 = AtomicU32::new(0);
+    static KEY_GAINS: AtomicU32 = AtomicU32::new(0);
 
-    fn loss_file()     -> std::path::PathBuf { loss_path("focus_monitor_losses.txt") }
-    fn gain_file()     -> std::path::PathBuf { loss_path("focus_monitor_gains.txt") }
-    fn key_loss_file() -> std::path::PathBuf { loss_path("focus_monitor_key_losses.txt") }
-    fn key_gain_file() -> std::path::PathBuf { loss_path("focus_monitor_key_gains.txt") }
+    fn loss_file() -> std::path::PathBuf {
+        loss_path("focus_monitor_losses.txt")
+    }
+    fn gain_file() -> std::path::PathBuf {
+        loss_path("focus_monitor_gains.txt")
+    }
+    fn key_loss_file() -> std::path::PathBuf {
+        loss_path("focus_monitor_key_losses.txt")
+    }
+    fn key_gain_file() -> std::path::PathBuf {
+        loss_path("focus_monitor_key_gains.txt")
+    }
 
     fn loss_path(name: &str) -> std::path::PathBuf {
         let mut p = std::env::temp_dir();
@@ -52,11 +60,17 @@ mod win {
     }
 
     fn wide(s: &str) -> Vec<u16> {
-        OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+        OsStr::new(s)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
     }
 
     unsafe extern "system" fn wnd_proc(
-        hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM,
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
     ) -> LRESULT {
         match msg {
             WM_ACTIVATE => {
@@ -90,8 +104,8 @@ mod win {
                 let text = wide(&format!(
                     "act: {act_l}L / {act_g}G   key: {key_l}L / {key_g}G   (should stay net 0)"
                 ));
-                TextOutW(hdc, 10, 10, &text);
-                EndPaint(hwnd, &ps);
+                let _ = TextOutW(hdc, 10, 10, &text);
+                let _ = EndPaint(hwnd, &ps);
             }
             WM_DESTROY => {
                 PostQuitMessage(0);
@@ -106,8 +120,8 @@ mod win {
             let class_name = wide("FocusMonitorWin");
 
             let wc = WNDCLASSW {
-                lpfnWndProc:   Some(wnd_proc),
-                hInstance:     HINSTANCE(std::ptr::null_mut()),
+                lpfnWndProc: Some(wnd_proc),
+                hInstance: HINSTANCE(std::ptr::null_mut()),
                 lpszClassName: windows::core::PCWSTR(class_name.as_ptr()),
                 hbrBackground: HBRUSH(COLOR_WINDOW.0 as *mut _),
                 ..Default::default()
@@ -120,14 +134,19 @@ mod win {
                 windows::core::PCWSTR(class_name.as_ptr()),
                 windows::core::PCWSTR(title.as_ptr()),
                 WS_OVERLAPPEDWINDOW,
-                100, 100, 600, 140,
-                None, None,
+                100,
+                100,
+                600,
+                140,
+                None,
+                None,
                 HINSTANCE(std::ptr::null_mut()),
                 None,
-            ).expect("CreateWindowExW failed");
+            )
+            .expect("CreateWindowExW failed");
 
-            ShowWindow(hwnd, SW_SHOWNORMAL);
-            UpdateWindow(hwnd).ok();
+            let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
+            let _ = UpdateWindow(hwnd).ok();
 
             // Write initial zeros so tests can read even before any event.
             write_count(&loss_file(), 0);
@@ -139,9 +158,9 @@ mod win {
             // when stdout is captured by the test runner in sandbox environments).
             let pid = GetCurrentProcessId();
             let hwnd_val = hwnd.0 as usize;
-            let pid_file  = std::env::temp_dir().join("focus_monitor_pid.txt");
+            let pid_file = std::env::temp_dir().join("focus_monitor_pid.txt");
             let hwnd_file = std::env::temp_dir().join("focus_monitor_hwnd.txt");
-            let _ = std::fs::write(&pid_file,  pid.to_string());
+            let _ = std::fs::write(&pid_file, pid.to_string());
             let _ = std::fs::write(&hwnd_file, hwnd_val.to_string());
             // Also print to stdout as a secondary signal.
             println!("FOCUS_PID={pid}");
@@ -152,7 +171,7 @@ mod win {
             // Message loop.
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                TranslateMessage(&msg);
+                let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
         }

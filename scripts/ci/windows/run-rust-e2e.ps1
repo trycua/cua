@@ -16,6 +16,9 @@ $driverRoot = Join-Path $repoRoot "libs\cua-driver"
 $rustRoot = Join-Path $driverRoot "rust"
 $artifactDir = Join-Path $repoRoot "artifacts\cua-driver\windows"
 New-Item -ItemType Directory -Force $artifactDir | Out-Null
+$recordingRoot = Join-Path $artifactDir "recordings"
+Remove-Item -Path $recordingRoot -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $recordingRoot | Out-Null
 $resultsPath = Join-Path $artifactDir "results.jsonl"
 $summaryPath = Join-Path $artifactDir "summary.md"
 @(
@@ -27,6 +30,13 @@ $summaryPath = Join-Path $artifactDir "summary.md"
 Remove-Item -Force -ErrorAction SilentlyContinue $resultsPath
 $env:CUA_E2E_RESULTS_FILE = $resultsPath
 $env:CUA_E2E_SUMMARY_FILE = $summaryPath
+$env:CUA_E2E_RECORDINGS_ROOT = $recordingRoot
+
+$ffmpeg = Get-Command ffmpeg.exe -ErrorAction SilentlyContinue
+$ffprobe = Get-Command ffprobe.exe -ErrorAction SilentlyContinue
+if ($null -eq $ffmpeg -or $null -eq $ffprobe) {
+    throw "FFmpeg and ffprobe are required for E2E trajectory videos"
+}
 
 & (Join-Path $scriptDir "verify-user-session.ps1")
 if ($RequireGui) { $env:CUA_REQUIRE_GUI = "1" }
@@ -113,6 +123,32 @@ function Invoke-CargoTest {
     }
 }
 
+function Test-E2eRecordings {
+    $failureCount = 0
+    $errors = @(Get-ChildItem -Path $recordingRoot -Filter "recording-error.txt" -Recurse -ErrorAction SilentlyContinue)
+    foreach ($errorFile in $errors) {
+        Write-Host "[VIDEO FAIL] $($errorFile.FullName)" -ForegroundColor Red
+        Get-Content $errorFile.FullName | Write-Host
+        $failureCount++
+    }
+
+    $videos = @(Get-ChildItem -Path $recordingRoot -Filter "recording.mp4" -Recurse -ErrorAction SilentlyContinue)
+    if ($videos.Count -eq 0) {
+        Write-Host "[VIDEO FAIL] No E2E trajectory videos were produced" -ForegroundColor Red
+        return ($failureCount + 1)
+    }
+    foreach ($video in $videos) {
+        & $ffprobe.Source -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 $video.FullName | Out-Null
+        if ($LASTEXITCODE -ne 0 -or $video.Length -eq 0) {
+            Write-Host "[VIDEO FAIL] Unplayable trajectory: $($video.FullName)" -ForegroundColor Red
+            $failureCount++
+        } else {
+            Write-Host "[VIDEO PASS] $($video.FullName)" -ForegroundColor Green
+        }
+    }
+    return $failureCount
+}
+
 $script:FailureCount = 0
 
 if ($Suite -in @("shared", "all")) {
@@ -157,6 +193,8 @@ if ($Suite -in @("modality", "all")) {
         "--ignored", "--nocapture", "--test-threads=1"
     )
 }
+
+$script:FailureCount += (Test-E2eRecordings)
 
 if ($script:FailureCount -ne 0) {
     throw "Windows Rust e2e suite had $($script:FailureCount) failing lane(s)"

@@ -36,7 +36,7 @@ jobs:
             libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
             libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
             libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
-            libayatana-appindicator3-dev librsvg2-dev
+            libayatana-appindicator3-dev librsvg2-dev ffmpeg
       - name: Run shared Rust behavior matrix
         run: |
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
@@ -49,6 +49,8 @@ jobs:
           name: rust-linux-shared
           path: artifacts/cua-driver/linux
           if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 14
 
   modality:
     if: inputs.suite == 'modality' || inputs.suite == 'all'
@@ -68,7 +70,7 @@ jobs:
             libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
             libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
             libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
-            libayatana-appindicator3-dev librsvg2-dev
+            libayatana-appindicator3-dev librsvg2-dev ffmpeg
       - name: Run modality Rust matrix
         run: |
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
@@ -81,6 +83,8 @@ jobs:
           name: rust-linux-modality
           path: artifacts/cua-driver/linux
           if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 14
 
   summary:
     if: always()

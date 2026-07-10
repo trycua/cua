@@ -174,7 +174,7 @@ where
 {
     let started = Instant::now();
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
-        let Some(fixture) = launch_host(spec) else {
+        let Some(fixture) = launch_host(spec, scenario) else {
             return false;
         };
         test(fixture);
@@ -209,14 +209,14 @@ fn resume_first_failure(failure: Option<Box<dyn Any + Send>>) {
     }
 }
 
-fn spawn_driver() -> Option<McpDriver> {
+fn spawn_driver(recording_label: &str) -> Option<McpDriver> {
     #[cfg(target_os = "macos")]
     {
-        return McpDriver::spawn_macos_daemon_proxy();
+        return McpDriver::spawn_macos_daemon_proxy_named(recording_label);
     }
     #[cfg(not(target_os = "macos"))]
     {
-        McpDriver::spawn()
+        McpDriver::spawn_named(recording_label)
     }
 }
 
@@ -229,7 +229,7 @@ struct Fixture {
     name: &'static str,
 }
 
-fn launch_host(spec: &HostSpec) -> Option<Fixture> {
+fn launch_host(spec: &HostSpec, scenario: &str) -> Option<Fixture> {
     if !spec.path.exists() {
         if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
             panic!(
@@ -244,7 +244,8 @@ fn launch_host(spec: &HostSpec) -> Option<Fixture> {
         return None;
     }
 
-    let Some(mut driver) = spawn_driver() else {
+    let recording_label = format!("{scenario}-{}", spec.name);
+    let Some(mut driver) = spawn_driver(&recording_label) else {
         if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
             panic!(
                 "cua-driver could not be started for the required {} fixture",

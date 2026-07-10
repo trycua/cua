@@ -31,6 +31,14 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ inputs.ref }}
+      - name: Ensure FFmpeg for trajectory video
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg -y --no-progress
+          }
+          ffmpeg -version
+          ffprobe -version
       - name: Run default Rust tests
         shell: pwsh
         run: .\scripts\ci\windows\run-rust-e2e.ps1 -Suite default -RequireGui
@@ -45,6 +53,8 @@ jobs:
           name: rust-windows-default
           path: artifacts/cua-driver/windows
           if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 14
 
   guard:
     if: inputs.suite == 'guard' || inputs.suite == 'all'
@@ -55,6 +65,14 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ inputs.ref }}
+      - name: Ensure FFmpeg for trajectory video
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg -y --no-progress
+          }
+          ffmpeg -version
+          ffprobe -version
       - name: Run UX guard tests
         shell: pwsh
         run: .\scripts\ci\windows\run-rust-e2e.ps1 -Suite guard -RequireGui
@@ -69,6 +87,8 @@ jobs:
           name: rust-windows-guard
           path: artifacts/cua-driver/windows
           if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 14
 
   shared:
     if: inputs.suite == 'shared' || inputs.suite == 'all'
@@ -79,6 +99,14 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ inputs.ref }}
+      - name: Ensure FFmpeg for trajectory video
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg -y --no-progress
+          }
+          ffmpeg -version
+          ffprobe -version
       - name: Run shared Rust behavior matrix
         shell: pwsh
         run: .\scripts\ci\windows\run-rust-e2e.ps1 -Suite shared -RequireGui
@@ -93,6 +121,8 @@ jobs:
           name: rust-windows-shared
           path: artifacts/cua-driver/windows
           if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 14
 
   native:
     if: inputs.suite == 'native' || inputs.suite == 'all'
@@ -103,6 +133,14 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ inputs.ref }}
+      - name: Ensure FFmpeg for trajectory video
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg -y --no-progress
+          }
+          ffmpeg -version
+          ffprobe -version
       - name: Run native Rust harnesses
         shell: pwsh
         run: .\scripts\ci\windows\run-rust-e2e.ps1 -Suite native -RequireGui
@@ -117,6 +155,8 @@ jobs:
           name: rust-windows-native
           path: artifacts/cua-driver/windows
           if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 14
 
   modality:
     if: inputs.suite == 'modality' || inputs.suite == 'all'
@@ -127,6 +167,14 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ inputs.ref }}
+      - name: Ensure FFmpeg for trajectory video
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg -y --no-progress
+          }
+          ffmpeg -version
+          ffprobe -version
       - name: Run modality input E2E
         shell: pwsh
         run: .\scripts\ci\windows\run-rust-e2e.ps1 -Suite modality -RequireGui
@@ -141,6 +189,8 @@ jobs:
           name: rust-windows-modality
           path: artifacts/cua-driver/windows
           if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 14
 
   summary:
     if: always()

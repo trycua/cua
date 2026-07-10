@@ -259,13 +259,36 @@ impl Tool for DragTool {
         let mods_owned = modifiers.clone();
         let fg = delivery_mode.is_foreground() && window_id.is_some();
         let result = focus_guard::with_focus_suppressed(
-            Some(pid),
+            // Foreground drag deliberately activates the target so the global
+            // HID stream carries the pressed-button state. A suppression lease
+            // here would race that activation and restore the prior app before
+            // Chromium receives the gesture.
+            if fg { None } else { Some(pid) },
             prior_front,
             "drag.CGEvent",
             || async move {
                 tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                     let do_it = move || -> anyhow::Result<()> {
                         let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                        if fg {
+                            // HID delivery is global, so foreground mode must
+                            // establish a real active application before the
+                            // gesture begins. The SkyLight flash can be
+                            // unavailable for Electron child windows; the
+                            // documented Cocoa activation is the fallback.
+                            apps::activate_pid(pid);
+                            std::thread::sleep(std::time::Duration::from_millis(40));
+                            return crate::input::mouse::drag_at_xy_foreground(
+                                from_sx,
+                                from_sy,
+                                to_sx,
+                                to_sy,
+                                duration_ms,
+                                steps,
+                                &m,
+                                button,
+                            );
+                        }
                         crate::input::mouse::drag_at_xy(
                             pid,
                             from_sx,
@@ -282,14 +305,18 @@ impl Tool for DragTool {
                             fg,
                         )
                     };
-                    // Foreground rung: brief front → drag → restore prior frontmost.
+                    // Foreground rung: activate for the complete HID gesture,
+                    // then restore the prior app after pointer capture settles.
                     match (fg, window_id) {
-                        (true, Some(wid)) => {
-                            crate::input::skylight::with_foreground_assist(
-                                pid as libc::pid_t,
-                                wid,
-                                do_it,
-                            )?;
+                        (true, Some(_wid)) => {
+                            let result = do_it();
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            if let Some(previous_pid) = prior_front {
+                                if previous_pid != pid {
+                                    apps::activate_pid(previous_pid);
+                                }
+                            }
+                            result?;
                             Ok(())
                         }
                         _ => do_it(),

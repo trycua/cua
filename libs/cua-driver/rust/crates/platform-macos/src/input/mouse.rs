@@ -202,9 +202,9 @@ fn click_at_xy_inner(
 
 /// Full Chromium-compatible left-click recipe matching Swift's `clickViaAuthSignedPost`.
 ///
-/// Sequence (Swift reference minus the `activate_without_raise` prologue — that step
-/// causes window-z side effects under Rust's overlay; it is reserved for a future
-/// explicit opt-in once the overlay re-pins after focus changes):
+/// The focus-without-raise prologue makes the target window key without changing
+/// its z-order, which Chromium requires before it accepts a background pixel
+/// mouseDown. The cursor overlay is re-pinned by the click tool after dispatch.
 ///  1. Stamped `mouseMoved` at target coords (f0=2, cursor-state primer).
 ///  2. Off-screen primer down/up at (-1, -1) (f0=1/2) — satisfies Chromium's
 ///     user-activation gate without hitting any DOM element.
@@ -233,6 +233,13 @@ pub fn click_at_xy_chromium(
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    // Chromium's first-mouse handling rejects a background click delivered to
+    // a non-key window. This SkyLight focus record keys the requested window
+    // without raising it or moving the user's cursor.
+    if crate::input::skylight::activate_without_raise(pid as libc::pid_t, wid) {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
@@ -571,7 +578,7 @@ pub fn drag_at_xy_foreground(
     if flags != CGEventFlags::CGEventFlagNull {
         down.set_flags(flags);
     }
-    crate::input::skylight::set_integer_field(down.as_ptr() as *mut std::ffi::c_void, 1, 1);
+    down.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, 1);
     down.post(CGEventTapLocation::HID);
     std::thread::sleep(std::time::Duration::from_millis(16));
 
@@ -587,11 +594,11 @@ pub fn drag_at_xy_foreground(
         if flags != CGEventFlags::CGEventFlagNull {
             event.set_flags(flags);
         }
-        crate::input::skylight::set_integer_field(event.as_ptr() as *mut std::ffi::c_void, 1, 1);
+        event.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, 1);
+        post(&event);
         if step_delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
         }
-        post(&event);
     }
 
     let up = CGEvent::new_mouse_event(source, up_type, CGPoint::new(to_x, to_y), cg_button)
@@ -599,7 +606,7 @@ pub fn drag_at_xy_foreground(
     if flags != CGEventFlags::CGEventFlagNull {
         up.set_flags(flags);
     }
-    crate::input::skylight::set_integer_field(up.as_ptr() as *mut std::ffi::c_void, 1, 1);
+    up.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, 1);
     post(&up);
     // The foreground wrapper restores the previous app immediately after this
     // function returns. Let the target's run loop consume the queued HID

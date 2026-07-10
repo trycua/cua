@@ -301,9 +301,9 @@ final class MacOSOfflineSetupPatcher {
         var loginwindow = try readPlistIfPresent(loginwindowPath)
 
         var accountInfo = loginwindow["AccountInfo"] as? [String: Any] ?? [:]
-        var firstLogins = accountInfo["FirstLogins"] as? [String: Any] ?? [:]
-        firstLogins[user.username] = 1
-        accountInfo["FirstLogins"] = firstLogins
+        // A FirstLogins entry causes macOS to launch Setup Assistant on the
+        // next graphical login, even when .AppleSetupDone is present.
+        accountInfo.removeValue(forKey: "FirstLogins")
         accountInfo["MaximumUsers"] = max(accountInfo["MaximumUsers"] as? Int ?? 1, 1)
         accountInfo["OnConsole"] = accountInfo["OnConsole"] as? [String: Any] ?? [:]
 

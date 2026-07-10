@@ -35,6 +35,7 @@
 
 pub mod ax;
 mod driver;
+pub mod e2e;
 mod mcp;
 mod cli;
 mod paths;

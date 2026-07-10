@@ -4,6 +4,14 @@ Tests in this directory exercise the public driver interface. Headless protocol
 tests run by default; GUI and modality tests are marked `#[ignore]` because they
 need staged harness apps and an interactive desktop.
 
+Start with the contributor overview in
+`../../../../docs/test-harnesses-guide.md`, then use the matrix below as the
+coverage map.
+
+The cross-OS ownership map is maintained in
+`../../../../docs/test-matrix.md`. Update that matrix when adding a harness,
+action, addressing mode, delivery mode, or OS-specific window-system case.
+
 ## Naming
 
 | Prefix | Runs by default | Purpose |
@@ -11,7 +19,7 @@ need staged harness apps and an interactive desktop.
 | `protocol_*_test.rs` | yes | MCP/CLI protocol and schema behavior |
 | `schema_*_test.rs` | yes | Generated schema consistency |
 | `harness_<toolkit>_test.rs` | no, `#[ignore]` | Toolkit-specific harness apps |
-| `modality_<area>[_<os>]_test.rs` | no, `#[ignore]` | Background input, capture, desktop scope |
+| `modality_<area>[_<os>]_test.rs` | no, `#[ignore]` | Capture, desktop scope, and transitional environment checks |
 | `guard_*_test.rs` | usually ignored or self-skipping | UX guard and interactive desktop checks |
 
 ## Harness Requirements
@@ -41,13 +49,20 @@ against Electron and Tauri on each supported host. CI and VM runners set
 workspace paths. They also set `CUA_TEST_REQUIRE_FIXTURES=1`, turning a missing
 fixture into a failure instead of a silent skip.
 
-The canonical Windows and Linux runners also set
+Each matrix row declares its action, AX/PX targeting, foreground or background
+delivery, scope, driver route, external oracles, and required behavior in
+`cases.jsonl`. `results.jsonl` records the observed behavior and derived test
+status. The Rust reporter validates both files and renders `summary.md`.
+
+The canonical OS runners also set
 `CUA_E2E_RECORDINGS_ROOT`. Every testkit `McpDriver` then records its full
 desktop trajectory to a unique directory containing `recording.mp4`, cursor
 samples, action JSON, per-turn screenshots, and a `trajectory.json` test-label
 manifest. Windows and Linux require
 FFmpeg; macOS uses the installed driver's ScreenCaptureKit backend. The runner
-validates each MP4 with `ffprobe` before reporting success.
+validates each MP4 with `ffprobe` before reporting success. A separate Rust
+preflight verifies the desktop, fixture, AX tree, screenshot, and video
+lifecycle once before behavioral cells run.
 
 ## Running
 
@@ -57,10 +72,12 @@ cargo test -p cua-driver --test harness_appkit_test -- --ignored --nocapture
 cargo test -p cua-driver --test modality_desktop_scope_macos_test -- --ignored --nocapture
 ```
 
-Windows Rust run-all uses
-`../../../../tests/runners/windows/run-all.ps1`. It builds repo-local fixtures
-and runs the default, guard, harness, and modality suites. It intentionally
-excludes optional external-app suites.
+The legacy Windows run-all uses
+`../../../../tests/runners/windows/run-all.ps1`. The current canonical E2E
+entrypoint is `scripts/ci/windows/run-rust-e2e.ps1 -Suite all -RequireGui`.
+It runs the complete Rust harness matrix; the guard, shared, native, and
+modality selectors are retained only for focused diagnosis. Optional
+external-app suites remain separate.
 
 Legacy Windows Sandbox runs use
 `../../../../tests/runners/windows-sandbox/run-tests-in-sandbox.ps1`, which
@@ -91,11 +108,11 @@ The repository-level runners are the preferred entrypoints for the canonical
 matrix:
 
 ```bash
-scripts/ci/linux/run-rust-e2e.sh --suite shared
+scripts/ci/linux/run-rust-e2e.sh --suite all
 ```
 
 ```powershell
-.\scripts\ci\windows\run-rust-e2e.ps1 -Suite shared -RequireGui
+.\scripts\ci\windows\run-rust-e2e.ps1 -Suite all -RequireGui
 ```
 
 ## Optional External Apps

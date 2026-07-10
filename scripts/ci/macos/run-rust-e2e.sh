@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Run the canonical Rust desktop matrix on a Linux user session.
-# Scenario definitions and assertions live in the Rust integration test.
+# Run the canonical Rust desktop matrix in a logged-in macOS user session.
+# macOS harness tests use the installed, TCC-authorized cua-driver daemon path.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 DRIVER_ROOT="${REPO_ROOT}/libs/cua-driver"
 RUST_ROOT="${DRIVER_ROOT}/rust"
-BUILD_FIXTURES=1
 SUITE="all"
+BUILD_FIXTURES=1
 
 usage() {
   cat <<'EOF'
 Usage: run-rust-e2e.sh [--no-build] [--suite shared|native|modality|all]
 
-The caller must provide a real or virtual Linux desktop session. For a
-headless session, wrap this command in xvfb-run and dbus-run-session.
+Run from a logged-in macOS desktop after install-local and TCC authorization.
+The testkit proxies MCP calls through the installed CuaDriver daemon.
 EOF
 }
 
@@ -34,19 +34,20 @@ case "$SUITE" in
   *) echo "unsupported suite: $SUITE" >&2; exit 2 ;;
 esac
 
-ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/linux"
-mkdir -p "${ARTIFACT_DIR}"
+ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos"
 RECORDING_ROOT="${ARTIFACT_DIR}/recordings"
 rm -rf "${RECORDING_ROOT}"
 mkdir -p "${RECORDING_ROOT}"
+RESULTS_FILE="${ARTIFACT_DIR}/results.jsonl"
 DECLARATIONS_FILE="${ARTIFACT_DIR}/cases.jsonl"
 ENVIRONMENT_FILE="${ARTIFACT_DIR}/environment.jsonl"
-RESULTS_FILE="${ARTIFACT_DIR}/results.jsonl"
 SUMMARY_FILE="${ARTIFACT_DIR}/summary.md"
+mkdir -p "${ARTIFACT_DIR}"
 : > "${DECLARATIONS_FILE}"
 : > "${ENVIRONMENT_FILE}"
 : > "${RESULTS_FILE}"
 rm -f "${SUMMARY_FILE}"
+
 export CUA_E2E_DECLARATIONS_FILE="${DECLARATIONS_FILE}"
 export CUA_E2E_ENVIRONMENT_FILE="${ENVIRONMENT_FILE}"
 export CUA_E2E_RESULTS_FILE="${RESULTS_FILE}"
@@ -56,35 +57,35 @@ export CUA_TEST_DRIVER_BIN="${RUST_ROOT}/target/release/cua-driver"
 export CUA_TEST_APPS_ROOT="${RUST_ROOT}/test-apps"
 export CUA_TEST_REQUIRE_FIXTURES=1
 export CUA_TEST_DRIVER_STDERR=1
-export CUA_INCLUDE_TAURI_LINUX=1
 
 command -v ffmpeg >/dev/null || { echo "ffmpeg is required for E2E trajectory videos" >&2; exit 1; }
 command -v ffprobe >/dev/null || { echo "ffprobe is required for E2E trajectory validation" >&2; exit 1; }
 
 if [[ "${BUILD_FIXTURES}" == 1 ]]; then
   cargo build --release -p cua-driver --manifest-path "${RUST_ROOT}/Cargo.toml"
-  bash "${DRIVER_ROOT}/tests/fixtures/build/linux.sh"
+  bash "${DRIVER_ROOT}/tests/fixtures/build/macos.sh"
 fi
 
 if [[ ! -x "${CUA_TEST_DRIVER_BIN}" ]]; then
-  echo "driver binary not found: ${CUA_TEST_DRIVER_BIN}" >&2
+  echo "Required driver binary was not built: ${CUA_TEST_DRIVER_BIN}" >&2
   exit 1
 fi
+
 required_fixtures=()
-required_fixtures+=("${CUA_TEST_APPS_ROOT}/harness-electron/CuaTestHarness.Electron")
+required_fixtures+=("${CUA_TEST_APPS_ROOT}/harness-electron/CuaTestHarness.Electron.app")
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
   required_fixtures+=(
-    "${CUA_TEST_APPS_ROOT}/harness-tauri/CuaTestHarness.Tauri"
+    "${CUA_TEST_APPS_ROOT}/harness-tauri/CuaTestHarness.Tauri.app"
   )
 fi
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
-  required_fixtures+=("${CUA_TEST_APPS_ROOT}/harness-gtk3/CuaTestHarness.Gtk3")
+  required_fixtures+=(
+    "${CUA_TEST_APPS_ROOT}/harness-appkit/CuaTestHarness.AppKit.app"
+    "${CUA_TEST_APPS_ROOT}/harness-swiftui/CuaTestHarness.SwiftUI.app"
+  )
 fi
 for fixture in "${required_fixtures[@]}"; do
-  if [[ ! -x "${fixture}" ]]; then
-    echo "Required fixture was not built: ${fixture}" >&2
-    exit 1
-  fi
+  [[ -d "${fixture}" ]] || { echo "Required fixture missing: ${fixture}" >&2; exit 1; }
 done
 
 FAILURE_COUNT=0
@@ -99,7 +100,7 @@ run_report() {
     --output "${SUMMARY_FILE}")
 }
 
-echo "[PREFLIGHT] Linux desktop, fixture, AX, capture, and video"
+echo "[PREFLIGHT] macOS daemon identity, fixture, AX, capture, and video"
 set +e
 (cd "${RUST_ROOT}" && cargo test -p cua-driver --test e2e_environment_preflight_test -- \
   --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1) \
@@ -110,13 +111,12 @@ if [[ "${PREFLIGHT_EXIT}" != 0 ]]; then
   set +e
   run_report
   set -e
-  echo "Linux E2E environment preflight failed" >&2
+  echo "macOS E2E environment preflight failed" >&2
   exit 1
 fi
 
 run_test() {
-  local name="$1"
-  shift
+  local name="$1"; shift
   echo "[RUN] ${name}"
   set +e
   (cd "${RUST_ROOT}" && "$@") 2>&1 | tee "${ARTIFACT_DIR}/${name}.log"
@@ -128,27 +128,20 @@ run_test() {
 }
 
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
-  run_test shared-behavior-matrix \
-    cargo test -p cua-driver --test cross_platform_behavior_test -- \
-      --ignored --nocapture --test-threads=1
+  run_test shared-app-matrix cargo test -p cua-driver --test cross_platform_behavior_test -- \
+    --ignored --nocapture --test-threads=1
 fi
-
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
-  run_test gtk3-native-harness \
-    cargo test -p cua-driver --test harness_gtk3_test -- \
-      --ignored --nocapture --test-threads=1
+  run_test appkit-native-harness cargo test -p cua-driver --test harness_appkit_test -- \
+    --ignored --nocapture --test-threads=1
+  run_test swiftui-native-harness cargo test -p cua-driver --test harness_swiftui_test -- \
+    --ignored --nocapture --test-threads=1
 fi
-
 if [[ "${SUITE}" == modality || "${SUITE}" == all ]]; then
-  run_test linux-delivery-schema \
-    cargo test -p cua-driver --test modality_dispatch_linux_test -- \
-      --nocapture --test-threads=1
-  run_test modality-capture \
-    cargo test -p cua-driver --test modality_capture_mode_test -- \
-      --ignored --nocapture --test-threads=1
-  run_test modality-desktop-scope \
-    cargo test -p cua-driver --test modality_desktop_scope_linux_test -- \
-      --ignored --nocapture --test-threads=1
+  run_test modality-capture cargo test -p cua-driver --test modality_capture_mode_test -- \
+    --ignored --nocapture --test-threads=1
+  run_test modality-desktop-scope cargo test -p cua-driver --test modality_desktop_scope_macos_test -- \
+    --ignored --nocapture --test-threads=1
 fi
 
 video_count=0
@@ -158,14 +151,12 @@ while IFS= read -r -d '' video; do
       -of default=noprint_wrappers=1:nokey=1 "${video}" >/dev/null; then
     echo "[VIDEO FAIL] Unplayable trajectory: ${video}" >&2
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
-  else
-    echo "[VIDEO PASS] ${video}"
   fi
 done < <(find "${RECORDING_ROOT}" -type f -name recording.mp4 -print0)
 
-while IFS= read -r -d '' recording_error; do
-  echo "[VIDEO FAIL] ${recording_error}" >&2
-  cat "${recording_error}" >&2
+while IFS= read -r -d '' error_file; do
+  echo "[VIDEO FAIL] ${error_file}" >&2
+  cat "${error_file}" >&2
   FAILURE_COUNT=$((FAILURE_COUNT + 1))
 done < <(find "${RECORDING_ROOT}" -type f -name recording-error.txt -print0)
 
@@ -179,13 +170,12 @@ run_report
 REPORT_EXIT=$?
 set -e
 if [[ "${REPORT_EXIT}" != 0 ]]; then
-  echo "Linux E2E result validation failed" >&2
+  echo "macOS E2E result validation failed" >&2
   FAILURE_COUNT=$((FAILURE_COUNT + 1))
 fi
 
 if [[ "${FAILURE_COUNT}" != 0 ]]; then
-  echo "Linux Rust e2e suite had ${FAILURE_COUNT} failing lane(s)" >&2
+  echo "macOS Rust E2E suite had ${FAILURE_COUNT} failing lane(s)" >&2
   exit 1
 fi
-
-echo "Linux Rust e2e suite completed: ${SUITE}"
+echo "macOS Rust E2E suite completed: ${SUITE}"

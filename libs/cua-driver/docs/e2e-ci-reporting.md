@@ -1,67 +1,153 @@
 # Rust E2E CI Reporting
 
-The Rust desktop harness is the behavioral source of truth. GitHub Actions only
-selects the lane and publishes its results.
+Rust owns behavioral case declarations, observations, result classification,
+and report validation. OS runners build the environment, execute Rust targets,
+and upload the validated artifacts.
 
-## Workflow UI
+## Canonical Command
 
-The Linux and Windows manual workflows split the expensive suites into
-independent jobs. On Windows, `suite=all` covers the default Rust tests, UX
-guards, shared Electron/Tauri behavior, WPF/WinUI3/WebView2 harnesses, and
-modality-input E2E. The workflow summary job collects their artifacts and
-writes one Markdown table to the GitHub Actions run summary.
+The contributor-facing command is `all` on every OS:
 
-This means a failure in the shared Electron/Tauri lane does not prevent the
-native or modality lane from running. The workflow still fails when a required
-lane fails.
+```text
+Windows: scripts/ci/windows/run-rust-e2e.ps1 -Suite all -RequireGui
+Linux:   scripts/ci/linux/run-rust-e2e.sh --suite all
+macOS:   scripts/ci/macos/run-rust-e2e.sh --suite all
+```
 
-## Result files
+Workflows may fan `all` into internal jobs so one failure does not hide another
+lane. `shared`, `native`, `guard`, and `modality` selectors are transitional
+diagnostic partitions. They are not separate behavioral sources of truth.
 
-When `CUA_E2E_RESULTS_FILE` is set, Rust shared behavior tests append one JSON
-object per host and scenario:
+## Execution Order
+
+Each runner follows the same sequence:
+
+1. Build the Rust driver and required repo-local fixtures.
+2. Run `e2e_environment_preflight_test` once.
+3. Abort before behavioral cells if the desktop, permissions, fixture, capture,
+   or video lifecycle is unavailable.
+4. Run the selected Rust integration targets.
+5. Validate declarations, results, and evidence with `cua-e2e-report`.
+6. Upload the report, logs, and recordings.
+
+The preflight prevents a single TCC or desktop-session problem from appearing
+as the same failure on every behavioral cell.
+
+## Artifact Files
+
+Each OS lane writes:
+
+```text
+artifacts/cua-driver/<platform>/
+|-- environment.jsonl
+|-- cases.jsonl
+|-- results.jsonl
+|-- summary.md
+|-- environment-preflight.log
+|-- <rust-target>.log
+`-- recordings/<cell-id>-pid<process>-<sequence>/
+    |-- recording.mp4
+    |-- trajectory.json
+    |-- action.json
+    `-- turn-*/
+```
+
+`cases.jsonl` is the executed catalog. `results.jsonl` contains one result for
+every declared cell. The reporter rejects duplicates, missing results,
+undeclared results, contradictory statuses, and missing required videos.
+
+## Environment Record
+
+The preflight emits exactly one record:
 
 ```json
 {
-  "schema": "cua-e2e-result/v1",
-  "platform": "windows",
-  "host": "tauri",
-  "scenario": "keyboard",
-  "status": "FAIL",
-  "message": "application state did not reach key_state=enter",
-  "duration_ms": 24360
+  "schema": "cua-e2e-environment/v2",
+  "platform": "macos",
+  "display_server": "quartz",
+  "status": "ready",
+  "duration_ms": 912,
+  "message": ""
 }
 ```
 
-When `CUA_E2E_SUMMARY_FILE` is set, the same test writes a Markdown row for the
-GitHub summary. The CI scripts also parse each Cargo `test ... ok/FAILED` line,
-so native, guard, default, and modality suites appear as individual test rows
-as well as lane-level rows. Full logs are retained alongside them.
+An error record produces an environment section in `summary.md` and aborts the
+lane before case declarations are executed.
 
-Statuses are deliberately explicit:
+## Case And Result Contract
 
-- `PASS`: the external application-state oracle passed.
-- `FAIL`: the driver response or external oracle failed.
-- `SKIP`: the fixture was unavailable and was not required by the invocation.
+A case declaration uses `cua-e2e-case/v2`. A result flattens the same contract
+fields into `cua-e2e-result/v2` and adds the observation:
 
-The CI scripts set `CUA_TEST_REQUIRE_FIXTURES=1`, so missing required fixtures
-are reported as failures rather than silently becoming skips.
-
-## Running locally
-
-Windows:
-
-```powershell
-.\scripts\ci\windows\run-rust-e2e.ps1 -Suite shared -RequireGui
-.\scripts\ci\windows\run-rust-e2e.ps1 -Suite native -RequireGui
+```json
+{
+  "schema": "cua-e2e-result/v2",
+  "cell_id": "windows-electron-left-click-ax-background",
+  "platform": "windows",
+  "display_server": "win32",
+  "harness": "electron",
+  "toolkit": "chromium",
+  "action": "left_click",
+  "targeting": "ax",
+  "delivery": "background",
+  "scope": "window",
+  "driver_route": "platform_default",
+  "expected_behavior": { "kind": "deliver" },
+  "oracles": ["fixture_state"],
+  "test_status": "pass",
+  "observed_behavior": "delivered",
+  "passed_oracles": ["fixture_state"],
+  "duration_ms": 1482,
+  "message": "",
+  "evidence": {
+    "video": "recordings/windows-electron-left-click-ax-background-pid123-001/recording.mp4",
+    "trajectory": "recordings/windows-electron-left-click-ax-background-pid123-001/trajectory.json"
+  }
+}
 ```
 
-Linux:
+`targeting` describes how the action identifies its target: `ax`, `px`,
+`page`, or `not_applicable`. It is separate from screenshot/tree capture.
 
-```bash
-xvfb-run -a --server-args="-screen 0 1920x1080x24" \
-  dbus-run-session -- bash -lc \
-  "scripts/ci/linux/run-rust-e2e.sh --suite shared"
-```
+## Classification Rules
 
-The generated files are under `artifacts/cua-driver/<platform>/` and should
-not be committed.
+`test_status` answers whether the cell met its declared contract.
+`observed_behavior` records what the driver did.
+
+| Expected | Observed | Required oracles | Status |
+| --- | --- | --- | --- |
+| Deliver | Delivered | Passed | Pass |
+| Deliver | Refused | Any | Fail |
+| Deliver | No effect or error | Any | Fail |
+| Refuse | Allowed structured refusal | Passed | Pass |
+| Refuse | Different refusal code | Any | Fail |
+| Refuse | Delivered | Any | Fail pending contract review |
+
+The structured refusal enum currently recognizes
+`background_unavailable`, `background_occluded`, and
+`background_uipi_blocked`. Each refusal case declares the exact subset allowed
+by its controlled setup. String-prefix or message-substring matching is not
+accepted.
+
+A refusal contract also requires focus, z-order, and leaked-input observations.
+An honest refusal does not satisfy a case whose contract requires delivery.
+
+## Summary Ownership
+
+`cua-e2e-report` is the only behavioral Markdown renderer. Shell and
+PowerShell runners must not parse `test ... ok` output or create `host=cargo`
+and `host=lane` rows. Cargo logs remain available for unit-test annotations and
+lane diagnostics, outside the behavioral population.
+
+The summary reports delivered passes, refused passes, failures, and skips
+separately. Native targets will adopt the same records during convergence;
+until then their exit status remains visible in their logs and workflow job,
+not as invented behavioral cells.
+
+## Evidence Links
+
+Every canonical behavioral cell records an MP4, trajectory, screenshots, and
+log paths. GitHub cannot deep-link to a file inside a multi-cell artifact
+archive. The final workflow therefore uploads stable per-cell artifact bundles
+and links each summary row to its corresponding artifact. A lane archive may
+also be retained for bulk download.

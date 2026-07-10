@@ -16,8 +16,6 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 
 use std::any::Any;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -25,6 +23,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use cua_driver_testkit::ax::{element_index_by_id, element_index_containing};
+use cua_driver_testkit::e2e::{
+    write_declaration_from_env, write_result_from_env, CaseResult, CaseSpec, Delivery, DriverRoute,
+    Evidence, Observation, OracleKind, RefusalCode, Scope, Targeting,
+};
 use cua_driver_testkit::{harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
 
 struct HostSpec {
@@ -121,58 +123,10 @@ fn panic_message(payload: &Box<dyn Any + Send>) -> String {
         .unwrap_or_else(|| "test panicked without a string payload".to_owned())
 }
 
-fn escape_markdown(value: &str) -> String {
-    value
-        .replace('|', "\\|")
-        .replace('\r', "")
-        .replace('\n', " ")
-}
-
-fn append_result_line(path: &str, line: &str) {
-    let Some(parent) = std::path::Path::new(path).parent() else {
-        return;
-    };
-    let _ = std::fs::create_dir_all(parent);
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(file, "{line}");
-    }
-}
-
-fn record_result(scenario: &str, host: &str, status: &str, message: &str, duration: Duration) {
-    let message = escape_markdown(message);
-    if let Ok(path) = std::env::var("CUA_E2E_RESULTS_FILE") {
-        let line = serde_json::json!({
-            "schema": "cua-e2e-result/v1",
-            "platform": std::env::consts::OS,
-            "host": host,
-            "scenario": scenario,
-            "status": status,
-            "message": message,
-            "duration_ms": duration.as_millis(),
-        });
-        append_result_line(&path, &line.to_string());
-    }
-    if let Ok(path) = std::env::var("CUA_E2E_SUMMARY_FILE") {
-        append_result_line(
-            &path,
-            &format!(
-                "| {} | {} | {} | {} | {} ms | {} |",
-                std::env::consts::OS,
-                escape_markdown(host),
-                escape_markdown(scenario),
-                status,
-                duration.as_millis(),
-                if message.is_empty() { "-" } else { &message },
-            ),
-        );
-    }
-}
-
 fn run_host_case<F>(scenario: &str, spec: &HostSpec, test: F) -> Option<Box<dyn Any + Send>>
 where
     F: FnOnce(Fixture),
 {
-    let started = Instant::now();
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
         let Some(fixture) = launch_host(spec, scenario) else {
             return false;
@@ -181,23 +135,47 @@ where
         true
     }));
     match outcome {
-        Ok(true) => {
-            record_result(scenario, spec.name, "PASS", "", started.elapsed());
+        Ok(true) | Ok(false) => None,
+        Err(payload) => Some(payload),
+    }
+}
+
+fn run_host_case_with_outcome<F>(
+    case: CaseSpec,
+    spec: &HostSpec,
+    test: F,
+) -> Option<Box<dyn Any + Send>>
+where
+    F: FnOnce(&mut Fixture) -> Observation,
+{
+    write_declaration_from_env(&case).expect("write E2E case declaration");
+    let started = Instant::now();
+    let mut evidence = Evidence::default();
+    let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        let mut fixture = launch_host(spec, &case.cell_id)?;
+        evidence = fixture.evidence();
+        let mut observation = test(&mut fixture);
+        observation.evidence = evidence.clone();
+        Some(observation)
+    }));
+    match outcome {
+        Ok(Some(observation)) => {
+            let result = CaseResult::evaluate(case, observation, started.elapsed());
+            write_result_from_env(&result).expect("write E2E case result");
+            if result.test_status == cua_driver_testkit::e2e::TestStatus::Fail {
+                return Some(Box::new(result.message));
+            }
             None
         }
-        Ok(false) => {
-            record_result(
-                scenario,
-                spec.name,
-                "SKIP",
-                "fixture unavailable",
-                started.elapsed(),
-            );
-            None
-        }
+        Ok(None) => None,
         Err(payload) => {
             let message = panic_message(&payload);
-            record_result(scenario, spec.name, "FAIL", &message, started.elapsed());
+            let result = CaseResult::evaluate(
+                case,
+                Observation::error(&message, evidence),
+                started.elapsed(),
+            );
+            write_result_from_env(&result).expect("write failed E2E case result");
             Some(payload)
         }
     }
@@ -212,7 +190,7 @@ fn resume_first_failure(failure: Option<Box<dyn Any + Send>>) {
 fn spawn_driver(recording_label: &str) -> Option<McpDriver> {
     #[cfg(target_os = "macos")]
     {
-        return McpDriver::spawn_macos_daemon_proxy_named(recording_label);
+        McpDriver::spawn_macos_daemon_proxy_named(recording_label)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -227,6 +205,32 @@ struct Fixture {
     window_x: f64,
     window_y: f64,
     name: &'static str,
+}
+
+impl Fixture {
+    fn evidence(&self) -> Evidence {
+        let Some(recording_dir) = self.driver.recording_dir() else {
+            return Evidence::default();
+        };
+        let relative_dir = std::env::var_os("CUA_E2E_RECORDINGS_ROOT")
+            .map(PathBuf::from)
+            .and_then(|root| recording_dir.strip_prefix(root).ok().map(PathBuf::from))
+            .unwrap_or_else(|| {
+                recording_dir
+                    .file_name()
+                    .map(PathBuf::from)
+                    .unwrap_or_default()
+            });
+        let artifact_dir = PathBuf::from("recordings").join(relative_dir);
+        let artifact_path =
+            |name: &str| artifact_dir.join(name).to_string_lossy().replace('\\', "/");
+        Evidence {
+            video: Some(artifact_path("recording.mp4")),
+            trajectory: Some(artifact_path("trajectory.json")),
+            screenshot: None,
+            log: None,
+        }
+    }
 }
 
 fn launch_host(spec: &HostSpec, scenario: &str) -> Option<Fixture> {
@@ -244,7 +248,7 @@ fn launch_host(spec: &HostSpec, scenario: &str) -> Option<Fixture> {
         return None;
     }
 
-    let recording_label = format!("{scenario}-{}", spec.name);
+    let recording_label = scenario.to_owned();
     let Some(mut driver) = spawn_driver(&recording_label) else {
         if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
             panic!(
@@ -375,11 +379,10 @@ fn screenshot_scale(state: &ToolResponse) -> f64 {
 
 fn require_element(snapshot: &ToolResponse, id: &str) -> u64 {
     // Some WebKit/Chromium AX adapters preserve the DOM id as an annotation
-    // (`(calc-1 1)`) instead of emitting the common `id=...` form. Searching
-    // the visible label fallback handles adapters that omit both forms.
+    // instead of emitting the common `id=...` form. Searching the visible
+    // label fallback handles adapters that omit both forms.
     let visible_label = match id {
-        "calc-1" | "calc-2" | "calc-4" | "calc-plus" | "calc-equals" | "editor-document"
-        | "editor-save" | "scroll-tall" => id,
+        "editor-document" | "editor-save" | "scroll-tall" => id,
         "keyboard-input" => "keyboard-input",
         "drag-source" => "Drag source",
         "drop-target" => "Drop target",
@@ -443,19 +446,432 @@ fn click_ax(fixture: &mut Fixture, id: &str) {
     );
 }
 
+fn action_target_args(
+    fixture: &Fixture,
+    state: &ToolResponse,
+    id: &str,
+    addressing: &str,
+    delivery: &str,
+) -> serde_json::Value {
+    let index = require_element(state, id);
+    let mut args = serde_json::json!({
+        "pid": fixture.pid as i64,
+        "window_id": fixture.wid,
+        "delivery_mode": delivery,
+    });
+    let object = args.as_object_mut().expect("action arguments object");
+    if addressing == "ax" {
+        object.insert("element_index".to_owned(), serde_json::json!(index));
+    } else {
+        let origin = window_origin(fixture, state);
+        let scale = screenshot_scale(state);
+        let (x, y) = element_center(state, index);
+        object.insert("x".to_owned(), serde_json::json!((x - origin.0) * scale));
+        object.insert("y".to_owned(), serde_json::json!((y - origin.1) * scale));
+    }
+    args
+}
+
+fn run_pointer_action(
+    fixture: &mut Fixture,
+    tool: &str,
+    addressing: &str,
+    delivery: &str,
+    expected_marker: &str,
+) -> Observation {
+    let pre = snapshot(fixture);
+    let args = action_target_args(fixture, &pre, "border-click-target", addressing, delivery);
+    let response = fixture.driver.call(tool, args);
+    if let Some(code) = background_refusal_code(&response, delivery) {
+        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+    }
+    assert!(
+        !response.is_error(),
+        "{}: {tool} {addressing}/{delivery} failed: {}",
+        fixture.name,
+        response.text()
+    );
+    assert_tree_contains(fixture, expected_marker);
+    delivered_observation()
+}
+
+fn delivered_observation() -> Observation {
+    Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+}
+
+fn background_refusal_code(response: &ToolResponse, delivery: &str) -> Option<RefusalCode> {
+    if delivery != "background" || !response.is_error() {
+        return None;
+    }
+    response.structured()["code"]
+        .as_str()
+        .and_then(RefusalCode::from_driver_code)
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn is_background_refusal(response: &ToolResponse, delivery: &str) -> bool {
+    background_refusal_code(response, delivery).is_some()
+}
+
+fn run_text_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
+    let pre = snapshot(fixture);
+    let text = format!("cua-{addressing}-{delivery}");
+    let mut args = action_target_args(fixture, &pre, "txt-input", addressing, delivery);
+    args.as_object_mut()
+        .expect("type_text arguments object")
+        .insert("text".to_owned(), serde_json::json!(text));
+    let response = fixture.driver.call("type_text", args);
+    if let Some(code) = background_refusal_code(&response, delivery) {
+        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+    }
+    assert!(
+        !response.is_error(),
+        "{}: type_text {addressing}/{delivery} failed: {}",
+        fixture.name,
+        response.text()
+    );
+    thread::sleep(Duration::from_millis(250));
+    assert_tree_contains(fixture, &format!("mirror={text}"));
+    delivered_observation()
+}
+
+fn run_keyboard_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
+    let pre = snapshot(fixture);
+    let mut press_args = action_target_args(fixture, &pre, "keyboard-input", addressing, delivery);
+    press_args
+        .as_object_mut()
+        .expect("press_key arguments object")
+        .insert("key".to_owned(), serde_json::json!("return"));
+    let response = fixture.driver.call("press_key", press_args);
+    if let Some(code) = background_refusal_code(&response, delivery) {
+        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+    }
+    assert!(
+        !response.is_error(),
+        "{}: press_key {addressing}/{delivery} failed: {}",
+        fixture.name,
+        response.text()
+    );
+    assert_tree_contains(fixture, "key_state=enter");
+
+    let post_press = snapshot(fixture);
+    let mut hotkey_args =
+        action_target_args(fixture, &post_press, "keyboard-input", addressing, delivery);
+    hotkey_args
+        .as_object_mut()
+        .expect("hotkey arguments object")
+        .insert("keys".to_owned(), serde_json::json!(["ctrl", "shift", "7"]));
+    let response = fixture.driver.call("hotkey", hotkey_args);
+    if let Some(code) = background_refusal_code(&response, delivery) {
+        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+    }
+    assert!(
+        !response.is_error(),
+        "{}: hotkey {addressing}/{delivery} failed: {}",
+        fixture.name,
+        response.text()
+    );
+    assert_tree_contains(fixture, "key_state=hotkey");
+    delivered_observation()
+}
+
+fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
+    let pre = snapshot(fixture);
+    let mut args = action_target_args(fixture, &pre, "scroll-tall", addressing, delivery);
+    let object = args.as_object_mut().expect("scroll arguments object");
+    object.insert("direction".to_owned(), serde_json::json!("down"));
+    object.insert("by".to_owned(), serde_json::json!("page"));
+    object.insert("amount".to_owned(), serde_json::json!(2));
+    let response = fixture.driver.call("scroll", args);
+    if let Some(code) = background_refusal_code(&response, delivery) {
+        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+    }
+    assert!(
+        !response.is_error(),
+        "{}: scroll {addressing}/{delivery} failed: {}",
+        fixture.name,
+        response.text()
+    );
+    thread::sleep(Duration::from_millis(250));
+    let post = snapshot(fixture);
+    let offset = post
+        .tree_text()
+        .lines()
+        .find_map(|line| line.split("scroll_offset=").nth(1))
+        .and_then(|tail| tail.split(|ch: char| !ch.is_ascii_digit()).next())
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0);
+    assert!(
+        offset > 0,
+        "{}: scroll did not advance the external oracle: {}",
+        fixture.name,
+        post.tree_text()
+    );
+    delivered_observation()
+}
+
+fn run_drag_action(fixture: &mut Fixture, delivery: &str) -> Observation {
+    let pre = snapshot(fixture);
+    let source = require_element(&pre, "drag-source");
+    let target = require_element(&pre, "drop-target");
+    let origin = window_origin(fixture, &pre);
+    let scale = screenshot_scale(&pre);
+    let point = |index: u64| {
+        let (x, y) = element_center(&pre, index);
+        ((x - origin.0) * scale, (y - origin.1) * scale)
+    };
+    let (from_x, from_y) = point(source);
+    let (to_x, to_y) = point(target);
+    let response = fixture.driver.call(
+        "drag",
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "window_id": fixture.wid,
+            "from_x": from_x,
+            "from_y": from_y,
+            "to_x": to_x,
+            "to_y": to_y,
+            "duration_ms": 400,
+            "steps": 20,
+            "delivery_mode": delivery,
+        }),
+    );
+    if let Some(code) = background_refusal_code(&response, delivery) {
+        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+    }
+    assert!(
+        !response.is_error(),
+        "{}: drag PX/{delivery} failed: {}",
+        fixture.name,
+        response.text()
+    );
+    assert_tree_contains(fixture, "drag_status=dropped");
+    delivered_observation()
+}
+
+fn run_child_window_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
+    let pre = snapshot(fixture);
+    let args = action_target_args(fixture, &pre, "btn-open-child-window", addressing, delivery);
+    let response = fixture.driver.call("click", args);
+    if let Some(code) = background_refusal_code(&response, delivery) {
+        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+    }
+    assert!(
+        !response.is_error(),
+        "{}: child-window click {addressing}/{delivery} failed: {}",
+        fixture.name,
+        response.text()
+    );
+    assert_tree_contains(fixture, "child_windows=1");
+    delivered_observation()
+}
+
+fn run_editor_save_action(fixture: &mut Fixture, delivery: &str) -> Observation {
+    let pre = snapshot(fixture);
+    let text = format!("cua-editor-{delivery}");
+    let mut text_args = action_target_args(fixture, &pre, "editor-document", "ax", delivery);
+    text_args
+        .as_object_mut()
+        .expect("editor type_text arguments object")
+        .insert("text".to_owned(), serde_json::json!(text));
+    let response = fixture.driver.call("type_text", text_args);
+    if let Some(code) = background_refusal_code(&response, delivery) {
+        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+    }
+    assert!(
+        !response.is_error(),
+        "{}: editor type_text failed: {}",
+        fixture.name,
+        response.text()
+    );
+
+    let post_text = snapshot(fixture);
+    let save_args = action_target_args(fixture, &post_text, "editor-save", "ax", delivery);
+    let response = fixture.driver.call("click", save_args);
+    if let Some(code) = background_refusal_code(&response, delivery) {
+        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+    }
+    assert!(
+        !response.is_error(),
+        "{}: editor save failed: {}",
+        fixture.name,
+        response.text()
+    );
+    assert_tree_contains(fixture, "editor_status=saved:");
+    delivered_observation()
+}
+
+fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) -> CaseSpec {
+    let targeting = match addressing {
+        "ax" => Targeting::Ax,
+        "px" => Targeting::Px,
+        _ => Targeting::NotApplicable,
+    };
+    let delivery_kind = match delivery {
+        "background" => Delivery::Background,
+        "foreground" => Delivery::Foreground,
+        _ => Delivery::NotApplicable,
+    };
+    let scenario = format!("{action}_{addressing}_{delivery}");
+    let cell_id = format!("{}-{}-{scenario}", std::env::consts::OS, spec.name).replace('_', "-");
+    CaseSpec::delivered(
+        cell_id,
+        spec.name,
+        if spec.name == "electron" {
+            "chromium"
+        } else {
+            "platform-webview"
+        },
+        action,
+        targeting,
+        delivery_kind,
+        Scope::Window,
+        DriverRoute::PlatformDefault,
+        vec![OracleKind::FixtureState],
+    )
+}
+
 #[test]
 #[ignore]
-fn shared_web_calculator_ax_route_is_state_verified() {
+fn shared_web_action_matrix_is_state_verified() {
     let mut failure = None;
     for spec in host_specs() {
-        let result = run_host_case("calculator_ax", &spec, |mut fixture| {
-            click_ax(&mut fixture, "calc-1");
-            click_ax(&mut fixture, "calc-2");
-            click_ax(&mut fixture, "calc-plus");
-            click_ax(&mut fixture, "calc-4");
-            click_ax(&mut fixture, "calc-equals");
-            assert_tree_contains(&mut fixture, "display=16");
-            println!("✅ {} calculator AX route", fixture.name);
+        for (action, tool, marker, addressing, delivery) in [
+            (
+                "left_click",
+                "click",
+                "last_action=left_click",
+                "ax",
+                "background",
+            ),
+            (
+                "left_click",
+                "click",
+                "last_action=left_click",
+                "ax",
+                "foreground",
+            ),
+            (
+                "left_click",
+                "click",
+                "last_action=left_click",
+                "px",
+                "background",
+            ),
+            (
+                "left_click",
+                "click",
+                "last_action=left_click",
+                "px",
+                "foreground",
+            ),
+            (
+                "right_click",
+                "right_click",
+                "last_action=right_click",
+                "ax",
+                "background",
+            ),
+            (
+                "right_click",
+                "right_click",
+                "last_action=right_click",
+                "px",
+                "foreground",
+            ),
+            (
+                "double_click",
+                "double_click",
+                "last_action=double_click",
+                "ax",
+                "background",
+            ),
+            (
+                "double_click",
+                "double_click",
+                "last_action=double_click",
+                "px",
+                "foreground",
+            ),
+        ] {
+            let case = shared_case(&spec, action, addressing, delivery);
+            let result = run_host_case_with_outcome(case, &spec, |fixture| {
+                run_pointer_action(fixture, tool, addressing, delivery, marker)
+            });
+            if failure.is_none() {
+                failure = result;
+            }
+        }
+        for (action, addressing, delivery, run) in [
+            (
+                "type_text",
+                "ax",
+                "background",
+                run_text_action as fn(&mut Fixture, &str, &str) -> Observation,
+            ),
+            (
+                "type_text",
+                "px",
+                "foreground",
+                run_text_action as fn(&mut Fixture, &str, &str) -> Observation,
+            ),
+            (
+                "keyboard",
+                "ax",
+                "background",
+                run_keyboard_action as fn(&mut Fixture, &str, &str) -> Observation,
+            ),
+            (
+                "keyboard",
+                "px",
+                "foreground",
+                run_keyboard_action as fn(&mut Fixture, &str, &str) -> Observation,
+            ),
+            (
+                "scroll",
+                "ax",
+                "background",
+                run_scroll_action as fn(&mut Fixture, &str, &str) -> Observation,
+            ),
+            (
+                "scroll",
+                "px",
+                "foreground",
+                run_scroll_action as fn(&mut Fixture, &str, &str) -> Observation,
+            ),
+            (
+                "child_window",
+                "ax",
+                "background",
+                run_child_window_action as fn(&mut Fixture, &str, &str) -> Observation,
+            ),
+            (
+                "child_window",
+                "px",
+                "foreground",
+                run_child_window_action as fn(&mut Fixture, &str, &str) -> Observation,
+            ),
+        ] {
+            let case = shared_case(&spec, action, addressing, delivery);
+            let result = run_host_case_with_outcome(case, &spec, |fixture| {
+                run(fixture, addressing, delivery)
+            });
+            if failure.is_none() {
+                failure = result;
+            }
+        }
+        for delivery in ["background", "foreground"] {
+            let case = shared_case(&spec, "drag", "px", delivery);
+            let result = run_host_case_with_outcome(case, &spec, |fixture| {
+                run_drag_action(fixture, delivery)
+            });
+            if failure.is_none() {
+                failure = result;
+            }
+        }
+        let case = shared_case(&spec, "editor_save", "ax", "background");
+        let result = run_host_case_with_outcome(case, &spec, |fixture| {
+            run_editor_save_action(fixture, "background")
         });
         if failure.is_none() {
             failure = result;
@@ -523,11 +939,7 @@ fn shared_web_keyboard_routes_are_state_verified() {
             );
             #[cfg(target_os = "windows")]
             {
-                if hotkey.is_error()
-                    || hotkey
-                        .text()
-                        .contains("Background delivery is not available")
-                {
+                if is_background_refusal(&hotkey, "background") {
                     println!(
                         "✅ {} keyboard AX route: background hotkey refused honestly",
                         fixture.name
@@ -537,9 +949,7 @@ fn shared_web_keyboard_routes_are_state_verified() {
             }
             #[cfg(target_os = "linux")]
             {
-                if hotkey.is_error()
-                    && hotkey.structured()["code"].as_str() == Some("background_unavailable")
-                {
+                if is_background_refusal(&hotkey, "background") {
                     println!(
                         "✅ {} keyboard AX route: background hotkey refused honestly",
                         fixture.name
@@ -555,45 +965,6 @@ fn shared_web_keyboard_routes_are_state_verified() {
             );
             assert_tree_contains(&mut fixture, "key_state=hotkey");
             println!("✅ {} keyboard AX routes", fixture.name);
-        });
-        if failure.is_none() {
-            failure = result;
-        }
-    }
-    resume_first_failure(failure);
-}
-
-#[test]
-#[ignore]
-fn shared_web_calculator_pixel_route_is_state_verified() {
-    let mut failure = None;
-    for spec in host_specs() {
-        let result = run_host_case("calculator_pixel", &spec, |mut fixture| {
-            for id in ["calc-1", "calc-2", "calc-plus", "calc-4", "calc-equals"] {
-                let pre = snapshot(&mut fixture);
-                let origin = window_origin(&fixture, &pre);
-                let scale = screenshot_scale(&pre);
-                let index = require_element(&pre, id);
-                let (screen_x, screen_y) = element_center(&pre, index);
-                let response = fixture.driver.call(
-                    "click",
-                    serde_json::json!({
-                        "pid": fixture.pid as i64,
-                        "window_id": fixture.wid,
-                        "x": (screen_x - origin.0) * scale,
-                        "y": (screen_y - origin.1) * scale,
-                        "delivery_mode": "background"
-                    }),
-                );
-                assert!(
-                    !response.is_error(),
-                    "{}: pixel click {id} failed: {}",
-                    fixture.name,
-                    response.text()
-                );
-            }
-            assert_tree_contains(&mut fixture, "display=16");
-            println!("✅ {} calculator pixel route", fixture.name);
         });
         if failure.is_none() {
             failure = result;
@@ -644,11 +1015,7 @@ fn shared_web_editor_and_scroll_are_state_verified() {
             );
             #[cfg(target_os = "windows")]
             {
-                if response.is_error()
-                    || response
-                        .text()
-                        .contains("Background delivery is not available")
-                {
+                if is_background_refusal(&response, "background") {
                     println!(
                         "✅ {} editor + scroll: background scroll refused honestly",
                         fixture.name

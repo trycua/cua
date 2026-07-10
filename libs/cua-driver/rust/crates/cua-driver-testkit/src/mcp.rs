@@ -168,8 +168,9 @@ impl McpDriver {
             .unwrap_or(false);
         if response.is_error() || !video_active {
             panic!(
-                "E2E video recording did not start for {thread_name}: {}",
-                response.text()
+                "E2E video recording did not start for {thread_name}: {}; structured={}",
+                response.text(),
+                response.structured()
             );
         }
         let manifest = serde_json::json!({
@@ -217,6 +218,11 @@ impl McpDriver {
     /// lifetime should be tied to this driver.
     pub fn reaper(&mut self) -> &mut ChildReaper {
         &mut self.reaper
+    }
+
+    /// Directory for this driver's active per-cell recording, when enabled.
+    pub fn recording_dir(&self) -> Option<&std::path::Path> {
+        self.recording_dir.as_deref()
     }
 
     /// Poll `list_windows` until a window of `pid` whose title contains
@@ -287,6 +293,12 @@ fn recording_label(name: &str) -> String {
     }
 }
 
+impl Driver for McpDriver {
+    fn call(&mut self, tool: &str, args: Value) -> ToolResponse {
+        ToolResponse::from_mcp(self.call_raw(tool, args))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::recording_label;
@@ -298,11 +310,5 @@ mod tests {
             "module--test-name-windows"
         );
         assert_eq!(recording_label("///"), "unnamed-test");
-    }
-}
-
-impl Driver for McpDriver {
-    fn call(&mut self, tool: &str, args: Value) -> ToolResponse {
-        ToolResponse::from_mcp(self.call_raw(tool, args))
     }
 }

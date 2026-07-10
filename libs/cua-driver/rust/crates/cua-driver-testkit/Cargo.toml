@@ -9,6 +9,7 @@ description = "Shared harness for cua-driver integration tests: MCP/CLI transpor
 publish = false
 
 [dependencies]
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]

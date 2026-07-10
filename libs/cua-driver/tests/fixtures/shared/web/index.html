@@ -43,18 +43,6 @@
   </fieldset>
 
   <fieldset>
-    <legend>calculator_task</legend>
-    <div class="row">
-      <button id="calc-1" data-cua-id="calc-1" aria-label="calc-1 1">1</button>
-      <button id="calc-2" data-cua-id="calc-2" aria-label="calc-2 2">2</button>
-      <button id="calc-4" data-cua-id="calc-4" aria-label="calc-4 4">4</button>
-      <button id="calc-plus" data-cua-id="calc-plus" aria-label="calc-plus plus">+</button>
-      <button id="calc-equals" data-cua-id="calc-equals" aria-label="calc-equals equals">=</button>
-      <span class="mirror" id="calc-display" data-cua-id="calc-display">display=0</span>
-    </div>
-  </fieldset>
-
-  <fieldset>
     <legend>text_input</legend>
     <div class="row">
       <input type="text" id="txt-input" data-cua-id="txt-input" placeholder="type here" />
@@ -173,7 +161,6 @@
   // ----- state -----
   let counter = 0;
   let clickCount = 0;
-  let calculatorExpression = '';
 
   function $(id) { return document.getElementById(id); }
   function updateChkState() {
@@ -189,26 +176,6 @@
   $('btn-reset').addEventListener('click', () => {
     counter = 0;
     $('lbl-counter').textContent = 'counter=0';
-  });
-
-  // Calculator task oracle: the visible display is application state, not a
-  // driver response. It intentionally uses separate buttons so both AX and
-  // pixel-coordinate delivery can be tested against the same result.
-  ['1', '2', '4'].forEach(digit => {
-    $('calc-' + digit).addEventListener('click', () => {
-      calculatorExpression += digit;
-      $('calc-display').textContent = `display=${calculatorExpression}`;
-    });
-  });
-  $('calc-plus').addEventListener('click', () => {
-    calculatorExpression += '+';
-    $('calc-display').textContent = `display=${calculatorExpression}`;
-  });
-  $('calc-equals').addEventListener('click', () => {
-    const parts = calculatorExpression.split('+').map(Number);
-    const result = parts.length === 2 && parts.every(Number.isFinite) ? parts[0] + parts[1] : 'error';
-    calculatorExpression = String(result);
-    $('calc-display').textContent = `display=${calculatorExpression}`;
   });
 
   $('editor-save').addEventListener('click', () => {

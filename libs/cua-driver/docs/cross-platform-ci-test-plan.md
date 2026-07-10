@@ -76,7 +76,8 @@ not duplicate the scenario definitions in YAML or Python.
 
 ### Scenarios
 
-- Calculator click sequence and result oracle
+- Left, right, and double click action oracles
+- AX/PX action addressing across supported controls
 - Editor type, save, and saved-state oracle
 - Enter key and hotkey state oracles
 - Nested scroll and scroll-offset oracle
@@ -102,7 +103,7 @@ The runner should emit a common result record:
 
 ```json
 {
-  "scenario": "editor_type_and_save",
+  "scenario": "right_click",
   "os": "windows",
   "app": "electron",
   "surface": "ax",

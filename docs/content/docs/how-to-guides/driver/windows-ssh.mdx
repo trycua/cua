@@ -106,7 +106,7 @@ Each MCP tool call starts `cua-driver mcp` on the SSH side. That process detects
 
 Check these items before opening an issue:
 
-1. Confirm that `cua-driver --version` on the SSH side reports the same current install you expect. Upgrade if needed with `irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex`.
+1. Confirm that `cua-driver --version` on the SSH side reports the same current install you expect. Upgrade if needed with `irm https://cua.ai/driver/install.ps1 | iex`.
 2. Run `cua-driver status` from SSH and confirm it reports a running daemon. If it does not, use `cua-driver autostart status` to see whether the Scheduled Task is registered.
 3. Run `query session` and confirm your user has a row in `Active` or `Disc` state.
 4. Run `cua-driver doctor` from RDP and confirm it reports `[ok] interactive session: session N has an attached interactive desktop`.

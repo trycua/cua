@@ -66,13 +66,13 @@ Drive native desktop apps **in the background**. Agents click, type, and verify 
 **macOS / Linux**
 
 ```sh
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
+irm https://cua.ai/driver/install.ps1 | iex
 ```
 
 Then wire it into Claude Code as an MCP server and your agent can drive the desktop in the background:
@@ -141,7 +141,7 @@ Create and manage macOS/Linux VMs with near-native performance on Apple Silicon 
 
 ```bash
 # Install Lume
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+/bin/bash -c "$(curl -fsSL https://cua.ai/lume/install.sh)"
 
 # Create and start a vanilla macOS VM from an Apple restore image
 curl -L "$(lume ipsw | tail -n 1)" -o ~/Downloads/macos.ipsw

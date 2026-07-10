@@ -150,11 +150,11 @@ pub struct UpdateState {
 fn install_one_liner() -> String {
     #[cfg(windows)]
     {
-        "irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex".to_owned()
+        "irm https://cua.ai/driver/install.ps1 | iex".to_owned()
     }
     #[cfg(not(windows))]
     {
-        "curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash".to_owned()
+        "curl -fsSL https://cua.ai/driver/install.sh | bash".to_owned()
     }
 }
 

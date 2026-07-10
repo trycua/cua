@@ -589,7 +589,7 @@ jobs:
             ### Install (macOS / Linux pre-release)
 
             ```bash
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+            /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
             ```
 
             The shell installer covers macOS and the Linux pre-release backend
@@ -600,7 +600,7 @@ jobs:
             ### Install (Windows)
 
             ```powershell
-            irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
+            irm https://cua.ai/driver/install.ps1 | iex
             ```
 
             The installer auto-detects host architecture (x86_64 / arm64) and uses

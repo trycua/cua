@@ -5,11 +5,11 @@
 # required, no admin elevation.
 #
 # Usage (one-liner — recommended):
-#   irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
+#   irm https://cua.ai/driver/install.ps1 | iex
 #
 # Pin a version:
 #   $env:CUA_DRIVER_RS_VERSION = "0.2.0"
-#   irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
+#   irm https://cua.ai/driver/install.ps1 | iex
 #
 # Layout on disk (three tiers, two directory junctions):
 #
@@ -589,7 +589,7 @@ function Import-CuaDriverInstallModuleBootstrap {
 }
 Import-CuaDriverInstallModuleBootstrap `
     -LocalDir $PSScriptRoot `
-    -Url "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/_install-common.psm1"
+    -Url "https://cua.ai/driver/_install-common.psm1"
 
 function Register-CuaDriverAutostart {
     param([Parameter(Mandatory = $true)][string]$InstalledBinary)
@@ -1287,7 +1287,7 @@ if ($AutoStart) {
 # install-local.sh) never drift. The .txt holds the OS-agnostic bulk
 # (Try-it / skill pack / MCP setup / docs link) with {{BINARY}}
 # placeholders; OS-specific bits (autostart) stay inline below.
-$HintsUrl = "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/post-install-hints.txt"
+$HintsUrl = "https://cua.ai/driver/post-install-hints.txt"
 try {
     $hintsRaw = (Invoke-WebRequest -Uri $HintsUrl -UseBasicParsing -TimeoutSec 10).Content
     Write-Host ($hintsRaw -replace '\{\{BINARY\}\}', $installedBinary)

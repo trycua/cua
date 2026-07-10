@@ -24,7 +24,7 @@ use std::thread;
 use std::time::Instant;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use cursor_overlay::{CursorConfig, OverlayCommand, OverlayMsg, CursorKey, RenderStateCore};
+use cursor_overlay::{CursorConfig, OverlayCommand, OverlayMsg, RenderStateCore};
 use wayland_client::{
     protocol::{
         wl_buffer::WlBuffer,
@@ -39,7 +39,7 @@ use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle,
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{
-    zwlr_layer_shell_v1::{self, Layer, ZwlrLayerShellV1},
+    zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
     zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1},
 };
 
@@ -48,8 +48,8 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 /// SetPressed) are forwarded as-is so the layer-shell overlay matches the
 /// X11 visual: bloom + animated arrow + click pulse + press ring.
 enum WlOverlayCmd {
-    Cmd { key: CursorKey, cmd: OverlayCommand },
-    Remove { key: CursorKey },
+    Cmd { cmd: OverlayCommand },
+    Remove,
     Shutdown,
 }
 
@@ -91,7 +91,8 @@ pub fn forward(msg: &OverlayMsg) -> bool {
     let Some(tx) = tx() else { return false };
     match msg {
         OverlayMsg::Remove(k) => {
-            let _ = tx.try_send(WlOverlayCmd::Remove { key: k.clone() });
+            let _ = k;
+            let _ = tx.try_send(WlOverlayCmd::Remove);
             true
         }
         OverlayMsg::Cmd(kc) => {
@@ -99,7 +100,6 @@ pub fn forward(msg: &OverlayMsg) -> bool {
                 return false;
             }
             let _ = tx.try_send(WlOverlayCmd::Cmd {
-                key: kc.key.clone(),
                 cmd: kc.cmd.clone(),
             });
             true
@@ -242,7 +242,10 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     if !state.configured {
         anyhow::bail!("layer surface never received configure event");
     }
-    dbg(&format!("configured: w={} h={}", state.output_w, state.output_h));
+    dbg(&format!(
+        "configured: w={} h={}",
+        state.output_w, state.output_h
+    ));
 
     // Main loop. Tick the render core at ~60Hz so motion + spring physics
     // + click pulse animate smoothly; redraw every tick when the cursor is
@@ -258,8 +261,11 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
         let mut shutdown = false;
         loop {
             match rx.try_recv() {
-                Ok(WlOverlayCmd::Shutdown) => { shutdown = true; break; }
-                Ok(WlOverlayCmd::Cmd { cmd, .. }) => {
+                Ok(WlOverlayCmd::Shutdown) => {
+                    shutdown = true;
+                    break;
+                }
+                Ok(WlOverlayCmd::Cmd { cmd }) => {
                     // Seed: if the cursor is still at the off-screen sentinel
                     // `(-200, -200)` from `RenderStateCore::new`, snap to a
                     // point near the MoveTo / SnapTo target so the spring
@@ -286,17 +292,22 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                     // _sentinel_only` are both `false` here — same as X11.
                     let _ = state.core.apply_command_base(cmd, false, false);
                 }
-                Ok(WlOverlayCmd::Remove { .. }) => {
+                Ok(WlOverlayCmd::Remove) => {
                     // Single-cursor overlay: removing the active cursor
                     // hides it. Multi-cursor wlroots support can layer on
                     // top of this in a follow-up if needed.
                     state.core.visible = false;
                 }
                 Err(crossbeam_channel::TryRecvError::Empty) => break,
-                Err(crossbeam_channel::TryRecvError::Disconnected) => { shutdown = true; break; }
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    shutdown = true;
+                    break;
+                }
             }
         }
-        if shutdown { break; }
+        if shutdown {
+            break;
+        }
 
         // Tick animation forward and repaint if anything changed.
         let now = Instant::now();
@@ -343,16 +354,22 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
 /// When the cursor is hidden (`core.visible == false`, idle-faded, or
 /// off-screen sentinel) the pixmap is all zeros — the surface remains
 /// transparent and click-through.
-fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>) -> anyhow::Result<()> {
-    let Some(surface) = state.surface.as_ref() else { return Ok(()) };
+fn redraw(
+    state: &mut OverlayState,
+    shm: &WlShm,
+    qh: &QueueHandle<OverlayState>,
+) -> anyhow::Result<()> {
+    let Some(surface) = state.surface.as_ref() else {
+        return Ok(());
+    };
     let w = state.output_w.max(1);
     let h = state.output_h.max(1);
     let stride = w as i32 * 4;
     let size = (stride as usize) * (h as usize);
 
     // Reuses the same anon_shm pattern as the screencopy path in mod.rs.
-    let (fd, ptr) = super::anon_shm(size)
-        .map_err(|e| anyhow::anyhow!("overlay shm allocation failed: {e}"))?;
+    let (fd, ptr) =
+        super::anon_shm(size).map_err(|e| anyhow::anyhow!("overlay shm allocation failed: {e}"))?;
 
     // SAFETY: ptr came from mmap of `size` bytes, lifetime bounded to this
     // function.
@@ -397,7 +414,7 @@ fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>)
                     continue;
                 }
                 let off = ((py as usize) * (w as usize) + (px as usize)) * 4;
-                pm.data_mut()[off] = 0xFF;     // R
+                pm.data_mut()[off] = 0xFF; // R
                 pm.data_mut()[off + 1] = 0x00; // G
                 pm.data_mut()[off + 2] = 0xFF; // B
                 pm.data_mut()[off + 3] = 0xFF; // A
@@ -405,15 +422,15 @@ fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>)
         }
     }
 
-// RGBA → BGRA channel swap. tiny_skia stores pixels as RGBA8888
+    // RGBA → BGRA channel swap. tiny_skia stores pixels as RGBA8888
     // (premultiplied); wl_shm Argb8888 is little-endian = BGRA in memory.
     // Mirrors the inverse swap in ext_screencopy::encode_buffer_to_png.
     let src = pm.data();
     for i in (0..size).step_by(4) {
         // pm.data() is already RGBA premultiplied; just swap R↔B.
-        pixels[i] = src[i + 2];     // B ← R
+        pixels[i] = src[i + 2]; // B ← R
         pixels[i + 1] = src[i + 1]; // G
-        pixels[i + 2] = src[i];     // R ← B
+        pixels[i + 2] = src[i]; // R ← B
         pixels[i + 3] = src[i + 3]; // A
     }
 
@@ -436,7 +453,10 @@ fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>)
     let buffer_id = buffer.id().protocol_id();
     state.pending_buffers.insert(buffer_id, (ptr, size, fd));
 
-    dbg(&format!("redraw w={w} h={h} stride={stride} buf_id={buffer_id} pos=({:.1},{:.1}) visible={}", state.core.pos.0, state.core.pos.1, state.core.visible));
+    dbg(&format!(
+        "redraw w={w} h={h} stride={stride} buf_id={buffer_id} pos=({:.1},{:.1}) visible={}",
+        state.core.pos.0, state.core.pos.1, state.core.visible
+    ));
     surface.attach(Some(&buffer), 0, 0);
     surface.damage_buffer(0, 0, w as i32, h as i32);
     surface.commit();
@@ -455,23 +475,29 @@ impl Dispatch<wl_registry::WlRegistry, ()> for OverlayState {
         _conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
                 "wl_compositor" => {
-                    state.compositor = Some(registry.bind::<WlCompositor, _, _>(
-                        name, version.min(6), qh, ()));
+                    state.compositor =
+                        Some(registry.bind::<WlCompositor, _, _>(name, version.min(6), qh, ()));
                 }
                 "wl_shm" => {
                     state.shm = Some(registry.bind::<WlShm, _, _>(name, version.min(1), qh, ()));
                 }
                 "wl_output" => {
                     if state.output.is_none() {
-                        state.output = Some(registry.bind::<WlOutput, _, _>(name, version.min(4), qh, ()));
+                        state.output =
+                            Some(registry.bind::<WlOutput, _, _>(name, version.min(4), qh, ()));
                     }
                 }
                 "zwlr_layer_shell_v1" => {
-                    state.layer_shell = Some(registry.bind::<ZwlrLayerShellV1, _, _>(
-                        name, version.min(4), qh, ()));
+                    state.layer_shell =
+                        Some(registry.bind::<ZwlrLayerShellV1, _, _>(name, version.min(4), qh, ()));
                 }
                 _ => {}
             }
@@ -487,7 +513,8 @@ impl Dispatch<WlCompositor, ()> for OverlayState {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) {}
+    ) {
+    }
 }
 
 impl Dispatch<WlShm, ()> for OverlayState {
@@ -498,7 +525,8 @@ impl Dispatch<WlShm, ()> for OverlayState {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) {}
+    ) {
+    }
 }
 
 impl Dispatch<WlOutput, ()> for OverlayState {
@@ -528,7 +556,8 @@ impl Dispatch<ZwlrLayerShellV1, ()> for OverlayState {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) {}
+    ) {
+    }
 }
 
 impl Dispatch<ZwlrLayerSurfaceV1, ()> for OverlayState {
@@ -540,7 +569,12 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for OverlayState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let zwlr_layer_surface_v1::Event::Configure { serial, width, height } = event {
+        if let zwlr_layer_surface_v1::Event::Configure {
+            serial,
+            width,
+            height,
+        } = event
+        {
             layer.ack_configure(serial);
             if width > 0 {
                 state.output_w = width;
@@ -561,7 +595,8 @@ impl Dispatch<WlSurface, ()> for OverlayState {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) {}
+    ) {
+    }
 }
 
 impl Dispatch<WlShmPool, ()> for OverlayState {
@@ -572,7 +607,8 @@ impl Dispatch<WlShmPool, ()> for OverlayState {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) {}
+    ) {
+    }
 }
 
 impl Dispatch<WlBuffer, ()> for OverlayState {
@@ -605,5 +641,6 @@ impl Dispatch<WlRegion, ()> for OverlayState {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) {}
+    ) {
+    }
 }

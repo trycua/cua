@@ -83,8 +83,8 @@ ignore = ["E501"]
 asyncio_mode = "auto"
 testpaths = [
     "tests",
-    "../../../examples/sandboxes",
-    "../../../examples/agents",
+    "../../../tests/integration/sandbox_sdk",
+    "../../../tests/integration/sandbox_cli",
 ]
 
 [dependency-groups]

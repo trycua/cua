@@ -248,7 +248,6 @@ You can also run this in a VS Code notebook:
 2. Copy the code into a cell (without the `if __name__ == "__main__":` part)
 3. Run the cell to execute the code
 
-You can find the full code in our [notebook](https://github.com/trycua/cua/blob/main/notebooks/blog/build-your-own-operator-on-macos-2.ipynb).
 
 Compare this to the manual implementation from Part 1 - we've reduced dozens of lines of code to just a few. The cua-agent framework handles all the complex logic internally, letting you focus on the overarching agentic system.
 
@@ -675,7 +674,6 @@ With the basics covered, you might want to explore:
 ### Resources
 
 - [cua-agent GitHub repository](https://github.com/trycua/cua/tree/main/libs/python/agent)
-- [Agent Notebook Examples](https://github.com/trycua/cua/blob/main/notebooks/agent_nb.ipynb)
 - [OpenAI Agent SDK Specification](https://platform.openai.com/docs/api-reference/responses)
 - [Anthropic API Documentation](https://platform.claude.com/docs/en/api/overview)
 - [UI-TARS GitHub](https://github.com/ByteDance/UI-TARS)

@@ -66,8 +66,6 @@
             "**/build/**",
             ".pdm-build/**",
             "**/.git/**",
-            "examples/**",
-            "notebooks/**",
             "logs/**",
             "screenshots/**"
         ],
@@ -93,7 +91,7 @@
             "${workspaceFolder:cua-root}/libs/python/core",
             "${workspaceFolder:cua-root}/libs/python/computer",
             "${workspaceFolder:cua-root}/libs/python/agent",
-            "${workspaceFolder:cua-root}/libs/python/som",
+            "${workspaceFolder:cua-root}/libs/python/som"
         ],
         "python.languageServer": "None",
         "[python]": {
@@ -102,14 +100,6 @@
             "editor.codeActionsOnSave": {
                 "source.organizeImports": "explicit"
             }
-        },
-        "files.associations": {
-            "examples/computer_examples.py": "python",
-            "examples/agent_examples.py": "python"
-        },
-        "python.interpreterPaths": {
-            "examples/computer_examples.py": "${workspaceFolder}/libs/python/computer/.venv/bin/python",
-            "examples/agent_examples.py": "${workspaceFolder}/libs/python/agent/.venv/bin/python"
         }
     },
     "tasks": {
@@ -137,33 +127,5 @@
                 "problemMatcher": []
             }
         ]
-    },
-    "compounds": [
-        {
-            "name": "Run Computer Examples + Server",
-            "configurations": ["Run Computer Examples", "Run Computer Server"],
-            "stopAll": true,
-            "presentation": {
-                "group": "Computer",
-                "order": 1
-            }
-        },
-        {
-            "name": "Run Server with Keep-Alive Client",
-            "configurations": ["Run Computer Server", "Test Server Connection (Keep Alive)"],
-            "stopAll": true,
-            "presentation": {
-                "group": "Computer",
-                "order": 2
-            }
-        }
-    ],
-    "inputs": [
-        {
-            "id": "imagePath",
-            "type": "promptString",
-            "description": "Path to the image file or directory for icon detection",
-            "default": "${workspaceFolder}/examples/test_data"
-        }
-    ]
+    }
 }

@@ -192,8 +192,6 @@ Apple, macOS, Ubuntu, Canonical, and Microsoft are trademarks of their respectiv
 
 <div align="center">
 
-[![Stargazers over time](https://starchart.cc/trycua/cua.svg?variant=adaptive)](https://starchart.cc/trycua/cua)
-
 Thank you to all our [GitHub Sponsors](https://github.com/sponsors/trycua)!
 
 <img width="300" alt="coderabbit-cli" src="https://github.com/user-attachments/assets/23a98e38-7897-4043-8ef7-eb990520dccc" />

@@ -1,7 +1,9 @@
 //! MCP transport: one long-lived `cua-driver` server over stdio JSON-RPC.
 
 use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::process::{ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
@@ -24,18 +26,30 @@ pub struct McpDriver {
     stdin: ChildStdin,
     rx: Receiver<String>,
     next_id: u32,
+    recording_dir: Option<PathBuf>,
 }
+
+static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 impl McpDriver {
     /// Spawn the driver, start the stdout reader thread, and `initialize`.
     /// Returns `None` (with a skip message) if the binary isn't built — the
     /// caller's test should early-return so an un-built binary skips, not fails.
     pub fn spawn() -> Option<Self> {
-        Self::spawn_with_env(&[])
+        Self::spawn_internal(&[], None)
+    }
+
+    /// Spawn the driver with a stable recording label for artifact naming.
+    pub fn spawn_named(recording_label: &str) -> Option<Self> {
+        Self::spawn_internal(&[], Some(recording_label))
     }
 
     /// Spawn the driver with extra environment variables set on the child.
     pub fn spawn_with_env(env: &[(&str, &str)]) -> Option<Self> {
+        Self::spawn_internal(env, None)
+    }
+
+    fn spawn_internal(env: &[(&str, &str)], recording_label: Option<&str>) -> Option<Self> {
         let bin = driver_binary();
         if !bin.exists() {
             eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
@@ -79,8 +93,10 @@ impl McpDriver {
             stdin,
             rx,
             next_id: 2,
+            recording_dir: None,
         };
         d.initialize();
+        d.start_e2e_recording(recording_label);
         Some(d)
     }
 
@@ -93,6 +109,17 @@ impl McpDriver {
     /// already-running daemon and skip with a clear note when it is absent.
     #[cfg(target_os = "macos")]
     pub fn spawn_macos_daemon_proxy() -> Option<Self> {
+        Self::spawn_macos_daemon_proxy_internal(None)
+    }
+
+    /// macOS daemon-proxy variant with a stable recording artifact label.
+    #[cfg(target_os = "macos")]
+    pub fn spawn_macos_daemon_proxy_named(recording_label: &str) -> Option<Self> {
+        Self::spawn_macos_daemon_proxy_internal(Some(recording_label))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn spawn_macos_daemon_proxy_internal(recording_label: Option<&str>) -> Option<Self> {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
         let socket = format!("{home}/Library/Caches/cua-driver/cua-driver.sock");
         if std::os::unix::net::UnixStream::connect(&socket).is_err() {
@@ -102,7 +129,7 @@ impl McpDriver {
             );
             return None;
         }
-        Self::spawn_with_env(&[("CUA_DRIVER_RS_MCP_FORCE_PROXY", "1")])
+        Self::spawn_internal(&[("CUA_DRIVER_RS_MCP_FORCE_PROXY", "1")], recording_label)
     }
 
     fn initialize(&mut self) {
@@ -115,6 +142,75 @@ impl McpDriver {
     fn send(&mut self, req: Value) {
         let _ = writeln!(self.stdin, "{}", serde_json::to_string(&req).unwrap());
         let _ = self.stdin.flush();
+    }
+
+    fn start_e2e_recording(&mut self, explicit_label: Option<&str>) {
+        let Some(root) = std::env::var_os("CUA_E2E_RECORDINGS_ROOT") else {
+            return;
+        };
+        let sequence = RECORDING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let thread_name = std::thread::current()
+            .name()
+            .unwrap_or("unnamed-test")
+            .to_owned();
+        let label = recording_label(explicit_label.unwrap_or(&thread_name));
+        let output_dir =
+            PathBuf::from(root).join(format!("{label}-pid{}-{sequence:03}", std::process::id()));
+        let response = self.call(
+            "start_recording",
+            serde_json::json!({
+                "output_dir": output_dir.to_string_lossy(),
+                "record_video": true
+            }),
+        );
+        let video_active = response.structured()["video_active"]
+            .as_bool()
+            .unwrap_or(false);
+        if response.is_error() || !video_active {
+            panic!(
+                "E2E video recording did not start for {thread_name}: {}",
+                response.text()
+            );
+        }
+        let manifest = serde_json::json!({
+            "schema": "cua-e2e-trajectory/v1",
+            "label": label,
+            "rust_test_thread": thread_name,
+            "process_id": std::process::id(),
+            "sequence": sequence
+        });
+        let _ = std::fs::write(
+            output_dir.join("trajectory.json"),
+            serde_json::to_vec_pretty(&manifest).unwrap_or_default(),
+        );
+        eprintln!("[testkit] recording E2E video to {}", output_dir.display());
+        self.recording_dir = Some(output_dir);
+    }
+
+    fn stop_e2e_recording(&mut self) {
+        let Some(output_dir) = self.recording_dir.take() else {
+            return;
+        };
+        let response = self.call("stop_recording", serde_json::json!({}));
+        let video_path = output_dir.join("recording.mp4");
+        let valid_video = !response.is_error()
+            && response.structured()["last_video_path"].as_str().is_some()
+            && std::fs::metadata(&video_path)
+                .map(|metadata| metadata.len() > 0)
+                .unwrap_or(false);
+        if valid_video {
+            eprintln!("[testkit] finalized E2E video at {}", video_path.display());
+            return;
+        }
+
+        let message = format!(
+            "E2E video failed to finalize at {}: {}",
+            video_path.display(),
+            response.text()
+        );
+        eprintln!("[testkit] {message}");
+        let _ = std::fs::create_dir_all(&output_dir);
+        let _ = std::fs::write(output_dir.join("recording-error.txt"), message);
     }
 
     /// Mutable access to the child reaper, e.g. to launch a target app whose
@@ -163,6 +259,45 @@ impl McpDriver {
                 "error": format!("TIMEOUT (>{}s) on {tool}", CALL_TIMEOUT.as_secs())
             }),
         }
+    }
+}
+
+impl Drop for McpDriver {
+    fn drop(&mut self) {
+        self.stop_e2e_recording();
+    }
+}
+
+fn recording_label(name: &str) -> String {
+    let label: String = name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let label = label.trim_matches('-');
+    if label.is_empty() {
+        "unnamed-test".to_owned()
+    } else {
+        label.chars().take(96).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::recording_label;
+
+    #[test]
+    fn recording_label_is_artifact_safe() {
+        assert_eq!(
+            recording_label("module::test name/windows"),
+            "module--test-name-windows"
+        );
+        assert_eq!(recording_label("///"), "unnamed-test");
     }
 }
 

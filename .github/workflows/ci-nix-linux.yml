@@ -1,0 +1,45 @@
+name: "CI: Nix Linux Rust source"
+
+# This is the automatic Nix lane. Desktop-heavy legacy checks live in
+# nix-build.yml and nix-wayland.yml and are maintainer-dispatched instead.
+on:
+  pull_request:
+    paths:
+      - "flake.nix"
+      - "flake.lock"
+      - "nix/cua-driver/package.nix"
+      - "nix/cua-driver/tests/rust-unit.nix"
+      - "libs/cua-driver/rust/**"
+      - ".github/workflows/ci-nix-linux.yml"
+  push:
+    branches: [main]
+    paths:
+      - "flake.nix"
+      - "flake.lock"
+      - "nix/cua-driver/package.nix"
+      - "nix/cua-driver/tests/rust-unit.nix"
+      - "libs/cua-driver/rust/**"
+      - ".github/workflows/ci-nix-linux.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-nix-linux-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-source:
+    name: Nix Linux Rust source check
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Run source-built Rust check
+        run: nix build .#checks.x86_64-linux.cua-driver-linux-rust-unit --print-build-logs --show-trace

@@ -1061,6 +1061,11 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
             ap.do_action(0)
                 .await
                 .map_err(|e| anyhow!("doAction failed: {e}"))?;
+            // AT-SPI's doAction acknowledgement can precede the renderer's
+            // queued DOM mutation. Give WebKit/Chromium one short event-loop
+            // turn before returning success so a caller's immediate external
+            // state read observes the action it was told was delivered.
+            tokio::time::sleep(Duration::from_millis(50)).await;
             Ok((action, suspected_noop))
         },
         || {

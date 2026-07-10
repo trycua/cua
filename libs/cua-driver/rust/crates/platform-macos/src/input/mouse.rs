@@ -865,10 +865,10 @@ fn post_mouse_moved_primer(
     }
 }
 
-/// Synthesize a **pixel-unit mouse-wheel** scroll at `(screen_x, screen_y)`,
+/// Synthesize a targeted mouse-wheel scroll at `(screen_x, screen_y)`,
 /// posted to `pid`.
 ///
-/// This is the pixel-wheel scroll path. Unlike the keystroke path (PageDown /
+/// This is the targeted wheel path. Unlike the keystroke path (PageDown /
 /// arrow keys), which only ever drives the *focused* / page scroller, a real
 /// wheel event is hit-tested by the renderer at the cursor point: whatever
 /// element sits under `(screen_x, screen_y)` receives the scroll. That is the
@@ -876,11 +876,11 @@ fn post_mouse_moved_primer(
 /// therefore can never take keyboard focus (verified no-op via keystrokes on
 /// WKWebView's inner `scroll-tall` and WebView2).
 ///
-/// `CGEventCreateScrollWheelEvent2` builds the event in `kCGScrollEventUnitPixel`
-/// units; we then anchor it at the target point with `CGEventSetLocation` so the
-/// renderer routes it correctly, and stamp the same background-delivery fields
-/// the click primitives use (window-local point + f40 pid filter + window-routing
-/// fields) so it reaches backgrounded Chromium/Catalyst/WKWebView targets.
+/// `CGEventCreateScrollWheelEvent2` builds a line-unit event; we then anchor it
+/// at the target point with `CGEventSetLocation` so the renderer routes it
+/// correctly, and stamp the same background-delivery fields the click
+/// primitives use (window-local point + f40 pid filter + window-routing fields)
+/// so it reaches backgrounded Chromium/Catalyst/WKWebView targets.
 ///
 /// Sign convention (macOS): a POSITIVE `delta_y_per_tick` scrolls the content
 /// toward the top (reveals content ABOVE); NEGATIVE reveals content BELOW.
@@ -907,19 +907,42 @@ pub fn scroll_wheel_at_xy(
 ) -> anyhow::Result<()> {
     use core_graphics::event::ScrollEventUnit;
 
+    // Prime AppKit/WebKit's tracking state at the target before the wheel
+    // gesture. Background windows can retain a stale hit-test location; a
+    // nested overflow scroller then receives the wheel nowhere even though
+    // the event is successfully posted to the target pid.
+    let primer_source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    post_mouse_moved_primer(
+        pid,
+        &primer_source,
+        CGPoint::new(screen_x, screen_y),
+        window_local,
+        wid,
+        Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos() as i64,
+        ),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(12));
+
     for _ in 0..ticks.max(1) {
         // Fresh source per event, matching the click primitives.
         let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
             .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
         // wheel_count = 2 → both axes carried (vertical = wheel1/axis-1,
-        // horizontal = wheel2/axis-2). PIXEL units so the deltas are device
-        // pixels, matching a trackpad/precise wheel rather than coarse notches.
+        // horizontal = wheel2/axis-2). Convert the driver's pixel-tuned step
+        // into a bounded line delta for the event API.
+        let wheel_y = (delta_y_per_tick / 120).clamp(-10, 10);
+        let wheel_x = (delta_x_per_tick / 120).clamp(-10, 10);
         let event = CGEvent::new_scroll_event(
             source,
-            ScrollEventUnit::PIXEL,
+            ScrollEventUnit::LINE,
             2,
-            delta_y_per_tick,
-            delta_x_per_tick,
+            wheel_y,
+            wheel_x,
             0,
         )
         .map_err(|_| anyhow::anyhow!("CGEvent::new_scroll_event failed"))?;

@@ -16,6 +16,17 @@ $driverRoot = Join-Path $repoRoot "libs\cua-driver"
 $rustRoot = Join-Path $driverRoot "rust"
 $artifactDir = Join-Path $repoRoot "artifacts\cua-driver\windows"
 New-Item -ItemType Directory -Force $artifactDir | Out-Null
+$resultsPath = Join-Path $artifactDir "results.jsonl"
+$summaryPath = Join-Path $artifactDir "summary.md"
+@(
+    "# CUA Rust Windows E2E matrix",
+    "",
+    "| Platform | Host/lane | Scenario | Status | Duration | Details |",
+    "| --- | --- | --- | --- | --- | --- |"
+) | Set-Content -Path $summaryPath
+Remove-Item -Force -ErrorAction SilentlyContinue $resultsPath
+$env:CUA_E2E_RESULTS_FILE = $resultsPath
+$env:CUA_E2E_SUMMARY_FILE = $summaryPath
 
 & (Join-Path $scriptDir "verify-user-session.ps1")
 if ($RequireGui) { $env:CUA_REQUIRE_GUI = "1" }
@@ -47,15 +58,31 @@ function Invoke-CargoTest {
     Write-Host "[RUN] $Name" -ForegroundColor Yellow
     Push-Location $rustRoot
     try {
-        $logPath = Join-Path $artifactDir ("$($Name -replace '[^A-Za-z0-9_.-]', '-')}.log")
+        $logPath = Join-Path $artifactDir ("$($Name -replace '[^A-Za-z0-9_.-]', '-').log")
         $output = & cargo @Arguments 2>&1
         $exitCode = $LASTEXITCODE
         $output | Tee-Object -FilePath $logPath
-        if ($exitCode -ne 0) { throw "$Name failed with exit code $exitCode" }
+        $status = if ($exitCode -eq 0) { "PASS" } else { "FAIL" }
+        $record = [ordered]@{
+            schema = "cua-e2e-result/v1"
+            platform = "windows"
+            host = "lane"
+            scenario = $Name
+            status = $status
+            message = if ($exitCode -eq 0) { "" } else { "exit code $exitCode" }
+        } | ConvertTo-Json -Compress
+        Add-Content -Path $resultsPath -Value $record
+        $details = if ($exitCode -eq 0) { "-" } else { "exit code $exitCode" }
+        Add-Content -Path $summaryPath -Value "| Windows | lane | $Name | $status | n/a | $details |"
+        if ($exitCode -ne 0) {
+            $script:FailureCount++
+        }
     } finally {
         Pop-Location
     }
 }
+
+$script:FailureCount = 0
 
 if ($Suite -in @("shared", "all")) {
     Invoke-CargoTest "shared behavior matrix" @(
@@ -73,6 +100,10 @@ if ($Suite -in @("native", "all")) {
         "test", "-p", "cua-driver", "--test", "harness_web_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
+}
+
+if ($script:FailureCount -ne 0) {
+    throw "Windows Rust e2e suite had $($script:FailureCount) failing lane(s)"
 }
 
 Write-Host "Windows Rust e2e suite completed: $Suite" -ForegroundColor Green

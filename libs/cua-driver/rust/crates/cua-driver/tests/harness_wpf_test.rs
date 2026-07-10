@@ -1,9 +1,8 @@
 //! Integration test against the CuaTestHarness.Wpf .NET 8 app.
 //!
-//! Pairs of test apps live under `libs/cua-driver/test-harness/`. They
+//! Pairs of test apps live under `libs/cua-driver/tests/fixtures/`. They
 //! publish into `libs/cua-driver/rust/test-apps/harness-{wpf,winui3}/` and
-//! get mapped into the sandbox via the existing run-tests-in-sandbox.ps1
-//! mapped folder.
+//! get mapped into the sandbox by the legacy Windows Sandbox runner.
 //!
 //! Each scenario covers a Win32 hosting pattern the agent should handle:
 //!   - counter        : UIA Invoke on a plain WPF button
@@ -17,9 +16,9 @@
 //!   - child_hwnd     : native Win32 BUTTON child HWND visible in tree
 //!
 //! Run via the sandbox runner:
-//!   .\sandbox\run-tests-in-sandbox.ps1 harness_wpf
+//!   ..\tests\runners\windows-sandbox\run-tests-in-sandbox.ps1 harness_wpf
 //!
-//! Or locally (requires .NET 8 SDK + `test-harness/build/windows.ps1`):
+//! Or locally (requires .NET 8 SDK + `tests/fixtures/build/windows.ps1`):
 //!   cargo test --test harness_wpf_test -- --ignored --nocapture
 //!
 //! Tests are `#[ignore]` so they don't run in plain `cargo test`. The
@@ -65,7 +64,7 @@ fn harness_exe() -> PathBuf {
 fn launch_harness(driver: &mut McpDriver) -> Option<u32> {
     let exe = harness_exe();
     if !exe.exists() {
-        eprintln!("harness exe not found at {exe:?} — run test-harness/build/windows.ps1 first");
+        eprintln!("harness exe not found at {exe:?} — run tests/fixtures/build/windows.ps1 first");
         return None;
     }
     let app = spawn_in_job(

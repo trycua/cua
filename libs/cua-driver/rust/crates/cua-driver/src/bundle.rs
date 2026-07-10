@@ -66,6 +66,7 @@ pub fn is_executable_inside_cuadriver_app() -> bool {
 /// Mirrors Swift's `if getppid() == 1 { return false }` gate in
 /// `MCPCommand.shouldUseDaemonProxy()`.
 #[cfg(unix)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn parent_is_not_launchd() -> bool {
     // SAFETY: `libc::getppid` is a thread-safe POSIX getter that
     // takes no args and returns the parent pid. No invariants to

@@ -11,7 +11,7 @@
 //!   - text_input: TextField with mirror Text
 //!   - popover   : .popover() — SwiftUI analogue of WinUI3 CommandBarFlyout
 //!
-//! Run locally (after `libs/cua-driver/test-harness/build/macos.sh`):
+//! Run locally (after `libs/cua-driver/tests/fixtures/build/macos.sh`):
 //!   cargo test --test harness_swiftui_test -- --ignored --nocapture
 
 #![cfg(target_os = "macos")]

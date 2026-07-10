@@ -18,15 +18,15 @@
 //! held ports. Broker-spawned window pids (packaged apps / Electron) are
 //! tree-killed via `reaper().track_pid`.
 //!
-//! Targets (trycua test apps, auto-downloaded to %TEMP% if not provided):
-//!   - Electron (Chromium content) — `trycua/desktop-test-app-electron`.
-//!   - Tauri (WebView2 content)    — `trycua/desktop-test-app`.
+//! Targets (repo-local harness apps staged by `tests/fixtures/build/windows.ps1`):
+//!   - Electron (Chromium content) — `CuaTestHarness.Electron.exe`.
+//!   - Tauri (WebView2 content)    — `CuaTestHarness.Tauri.exe`.
 //!   - Win32 baseline              — `notepad.exe`.
-//! Override with `CUA_ELECTRON_EXE` / `CUA_TAURI_EXE`, or drop the exe in
-//! `test-apps/`. Auto-download uses `curl.exe`.
+//! Override with `HARNESS_ELECTRON_EXE` / `HARNESS_TAURI_EXE`
+//! (or legacy `CUA_ELECTRON_EXE` / `CUA_TAURI_EXE`).
 //!
 //! All tests are `#[ignore]` (GUI, real desktop session). Run explicitly,
-//! serially (apps bind a fixed HTTP port, so never in parallel):
+//! serially (GUI focus oracle, so never in parallel):
 //!   cargo test -p cua-driver --test e2e_windows_bg_input_test -- --ignored --nocapture --test-threads=1
 
 #![cfg(target_os = "windows")]
@@ -39,10 +39,7 @@ use std::time::{Duration, Instant};
 
 use cua_driver_testkit::{ax, workspace_root, Driver, McpDriver};
 
-const ELECTRON_URL: &str = "https://github.com/trycua/desktop-test-app-electron/releases/download/v0.1.0/desktop-test-app-electron.0.1.0.exe";
-const TAURI_URL: &str = "https://github.com/trycua/desktop-test-app/releases/download/v0.2.2/desktop-test-app-windows-x86_64.exe";
-
-// ── paths / downloads ─────────────────────────────────────────────────────────
+// ── paths ────────────────────────────────────────────────────────────────────
 
 fn focus_monitor_binary() -> PathBuf {
     workspace_root().join("target/debug/focus-monitor-win.exe")
@@ -60,56 +57,30 @@ fn kill_prior_by_name(exe: &Path) {
     }
 }
 
-fn curl_download(url: &str, dst: &Path) -> bool {
-    eprintln!("[e2e] downloading {url}\n        -> {dst:?}");
-    let ok = Command::new("curl.exe")
-        .args(["-L", "--fail", "--silent", "--show-error", "-o"])
-        .arg(dst)
-        .arg(url)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    ok && fs::metadata(dst).map(|m| m.len() > 4096).unwrap_or(false)
-}
-fn resolve_or_download(env_var: &str, prefix: &str, url: &str, tmp_name: &str) -> Option<PathBuf> {
-    if let Ok(p) = std::env::var(env_var) {
-        let pb = PathBuf::from(p);
-        if pb.exists() {
-            return Some(pb);
-        }
-    }
-    if let Ok(entries) = fs::read_dir(workspace_root().join("test-apps")) {
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().to_lowercase();
-            if name.starts_with(prefix) && name.ends_with(".exe") && !name.contains("setup") {
-                return Some(e.path());
+fn resolve_harness(primary_env: &str, legacy_env: &str, rel_path: &str) -> Option<PathBuf> {
+    for env_var in [primary_env, legacy_env] {
+        if let Ok(p) = std::env::var(env_var) {
+            let pb = PathBuf::from(p);
+            if pb.exists() {
+                return Some(pb);
             }
         }
     }
-    let dst = std::env::temp_dir().join(tmp_name);
-    if dst.exists() && fs::metadata(&dst).map(|m| m.len() > 4096).unwrap_or(false) {
-        return Some(dst);
-    }
-    if curl_download(url, &dst) {
-        Some(dst)
-    } else {
-        None
-    }
+    let pb = workspace_root().join(rel_path);
+    pb.exists().then_some(pb)
 }
 fn electron_exe() -> Option<PathBuf> {
-    resolve_or_download(
+    resolve_harness(
+        "HARNESS_ELECTRON_EXE",
         "CUA_ELECTRON_EXE",
-        "desktop-test-app-electron",
-        ELECTRON_URL,
-        "desktop-test-app-electron.0.1.0.exe",
+        "test-apps/harness-electron/CuaTestHarness.Electron.exe",
     )
 }
 fn tauri_exe() -> Option<PathBuf> {
-    resolve_or_download(
+    resolve_harness(
+        "HARNESS_TAURI_EXE",
         "CUA_TAURI_EXE",
-        "desktop-test-app-windows",
-        TAURI_URL,
-        "desktop-test-app-windows-x86_64.exe",
+        "test-apps/harness-tauri/CuaTestHarness.Tauri.exe",
     )
 }
 
@@ -126,7 +97,10 @@ fn focus_hwnd_file() -> PathBuf {
     std::env::temp_dir().join("focus_monitor_hwnd.txt")
 }
 fn read_count(p: &Path) -> u32 {
-    fs::read_to_string(p).ok().and_then(|s| s.trim().parse::<u32>().ok()).unwrap_or(0)
+    fs::read_to_string(p)
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(0)
 }
 
 fn window_ids(driver: &mut McpDriver) -> HashSet<u64> {
@@ -135,6 +109,30 @@ fn window_ids(driver: &mut McpDriver) -> HashSet<u64> {
         .as_array()
         .map(|a| a.iter().filter_map(|w| w["window_id"].as_u64()).collect())
         .unwrap_or_default()
+}
+
+fn require_interactive_desktop(context: &str) -> bool {
+    if platform_windows::diagnostics::current_session_id() == Some(0) {
+        eprintln!(
+            "{context}: running in Windows Session 0; skipping GUI modality e2e. \
+             Re-run from an interactive logon session (RDP/console)."
+        );
+        return false;
+    }
+
+    match platform_windows::diagnostics::interactive_desktop_check() {
+        Ok(true) => true,
+        Ok(false) => {
+            eprintln!("{context}: no foreground interactive desktop; skipping GUI modality e2e");
+            false
+        }
+        Err(e) => {
+            eprintln!(
+                "{context}: interactive desktop check failed ({e}); skipping GUI modality e2e"
+            );
+            false
+        }
+    }
 }
 
 // ── fixture ───────────────────────────────────────────────────────────────────
@@ -150,6 +148,10 @@ struct E2eFixture {
 /// belongs to a child pid) → sentinel (grabs foreground, pushing the app to
 /// the background) → reset counters.
 fn setup(target_exe: &Path, _title_hint: &str) -> Option<E2eFixture> {
+    if !require_interactive_desktop("modality_input_e2e_test") {
+        return None;
+    }
+
     let fm_bin = focus_monitor_binary();
     if !fm_bin.exists() {
         eprintln!("[e2e] focus-monitor-win.exe not built — skipping");
@@ -174,7 +176,11 @@ fn setup(target_exe: &Path, _title_hint: &str) -> Option<E2eFixture> {
     let before = window_ids(&mut driver);
     if driver
         .reaper()
-        .spawn(Command::new(target_exe).stdout(Stdio::null()).stderr(Stdio::null()))
+        .spawn(
+            Command::new(target_exe)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        )
         .is_err()
     {
         eprintln!("[e2e] target spawn failed"); // driver drops → kills itself
@@ -189,7 +195,9 @@ fn setup(target_exe: &Path, _title_hint: &str) -> Option<E2eFixture> {
         let r = driver.call("list_windows", serde_json::json!({}));
         if let Some(arr) = r.structured()["windows"].as_array() {
             for w in arr {
-                let Some(wid) = w["window_id"].as_u64() else { continue };
+                let Some(wid) = w["window_id"].as_u64() else {
+                    continue;
+                };
                 let pid = w["pid"].as_u64().unwrap_or(0) as u32;
                 let title = w["title"].as_str().unwrap_or("");
                 if !before.contains(&wid) && !title.is_empty() && pid != 0 {
@@ -218,7 +226,11 @@ fn setup(target_exe: &Path, _title_hint: &str) -> Option<E2eFixture> {
     // 4. Sentinel grabs foreground; app drops to z+1 (the background target).
     if driver
         .reaper()
-        .spawn(Command::new(&fm_bin).stdout(Stdio::null()).stderr(Stdio::null()))
+        .spawn(
+            Command::new(&fm_bin)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        )
         .is_err()
     {
         eprintln!("[e2e] sentinel spawn failed — skipping");
@@ -340,7 +352,9 @@ fn webview_click_case(label: &str, exe: PathBuf) {
     let mut needs_foreground = false;
     assert_target_stays_background(label, pid, || {
         let args = match elem {
-            Some(idx) => serde_json::json!({"pid": pid as i64, "window_id": wid, "element_index": idx}),
+            Some(idx) => {
+                serde_json::json!({"pid": pid as i64, "window_id": wid, "element_index": idx})
+            }
             None => serde_json::json!({"pid": pid as i64, "window_id": wid, "x": 200, "y": 200}),
         };
         let last = fx.driver.call("click", args);
@@ -358,7 +372,9 @@ fn webview_click_case(label: &str, exe: PathBuf) {
     // only — it does NOT capture accessibility-driven UIA Invoke, so a `[]`
     // there is expected for the UIA path. The hard invariant is no-foreground-steal.
     std::thread::sleep(Duration::from_millis(300));
-    let reg = registered_since_reset().map(|b| b.to_string()).unwrap_or_else(|| "n/a".into());
+    let reg = registered_since_reset()
+        .map(|b| b.to_string())
+        .unwrap_or_else(|| "n/a".into());
     println!("{label}: delivered={delivered:?}  pointer-events-logged={reg}");
 }
 

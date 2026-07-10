@@ -23,13 +23,13 @@ on:
   pull_request:
     paths:
       - "libs/cua-driver/rust/**"
-      - "libs/cua-driver/test-harness/**"
+      - "libs/cua-driver/tests/fixtures/**"
       - ".github/workflows/ci-cua-driver-interactive-linux.yml"
   push:
     branches: [main]
     paths:
       - "libs/cua-driver/rust/**"
-      - "libs/cua-driver/test-harness/**"
+      - "libs/cua-driver/tests/fixtures/**"
       - ".github/workflows/ci-cua-driver-interactive-linux.yml"
   workflow_dispatch:
 
@@ -52,6 +52,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             xvfb dbus-x11 at-spi2-core openbox \
             libgtk-3-0 gir1.2-gtk-3.0 python3-gi \
+            build-essential libglib2.0-dev libgtk-3-dev \
+            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
+            libayatana-appindicator3-dev librsvg2-dev \
             libxtst6 libxtst-dev libx11-dev libxext-dev \
             ffmpeg
 
@@ -68,7 +71,7 @@ jobs:
         run: cargo build --release -p cua-driver
 
       - name: Build the GTK3 harness app
-        run: bash libs/cua-driver/test-harness/build/linux.sh
+        run: bash libs/cua-driver/tests/fixtures/build/linux.sh
 
       - name: AT-SPI reachability probe (diagnostic, non-fatal)
         run: |

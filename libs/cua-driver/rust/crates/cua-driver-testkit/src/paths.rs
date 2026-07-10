@@ -36,7 +36,7 @@ pub fn driver_binary() -> PathBuf {
 }
 
 /// A built harness app under `test-apps/<dir>/<exe>` (produced by
-/// `test-harness/build/{windows.ps1,macos.sh}`). Example:
+/// `tests/fixtures/build/{windows.ps1,macos.sh}`). Example:
 /// `harness_app("harness-wpf", "CuaTestHarness.Wpf.exe")`.
 pub fn harness_app(dir: &str, exe: &str) -> PathBuf {
     workspace_root().join("test-apps").join(dir).join(exe)

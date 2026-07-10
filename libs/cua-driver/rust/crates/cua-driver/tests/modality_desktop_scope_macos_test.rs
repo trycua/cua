@@ -46,7 +46,7 @@ fn harness_exe() -> std::path::PathBuf {
 fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
     let exe = harness_exe();
     if !exe.exists() {
-        eprintln!("[desktop-mac] AppKit harness not built ({exe:?}) — run test-harness/build/macos.sh; skipping");
+        eprintln!("[desktop-mac] AppKit harness not built ({exe:?}) — run tests/fixtures/build/macos.sh; skipping");
         return None;
     }
     driver

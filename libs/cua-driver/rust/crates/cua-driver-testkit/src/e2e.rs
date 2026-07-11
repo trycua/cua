@@ -108,6 +108,7 @@ pub enum Scope {
 #[serde(rename_all = "snake_case")]
 pub enum DriverRoute {
     AxRead,
+    WindowState,
     UiaInvoke,
     UiaToggle,
     UiaSelection,

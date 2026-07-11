@@ -29,14 +29,17 @@ declared-coverage grid and the detailed rows:
 
 **Result:** 42 delivered, 3 refused, 2 failed, 0 skipped
 
+**Source SHA:** `0123456789abcdef0123456789abcdef01234567`
+
 ## Declared Coverage
 
 ## Detailed Results
 ```
 
-Environment readiness and source identity live in `environment.jsonl` and the
-workflow metadata. An environment failure prevents behavioral cells and makes
-the reporter fail; it is not converted into a partial green summary.
+Environment readiness and source identity live in `environment.jsonl`, the
+generated summary, and the workflow metadata. An environment failure prevents
+behavioral cells and makes the reporter fail; it is not converted into a
+partial green summary.
 
 ## Behavioral Table
 
@@ -77,7 +80,7 @@ The reporter fails before publishing a green summary when it finds:
 - a serialized status that contradicts expected and observed behavior;
 - an unknown refusal code;
 - a passing cell missing a required oracle;
-- missing or empty required video evidence when video is required;
+- unfinalized, missing, or empty required video evidence;
 - more or fewer than one environment record.
 
 The reporter validates the exact video it renders. It records the trajectory

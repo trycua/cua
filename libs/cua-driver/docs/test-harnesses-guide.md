@@ -304,12 +304,16 @@ hierarchy:
 
 1. **Complete macOS web coverage.** Add a dedicated Rust WKWebView E2E target
    if WKWebView remains a supported harness.
-2. **Fresh OS validation.** Run the complete matrix on Windows, Linux
-   X11/Wayland, and macOS, then classify actual failures as driver bugs,
-   fixture bugs, environment failures, or expected refusals.
-3. **Wayland validation.** Exercise the declared Wayland routes in a real
-   compositor session; Xvfb proves only the X11 dimension.
-4. **Flake cleanup.** Replace remaining fixed native waits with external-state
+2. **Preserve Windows validation.** Exact run `29149710089` passed all 110
+   hosted rows. Future acceptance runs must keep one full source SHA across
+   every lane and retain the typed evidence contract.
+3. **Finish macOS validation.** Re-authorize Accessibility and Screen Recording
+   for the stable signed app identity, then run the complete local matrix.
+4. **Close pure-Wayland gaps.** Supported X11 and the Nix source gate pass.
+   Exact run `29150698432` executed all 80 Sway rows with no skips: 6 delivered
+   and 74 remained visible failures. Issue `#1922` tracks the grouped backend
+   work.
+5. **Flake cleanup.** Replace remaining fixed native waits with external-state
    polling and add fixture reset tokens before reusing a harness process.
 
 ## File Convergence Plan

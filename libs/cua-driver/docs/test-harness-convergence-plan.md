@@ -55,10 +55,11 @@ external oracles. Test count is not a success metric.
 
 ## Current Branch State
 
-The branch is partway through the migration. The plan must start from this
-state rather than the older 60-cell proposal.
+The branch implements the target ownership and reporting model. Platform
+validation below replaces the older 60-cell proposal and records the remaining
+environment or backend gaps separately.
 
-### Already present
+### Implemented
 
 - `cross_platform_behavior_test.rs` has one typed 36-cell catalog per shared
   harness application: 72 shared cells across Electron and Tauri per platform.
@@ -92,7 +93,7 @@ state rather than the older 60-cell proposal.
 - WPF, WinUI3, WebView2, AppKit, SwiftUI, GTK3, capture, launch, cursor, and
   desktop-scope owners emit the same typed result records as the shared matrix.
 
-### Still incomplete
+### Validation and known gaps
 
 - The macOS preflight is implemented, but this host currently reports an
   ad-hoc-signed daemon without reusable Accessibility or Screen Recording
@@ -100,13 +101,18 @@ state rather than the older 60-cell proposal.
   interrupted signing state, but the stable private key still needs one
   Keychain authorization.
 - AppKit scroll remains an optional failing gap outside the canonical run.
-- Linux X11 native and capture/scope lanes pass. The shared lane is down to
-  five explicit AX background failures: two Electron activation leaks, two
-  Tauri text/save refusals, and one Tauri scroll activation leak. Pure Wayland
-  now starts Sway and a live AT-SPI registry, but no fixture application enters
-  the registry tree, so strict preflight aborts before cells. Some native
-  targets still use fixed waits; shared and Windows web targets poll external
-  state and allocate CDP ports per process.
+- Linux X11 is complete: exact run `29148643166` passed all 80 typed rows, with
+  48 delivered actions and 32 exact refusals. The Nix source gate passed in
+  final-code run `29150690892`.
+- Windows is complete: exact run `29149710089` passed all 110 typed rows, with
+  87 delivered actions and 23 exact refusals. Every cell and lane preflight
+  produced parseable MP4 evidence.
+- Pure Wayland remains experimental. Exact run `29150698432` passed strict
+  preflight and executed all 80 rows: 6 delivered and 74 failed, with no skips.
+  Sentinel startup noise is gone; issue `#1922` owns the remaining target
+  posture metadata, Tauri AX tree, Electron input, AT-SPI geometry, and GTK
+  mapping gaps. Some native targets still use fixed waits; shared and Windows
+  web targets poll external state and allocate CDP ports per process.
 
 ## Target Test Model
 
@@ -402,8 +408,10 @@ or an unexplained sleep.
 ### Slice 6: CI validation and deletion
 
 - Run the complete macOS matrix locally after install-local and TCC preflight.
-- Run the complete Windows matrix on GitHub-hosted and optional RDP runners.
-- Run the complete Linux X11 matrix, then the Nix Wayland lane.
+- Keep the accepted GitHub-hosted Windows matrix as the canonical result; use
+  an optional RDP runner only for environment-parity investigations.
+- Keep the accepted Linux X11 and Nix source runs as the supported Linux gates.
+- Run pure Wayland as an experimental issue-linked lane until `#1922` closes.
 - Compare old/new cells before each transitional file deletion.
 - Update contributor docs and the PR description from the generated catalog.
 
@@ -437,5 +445,6 @@ A test or fixture path may be deleted only when:
 - No orphaned target is counted as coverage.
 - Shared and native harnesses emit the same result/evidence shape.
 - Unit/protocol tests stay desktop-independent and video-free.
-- Windows, Linux X11/Wayland, and macOS complete runs produce classified outcomes
-  and per-cell evidence links.
+- Windows and supported Linux X11 complete runs produce classified outcomes and
+  per-cell evidence links. Experimental Wayland and macOS permission failures
+  stop or fail explicitly without producing a false behavioral pass.

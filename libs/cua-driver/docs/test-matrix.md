@@ -130,8 +130,9 @@ real-app checks.
 
 Nix provides the Linux build and desktop environment. X11 and Wayland are
 separate matrix dimensions because their capture and input contracts differ.
-Linux runs do not require GIF output. They may retain MP4, screenshots, AX
-trees, structured results, and driver logs for E2E evidence.
+Linux runs do not produce GIF output. Every canonical GUI cell retains an MP4
+and trajectory alongside screenshots, AX trees, structured results, and driver
+logs for E2E evidence.
 
 ## Action Delivery Matrix
 

@@ -23,13 +23,15 @@ partitions, not public suite choices or separate behavioral sources of truth.
 
 Each runner follows the same sequence:
 
-1. Build the Rust driver and required repo-local fixtures.
-2. Run `e2e_environment_preflight_test` once.
-3. Abort before behavioral cells if the desktop, permissions, fixture, capture,
+1. Resolve one immutable source SHA and check out that SHA in every lane.
+2. Build the Rust driver and required repo-local fixtures.
+3. Run `e2e_environment_preflight_test` once; it verifies `git rev-parse HEAD`
+   against the workflow's resolved SHA.
+4. Abort before behavioral cells if the desktop, permissions, fixture, capture,
    or video lifecycle is unavailable.
-4. Run the selected Rust integration targets.
-5. Validate declarations, results, and evidence with `cua-e2e-report`.
-6. Upload the report, logs, and recordings.
+5. Run the selected Rust integration targets.
+6. Validate declarations, results, and evidence with `cua-e2e-report`.
+7. Upload the report, logs, and recordings.
 
 The preflight prevents a single TCC or desktop-session problem from appearing
 as the same failure on every behavioral cell.
@@ -69,6 +71,7 @@ The preflight emits exactly one record:
   "schema": "cua-e2e-environment/v2",
   "platform": "macos",
   "display_server": "quartz",
+  "source_sha": "0123456789abcdef0123456789abcdef01234567",
   "status": "ready",
   "duration_ms": 912,
   "message": ""
@@ -76,7 +79,8 @@ The preflight emits exactly one record:
 ```
 
 An error record produces an environment section in `summary.md` and aborts the
-lane before case declarations are executed.
+lane before case declarations are executed. The same source SHA appears in the
+successful typed summary.
 
 ## Case And Result Contract
 

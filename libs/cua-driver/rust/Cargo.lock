@@ -651,6 +651,8 @@ dependencies = [
 name = "cua-driver-testkit"
 version = "0.7.1"
 dependencies = [
+ "core-foundation",
+ "objc2-app-kit",
  "serde",
  "serde_json",
  "windows 0.61.3",

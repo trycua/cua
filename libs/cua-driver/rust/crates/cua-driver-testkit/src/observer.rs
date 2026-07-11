@@ -314,7 +314,7 @@ pub mod windows {
         fn snapshot(&self, target: TargetWindow) -> Result<DesktopSnapshot, ObserverError> {
             let hwnd = HWND(target.native_id as *mut _);
             let target_z = unsafe {
-                if !IsWindow(hwnd).as_bool() {
+                if !IsWindow(Some(hwnd)).as_bool() {
                     TargetZ::NotFound
                 } else if IsIconic(hwnd).as_bool() {
                     TargetZ::Minimized
@@ -439,6 +439,308 @@ pub mod windows {
             })
             .count();
         Ok(covered >= 2)
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub mod macos {
+    use std::ffi::c_void;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::thread::JoinHandle;
+    use std::time::Duration;
+
+    use core_foundation::array::{CFArray, CFArrayRef};
+    use core_foundation::base::{CFGetTypeID, CFTypeRef, TCFType};
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::number::CFNumber;
+    use core_foundation::string::CFString;
+    use objc2_app_kit::NSWorkspace;
+
+    use super::{
+        DesktopJournal, DesktopSnapshot, FocusEvent, ObserverBackend, ObserverCapabilities,
+        ObserverError, TargetWindow, TargetZ,
+    };
+
+    const WINDOW_LIST_ON_SCREEN: u32 = 1;
+    const WINDOW_LIST_EXCLUDE_DESKTOP: u32 = 16;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGWindowListCopyWindowInfo(option: u32, relative_to_window: u32) -> CFArrayRef;
+        fn CGEventCreate(source: *mut c_void) -> *mut c_void;
+        fn CGEventGetLocation(event: *mut c_void) -> CGPoint;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        fn CFRelease(value: *const c_void);
+    }
+
+    #[repr(C)]
+    struct CGPoint {
+        x: f64,
+        y: f64,
+    }
+
+    #[derive(Clone, Copy)]
+    struct Bounds {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    }
+
+    impl Bounds {
+        fn area(self) -> f64 {
+            self.width.max(0.0) * self.height.max(0.0)
+        }
+
+        fn intersection_area(self, other: Self) -> f64 {
+            let left = self.x.max(other.x);
+            let top = self.y.max(other.y);
+            let right = (self.x + self.width).min(other.x + other.width);
+            let bottom = (self.y + self.height).min(other.y + other.height);
+            (right - left).max(0.0) * (bottom - top).max(0.0)
+        }
+    }
+
+    struct WindowRow {
+        id: u64,
+        pid: u32,
+        on_screen: bool,
+        bounds: Bounds,
+    }
+
+    pub struct MacosObserver {
+        stop: Arc<AtomicBool>,
+        events: Arc<Mutex<Vec<FocusEvent>>>,
+        sampler: Option<JoinHandle<()>>,
+    }
+
+    impl MacosObserver {
+        pub fn new() -> Self {
+            Self {
+                stop: Arc::new(AtomicBool::new(false)),
+                events: Arc::new(Mutex::new(Vec::new())),
+                sampler: None,
+            }
+        }
+    }
+
+    impl Default for MacosObserver {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl ObserverBackend for MacosObserver {
+        fn capabilities(&self) -> ObserverCapabilities {
+            ObserverCapabilities {
+                focus: true,
+                z_order: true,
+                cursor: true,
+                leaked_input: false,
+            }
+        }
+
+        fn snapshot(&self, target: TargetWindow) -> Result<DesktopSnapshot, ObserverError> {
+            let rows = window_rows();
+            let target_index = rows.iter().position(|row| row.id == target.native_id);
+            let target_z = match target_index {
+                None => TargetZ::NotFound,
+                Some(index) if !rows[index].on_screen => TargetZ::Minimized,
+                Some(_) if frontmost_pid() == Some(target.pid as u64) => TargetZ::Foreground,
+                Some(index) => {
+                    let target_bounds = rows[index].bounds;
+                    let meaningful_cover = rows[..index].iter().any(|row| {
+                        row.pid != target.pid
+                            && target_bounds.intersection_area(row.bounds)
+                                >= target_bounds.area() * 0.10
+                    });
+                    if meaningful_cover {
+                        TargetZ::BackgroundOccluded
+                    } else {
+                        TargetZ::BackgroundVisible
+                    }
+                }
+            };
+            let foreground = frontmost_pid();
+            Ok(DesktopSnapshot {
+                foreground,
+                input_focus: foreground,
+                target_z,
+                cursor_pos: cursor_position(),
+            })
+        }
+
+        fn start_journal(&mut self) -> Result<(), ObserverError> {
+            if self.sampler.is_some() {
+                return Err(ObserverError::new("macOS focus journal already active"));
+            }
+            self.stop.store(false, Ordering::Release);
+            self.events.lock().expect("focus journal lock").clear();
+            let stop = Arc::clone(&self.stop);
+            let events = Arc::clone(&self.events);
+            self.sampler = Some(std::thread::spawn(move || {
+                let mut previous = frontmost_pid();
+                while !stop.load(Ordering::Acquire) {
+                    let current = frontmost_pid();
+                    if current != previous {
+                        events.lock().expect("focus journal lock").push(FocusEvent {
+                            from: previous,
+                            to: current,
+                        });
+                        previous = current;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }));
+            Ok(())
+        }
+
+        fn drain_journal(&mut self) -> Result<DesktopJournal, ObserverError> {
+            self.stop.store(true, Ordering::Release);
+            if let Some(sampler) = self.sampler.take() {
+                sampler
+                    .join()
+                    .map_err(|_| ObserverError::new("macOS focus journal panicked"))?;
+            }
+            Ok(DesktopJournal {
+                focus_events: self.events.lock().expect("focus journal lock").clone(),
+                leaked_input_events: Vec::new(),
+            })
+        }
+    }
+
+    impl Drop for MacosObserver {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Release);
+            if let Some(sampler) = self.sampler.take() {
+                let _ = sampler.join();
+            }
+        }
+    }
+
+    fn frontmost_pid() -> Option<u64> {
+        unsafe {
+            Some(
+                NSWorkspace::sharedWorkspace()
+                    .frontmostApplication()?
+                    .processIdentifier() as u64,
+            )
+        }
+    }
+
+    fn cursor_position() -> Option<(f64, f64)> {
+        unsafe {
+            let event = CGEventCreate(std::ptr::null_mut());
+            if event.is_null() {
+                return None;
+            }
+            let point = CGEventGetLocation(event);
+            CFRelease(event);
+            Some((point.x, point.y))
+        }
+    }
+
+    fn window_rows() -> Vec<WindowRow> {
+        let raw = unsafe {
+            CGWindowListCopyWindowInfo(WINDOW_LIST_ON_SCREEN | WINDOW_LIST_EXCLUDE_DESKTOP, 0)
+        };
+        if raw.is_null() {
+            return Vec::new();
+        }
+        let array: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(raw.cast()) };
+        array
+            .iter()
+            .filter_map(|item| parse_window_row(*item))
+            .collect()
+    }
+
+    fn parse_window_row(item: CFTypeRef) -> Option<WindowRow> {
+        let dictionary_type = CFDictionary::<*const c_void, *const c_void>::type_id();
+        if unsafe { CFGetTypeID(item) } != dictionary_type {
+            return None;
+        }
+        let dictionary: CFDictionary<*const c_void, *const c_void> =
+            unsafe { CFDictionary::wrap_under_get_rule(item.cast()) };
+        let id = number(&dictionary, "kCGWindowNumber")? as u64;
+        let pid = number(&dictionary, "kCGWindowOwnerPID")? as u32;
+        let on_screen = boolean(&dictionary, "kCGWindowIsOnscreen").unwrap_or(false);
+        let bounds = dictionary_value(&dictionary, "kCGWindowBounds")
+            .and_then(|value| {
+                if unsafe { CFGetTypeID(value) } != dictionary_type {
+                    return None;
+                }
+                let bounds: CFDictionary<*const c_void, *const c_void> =
+                    unsafe { CFDictionary::wrap_under_get_rule(value.cast()) };
+                Some(Bounds {
+                    x: number(&bounds, "X").unwrap_or(0) as f64,
+                    y: number(&bounds, "Y").unwrap_or(0) as f64,
+                    width: number(&bounds, "Width").unwrap_or(0) as f64,
+                    height: number(&bounds, "Height").unwrap_or(0) as f64,
+                })
+            })
+            .unwrap_or(Bounds {
+                x: 0.0,
+                y: 0.0,
+                width: 0.0,
+                height: 0.0,
+            });
+        Some(WindowRow {
+            id,
+            pid,
+            on_screen,
+            bounds,
+        })
+    }
+
+    fn dictionary_value(
+        dictionary: &CFDictionary<*const c_void, *const c_void>,
+        key: &str,
+    ) -> Option<CFTypeRef> {
+        let key = CFString::new(key);
+        dictionary
+            .find(key.as_concrete_TypeRef().cast())
+            .map(|value| (*value).cast())
+    }
+
+    fn number(dictionary: &CFDictionary<*const c_void, *const c_void>, key: &str) -> Option<i64> {
+        let value = dictionary_value(dictionary, key)?;
+        if unsafe { CFGetTypeID(value) } != CFNumber::type_id() {
+            return None;
+        }
+        unsafe { CFNumber::wrap_under_get_rule(value.cast()) }.to_i64()
+    }
+
+    fn boolean(dictionary: &CFDictionary<*const c_void, *const c_void>, key: &str) -> Option<bool> {
+        let value = dictionary_value(dictionary, key)?;
+        if unsafe { CFGetTypeID(value) } != CFBoolean::type_id() {
+            return None;
+        }
+        Some(bool::from(unsafe {
+            CFBoolean::wrap_under_get_rule(value.cast())
+        }))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn native_snapshot_reads_desktop_without_a_target() {
+            let snapshot = MacosObserver::new()
+                .snapshot(TargetWindow {
+                    native_id: u64::MAX,
+                    pid: u32::MAX,
+                })
+                .expect("macOS desktop snapshot");
+            assert_eq!(snapshot.target_z, TargetZ::NotFound);
+            assert!(snapshot.foreground.is_some());
+            assert!(snapshot.cursor_pos.is_some());
+        }
     }
 }
 

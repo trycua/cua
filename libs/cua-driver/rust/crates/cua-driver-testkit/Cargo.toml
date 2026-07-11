@@ -12,6 +12,15 @@ publish = false
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+objc2-app-kit = { version = "0.2", features = [
+    "NSApplication",
+    "NSRunningApplication",
+    "NSWorkspace",
+    "libc",
+] }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.61", features = [
     "Win32_Foundation",

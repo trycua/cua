@@ -43,3 +43,21 @@ claude mcp add --transport stdio cua-computer-use -- cua-driver mcp --claude-cod
 This keeps CuaDriver's normal MCP tools and changes only `screenshot`, which requires `pid` and `window_id` and captures that window only.
 
 Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots still work as CuaDriver calls, but they do not expose the `mcp__cua-computer-use__screenshot` tool name that Claude Code appears to use as the image-grounding cue.
+
+## Codex Computer Use compatibility on macOS
+
+Run the driver with the app-oriented Codex Computer Use contract:
+
+```bash
+cua-driver mcp --codex-computer-use-compat
+```
+
+This opt-in mode exposes the ten Codex v829 tools, requires a fresh
+`get_app_state` snapshot before actions, and returns text plus a logical-point
+JPEG after state reads and successful actions. It uses the Sky cursor by
+default, while explicit `--cursor-shape` or `--cursor-icon` values still win.
+The native tool catalog is unchanged when the flag is absent.
+
+The driver blocks terminal-class apps, System Settings, authentication UI,
+and its embedding host. Per-app approval policy remains the host's
+responsibility.

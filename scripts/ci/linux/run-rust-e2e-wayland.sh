@@ -62,6 +62,7 @@ export QT_QPA_PLATFORM=wayland
 # Sway lane deliberately uses a software-only headless output, so keep Tauri's
 # renderer on WebKitGTK's non-composited software path.
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
+export WEBKIT_DISABLE_DMABUF_RENDERER=1
 export WEBKIT_FORCE_SANDBOX=0
 export NO_AT_BRIDGE=0
 export ACCESSIBILITY_ENABLED=1

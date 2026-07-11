@@ -1,20 +1,24 @@
-const { contextBridge } = require('electron');
-const fs = require('fs');
+const { contextBridge, ipcRenderer } = require('electron');
+
+const fixtureConfig = ipcRenderer.sendSync('cua-e2e-config');
+const fixtureJournalUrl = fixtureConfig.journalUrl || '';
 
 contextBridge.exposeInMainWorld('cuaE2E', {
-  journalUrl: process.env.CUA_E2E_FIXTURE_JOURNAL_URL || '',
+  journalUrl: fixtureJournalUrl,
+  publishFixtureState(state) {
+    if (fixtureJournalUrl) ipcRenderer.send('cua-e2e-fixture-state', state);
+  },
 });
 
-const journalPath = process.env.CUA_E2E_SENTINEL_JOURNAL;
-const sentinelMode = process.env.CUA_E2E_SENTINEL === '1' && journalPath;
+const sentinelMode = fixtureConfig.sentinelMode;
 
 function record(kind, details = {}) {
   if (!sentinelMode) return;
-  fs.appendFileSync(
-    journalPath,
-    JSON.stringify({ kind, at_ms: Date.now(), ...details }) + '\n',
-    'utf8'
-  );
+  ipcRenderer.send('cua-e2e-sentinel-event', {
+    kind,
+    at_ms: Date.now(),
+    ...details,
+  });
 }
 
 if (sentinelMode) {

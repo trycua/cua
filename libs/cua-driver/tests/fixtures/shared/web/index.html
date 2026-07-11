@@ -323,6 +323,10 @@
         if ('checked' in element) entry.checked = element.checked;
         state[element.dataset.cuaId] = entry;
       });
+      if (window.cuaE2E?.publishFixtureState) {
+        window.cuaE2E.publishFixtureState(state);
+        return;
+      }
       fetch(journalUrl, {
         method: 'POST',
         mode: 'no-cors',

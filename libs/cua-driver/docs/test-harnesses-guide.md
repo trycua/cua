@@ -301,30 +301,28 @@ logs; they do not need desktop video.
 
 The overall structure exists, but the plan is not completely finished:
 
-1. **Cross-platform focus oracle.** Move focus monitoring behind the testkit,
-   keep `focus-monitor-win` as the Windows implementation, and add equivalent
-   macOS/Linux observers before requiring focus assertions in those lanes.
-2. **Fold in standalone invariants.** Move focus, z-order, cursor, and desktop
+1. **Fold in standalone invariants.** Move any remaining unique focus,
+   z-order, cursor, and desktop
    assertions from `guard_ux_test.rs` into the relevant shared/native action
    rows, then remove the standalone guard target once coverage is preserved.
-3. **Structured result adoption.** The shared matrix emits v2 case/result
+2. **Structured result adoption.** The shared matrix emits v2 case/result
    records. Native harnesses still need to adopt the same `CaseSpec` and result
    writer instead of relying on Cargo output.
-4. **Fold in transitional input probes.** Move the useful assertions from
+3. **Fold in transitional input probes.** Move the useful assertions from
    `modality_input_e2e_test.rs` into the shared/native action rows, preserving
    the focus and no-z-order oracle, then remove the duplicate target.
-5. **Per-cell GitHub evidence links.** The summary should link the matching
+4. **Per-cell GitHub evidence links.** The summary should link the matching
    video, trajectory, and log in each row, rather than only linking a whole
    lane archive.
-6. **Consistent delivery declarations.** Native tests should explicitly state
+5. **Consistent delivery declarations.** Native tests should explicitly state
    foreground or background intent instead of relying on an omitted field to
    mean background.
-7. **Complete macOS web coverage.** Add a dedicated Rust WKWebView E2E target
+6. **Complete macOS web coverage.** Add a dedicated Rust WKWebView E2E target
    if WKWebView remains a supported harness.
-8. **Fresh OS validation.** Run the complete `all` matrix on Windows, Linux
+7. **Fresh OS validation.** Run the complete `all` matrix on Windows, Linux
    X11/Wayland, and macOS, then classify actual failures as driver bugs,
    fixture bugs, environment failures, or expected refusals.
-9. **Legacy cleanup.** After the canonical matrix is stable, retire old Python
+8. **Legacy cleanup.** After the canonical matrix is stable, retire old Python
    and recording-only runners that duplicate Rust coverage, while preserving
    any still-supported external-app checks as explicitly optional.
 

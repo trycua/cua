@@ -14,8 +14,8 @@ The original direction remains sound:
 
 This review changes five parts of the earlier plan:
 
-1. Do not make 19 cells per host a fixed target. The current 19-cell shared
-   matrix is a useful transition, but every omitted combination needs a route
+1. Do not make a historical cell count a target. The shared matrix must cover
+   supported route combinations, while every omission needs a route
    equivalence or unsupported-capability reason.
 2. Separate test status from driver behavior. A test may pass because a
    required action was delivered or because a declared unsupported route was
@@ -60,35 +60,40 @@ state rather than the older 60-cell proposal.
 
 ### Already present
 
-- `cross_platform_behavior_test.rs` now has one provisional shared action
-  matrix with 19 cells per host: 8 pointer, 8 text/key/scroll/child-window, 2
-  drag, and 1 editor-save cell.
-- The result writer has provisional action, `addressing`, delivery, scope,
-  oracle, and expected-outcome fields. The final schema renames `addressing` to
-  `targeting`.
-- Background refusal matching uses an explicit Windows-compatible set:
+- `cross_platform_behavior_test.rs` has one typed 32-cell catalog per shared
+  host. It covers AX and PX with foreground and background delivery for click,
+  text, keyboard, scroll, and child-window actions; PX drag and AX editor-save
+  each cover both delivery modes.
+- Declaration and result schema v2 record action, `targeting`, delivery, scope,
+  backend route, expected and observed behavior, independent test status,
+  required oracles, duration, and evidence.
+- Background refusal matching uses the explicit structured set:
   `background_unavailable`, `background_occluded`, and
   `background_uipi_blocked`.
+- Every catalog route is explicit for Win32, Quartz, X11, and Wayland; the
+  Windows Chromium PX background route remains required delivery.
+- Every background shared cell attaches independent focus, z-order, real
+  cursor, leaked-input, and fixture-state observations. Windows, macOS, and X11
+  use direct testkit observers; an occluding Electron sentinel supplies the
+  focus and leaked-input journal. Unsupported Wayland observations fail closed.
 - Electron and Tauri use repo-local builds of the same shared web fixture.
-- Windows and Linux workflows fan diagnostic suites into independent jobs.
-- Per-driver recording support exists in `cua-driver-testkit`.
+- Windows, Linux, and macOS runners have strict source, fixture, AX, capture,
+  and video preflights. Shell runners no longer synthesize behavioral rows.
+- Rust validates duplicate, missing, contradictory, and evidence-less results
+  before rendering the GitHub summary.
+- Per-cell source-driver recording support exists in `cua-driver-testkit`.
 
 ### Still incomplete
 
-- Three older shared tests still run beside the new matrix. The old
-  child-window/drag test still contains the non-macOS fake-pass branch.
-- A refusal cell records no focus or z-order evidence yet.
-- The current shared diagonal has no written route map proving that omitted
-  AX/PX and delivery combinations are equivalent.
-- Result schema documents disagree on field names and v1/v2 semantics.
+- Three older shared tests remain in source pending deletion, although the
+  canonical runners now select only the typed catalog.
 - `guard_ux_test.rs`, `modality_input_e2e_test.rs`, and
   `modality_background_test.rs` overlap and still allow many runtime skips.
 - Windows `all` still exposes `guard` and `modality` as test families and does
   not run the Windows desktop-scope target.
 - Linux `all` still reports schema-only dispatch checks as E2E behavior.
-- The macOS runner has no single preflight for the daemon identity, TCC,
-  fixture visibility, and video capture. A failed video permission currently
-  causes one failure per cell.
+- The macOS preflight is implemented, but this host currently reports an
+  ad-hoc-signed daemon without a reusable Screen Recording grant.
 - `harness_appkit_scroll_expected_fail` still uses `#[should_panic]`.
 - Native harness tests do not emit the same typed result records as the shared
   matrix.
@@ -177,10 +182,9 @@ driver route:
 5. Every omitted combination names an `equivalent_to` cell or an unsupported
    contract reason.
 
-The current 19-cell shared matrix is accepted only after this route map proves
-the diagonal. Add a missing combination when it reaches a different driver
-route. Remove a combination when another cell proves the same route with an
-equal or stronger oracle.
+The shared catalog currently declares 32 cells per host. Add a missing
+combination when it reaches a different driver route. Remove a combination
+only when another cell proves the same route with an equal or stronger oracle.
 
 ## Cross-cutting Desktop Observer
 
@@ -341,7 +345,7 @@ environment error, and a synthetic CaseSpec set renders a valid report.
 
 ### Slice 2: Shared matrix integrity
 
-- Map the current 19 cells to driver routes.
+- Map every shared cell to an explicit driver route.
 - Add any missing route cells; document every omitted equivalent.
 - Add the desktop observer to background and refusal cells.
 - Preserve editor-save and all existing external markers.

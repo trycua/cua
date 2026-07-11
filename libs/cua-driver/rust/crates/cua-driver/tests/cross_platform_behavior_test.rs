@@ -29,6 +29,7 @@ use cua_driver_testkit::e2e::{
     shared_web_route, write_declaration_from_env, write_result_from_env, CaseResult, CaseSpec,
     Delivery, Evidence, Observation, OracleKind, RefusalCode, Scope, Targeting,
 };
+use cua_driver_testkit::observer::{DesktopObserver, NativeObserver, TargetWindow};
 use cua_driver_testkit::{harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
 
 struct HostSpec {
@@ -161,18 +162,33 @@ where
         } else {
             None
         };
-        let mut observation = test(&mut fixture);
+        let mut observation = if delivery == Delivery::Background {
+            let mut observer = DesktopObserver::new(
+                NativeObserver::new(),
+                TargetWindow {
+                    pid: fixture.pid,
+                    native_id: fixture.wid,
+                },
+            );
+            let (observation, delta) = observer
+                .observe(&[OracleKind::ZOrder, OracleKind::Cursor], || {
+                    test(&mut fixture)
+                })
+                .expect("observe background desktop side effects");
+            delta
+                .ensure_supported()
+                .expect("required background desktop oracles are unsupported");
+            let mut observation = observation;
+            observation.passed_oracles.extend(delta.passed());
+            append_violations(&mut observation, delta.violations());
+            observation
+        } else {
+            test(&mut fixture)
+        };
         if let Some(sentinel) = sentinel {
             let (passed, violations) = sentinel.observe();
             observation.passed_oracles.extend(passed);
-            if !violations.is_empty() {
-                let message = violations.join("; ");
-                observation.message = if observation.message.is_empty() {
-                    message
-                } else {
-                    format!("{}; {message}", observation.message)
-                };
-            }
+            append_violations(&mut observation, &violations);
         }
         observation.evidence = evidence.clone();
         Some(observation)
@@ -198,6 +214,18 @@ where
             Some(payload)
         }
     }
+}
+
+fn append_violations(observation: &mut Observation, violations: &[String]) {
+    if violations.is_empty() {
+        return;
+    }
+    let message = violations.join("; ");
+    observation.message = if observation.message.is_empty() {
+        message
+    } else {
+        format!("{}; {message}", observation.message)
+    };
 }
 
 fn resume_first_failure(failure: Option<Box<dyn Any + Send>>) {
@@ -871,7 +899,12 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
     let cell_id = format!("{}-{}-{scenario}", std::env::consts::OS, spec.name).replace('_', "-");
     let mut oracles = vec![OracleKind::FixtureState];
     if delivery_kind == Delivery::Background {
-        oracles.extend([OracleKind::Focus, OracleKind::NoLeakedInput]);
+        oracles.extend([
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::Cursor,
+            OracleKind::NoLeakedInput,
+        ]);
     }
     CaseSpec::delivered(
         cell_id,

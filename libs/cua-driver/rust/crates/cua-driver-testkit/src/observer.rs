@@ -201,6 +201,11 @@ fn evaluate(
                         "foreground changed from {:?} to {:?}",
                         before.foreground, after.foreground
                     ))
+                } else if before.input_focus != after.input_focus {
+                    Some(format!(
+                        "input focus changed from {:?} to {:?}",
+                        before.input_focus, after.input_focus
+                    ))
                 } else if !journal.focus_events.is_empty() {
                     Some(format!(
                         "foreground changed transiently: {:?}",
@@ -744,6 +749,405 @@ pub mod macos {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub mod linux {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::thread::JoinHandle;
+    use std::time::Duration;
+
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{
+        AtomEnum, ConnectionExt, MapState, Rectangle, Window, WindowClass,
+    };
+    use x11rb::rust_connection::RustConnection;
+
+    use super::{
+        DesktopJournal, DesktopSnapshot, FocusEvent, ObserverBackend, ObserverCapabilities,
+        ObserverError, TargetWindow, TargetZ,
+    };
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum SessionKind {
+        X11,
+        Wayland,
+        Missing,
+    }
+
+    pub struct LinuxObserver {
+        session: SessionKind,
+        stop: Arc<AtomicBool>,
+        events: Arc<Mutex<Vec<FocusEvent>>>,
+        sampler: Option<JoinHandle<()>>,
+    }
+
+    impl LinuxObserver {
+        pub fn new() -> Self {
+            let explicit_wayland = std::env::var("XDG_SESSION_TYPE")
+                .map(|value| value.eq_ignore_ascii_case("wayland"))
+                .unwrap_or(false)
+                || std::env::var_os("WAYLAND_DISPLAY").is_some();
+            let session = if explicit_wayland {
+                SessionKind::Wayland
+            } else if std::env::var_os("DISPLAY").is_some() {
+                if x11_window_manager_ready() {
+                    SessionKind::X11
+                } else {
+                    SessionKind::Missing
+                }
+            } else {
+                SessionKind::Missing
+            };
+            Self {
+                session,
+                stop: Arc::new(AtomicBool::new(false)),
+                events: Arc::new(Mutex::new(Vec::new())),
+                sampler: None,
+            }
+        }
+    }
+
+    impl Default for LinuxObserver {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl ObserverBackend for LinuxObserver {
+        fn capabilities(&self) -> ObserverCapabilities {
+            let supported = self.session == SessionKind::X11;
+            ObserverCapabilities {
+                focus: supported,
+                z_order: supported,
+                cursor: supported,
+                leaked_input: false,
+            }
+        }
+
+        fn snapshot(&self, target: TargetWindow) -> Result<DesktopSnapshot, ObserverError> {
+            match self.session {
+                SessionKind::X11 => x11_snapshot(target),
+                SessionKind::Wayland | SessionKind::Missing => Ok(DesktopSnapshot {
+                    foreground: None,
+                    input_focus: None,
+                    target_z: TargetZ::NotFound,
+                    cursor_pos: None,
+                }),
+            }
+        }
+
+        fn start_journal(&mut self) -> Result<(), ObserverError> {
+            if self.sampler.is_some() {
+                return Err(ObserverError::new("Linux focus journal already active"));
+            }
+            self.stop.store(false, Ordering::Release);
+            self.events.lock().expect("focus journal lock").clear();
+            if self.session != SessionKind::X11 {
+                return Ok(());
+            }
+            let stop = Arc::clone(&self.stop);
+            let events = Arc::clone(&self.events);
+            self.sampler = Some(std::thread::spawn(move || {
+                let mut previous = x11_focus_identity().ok().flatten();
+                while !stop.load(Ordering::Acquire) {
+                    if let Ok(current) = x11_focus_identity() {
+                        if current != previous {
+                            events.lock().expect("focus journal lock").push(FocusEvent {
+                                from: previous,
+                                to: current,
+                            });
+                            previous = current;
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }));
+            Ok(())
+        }
+
+        fn drain_journal(&mut self) -> Result<DesktopJournal, ObserverError> {
+            self.stop.store(true, Ordering::Release);
+            if let Some(sampler) = self.sampler.take() {
+                sampler
+                    .join()
+                    .map_err(|_| ObserverError::new("Linux focus journal panicked"))?;
+            }
+            Ok(DesktopJournal {
+                focus_events: self.events.lock().expect("focus journal lock").clone(),
+                leaked_input_events: Vec::new(),
+            })
+        }
+    }
+
+    impl Drop for LinuxObserver {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Release);
+            if let Some(sampler) = self.sampler.take() {
+                let _ = sampler.join();
+            }
+        }
+    }
+
+    fn x11_connection() -> Result<(RustConnection, usize), ObserverError> {
+        x11rb::connect(None)
+            .map_err(|error| ObserverError::new(format!("X11 connect failed: {error}")))
+    }
+
+    fn x11_snapshot(target: TargetWindow) -> Result<DesktopSnapshot, ObserverError> {
+        let (connection, screen_index) = x11_connection()?;
+        let root = connection.setup().roots[screen_index].root;
+        let target = u32::try_from(target.native_id)
+            .map_err(|_| ObserverError::new("X11 window id does not fit in u32"))?;
+        let target_root = match top_level(&connection, target, root) {
+            Ok(window) => window,
+            Err(_) => {
+                return Ok(DesktopSnapshot {
+                    foreground: active_window(&connection, root)?.map(u64::from),
+                    input_focus: input_focus(&connection, root)?.map(u64::from),
+                    target_z: TargetZ::NotFound,
+                    cursor_pos: query_pointer(&connection, root)?,
+                });
+            }
+        };
+        let active = active_window(&connection, root)?;
+        let focus = input_focus(&connection, root)?;
+        let target_z = if !is_viewable(&connection, target_root)? {
+            TargetZ::Minimized
+        } else if active == Some(target_root) || focus == Some(target_root) {
+            TargetZ::Foreground
+        } else if is_occluded(&connection, root, target_root)? {
+            TargetZ::BackgroundOccluded
+        } else {
+            TargetZ::BackgroundVisible
+        };
+        Ok(DesktopSnapshot {
+            foreground: active.map(u64::from),
+            input_focus: focus.map(u64::from),
+            target_z,
+            cursor_pos: query_pointer(&connection, root)?,
+        })
+    }
+
+    fn x11_focus_identity() -> Result<Option<u64>, ObserverError> {
+        let (connection, screen_index) = x11_connection()?;
+        let root = connection.setup().roots[screen_index].root;
+        Ok(active_window(&connection, root)?
+            .or(input_focus(&connection, root)?)
+            .map(u64::from))
+    }
+
+    fn x11_window_manager_ready() -> bool {
+        let Ok((connection, screen_index)) = x11_connection() else {
+            return false;
+        };
+        let root = connection.setup().roots[screen_index].root;
+        let Ok(atom_cookie) = connection.intern_atom(false, b"_NET_SUPPORTING_WM_CHECK") else {
+            return false;
+        };
+        let Ok(atom_reply) = atom_cookie.reply() else {
+            return false;
+        };
+        let atom = atom_reply.atom;
+        let read_window = |window| {
+            connection
+                .get_property(false, window, atom, AtomEnum::WINDOW, 0, 1)
+                .ok()?
+                .reply()
+                .ok()?
+                .value32()?
+                .next()
+        };
+        let Some(manager) = read_window(root) else {
+            return false;
+        };
+        manager != 0 && read_window(manager) == Some(manager)
+    }
+
+    fn active_window(
+        connection: &RustConnection,
+        root: Window,
+    ) -> Result<Option<Window>, ObserverError> {
+        let atom = connection
+            .intern_atom(false, b"_NET_ACTIVE_WINDOW")
+            .map_err(x11_error("intern _NET_ACTIVE_WINDOW"))?
+            .reply()
+            .map_err(x11_error("read _NET_ACTIVE_WINDOW atom"))?
+            .atom;
+        let reply = connection
+            .get_property(false, root, atom, AtomEnum::WINDOW, 0, 1)
+            .map_err(x11_error("request _NET_ACTIVE_WINDOW"))?
+            .reply()
+            .map_err(x11_error("read _NET_ACTIVE_WINDOW"))?;
+        let active = reply
+            .value32()
+            .and_then(|mut values| values.next())
+            .filter(|window| *window != 0);
+        active
+            .map(|window| top_level(connection, window, root))
+            .transpose()
+    }
+
+    fn input_focus(
+        connection: &RustConnection,
+        root: Window,
+    ) -> Result<Option<Window>, ObserverError> {
+        let window = connection
+            .get_input_focus()
+            .map_err(x11_error("request input focus"))?
+            .reply()
+            .map_err(x11_error("read input focus"))?
+            .focus;
+        if window == 0 || window == 1 {
+            Ok(None)
+        } else {
+            top_level(connection, window, root).map(Some)
+        }
+    }
+
+    fn top_level(
+        connection: &RustConnection,
+        mut window: Window,
+        root: Window,
+    ) -> Result<Window, ObserverError> {
+        for _ in 0..32 {
+            let tree = connection
+                .query_tree(window)
+                .map_err(x11_error("request X11 window tree"))?
+                .reply()
+                .map_err(x11_error("read X11 window tree"))?;
+            if tree.parent == root || window == root {
+                return Ok(window);
+            }
+            window = tree.parent;
+        }
+        Err(ObserverError::new("X11 window ancestry exceeded 32 levels"))
+    }
+
+    fn is_viewable(connection: &RustConnection, window: Window) -> Result<bool, ObserverError> {
+        let attributes = connection
+            .get_window_attributes(window)
+            .map_err(x11_error("request X11 window attributes"))?
+            .reply()
+            .map_err(x11_error("read X11 window attributes"))?;
+        Ok(attributes.class == WindowClass::INPUT_OUTPUT
+            && attributes.map_state == MapState::VIEWABLE)
+    }
+
+    fn absolute_bounds(
+        connection: &RustConnection,
+        window: Window,
+        root: Window,
+    ) -> Result<Rectangle, ObserverError> {
+        let geometry = connection
+            .get_geometry(window)
+            .map_err(x11_error("request X11 window geometry"))?
+            .reply()
+            .map_err(x11_error("read X11 window geometry"))?;
+        let translated = connection
+            .translate_coordinates(window, root, 0, 0)
+            .map_err(x11_error("request X11 translated coordinates"))?
+            .reply()
+            .map_err(x11_error("read X11 translated coordinates"))?;
+        Ok(Rectangle {
+            x: translated.dst_x,
+            y: translated.dst_y,
+            width: geometry.width,
+            height: geometry.height,
+        })
+    }
+
+    fn is_occluded(
+        connection: &RustConnection,
+        root: Window,
+        target: Window,
+    ) -> Result<bool, ObserverError> {
+        let target_bounds = absolute_bounds(connection, target, root)?;
+        if target_bounds.width <= 4 || target_bounds.height <= 4 {
+            return Ok(false);
+        }
+        let covered = sample_points(target_bounds)
+            .into_iter()
+            .filter(|(x, y)| {
+                connection
+                    .translate_coordinates(root, root, *x, *y)
+                    .ok()
+                    .and_then(|cookie| cookie.reply().ok())
+                    .map(|reply| reply.child != 0 && reply.child != target)
+                    .unwrap_or(true)
+            })
+            .count();
+        Ok(covered >= 2)
+    }
+
+    fn sample_points(bounds: Rectangle) -> [(i16, i16); 5] {
+        let left = bounds.x.saturating_add(2);
+        let top = bounds.y.saturating_add(2);
+        let right = i32::from(bounds.x)
+            .saturating_add(i32::from(bounds.width))
+            .saturating_sub(3)
+            .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+        let bottom = i32::from(bounds.y)
+            .saturating_add(i32::from(bounds.height))
+            .saturating_sub(3)
+            .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+        let center_x = i32::from(bounds.x)
+            .saturating_add(i32::from(bounds.width) / 2)
+            .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+        let center_y = i32::from(bounds.y)
+            .saturating_add(i32::from(bounds.height) / 2)
+            .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+        [
+            (left, top),
+            (right, top),
+            (left, bottom),
+            (right, bottom),
+            (center_x, center_y),
+        ]
+    }
+
+    fn query_pointer(
+        connection: &RustConnection,
+        root: Window,
+    ) -> Result<Option<(f64, f64)>, ObserverError> {
+        let pointer = connection
+            .query_pointer(root)
+            .map_err(x11_error("request X11 pointer"))?
+            .reply()
+            .map_err(x11_error("read X11 pointer"))?;
+        Ok(Some((f64::from(pointer.root_x), f64::from(pointer.root_y))))
+    }
+
+    fn x11_error<E: std::fmt::Display>(operation: &'static str) -> impl FnOnce(E) -> ObserverError {
+        move |error| ObserverError::new(format!("{operation} failed: {error}"))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn occlusion_samples_corners_and_center() {
+            let bounds = Rectangle {
+                x: -100,
+                y: 20,
+                width: 200,
+                height: 100,
+            };
+            assert_eq!(
+                sample_points(bounds),
+                [(-98, 22), (97, 22), (-98, 117), (97, 117), (0, 70)]
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub use linux::LinuxObserver as NativeObserver;
+#[cfg(target_os = "macos")]
+pub use macos::MacosObserver as NativeObserver;
+#[cfg(target_os = "windows")]
+pub use windows::WindowsObserver as NativeObserver;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -785,6 +1189,25 @@ mod tests {
         );
         assert!(delta.passed().is_empty());
         assert!(delta.violations()[0].contains("transiently"));
+    }
+
+    #[test]
+    fn input_focus_change_fails_when_foreground_is_stable() {
+        let before = snapshot(10, TargetZ::BackgroundOccluded, (100.0, 100.0));
+        let mut after = before.clone();
+        after.input_focus = Some(20);
+        let delta = evaluate(
+            ObserverCapabilities {
+                focus: true,
+                ..ObserverCapabilities::default()
+            },
+            &[OracleKind::Focus],
+            before,
+            after,
+            DesktopJournal::default(),
+        );
+        assert!(delta.passed().is_empty());
+        assert!(delta.violations()[0].contains("input focus changed"));
     }
 
     #[test]

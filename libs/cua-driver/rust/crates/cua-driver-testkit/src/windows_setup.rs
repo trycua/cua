@@ -24,7 +24,8 @@ pub fn minimize_hosted_runner_console() -> Result<&'static str, String> {
         return Ok("not_applicable");
     }
 
-    use windows::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE};
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{HWND, LPARAM, TRUE};
     use windows::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetClassNameW, GetWindowTextLengthW, GetWindowTextW, IsIconic,
         IsWindowVisible, ShowWindow, SW_MINIMIZE,

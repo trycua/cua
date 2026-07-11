@@ -345,7 +345,7 @@ unsafe fn walk_element(
     max_depth: usize,
     mode: WalkMode,
 ) {
-    if depth > max_depth {
+    if depth_limit_reached(depth, max_depth, truncated) {
         return;
     }
     // Codex compatibility separates the 800-node response budget from a
@@ -530,6 +530,14 @@ unsafe fn walk_element(
         );
         CFRelease(child as CFTypeRef);
     }
+}
+
+fn depth_limit_reached(depth: usize, max_depth: usize, truncated: &mut bool) -> bool {
+    if depth <= max_depth {
+        return false;
+    }
+    *truncated = true;
+    true
 }
 
 fn format_node_line(node: &AXNode) -> String {
@@ -729,5 +737,14 @@ mod tests {
             "AXScrollArea",
             WalkMode::CodexFull
         ));
+    }
+
+    #[test]
+    fn depth_limit_marks_partial_trees_as_truncated() {
+        let mut truncated = false;
+        assert!(!depth_limit_reached(20, 20, &mut truncated));
+        assert!(!truncated);
+        assert!(depth_limit_reached(21, 20, &mut truncated));
+        assert!(truncated);
     }
 }

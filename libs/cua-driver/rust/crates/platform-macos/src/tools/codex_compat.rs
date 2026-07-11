@@ -386,6 +386,11 @@ struct AppSnapshot {
     native_pixels_per_compat_y: f64,
     logical_width: u32,
     logical_height: u32,
+    /// Global logical-point origin of the captured key window. AX frames are
+    /// screen-global, while compatibility screenshots use a window-local
+    /// origin, so structured element frames subtract this origin.
+    window_origin_x: f64,
+    window_origin_y: f64,
     /// Each MCP session owns its own native element cache. A snapshot taken by
     /// session B therefore cannot replace the AX handles session A will use.
     native: Arc<ToolState>,
@@ -748,6 +753,8 @@ impl CompatState {
             .as_ref()
             .map(|bounds| bounds.height.round().max(1.0) as u32)
             .unwrap_or(native_height.max(1.0) as u32);
+        let window_origin_x = bounds.as_ref().map(|bounds| bounds.x).unwrap_or(0.0);
+        let window_origin_y = bounds.as_ref().map(|bounds| bounds.y).unwrap_or(0.0);
         if let Err(error) = self.validate_lock_epoch(lock_epoch) {
             return error.into_result();
         }
@@ -763,6 +770,8 @@ impl CompatState {
                 native_pixels_per_compat_y: native_height / logical_height as f64,
                 logical_width,
                 logical_height,
+                window_origin_x,
+                window_origin_y,
                 native,
             },
         );
@@ -1742,6 +1751,11 @@ fn state_result(
             }
         }
     }
+    normalize_element_frames(
+        &mut structured,
+        snapshot.window_origin_x,
+        snapshot.window_origin_y,
+    );
     if let Some(object) = structured.as_object_mut() {
         object.remove("snapshot_id");
     }
@@ -1765,6 +1779,23 @@ fn state_result(
         is_error: None,
         structured_content: Some(structured),
     })
+}
+
+fn normalize_element_frames(structured: &mut Value, origin_x: f64, origin_y: f64) {
+    let Some(elements) = structured.get_mut("elements").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for element in elements {
+        let Some(frame) = element.get_mut("frame").and_then(Value::as_object_mut) else {
+            continue;
+        };
+        if let Some(x) = frame.get("x").and_then(Value::as_f64) {
+            frame.insert("x".to_owned(), json!(x - origin_x));
+        }
+        if let Some(y) = frame.get("y").and_then(Value::as_f64) {
+            frame.insert("y".to_owned(), json!(y - origin_y));
+        }
+    }
 }
 
 fn logical_jpeg(png_base64: &str, width: u32, height: u32) -> Option<String> {
@@ -2765,6 +2796,8 @@ mod tests {
             native_pixels_per_compat_y: 2.0,
             logical_width: 232,
             logical_height: 408,
+            window_origin_x: 100.0,
+            window_origin_y: 200.0,
             native: session_native,
         }
     }
@@ -3264,6 +3297,21 @@ mod tests {
         // converts to logical window coordinates, returning the exact point
         // the agent selected on the normalized JPEG.
         assert_eq!((native_point.0 / 2.0, native_point.1 / 2.0), compat_point);
+    }
+
+    #[test]
+    fn structured_element_frames_are_window_local_logical_points() {
+        let mut structured = json!({
+            "elements": [
+                {"element_index": 1, "frame": {"x": 116.5, "y": 232.25, "w": 40.0, "h": 20.0}},
+                {"element_index": 2}
+            ]
+        });
+        normalize_element_frames(&mut structured, 100.0, 200.0);
+        assert_eq!(structured["elements"][0]["frame"]["x"], 16.5);
+        assert_eq!(structured["elements"][0]["frame"]["y"], 32.25);
+        assert_eq!(structured["elements"][0]["frame"]["w"], 40.0);
+        assert!(structured["elements"][1].get("frame").is_none());
     }
 
     #[test]

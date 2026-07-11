@@ -4065,8 +4065,14 @@ impl Tool for PressKeyTool {
         }
 
         // W1: an element-addressed key needs the control's actual focus
-        // target, not merely its owning top-level HWND. Keep background
-        // delivery non-activating while UIA establishes child focus.
+        // target, not merely its owning top-level HWND. Embedded WebView hosts
+        // can activate their frame from UIA SetFocus even under
+        // WS_EX_NOACTIVATE. Their proven-safe pixel route establishes renderer
+        // focus with a posted click, so reuse that route at the AX element's
+        // cached center.
+        let background_webview_focus = elem_idx.is_some()
+            && delivery == DeliveryMode::Background
+            && crate::input::has_chromium_descendant(hwnd);
         let _noact = if elem_idx.is_some() && delivery == DeliveryMode::Background {
             Some(crate::input::NoActivateGuard::arm(
                 windows::Win32::Foundation::HWND(hwnd as *mut _),
@@ -4074,7 +4080,57 @@ impl Tool for PressKeyTool {
         } else {
             None
         };
-        if let Some(idx) = elem_idx {
+        if let Some(idx) = elem_idx.filter(|_| background_webview_focus) {
+            let Some((cx, cy)) = self
+                .state
+                .element_cache
+                .get_element_center(pid, hwnd, idx as usize)
+            else {
+                return ToolResult::error(format!(
+                    "Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first."
+                ));
+            };
+            let (cx, cy) = match resolve_onscreen_point_with_scroll(
+                &self.state.element_cache,
+                pid,
+                hwnd,
+                idx as usize,
+                cx,
+                cy,
+                "focusing for key delivery",
+            ) {
+                Ok(point) => point,
+                Err(message) => return ToolResult::error(message),
+            };
+            let already_focused = self
+                .state
+                .element_cache
+                .element_has_keyboard_focus(pid, hwnd, idx as usize)
+                .unwrap_or(false);
+            if !already_focused {
+                let focus_result = tokio::task::spawn_blocking(move || {
+                    crate::input::post_click_screen(hwnd, cx, cy, 1, "left")
+                })
+                .await;
+                match focus_result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => return ToolResult::error(e.to_string()),
+                    Err(e) => return ToolResult::error(format!("WebView focus task failed: {e}")),
+                }
+            }
+            if crate::input::wait_for_focused_descendant(
+                hwnd,
+                std::time::Duration::from_millis(500),
+            )
+            .is_none()
+            {
+                return crate::input::delivery::background_unavailable_error_with_cause(
+                    hwnd,
+                    event_kind,
+                    "posted focus click did not establish renderer focus",
+                );
+            }
+        } else if let Some(idx) = elem_idx {
             let state = self.state.clone();
             let focused = tokio::task::spawn_blocking(move || {
                 crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || {
@@ -4818,6 +4874,20 @@ impl Tool for ScrollTool {
             );
         }
         if let Some(idx) = elem_idx {
+            let prev_fg = if delivery == DeliveryMode::Background {
+                Some(unsafe {
+                    windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow()
+                })
+            } else {
+                None
+            };
+            let _noact = if delivery == DeliveryMode::Background {
+                Some(crate::input::NoActivateGuard::arm(
+                    windows::Win32::Foundation::HWND(hwnd as *mut _),
+                ))
+            } else {
+                None
+            };
             let state = self.state.clone();
             let direction_for_uia = direction.clone();
             let uia_result = tokio::task::spawn_blocking(move || {
@@ -4838,6 +4908,31 @@ impl Tool for ScrollTool {
             })
             .await;
             if matches!(uia_result, Ok(Ok(()))) {
+                if delivery == DeliveryMode::Background {
+                    // Keep WS_EX_NOACTIVATE armed through any WebView handler
+                    // queued by the UIA operation.
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    if let Some(previous) = prev_fg {
+                        use windows::Win32::Foundation::HWND;
+                        use windows::Win32::UI::WindowsAndMessaging::{
+                            GetAncestor, GetForegroundWindow, GA_ROOT,
+                        };
+                        let current = unsafe { GetForegroundWindow() };
+                        let current_root = unsafe { GetAncestor(current, GA_ROOT) };
+                        let target_root = unsafe { GetAncestor(HWND(hwnd as *mut _), GA_ROOT) };
+                        if !previous.0.is_null()
+                            && current != previous
+                            && !target_root.0.is_null()
+                            && current_root == target_root
+                        {
+                            unsafe {
+                                crate::input::force_foreground_attached(previous);
+                                std::thread::sleep(std::time::Duration::from_millis(12));
+                                crate::input::force_foreground_attached(previous);
+                            }
+                        }
+                    }
+                }
                 return ToolResult::text(format!(
                     "Scrolled {direction} {amount} ticks via UIA (delivery_mode:background)."
                 ))

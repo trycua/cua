@@ -16,12 +16,14 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOUSEINPUT, SendInput,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    ChildWindowFromPointEx, GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW,
-    PostMessageW, SetCursorPos, SetWindowPos, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE,
+    ChildWindowFromPointEx, GetAncestor, GetClassLongPtrW, GetCursorPos, GetForegroundWindow,
+    GetSystemMetrics, GetWindowLongPtrW, PostMessageW, SetCursorPos, SetWindowPos, CS_DBLCLKS,
+    CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, GA_ROOT, GCL_STYLE,
     CWP_SKIPTRANSPARENT, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST,
     SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
-    WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_TOPMOST,
+    SWP_NOMOVE, SWP_NOSIZE, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONDBLCLK,
+    WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_TOPMOST,
 };
 
 const MK_LBUTTON: u32 = 0x0001;
@@ -29,6 +31,14 @@ const MK_MBUTTON: u32 = 0x0010;
 const MK_RBUTTON: u32 = 0x0002;
 
 const CLICK_DELAY_MS: u64 = 35;
+
+fn posted_press_message(down: u32, double: u32, click_index: usize, wants_double: bool) -> u32 {
+    if wants_double && click_index % 2 == 1 {
+        double
+    } else {
+        down
+    }
+}
 
 /// Walk from `root` down to the deepest visible child that contains
 /// `screen_pt`, mirroring trope-cua's DeepestChildFromScreenPoint.
@@ -98,25 +108,55 @@ fn post_click_on(hwnd: HWND, x: i32, y: i32, count: usize, button: &str) -> Resu
         anyhow::bail!(msg);
     }
 
-    let (down_msg, up_msg, mk_flag) = match button {
-        "right"  => (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON),
-        "middle" => (WM_MBUTTONDOWN, WM_MBUTTONUP, MK_MBUTTON),
-        _        => (WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON),
+    let (down_msg, double_msg, up_msg, mk_flag) = match button {
+        "right" => (WM_RBUTTONDOWN, WM_RBUTTONDBLCLK, WM_RBUTTONUP, MK_RBUTTON),
+        "middle" => (
+            WM_MBUTTONDOWN,
+            WM_MBUTTONDBLCLK,
+            WM_MBUTTONUP,
+            MK_MBUTTON,
+        ),
+        _ => (WM_LBUTTONDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONUP, MK_LBUTTON),
     };
     let lparam  = make_lparam(x, y);
     let wdown   = WPARAM(mk_flag as usize);
     let wup     = WPARAM(0);
+    let wants_double =
+        unsafe { (GetClassLongPtrW(hwnd, GCL_STYLE) as u32 & CS_DBLCLKS.0) != 0 };
+    let prev_fg = unsafe { GetForegroundWindow() };
+    let target_root = unsafe {
+        let root = GetAncestor(hwnd, GA_ROOT);
+        if root.0.is_null() { hwnd } else { root }
+    };
 
+    // Posted pointer messages are normally non-activating, but WebView hosts can
+    // call SetForegroundWindow from their event handlers. Keep the top-level
+    // categorically non-activatable until the complete burst has settled.
+    let _noact = crate::input::NoActivateGuard::arm(hwnd);
     for i in 0..count {
+        let press_msg = posted_press_message(down_msg, double_msg, i, wants_double);
         unsafe {
             // WM_MOUSEMOVE first so hover state is correct before the click.
             PostMessageW(hwnd, WM_MOUSEMOVE, WPARAM(0), lparam)?;
-            PostMessageW(hwnd, down_msg, wdown, lparam)?;
+            // Win32 controls do not infer a double-click from two posted DOWN
+            // messages. The second press must use WM_*BUTTONDBLCLK.
+            PostMessageW(hwnd, press_msg, wdown, lparam)?;
             sleep(Duration::from_millis(CLICK_DELAY_MS));
             PostMessageW(hwnd, up_msg, wup, lparam)?;
         }
         if i + 1 < count {
             sleep(Duration::from_millis(80));
+        }
+    }
+    sleep(Duration::from_millis(50));
+    unsafe {
+        if !prev_fg.0.is_null()
+            && prev_fg != target_root
+            && GetForegroundWindow() == target_root
+        {
+            crate::input::force_foreground_attached(prev_fg);
+            sleep(Duration::from_millis(12));
+            crate::input::force_foreground_attached(prev_fg);
         }
     }
     Ok(())
@@ -790,7 +830,28 @@ pub fn send_wheel_synthesized(sx: i32, sy: i32, ticks: i32, horizontal: bool) ->
 
 #[cfg(test)]
 mod wheel_tests {
-    use super::{wheel_mouse_data, WHEEL_DELTA};
+    use super::{posted_press_message, wheel_mouse_data, WHEEL_DELTA};
+    use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONDBLCLK, WM_LBUTTONDOWN};
+
+    #[test]
+    fn posted_double_click_uses_the_win32_double_click_message() {
+        assert_eq!(
+            posted_press_message(WM_LBUTTONDOWN, WM_LBUTTONDBLCLK, 0, true),
+            WM_LBUTTONDOWN
+        );
+        assert_eq!(
+            posted_press_message(WM_LBUTTONDOWN, WM_LBUTTONDBLCLK, 1, true),
+            WM_LBUTTONDBLCLK
+        );
+        assert_eq!(
+            posted_press_message(WM_LBUTTONDOWN, WM_LBUTTONDBLCLK, 2, true),
+            WM_LBUTTONDOWN
+        );
+        assert_eq!(
+            posted_press_message(WM_LBUTTONDOWN, WM_LBUTTONDBLCLK, 1, false),
+            WM_LBUTTONDOWN
+        );
+    }
 
     #[test]
     fn wheel_data_up_is_positive_one_notch() {

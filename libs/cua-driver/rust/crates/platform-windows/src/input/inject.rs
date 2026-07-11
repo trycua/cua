@@ -141,7 +141,6 @@ pub struct NoActivateGuard {
     // Store the handle as an integer so the guard is `Send` and can be held
     // across `.await` in the async tools.
     root_addr: isize,
-    prev_exstyle: isize,
     applied: bool,
 }
 
@@ -163,7 +162,10 @@ impl NoActivateGuard {
                 // by UIPI on higher-integrity targets).
                 (GetWindowLongPtrW(root, GWL_EXSTYLE) & want) != 0
             };
-            Self { root_addr: root.0 as isize, prev_exstyle: prev, applied }
+            Self {
+                root_addr: root.0 as isize,
+                applied,
+            }
         }
     }
 }
@@ -172,7 +174,13 @@ impl Drop for NoActivateGuard {
     fn drop(&mut self) {
         if self.applied {
             unsafe {
-                let _ = SetWindowLongPtrW(HWND(self.root_addr as *mut _), GWL_EXSTYLE, self.prev_exstyle);
+                let root = HWND(self.root_addr as *mut _);
+                let current = GetWindowLongPtrW(root, GWL_EXSTYLE);
+                let noactivate = WS_EX_NOACTIVATE.0 as isize;
+                // Clear only the bit this guard added. Restoring the full
+                // captured value can clobber unrelated style changes the app
+                // made while the background action was in flight.
+                SetWindowLongPtrW(root, GWL_EXSTYLE, current & !noactivate);
             }
         }
     }

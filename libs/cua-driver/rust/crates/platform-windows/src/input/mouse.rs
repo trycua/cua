@@ -504,6 +504,7 @@ fn send_click_synthesized_mods_impl(
         // restore" for pointer input, done the one Windows way that doesn't
         // need UIAccess — the technique the OG GTK path used. (Keyboard
         // foreground still needs *real* focus; only pointer can be z-routed.)
+        let changed_foreground = activate && prev_fg != target;
         let noactivate = if activate {
             if !crate::input::force_foreground_attached(target) {
                 bail!("Could not activate target HWND for the foreground click.");
@@ -518,6 +519,15 @@ fn send_click_synthesized_mods_impl(
             (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32) & WS_EX_TOPMOST.0 != 0;
         if !activate {
             let _ = SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        }
+
+        // SetForegroundWindow returns before retained-mode frameworks finish
+        // processing their activation messages. Sending the pointer-down in
+        // that gap can make the first click activate the window without
+        // reaching the control beneath it. Wait only when this call changed
+        // the foreground; already-active targets stay on the fast path.
+        if changed_foreground {
+            sleep(Duration::from_millis(50));
         }
 
         // Move the cursor so the OS hover state matches before the click; the

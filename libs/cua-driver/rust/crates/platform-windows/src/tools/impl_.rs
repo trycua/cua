@@ -2471,11 +2471,6 @@ impl Tool for ClickTool {
             // moved there. The active SendInput path performs the foreground
             // swap and UIPI checks needed for Chromium and retained-mode apps.
             let send_result = tokio::task::spawn_blocking(move || -> anyhow::Result<u64> {
-                use windows::Win32::Foundation::HWND;
-                let root = HWND(hwnd_u as *mut _);
-                if !unsafe { crate::input::force_foreground_attached(root) } {
-                    anyhow::bail!("Could not activate the window under desktop point ({sx},{sy})");
-                }
                 let mod_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 crate::input::send_click_synthesized_active_mods(
                     hwnd_u, sx, sy, count, &button, &mod_refs,

@@ -19,10 +19,8 @@
 //!
 //! Tests are `#[ignore]` so they don't run in plain `cargo test`.
 //!
-//! **TCC caveat:** on a fresh Mac, the cua-driver process needs
-//! Accessibility permission for AX queries to return non-empty trees.
-//! These tests print a TCC hint and exit cleanly (PASS-by-skip) when the
-//! AX tree is empty rather than misreporting as a test failure.
+//! The macOS lane preflight verifies the installed daemon identity and TCC
+//! grants before these tests run. Missing fixtures or AX trees fail here too.
 
 #![cfg(target_os = "macos")]
 
@@ -57,15 +55,12 @@ struct Harness {
 }
 
 impl Harness {
-    fn launch() -> Option<Self> {
+    fn launch() -> Self {
         let exe = harness_exe();
-        if !exe.exists() {
-            eprintln!(
-                "harness exe not found at {exe:?} \
-                — run libs/cua-driver/tests/fixtures/build/macos.sh first"
-            );
-            return None;
-        }
+        assert!(
+            exe.exists(),
+            "required AppKit harness is missing at {exe:?}; run the fixture build"
+        );
         // Launch the binary directly (not via `open`) so we control the pid
         // and can kill it cleanly on Drop. The app still installs an AppKit
         // window via NSApp.run().
@@ -73,11 +68,11 @@ impl Harness {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .ok()?;
+            .unwrap_or_else(|error| panic!("launch AppKit harness {exe:?}: {error}"));
         let pid = app.id();
         // Settle for window creation + activation.
         std::thread::sleep(Duration::from_millis(800));
-        Some(Self { _app: app, pid })
+        Self { _app: app, pid }
     }
 }
 
@@ -107,16 +102,8 @@ fn snapshot_elements(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolRe
 #[test]
 #[ignore]
 fn harness_appkit_smoke() {
-    let Some(mut driver) = McpDriver::spawn_macos_daemon_proxy() else {
-        return;
-    };
-    let harness = match Harness::launch() {
-        Some(h) => h,
-        None => {
-            eprintln!("harness not built — skipping");
-            return;
-        }
-    };
+    let mut driver = McpDriver::spawn_macos_daemon_proxy().expect("start macOS daemon proxy");
+    let harness = Harness::launch();
     println!("harness pid={}", harness.pid);
 
     let (wid, title) = driver
@@ -126,14 +113,7 @@ fn harness_appkit_smoke() {
 
     let snap = snapshot_elements(&mut driver, harness.pid, wid);
 
-    if looks_empty(snap.tree_text()) {
-        eprintln!(
-            "AX tree empty — likely TCC Accessibility not granted to the test runner. \
-                   Skipping element-assertion phase. To enable: System Settings → Privacy & \
-                   Security → Accessibility → add the binary running `cargo test`."
-        );
-        return;
-    }
+    assert!(!looks_empty(snap.tree_text()), "required AppKit AX tree is empty");
 
     let text = snap.tree_text();
     println!("snapshot:\n{text}");
@@ -179,25 +159,14 @@ fn harness_appkit_smoke() {
 #[test]
 #[ignore]
 fn harness_appkit_text_input() {
-    let Some(mut driver) = McpDriver::spawn_macos_daemon_proxy() else {
-        return;
-    };
-    let harness = match Harness::launch() {
-        Some(h) => h,
-        None => {
-            eprintln!("harness not built — skipping");
-            return;
-        }
-    };
+    let mut driver = McpDriver::spawn_macos_daemon_proxy().expect("start macOS daemon proxy");
+    let harness = Harness::launch();
 
     let (wid, _) = driver
         .find_window(harness.pid as i64, "CuaTestHarness AppKit")
         .expect("main window not found");
     let snap_pre = snapshot_elements(&mut driver, harness.pid, wid);
-    if looks_empty(snap_pre.tree_text()) {
-        eprintln!("AX empty — TCC not granted; skipping");
-        return;
-    }
+    assert!(!looks_empty(snap_pre.tree_text()), "required AppKit AX tree is empty");
     let idx = element_index_by_id(snap_pre.tree_text(), "txt-input")
         .expect("txt-input element_index not found");
 
@@ -229,31 +198,16 @@ fn harness_appkit_text_input() {
 #[test]
 #[ignore]
 fn harness_appkit_type_text_keystroke() {
-    let Some(mut driver) = McpDriver::spawn_macos_daemon_proxy() else {
-        return;
-    };
-    let harness = match Harness::launch() {
-        Some(h) => h,
-        None => {
-            eprintln!("harness not built — skipping");
-            return;
-        }
-    };
+    let mut driver = McpDriver::spawn_macos_daemon_proxy().expect("start macOS daemon proxy");
+    let harness = Harness::launch();
 
     let (wid, _) = driver
         .find_window(harness.pid as i64, "CuaTestHarness AppKit")
         .expect("main window not found");
     let snap_pre = snapshot_elements(&mut driver, harness.pid, wid);
-    if looks_empty(snap_pre.tree_text()) {
-        eprintln!("AX empty — TCC not granted; skipping");
-        return;
-    }
-    let idx: u64 = if let Some(i) = element_index_by_id(snap_pre.tree_text(), "txt-input") {
-        i
-    } else {
-        eprintln!("txt-input not found; skipping");
-        return;
-    };
+    assert!(!looks_empty(snap_pre.tree_text()), "required AppKit AX tree is empty");
+    let idx = element_index_by_id(snap_pre.tree_text(), "txt-input")
+        .expect("txt-input element_index not found");
 
     // Focus the field first so the keystrokes land in it. AX press on
     // a text field has the side effect of giving it keyboard focus.
@@ -309,25 +263,14 @@ fn harness_appkit_type_text_keystroke() {
 #[test]
 #[ignore]
 fn harness_appkit_scroll_optional_known_gap() {
-    let Some(mut driver) = McpDriver::spawn_macos_daemon_proxy() else {
-        return;
-    };
-    let harness = match Harness::launch() {
-        Some(h) => h,
-        None => {
-            eprintln!("harness not built — skipping");
-            return;
-        }
-    };
+    let mut driver = McpDriver::spawn_macos_daemon_proxy().expect("start macOS daemon proxy");
+    let harness = Harness::launch();
 
     let (wid, _) = driver
         .find_window(harness.pid as i64, "CuaTestHarness AppKit")
         .expect("main window not found");
     let snap_pre = snapshot_elements(&mut driver, harness.pid, wid);
-    if looks_empty(snap_pre.tree_text()) {
-        eprintln!("AX empty — TCC not granted; skipping");
-        return;
-    }
+    assert!(!looks_empty(snap_pre.tree_text()), "required AppKit AX tree is empty");
     // Pre-condition: offset label should be at "0" (the controller
     // initial state). The label text appears as an AXStaticText leaf
     // immediately after the AXTextArea body in the rendered tree.
@@ -378,25 +321,14 @@ fn harness_appkit_scroll_optional_known_gap() {
 #[test]
 #[ignore]
 fn harness_appkit_counter() {
-    let Some(mut driver) = McpDriver::spawn_macos_daemon_proxy() else {
-        return;
-    };
-    let harness = match Harness::launch() {
-        Some(h) => h,
-        None => {
-            eprintln!("harness not built — skipping");
-            return;
-        }
-    };
+    let mut driver = McpDriver::spawn_macos_daemon_proxy().expect("start macOS daemon proxy");
+    let harness = Harness::launch();
 
     let (wid, _) = driver
         .find_window(harness.pid as i64, "CuaTestHarness AppKit")
         .expect("main window not found");
     let snap_pre = snapshot_elements(&mut driver, harness.pid, wid);
-    if looks_empty(snap_pre.tree_text()) {
-        eprintln!("AX empty — TCC not granted; skipping");
-        return;
-    }
+    assert!(!looks_empty(snap_pre.tree_text()), "required AppKit AX tree is empty");
     let pre_text = snap_pre.tree_text().to_owned();
     assert!(
         pre_text.contains("\"0\""),

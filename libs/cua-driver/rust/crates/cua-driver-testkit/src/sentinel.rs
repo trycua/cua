@@ -82,19 +82,29 @@ impl ForegroundSentinel {
         reaper.track_pid(target.pid);
 
         let focus_deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            let journal = fs::read_to_string(&journal_path).unwrap_or_default();
-            if journal.contains(r#""kind":"ready""#) && journal.contains(r#""kind":"focus""#) {
-                break;
+        if is_wayland_session() {
+            wait_for_journal(&journal_path, focus_deadline, r#""kind":"ready""#, "ready");
+            activate_native_foreground(driver, target);
+            wait_for_native_focus_stable(target);
+            let focus_deadline = Instant::now() + Duration::from_secs(10);
+            wait_for_journal(&journal_path, focus_deadline, r#""kind":"focus""#, "focused");
+        } else {
+            loop {
+                let journal = fs::read_to_string(&journal_path).unwrap_or_default();
+                if journal.contains(r#""kind":"ready""#)
+                    && journal.contains(r#""kind":"focus""#)
+                {
+                    break;
+                }
+                assert!(
+                    Instant::now() < focus_deadline,
+                    "foreground sentinel did not become ready and focused: {journal}"
+                );
+                std::thread::sleep(Duration::from_millis(100));
             }
-            assert!(
-                Instant::now() < focus_deadline,
-                "foreground sentinel did not become ready and focused: {journal}"
-            );
-            std::thread::sleep(Duration::from_millis(100));
+            activate_native_foreground(driver, target);
+            wait_for_native_focus_stable(target);
         }
-        activate_native_foreground(driver, target);
-        wait_for_native_focus_stable(target);
         fs::write(&journal_path, "").expect("reset focused sentinel journal");
 
         Self {
@@ -216,12 +226,39 @@ impl ForegroundSentinel {
     }
 }
 
+fn wait_for_journal(path: &std::path::Path, deadline: Instant, marker: &str, state: &str) {
+    loop {
+        let journal = fs::read_to_string(path).unwrap_or_default();
+        if journal.contains(marker) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "foreground sentinel did not become {state}: {journal}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn is_wayland_session() -> bool {
+    cfg!(target_os = "linux")
+        && std::env::var("XDG_SESSION_TYPE")
+            .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
+}
+
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 fn activate_native_foreground(driver: &mut impl Driver, target: TargetWindow) {
     #[cfg(target_os = "linux")]
-    if std::env::var("XDG_SESSION_TYPE")
-        .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
-    {
+    if is_wayland_session() {
+        let output = Command::new("swaymsg")
+            .arg(format!(r#"[pid="{}"] focus"#, target.pid))
+            .output()
+            .expect("could not run swaymsg to focus foreground sentinel");
+        assert!(
+            output.status.success(),
+            "could not focus foreground sentinel through Sway: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         return;
     }
     let response = driver.call(
@@ -244,13 +281,6 @@ fn activate_native_foreground(_driver: &mut impl Driver, _target: TargetWindow) 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 fn wait_for_native_focus_stable(target: TargetWindow) {
     use crate::observer::{ObserverBackend, TargetZ};
-
-    #[cfg(target_os = "linux")]
-    if std::env::var("XDG_SESSION_TYPE")
-        .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
-    {
-        return;
-    }
 
     let backend = NativeObserver::new();
     let deadline = Instant::now() + Duration::from_secs(3);

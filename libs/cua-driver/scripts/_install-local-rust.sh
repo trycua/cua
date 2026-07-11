@@ -71,6 +71,7 @@ NORMAL=$(tput sgr0 2>/dev/null || true)
 RED=$(tput setaf 1 2>/dev/null || true)
 GREEN=$(tput setaf 2 2>/dev/null || true)
 BLUE=$(tput setaf 4 2>/dev/null || true)
+YELLOW=$(tput setaf 3 2>/dev/null || true)
 
 if [ "$(id -u)" -eq 0 ] || [ -n "${SUDO_USER:-}" ]; then
     echo "${RED}Error: do not run this script with sudo or as root.${NORMAL}"
@@ -307,6 +308,21 @@ ensure_local_signing_identity() {
     printf -- '-'
 }
 
+# Keychain-backed codesign can wait forever for a GUI authorization prompt when
+# install-local is launched from a headless shell. Keep the install bounded;
+# ad-hoc signing remains a usable fallback for local development.
+codesign_bounded() {
+    local timeout_seconds="$1"
+    shift
+    if command -v gtimeout >/dev/null 2>&1; then
+        gtimeout "$timeout_seconds" codesign "$@"
+    elif command -v perl >/dev/null 2>&1; then
+        perl -e 'alarm shift; exec @ARGV' "$timeout_seconds" codesign "$@"
+    else
+        codesign "$@"
+    fi
+}
+
 # --- macOS: wrap the binary in CuaDriver.app for a stable TCC identity ---
 #
 # TCC keys Accessibility / Screen-Recording grants on the bundle
@@ -350,9 +366,9 @@ if [ "$OS" = "Darwin" ]; then
     if command -v codesign >/dev/null 2>&1; then
         SIGN_ID="$(ensure_local_signing_identity)"
         if [ "$SIGN_ID" != "-" ] \
-           && codesign --force --deep --sign "$SIGN_ID" "$APP_DEST" 2>/dev/null; then
+           && codesign_bounded 20 --force --deep --sign "$SIGN_ID" "$APP_DEST" 2>/dev/null; then
             echo "${GREEN}signed $APP_DEST with a stable local identity — TCC grants survive future install-local rebuilds${NORMAL}"
-        elif codesign --force --deep --sign - "$APP_DEST" 2>/dev/null; then
+        elif codesign_bounded 20 --force --deep --sign - "$APP_DEST" 2>/dev/null; then
             if [ "$SIGN_ID" != "-" ]; then
                 echo "${YELLOW}note: stable-identity signing failed; signed ad-hoc instead (Accessibility/Screen Recording will reset on the next rebuild)${NORMAL}" >&2
             fi

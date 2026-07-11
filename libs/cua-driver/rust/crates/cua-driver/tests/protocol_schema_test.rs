@@ -60,11 +60,24 @@ fn tools_list_schema_shape() {
             "{tool}.delivery_mode should advertise background and foreground: {delivery:?}"
         );
     }
-    let scope = &properties("click")["scope"];
-    assert!(
-        enum_contains(scope, "window") && enum_contains(scope, "desktop"),
-        "click.scope should advertise window and desktop: {scope:?}"
-    );
+    // macOS selects desktop coordinates per click. Linux and Windows retain
+    // the process-level capture_scope gate used by their desktop-state tools.
+    #[cfg(target_os = "macos")]
+    {
+        let scope = &properties("click")["scope"];
+        assert!(
+            enum_contains(scope, "window") && enum_contains(scope, "desktop"),
+            "click.scope should advertise window and desktop: {scope:?}"
+        );
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        let capture_scope = &properties("set_config")["capture_scope"];
+        assert!(
+            enum_contains(capture_scope, "window") && enum_contains(capture_scope, "desktop"),
+            "set_config.capture_scope should advertise window and desktop: {capture_scope:?}"
+        );
+    }
 
     // list_windows schema has on_screen_only.
     let lw = tools.iter().find(|t| t["name"] == "list_windows")

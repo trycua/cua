@@ -26,8 +26,8 @@ use std::time::{Duration, Instant};
 
 use cua_driver_testkit::ax::{element_index_by_id, element_index_containing};
 use cua_driver_testkit::e2e::{
-    write_declaration_from_env, write_result_from_env, CaseResult, CaseSpec, Delivery, DriverRoute,
-    Evidence, Observation, OracleKind, RefusalCode, Scope, Targeting,
+    shared_web_route, write_declaration_from_env, write_result_from_env, CaseResult, CaseSpec,
+    Delivery, Evidence, Observation, OracleKind, RefusalCode, Scope, Targeting,
 };
 use cua_driver_testkit::{harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
 
@@ -885,7 +885,14 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         targeting,
         delivery_kind,
         Scope::Window,
-        DriverRoute::PlatformDefault,
+        shared_web_route(
+            cua_driver_testkit::e2e::Platform::current(),
+            cua_driver_testkit::e2e::DisplayServer::current(),
+            action,
+            targeting,
+            delivery_kind,
+        )
+        .unwrap_or_else(|error| panic!("{error}")),
         oracles,
     )
 }

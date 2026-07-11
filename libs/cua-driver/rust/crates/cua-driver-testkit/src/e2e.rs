@@ -107,13 +107,121 @@ pub enum Scope {
 #[serde(rename_all = "snake_case")]
 pub enum DriverRoute {
     UiaInvoke,
+    UiaValue,
+    UiaScroll,
     PostMessage,
-    CoordinateInjection,
-    CgEvent,
-    AtSpiAction,
-    Libei,
+    WindowsTargetedInjection,
+    WindowsSendInput,
+    MacosAxAction,
+    MacosAxValue,
+    MacosCgEventPid,
+    MacosCgEventHid,
+    LinuxAtSpiAction,
+    LinuxAtSpiValue,
+    LinuxXSendEvent,
+    LinuxXTest,
+    LinuxLibei,
     Cdp,
-    PlatformDefault,
+    Composite,
+}
+
+pub fn shared_web_route(
+    platform: Platform,
+    display_server: DisplayServer,
+    action: &str,
+    targeting: Targeting,
+    delivery: Delivery,
+) -> Result<DriverRoute, String> {
+    use DriverRoute as Route;
+
+    let pointer_or_key_route = |background, foreground| match delivery {
+        Delivery::Background => Ok(background),
+        Delivery::Foreground => Ok(foreground),
+        Delivery::NotApplicable => Err(format!("{action}: delivery mode is required")),
+    };
+    match (platform, display_server, targeting, action) {
+        (Platform::Windows, DisplayServer::Win32, Targeting::Px, _) => {
+            pointer_or_key_route(Route::WindowsTargetedInjection, Route::WindowsSendInput)
+        }
+        (Platform::Windows, DisplayServer::Win32, Targeting::Ax, "left_click")
+        | (Platform::Windows, DisplayServer::Win32, Targeting::Ax, "child_window") => {
+            Ok(Route::UiaInvoke)
+        }
+        (Platform::Windows, DisplayServer::Win32, Targeting::Ax, "type_text") => {
+            Ok(Route::UiaValue)
+        }
+        (Platform::Windows, DisplayServer::Win32, Targeting::Ax, "scroll") => {
+            Ok(Route::UiaScroll)
+        }
+        (
+            Platform::Windows,
+            DisplayServer::Win32,
+            Targeting::Ax,
+            "right_click" | "double_click" | "keyboard",
+        ) => pointer_or_key_route(Route::PostMessage, Route::WindowsSendInput),
+        (Platform::Windows, DisplayServer::Win32, Targeting::Ax, "editor_save") => {
+            Ok(Route::Composite)
+        }
+
+        (Platform::Macos, DisplayServer::Quartz, Targeting::Px, _) => {
+            pointer_or_key_route(Route::MacosCgEventPid, Route::MacosCgEventHid)
+        }
+        (Platform::Macos, DisplayServer::Quartz, Targeting::Ax, "left_click")
+        | (Platform::Macos, DisplayServer::Quartz, Targeting::Ax, "child_window")
+        | (Platform::Macos, DisplayServer::Quartz, Targeting::Ax, "scroll") => {
+            Ok(Route::MacosAxAction)
+        }
+        (Platform::Macos, DisplayServer::Quartz, Targeting::Ax, "type_text") => {
+            Ok(Route::MacosAxValue)
+        }
+        (
+            Platform::Macos,
+            DisplayServer::Quartz,
+            Targeting::Ax,
+            "right_click" | "double_click" | "keyboard",
+        ) => pointer_or_key_route(Route::MacosCgEventPid, Route::MacosCgEventHid),
+        (Platform::Macos, DisplayServer::Quartz, Targeting::Ax, "editor_save") => {
+            Ok(Route::Composite)
+        }
+
+        (Platform::Linux, DisplayServer::Wayland, Targeting::Px, _) => Ok(Route::LinuxLibei),
+        (Platform::Linux, DisplayServer::X11, Targeting::Px, _) => {
+            pointer_or_key_route(Route::LinuxXSendEvent, Route::LinuxXTest)
+        }
+        (
+            Platform::Linux,
+            DisplayServer::X11 | DisplayServer::Wayland,
+            Targeting::Ax,
+            "left_click" | "child_window" | "scroll",
+        ) => Ok(Route::LinuxAtSpiAction),
+        (
+            Platform::Linux,
+            DisplayServer::X11 | DisplayServer::Wayland,
+            Targeting::Ax,
+            "type_text",
+        ) => Ok(Route::LinuxAtSpiValue),
+        (
+            Platform::Linux,
+            DisplayServer::X11,
+            Targeting::Ax,
+            "right_click" | "double_click" | "keyboard",
+        ) => pointer_or_key_route(Route::LinuxXSendEvent, Route::LinuxXTest),
+        (
+            Platform::Linux,
+            DisplayServer::Wayland,
+            Targeting::Ax,
+            "right_click" | "double_click" | "keyboard",
+        ) => Ok(Route::LinuxLibei),
+        (
+            Platform::Linux,
+            DisplayServer::X11 | DisplayServer::Wayland,
+            Targeting::Ax,
+            "editor_save",
+        ) => Ok(Route::Composite),
+        _ => Err(format!(
+            "no shared route for {platform:?}/{display_server:?}/{action}/{targeting:?}/{delivery:?}"
+        )),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -668,7 +776,7 @@ mod tests {
             Targeting::Ax,
             Delivery::Background,
             Scope::Window,
-            DriverRoute::PlatformDefault,
+            DriverRoute::UiaInvoke,
             vec![OracleKind::FixtureState],
         )
     }
@@ -815,5 +923,55 @@ mod tests {
         assert_eq!(value["schema"], RESULT_SCHEMA);
         assert_eq!(value["cell_id"], "rendered");
         assert!(value.get("case").is_none());
+    }
+
+    #[test]
+    fn shared_routes_are_explicit_for_the_current_matrix() {
+        let cells = [
+            ("left_click", Targeting::Ax, Delivery::Background),
+            ("left_click", Targeting::Ax, Delivery::Foreground),
+            ("left_click", Targeting::Px, Delivery::Background),
+            ("left_click", Targeting::Px, Delivery::Foreground),
+            ("right_click", Targeting::Ax, Delivery::Background),
+            ("right_click", Targeting::Px, Delivery::Foreground),
+            ("double_click", Targeting::Ax, Delivery::Background),
+            ("double_click", Targeting::Px, Delivery::Foreground),
+            ("type_text", Targeting::Ax, Delivery::Background),
+            ("type_text", Targeting::Px, Delivery::Foreground),
+            ("keyboard", Targeting::Ax, Delivery::Background),
+            ("keyboard", Targeting::Px, Delivery::Foreground),
+            ("scroll", Targeting::Ax, Delivery::Background),
+            ("scroll", Targeting::Px, Delivery::Foreground),
+            ("child_window", Targeting::Ax, Delivery::Background),
+            ("child_window", Targeting::Px, Delivery::Foreground),
+            ("drag", Targeting::Px, Delivery::Background),
+            ("drag", Targeting::Px, Delivery::Foreground),
+            ("editor_save", Targeting::Ax, Delivery::Background),
+        ];
+        for (platform, display_server) in [
+            (Platform::Windows, DisplayServer::Win32),
+            (Platform::Macos, DisplayServer::Quartz),
+            (Platform::Linux, DisplayServer::X11),
+            (Platform::Linux, DisplayServer::Wayland),
+        ] {
+            for (action, targeting, delivery) in cells {
+                shared_web_route(platform, display_server, action, targeting, delivery)
+                    .unwrap_or_else(|error| panic!("{error}"));
+            }
+        }
+    }
+
+    #[test]
+    fn windows_pixel_background_route_remains_required_targeted_delivery() {
+        assert_eq!(
+            shared_web_route(
+                Platform::Windows,
+                DisplayServer::Win32,
+                "left_click",
+                Targeting::Px,
+                Delivery::Background,
+            ),
+            Ok(DriverRoute::WindowsTargetedInjection)
+        );
     }
 }

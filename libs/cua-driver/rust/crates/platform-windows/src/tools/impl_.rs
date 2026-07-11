@@ -3171,9 +3171,11 @@ async fn focus_by_pixel(
     .invoke(click_args)
     .await;
     if focus.is_error == Some(true) {
-        return Err(ToolResult::error(format!(
-            "focus pixel-click at ({x:.0},{y:.0}) failed."
-        )));
+        // Preserve the click tool's structured background refusal (for example
+        // background_occluded / background_uipi_blocked). Re-wrapping it as a
+        // text-only error made keyboard-family PX calls lose the actionable
+        // capability result produced by the actual actuator.
+        return Err(focus);
     }
     // Brief settle so the renderer registers focus before the keystrokes.
     tokio::time::sleep(std::time::Duration::from_millis(120)).await;
@@ -3375,6 +3377,50 @@ impl Tool for TypeTextTool {
         // rejected (daemon not at UIAccess integrity), it returns an error
         // rather than a false success.
         if delivery == DeliveryMode::Foreground {
+            // An indexed foreground type targets that element, not whichever
+            // child happened to retain focus in the top-level window. UIA
+            // SetFocus is not sufficient for Chromium renderer controls, so
+            // establish real system focus with the same foreground coordinate
+            // actuator used by an indexed click before sending Unicode input.
+            if let Some(idx) = elem_idx {
+                let (cx, cy) = match self.state.element_cache.get_element_center(
+                    pid,
+                    hwnd,
+                    idx as usize,
+                ) {
+                    Some(center) => center,
+                    None => return ToolResult::error(format!(
+                        "Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first."
+                    )),
+                };
+                let (cx, cy) = match resolve_onscreen_point_with_scroll(
+                    &self.state.element_cache,
+                    pid,
+                    hwnd,
+                    idx as usize,
+                    cx,
+                    cy,
+                    "foreground typing",
+                ) {
+                    Ok(point) => point,
+                    Err(message) => return ToolResult::error(message),
+                };
+                let focus_result = tokio::task::spawn_blocking(move || {
+                    crate::input::send_click_synthesized(hwnd, cx, cy, 1, "left")
+                })
+                .await;
+                match focus_result {
+                    Ok(Ok(())) => {
+                        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                    }
+                    Ok(Err(error)) => return ToolResult::error(error.to_string()),
+                    Err(error) => {
+                        return ToolResult::error(format!(
+                            "foreground element-focus task failed: {error}"
+                        ))
+                    }
+                }
+            }
             let text_fg = text.clone();
             let r = tokio::task::spawn_blocking(move || {
                 crate::input::send_text_synthesized(hwnd, &text_fg)
@@ -4279,13 +4325,11 @@ impl Tool for HotkeyTool {
         // reaches here means the key combo is NOT silently dropped on this
         // target (the drop-check above returned early otherwise), so it stays
         // on PostMessage and the no-foreground contract holds.
-        // px-focus delivers the combo via PostMessage to the now-focused field, so
-        // it never takes the SendInput foreground swap.
-        let use_send_input = !px_focus
-            && match delivery {
-                DeliveryMode::Foreground => true,
-                DeliveryMode::Background => false,
-            };
+        // Foreground is an explicit request for system-queue delivery. This is
+        // still required after a PX focus click: PostMessage does not update
+        // global modifier state, so Chromium never observes Ctrl+Shift+7 as a
+        // chord even though the renderer control is focused.
+        let use_send_input = delivery == DeliveryMode::Foreground;
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
             if use_send_input {
@@ -4538,8 +4582,8 @@ impl Tool for ScrollTool {
                     "by":{"type":"string","enum":["line","page"],"description":"Scroll granularity. Default: line."},
                     "amount":{"type":"integer","minimum":1,"maximum":50,
                         "description":"Number of scroll ticks. Default 3."},
-                    "x":{"type":"number","description":"Screen-absolute X (desktop scope only) — wheel routes to the window under (x,y). Must be paired with y and no pid/window_id."},
-                    "y":{"type":"number","description":"Screen-absolute Y (desktop scope only). Must be paired with x and no pid/window_id."},
+                    "x":{"type":"number","description":"With pid/window_id: window-local screenshot X used to target a nested scroll surface in foreground mode. Without pid/window_id: screen-absolute X for desktop scope. Must be paired with y."},
+                    "y":{"type":"number","description":"With pid/window_id: window-local screenshot Y used to target a nested scroll surface in foreground mode. Without pid/window_id: screen-absolute Y for desktop scope. Must be paired with x."},
                     "window_id":{"type":"integer","description":"HWND of the target window. Required when element_index is used; otherwise auto-resolves the pid's first visible window."},
                     "element_index":{"type":"integer","description":"Optional element_index. Accepted for parity; currently no-op on Windows."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
@@ -4744,16 +4788,27 @@ impl Tool for ScrollTool {
             };
             let per: i32 = if by == "page" { 3 } else { 1 };
             let ticks = sign * (amount as i32) * per;
-            // Target the window's screen center so the wheel lands on it.
-            let center = tokio::task::spawn_blocking(move || {
-                crate::win32::list_windows(Some(pid))
-                    .into_iter()
-                    .find(|w| w.hwnd == hwnd)
-                    .map(|w| (w.x + w.width / 2, w.y + w.height / 2))
-            })
-            .await
-            .ok()
-            .flatten();
+            // A supplied PX target is window-local in the get_window_state
+            // bitmap. Route the wheel there so nested web scrollers receive it;
+            // otherwise retain the whole-window center fallback.
+            let px = args.get("x").and_then(|value| value.as_f64());
+            let py = args.get("y").and_then(|value| value.as_f64());
+            if px.is_some() != py.is_some() {
+                return ToolResult::error("scroll requires x and y together.");
+            }
+            let center = if let (Some(x), Some(y)) = (px, py) {
+                Some(bitmap_to_screen(hwnd, x as i32, y as i32))
+            } else {
+                tokio::task::spawn_blocking(move || {
+                    crate::win32::list_windows(Some(pid))
+                        .into_iter()
+                        .find(|w| w.hwnd == hwnd)
+                        .map(|w| (w.x + w.width / 2, w.y + w.height / 2))
+                })
+                .await
+                .ok()
+                .flatten()
+            };
             let (cx, cy) = match center {
                 Some(c) => c,
                 None => {

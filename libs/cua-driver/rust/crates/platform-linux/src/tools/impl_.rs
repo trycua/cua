@@ -2209,11 +2209,11 @@ impl Tool for TypeTextTool {
         }
         let text_len = text.chars().count();
 
-        // Foreground means the caller explicitly permits activation. Chromium's
-        // EditableText bridge can acknowledge a write that its renderer never
-        // observes, so that embedder must use real XTest key events. Native
-        // toolkits keep their verifiable AT-SPI path below.
-        if delivery.is_foreground() && is_chromium_embedder(pid) {
+        // Foreground means the caller explicitly permits activation. Chromium
+        // and WebKitGTK can acknowledge an accessibility write without
+        // producing the renderer input event, so web embedders use real XTest
+        // key events. Native toolkits keep their verifiable AT-SPI path below.
+        if delivery.is_foreground() && (is_chromium_embedder(pid) || is_webkitgtk_embedder(pid)) {
             if let Some(idx) = resolved_elem_idx {
                 let focused =
                     tokio::task::spawn_blocking(move || crate::atspi::focus_element(pid, idx))

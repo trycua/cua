@@ -50,24 +50,6 @@ Create a new virtual machine
 | `--debug` | false | Compatibility flag; ignored by offline setup. |
 | `--no-display` | false | Compatibility flag; offline setup verifies headlessly. |
 
-### lume clone
-
-Clone an existing virtual machine
-
-**Arguments:**
-
-| Name | Type | Required | Description |
-| ---- | ---- | -------- | ----------- |
-| `<name>` | String | Yes | Name of the source VM |
-| `<new-name>` | String | Yes | Name for the cloned VM |
-
-**Options:**
-
-| Name | Type | Default | Description |
-| ---- | ---- | ------- | ----------- |
-| `--source-storage` | String | - | Source VM storage location |
-| `--dest-storage` | String | - | Destination VM storage location |
-
 ### lume run
 
 Run a virtual machine
@@ -135,7 +117,36 @@ Delete a virtual machine
 | ---- | ------- | ----------- |
 | `--force` | false | Force deletion without confirmation |
 
+### lume clone
+
+Clone an existing virtual machine
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<name>` | String | Yes | Name of the source VM |
+| `<new-name>` | String | Yes | Name for the cloned VM |
+
+**Options:**
+
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `--source-storage` | String | - | Source VM storage location |
+| `--dest-storage` | String | - | Destination VM storage location |
+
 ## VM Information and Configuration
+
+### lume ls
+
+List virtual machines
+
+**Options:**
+
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `-f, --format` | String | text | Output format (json or text) |
+| `--storage` | String | - | Filter by storage location name |
 
 ### lume get
 
@@ -174,18 +185,17 @@ Set new values for CPU, memory, and disk size of a virtual machine
 | `--display` | String | - | New display resolution |
 | `--storage` | String | - | VM storage location to use |
 
-### lume ls
+## Image Management
 
-List virtual machines
+### lume images
+
+List available macOS images from local cache
 
 **Options:**
 
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `-f, --format` | String | text | Output format (json or text) |
-| `--storage` | String | - | Filter by storage location name |
-
-## Image Management
+| `--organization` | String | trycua | Organization to list images for |
 
 ### lume pull
 
@@ -235,15 +245,32 @@ Push a macOS VM to an OCI-compatible registry
 | `--dry-run` | false | Prepare files without uploading |
 | `--reassemble` | true | Verify integrity by reassembling chunks |
 
-### lume images
+### lume convert
 
-List available macOS images from local cache
+Convert a legacy Lume image to OCI-compliant format
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<source-image>` | String | Yes | Source image to convert (legacy format, for example macos-tahoe:latest) |
+| `<target-image>` | String | Yes | Target image to push in OCI format (name:tag) |
 
 **Options:**
 
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--organization` | String | trycua | Organization to list images for |
+| `--additional-tags` | [String] | - | Additional tags for the OCI image |
+| `--registry` | String | ghcr.io | Registry to pull from and push to |
+| `--organization` | String | trycua | Registry organization |
+
+**Flags:**
+
+| Name | Default | Description |
+| ---- | ------- | ----------- |
+| `--verbose` | false | Enable verbose logging |
+| `--dry-run` | false | Prepare files without uploading |
+| `--single-layer` | false | Push one kubelet-compatible disk layer |
 
 ### lume ipsw
 
@@ -253,7 +280,7 @@ Get macOS restore image IPSW URL
 
 Remove cached images
 
-## Guest Access and Setup
+## Guest Access and Security
 
 ### lume ssh
 
@@ -301,17 +328,36 @@ Prepare unattended macOS setup
 | `--no-display` | false | Compatibility flag; offline setup verifies headlessly |
 | `--debug` | false | Compatibility flag; ignored by offline setup |
 
-## Configuration and Server
+### lume sip
 
-### lume serve
+Enable or disable System Integrity Protection on a macOS VM
 
-Start the VM management server
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<state>` | String | Yes | Desired SIP state: on or off |
+| `<name>` | String | Yes | Name of the virtual machine |
 
 **Options:**
 
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--port` | Int | 7777 | Port to listen on |
+| `--admin-user` | String | lume | Administrator username in the guest |
+| `--admin-password` | String | - | Administrator password in the guest; prefer --admin-password-stdin |
+| `--screenshot-dir` | String | - | Directory for Recovery framebuffer screenshots |
+| `--vnc-port` | Int | 5999 | Port for the temporary Recovery VNC server |
+| `--storage` | String | - | VM storage location |
+| `--timeout` | Int | 900 | Overall timeout in seconds |
+
+**Flags:**
+
+| Name | Default | Description |
+| ---- | ------- | ----------- |
+| `-y, --yes` | false | Skip the interactive confirmation prompt |
+| `--admin-password-stdin` | false | Read one administrator-password line from standard input without echo |
+
+## Configuration and Server
 
 ### lume config
 
@@ -330,6 +376,16 @@ Get or set lume configuration
   - `lume config cache dir` - Get or set cache directory
   - `lume config cache enable` - Enable image caching
   - `lume config cache disable` - Disable image caching
+
+### lume serve
+
+Start the VM management server
+
+**Options:**
+
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `--port` | Int | 7777 | Port to listen on |
 
 ### lume logs
 
@@ -365,6 +421,24 @@ Check for a Lume update and optionally apply it
 | ---- | ------- | ----------- |
 | `--apply` | false | Apply the update by re-running the official installer |
 | `--json` | false | Emit the structured update-state payload as JSON |
+
+## Developer Tools
+
+### lume dump-docs
+
+Output CLI and API documentation as JSON for tooling and integrations
+
+**Options:**
+
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `--type` | String | cli | Documentation type: cli, api, or all |
+
+**Flags:**
+
+| Name | Default | Description |
+| ---- | ------- | ----------- |
+| `--pretty` | false | Pretty-print JSON output |
 
 ## Global Options
 

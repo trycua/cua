@@ -56,6 +56,11 @@ struct CLIDocumentation: Codable {
 enum CommandDocExtractor {
     /// Extract documentation from all registered commands
     static func extractAll() -> CLIDocumentation {
+        let coverage = documentationCoverage
+        precondition(
+            coverage.missing.isEmpty && coverage.extra.isEmpty,
+            "CLI documentation coverage mismatch. Missing: \(coverage.missing); extra: \(coverage.extra)"
+        )
         return CLIDocumentation(
             name: "lume",
             version: Lume.Version.current,
@@ -73,6 +78,7 @@ enum CommandDocExtractor {
             createDoc,
             pullDoc,
             pushDoc,
+            convertDoc,
             imagesDoc,
             cloneDoc,
             getDoc,
@@ -81,6 +87,7 @@ enum CommandDocExtractor {
             runDoc,
             stopDoc,
             sshDoc,
+            sipDoc,
             ipswDoc,
             serveDoc,
             deleteDoc,
@@ -90,7 +97,21 @@ enum CommandDocExtractor {
             checkUpdateDoc,
             updateDoc,
             setupDoc,
+            dumpDocsDoc,
         ]
+    }
+
+    static var documentationCoverage: (missing: [String], extra: [String]) {
+        let registered = Swift.Set(CommandRegistry.allCommands.map(commandName))
+        let documented = Swift.Set(allCommandDocs.map(\.name))
+        return (
+            missing: registered.subtracting(documented).sorted(),
+            extra: documented.subtracting(registered).sorted()
+        )
+    }
+
+    private static func commandName(_ command: ParsableCommand.Type) -> String {
+        command.configuration.commandName ?? String(describing: command).lowercased()
     }
 
     // MARK: - Create
@@ -166,6 +187,41 @@ enum CommandDocExtractor {
                 FlagDoc(name: "verbose", shortName: nil, help: "Enable verbose logging", defaultValue: false),
                 FlagDoc(name: "dry-run", shortName: nil, help: "Prepare files without uploading", defaultValue: false),
                 FlagDoc(name: "reassemble", shortName: nil, help: "Verify integrity by reassembling chunks", defaultValue: true),
+            ],
+            subcommands: []
+        )
+    }
+
+    // MARK: - Convert
+
+    private static var convertDoc: CommandDoc {
+        CommandDoc(
+            name: "convert",
+            abstract: "Convert a legacy Lume image to OCI-compliant format",
+            discussion: nil,
+            arguments: [
+                ArgumentDoc(
+                    name: "source-image",
+                    help: "Source image to convert (legacy format, for example macos-tahoe:latest)",
+                    type: "String",
+                    isOptional: false
+                ),
+                ArgumentDoc(
+                    name: "target-image",
+                    help: "Target image to push in OCI format (name:tag)",
+                    type: "String",
+                    isOptional: false
+                ),
+            ],
+            options: [
+                OptionDoc(name: "additional-tags", shortName: nil, help: "Additional tags for the OCI image", type: "[String]", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "registry", shortName: nil, help: "Registry to pull from and push to", type: "String", defaultValue: "ghcr.io", isOptional: false),
+                OptionDoc(name: "organization", shortName: nil, help: "Registry organization", type: "String", defaultValue: "trycua", isOptional: false),
+            ],
+            flags: [
+                FlagDoc(name: "verbose", shortName: nil, help: "Enable verbose logging", defaultValue: false),
+                FlagDoc(name: "dry-run", shortName: nil, help: "Prepare files without uploading", defaultValue: false),
+                FlagDoc(name: "single-layer", shortName: nil, help: "Push one kubelet-compatible disk layer", defaultValue: false),
             ],
             subcommands: []
         )
@@ -328,6 +384,33 @@ enum CommandDocExtractor {
                 OptionDoc(name: "timeout", shortName: "t", help: "Command timeout in seconds (0 for no timeout)", type: "Int", defaultValue: "60", isOptional: false),
             ],
             flags: [],
+            subcommands: []
+        )
+    }
+
+    // MARK: - SIP
+
+    private static var sipDoc: CommandDoc {
+        CommandDoc(
+            name: "sip",
+            abstract: "Enable or disable System Integrity Protection on a macOS VM",
+            discussion: "Validates the administrator account, changes SIP from paired Recovery over VNC, and verifies the canonical csrutil status after a normal boot.",
+            arguments: [
+                ArgumentDoc(name: "state", help: "Desired SIP state: on or off", type: "String", isOptional: false),
+                ArgumentDoc(name: "name", help: "Name of the virtual machine", type: "String", isOptional: false),
+            ],
+            options: [
+                OptionDoc(name: "admin-user", shortName: nil, help: "Administrator username in the guest", type: "String", defaultValue: "lume", isOptional: false),
+                OptionDoc(name: "admin-password", shortName: nil, help: "Administrator password in the guest; prefer --admin-password-stdin", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "screenshot-dir", shortName: nil, help: "Directory for Recovery framebuffer screenshots", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "vnc-port", shortName: nil, help: "Port for the temporary Recovery VNC server", type: "Int", defaultValue: "5999", isOptional: false),
+                OptionDoc(name: "storage", shortName: nil, help: "VM storage location", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "timeout", shortName: nil, help: "Overall timeout in seconds", type: "Int", defaultValue: "900", isOptional: false),
+            ],
+            flags: [
+                FlagDoc(name: "yes", shortName: "y", help: "Skip the interactive confirmation prompt", defaultValue: false),
+                FlagDoc(name: "admin-password-stdin", shortName: nil, help: "Read one administrator-password line from standard input without echo", defaultValue: false),
+            ],
             subcommands: []
         )
     }
@@ -562,6 +645,24 @@ enum CommandDocExtractor {
             flags: [
                 FlagDoc(name: "no-display", shortName: nil, help: "Compatibility flag; offline setup verifies headlessly", defaultValue: false),
                 FlagDoc(name: "debug", shortName: nil, help: "Compatibility flag; ignored by offline setup", defaultValue: false),
+            ],
+            subcommands: []
+        )
+    }
+
+    // MARK: - Dump Docs
+
+    private static var dumpDocsDoc: CommandDoc {
+        CommandDoc(
+            name: "dump-docs",
+            abstract: "Output CLI and API documentation as JSON for tooling and integrations",
+            discussion: nil,
+            arguments: [],
+            options: [
+                OptionDoc(name: "type", shortName: nil, help: "Documentation type: cli, api, or all", type: "String", defaultValue: "cli", isOptional: false),
+            ],
+            flags: [
+                FlagDoc(name: "pretty", shortName: nil, help: "Pretty-print JSON output", defaultValue: false),
             ],
             subcommands: []
         )

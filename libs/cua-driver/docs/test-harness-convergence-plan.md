@@ -277,7 +277,7 @@ Canonical invocations set strict mode. Missing required capabilities produce
 | `modality_background_test.rs` | Move WPF actions into WPF cells and capture checks into capture ownership, then delete |
 | `modality_capture_mode_test.rs` | Rename to `capture_contract_test.rs`; one owner for tree/image inclusion behavior |
 | `modality_desktop_scope_*.rs` | Rename to `desktop_scope_*_test.rs`; keep platform-specific scope contracts |
-| `modality_focus_test.rs` | Delete the redundant Calculator focus test after launch ownership is settled |
+| `modality_focus_test.rs` | Deleted; shared click/type cells own focus preservation and launch focus has a separate optional owner |
 | `modality_launch_focus_macos_test.rs` | Optional real-app lane with issue ownership; never part of canonical harness counts |
 | `modality_dispatch_test.rs` | Move schema assertions to protocol tests and real GUI assertions to platform cells, then delete |
 | `modality_dispatch_linux_test.rs` | Keep only real X11/Wayland delivery behavior; move schema checks to protocol tests |

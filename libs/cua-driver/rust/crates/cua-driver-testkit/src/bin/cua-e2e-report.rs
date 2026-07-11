@@ -74,6 +74,6 @@ fn main() {
         require_video,
     )
     .unwrap_or_else(|errors| panic!("invalid E2E report:\n{}", errors.join("\n")));
-    let markdown = summary.markdown(&results);
+    let markdown = summary.markdown_with_declarations(&declarations, &results);
     emit(markdown, output.as_ref());
 }

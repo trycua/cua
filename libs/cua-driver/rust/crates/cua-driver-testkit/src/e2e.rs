@@ -671,10 +671,25 @@ pub struct ValidationSummary {
 
 impl ValidationSummary {
     pub fn markdown(&self, results: &[CaseResult]) -> String {
+        let declarations = results
+            .iter()
+            .map(|result| result.case.clone())
+            .collect::<Vec<_>>();
+        self.markdown_with_declarations(&declarations, results)
+    }
+
+    pub fn markdown_with_declarations(
+        &self,
+        declarations: &[CaseSpec],
+        results: &[CaseResult],
+    ) -> String {
         let mut output = format!(
             "# CUA Driver E2E\n\n**Result:** {} delivered, {} refused, {} failed, {} skipped\n\n",
             self.delivered, self.refused, self.failed, self.skipped
         );
+        output.push_str("## Declared Coverage\n\n");
+        output.push_str(&declared_coverage_markdown(declarations, results));
+        output.push_str("\n## Detailed Results\n\n");
         output.push_str(
             "| Cell | Platform | Harness | Action | Targeting | Delivery | Scope | Route | Oracles | Expected | Observed | Status | Duration | Evidence | Details |\n",
         );
@@ -720,6 +735,118 @@ impl ValidationSummary {
         }
         output
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum CoverageColumn {
+    AxBackground,
+    AxForeground,
+    PxBackground,
+    PxForeground,
+    Page,
+    NotApplicable,
+}
+
+const COVERAGE_COLUMNS: [CoverageColumn; 6] = [
+    CoverageColumn::AxBackground,
+    CoverageColumn::AxForeground,
+    CoverageColumn::PxBackground,
+    CoverageColumn::PxForeground,
+    CoverageColumn::Page,
+    CoverageColumn::NotApplicable,
+];
+
+fn declared_coverage_markdown(declarations: &[CaseSpec], results: &[CaseResult]) -> String {
+    let results_by_cell = results
+        .iter()
+        .map(|result| (result.case.cell_id.as_str(), result))
+        .collect::<BTreeMap<_, _>>();
+    let mut rows = BTreeMap::<(String, String), BTreeMap<CoverageColumn, Vec<String>>>::new();
+
+    for declaration in declarations {
+        let column = coverage_column(declaration);
+        let status = results_by_cell
+            .get(declaration.cell_id.as_str())
+            .map(|result| coverage_status(result))
+            .unwrap_or("MISSING");
+        let label = match column {
+            CoverageColumn::Page => format!("{:?}: {status}", declaration.delivery),
+            CoverageColumn::NotApplicable => format!(
+                "{:?}/{:?}: {status}",
+                declaration.targeting, declaration.delivery
+            ),
+            _ => status.to_owned(),
+        };
+        rows.entry((declaration.harness.clone(), declaration.action.clone()))
+            .or_default()
+            .entry(column)
+            .or_default()
+            .push(label);
+    }
+
+    let mut output = String::from(
+        "| Harness | Action | AX/BG | AX/FG | PX/BG | PX/FG | Page | NotApplicable |\n",
+    );
+    output.push_str("| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+    for ((harness, action), cells) in rows {
+        output.push_str(&format!(
+            "| {} | {} | {} |\n",
+            markdown_table_text(&harness),
+            markdown_table_text(&action),
+            COVERAGE_COLUMNS
+                .iter()
+                .map(|column| render_coverage_cell(cells.get(column)))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        ));
+    }
+    output
+}
+
+fn coverage_column(case: &CaseSpec) -> CoverageColumn {
+    match (case.targeting, case.delivery) {
+        (Targeting::Page, _) => CoverageColumn::Page,
+        (Targeting::Ax, Delivery::Background) => CoverageColumn::AxBackground,
+        (Targeting::Ax, Delivery::Foreground) => CoverageColumn::AxForeground,
+        (Targeting::Px, Delivery::Background) => CoverageColumn::PxBackground,
+        (Targeting::Px, Delivery::Foreground) => CoverageColumn::PxForeground,
+        _ => CoverageColumn::NotApplicable,
+    }
+}
+
+fn coverage_status(result: &CaseResult) -> &'static str {
+    match (result.test_status, result.observed_behavior) {
+        (TestStatus::Pass, ObservedBehavior::Delivered) => "PASS",
+        (TestStatus::Pass, ObservedBehavior::Refused) => "REFUSED",
+        (TestStatus::Pass, _) => "INVALID",
+        (TestStatus::Fail | TestStatus::EnvironmentError, _) => "FAIL",
+        (TestStatus::Skip, _) => "SKIP",
+    }
+}
+
+fn render_coverage_cell(labels: Option<&Vec<String>>) -> String {
+    let Some(labels) = labels else {
+        return "-".to_owned();
+    };
+    let mut counts = BTreeMap::new();
+    for label in labels {
+        *counts.entry(label).or_insert(0usize) += 1;
+    }
+    counts
+        .into_iter()
+        .map(|(label, count)| {
+            if count == 1 {
+                label.clone()
+            } else {
+                format!("{label} ({count})")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("<br>")
+}
+
+fn markdown_table_text(value: &str) -> String {
+    value.replace('|', "\\|").replace('\n', " ")
 }
 
 pub fn append_json_line<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
@@ -950,6 +1077,26 @@ mod tests {
         )
     }
 
+    fn coverage_case(
+        id: &str,
+        harness: &str,
+        action: &str,
+        targeting: Targeting,
+        delivery: Delivery,
+    ) -> CaseSpec {
+        CaseSpec::delivered(
+            id,
+            harness,
+            harness,
+            action,
+            targeting,
+            delivery,
+            Scope::Window,
+            DriverRoute::Composite,
+            vec![OracleKind::FixtureState],
+        )
+    }
+
     #[test]
     fn required_delivery_rejects_honest_refusal() {
         let case = delivered_case("required-delivery");
@@ -1081,17 +1228,137 @@ mod tests {
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default()),
             Duration::from_millis(7),
         );
-        let summary = validate_catalog(&[case], std::slice::from_ref(&result), None, false)
-            .expect("valid catalog");
+        let summary = validate_catalog(
+            std::slice::from_ref(&case),
+            std::slice::from_ref(&result),
+            None,
+            false,
+        )
+        .expect("valid catalog");
         assert_eq!(summary.delivered, 1);
         assert!(summary
-            .markdown(std::slice::from_ref(&result))
+            .markdown_with_declarations(std::slice::from_ref(&case), std::slice::from_ref(&result),)
             .contains("1 delivered"));
 
         let value = serde_json::to_value(result).expect("serialize result");
         assert_eq!(value["schema"], RESULT_SCHEMA);
         assert_eq!(value["cell_id"], "rendered");
         assert!(value.get("case").is_none());
+    }
+
+    #[test]
+    fn declared_coverage_distinguishes_statuses_and_groups_harness_actions() {
+        let delivered = coverage_case(
+            "electron-click-ax-background",
+            "electron",
+            "click",
+            Targeting::Ax,
+            Delivery::Background,
+        );
+        let mut refused = coverage_case(
+            "electron-click-px-background",
+            "electron",
+            "click",
+            Targeting::Px,
+            Delivery::Background,
+        )
+        .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
+        refused.oracles = vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ];
+        let failed = coverage_case(
+            "electron-click-px-foreground",
+            "electron",
+            "click",
+            Targeting::Px,
+            Delivery::Foreground,
+        );
+        let grouped = coverage_case(
+            "tauri-type-text-ax-background",
+            "tauri",
+            "type_text",
+            Targeting::Ax,
+            Delivery::Background,
+        );
+
+        let results = vec![
+            CaseResult::evaluate(
+                delivered.clone(),
+                Observation::delivered(vec![OracleKind::FixtureState], Evidence::default()),
+                Duration::from_millis(1),
+            ),
+            CaseResult::evaluate(
+                refused.clone(),
+                Observation::refused(
+                    RefusalCode::BackgroundUnavailable,
+                    vec![
+                        OracleKind::FixtureState,
+                        OracleKind::Focus,
+                        OracleKind::ZOrder,
+                        OracleKind::NoLeakedInput,
+                    ],
+                    "",
+                    Evidence::default(),
+                ),
+                Duration::from_millis(1),
+            ),
+            CaseResult::evaluate(
+                failed.clone(),
+                Observation::error("driver error", Evidence::default()),
+                Duration::from_millis(1),
+            ),
+            CaseResult::evaluate(
+                grouped.clone(),
+                Observation::delivered(vec![OracleKind::FixtureState], Evidence::default()),
+                Duration::from_millis(1),
+            ),
+        ];
+        let declarations = vec![delivered, refused, failed, grouped];
+        let summary =
+            validate_catalog(&declarations, &results, None, false).expect("valid catalog");
+        let markdown = summary.markdown_with_declarations(&declarations, &results);
+
+        assert!(markdown.contains("| electron | click | PASS | - | REFUSED | FAIL | - | - |"));
+        assert!(markdown.contains("| tauri | type_text | PASS | - | - | - | - | - |"));
+    }
+
+    #[test]
+    fn declared_coverage_keeps_page_and_not_applicable_out_of_the_ax_px_grid() {
+        let page = coverage_case(
+            "web-evaluate-page-background",
+            "web",
+            "evaluate",
+            Targeting::Page,
+            Delivery::Background,
+        );
+        let not_applicable = coverage_case(
+            "web-evaluate-not-applicable-background",
+            "web",
+            "evaluate",
+            Targeting::NotApplicable,
+            Delivery::Background,
+        );
+        let results = [page.clone(), not_applicable.clone()]
+            .into_iter()
+            .map(|case| {
+                CaseResult::evaluate(
+                    case,
+                    Observation::delivered(vec![OracleKind::FixtureState], Evidence::default()),
+                    Duration::from_millis(1),
+                )
+            })
+            .collect::<Vec<_>>();
+        let declarations = vec![page, not_applicable];
+        let summary =
+            validate_catalog(&declarations, &results, None, false).expect("valid catalog");
+        let markdown = summary.markdown_with_declarations(&declarations, &results);
+
+        assert!(markdown.contains(
+            "| web | evaluate | - | - | - | - | Background: PASS | NotApplicable/Background: PASS |"
+        ));
     }
 
     #[test]
@@ -1185,7 +1452,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_pixel_background_route_remains_required_targeted_delivery() {
+    fn windows_pixel_background_route_remains_targeted_injection() {
         assert_eq!(
             shared_web_route(
                 Platform::Windows,

@@ -96,6 +96,7 @@ impl ForegroundSentinel {
             );
             std::thread::sleep(Duration::from_millis(100));
         }
+        activate_native_foreground(driver, target);
         wait_for_native_focus_stable(target);
         fs::write(&journal_path, "").expect("reset focused sentinel journal");
 
@@ -173,6 +174,25 @@ impl ForegroundSentinel {
         }
     }
 }
+
+#[cfg(target_os = "windows")]
+fn activate_native_foreground(driver: &mut impl Driver, target: TargetWindow) {
+    let response = driver.call(
+        "bring_to_front",
+        serde_json::json!({
+            "pid": target.pid,
+            "window_id": target.native_id,
+        }),
+    );
+    assert!(
+        !response.is_error(),
+        "could not activate foreground sentinel: {}",
+        response.text()
+    );
+}
+
+#[cfg(not(target_os = "windows"))]
+fn activate_native_foreground(_driver: &mut impl Driver, _target: TargetWindow) {}
 
 #[cfg(target_os = "windows")]
 fn wait_for_native_focus_stable(target: TargetWindow) {

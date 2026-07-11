@@ -18,7 +18,7 @@
 use anyhow::{bail, Result};
 use std::thread::sleep;
 use std::time::Duration;
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE, WPARAM};
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetFocus;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -27,8 +27,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetWindowThreadProcessId, IsChild, PostMessageW, WM_CHAR, WM_KEYDOWN, WM_KEYUP,
-    WM_SYSKEYDOWN, WM_SYSKEYUP,
+    EnumChildWindows, GetClassNameW, GetWindowThreadProcessId, IsChild, PostMessageW, WM_CHAR,
+    WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
@@ -127,51 +127,68 @@ pub fn is_xaml_host_hwnd(hwnd: u64) -> bool {
 
 const KEY_DELAY_MS: u64 = 4;
 
-/// If the target's UI thread has a focused child window that's a descendant
-/// of `parent`, return that child. Otherwise `None`. Used to retarget
+/// If any UI thread under the target has a focused child window that's a
+/// descendant of `parent`, return that child. Otherwise `None`. Used to retarget
 /// `PostMessage(WM_CHAR/WM_KEYDOWN)` from the top-level frame to the actual
 /// editor control (Scintilla in Notepad++, RichEdit in WordPad, etc.) —
 /// top-level WindowProcs don't forward keyboard messages to embedded editors
 /// automatically, so without this drill-down `type_text` silently no-ops
 /// against any app that puts its text surface in a child HWND.
 ///
-/// Uses `AttachThreadInput` to read the target thread's focus state, which
-/// is the standard cross-thread way to read another thread's `GetFocus()`.
-/// We detach immediately after — attaching for the duration of the post
-/// would change input-state visibility for the duration.
+/// Embedded renderers such as WebView2 may put their focused child on a
+/// different UI thread from the native top-level frame. Enumerating descendant
+/// thread ids is therefore required; checking only the frame thread queues the
+/// message successfully but leaves the renderer untouched. `AttachThreadInput`
+/// lets us inspect each thread's `GetFocus()` state, and is detached immediately
+/// before dispatch.
 fn focused_descendant(parent: HWND) -> Option<HWND> {
     if parent.0.is_null() {
         return None;
     }
-    let mut target_pid: u32 = 0;
-    let target_thread = unsafe { GetWindowThreadProcessId(parent, Some(&mut target_pid)) };
-    if target_thread == 0 {
+    let parent_thread = unsafe { GetWindowThreadProcessId(parent, None) };
+    if parent_thread == 0 {
         return None;
+    }
+
+    unsafe extern "system" fn collect_thread(child: HWND, lparam: LPARAM) -> BOOL {
+        let threads = &mut *(lparam.0 as *mut Vec<u32>);
+        let thread = GetWindowThreadProcessId(child, None);
+        if thread != 0 && !threads.contains(&thread) {
+            threads.push(thread);
+        }
+        TRUE
+    }
+
+    let mut target_threads = vec![parent_thread];
+    unsafe {
+        let _ = EnumChildWindows(
+            parent,
+            Some(collect_thread),
+            LPARAM(&mut target_threads as *mut Vec<u32> as isize),
+        );
     }
     let our_thread = unsafe { GetCurrentThreadId() };
 
-    let focused = if our_thread == target_thread {
-        unsafe { GetFocus() }
-    } else {
-        let _ = unsafe { AttachThreadInput(our_thread, target_thread, true) };
-        let f = unsafe { GetFocus() };
-        let _ = unsafe { AttachThreadInput(our_thread, target_thread, false) };
-        f
-    };
-    if focused.0.is_null() {
-        return None;
+    for target_thread in target_threads {
+        let focused = if our_thread == target_thread {
+            unsafe { GetFocus() }
+        } else {
+            let attached = unsafe { AttachThreadInput(our_thread, target_thread, true) }.as_bool();
+            if !attached {
+                continue;
+            }
+            let focused = unsafe { GetFocus() };
+            let _ = unsafe { AttachThreadInput(our_thread, target_thread, false) };
+            focused
+        };
+        if !focused.0.is_null()
+            && focused != parent
+            && unsafe { IsChild(parent, focused) }.as_bool()
+        {
+            return Some(focused);
+        }
     }
-    if focused == parent {
-        return None;
-    }
-    // Only retarget if focus is genuinely a descendant of `parent` — protects
-    // against accidentally posting to an unrelated window if the target is
-    // not the foreground app at the moment.
-    if unsafe { IsChild(parent, focused) }.as_bool() {
-        Some(focused)
-    } else {
-        None
-    }
+    None
 }
 
 /// Post a Unicode character as WM_CHAR.

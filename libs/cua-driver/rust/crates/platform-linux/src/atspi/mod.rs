@@ -38,6 +38,7 @@ pub struct AtspiNode {
 pub struct AtspiTreeResult {
     pub tree_markdown: String,
     pub nodes: Vec<AtspiNode>,
+    pub bounds: Vec<(usize, i32, i32, u32, u32)>,
 }
 
 /// Walk the AT-SPI tree for a window identified by (pid, xid).
@@ -66,7 +67,9 @@ pub fn walk_tree_bounded(
     // after launch returns the real tree instead of an empty one. See #1927.
     const MAX_ATTEMPTS: usize = 4;
     for attempt in 0..MAX_ATTEMPTS {
-        if let Ok(Some((raw_md, nodes))) = native::walk_tree_bounded(pid, max_elements, max_depth) {
+        if let Ok(Some((raw_md, nodes, bounds))) =
+            native::walk_tree_bounded(pid, xid, max_elements, max_depth)
+        {
             // `nodes.len() <= 1` == only the root window resolved: the
             // cold-registry symptom. Accept any real tree immediately; only
             // keep waiting on the degenerate case, and accept it anyway on the
@@ -80,6 +83,7 @@ pub fn walk_tree_bounded(
                 return AtspiTreeResult {
                     tree_markdown: md,
                     nodes,
+                    bounds,
                 };
             }
         }
@@ -180,15 +184,6 @@ pub fn focused_is_editable(pid: u32) -> Result<Option<bool>> {
     native::focused_is_editable(pid)
 }
 
-/// Get the screen-coordinate bounding box (x, y, width, height) of element `idx`.
-/// Screen-coordinate bounds for every action node in pid's AT-SPI tree, keyed
-/// by `element_index`. Best-effort: nodes whose bounds can't be read are
-/// omitted rather than erroring the whole call. Returns `(element_index, x, y,
-/// width, height)` tuples in screen coordinates.
-pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32, u32, u32)>> {
-    native::get_all_element_bounds(pid, xid)
-}
-
 pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> {
     native::get_element_bounds(pid, idx)
 }
@@ -205,6 +200,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
             return AtspiTreeResult {
                 tree_markdown: String::new(),
                 nodes: vec![],
+                bounds: vec![],
             }
         }
     };
@@ -255,6 +251,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
     AtspiTreeResult {
         tree_markdown,
         nodes,
+        bounds: vec![],
     }
 }
 

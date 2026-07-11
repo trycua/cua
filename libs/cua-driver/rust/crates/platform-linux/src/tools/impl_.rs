@@ -604,9 +604,13 @@ impl Tool for GetWindowStateTool {
                 max_elements,
                 max_depth,
             ));
-            // Best-effort per-element screen bounds (AT-SPI Component.GetExtents).
-            // Tolerant: an empty/missing map never fails the call.
-            let bounds = crate::atspi::get_all_element_bounds(pid, xid).unwrap_or_default();
+            // Bounds and element indices come from the same captured AT-SPI
+            // traversal. Joining two live walks by ordinal mis-associated
+            // Chromium controls when its lazy subtree changed between walks.
+            let bounds = tree_result
+                .as_ref()
+                .map(|tree| tree.bounds.clone())
+                .unwrap_or_default();
             // Capture and DELIVER the screenshot alongside the tree by default — the
             // grounding frame the agent cross-checks the tree against. With
             // screenshot_out_file set, write to disk and surface the path instead

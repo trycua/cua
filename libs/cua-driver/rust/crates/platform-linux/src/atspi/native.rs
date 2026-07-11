@@ -375,7 +375,7 @@ async fn collect_visited_bounded<'a>(
     // AT-SPI (most commonly because it holds a modal grab and isn't servicing
     // D-Bus), every per-node `call()` burns the full CALL_TIMEOUT before being
     // skipped, so the walk would otherwise grind for minutes. Callers that lack
-    // their own OP_TIMEOUT (get_all_element_bounds, insert_text) relied on this
+    // their own OP_TIMEOUT (snapshot bounds, insert_text) relied on this
     // never happening — bound it here so the walk returns partial within
     // OP_TIMEOUT for every caller, instead of hanging get_window_state/type_text
     // on modal dialogs (#1936).
@@ -403,7 +403,7 @@ async fn collect_visited_bounded<'a>(
         // await that actually hangs, so it MUST carry the per-call timeout —
         // otherwise the loop never returns to the deadline check at the top and
         // the walk stalls past OP_TIMEOUT for callers without an outer guard
-        // (get_all_element_bounds, insert_text). That was the residual #1936 hang.
+        // (snapshot bounds, insert_text). That was the residual #1936 hang.
         let acc = match call(accessible_for(conn, &oref)).await {
             Some(Ok(a)) => a,
             Some(Err(error)) => {
@@ -656,7 +656,7 @@ fn format_value(v: f64) -> String {
 ///
 /// This predicate is the single source of truth for the element-index space and
 /// MUST be applied identically in `render` and in every `action_nodes` filter
-/// (`perform_action`, `set_value`, `get_element_bounds`, `get_all_element_bounds`);
+/// (`perform_action`, `set_value`, `get_element_bounds`, snapshot bounds);
 /// any divergence would desync indices between the snapshot and the operations.
 fn is_indexable(v: &Visited) -> bool {
     is_indexable_capabilities(!v.actions.is_empty(), v.has_editable, v.has_value)
@@ -669,7 +669,8 @@ fn is_indexable_capabilities(has_action: bool, has_editable: bool, has_value: bo
 // ── Public (sync) entry points ───────────────────────────────────────────────
 
 pub fn walk_tree(pid: u32) -> Result<Option<(String, Vec<AtspiNode>)>> {
-    walk_tree_bounded(pid, None, None)
+    walk_tree_bounded(pid, 0, None, None)
+        .map(|snapshot| snapshot.map(|(markdown, nodes, _)| (markdown, nodes)))
 }
 
 /// Walk the AT-SPI tree with caller-supplied node + depth caps.
@@ -677,24 +678,28 @@ pub fn walk_tree(pid: u32) -> Result<Option<(String, Vec<AtspiNode>)>> {
 /// = None` keeps the historical unbounded depth. Issue #22865.
 pub fn walk_tree_bounded(
     pid: u32,
+    xid: u64,
     max_elements: Option<usize>,
     max_depth: Option<usize>,
-) -> Result<Option<(String, Vec<AtspiNode>)>> {
+) -> Result<Option<(String, Vec<AtspiNode>, Vec<(usize, i32, i32, u32, u32)>)>> {
     runtime().block_on(async {
-        let work = async {
+        let walk = async {
             let conn = shared_connection().await?;
-            match collect_visited_bounded(conn, pid, max_elements, max_depth).await? {
-                Some(visited) => Ok(Some(render(&visited))),
-                None => Ok(None),
-            }
+            collect_visited_bounded(conn, pid, max_elements, max_depth).await
         };
-        match tokio::time::timeout(OP_TIMEOUT, work).await {
-            Ok(r) => r,
+        let visited = match tokio::time::timeout(OP_TIMEOUT, walk).await {
+            Ok(result) => result?,
             Err(_) => {
                 dlog!("walk_tree timed out for pid {pid}");
-                Ok(None)
+                return Ok(None);
             }
-        }
+        };
+        let Some(visited) = visited else {
+            return Ok(None);
+        };
+        let (markdown, nodes) = render(&visited);
+        let bounds = element_bounds_for_visited(&visited, pid, xid).await;
+        Ok(Some((markdown, nodes, bounds)))
     })
 }
 
@@ -1343,12 +1348,12 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
 /// (a label inside the button) → a silent no-op that still returns `Some`
 /// ("false success"). And on native Wayland there is no virtual-pointer click to
 /// fall back to (Mutter drops synthetic pointer events). This routine instead
-/// reuses [`get_all_element_bounds`] — the SAME screen frames `get_window_state`
-/// exposes to the agent, reconstructed via the GNOME Shell helper on Wayland and
-/// `_GTK_FRAME_EXTENTS` on X11 — and actuates by `element_index`, the click path
-/// already verified working. So "click at pixel (x,y)" becomes "click the
-/// element the agent sees there", with no pointer injection and no reliance on
-/// `CoordType::Screen` (which GTK4 reports as (0,0)).
+/// uses the SAME screen-frame reconstruction that `get_window_state` exposes to
+/// the agent, via the GNOME Shell helper on Wayland and `_GTK_FRAME_EXTENTS` on
+/// X11, and actuates by `element_index`, the click path already verified
+/// working. So "click at pixel (x,y)" becomes "click the element the agent sees
+/// there", with no pointer injection and no reliance on `CoordType::Screen`
+/// (which GTK4 reports as (0,0)).
 ///
 /// `screen_x`/`screen_y` are full-display screen pixels (what the vision
 /// screenshot and `get_window_state` frames are in). Returns `Ok(Some(action))`
@@ -1728,14 +1733,10 @@ fn screen_extent_rebase(
     }
 }
 
-/// Screen-coordinate bounds for every action node in the tree, keyed by the
-/// same `element_index` used by [`walk_tree`]/`get_element_bounds`.
-///
-/// Walks the application once (unlike calling `get_element_bounds` per node,
-/// which would reconnect and re-walk every time) and queries each node's
-/// `Component.GetExtents(Screen)`. Nodes without a usable Component interface,
-/// or whose extents query fails/times out, are silently skipped — the result is
-/// best-effort and never errors on a per-node hiccup.
+/// Screen-coordinate bounds for the exact visited sequence rendered into the
+/// current snapshot. Nodes without a usable Component interface, or whose
+/// extents query fails/times out, are omitted rather than borrowing another
+/// live traversal's ordinal.
 ///
 /// GTK4 caveat: GTK4's AT-SPI bridge returns `GetExtents(Screen)` as `(0,0)`
 /// for every element (issue #1564 / the #1739 a11y rework), so a screen query
@@ -1746,122 +1747,109 @@ fn screen_extent_rebase(
 /// offset is just the X11 origin and the result matches the old screen path.
 ///
 /// Returns `(element_index, x, y, width, height)` tuples.
-pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32, u32, u32)>> {
-    bounded(
-        async {
-            let conn = shared_connection().await?;
-            let visited = collect_visited(conn, pid)
-                .await?
-                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-
-            // Query WINDOW-relative extents and add a deterministic screen offset
-            // (X11 window origin + GTK4 CSD inset). This fixes GTK4 — whose
-            // CoordType::Screen reports every element at (0,0) — by using the
-            // distinct per-widget WINDOW coords instead. On Wayland / when no X11
-            // window resolves, `offset` is None and we keep the legacy Screen path
-            // so non-X11 behaviour is unchanged.
-            let offset = window_to_screen_offset(pid, xid);
-            let coord = if offset.is_some() {
-                CoordType::Window
-            } else {
-                CoordType::Screen
-            };
-            // Chromium on X11 labels its component extents as Screen while
-            // returning coordinates relative to the renderer frame. Rebase
-            // those values by comparing the top-level accessible frame with
-            // the actual X11 window origin. Correct screen-coordinate providers
-            // produce a zero delta; Chromium's local (0,0) frame produces the
-            // required window-origin delta. GTK's explicit Window-coordinate
-            // path above remains authoritative when available.
-            let screen_rebase = if offset.is_none() && !crate::wayland::is_wayland() && xid != 0 {
-                let x11_origin = x11_window_origin(xid);
-                let frame = visited.iter().find(|node| {
-                    node.has_component
-                        && matches!(
-                            node.role.to_ascii_lowercase().as_str(),
-                            "frame" | "window" | "dialog" | "alert" | "file chooser"
-                        )
-                });
-                if let (Some(origin), Some(frame)) = (x11_origin, frame) {
-                    let accessible_origin = match call(frame.acc.proxies()).await {
-                        Some(Ok(proxies)) => match call(proxies.component()).await {
-                            Some(Ok(component)) => {
-                                match call(component.get_extents(CoordType::Screen)).await {
-                                    Some(Ok((x, y, _, _))) => Some((x, y)),
-                                    _ => None,
-                                }
-                            }
+async fn element_bounds_for_visited(
+    visited: &[Visited<'_>],
+    pid: u32,
+    xid: u64,
+) -> Vec<(usize, i32, i32, u32, u32)> {
+    // Query WINDOW-relative extents and add a deterministic screen offset
+    // (X11 window origin + GTK4 CSD inset). This fixes GTK4 — whose
+    // CoordType::Screen reports every element at (0,0) — by using the
+    // distinct per-widget WINDOW coords instead. On Wayland / when no X11
+    // window resolves, `offset` is None and we keep the legacy Screen path
+    // so non-X11 behaviour is unchanged.
+    let offset = window_to_screen_offset(pid, xid);
+    let coord = if offset.is_some() {
+        CoordType::Window
+    } else {
+        CoordType::Screen
+    };
+    // Chromium on X11 labels its component extents as Screen while
+    // returning coordinates relative to the renderer frame. Rebase
+    // those values by comparing the top-level accessible frame with
+    // the actual X11 window origin. Correct screen-coordinate providers
+    // produce a zero delta; Chromium's local (0,0) frame produces the
+    // required window-origin delta. GTK's explicit Window-coordinate
+    // path above remains authoritative when available.
+    let screen_rebase = if offset.is_none() && !crate::wayland::is_wayland() && xid != 0 {
+        let x11_origin = x11_window_origin(xid);
+        let frame = visited.iter().find(|node| {
+            node.has_component
+                && matches!(
+                    node.role.to_ascii_lowercase().as_str(),
+                    "frame" | "window" | "dialog" | "alert" | "file chooser"
+                )
+        });
+        if let (Some(origin), Some(frame)) = (x11_origin, frame) {
+            let accessible_origin = match call(frame.acc.proxies()).await {
+                Some(Ok(proxies)) => match call(proxies.component()).await {
+                    Some(Ok(component)) => {
+                        match call(component.get_extents(CoordType::Screen)).await {
+                            Some(Ok((x, y, _, _))) => Some((x, y)),
                             _ => None,
-                        },
-                        _ => None,
-                    };
-                    accessible_origin
-                        .and_then(|frame_origin| screen_extent_rebase(origin, frame_origin))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            let (offset_x, offset_y) = offset.or(screen_rebase).unwrap_or((0, 0));
-            if let Some((ox, oy)) = offset {
-                dlog!("element bounds: WINDOW coords + screen offset ({ox},{oy})");
-            } else if let Some((ox, oy)) = screen_rebase {
-                dlog!("element bounds: SCREEN coords + X11 frame rebase ({ox},{oy})");
-            }
-
-            let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
-            // Hard wall-clock budget for the whole collection: on pathological
-            // trees individual D-Bus calls each burn up to CALL_TIMEOUT (geany's
-            // unrealized nodes did exactly that). Return whatever was collected
-            // in time, but do not impose an index-based node cap: a cap silently
-            // stripped frames from valid controls later in renderer trees and
-            // made PX targeting depend on DOM order.
-            let deadline = std::time::Instant::now() + Duration::from_secs(20);
-            let mut out = Vec::with_capacity(action_nodes.len());
-            for (idx, node) in action_nodes.iter().enumerate() {
-                if std::time::Instant::now() >= deadline {
-                    dlog!("get_all_element_bounds: 20s budget exhausted at node {idx}; returning {} bound(s)", out.len());
-                    break;
-                }
-                if !node.has_component {
-                    continue;
-                }
-                let proxies = match call(node.acc.proxies()).await {
-                    Some(Ok(p)) => p,
-                    _ => continue,
-                };
-                let comp = match call(proxies.component()).await {
-                    Some(Ok(c)) => c,
-                    _ => continue,
-                };
-                if let Some(Ok((x, y, w, h))) = call(comp.get_extents(coord)).await {
-                    // Unrealized widgets (e.g. items inside closed menus/popovers)
-                    // report GetExtents as the i32::MIN sentinel and/or a degenerate
-                    // 0x0 / 1x1 size. Emitting those poisons downstream consumers
-                    // (overlay renderers, click targeting), so keep only elements
-                    // with plausible on-screen geometry. (Validate the raw extents,
-                    // before applying the screen offset, so the sentinel check still
-                    // catches unrealized widgets.)
-                    if x == i32::MIN
-                        || y == i32::MIN
-                        || x < -16384
-                        || y < -16384
-                        || w <= 1
-                        || h <= 1
-                    {
-                        continue;
+                        }
                     }
-                    out.push((idx, x + offset_x, y + offset_y, w as u32, h as u32));
-                }
+                    _ => None,
+                },
+                _ => None,
+            };
+            accessible_origin.and_then(|frame_origin| screen_extent_rebase(origin, frame_origin))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let (offset_x, offset_y) = offset.or(screen_rebase).unwrap_or((0, 0));
+    if let Some((ox, oy)) = offset {
+        dlog!("element bounds: WINDOW coords + screen offset ({ox},{oy})");
+    } else if let Some((ox, oy)) = screen_rebase {
+        dlog!("element bounds: SCREEN coords + X11 frame rebase ({ox},{oy})");
+    }
+
+    let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
+    // Hard wall-clock budget for the whole collection: on pathological
+    // trees individual D-Bus calls each burn up to CALL_TIMEOUT (geany's
+    // unrealized nodes did exactly that). Return whatever was collected
+    // in time, but do not impose an index-based node cap: a cap silently
+    // stripped frames from valid controls later in renderer trees and
+    // made PX targeting depend on DOM order.
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let mut out = Vec::with_capacity(action_nodes.len());
+    for (idx, node) in action_nodes.iter().enumerate() {
+        if std::time::Instant::now() >= deadline {
+            dlog!(
+                "snapshot bounds: 20s budget exhausted at node {idx}; returning {} bound(s)",
+                out.len()
+            );
+            break;
+        }
+        if !node.has_component {
+            continue;
+        }
+        let proxies = match call(node.acc.proxies()).await {
+            Some(Ok(p)) => p,
+            _ => continue,
+        };
+        let comp = match call(proxies.component()).await {
+            Some(Ok(c)) => c,
+            _ => continue,
+        };
+        if let Some(Ok((x, y, w, h))) = call(comp.get_extents(coord)).await {
+            // Unrealized widgets (e.g. items inside closed menus/popovers)
+            // report GetExtents as the i32::MIN sentinel and/or a degenerate
+            // 0x0 / 1x1 size. Emitting those poisons downstream consumers
+            // (overlay renderers, click targeting), so keep only elements
+            // with plausible on-screen geometry. (Validate the raw extents,
+            // before applying the screen offset, so the sentinel check still
+            // catches unrealized widgets.)
+            if x == i32::MIN || y == i32::MIN || x < -16384 || y < -16384 || w <= 1 || h <= 1 {
+                continue;
             }
-            Ok(out)
-        },
-        || {
-            dlog!("get_all_element_bounds timed out for pid {pid}; returning no bounds");
-            Ok(Vec::new())
-        },
-    )
+            out.push((idx, x + offset_x, y + offset_y, w as u32, h as u32));
+        }
+    }
+    out
 }
 
 #[cfg(test)]

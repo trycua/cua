@@ -17,6 +17,7 @@ pub mod inject;
 pub use inject::{
     inject_click_screen, point_in_window_bounds, ForegroundLockGuard, NoActivateGuard,
 };
+pub(crate) use inject::force_foreground_attached;
 pub use mouse::{
     has_chromium_descendant, is_chromium_target_window, post_click, post_click_screen,
     send_click_synthesized, send_click_synthesized_mods, send_wheel_synthesized,

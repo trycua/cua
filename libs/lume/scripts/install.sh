@@ -5,12 +5,12 @@ set -e
 # This script installs Lume to your system
 
 # Define colors for output
-BOLD=$(tput bold)
-NORMAL=$(tput sgr0)
-RED=$(tput setaf 1)
-GREEN=$(tput setaf 2)
-BLUE=$(tput setaf 4)
-YELLOW=$(tput setaf 3)
+BOLD=$(tput bold 2>/dev/null || echo "")
+NORMAL=$(tput sgr0 2>/dev/null || echo "")
+RED=$(tput setaf 1 2>/dev/null || echo "")
+GREEN=$(tput setaf 2 2>/dev/null || echo "")
+BLUE=$(tput setaf 4 2>/dev/null || echo "")
+YELLOW=$(tput setaf 3 2>/dev/null || echo "")
 
 # Check if running as root or with sudo
 if [ "$(id -u)" -eq 0 ] || [ -n "$SUDO_USER" ]; then

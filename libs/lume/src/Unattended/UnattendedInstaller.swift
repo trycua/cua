@@ -3,6 +3,29 @@ import Foundation
 /// Orchestrates unattended macOS installation
 @MainActor
 final class UnattendedInstaller {
+    // Publish the offline-created administrator to the VM's paired Recovery environment.
+    static let recoveryUserMetadataRefreshCommand = "/usr/sbin/diskutil apfs updatePreboot / >/dev/null"
+
+    static var guestFinalizationScript: String {
+        """
+        set -e
+        /usr/bin/touch /var/db/.AppleSetupDone
+        /usr/sbin/chown root:wheel /var/db/.AppleSetupDone
+        /bin/chmod 644 /var/db/.AppleSetupDone
+        /usr/bin/defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser -string lume
+        /usr/bin/defaults write /Library/Preferences/com.apple.loginwindow GuestEnabled -bool false
+        /usr/bin/defaults write /Library/Preferences/com.apple.loginwindow lastUser -string loggedIn
+        /usr/bin/defaults write /Library/Preferences/com.apple.loginwindow lastUserName -string lume
+        /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeCloudSetup -bool true
+        /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeePrivacy -bool true
+        /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeSiriSetup -bool true
+        /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeTouchIDSetup -bool true
+        /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeTrueToneSetup -bool true
+        \(recoveryUserMetadataRefreshCommand)
+        /bin/launchctl enable system/com.openssh.sshd
+        /usr/bin/stat -f 'MARKER_OWNER=%u:%g' /var/db/.AppleSetupDone
+        """
+    }
 
     /// Run unattended setup on a VM by patching the installed macOS disk offline.
     func install(
@@ -191,23 +214,7 @@ final class UnattendedInstaller {
 
         let sshClient = SSHClient(host: vmIP, port: 22, user: user, password: password)
         let escapedPassword = password.replacingOccurrences(of: "'", with: "'\\''")
-        let script = """
-        set -e
-        /usr/bin/touch /var/db/.AppleSetupDone
-        /usr/sbin/chown root:wheel /var/db/.AppleSetupDone
-        /bin/chmod 644 /var/db/.AppleSetupDone
-        /usr/bin/defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser -string lume
-        /usr/bin/defaults write /Library/Preferences/com.apple.loginwindow GuestEnabled -bool false
-        /usr/bin/defaults write /Library/Preferences/com.apple.loginwindow lastUser -string loggedIn
-        /usr/bin/defaults write /Library/Preferences/com.apple.loginwindow lastUserName -string lume
-        /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeCloudSetup -bool true
-        /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeePrivacy -bool true
-        /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeSiriSetup -bool true
-        /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeTouchIDSetup -bool true
-        /usr/bin/defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeTrueToneSetup -bool true
-        /bin/launchctl enable system/com.openssh.sshd
-        /usr/bin/stat -f 'MARKER_OWNER=%u:%g' /var/db/.AppleSetupDone
-        """
+        let script = Self.guestFinalizationScript
         let encodedScript = Data(script.utf8).base64EncodedString()
         let command = "printf '%s\\n' '\(escapedPassword)' | /usr/bin/sudo -S /bin/sh -c '/bin/echo \(encodedScript) | /usr/bin/base64 -D | /bin/sh'"
         let result = try await sshClient.execute(command: command, timeout: 60)

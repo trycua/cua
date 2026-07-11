@@ -4064,7 +4064,9 @@ impl Tool for PressKeyTool {
         if let Some(idx) = elem_idx {
             let state = self.state.clone();
             let focused = tokio::task::spawn_blocking(move || {
-                state.element_cache.focus_element(pid, hwnd, idx as usize)
+                crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || {
+                    state.element_cache.focus_element(pid, hwnd, idx as usize)
+                })
             })
             .await;
             match focused {

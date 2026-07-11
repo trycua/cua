@@ -1,6 +1,5 @@
 //! Full-desktop foreground sentinel used by background E2E cells.
 
-use std::collections::HashSet;
 use std::fs;
 use std::net::TcpListener;
 use std::process::{Command, Stdio};
@@ -8,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use crate::e2e::OracleKind;
 use crate::observer::{DesktopObserver, NativeObserver, TargetWindow};
-use crate::{harness_app, ChildReaper, Driver};
+use crate::{harness_app, spawn_in_job, ChildReaper, Driver};
 
 /// A foreground Electron window that journals focus and leaked input while it
 /// fully occludes the background target.
@@ -37,8 +36,6 @@ impl ForegroundSentinel {
             .and_then(|listener| listener.local_addr())
             .expect("allocate sentinel CDP port")
             .port();
-        let before_windows = window_ids(driver);
-
         let mut command = Command::new(&electron.path);
         command
             .args(&electron.args)
@@ -48,10 +45,11 @@ impl ForegroundSentinel {
             .env("CUA_ELECTRON_CDP_PORT", cdp_port.to_string())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        let child = spawn_in_job(&mut command).expect("launch foreground sentinel");
+        let launched_pid = child.id();
         let mut reaper = ChildReaper::new();
-        reaper
-            .spawn(&mut command)
-            .expect("launch foreground sentinel");
+        reaper.push(child);
+        let expected_title = format!("CuaTestHarness Sentinel [cdp={cdp_port}]");
 
         let window_deadline = Instant::now() + Duration::from_secs(15);
         let target = loop {
@@ -62,11 +60,10 @@ impl ForegroundSentinel {
                     windows.iter().find_map(|window| {
                         let id = window["window_id"].as_u64()?;
                         let title = window["title"].as_str().unwrap_or("");
-                        (!before_windows.contains(&id) && title.contains("CuaTestHarness Sentinel"))
-                            .then(|| TargetWindow {
-                                pid: window["pid"].as_u64().unwrap_or(0) as u32,
-                                native_id: id,
-                            })
+                        title.contains(&expected_title).then(|| TargetWindow {
+                            pid: window["pid"].as_u64().unwrap_or(launched_pid as u64) as u32,
+                            native_id: id,
+                        })
                     })
                 })
             {
@@ -245,20 +242,6 @@ pub fn run_with_background_oracles<D: Driver, R>(
 ) -> Result<(R, Vec<OracleKind>), String> {
     let sentinel = ForegroundSentinel::launch(driver);
     sentinel.observe_background(target, || action(driver))
-}
-
-fn window_ids(driver: &mut impl Driver) -> HashSet<u64> {
-    driver
-        .call("list_windows", serde_json::json!({}))
-        .structured()["windows"]
-        .as_array()
-        .map(|windows| {
-            windows
-                .iter()
-                .filter_map(|window| window["window_id"].as_u64())
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 struct ElectronFixture {

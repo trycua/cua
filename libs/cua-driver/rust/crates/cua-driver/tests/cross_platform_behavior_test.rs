@@ -365,7 +365,7 @@ fn screenshot_scale(state: &ToolResponse) -> f64 {
         })
         .and_then(|window| window["frame"]["w"].as_f64())
         .unwrap_or(0.0);
-    if window_width > 0.0 && width > window_width {
+    if window_width > 0.0 && width > 0.0 {
         width / window_width
     } else {
         1.0

@@ -323,41 +323,44 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation): string {
   lines.push('For installation steps, see [Install Lume](/how-to-guides/lume/install-lume).');
   lines.push('');
 
-  // Group commands by category
-  const vmManagement = ['create', 'run', 'stop', 'delete', 'clone'];
-  const vmInfo = ['ls', 'get', 'set'];
-  const imageManagement = ['images', 'pull', 'push', 'ipsw', 'prune'];
-  const guestAccess = ['ssh', 'setup'];
-  const configuration = ['config', 'serve', 'logs', 'check-update', 'update'];
+  const groups = [
+    { title: 'VM Management', commands: ['create', 'run', 'stop', 'delete', 'clone'] },
+    { title: 'VM Information and Configuration', commands: ['ls', 'get', 'set'] },
+    {
+      title: 'Image Management',
+      commands: ['images', 'pull', 'push', 'convert', 'ipsw', 'prune'],
+    },
+    { title: 'Guest Access and Security', commands: ['ssh', 'setup', 'sip'] },
+    {
+      title: 'Configuration and Server',
+      commands: ['config', 'serve', 'logs', 'check-update', 'update'],
+    },
+    { title: 'Developer Tools', commands: ['dump-docs'] },
+  ];
 
-  lines.push('## VM Management');
-  lines.push('');
-  for (const cmd of docs.commands.filter((c) => vmManagement.includes(c.name))) {
-    lines.push(...generateCommandDoc(cmd, '###'));
+  const assignedCommands = groups.flatMap((group) => group.commands);
+  const duplicateAssignments = assignedCommands.filter(
+    (name, index) => assignedCommands.indexOf(name) !== index
+  );
+  const ungroupedCommands = docs.commands
+    .map((command) => command.name)
+    .filter((name) => !assignedCommands.includes(name));
+
+  if (duplicateAssignments.length > 0 || ungroupedCommands.length > 0) {
+    throw new Error(
+      `CLI command grouping mismatch. Ungrouped: ${[...new Set(ungroupedCommands)].sort().join(', ') || 'none'}; duplicated: ${[...new Set(duplicateAssignments)].sort().join(', ') || 'none'}`
+    );
   }
 
-  lines.push('## VM Information and Configuration');
-  lines.push('');
-  for (const cmd of docs.commands.filter((c) => vmInfo.includes(c.name))) {
-    lines.push(...generateCommandDoc(cmd, '###'));
-  }
-
-  lines.push('## Image Management');
-  lines.push('');
-  for (const cmd of docs.commands.filter((c) => imageManagement.includes(c.name))) {
-    lines.push(...generateCommandDoc(cmd, '###'));
-  }
-
-  lines.push('## Guest Access and Setup');
-  lines.push('');
-  for (const cmd of docs.commands.filter((c) => guestAccess.includes(c.name))) {
-    lines.push(...generateCommandDoc(cmd, '###'));
-  }
-
-  lines.push('## Configuration and Server');
-  lines.push('');
-  for (const cmd of docs.commands.filter((c) => configuration.includes(c.name))) {
-    lines.push(...generateCommandDoc(cmd, '###'));
+  for (const group of groups) {
+    lines.push(`## ${group.title}`);
+    lines.push('');
+    for (const commandName of group.commands) {
+      const command = docs.commands.find((candidate) => candidate.name === commandName);
+      if (command) {
+        lines.push(...generateCommandDoc(command, '###'));
+      }
+    }
   }
 
   // Global options

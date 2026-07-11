@@ -61,6 +61,21 @@ lume get macos-tahoe
 lume ssh macos-tahoe 'id -un'
 ```
 
+## SIP automation
+
+- `lume sip` supports stopped macOS VMs only.
+- The VM must have a working administrator account and Remote Login enabled.
+- The optional `vncdotool` package provides Recovery VNC input.
+- Recovery input accepts administrator passwords made from lowercase ASCII
+  letters, digits, and hyphens.
+- The account named by `--admin-user` must match the Recovery password prompt.
+- Tahoe is the currently verified Recovery workflow.
+- The command leaves the VM stopped after a successful policy change.
+- If Recovery does not halt during its grace period, Lume stops that exact run
+  process and requires a normal-boot `csrutil status` verification.
+- Customized SIP policies are rejected because they do not have one canonical
+  enabled or disabled state.
+
 ## Disk allocation
 
 macOS VM disks use sparse files. The configured disk capacity describes the

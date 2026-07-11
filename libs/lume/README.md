@@ -25,3 +25,14 @@ tracked in [#2155](https://github.com/trycua/cua/issues/2155).
 
 To use the other built-in preset, replace `tahoe` with `sequoia` in the
 `--unattended` option and choose a matching VM name.
+
+## Optional dependencies
+
+The `lume sip` command uses `vncdotool` to control macOS Recovery over VNC.
+Install it only if you need to enable or disable SIP:
+
+```bash
+pip3 install vncdotool
+```
+
+Other Lume commands do not require this package.

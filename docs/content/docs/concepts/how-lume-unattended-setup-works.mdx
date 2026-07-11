@@ -29,6 +29,13 @@ particular macOS release exposes. Disk setup writes the desired guest state
 directly and keeps the verification step small: Lume checks that the guest
 boots and accepts SSH.
 
+## Boot policy changes use Recovery
+
+Offline setup can change guest files, but it cannot sign Apple silicon boot
+policy. SIP changes therefore use the VM's paired Recovery environment and a
+normal boot verification. Read [How SIP works in Lume
+VMs](/concepts/how-sip-works-in-lume-vms) for the policy model.
+
 ## Presets and images
 
 The `tahoe` and `sequoia` presets use the same offline patcher. Tahoe is the
@@ -44,4 +51,5 @@ required for unattended setup.
 
 - [Create your first local macOS VM](/tutorials/create-your-first-lume-vm)
 - [Create a vanilla Tahoe VM](/how-to-guides/lume/create-vanilla-vm)
+- [Change SIP on a macOS VM](/how-to-guides/lume/change-sip)
 - [Lume CLI reference](/reference/lume/cli-reference)

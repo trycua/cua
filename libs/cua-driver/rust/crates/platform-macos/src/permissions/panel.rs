@@ -15,7 +15,7 @@
 //! On first launch with missing grants the panel resembles:
 //!
 //! ```text
-//! ┌─ cmux cua Permissions ──────────────────────┐
+//! ┌─ Cua Driver Permissions ────────────────────┐
 //! │  Enable Cua Driver Computer Use             │
 //! │  Two macOS permissions are required.        │
 //! │                                             │
@@ -57,6 +57,7 @@
 
 use std::cell::RefCell;
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 
 use objc2::runtime::AnyObject;
 use objc2::{class, msg_send};
@@ -86,6 +87,88 @@ pub enum PanelOutcome {
     /// The current process may still cache a false probe, so the caller must
     /// re-exec and verify without claiming that the grant succeeded.
     RefreshRequired,
+}
+
+const OUTCOME_NONE: u8 = 0;
+const OUTCOME_DISMISSED: u8 = 1;
+const OUTCOME_ALL_GRANTED: u8 = 2;
+const OUTCOME_REFRESH_REQUIRED: u8 = 3;
+const OUTCOME_UNAVAILABLE: u8 = 4;
+
+static PANEL_VISIBLE: AtomicBool = AtomicBool::new(false);
+static PANEL_COMPLETION: AtomicU64 = AtomicU64::new(0);
+static PANEL_LAST_OUTCOME: AtomicU8 = AtomicU8::new(OUTCOME_NONE);
+
+struct PanelLifecycleGuard {
+    finished: bool,
+}
+
+impl PanelLifecycleGuard {
+    fn begin() -> Self {
+        PANEL_LAST_OUTCOME.store(OUTCOME_NONE, Ordering::Release);
+        PANEL_VISIBLE.store(true, Ordering::Release);
+        Self { finished: false }
+    }
+
+    fn finish(mut self, outcome: PanelOutcome) {
+        record_panel_completion(outcome);
+        self.finished = true;
+    }
+}
+
+impl Drop for PanelLifecycleGuard {
+    fn drop(&mut self) {
+        if !self.finished {
+            record_panel_completion(PanelOutcome::Unavailable);
+        }
+    }
+}
+
+fn record_panel_completion(outcome: PanelOutcome) {
+    let encoded = match outcome {
+        PanelOutcome::Unavailable => OUTCOME_UNAVAILABLE,
+        PanelOutcome::Dismissed => OUTCOME_DISMISSED,
+        PanelOutcome::AllGranted => OUTCOME_ALL_GRANTED,
+        PanelOutcome::RefreshRequired => OUTCOME_REFRESH_REQUIRED,
+    };
+    PANEL_LAST_OUTCOME.store(encoded, Ordering::Release);
+    PANEL_VISIBLE.store(false, Ordering::Release);
+    PANEL_COMPLETION.fetch_add(1, Ordering::AcqRel);
+}
+
+/// Process-local lifecycle snapshot for the daemon's private permission
+/// control channel. This is intentionally separate from the MCP registry: a
+/// CLI can tell whether the already-running branded panel is still active (or
+/// was dismissed) without adding a public computer-use tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PanelLifecycle {
+    pub visible: bool,
+    pub completion: u64,
+    pub last_outcome: Option<PanelOutcome>,
+}
+
+pub fn lifecycle() -> PanelLifecycle {
+    let last_outcome = match PANEL_LAST_OUTCOME.load(Ordering::Acquire) {
+        OUTCOME_DISMISSED => Some(PanelOutcome::Dismissed),
+        OUTCOME_ALL_GRANTED => Some(PanelOutcome::AllGranted),
+        OUTCOME_REFRESH_REQUIRED => Some(PanelOutcome::RefreshRequired),
+        OUTCOME_UNAVAILABLE => Some(PanelOutcome::Unavailable),
+        _ => None,
+    };
+    PanelLifecycle {
+        visible: PANEL_VISIBLE.load(Ordering::Acquire),
+        completion: PANEL_COMPLETION.load(Ordering::Acquire),
+        last_outcome,
+    }
+}
+
+pub fn outcome_name(outcome: PanelOutcome) -> &'static str {
+    match outcome {
+        PanelOutcome::Unavailable => "unavailable",
+        PanelOutcome::Dismissed => "dismissed",
+        PanelOutcome::AllGranted => "all-granted",
+        PanelOutcome::RefreshRequired => "refresh-required",
+    }
 }
 
 /// Inputs for [`show_modal`].
@@ -137,7 +220,10 @@ pub fn panel_enabled() -> bool {
 /// should check [`panel_enabled`] first to avoid the panic.
 pub fn show_modal(opts: PanelOpts) -> PanelOutcome {
     let _mtm = MainThreadMarker::new().expect("show_modal must be called from the main thread");
-    unsafe { show_modal_unsafe(&opts) }
+    let lifecycle = PanelLifecycleGuard::begin();
+    let outcome = unsafe { show_modal_unsafe(&opts) };
+    lifecycle.finish(outcome);
+    outcome
 }
 
 /// Block the current (main) thread for `seconds` while letting the
@@ -1620,5 +1706,19 @@ mod tests {
             RowAction::Allow
         );
         assert!(!flow.note_system_ui_returned());
+    }
+
+    #[test]
+    fn panel_lifecycle_guard_records_unwind_as_unavailable() {
+        let _guard = env_lock();
+        let before = lifecycle().completion;
+        {
+            let _lifecycle = PanelLifecycleGuard::begin();
+            assert!(lifecycle().visible);
+        }
+        let after = lifecycle();
+        assert!(!after.visible);
+        assert_eq!(after.completion, before + 1);
+        assert_eq!(after.last_outcome, Some(PanelOutcome::Unavailable));
     }
 }

@@ -86,9 +86,8 @@ pub enum Command {
     CheckUpdate { json: bool, no_cache: bool },
     Doctor { json: bool },
     Diagnose,
-    /// `cua-driver permissions status|grant [--json]` — report TCC status
-    /// (with source attribution + a live capture probe) or raise the
-    /// correctly-attributed grant by launching CuaDriver via LaunchServices.
+    /// `cua-driver permissions status|grant [--json]`: report profile-bound
+    /// daemon TCC status or open correctly-attributed CuaDriver onboarding.
     Permissions { subcommand: String, json: bool },
     Config {
         /// `show` | `get` | `set` | `reset` (None → show)
@@ -197,9 +196,9 @@ pub fn parse_command() -> Command {
         println!("                                  Answers via a running daemon, so the result carries the CuaDriver");
         println!("                                  identity (com.trycua.driver). If no daemon is running it reports");
         println!("                                  `unknown` rather than your terminal's grants. Add --json for the payload.");
-        println!("  cua-driver permissions grant    Launch CuaDriver via LaunchServices so the permission dialog attributes");
-        println!("                                  to com.trycua.driver (not your terminal), wait for the grant, then");
-        println!("                                  confirm the driver's own status. This is the correct way to grant.");
+        println!("  cua-driver permissions grant    Open or reopen CuaDriver permission onboarding in a running daemon.");
+        println!("                                  Launches the app if needed, then refreshes every live profile so");
+        println!("                                  status reflects com.trycua.driver instead of your terminal.");
         println!();
         println!("Updating cua-driver:");
         println!("  cua-driver check-update         Ask GitHub whether a newer release is available. Read-only.");
@@ -256,7 +255,7 @@ pub fn parse_command() -> Command {
         println!("  for a visibly gliding demo. These flags tune the overlay on `serve`/`mcp`:");
         println!("  --no-overlay            Disable the cursor overlay entirely for this daemon.");
         println!("  --cursor-id <id>        Name the default cursor instance (default: 'default').");
-        println!("  --cursor-icon <path>    Use a custom PNG / JPEG / SVG / ICO cursor asset.");
+        println!("  --cursor-icon <path>    Use a custom PNG / SVG / ICO cursor asset.");
         println!("  --cursor-shape <name>   Built-in silhouette: {} ('teardrop' is the default —",
             cursor_overlay::BuiltinShape::names_help());
         println!("                          embedded cursor-up SVG; 'arrow' is the procedural gradient");
@@ -1910,196 +1909,345 @@ pub fn run_permissions_cmd(
     }
 }
 
-/// Report the CuaDriver daemon's TCC status — reliably, or not at all.
-///
-/// macOS attributes Accessibility / Screen-Recording to the *responsible
-/// process*, so the ONLY process that can read `com.trycua.driver`'s real
-/// grants is the daemon running as its own responsible process. When the
-/// daemon is up we query it and report its
-/// `driver-daemon`-attributed answer. When it is NOT up we deliberately
-/// report `unknown` rather than fall back to an in-process check — that
-/// fallback would report the *calling terminal's* grants and could print
-/// `✅ granted` while the driver itself has none. An honest "unknown" beats a
-/// confident lie. To grant + verify, use `cua-driver permissions grant`.
-/// Never raises a prompt.
-fn run_permissions_status(json: bool) {
-    let socket = crate::serve::default_socket_path();
+#[derive(Clone)]
+struct PermissionDaemonEndpoint {
+    profile: crate::serve::DaemonProfile,
+    label: &'static str,
+    socket: String,
+}
 
-    // Only a listening daemon can answer for com.trycua.driver. A failed/!ok
-    // response (e.g. daemon mid-re-exec during the gate's recheck window) is
-    // treated the same as "no daemon" → unknown.
-    let daemon_status: Option<serde_json::Value> = if crate::serve::is_daemon_listening(&socket) {
-        let req = crate::serve::DaemonRequest {
-            method: "call".into(),
-            name: Some("check_permissions".into()),
-            args: Some(serde_json::json!({ "prompt": false })),
-            session_id: None,
-        };
-        crate::serve::send_request(&socket, &req)
-            .ok()
-            .filter(|r| r.ok)
-            .and_then(|r| r.result)
-            .and_then(|res| res.get("structuredContent").cloned())
-            // Trust the booleans ONLY when the answering daemon is its own
-            // responsible process (`driver-daemon`). Otherwise those grants
-            // belong to the launching app, so we discard them and fall through
-            // to `unknown`. A missing `source` (non-macOS, no TCC) is trusted
-            // as-is.
-            .filter(|s| {
-                s.get("source")
-                    .and_then(|src| src.get("attribution"))
-                    .and_then(|v| v.as_str())
-                    .map(|a| a == "driver-daemon")
-                    .unwrap_or(true)
-            })
-    } else {
-        None
+#[derive(Clone)]
+struct PermissionDaemonState {
+    endpoint: PermissionDaemonEndpoint,
+    payload: serde_json::Value,
+}
+
+fn permission_daemon_endpoints() -> Vec<PermissionDaemonEndpoint> {
+    vec![
+        PermissionDaemonEndpoint {
+            profile: crate::serve::DaemonProfile::Native,
+            label: "Native daemon",
+            socket: crate::serve::default_socket_path(),
+        },
+        PermissionDaemonEndpoint {
+            profile: crate::serve::DaemonProfile::CodexComputerUseCompat,
+            label: "Codex Computer Use daemon",
+            socket: crate::serve::codex_compat_default_socket_path(),
+        },
+    ]
+}
+
+fn query_permission_daemon(
+    endpoint: &PermissionDaemonEndpoint,
+) -> anyhow::Result<Option<PermissionDaemonState>> {
+    if !crate::serve::is_daemon_listening(&endpoint.socket) {
+        return Ok(None);
+    }
+    let request = crate::serve::DaemonRequest {
+        method: "permissions_status".into(),
+        name: None,
+        args: None,
+        session_id: None,
     };
+    let response = match crate::serve::send_request(&endpoint.socket, &request) {
+        Ok(response) => response,
+        Err(_) => return Ok(None),
+    };
+    if !response.ok {
+        anyhow::bail!(
+            "{} rejected its permission status request: {}",
+            endpoint.label,
+            response.error.unwrap_or_else(|| "unknown daemon error".to_owned())
+        );
+    }
+    let payload = response
+        .result
+        .ok_or_else(|| anyhow::anyhow!("{} returned no permission status", endpoint.label))?;
+    let reported_profile = payload.get("profile").and_then(|value| value.as_str());
+    if reported_profile != Some(endpoint.profile.as_str()) {
+        anyhow::bail!(
+            "{} on {} reported profile {:?}, expected {}",
+            endpoint.label,
+            endpoint.socket,
+            reported_profile,
+            endpoint.profile
+        );
+    }
+    let attribution = payload
+        .get("source")
+        .and_then(|source| source.get("attribution"))
+        .and_then(|value| value.as_str());
+    if attribution != Some("driver-daemon") {
+        anyhow::bail!(
+            "{} did not return daemon-attributed permission state",
+            endpoint.label
+        );
+    }
+    Ok(Some(PermissionDaemonState {
+        endpoint: endpoint.clone(),
+        payload,
+    }))
+}
 
-    let Some(structured) = daemon_status else {
-        // No reliable answer. Emit NO accessibility/screen_recording booleans —
-        // nothing downstream can misread a false `granted: true`.
+fn discover_permission_daemons() -> anyhow::Result<Vec<PermissionDaemonState>> {
+    permission_daemon_endpoints()
+        .iter()
+        .map(query_permission_daemon)
+        .filter_map(|result| match result {
+            Ok(Some(state)) => Some(Ok(state)),
+            Ok(None) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect()
+}
+
+fn wait_for_permission_daemon(
+    endpoint: &PermissionDaemonEndpoint,
+    timeout: std::time::Duration,
+) -> anyhow::Result<PermissionDaemonState> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if let Some(state) = query_permission_daemon(endpoint)? {
+            return Ok(state);
+        }
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!("{} did not return during permission onboarding", endpoint.label);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+fn permission_bool(state: &PermissionDaemonState, key: &str) -> bool {
+    state
+        .payload
+        .get(key)
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+fn permission_instance(state: &PermissionDaemonState) -> Option<&str> {
+    state
+        .payload
+        .get("source")
+        .and_then(|source| source.get("instance"))
+        .and_then(|value| value.as_str())
+}
+
+fn permission_all_granted(state: &PermissionDaemonState) -> bool {
+    permission_bool(state, "accessibility") && permission_bool(state, "screen_recording")
+}
+
+/// Report permission state from every live daemon profile. A terminal process
+/// is never trusted to answer for the app bundle's TCC identity.
+fn run_permissions_status(json: bool) {
+    let states = match discover_permission_daemons() {
+        Ok(states) => states,
+        Err(error) => {
+            if json {
+                let payload = serde_json::json!({
+                    "daemon_running": true,
+                    "status": "unknown",
+                    "profiles": {},
+                    "reason": error.to_string(),
+                });
+                println!("{}", serde_json::to_string_pretty(&payload).unwrap());
+            } else {
+                eprintln!("Could not read daemon permission state: {error}");
+            }
+            return;
+        }
+    };
+    if states.is_empty() {
         if json {
             let payload = serde_json::json!({
                 "daemon_running": false,
                 "status": "unknown",
-                "reason": "no CuaDriver daemon is running under the driver's own identity \
-                           (com.trycua.driver), so its real TCC status can't be read from this \
-                           process. Run `cua-driver permissions grant` to grant + verify.",
+                "profiles": {},
+                "reason": "no CuaDriver daemon profile is available under the app bundle's own TCC identity",
             });
+            println!("{}", serde_json::to_string_pretty(&payload).unwrap());
+        } else {
+            println!("Accessibility:    ❓ unknown");
+            println!("Screen Recording: ❓ unknown");
             println!(
-                "{}",
-                serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string())
+                "No native or Codex Computer Use daemon is available to report its own TCC state."
             );
-            return;
+            println!("  Run `cua-driver permissions grant` to launch onboarding.");
         }
-        println!("Accessibility:    ❓ unknown");
-        println!("Screen Recording: ❓ unknown");
-        println!(
-            "No CuaDriver daemon is running under the driver's own identity (com.trycua.driver), \
-             so its real TCC status can't be read."
-        );
-        println!(
-            "(A status check from this terminal would report the terminal's grants, not the \
-             driver's.)"
-        );
-        println!("  → Run `cua-driver permissions grant` to grant + verify, or start the daemon");
-        println!("    (`open -n -g -a CuaDriver --args serve`) and re-run this command.");
         return;
-    };
+    }
 
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&structured).unwrap_or_else(|_| structured.to_string())
-        );
+        let profiles = states.iter().fold(serde_json::Map::new(), |mut map, state| {
+            map.insert(state.endpoint.profile.as_str().to_owned(), state.payload.clone());
+            map
+        });
+        let payload = serde_json::json!({
+            "daemon_running": true,
+            "status": "known",
+            "accessibility": states
+                .iter()
+                .all(|state| permission_bool(state, "accessibility")),
+            "screen_recording": states
+                .iter()
+                .all(|state| permission_bool(state, "screen_recording")),
+            "all_live_profiles_granted": states.iter().all(permission_all_granted),
+            "source": { "attribution": "driver-daemon" },
+            "profiles": profiles,
+        });
+        println!("{}", serde_json::to_string_pretty(&payload).unwrap());
         return;
     }
 
-    let b = |k: &str| structured.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
-    let ax = b("accessibility");
-    let sr = b("screen_recording");
-    let cap = b("screen_recording_capturable");
-    let attribution = structured
-        .get("source")
-        .and_then(|s| s.get("attribution"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("driver-daemon");
-
-    println!("Accessibility:    {}", if ax { "✅ granted" } else { "❌ not granted" });
-    println!("Screen Recording: {}", if sr { "✅ granted" } else { "❌ not granted" });
-    if sr && !cap {
+    for (index, state) in states.iter().enumerate() {
+        if index > 0 {
+            println!();
+        }
+        println!("{} ({})", state.endpoint.label, state.endpoint.profile);
         println!(
-            "  ⚠️  preflight reports granted, but a live capture probe failed — the grant \
-             likely belongs to another process, not this one."
+            "  Accessibility:    {}",
+            if permission_bool(state, "accessibility") {
+                "✅ granted"
+            } else {
+                "❌ not granted"
+            }
         );
+        println!(
+            "  Screen Recording: {}",
+            if permission_bool(state, "screen_recording") {
+                "✅ granted"
+            } else {
+                "❌ not granted"
+            }
+        );
+        println!("  Source: driver-daemon");
     }
-    println!("Source: {attribution}");
-    if !(ax && sr) {
-        println!("  → To grant for the driver, run: cua-driver permissions grant");
+    if states.iter().any(|state| !permission_all_granted(state)) {
+        println!("\n  Run `cua-driver permissions grant` to continue onboarding.");
     }
 }
 
-/// Launch CuaDriver via LaunchServices so the permission prompt attributes to
-/// com.trycua.driver, wait (user-paced) for the daemon to come up — its socket
-/// only appears once the permissions gate passes, i.e. the grant was given —
-/// then report the driver's own status.
+#[cfg(target_os = "macos")]
+fn send_permission_control(
+    endpoint: &PermissionDaemonEndpoint,
+    method: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let request = crate::serve::DaemonRequest {
+        method: method.to_owned(),
+        name: None,
+        args: None,
+        session_id: None,
+    };
+    let response = crate::serve::send_request(&endpoint.socket, &request)?;
+    if !response.ok {
+        anyhow::bail!(
+            "{} rejected {method}: {}",
+            endpoint.label,
+            response.error.unwrap_or_else(|| "unknown daemon error".to_owned())
+        );
+    }
+    let payload = response.result.unwrap_or_else(|| serde_json::json!({}));
+    if payload.get("profile").and_then(|value| value.as_str()) != Some(endpoint.profile.as_str()) {
+        anyhow::bail!("{} returned the wrong daemon profile for {method}", endpoint.label);
+    }
+    Ok(payload)
+}
+
+#[cfg(target_os = "macos")]
+fn permission_onboarding_dismissed(
+    state: &PermissionDaemonState,
+    instance_changed: bool,
+    panel_completion_baseline: u64,
+) -> bool {
+    let recovery = state
+        .payload
+        .get("recovery")
+        .and_then(|value| value.get("state"))
+        .and_then(|value| value.as_str());
+    let panel_visible = state
+        .payload
+        .get("panel")
+        .and_then(|value| value.get("visible"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let panel_outcome = state
+        .payload
+        .get("panel")
+        .and_then(|value| value.get("last_outcome"))
+        .and_then(|value| value.as_str());
+    let panel_completion = state
+        .payload
+        .get("panel")
+        .and_then(|value| value.get("completion"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+
+    (!panel_visible && recovery == Some("dismissed"))
+        || (!instance_changed
+            && panel_completion > panel_completion_baseline
+            && !panel_visible
+            && panel_outcome == Some("dismissed"))
+        || (instance_changed
+            && panel_completion > 0
+            && !panel_visible
+            && panel_outcome == Some("dismissed"))
+}
+
+#[cfg(target_os = "macos")]
+fn wait_for_fresh_permission_state(
+    endpoint: &PermissionDaemonEndpoint,
+    previous_instance: &str,
+    watch_dismissal: bool,
+    panel_completion_baseline: u64,
+) -> anyhow::Result<PermissionDaemonState> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+    loop {
+        if let Some(state) = query_permission_daemon(endpoint)? {
+            let instance_changed = permission_instance(&state)
+                .map(|instance| instance != previous_instance)
+                .unwrap_or(false);
+            if instance_changed && permission_all_granted(&state) {
+                return Ok(state);
+            }
+            if watch_dismissal {
+                if permission_onboarding_dismissed(
+                    &state,
+                    instance_changed,
+                    panel_completion_baseline,
+                ) {
+                    anyhow::bail!(
+                        "permission onboarding was closed before both grants were enabled"
+                    );
+                }
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for {} to verify both grants", endpoint.label);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn refresh_permission_daemon(
+    state: &PermissionDaemonState,
+) -> anyhow::Result<PermissionDaemonState> {
+    let instance = permission_instance(state)
+        .ok_or_else(|| anyhow::anyhow!("{} returned no process instance", state.endpoint.label))?
+        .to_owned();
+    send_permission_control(&state.endpoint, "permissions_refresh")?;
+    wait_for_fresh_permission_state(&state.endpoint, &instance, false, 0)
+}
+
+/// Reopen onboarding inside a live daemon, then refresh every daemon profile
+/// so each one observes TCC state from a fresh process image. The private
+/// control methods do not alter either profile's MCP tool roster.
 fn run_permissions_grant() {
     #[cfg(target_os = "macos")]
     {
-        let socket = crate::serve::default_socket_path();
-        if crate::serve::is_daemon_listening(&socket) {
-            println!("CuaDriver daemon already running — checking its permissions…");
-        } else {
-            println!("Launching CuaDriver to request permissions.");
-            println!(
-                "A dialog titled \u{201c}Cua Driver\u{201d} will appear — approve Accessibility \
-                 and Screen Recording in System Settings, then this command continues."
-            );
-            // Permissions-grant launch never needs the compat screenshot surface.
-            if let Err(e) = launch_daemon_and_wait(&socket, 180, false, false) {
-                eprintln!("\nDidn't detect the CuaDriver daemon: {e}");
-                eprintln!(
-                    "If you haven't yet, grant Accessibility + Screen Recording to CuaDriver \
-                     in System Settings, then re-run `cua-driver permissions grant`."
-                );
-                process::exit(1);
-            }
-        }
-        // Since #1761 the daemon binds its socket IMMEDIATELY — before the
-        // permissions gate completes — so the first `check_permissions`
-        // query returns "pending" while the grant is still missing. Poll
-        // the daemon until both grants flip true (success) or we time out.
-        //
-        // The gate re-execs the daemon (~every 25s) to pick up an
-        // Accessibility grant — `AXIsProcessTrusted` is cached per process
-        // and only a fresh process image sees a later grant. During each
-        // restart the socket briefly disappears, so tolerate transient
-        // connection failures rather than bailing on the first one.
-        let req = crate::serve::DaemonRequest {
-            method: "call".into(),
-            name: Some("check_permissions".into()),
-            args: Some(serde_json::json!({ "prompt": false })),
-            session_id: None,
-        };
-        let poll_deadline =
-            std::time::Instant::now() + std::time::Duration::from_secs(180);
-        let mut ax = false;
-        let mut sr = false;
-        loop {
-            if let Some(structured) = crate::serve::send_request(&socket, &req)
-                .ok()
-                .filter(|r| r.ok)
-                .and_then(|r| r.result)
-                .and_then(|res| res.get("structuredContent").cloned())
-            {
-                ax = structured.get("accessibility").and_then(|v| v.as_bool()).unwrap_or(false);
-                sr = structured.get("screen_recording").and_then(|v| v.as_bool()).unwrap_or(false);
-                if ax && sr {
-                    break;
-                }
-            }
-            // `send_request` failing (None / !ok) means the daemon is
-            // mid-restart (re-exec) or briefly down — keep polling.
-            if std::time::Instant::now() >= poll_deadline {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_secs(2));
-        }
-        if ax && sr {
-            println!("\n✅ CuaDriver has Accessibility + Screen Recording. You're set.");
-        } else {
-            let missing = match (ax, sr) {
-                (false, false) => "Accessibility + Screen Recording",
-                (false, true) => "Accessibility",
-                (true, false) => "Screen Recording",
-                (true, true) => unreachable!(),
-            };
-            println!("\n⚠️  Timed out waiting on: {missing}.");
-            println!(
-                "Approve CuaDriver for \u{201c}Cua Driver\u{201d} in System Settings \u{2192} \
-                 Privacy & Security, then re-run `cua-driver permissions grant`."
-            );
+        if let Err(error) = run_permissions_grant_macos() {
+            eprintln!("Permission onboarding failed: {error}");
+            process::exit(1);
         }
     }
     #[cfg(not(target_os = "macos"))]
@@ -2107,6 +2255,104 @@ fn run_permissions_grant() {
         eprintln!("`cua-driver permissions grant` is macOS-only.");
         process::exit(1);
     }
+}
+
+#[cfg(target_os = "macos")]
+fn run_permissions_grant_macos() -> anyhow::Result<()> {
+    let mut live = discover_permission_daemons()?;
+    if live.is_empty() {
+        let native = permission_daemon_endpoints()
+            .into_iter()
+            .find(|endpoint| endpoint.profile == crate::serve::DaemonProfile::Native)
+            .expect("native permission endpoint");
+        println!("Launching CuaDriver permission onboarding.");
+        launch_daemon_and_wait(&native.socket, 10, false, false)?;
+        let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Some(state) = query_permission_daemon(&native)? {
+                live.push(state);
+                break;
+            }
+            if std::time::Instant::now() >= ready_deadline {
+                anyhow::bail!("native daemon started but did not return permission state");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    } else {
+        println!("Using the running CuaDriver daemon to open permission onboarding.");
+    }
+
+    if live.iter().any(permission_all_granted) {
+        for state in live.iter().filter(|state| !permission_all_granted(state)) {
+            refresh_permission_daemon(state)?;
+        }
+        println!("CuaDriver has Accessibility and Screen Recording for every live profile.");
+        return Ok(());
+    }
+
+    let presenter = live
+        .iter()
+        .find(|state| state.endpoint.profile == crate::serve::DaemonProfile::Native)
+        .or_else(|| live.first())
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("no daemon profile is available for onboarding"))?;
+    let original_instance = permission_instance(&presenter)
+        .ok_or_else(|| anyhow::anyhow!("{} returned no process instance", presenter.endpoint.label))?
+        .to_owned();
+    let panel_completion_baseline = presenter
+        .payload
+        .get("panel")
+        .and_then(|value| value.get("completion"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+
+    let present_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match send_permission_control(&presenter.endpoint, "permissions_present") {
+            Ok(_) => break,
+            Err(error) if std::time::Instant::now() < present_deadline => {
+                let panel_is_visible = query_permission_daemon(&presenter.endpoint)?
+                    .and_then(|state| {
+                        state.payload.get("panel")?.get("visible")?.as_bool()
+                    })
+                    .unwrap_or(false);
+                if panel_is_visible {
+                    break;
+                }
+                let _ = error;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    println!("Complete Accessibility and Screen Recording in the CuaDriver panel.");
+    let presenter_fresh = wait_for_fresh_permission_state(
+        &presenter.endpoint,
+        &original_instance,
+        true,
+        panel_completion_baseline,
+    )?;
+
+    let mut refresh_endpoints: Vec<PermissionDaemonEndpoint> =
+        live.iter().map(|state| state.endpoint.clone()).collect();
+    for state in discover_permission_daemons()? {
+        if !refresh_endpoints
+            .iter()
+            .any(|endpoint| endpoint.socket == state.endpoint.socket)
+        {
+            refresh_endpoints.push(state.endpoint);
+        }
+    }
+    for endpoint in refresh_endpoints {
+        if endpoint.socket == presenter_fresh.endpoint.socket {
+            continue;
+        }
+        let state = wait_for_permission_daemon(&endpoint, std::time::Duration::from_secs(10))?;
+        refresh_permission_daemon(&state)?;
+    }
+
+    println!("CuaDriver has Accessibility and Screen Recording for every live profile.");
+    Ok(())
 }
 
 /// `cua-driver check-update [--json] [--no-cache]` — pure check, never installs.
@@ -3169,6 +3415,50 @@ mod tests {
             codex_mcp_add_command("/opt/cua-driver", true),
             "codex mcp add cua-computer-use -- /opt/cua-driver mcp --codex-computer-use-compat"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    fn permission_state_with_panel(
+        completion: u64,
+        visible: bool,
+        outcome: Option<&str>,
+        recovery: &str,
+    ) -> PermissionDaemonState {
+        PermissionDaemonState {
+            endpoint: permission_daemon_endpoints().remove(0),
+            payload: serde_json::json!({
+                "panel": {
+                    "completion": completion,
+                    "visible": visible,
+                    "last_outcome": outcome,
+                },
+                "recovery": { "state": recovery },
+            }),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn permission_recovery_ignores_stale_dismissal_until_panel_completes_again() {
+        let stale = permission_state_with_panel(4, false, Some("dismissed"), "queued");
+        assert!(!permission_onboarding_dismissed(&stale, false, 4));
+
+        let reopened = permission_state_with_panel(4, true, None, "dismissed");
+        assert!(!permission_onboarding_dismissed(&reopened, false, 4));
+
+        let completed = permission_state_with_panel(5, false, Some("dismissed"), "dismissed");
+        assert!(permission_onboarding_dismissed(&completed, false, 4));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn permission_recovery_detects_dismissal_after_process_refresh() {
+        let fresh_process =
+            permission_state_with_panel(1, false, Some("dismissed"), "idle");
+        assert!(permission_onboarding_dismissed(&fresh_process, true, 9));
+
+        let still_visible = permission_state_with_panel(0, true, None, "idle");
+        assert!(!permission_onboarding_dismissed(&still_visible, true, 9));
     }
 
     #[test]

@@ -7,6 +7,9 @@
 //!   {"method":"list"}
 //!   {"method":"describe","name":"<tool>"}
 //!   {"method":"shutdown"}
+//!   {"method":"permissions_status"}       (private macOS operator control)
+//!   {"method":"permissions_present"}      (private macOS operator control)
+//!   {"method":"permissions_refresh"}      (private macOS operator control)
 //!
 //! Response shapes:
 //!   {"ok":true,"result":...}
@@ -519,6 +522,67 @@ impl DaemonResponse {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn daemon_instance_id() -> &'static str {
+    static INSTANCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    INSTANCE.get_or_init(|| {
+        let started = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        format!("{}-{started}", std::process::id())
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn daemon_permission_attribution() -> &'static str {
+    let inside_bundle = std::env::current_exe()
+        .ok()
+        .and_then(|path| std::fs::canonicalize(path).ok())
+        .map(|path| {
+            path.to_string_lossy()
+                .contains("/CuaDriver.app/Contents/MacOS/")
+        })
+        .unwrap_or(false);
+    let launched_by_launchd = unsafe { libc::getppid() } == 1;
+    let disclaimed =
+        std::env::var_os(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV).is_some();
+    if inside_bundle && (launched_by_launchd || disclaimed) {
+        "driver-daemon"
+    } else {
+        "caller"
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn daemon_permission_status(profile: DaemonProfile) -> serde_json::Value {
+    let status = platform_macos::permissions::current_status();
+    let panel = platform_macos::permissions::panel::lifecycle();
+    let recovery = platform_macos::permissions::gate::recovery_lifecycle();
+    serde_json::json!({
+        "accessibility": status.accessibility,
+        "screen_recording": status.screen_recording,
+        "all_granted": status.all_granted(),
+        "profile": profile,
+        "panel": {
+            "visible": panel.visible,
+            "completion": panel.completion,
+            "last_outcome": panel.last_outcome.map(
+                platform_macos::permissions::panel::outcome_name
+            ),
+        },
+        "recovery": {
+            "generation": recovery.generation,
+            "state": recovery.state,
+        },
+        "source": {
+            "attribution": daemon_permission_attribution(),
+            "pid": std::process::id(),
+            "instance": daemon_instance_id(),
+        },
+    })
+}
+
 // ── Client ────────────────────────────────────────────────────────────────────
 
 /// Probe whether a daemon is listening on `socket_path`.
@@ -803,6 +867,94 @@ pub async fn run_serve(
                                     let _ = tx.send(());
                                 }
                                 return;
+                            }
+                            "permissions_status" => {
+                                #[cfg(target_os = "macos")]
+                                let resp = DaemonResponse::ok(daemon_permission_status(profile));
+                                #[cfg(not(target_os = "macos"))]
+                                let resp = DaemonResponse::err(
+                                    "permissions_status is available only on macOS",
+                                    64,
+                                );
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "permissions_present" => {
+                                #[cfg(target_os = "macos")]
+                                {
+                                    let prepared =
+                                        platform_macos::permissions::gate::prepare_interactive_recovery();
+                                    match prepared {
+                                        Ok(request) => {
+                                            let resp = DaemonResponse::ok(serde_json::json!({
+                                                "presentation": request.state(),
+                                                "generation": request.generation(),
+                                                "profile": profile,
+                                            }));
+                                            let _ = writer.write_all(
+                                                (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                            ).await;
+                                            let _ = writer.flush().await;
+                                            platform_macos::permissions::gate::dispatch_prepared_interactive_recovery(
+                                                request,
+                                            );
+                                        }
+                                        Err(error) => {
+                                            let resp = DaemonResponse::err(error.to_string(), 1);
+                                            let _ = writer.write_all(
+                                                (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                            ).await;
+                                        }
+                                    }
+                                }
+                                #[cfg(not(target_os = "macos"))]
+                                {
+                                    let resp = DaemonResponse::err(
+                                        "permissions_present is available only on macOS",
+                                        64,
+                                    );
+                                    let _ = writer.write_all(
+                                        (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                    ).await;
+                                }
+                            }
+                            "permissions_refresh" => {
+                                #[cfg(target_os = "macos")]
+                                {
+                                    let available =
+                                        platform_macos::permissions::gate::ensure_process_refresh_available();
+                                    match available {
+                                        Ok(()) => {
+                                            let resp = DaemonResponse::ok(serde_json::json!({
+                                                "refresh": "scheduled",
+                                                "profile": profile,
+                                                "pid": std::process::id(),
+                                            }));
+                                            let _ = writer.write_all(
+                                                (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                            ).await;
+                                            let _ = writer.flush().await;
+                                            platform_macos::permissions::gate::dispatch_process_refresh();
+                                        }
+                                        Err(error) => {
+                                            let resp = DaemonResponse::err(error.to_string(), 1);
+                                            let _ = writer.write_all(
+                                                (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                            ).await;
+                                        }
+                                    }
+                                }
+                                #[cfg(not(target_os = "macos"))]
+                                {
+                                    let resp = DaemonResponse::err(
+                                        "permissions_refresh is available only on macOS",
+                                        64,
+                                    );
+                                    let _ = writer.write_all(
+                                        (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                    ).await;
+                                }
                             }
                             "list" => {
                                 // Include full ToolDef (input_schema + annotation
@@ -1880,6 +2032,28 @@ mod gate_tests {
                 .mode()
                 & 0o777;
             assert_eq!(mode, 0o600, "{} must be private", path.display());
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let status_request = DaemonRequest {
+                method: "permissions_status".into(),
+                name: None,
+                args: None,
+                session_id: None,
+            };
+            let socket_for_status = socket.to_string_lossy().into_owned();
+            let response = tokio::task::spawn_blocking(move || {
+                send_request(&socket_for_status, &status_request)
+            })
+            .await
+            .expect("permission status task")
+            .expect("permission status response");
+            assert!(response.ok);
+            let status = response.result.expect("permission status payload");
+            assert_eq!(status["profile"], "native");
+            assert_eq!(status["source"]["attribution"], "caller");
+            assert!(status["source"]["instance"].as_str().is_some());
         }
 
         let shutdown = DaemonRequest {

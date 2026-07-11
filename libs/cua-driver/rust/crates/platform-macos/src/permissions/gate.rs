@@ -24,7 +24,11 @@
 //! Embedded mode bypasses both surfaces because the host application owns
 //! permission attribution and onboarding.
 
+#[cfg(target_os = "macos")]
+use std::ffi::c_void;
 use std::io::Write;
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -32,6 +36,253 @@ use anyhow::Result;
 use crate::permissions::status::{
     current_status, request_accessibility, request_screen_recording, PermissionsStatus,
 };
+
+#[cfg(target_os = "macos")]
+const RECOVERY_IDLE: u8 = 0;
+#[cfg(target_os = "macos")]
+const RECOVERY_QUEUED: u8 = 1;
+#[cfg(target_os = "macos")]
+const RECOVERY_PRESENTING: u8 = 2;
+#[cfg(target_os = "macos")]
+const RECOVERY_DISMISSED: u8 = 3;
+#[cfg(target_os = "macos")]
+const RECOVERY_REFRESHING: u8 = 4;
+#[cfg(target_os = "macos")]
+const RECOVERY_FAILED: u8 = 5;
+#[cfg(target_os = "macos")]
+const RECOVERY_RESERVING: u8 = 6;
+
+#[cfg(target_os = "macos")]
+static RECOVERY_STATE: AtomicU8 = AtomicU8::new(RECOVERY_IDLE);
+#[cfg(target_os = "macos")]
+static RECOVERY_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Private daemon-control lifecycle for an explicit `permissions grant`
+/// recovery request. It is process-local and never appears in the MCP tool
+/// catalog.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecoveryLifecycle {
+    pub generation: u64,
+    pub state: &'static str,
+}
+
+#[cfg(target_os = "macos")]
+pub fn recovery_lifecycle() -> RecoveryLifecycle {
+    let state = match RECOVERY_STATE.load(Ordering::Acquire) {
+        RECOVERY_QUEUED => "queued",
+        RECOVERY_PRESENTING => "presenting",
+        RECOVERY_DISMISSED => "dismissed",
+        RECOVERY_REFRESHING => "refreshing",
+        RECOVERY_FAILED => "failed",
+        RECOVERY_RESERVING => "reserving",
+        _ => "idle",
+    };
+    RecoveryLifecycle {
+        generation: RECOVERY_GENERATION.load(Ordering::Acquire),
+        state,
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryRequest {
+    Scheduled(u64),
+    AlreadyPending(u64),
+    ExistingPanel,
+}
+
+#[cfg(target_os = "macos")]
+impl RecoveryRequest {
+    pub fn state(self) -> &'static str {
+        match self {
+            Self::Scheduled(_) => "scheduled",
+            Self::AlreadyPending(_) => "already-pending",
+            Self::ExistingPanel => "already-visible",
+        }
+    }
+
+    pub fn generation(self) -> u64 {
+        match self {
+            Self::Scheduled(generation) | Self::AlreadyPending(generation) => generation,
+            Self::ExistingPanel => RECOVERY_GENERATION.load(Ordering::Acquire),
+        }
+    }
+
+    pub fn needs_dispatch(self) -> bool {
+        matches!(self, Self::Scheduled(_))
+    }
+}
+
+#[cfg(target_os = "macos")]
+enum PermissionMainCommand {
+    PresentRecovery,
+    RefreshProcess,
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "dispatch", kind = "dylib")]
+extern "C" {
+    static _dispatch_main_q: u8;
+    fn dispatch_async_f(
+        queue: *const c_void,
+        context: *mut c_void,
+        work: unsafe extern "C" fn(*mut c_void),
+    );
+}
+
+#[cfg(target_os = "macos")]
+fn dispatch_permission_command(command: PermissionMainCommand) {
+    let command = Box::new(command);
+    unsafe {
+        let main_queue = &raw const _dispatch_main_q as *const c_void;
+        dispatch_async_f(
+            main_queue,
+            Box::into_raw(command) as *mut c_void,
+            permission_main_callback,
+        );
+    }
+}
+
+/// Ask the already-running daemon to show its branded permission panel again.
+/// The request only queues main-thread AppKit work and returns immediately, so
+/// the daemon socket and active MCP control connections stay alive while the
+/// user makes a decision.
+#[cfg(target_os = "macos")]
+pub fn prepare_interactive_recovery() -> Result<RecoveryRequest> {
+    let panel = crate::permissions::panel::lifecycle();
+    if panel.visible {
+        return Ok(RecoveryRequest::ExistingPanel);
+    }
+    if !crate::session::has_graphic_access() {
+        anyhow::bail!("permission onboarding requires an active macOS graphic session");
+    }
+    if !crate::pip::appkit_main_loop_available() {
+        anyhow::bail!(
+            "permission onboarding is not ready because the daemon's AppKit main loop is not available"
+        );
+    }
+
+    Ok(reserve_recovery_request())
+}
+
+#[cfg(target_os = "macos")]
+fn reserve_recovery_request() -> RecoveryRequest {
+    loop {
+        let current = RECOVERY_STATE.load(Ordering::Acquire);
+        if current == RECOVERY_RESERVING {
+            std::hint::spin_loop();
+            continue;
+        }
+        if matches!(
+            current,
+            RECOVERY_QUEUED | RECOVERY_PRESENTING | RECOVERY_REFRESHING
+        ) {
+            return RecoveryRequest::AlreadyPending(
+                RECOVERY_GENERATION.load(Ordering::Acquire),
+            );
+        }
+        if RECOVERY_STATE
+            .compare_exchange(
+                current,
+                RECOVERY_RESERVING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
+            break;
+        }
+    }
+
+    let generation = RECOVERY_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+    RECOVERY_STATE.store(RECOVERY_QUEUED, Ordering::Release);
+    RecoveryRequest::Scheduled(generation)
+}
+
+#[cfg(target_os = "macos")]
+pub fn dispatch_prepared_interactive_recovery(request: RecoveryRequest) {
+    if request.needs_dispatch() {
+        dispatch_permission_command(PermissionMainCommand::PresentRecovery);
+    }
+}
+
+/// Queue a fresh process image after the caller has flushed its daemon-control
+/// acknowledgement. The replacement retains the original argv and bundle
+/// identity, while proxy control connections reconnect to the same profile.
+#[cfg(target_os = "macos")]
+pub fn ensure_process_refresh_available() -> Result<()> {
+    if !crate::session::has_graphic_access() {
+        anyhow::bail!("permission refresh requires an active macOS graphic session");
+    }
+    if !crate::pip::appkit_main_loop_available() && !crate::permissions::panel::lifecycle().visible
+    {
+        anyhow::bail!(
+            "permission refresh is not ready because the daemon's AppKit main loop is not available"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub fn dispatch_process_refresh() {
+    dispatch_permission_command(PermissionMainCommand::RefreshProcess);
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn permission_main_callback(context: *mut c_void) {
+    let command = unsafe { *Box::from_raw(context as *mut PermissionMainCommand) };
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match command {
+        PermissionMainCommand::PresentRecovery => run_interactive_recovery_on_main(),
+        PermissionMainCommand::RefreshProcess => {
+            reexec_self(ReexecMode::SilentWait);
+        }
+    }));
+    if result.is_err() {
+        RECOVERY_STATE.store(RECOVERY_FAILED, Ordering::Release);
+        eprintln!("[cua-driver] permission control panicked on the AppKit main thread");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn run_interactive_recovery_on_main() {
+    RECOVERY_STATE.store(RECOVERY_PRESENTING, Ordering::Release);
+    let lifecycle = crate::permissions::panel::lifecycle();
+    if lifecycle.visible {
+        RECOVERY_STATE.store(RECOVERY_IDLE, Ordering::Release);
+        return;
+    }
+
+    let initial = current_status();
+    if initial.all_granted() {
+        RECOVERY_STATE.store(RECOVERY_REFRESHING, Ordering::Release);
+        reexec_self(ReexecMode::InteractivePanel);
+        RECOVERY_STATE.store(RECOVERY_FAILED, Ordering::Release);
+        return;
+    }
+
+    let outcome = if crate::permissions::panel::panel_enabled() {
+        crate::permissions::panel::show_modal(crate::permissions::panel::PanelOpts {
+            initial_status: initial,
+        })
+    } else {
+        crate::permissions::panel::PanelOutcome::Unavailable
+    };
+    match outcome {
+        crate::permissions::panel::PanelOutcome::AllGranted
+        | crate::permissions::panel::PanelOutcome::RefreshRequired => {
+            RECOVERY_STATE.store(RECOVERY_REFRESHING, Ordering::Release);
+            reexec_self(ReexecMode::InteractivePanel);
+            RECOVERY_STATE.store(RECOVERY_FAILED, Ordering::Release);
+        }
+        crate::permissions::panel::PanelOutcome::Dismissed => {
+            RECOVERY_STATE.store(RECOVERY_DISMISSED, Ordering::Release);
+        }
+        crate::permissions::panel::PanelOutcome::Unavailable => {
+            RECOVERY_STATE.store(RECOVERY_FAILED, Ordering::Release);
+        }
+    }
+}
 
 /// Which TCC grant is missing.  Each variant maps 1:1 to a System Settings
 /// pane URL via [`MissingPermission::settings_url`].
@@ -785,5 +1036,40 @@ mod tests {
         assert_eq!(std::env::var(GATE_REEXEC_ENV).as_deref(), Ok("1"));
         std::env::remove_var(GATE_REEXEC_ENV);
         std::env::remove_var(GATE_START_ENV);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn concurrent_recovery_requests_share_the_published_generation() {
+        let _guard = env_lock();
+        RECOVERY_STATE.store(RECOVERY_IDLE, Ordering::Release);
+        RECOVERY_GENERATION.store(0, Ordering::Release);
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    reserve_recovery_request()
+                })
+            })
+            .collect();
+        let requests: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("recovery reservation thread"))
+            .collect();
+
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| matches!(request, RecoveryRequest::Scheduled(1)))
+                .count(),
+            1
+        );
+        assert!(requests.iter().all(|request| request.generation() == 1));
+
+        RECOVERY_STATE.store(RECOVERY_IDLE, Ordering::Release);
+        RECOVERY_GENERATION.store(0, Ordering::Release);
     }
 }

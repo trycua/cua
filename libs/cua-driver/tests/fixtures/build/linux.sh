@@ -11,6 +11,7 @@
 # Usage:
 #   ./linux.sh
 #   ./linux.sh --skip gtk3       # skip one target (gtk3|electron|tauri)
+#   ./linux.sh --only electron,gtk3
 #   ./linux.sh --clean
 set -euo pipefail
 
@@ -20,6 +21,7 @@ TEST_APPS_DIR="$(cd "$HARNESS_DIR/../../rust/test-apps" && pwd)"
 STAGE="$TEST_APPS_DIR/harness-gtk3"
 SRC="$HARNESS_DIR/apps/linux/gtk3"
 SKIP="none"
+ONLY=",gtk3,electron,tauri,"
 CLEAN=0
 
 while [[ $# -gt 0 ]]; do
@@ -32,8 +34,12 @@ while [[ $# -gt 0 ]]; do
             CLEAN=1
             shift
             ;;
+        --only)
+            ONLY=",${2:-},"
+            shift 2
+            ;;
         *)
-            echo "Usage: $0 [--skip gtk3|electron|tauri] [--clean]" >&2
+            echo "Usage: $0 [--skip gtk3|electron|tauri] [--only comma-separated-targets] [--clean]" >&2
             exit 2
             ;;
     esac
@@ -43,7 +49,7 @@ if [[ "$CLEAN" == "1" ]]; then
     rm -rf "$TEST_APPS_DIR/harness-gtk3" "$TEST_APPS_DIR/harness-electron" "$TEST_APPS_DIR/harness-tauri"
 fi
 
-if [[ "$SKIP" != "gtk3" ]]; then
+if [[ "$SKIP" != "gtk3" && "$ONLY" == *",gtk3,"* ]]; then
     rm -rf "$STAGE"
     mkdir -p "$STAGE"
     cp "$SRC/main.py" "$STAGE/main.py"
@@ -66,10 +72,10 @@ LAUNCHER
     fi
 fi
 
-if [[ "$SKIP" != "electron" ]]; then
+if [[ "$SKIP" != "electron" && "$ONLY" == *",electron,"* ]]; then
     "$HARNESS_DIR/apps/cross-platform/electron/build.sh"
 fi
 
-if [[ "$SKIP" != "tauri" ]]; then
+if [[ "$SKIP" != "tauri" && "$ONLY" == *",tauri,"* ]]; then
     "$HARNESS_DIR/apps/cross-platform/tauri/build.sh"
 fi

@@ -51,7 +51,14 @@ $env:CUA_TEST_DRIVER_STDERR = "1"
 if (-not $NoBuild) {
     & cargo build --release -p cua-driver --manifest-path (Join-Path $rustRoot "Cargo.toml")
     if ($LASTEXITCODE -ne 0) { throw "Rust driver build failed" }
-    & (Join-Path $scriptDir "build-harnesses.ps1")
+    $fixtureTargets = switch ($Suite) {
+        "shared" { @("electron", "tauri") }
+        "native" { @("wpf", "winui3", "webview", "electron") }
+        "capture" { @("wpf", "electron") }
+        "guard" { @("electron") }
+        default { @("wpf", "winui3", "webview", "electron", "tauri") }
+    }
+    & (Join-Path $scriptDir "build-harnesses.ps1") -Targets $fixtureTargets
 }
 
 if ($Suite -in @("guard", "all")) {

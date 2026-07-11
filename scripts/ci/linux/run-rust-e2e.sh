@@ -63,7 +63,12 @@ command -v ffprobe >/dev/null || { echo "ffprobe is required for E2E trajectory 
 
 if [[ "${BUILD_FIXTURES}" == 1 ]]; then
   cargo build --release -p cua-driver --manifest-path "${RUST_ROOT}/Cargo.toml"
-  bash "${DRIVER_ROOT}/tests/fixtures/build/linux.sh"
+  case "${SUITE}" in
+    shared) FIXTURE_TARGETS="electron,tauri" ;;
+    native|scope) FIXTURE_TARGETS="electron,gtk3" ;;
+    *) FIXTURE_TARGETS="electron,tauri,gtk3" ;;
+  esac
+  bash "${DRIVER_ROOT}/tests/fixtures/build/linux.sh" --only "${FIXTURE_TARGETS}"
 fi
 
 if [[ ! -x "${CUA_TEST_DRIVER_BIN}" ]]; then

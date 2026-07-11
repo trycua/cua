@@ -892,39 +892,48 @@ fn display_for_cursor<'a>(
     cursor_point: (f64, f64),
     pinned_target: Option<LogicalRect>,
 ) -> Option<&'a DisplayGeometry> {
+    let cursor_is_finite = cursor_point.0.is_finite() && cursor_point.1.is_finite();
+    if cursor_is_finite {
+        // The cursor bitmap moves independently of its pinned target window.
+        // Prefer the display that contains the cursor so a move across a
+        // mixed-DPI boundary rerasterizes immediately at the destination
+        // display's native scale, including when the target spans displays.
+        if let Some(display) = displays
+            .iter()
+            .find(|display| display.bounds.contains(cursor_point))
+        {
+            return Some(display);
+        }
+    }
+
+    // A valid point outside every active display can occur while a cursor is
+    // hidden or a display is being reconfigured. In that case, use the pinned
+    // target's largest display intersection until an on-screen point arrives.
     if let Some(target) = pinned_target.filter(|bounds| bounds.is_valid()) {
-        let mut best: Option<(&DisplayGeometry, f64, bool)> = None;
+        let mut best: Option<(&DisplayGeometry, f64)> = None;
         for display in displays {
             let area = display.bounds.intersection_area(target);
             if area <= 0.0 {
                 continue;
             }
-            let contains_cursor = display.bounds.contains(cursor_point);
-            let replace = best.is_none_or(|(_, best_area, best_contains_cursor)| {
-                area > best_area || (area == best_area && contains_cursor && !best_contains_cursor)
-            });
+            let replace = best.is_none_or(|(_, best_area)| area > best_area);
             if replace {
-                best = Some((display, area, contains_cursor));
+                best = Some((display, area));
             }
         }
-        if let Some((display, _, _)) = best {
+        if let Some((display, _)) = best {
             return Some(display);
         }
     }
 
-    if !cursor_point.0.is_finite() || !cursor_point.1.is_finite() {
+    if !cursor_is_finite {
         return None;
     }
-    displays
-        .iter()
-        .find(|display| display.bounds.contains(cursor_point))
-        .or_else(|| {
-            displays.iter().min_by(|left, right| {
-                left.bounds
-                    .distance_squared_to(cursor_point)
-                    .total_cmp(&right.bounds.distance_squared_to(cursor_point))
-            })
-        })
+    displays.iter().min_by(|left, right| {
+        left.bounds
+            .distance_squared_to(cursor_point)
+            .total_cmp(&right.bounds.distance_squared_to(cursor_point))
+    })
 }
 
 fn backing_scale_for_cursor(
@@ -2251,7 +2260,7 @@ mod tests {
     }
 
     #[test]
-    fn display_scale_resolution_handles_negative_above_and_pinned_targets() {
+    fn display_scale_resolution_prefers_cursor_then_pinned_target() {
         let displays = [
             DisplayGeometry {
                 bounds: LogicalRect {
@@ -2303,20 +2312,84 @@ mod tests {
         };
         assert_eq!(
             backing_scale_for_cursor(&displays, 2.0, (500.0, 300.0), Some(pinned_left)),
-            1.0,
-            "a pinned panel should follow the target window's display"
+            2.0,
+            "an on-screen cursor should use its own display despite a remote pinned target"
         );
 
-        let equal_split = LogicalRect {
-            left: -100.0,
+        let spanning_left_majority = LogicalRect {
+            left: -800.0,
             top: 100.0,
-            width: 200.0,
+            width: 1000.0,
             height: 200.0,
         };
+        let spanning_scale =
+            backing_scale_for_cursor(&displays, 1.0, (20.0, 150.0), Some(spanning_left_majority));
         assert_eq!(
-            backing_scale_for_cursor(&displays, 1.0, (20.0, 150.0), Some(equal_split)),
-            2.0,
-            "cursor display should break a pinned-window intersection tie"
+            spanning_scale, 2.0,
+            "a spanning window must rasterize at the on-screen cursor's display scale"
+        );
+
+        assert_eq!(
+            backing_scale_for_cursor(
+                &displays,
+                2.0,
+                (-2500.0, 300.0),
+                Some(spanning_left_majority),
+            ),
+            1.0,
+            "an off-screen cursor should fall back to the pinned target's largest intersection"
+        );
+    }
+
+    #[test]
+    fn spanning_window_cursor_rasterizes_at_cursor_display_scale() {
+        let displays = [
+            DisplayGeometry {
+                bounds: LogicalRect {
+                    left: -1000.0,
+                    top: 0.0,
+                    width: 1000.0,
+                    height: 800.0,
+                },
+                backing_scale: 1.0,
+            },
+            DisplayGeometry {
+                bounds: LogicalRect {
+                    left: 0.0,
+                    top: 0.0,
+                    width: 1000.0,
+                    height: 800.0,
+                },
+                backing_scale: 2.0,
+            },
+        ];
+        let spanning_target = LogicalRect {
+            left: -800.0,
+            top: 100.0,
+            width: 1000.0,
+            height: 600.0,
+        };
+        let scale = backing_scale_for_cursor(&displays, 1.0, (100.0, 400.0), Some(spanning_target));
+        assert_eq!(scale, 2.0);
+
+        let mut rs = RenderState::new(CursorConfig::default());
+        rs.core.visible = true;
+        rs.core.pos = (100.0, 400.0);
+        rs.core.idle_alpha = 1.0;
+
+        let rect = cursor_window_rect(&rs).expect("visible cursor has a panel rect");
+        let point_size = rect.pixel_size(1.0);
+        let expected_pixel_size = rect.pixel_size(scale);
+        assert_eq!(
+            expected_pixel_size,
+            (point_size.0 * 2, point_size.1 * 2),
+            "the cursor panel should allocate Retina pixels on the cursor display"
+        );
+        let pixmap = render_cursor_pixmap(&rs, rect, scale);
+        assert_eq!(
+            (pixmap.width(), pixmap.height()),
+            expected_pixel_size,
+            "the cursor bitmap should be rasterized at the selected cursor display scale"
         );
     }
 

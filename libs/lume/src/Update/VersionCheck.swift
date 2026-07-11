@@ -4,7 +4,7 @@ enum LumeVersionCheck {
     static let releaseTagPrefix = "lume-v"
     static let releasesURL = URL(string: "https://api.github.com/repos/trycua/cua/releases?per_page=40")!
     static let defaultInstallScriptURL =
-        "https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh"
+        "https://cua.ai/lume/install.sh"
 
     private static let cacheRefreshSeconds: TimeInterval = 20 * 60 * 60
     private static let updateCheckEnv = "LUME_UPDATE_CHECK"

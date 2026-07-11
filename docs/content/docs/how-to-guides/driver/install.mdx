@@ -14,7 +14,7 @@ Cua Driver supports macOS, Windows, and Linux. Use the same **one-line installer
 **Requirements:** macOS 14 (Sonoma) or later on Apple Silicon or Intel.
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
 ```
 
 The installer places `CuaDriver.app` in `/Applications` and creates the `~/.local/bin/cua-driver` symlink. The app bundle uses the `com.trycua.driver` signing identity, so macOS TCC permissions for Accessibility and Screen Recording remain attached across upgrades.
@@ -27,7 +27,7 @@ If `~/.local/bin` is missing from your PATH, the installer detects your shell (`
 **Requirements:** Windows 10/11 or Windows Server with an interactive desktop session and PowerShell.
 
 ```powershell
-irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
+irm https://cua.ai/driver/install.ps1 | iex
 ```
 
 The installer downloads the release under `%USERPROFILE%\.cua-driver\packages\releases\` and exposes `cua-driver.exe` from `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin`. It runs without administrator privileges, detects whether the host is x64 or arm64, and appends the install directory to your User-scope `Path` so new PowerShell windows can resolve `cua-driver.exe`. It also attempts to register the `cua-driver-serve` autostart task; that step needs an interactive session, so on a non-interactive or SSH install it is skipped — set it up later with [`cua-driver autostart enable`](/how-to-guides/driver/keep-running).
@@ -35,7 +35,7 @@ The installer downloads the release under `%USERPROFILE%\.cua-driver\packages\re
 To skip the PATH change, pass the no-update flag:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1))) -NoPathUpdate
+& ([scriptblock]::Create((irm https://cua.ai/driver/install.ps1))) -NoPathUpdate
 ```
 
   </Tab>
@@ -50,7 +50,7 @@ sudo apt install libxi6 at-spi2-core
 ```
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
 ```
 
 The installer downloads the binary to `~/.cua-driver/packages/releases/`, points `~/.cua-driver/packages/current` at that release, and creates the `~/.local/bin/cua-driver` symlink. It does not use sudo.

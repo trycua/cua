@@ -1,0 +1,46 @@
+---
+title: Serve the Lume API
+description: Run Lume's local HTTP API for tools and scripts.
+---
+
+Use the Lume API when another local process needs to list, create, run, or stop
+VMs through HTTP.
+
+## Start the server
+
+Start the API on its default port:
+
+```bash
+lume serve
+```
+
+To use another port:
+
+```bash
+lume serve --port 7778
+```
+
+The API listens on `localhost`. Keep the server bound to the local host unless
+you have a specific network boundary and authentication plan for exposing it.
+
+## Check the server
+
+List the local VMs:
+
+```bash
+curl http://localhost:7777/lume/vms
+```
+
+Use the [HTTP API reference](/reference/lume/http-api) for request bodies,
+responses, and the complete endpoint list.
+
+## Run it at login
+
+The standard installer starts Lume's background service at login. Install with
+`--no-background-service` when you want to manage the API process yourself:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://cua.ai/lume/install.sh) --no-background-service"
+```
+
+After that installation, start the server explicitly with `lume serve`.

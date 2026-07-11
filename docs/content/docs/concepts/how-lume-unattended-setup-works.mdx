@@ -1,0 +1,47 @@
+---
+title: How Lume prepares vanilla macOS VMs
+description: Understand the offline setup flow behind Lume's unattended macOS VMs.
+---
+
+Lume creates vanilla macOS VMs from Apple restore images. The unattended setup
+prepares the installed guest on disk, so the workflow does not depend on GUI
+clicks or a particular Setup Assistant layout.
+
+## The setup sequence
+
+When you run `lume create` with `--unattended tahoe` or `--unattended sequoia`,
+Lume:
+
+1. Installs macOS from the IPSW into a new VM disk.
+2. Boots the VM once so macOS materializes its first-boot state.
+3. Stops the VM and mounts its Data volume on the host.
+4. Patches the guest account and login configuration offline.
+5. Enables SSH, autologin, and the no-sleep settings.
+6. Boots the VM again and verifies SSH before finalizing creation.
+
+The default account is `lume` with the initial password `lume`. Change that
+password before using the VM for sensitive work.
+
+## Why the setup is offline
+
+GUI automation depends on display timing, window state, and the controls that a
+particular macOS release exposes. Disk setup writes the desired guest state
+directly and keeps the verification step small: Lume checks that the guest
+boots and accepts SSH.
+
+## Presets and images
+
+The `tahoe` and `sequoia` presets use the same offline patcher. Tahoe is the
+verified preset for the current vanilla workflow. Sequoia can still show the
+Accessibility step of Setup Assistant on its first display boot; see [issue
+#2155](https://github.com/trycua/cua/issues/2155).
+
+The IPSW flow creates a fresh vanilla guest each time. Registry snapshots remain
+available for workflows that need a previously prepared disk, but they are not
+required for unattended setup.
+
+## Related pages
+
+- [Create your first local macOS VM](/tutorials/create-your-first-lume-vm)
+- [Create a vanilla Tahoe VM](/how-to-guides/lume/create-vanilla-vm)
+- [Lume CLI reference](/reference/lume/cli-reference)

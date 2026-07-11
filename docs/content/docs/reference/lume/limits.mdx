@@ -1,0 +1,67 @@
+---
+title: Limits and VM states
+description: Host requirements, VM states, storage behavior, and common Lume failures.
+---
+
+This page records constraints that affect Lume workflows. Use the [CLI
+reference](/reference/lume/cli-reference) for command syntax.
+
+## Host requirements
+
+- Lume runs on Apple Silicon Macs.
+- macOS 13 or later is required.
+- Lume needs at least 8GB of available memory. 16GB is a better starting point for a guest with 8GB allocated.
+- Leave at least 50GB of free disk space for a macOS guest and its restore image.
+
+## macOS VM concurrency
+
+Apple's Virtualization framework allows Lume to run up to two macOS guests on a
+host. Memory, disk, and CPU capacity can reduce the practical limit.
+
+## VM states
+
+`lume ls` can report these states:
+
+| State | Meaning |
+| --- | --- |
+| `stopped` | The VM is ready to start. |
+| `running` | The VM is booted and has a live virtualization session. |
+| `provisioning` | Lume is creating the VM or completing an asynchronous operation. |
+| `provisioning (stale)` | A provisioning marker remains after its operation stopped unexpectedly. |
+
+Wait for a provisioning operation to finish before running the VM. If a VM is
+stale, inspect the Lume logs and remove the incomplete VM before recreating it.
+
+## Common failures
+
+### Auxiliary storage is locked
+
+Only one process can run a VM at a time. Check the VM list and stop the process
+that owns the VM before retrying:
+
+```bash
+lume ls
+lume stop macos-tahoe
+```
+
+### `sudo lume` cannot find a VM
+
+Lume stores VMs under the current user's home directory by default. Running
+with `sudo` changes `HOME`, so the root process looks in a different VM store.
+Run Lume as the account that created the VM.
+
+### SSH is unavailable
+
+VMs created with `--unattended tahoe` enable SSH and use `lume` / `lume` for the
+initial account. Check that the VM is running, then inspect its details:
+
+```bash
+lume run macos-tahoe --no-display
+lume get macos-tahoe
+lume ssh macos-tahoe 'id -un'
+```
+
+## Disk allocation
+
+macOS VM disks use sparse files. The configured disk capacity describes the
+guest's logical disk. The host allocation grows as the guest writes data.

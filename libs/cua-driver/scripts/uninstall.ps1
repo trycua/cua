@@ -6,11 +6,11 @@
 # config directories.
 #
 # Usage (one-liner — recommended):
-#   irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.ps1 | iex
+#   irm https://cua.ai/driver/uninstall.ps1 | iex
 #
 # Force (skip all prompts):
 #   $env:CUA_DRIVER_RS_UNINSTALL_FORCE = '1'
-#   irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.ps1 | iex
+#   irm https://cua.ai/driver/uninstall.ps1 | iex
 #
 # Why an env var and not a `-Force` parameter: `iex` (Invoke-Expression)
 # refuses to parse a script that opens with `[CmdletBinding()] param(...)`

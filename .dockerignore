@@ -29,9 +29,6 @@ build
 # Docs
 docs/site
 
-# Notebooks
-notebooks/.ipynb_checkpoints
-
 # Docker
 Dockerfile
-.dockerignore 
+.dockerignore

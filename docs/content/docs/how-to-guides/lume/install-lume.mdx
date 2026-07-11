@@ -3,8 +3,6 @@ title: Install and run Lume
 description: Install Lume, Cua's local Apple Silicon VM manager for macOS and Linux guests.
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
-
 Lume is Cua's local VM manager for Apple Silicon Macs. Use it when you want to create, run, or serve macOS and Linux VMs on your own machine. It can provide local VM substrate for Cua workflows, but the primary product choice is still [Cua Driver](/tutorials/drive-your-first-app) for an existing machine or [Cua Sandbox](/tutorials/your-first-cloud-sandbox) for a fresh isolated desktop.
 
 ## Requirements
@@ -19,7 +17,7 @@ Lume is Cua's local VM manager for Apple Silicon Macs. Use it when you want to c
 Install with a single command:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+/bin/bash -c "$(curl -fsSL https://cua.ai/lume/install.sh)"
 ```
 
 ## Verify the install
@@ -45,37 +43,16 @@ lume update --apply
 The installer no longer creates scheduled auto-updaters. Older `lume-update` cron jobs and
 LaunchAgents are removed the next time the installer runs.
 
-## Run a prebuilt VM
-
-Pull and start a prebuilt macOS image:
-
-```bash
-lume run macos-sequoia-vanilla:latest
-```
-
-<Callout title="Security Note">
-  Prebuilt images use the default password `lume`. Change this immediately after your first login
-  using the `passwd` command.
-</Callout>
-
-## Start the API service manually
-
-By default, Lume is installed as a background service that starts automatically on login. If you prefer to start the Lume API service manually when needed, you can use the `--no-background-service` option:
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh) --no-background-service"
-```
-
-<Callout title="Note">
-  With this option, you'll need to manually start the Lume API service by running `lume serve` in
-  your terminal whenever you need tools or libraries that rely on the local Lume HTTP API.
-</Callout>
-
-## Manual download
+## Manual installation
 
 You can also download the `lume.pkg.tar.gz` archive from the [latest release](https://github.com/trycua/cua/releases?q=lume&expanded=true), extract it, and install the package manually.
 
 ## Next steps
 
+- [Create your first local VM](/tutorials/create-your-first-lume-vm): follow the Tahoe happy path from IPSW to SSH.
+- [Create a vanilla Tahoe VM](/how-to-guides/lume/create-vanilla-vm): create, run, inspect, and remove a local VM.
+- [Manage local VMs](/how-to-guides/lume/manage-vms): share files, use storage locations, and clone disks.
+- [Serve the Lume API](/how-to-guides/lume/serve-api): run the local HTTP API for tools and scripts.
+- [Use Lume with MCP](/how-to-guides/lume/use-mcp-server): connect an AI client to local VM tools.
 - [Lume CLI reference](/reference/lume/cli-reference): inspect every command and option.
 - [Lume HTTP API reference](/reference/lume/http-api): use the local API from tools and scripts.

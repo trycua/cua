@@ -66,13 +66,13 @@ Drive native desktop apps **in the background**. Agents click, type, and verify 
 **macOS / Linux**
 
 ```sh
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
+irm https://cua.ai/driver/install.ps1 | iex
 ```
 
 Then wire it into Claude Code as an MCP server and your agent can drive the desktop in the background:
@@ -141,11 +141,21 @@ Create and manage macOS/Linux VMs with near-native performance on Apple Silicon 
 
 ```bash
 # Install Lume
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+/bin/bash -c "$(curl -fsSL https://cua.ai/lume/install.sh)"
 
-# Pull & start a macOS VM
-lume run macos-sequoia-vanilla:latest
+# Create and start a vanilla macOS VM from an Apple restore image
+curl -L "$(lume ipsw | tail -n 1)" -o ~/Downloads/macos-tahoe.ipsw
+lume create macos-tahoe --ipsw ~/Downloads/macos-tahoe.ipsw --unattended tahoe
+lume run macos-tahoe
 ```
+
+The `--unattended` option prepares the installed guest offline. The built-in
+`sequoia` and `tahoe` presets create the `lume` user, enable SSH, configure
+autologin, and disable sleep and screen locking. The default credentials are
+`lume` / `lume`.
+
+The Tahoe flow is E2E verified. Sequoia may still open the Accessibility step
+of Setup Assistant on its first display boot; see [issue #2155](https://github.com/trycua/cua/issues/2155).
 
 **[Get Started](https://cua.ai/docs/lume)** | **[FAQ](https://cua.ai/docs/lume/guide/getting-started/faq)** | **[CLI Reference](https://cua.ai/docs/lume/reference/cli-reference)**
 

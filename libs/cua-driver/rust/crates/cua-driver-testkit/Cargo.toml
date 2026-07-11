@@ -34,5 +34,6 @@ windows = { version = "0.61", features = [
     "Win32_System_Console",
     "Win32_Security",
     "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }

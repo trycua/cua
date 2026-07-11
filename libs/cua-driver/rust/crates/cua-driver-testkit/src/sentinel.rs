@@ -91,9 +91,7 @@ impl ForegroundSentinel {
         } else {
             loop {
                 let journal = fs::read_to_string(&journal_path).unwrap_or_default();
-                if journal.contains(r#""kind":"ready""#)
-                    && journal.contains(r#""kind":"focus""#)
-                {
+                if journal.contains(r#""kind":"ready""#) && journal.contains(r#""kind":"focus""#) {
                     break;
                 }
                 assert!(
@@ -122,7 +120,9 @@ impl ForegroundSentinel {
             Err(error) => {
                 return (
                     Vec::new(),
-                    vec![format!("foreground sentinel journal could not be read: {error}")],
+                    vec![format!(
+                        "foreground sentinel journal could not be read: {error}"
+                    )],
                 )
             }
         };
@@ -288,6 +288,60 @@ fn activate_native_foreground(driver: &mut impl Driver, target: TargetWindow) {
         "could not activate foreground sentinel: {}",
         response.text()
     );
+    #[cfg(target_os = "windows")]
+    physically_focus_windows_sentinel(target);
+}
+
+#[cfg(target_os = "windows")]
+fn physically_focus_windows_sentinel(target: TargetWindow) {
+    use windows::Win32::Foundation::{HWND, POINT, RECT};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+        MOUSEINPUT,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect, SetCursorPos};
+
+    let hwnd = HWND(target.native_id as *mut _);
+    let mut rect = RECT::default();
+    let mut original_cursor = POINT::default();
+    unsafe {
+        GetWindowRect(hwnd, &mut rect).expect("read foreground sentinel bounds");
+        GetCursorPos(&mut original_cursor).expect("read cursor before focusing sentinel");
+    }
+    let x = (rect.left + rect.right) / 2;
+    let y = (rect.top + rect.bottom) / 2;
+    assert!(
+        rect.right > rect.left && rect.bottom > rect.top,
+        "foreground sentinel has invalid bounds: {rect:?}"
+    );
+
+    let inputs = [
+        INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dwFlags: MOUSEEVENTF_LEFTDOWN,
+                    ..Default::default()
+                },
+            },
+        },
+        INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dwFlags: MOUSEEVENTF_LEFTUP,
+                    ..Default::default()
+                },
+            },
+        },
+    ];
+    unsafe {
+        SetCursorPos(x, y).expect("move cursor onto foreground sentinel");
+        let sent = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+        assert_eq!(sent, inputs.len() as u32, "click foreground sentinel");
+        SetCursorPos(original_cursor.x, original_cursor.y)
+            .expect("restore cursor after focusing sentinel");
+    }
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]

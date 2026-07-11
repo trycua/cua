@@ -128,12 +128,6 @@ struct RenderMap {
     last_active_key: Option<CursorKey>,
     win_w: f64,
     win_h: f64,
-    /// `NSScreen.backingScaleFactor` of the screen the overlay window sits on.
-    /// 1.0 on a non-retina display, 2.0 on a typical retina Mac. Drives the
-    /// physical-pixel pixmap sizing + `paint_cursor` `backing_scale` so the
-    /// rendered cursor is crisp at native resolution instead of being
-    /// bilinear-upsampled by Core Animation from a logical-pixel buffer.
-    backing_scale: f64,
     /// Frozen launch-time config used as the template for lazily-created
     /// cursors (its palette is overridden per-key via `Palette::for_instance`).
     template: CursorConfig,
@@ -233,7 +227,6 @@ pub fn init(cfg: CursorConfig) {
         last_active_key: None,
         win_w: 0.0,
         win_h: 0.0,
-        backing_scale: 1.0, // overwritten in run_appkit() once the NSScreen is known
         template: cfg,
         ended: std::collections::HashSet::new(),
     });
@@ -721,6 +714,50 @@ impl LogicalRect {
             (self.height * scale).ceil().max(1.0) as u32,
         )
     }
+
+    fn contains(self, point: (f64, f64)) -> bool {
+        point.0 >= self.left
+            && point.0 < self.left + self.width
+            && point.1 >= self.top
+            && point.1 < self.top + self.height
+    }
+
+    fn intersection_area(self, other: Self) -> f64 {
+        let left = self.left.max(other.left);
+        let top = self.top.max(other.top);
+        let right = (self.left + self.width).min(other.left + other.width);
+        let bottom = (self.top + self.height).min(other.top + other.height);
+        (right - left).max(0.0) * (bottom - top).max(0.0)
+    }
+
+    fn distance_squared_to(self, point: (f64, f64)) -> f64 {
+        let right = self.left + self.width;
+        let bottom = self.top + self.height;
+        let dx = if point.0 < self.left {
+            self.left - point.0
+        } else if point.0 > right {
+            point.0 - right
+        } else {
+            0.0
+        };
+        let dy = if point.1 < self.top {
+            self.top - point.1
+        } else if point.1 > bottom {
+            point.1 - bottom
+        } else {
+            0.0
+        };
+        dx * dx + dy * dy
+    }
+
+    fn is_valid(self) -> bool {
+        self.left.is_finite()
+            && self.top.is_finite()
+            && self.width.is_finite()
+            && self.height.is_finite()
+            && self.width > 0.0
+            && self.height > 0.0
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -728,6 +765,12 @@ struct ScreenGeometry {
     origin_x: f64,
     origin_y: f64,
     height: f64,
+    fallback_backing_scale: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DisplayGeometry {
+    bounds: LogicalRect,
     backing_scale: f64,
 }
 
@@ -769,6 +812,134 @@ fn appkit_frame_for_rect(rect: LogicalRect, screen: ScreenGeometry) -> AppKitRec
         width: rect.width,
         height: rect.height,
     }
+}
+
+fn normalized_backing_scale(scale: f64, fallback: f64) -> f64 {
+    let fallback = if fallback.is_finite() && fallback > 0.0 {
+        fallback.max(1.0)
+    } else {
+        1.0
+    };
+    if scale.is_finite() && scale > 0.0 {
+        scale.max(1.0)
+    } else {
+        fallback
+    }
+}
+
+fn active_display_geometries(fallback_scale: f64) -> Vec<DisplayGeometry> {
+    use core_graphics::display::CGDisplay;
+
+    let Ok(display_ids) = CGDisplay::active_displays() else {
+        return Vec::new();
+    };
+    let mut displays: Vec<DisplayGeometry> = Vec::with_capacity(display_ids.len());
+    for display_id in display_ids {
+        let bounds = CGDisplay::new(display_id).bounds();
+        let logical = LogicalRect {
+            left: bounds.origin.x,
+            top: bounds.origin.y,
+            width: bounds.size.width,
+            height: bounds.size.height,
+        };
+        if !logical.is_valid() {
+            continue;
+        }
+        let scale = normalized_backing_scale(
+            crate::tools::get_screen_size::get_backing_scale(
+                display_id,
+                logical.width.round() as i64,
+            ),
+            fallback_scale,
+        );
+
+        // Mirrored displays may report identical logical bounds. A single
+        // raster must satisfy both, so retain the denser backing scale.
+        if let Some(existing) = displays
+            .iter_mut()
+            .find(|display| display.bounds == logical)
+        {
+            existing.backing_scale = existing.backing_scale.max(scale);
+        } else {
+            displays.push(DisplayGeometry {
+                bounds: logical,
+                backing_scale: scale,
+            });
+        }
+    }
+    displays
+}
+
+fn window_bounds_snapshot() -> HashMap<u64, LogicalRect> {
+    crate::windows::all_windows()
+        .into_iter()
+        .filter_map(|window| {
+            let bounds = LogicalRect {
+                left: window.bounds.x,
+                top: window.bounds.y,
+                width: window.bounds.width,
+                height: window.bounds.height,
+            };
+            bounds
+                .is_valid()
+                .then_some((window.window_id as u64, bounds))
+        })
+        .collect()
+}
+
+fn display_for_cursor<'a>(
+    displays: &'a [DisplayGeometry],
+    cursor_point: (f64, f64),
+    pinned_target: Option<LogicalRect>,
+) -> Option<&'a DisplayGeometry> {
+    if let Some(target) = pinned_target.filter(|bounds| bounds.is_valid()) {
+        let mut best: Option<(&DisplayGeometry, f64, bool)> = None;
+        for display in displays {
+            let area = display.bounds.intersection_area(target);
+            if area <= 0.0 {
+                continue;
+            }
+            let contains_cursor = display.bounds.contains(cursor_point);
+            let replace = best.is_none_or(|(_, best_area, best_contains_cursor)| {
+                area > best_area || (area == best_area && contains_cursor && !best_contains_cursor)
+            });
+            if replace {
+                best = Some((display, area, contains_cursor));
+            }
+        }
+        if let Some((display, _, _)) = best {
+            return Some(display);
+        }
+    }
+
+    if !cursor_point.0.is_finite() || !cursor_point.1.is_finite() {
+        return None;
+    }
+    displays
+        .iter()
+        .find(|display| display.bounds.contains(cursor_point))
+        .or_else(|| {
+            displays.iter().min_by(|left, right| {
+                left.bounds
+                    .distance_squared_to(cursor_point)
+                    .total_cmp(&right.bounds.distance_squared_to(cursor_point))
+            })
+        })
+}
+
+fn backing_scale_for_cursor(
+    displays: &[DisplayGeometry],
+    fallback_scale: f64,
+    cursor_point: (f64, f64),
+    pinned_target: Option<LogicalRect>,
+) -> f64 {
+    display_for_cursor(displays, cursor_point, pinned_target)
+        .map(|display| normalized_backing_scale(display.backing_scale, fallback_scale))
+        .unwrap_or_else(|| normalized_backing_scale(fallback_scale, 1.0))
+}
+
+fn backing_scale_changed(previous: Option<f64>, next: f64) -> bool {
+    previous.is_none_or(|previous| (previous - next).abs() > 0.001)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -847,8 +1018,10 @@ fn cursor_window_rect(rs: &RenderState) -> Option<LogicalRect> {
 fn cursor_redraw_needed(
     last_appearance: Option<AppearanceSignature>,
     last_pixel_size: Option<(u32, u32)>,
+    last_backing_scale: Option<f64>,
     next_appearance: AppearanceSignature,
     next_pixel_size: (u32, u32),
+    next_backing_scale: f64,
     force: bool,
     focus_active: bool,
 ) -> bool {
@@ -856,6 +1029,7 @@ fn cursor_redraw_needed(
         || focus_active
         || last_appearance != Some(next_appearance)
         || last_pixel_size != Some(next_pixel_size)
+        || backing_scale_changed(last_backing_scale, next_backing_scale)
 }
 
 fn render_cursor_pixmap(
@@ -923,14 +1097,27 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let max_fps: i64 = msg_send![main_screen, maximumFramesPerSecond];
     let frame_budget = frame_budget_for_max_fps(max_fps);
 
-    // ---- Update RenderMap header with screen size (screen-global) ----
+    // Keep the main screen as the global top-left coordinate anchor. Raster
+    // density is selected independently per cursor from every active display.
     {
         let mut guard = RENDER.lock().unwrap();
         if let Some(m) = guard.as_mut() {
             m.win_w = win_w;
             m.win_h = win_h;
-            m.backing_scale = backing_scale;
         }
+    }
+
+    let mut displays = active_display_geometries(backing_scale);
+    if displays.is_empty() {
+        displays.push(DisplayGeometry {
+            bounds: LogicalRect {
+                left: 0.0,
+                top: 0.0,
+                width: win_w,
+                height: win_h,
+            },
+            backing_scale,
+        });
     }
 
     // ---- Render thread (display-rate while animating, quiescent while idle) ----
@@ -938,10 +1125,10 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         origin_x: screen_frame.origin.x,
         origin_y: screen_frame.origin.y,
         height: win_h,
-        backing_scale,
+        fallback_backing_scale: backing_scale,
     };
     std::thread::spawn(move || {
-        render_loop(rx, screen, frame_budget);
+        render_loop(rx, screen, displays, frame_budget);
     });
 
     // ---- NSApplication run loop ----
@@ -958,6 +1145,7 @@ struct CursorWindowHandle {
     visible: bool,
     last_appearance: Option<AppearanceSignature>,
     last_pixel_size: Option<(u32, u32)>,
+    last_backing_scale: f64,
     last_pinned: Option<u64>,
     last_level: Option<PanelLevel>,
     repin_frames: u32,
@@ -968,6 +1156,7 @@ struct CursorWindowUpdate {
     rect: Option<LogicalRect>,
     appearance: Option<AppearanceSignature>,
     pixel_size: Option<(u32, u32)>,
+    backing_scale: f64,
     pixmap: Option<tiny_skia::Pixmap>,
     pinned_wid: Option<u64>,
     panel_level: PanelLevel,
@@ -976,12 +1165,15 @@ struct CursorWindowUpdate {
 fn render_loop(
     rx: std::sync::mpsc::Receiver<OverlayMsg>,
     screen: ScreenGeometry,
+    mut displays: Vec<DisplayGeometry>,
     target_frame_ms: Duration,
 ) {
     let mut last_tick = Instant::now();
     let mut frame_tick_needed = false;
     let mut idle_fade_due_in: Option<Duration> = None;
     let mut handles: HashMap<CursorKey, CursorWindowHandle> = HashMap::new();
+    let mut pinned_bounds = HashMap::new();
+    let mut last_geometry_refresh: Option<Instant> = None;
     let repin_interval_frames = repin_frame_interval(target_frame_ms);
 
     loop {
@@ -1008,6 +1200,17 @@ fn render_loop(
 
         let woke_from_idle = first_msg.is_some();
         let now = Instant::now();
+        if woke_from_idle
+            || last_geometry_refresh
+                .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(1))
+        {
+            let refreshed_displays = active_display_geometries(screen.fallback_backing_scale);
+            if !refreshed_displays.is_empty() {
+                displays = refreshed_displays;
+            }
+            pinned_bounds = window_bounds_snapshot();
+            last_geometry_refresh = Some(now);
+        }
         let dt = if woke_from_idle {
             // The blocking recv() above can span an arbitrarily long idle period.
             // Do not charge that time to the first animation tick after a command;
@@ -1066,21 +1269,33 @@ fn render_loop(
                         .cursors
                         .iter()
                         .map(|(key, rs)| {
+                            let pinned_target = rs
+                                .core
+                                .pinned_wid
+                                .and_then(|window_id| pinned_bounds.get(&window_id).copied());
+                            let backing_scale = backing_scale_for_cursor(
+                                &displays,
+                                screen.fallback_backing_scale,
+                                rs.core.pos,
+                                pinned_target,
+                            );
                             let rect = cursor_window_rect(rs);
                             let (appearance, pixel_size, pixmap) = if let Some(rect) = rect {
                                 let appearance = appearance_signature(rs);
-                                let pixel_size = rect.pixel_size(screen.backing_scale);
+                                let pixel_size = rect.pixel_size(backing_scale);
                                 let handle = handles.get(key);
                                 let redraw = cursor_redraw_needed(
                                     handle.and_then(|h| h.last_appearance),
                                     handle.and_then(|h| h.last_pixel_size),
+                                    handle.map(|h| h.last_backing_scale),
                                     appearance,
                                     pixel_size,
+                                    backing_scale,
                                     had_msg,
                                     rs.focus_rect.is_some(),
                                 );
-                                let pixmap = redraw
-                                    .then(|| render_cursor_pixmap(rs, rect, screen.backing_scale));
+                                let pixmap =
+                                    redraw.then(|| render_cursor_pixmap(rs, rect, backing_scale));
                                 (Some(appearance), Some(pixel_size), pixmap)
                             } else {
                                 (None, None, None)
@@ -1090,6 +1305,7 @@ fn render_loop(
                                 rect,
                                 appearance,
                                 pixel_size,
+                                backing_scale,
                                 pixmap,
                                 pinned_wid: rs.core.pinned_wid,
                                 panel_level: panel_level_for_pin(rs.core.pinned_wid),
@@ -1122,7 +1338,7 @@ fn render_loop(
                         Some(handle) => handle,
                         None => {
                             let Some(new_handle) =
-                                dispatch_create_cursor_window(screen.backing_scale)
+                                dispatch_create_cursor_window(update.backing_scale)
                             else {
                                 continue;
                             };
@@ -1135,10 +1351,16 @@ fn render_loop(
                     let was_visible = handle.visible;
                     let pin_changed = update.pinned_wid != handle.last_pinned;
                     let level_changed = Some(update.panel_level) != handle.last_level;
+                    let contents_scale = backing_scale_changed(
+                        Some(handle.last_backing_scale),
+                        update.backing_scale,
+                    )
+                    .then_some(update.backing_scale);
                     dispatch_update_cursor_window(
                         handle.win_ptr,
                         handle.layer_ptr,
                         frame,
+                        contents_scale,
                         update.pixmap,
                         update.panel_level,
                         update.pinned_wid,
@@ -1147,6 +1369,7 @@ fn render_loop(
                     handle.visible = true;
                     handle.last_appearance = update.appearance;
                     handle.last_pixel_size = update.pixel_size;
+                    handle.last_backing_scale = update.backing_scale;
                     handle.last_level = Some(update.panel_level);
 
                     if frame_tick_needed || had_msg || !was_visible {
@@ -1304,6 +1527,7 @@ fn dispatch_create_cursor_window(backing_scale: f64) -> Option<CursorWindowHandl
             visible: false,
             last_appearance: None,
             last_pixel_size: None,
+            last_backing_scale: normalized_backing_scale(backing_scale, 1.0),
             last_pinned: None,
             last_level: None,
             repin_frames: 0,
@@ -1315,6 +1539,7 @@ fn dispatch_update_cursor_window(
     win_ptr: usize,
     layer_ptr: usize,
     frame: AppKitRect,
+    contents_scale: Option<f64>,
     pixmap: Option<tiny_skia::Pixmap>,
     panel_level: PanelLevel,
     order_target: Option<u64>,
@@ -1337,6 +1562,7 @@ fn dispatch_update_cursor_window(
         win_ptr: usize,
         layer_ptr: usize,
         frame: AppKitRect,
+        contents_scale: Option<f64>,
         cg_image_ptr: usize,
         panel_level: PanelLevel,
         order_target: Option<u64>,
@@ -1362,6 +1588,9 @@ fn dispatch_update_cursor_window(
         };
         let _: () = objc2::msg_send![win, setFrame: frame display: false];
         let _: () = objc2::msg_send![win, setLevel: payload.panel_level.ns_window_level()];
+        if let Some(contents_scale) = payload.contents_scale {
+            let _: () = objc2::msg_send![layer, setContentsScale: contents_scale];
+        }
         if payload.cg_image_ptr != 0 {
             let cg_id = payload.cg_image_ptr as *mut AnyObject;
             let _: () = objc2::msg_send![layer, setContents: cg_id];
@@ -1381,6 +1610,7 @@ fn dispatch_update_cursor_window(
         win_ptr,
         layer_ptr,
         frame,
+        contents_scale: contents_scale.map(|scale| normalized_backing_scale(scale, 1.0)),
         cg_image_ptr,
         panel_level,
         order_target,
@@ -1616,7 +1846,6 @@ mod tests {
             last_active_key: None,
             win_w: 100.0,
             win_h: 100.0,
-            backing_scale: 1.0,
             template: CursorConfig::default(),
             ended: std::collections::HashSet::new(),
         }
@@ -1987,6 +2216,163 @@ mod tests {
     }
 
     #[test]
+    fn global_appkit_transform_preserves_left_and_above_main_coordinates() {
+        let main = ScreenGeometry {
+            origin_x: 10.0,
+            origin_y: 20.0,
+            height: 900.0,
+            fallback_backing_scale: 2.0,
+        };
+        let left = appkit_frame_for_rect(
+            LogicalRect {
+                left: -1800.0,
+                top: 100.0,
+                width: 144.0,
+                height: 144.0,
+            },
+            main,
+        );
+        assert_eq!(left.x, -1790.0);
+        assert_eq!(left.y, 676.0);
+
+        let above = appkit_frame_for_rect(
+            LogicalRect {
+                left: 300.0,
+                top: -600.0,
+                width: 144.0,
+                height: 144.0,
+            },
+            main,
+        );
+        assert_eq!(above.x, 310.0);
+        assert_eq!(above.y, 1376.0);
+        assert_eq!(above.width, 144.0);
+        assert_eq!(above.height, 144.0);
+    }
+
+    #[test]
+    fn display_scale_resolution_handles_negative_above_and_pinned_targets() {
+        let displays = [
+            DisplayGeometry {
+                bounds: LogicalRect {
+                    left: -1920.0,
+                    top: 0.0,
+                    width: 1920.0,
+                    height: 1080.0,
+                },
+                backing_scale: 1.0,
+            },
+            DisplayGeometry {
+                bounds: LogicalRect {
+                    left: 0.0,
+                    top: 0.0,
+                    width: 1440.0,
+                    height: 900.0,
+                },
+                backing_scale: 2.0,
+            },
+            DisplayGeometry {
+                bounds: LogicalRect {
+                    left: 0.0,
+                    top: -1200.0,
+                    width: 1920.0,
+                    height: 1200.0,
+                },
+                backing_scale: 1.5,
+            },
+        ];
+
+        assert_eq!(
+            backing_scale_for_cursor(&displays, 2.0, (-500.0, 300.0), None),
+            1.0
+        );
+        assert_eq!(
+            backing_scale_for_cursor(&displays, 2.0, (500.0, -300.0), None),
+            1.5
+        );
+        assert_eq!(
+            backing_scale_for_cursor(&displays, 1.0, (500.0, 300.0), None),
+            2.0
+        );
+
+        let pinned_left = LogicalRect {
+            left: -1700.0,
+            top: 100.0,
+            width: 1000.0,
+            height: 700.0,
+        };
+        assert_eq!(
+            backing_scale_for_cursor(&displays, 2.0, (500.0, 300.0), Some(pinned_left)),
+            1.0,
+            "a pinned panel should follow the target window's display"
+        );
+
+        let equal_split = LogicalRect {
+            left: -100.0,
+            top: 100.0,
+            width: 200.0,
+            height: 200.0,
+        };
+        assert_eq!(
+            backing_scale_for_cursor(&displays, 1.0, (20.0, 150.0), Some(equal_split)),
+            2.0,
+            "cursor display should break a pinned-window intersection tie"
+        );
+    }
+
+    #[test]
+    fn backing_scale_transition_forces_native_rerasterization() {
+        let displays = [
+            DisplayGeometry {
+                bounds: LogicalRect {
+                    left: -1000.0,
+                    top: 0.0,
+                    width: 1000.0,
+                    height: 800.0,
+                },
+                backing_scale: 1.0,
+            },
+            DisplayGeometry {
+                bounds: LogicalRect {
+                    left: 0.0,
+                    top: 0.0,
+                    width: 1000.0,
+                    height: 800.0,
+                },
+                backing_scale: 2.0,
+            },
+        ];
+        let one_x = backing_scale_for_cursor(&displays, 2.0, (-1.0, 400.0), None);
+        let two_x = backing_scale_for_cursor(&displays, 1.0, (0.0, 400.0), None);
+        assert_eq!((one_x, two_x), (1.0, 2.0));
+
+        let mut rs = RenderState::new(CursorConfig::default());
+        rs.core.visible = true;
+        rs.core.pos = (60.0, 60.0);
+        rs.core.idle_alpha = 1.0;
+
+        let rect = cursor_window_rect(&rs).unwrap();
+        let appearance = appearance_signature(&rs);
+        let one_x_size = rect.pixel_size(one_x);
+        let two_x_size = rect.pixel_size(two_x);
+        assert_eq!(two_x_size, (one_x_size.0 * 2, one_x_size.1 * 2));
+        let two_x_pixmap = render_cursor_pixmap(&rs, rect, two_x);
+        assert_eq!((two_x_pixmap.width(), two_x_pixmap.height()), two_x_size);
+        assert!(cursor_redraw_needed(
+            Some(appearance),
+            Some(one_x_size),
+            Some(one_x),
+            appearance,
+            one_x_size,
+            two_x,
+            false,
+            false,
+        ));
+        assert!(backing_scale_changed(Some(one_x), two_x));
+        assert!(!backing_scale_changed(Some(two_x), two_x));
+    }
+
+    #[test]
     fn position_only_motion_moves_window_without_redrawing_bitmap() {
         let mut rs = RenderState::new(CursorConfig::default());
         rs.core.visible = true;
@@ -2010,7 +2396,7 @@ mod tests {
                     origin_x: 0.0,
                     origin_y: 0.0,
                     height: 200.0,
-                    backing_scale: 2.0,
+                    fallback_backing_scale: 2.0,
                 }
             )
             .x,
@@ -2020,7 +2406,7 @@ mod tests {
                     origin_x: 0.0,
                     origin_y: 0.0,
                     height: 200.0,
-                    backing_scale: 2.0,
+                    fallback_backing_scale: 2.0,
                 }
             )
             .x,
@@ -2028,14 +2414,32 @@ mod tests {
         );
         assert_eq!(size_a, size_b, "cursor-only canvas size should stay fixed");
         assert!(
-            !cursor_redraw_needed(Some(app_a), Some(size_a), app_b, size_b, false, false),
+            !cursor_redraw_needed(
+                Some(app_a),
+                Some(size_a),
+                Some(2.0),
+                app_b,
+                size_b,
+                2.0,
+                false,
+                false
+            ),
             "position-only movement should not redraw the small bitmap"
         );
 
         rs.core.heading += 0.1;
         let app_c = appearance_signature(&rs);
         assert!(
-            cursor_redraw_needed(Some(app_b), Some(size_b), app_c, size_b, false, false),
+            cursor_redraw_needed(
+                Some(app_b),
+                Some(size_b),
+                Some(2.0),
+                app_c,
+                size_b,
+                2.0,
+                false,
+                false
+            ),
             "heading changes must redraw rotation frames"
         );
 
@@ -2055,8 +2459,10 @@ mod tests {
             !cursor_redraw_needed(
                 Some(sky_app_a),
                 Some(sky_size),
+                Some(2.0),
                 sky_app_b,
                 sky_size,
+                2.0,
                 false,
                 false
             ),

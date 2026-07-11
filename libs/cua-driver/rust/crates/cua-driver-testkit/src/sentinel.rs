@@ -14,6 +14,7 @@ use crate::{harness_app, ChildReaper, Driver};
 /// fully occludes the background target.
 pub struct ForegroundSentinel {
     journal_path: std::path::PathBuf,
+    target: TargetWindow,
     _reaper: ChildReaper,
     _user_data: tempfile::TempDir,
 }
@@ -53,20 +54,27 @@ impl ForegroundSentinel {
             .expect("launch foreground sentinel");
 
         let window_deadline = Instant::now() + Duration::from_secs(15);
-        let sentinel_pid = loop {
+        let target = loop {
             let windows = driver.call("list_windows", serde_json::json!({}));
-            if let Some(pid) = windows.structured()["windows"]
+            if let Some(target) = windows.structured()["windows"]
                 .as_array()
                 .and_then(|windows| {
                     windows.iter().find_map(|window| {
                         let id = window["window_id"].as_u64()?;
                         let title = window["title"].as_str().unwrap_or("");
                         (!before_windows.contains(&id) && title.contains("CuaTestHarness Sentinel"))
-                            .then(|| window["pid"].as_u64().unwrap_or(0) as u32)
+                            .then(|| TargetWindow {
+                                pid: window["pid"].as_u64().unwrap_or(0) as u32,
+                                native_id: id,
+                            })
                     })
                 })
             {
-                break sentinel_pid_nonzero(pid);
+                assert_ne!(
+                    target.pid, 0,
+                    "foreground sentinel window has no process id"
+                );
+                break target;
             }
             assert!(
                 Instant::now() < window_deadline,
@@ -74,7 +82,7 @@ impl ForegroundSentinel {
             );
             std::thread::sleep(Duration::from_millis(100));
         };
-        reaper.track_pid(sentinel_pid);
+        reaper.track_pid(target.pid);
 
         let focus_deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -92,6 +100,7 @@ impl ForegroundSentinel {
 
         Self {
             journal_path,
+            target,
             _reaper: reaper,
             _user_data: user_data,
         }
@@ -120,6 +129,10 @@ impl ForegroundSentinel {
             ));
         }
         (passed, violations)
+    }
+
+    pub fn target(&self) -> TargetWindow {
+        self.target
     }
 
     /// Run one background action while checking the native desktop and the
@@ -154,11 +167,6 @@ impl ForegroundSentinel {
             Err(violations.join("; "))
         }
     }
-}
-
-fn sentinel_pid_nonzero(pid: u32) -> u32 {
-    assert_ne!(pid, 0, "foreground sentinel window has no process id");
-    pid
 }
 
 fn window_ids(driver: &mut impl Driver) -> HashSet<u64> {

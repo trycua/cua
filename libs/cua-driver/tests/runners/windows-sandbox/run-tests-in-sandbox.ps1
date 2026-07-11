@@ -86,6 +86,14 @@ try {
     cargo test -p cua-driver --test harness_web_test --no-run
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_web_test) failed" }
 
+    Write-Host "`n[BUILD] cargo test --no-run (launch_windows_test)..." -ForegroundColor Yellow
+    cargo test -p cua-driver --test launch_windows_test --no-run
+    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (launch_windows_test) failed" }
+
+    Write-Host "`n[BUILD] cargo test --no-run (agent_cursor_windows_test)..." -ForegroundColor Yellow
+    cargo test -p cua-driver --test agent_cursor_windows_test --no-run
+    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (agent_cursor_windows_test) failed" }
+
 } finally { Pop-Location }
 
 # -- 1.5. Build the test fixtures if dependencies are on PATH ------------------

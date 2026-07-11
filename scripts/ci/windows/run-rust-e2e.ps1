@@ -186,6 +186,14 @@ if ($Suite -in @("native", "all")) {
         "test", "-p", "cua-driver", "--test", "harness_web_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
+    Invoke-CargoTest "Windows minimized launch" @(
+        "test", "-p", "cua-driver", "--test", "launch_windows_test", "--",
+        "--ignored", "--nocapture", "--test-threads=1"
+    )
+    Invoke-CargoTest "Windows agent cursor" @(
+        "test", "-p", "cua-driver", "--test", "agent_cursor_windows_test", "--",
+        "--ignored", "--nocapture", "--test-threads=1"
+    )
 }
 
 if ($Suite -in @("capture", "all")) {

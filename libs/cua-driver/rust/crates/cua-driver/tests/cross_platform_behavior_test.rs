@@ -733,11 +733,30 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
     };
     let scenario = format!("{action}_{addressing}_{delivery}");
     let cell_id = format!("{}-{}-{scenario}", std::env::consts::OS, spec.name).replace('_', "-");
-    let expected_background_refusal = cfg!(target_os = "windows")
-        && spec.name == "electron"
-        && action == "left_click"
-        && targeting == Targeting::Ax
-        && delivery_kind == Delivery::Background;
+    let expected_refusals = if cfg!(target_os = "windows") && delivery_kind == Delivery::Background
+    {
+        match (spec.name, action, targeting) {
+            (
+                "electron",
+                "left_click" | "right_click" | "double_click" | "child_window" | "drag",
+                _,
+            ) => vec![RefusalCode::BackgroundOccluded],
+            ("electron", "type_text" | "press_key" | "hotkey", Targeting::Px) => {
+                vec![RefusalCode::BackgroundOccluded]
+            }
+            ("electron", "type_text" | "press_key" | "hotkey" | "scroll" | "editor_save", _) => {
+                vec![RefusalCode::BackgroundUnavailable]
+            }
+            ("tauri", "hotkey", _) | ("tauri", "scroll", Targeting::Px) => {
+                vec![RefusalCode::BackgroundUnavailable]
+            }
+            ("tauri", "drag", Targeting::Px) => vec![RefusalCode::BackgroundOccluded],
+            _ => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
+    let expected_background_refusal = !expected_refusals.is_empty();
     let mut oracles = if expected_background_refusal {
         Vec::new()
     } else {
@@ -750,7 +769,8 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
             OracleKind::Cursor,
             OracleKind::NoLeakedInput,
         ]);
-        if cfg!(target_os = "windows")
+        if !expected_background_refusal
+            && cfg!(target_os = "windows")
             && (matches!(action, "press_key" | "hotkey")
                 || (action == "type_text" && targeting == Targeting::Px))
         {
@@ -781,7 +801,7 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         oracles,
     );
     if expected_background_refusal {
-        case.expecting_refusal(vec![RefusalCode::BackgroundOccluded])
+        case.expecting_refusal(expected_refusals)
     } else {
         case
     }

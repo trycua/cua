@@ -140,10 +140,19 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
     use EventKind::*;
     if crate::input::is_chromium_target_window(hwnd) {
         // Chromium's input thread architecture requires SendInput-queue
-        // origin for mouse + key-combo events (#1623). Plain keystrokes and
-        // text input via WM_CHAR still work because they go through
-        // Chromium's IME path, which DOES consume Win32 messages.
-        return matches!(kind, MouseClick | MouseMove | MouseScroll | KeyCombo);
+        // origin for pointer and keyboard events (#1623). Posted WM_CHAR and
+        // plain key messages can return success while a background renderer
+        // receives nothing, so they must be refused as honestly as chords.
+        return matches!(
+            kind,
+            MouseClick | MouseMove | MouseScroll | Keystroke | KeyCombo | TextInput
+        );
+    }
+    if crate::input::has_chromium_descendant(hwnd) {
+        // Embedded WebView2 hosts retain useful UIA/top-level routes for
+        // clicks and ValuePattern text. Their drag, wheel and modifier-chord
+        // paths still depend on the renderer's system input queue.
+        return matches!(kind, MouseMove | MouseScroll | KeyCombo);
     }
     if is_wpf_target_window(hwnd) {
         // WPF ignores posted pointer messages (its input manager drops

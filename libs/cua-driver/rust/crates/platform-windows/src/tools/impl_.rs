@@ -2730,22 +2730,6 @@ impl Tool for ClickTool {
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
-            // Chromium can return S_OK from InvokePattern without dispatching
-            // a DOM click while fully occluded. Do not report that silent loss
-            // as delivery: Chromium does not expose a target-bound default
-            // action for this control, and coordinate injection cannot reach an
-            // occluded window without changing z-order.
-            if delivery == DeliveryMode::Background
-                && btn == "left"
-                && count == 1
-                && crate::input::is_chromium_target_window(hwnd)
-            {
-                return crate::input::delivery::background_unavailable_error_with_cause(
-                    hwnd,
-                    EventKind::MouseClick,
-                    "Chromium UIA Invoke does not deliver to a fully occluded window",
-                );
-            }
             // delivery_mode:"background" on WinUI3 for double / right / middle: single
             // left falls through to the UIA Invoke path below (already drives
             // WinUI3). Double-left lands via a double UIA Invoke; right/middle
@@ -2772,6 +2756,25 @@ impl Tool for ClickTool {
             let state_clone = self.state.clone();
             let use_uia_invoke = (btn == "left" || btn == "middle") && count == 1;
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+                // Direct Chromium UIA Invoke can return S_OK without firing a
+                // DOM event while occluded. Try the honest coordinate actuator
+                // first: it lands while visible and reports occlusion without
+                // raising the window when hidden.
+                if delivery == DeliveryMode::Background
+                    && crate::input::is_chromium_target_window(hwnd)
+                {
+                    let (cx, cy) = resolve_onscreen_point_with_scroll(
+                        &state_clone.element_cache, pid, hwnd, idx, cx, cy, "clicking",
+                    )
+                    .map_err(|message| anyhow::anyhow!(message))?;
+                    return crate::input::inject_click_screen(hwnd, cx, cy, count, &btn)
+                        .map(|()| format!(
+                            "✅ Injected click on [{idx}] (screen ({cx},{cy}), background, no foreground swap)."
+                        ))
+                        .map_err(|error| anyhow::anyhow!(
+                            "__CUA_BG_UNAVAILABLE_CLICK__{error}"
+                        ));
+                }
                 if use_uia_invoke {
                     // Retain the element out of the cache (AddRef under the
                     // cache lock) so it can't be freed by a concurrent
@@ -2863,30 +2866,31 @@ impl Tool for ClickTool {
                         std::mem::forget(elem);
                     }
                 }
-                // PostMessage fallback (legacy Win32 + non-Invokable elements).
-                // delivery_mode:"background" on targets that silently drop PostMessage
-                // clicks (Chromium content, GTK buttons): route through the
-                // universal coordinate-injection actuator (touch injection, no
-                // foreground swap, z-order preserved) so the caller never needs
-                // to know the target is Chromium/GTK and never sees a raise.
-                // Only the structured error remains as a last resort (e.g. a
-                // right-click, which has no clean touch mapping).
                 if delivery == DeliveryMode::Background
-                    && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
-                {
-                    // Coordinate injection lands at (cx,cy); scroll the element
-                    // into view if it's off-screen, else preserve the clean
-                    // off-screen failure.
-                    let (cx, cy) = resolve_onscreen_point_with_scroll(
-                        &state_clone.element_cache, pid, hwnd, idx, cx, cy, "clicking",
+                    && crate::input::delivery::would_be_silently_dropped(
+                        hwnd,
+                        EventKind::MouseClick,
                     )
-                    .map_err(|m| anyhow::anyhow!(m))?;
-                    match crate::input::inject_click_screen(hwnd, cx, cy, count, &btn) {
-                        Ok(()) => return Ok(format!(
-                            "✅ Injected click on [{idx}] (screen ({cx},{cy}), background, no foreground swap)."
-                        )),
-                        Err(e) => anyhow::bail!("__CUA_BG_UNAVAILABLE_CLICK__{e}"),
-                    }
+                {
+                    let (cx, cy) = resolve_onscreen_point_with_scroll(
+                        &state_clone.element_cache,
+                        pid,
+                        hwnd,
+                        idx,
+                        cx,
+                        cy,
+                        "clicking",
+                    )
+                    .map_err(|message| anyhow::anyhow!(message))?;
+                    return crate::input::inject_click_screen(hwnd, cx, cy, count, &btn)
+                        .map(|()| {
+                            format!(
+                                "✅ Injected click on [{idx}] (screen ({cx},{cy}), background, no foreground swap)."
+                            )
+                        })
+                        .map_err(|error| {
+                            anyhow::anyhow!("__CUA_BG_UNAVAILABLE_CLICK__{error}")
+                        });
                 }
                 crate::input::post_click_screen(hwnd, cx, cy, count, &btn)?;
                 let action_name = match btn.as_str() {
@@ -3026,6 +3030,30 @@ impl Tool for ClickTool {
                     return r;
                 }
             }
+            // As above, bypass Chromium's false-positive UIA Invoke and use
+            // the coordinate actuator before attempting any accessibility hit
+            // test. The actuator itself distinguishes visible delivery from a
+            // fully occluded structured refusal.
+            if delivery == DeliveryMode::Background && crate::input::is_chromium_target_window(hwnd)
+            {
+                let btn2 = btn.clone();
+                let inj = tokio::task::spawn_blocking(move || {
+                    crate::input::inject_click_screen(hwnd, sx as i32, sy as i32, count, &btn2)
+                })
+                .await;
+                return match inj {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Injected click to pid {pid} at ({sx},{sy}) (background, no foreground swap)."
+                    ))
+                    .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" })),
+                    Ok(Err(error)) => crate::input::delivery::background_unavailable_error_with_cause(
+                        hwnd,
+                        EventKind::MouseClick,
+                        error.to_string(),
+                    ),
+                    Err(error) => ToolResult::error(format!("Task error: {error}")),
+                };
+            }
             let use_uia = (btn == "left" || btn == "middle") && count == 1;
             if use_uia {
                 let invoked = tokio::task::spawn_blocking(move || {
@@ -3047,20 +3075,8 @@ impl Tool for ClickTool {
                 }
             }
 
-            // UIA hit-test didn't land. Decide between PostMessage / injection /
-            // SendInput based on dispatch mode.
-            //
-            // delivery_mode:"background" (the default) — never swap foreground. If the
-            // target silently drops PostMessage mouse events (Chromium DOM
-            // content, GTK button widgets), route through the universal
-            // coordinate-injection actuator: touch injection lands in the system
-            // input queue (so Chromium/Electron/WPF accept it; the OS promotes to
-            // WM_*BUTTON for legacy Win32) WITHOUT SetForegroundWindow, and a
-            // cloak+restore z-order guard keeps the target from visibly raising.
-            // This is what lets a caller "just target the app and play actions"
-            // without knowing whether it's Chromium/GTK/etc. The structured
-            // background_unavailable error only survives as a last resort for
-            // inputs injection can't express (e.g. right/middle clicks).
+            // UIA did not land. Known dropped surfaces other than direct
+            // Chromium (handled above) get one targeted injection attempt.
             if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
@@ -3070,23 +3086,16 @@ impl Tool for ClickTool {
                 })
                 .await;
                 return match inj {
-                    Ok(Ok(())) => {
-                        let click_word = match count {
-                            2 => "double-click",
-                            3 => "triple-click",
-                            _ => "click",
-                        };
-                        ToolResult::text(format!(
-                            "✅ Injected {click_word} to pid {pid} at ({sx},{sy}) (background, no foreground swap)."
-                        ))
-                        .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" }))
-                    }
-                    Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Injected click to pid {pid} at ({sx},{sy}) (background, no foreground swap)."
+                    ))
+                    .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" })),
+                    Ok(Err(error)) => crate::input::delivery::background_unavailable_error_with_cause(
                         hwnd,
                         EventKind::MouseClick,
-                        e.to_string(),
+                        error.to_string(),
                     ),
-                    Err(e) => ToolResult::error(format!("Task error: {e}")),
+                    Err(error) => ToolResult::error(format!("Task error: {error}")),
                 };
             }
 
@@ -4722,6 +4731,12 @@ impl Tool for ScrollTool {
         // UIA while their top-level HWND ignores WM_VSCROLL. Prefer the
         // accessibility channel for an indexed target; the message path below
         // remains the fallback for native Win32 scrollbars.
+        if delivery == DeliveryMode::Background && crate::input::is_chromium_target_window(hwnd) {
+            return crate::input::delivery::background_unavailable_error(
+                hwnd,
+                EventKind::MouseScroll,
+            );
+        }
         if let Some(idx) = elem_idx {
             let state = self.state.clone();
             let direction_for_uia = direction.clone();
@@ -4752,6 +4767,16 @@ impl Tool for ScrollTool {
                     "delivery_mode": "background"
                 }));
             }
+        }
+
+        if delivery == DeliveryMode::Background
+            && args.get("x").is_some_and(serde_json::Value::is_number)
+            && args.get("y").is_some_and(serde_json::Value::is_number)
+        {
+            return crate::input::delivery::background_unavailable_error(
+                hwnd,
+                EventKind::MouseScroll,
+            );
         }
 
         // delivery_mode:"background" — WM_VSCROLL/HSCROLL is silently dropped by
@@ -5871,7 +5896,7 @@ impl Tool for DragTool {
         // no cursor move; the target is held non-activatable + cloaked for the
         // stroke (mirrors the click pen path).
         if delivery == DeliveryMode::Background
-            && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
+            && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseMove)
         {
             let target = hwnd;
             let btn = button.clone();
@@ -5912,7 +5937,11 @@ impl Tool for DragTool {
                          (delivery_mode:background, PostMessage would have been dropped)."
                     ))
                 }
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
+                    hwnd,
+                    EventKind::MouseMove,
+                    e.to_string(),
+                ),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }

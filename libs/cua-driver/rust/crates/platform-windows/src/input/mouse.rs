@@ -298,6 +298,46 @@ pub fn is_chromium_target_window(hwnd: u64) -> bool {
     is_chromium
 }
 
+/// Return true when `hwnd` hosts a Chromium/WebView2 renderer child even if
+/// its own top-level class is framework-specific (for example a Tauri host).
+/// Keep this separate from [`is_chromium_target_window`]: embedded WebView2
+/// surfaces support some UIA/top-level background routes that direct Chromium
+/// frames do not, so delivery policy needs to distinguish the two shapes.
+pub fn has_chromium_descendant(hwnd: u64) -> bool {
+    use windows::Win32::Foundation::{BOOL, FALSE, LPARAM, TRUE};
+    use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, GetClassNameW};
+
+    if hwnd == 0 {
+        return false;
+    }
+    struct Scan {
+        found: bool,
+    }
+    unsafe extern "system" fn child_cb(child: HWND, lparam: LPARAM) -> BOOL {
+        let scan = &mut *(lparam.0 as *mut Scan);
+        let mut buf = [0u16; 64];
+        let n = GetClassNameW(child, &mut buf);
+        if n > 0 {
+            let class = String::from_utf16_lossy(&buf[..n as usize]);
+            if class.starts_with("Chrome_WidgetWin_") || class.starts_with("CefBrowser") {
+                scan.found = true;
+                return FALSE;
+            }
+        }
+        TRUE
+    }
+
+    let mut scan = Scan { found: false };
+    unsafe {
+        let _ = EnumChildWindows(
+            HWND(hwnd as *mut _),
+            Some(child_cb),
+            LPARAM(&mut scan as *mut Scan as isize),
+        );
+    }
+    scan.found
+}
+
 /// Click at **screen** coordinates `(sx, sy)` via `SendInput` against the
 /// system input queue, briefly focusing `target` so the click lands there.
 ///

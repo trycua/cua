@@ -16,13 +16,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOUSEINPUT, SendInput,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    ChildWindowFromPointEx, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT,
-    GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW, PostMessageW,
-    SetCursorPos, SetWindowPos, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST,
-    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_TOPMOST,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
-    WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    ChildWindowFromPointEx, GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW,
+    PostMessageW, SendMessageTimeoutW, SetCursorPos, SetWindowPos, CWP_SKIPDISABLED,
+    CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST,
+    SMTO_ABORTIFHUNG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
+    WM_MBUTTONUP, WM_MOUSEMOVE, WM_NULL, WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_TOPMOST,
 };
 
 const MK_LBUTTON: u32 = 0x0001;
@@ -522,12 +521,21 @@ fn send_click_synthesized_mods_impl(
         }
 
         // SetForegroundWindow returns before retained-mode frameworks finish
-        // processing their activation messages. Sending the pointer-down in
-        // that gap can make the first click activate the window without
-        // reaching the control beneath it. Wait only when this call changed
-        // the foreground; already-active targets stay on the fast path.
+        // processing their activation messages. Synchronize with the target
+        // queue, then allow one dispatcher turn before sending pointer-down;
+        // otherwise the first click can activate the window without reaching
+        // the control beneath it. Already-active targets stay on the fast path.
         if changed_foreground {
-            sleep(Duration::from_millis(50));
+            let _ = SendMessageTimeoutW(
+                target,
+                WM_NULL,
+                WPARAM(0),
+                LPARAM(0),
+                SMTO_ABORTIFHUNG,
+                250,
+                None,
+            );
+            sleep(Duration::from_millis(100));
         }
 
         // Move the cursor so the OS hover state matches before the click; the

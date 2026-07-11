@@ -47,31 +47,71 @@ use indexmap::IndexMap;
 // own cursor key. A new animation only supersedes the SAME key's prior waiter,
 // so concurrent sessions never cross-cancel each other's arrivals.
 
-static ARRIVAL_TX: Mutex<Option<HashMap<CursorKey, tokio::sync::oneshot::Sender<()>>>> =
-    Mutex::new(None);
+struct ArrivalWaiter {
+    generation: u64,
+    tx: tokio::sync::oneshot::Sender<()>,
+}
 
-fn arrival_register(key: CursorKey, tx: tokio::sync::oneshot::Sender<()>) {
+static ARRIVAL_TX: Mutex<Option<HashMap<CursorKey, ArrivalWaiter>>> = Mutex::new(None);
+static NEXT_ARRIVAL_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn arrival_register(key: CursorKey, tx: tokio::sync::oneshot::Sender<()>) -> u64 {
+    let generation = NEXT_ARRIVAL_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut guard = ARRIVAL_TX.lock().unwrap();
     let map = guard.get_or_insert_with(HashMap::new);
     // Cancel only the same key's previous waiter (superseded by new animation).
-    if let Some(old_tx) = map.insert(key, tx) {
-        let _ = old_tx.send(());
+    if let Some(old) = map.insert(key, ArrivalWaiter { generation, tx }) {
+        let _ = old.tx.send(());
     }
+    generation
 }
 
 fn arrival_fire(key: &CursorKey) {
     if let Ok(mut guard) = ARRIVAL_TX.lock() {
         if let Some(map) = guard.as_mut() {
-            if let Some(tx) = map.remove(key) {
-                let _ = tx.send(());
+            if let Some(waiter) = map.remove(key) {
+                let _ = waiter.tx.send(());
             }
+        }
+    }
+}
+
+fn arrival_cancel(key: &CursorKey, generation: u64) {
+    if let Ok(mut guard) = ARRIVAL_TX.lock() {
+        if let Some(map) = guard.as_mut() {
+            if map
+                .get(key)
+                .is_some_and(|waiter| waiter.generation == generation)
+            {
+                map.remove(key);
+            }
+        }
+    }
+}
+
+async fn wait_for_arrival(
+    key: &CursorKey,
+    generation: u64,
+    rx: tokio::sync::oneshot::Receiver<()>,
+    timeout: Duration,
+) -> bool {
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(())) => true,
+        Ok(Err(_)) | Err(_) => {
+            arrival_cancel(key, generation);
+            false
         }
     }
 }
 
 // ── Global overlay state ──────────────────────────────────────────────────
 
-static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<OverlayMsg>> = OnceLock::new();
+static CMD_TX: OnceLock<std::sync::mpsc::Sender<OverlayMsg>> = OnceLock::new();
+static PENDING_COMMANDS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+const MAX_PENDING_COMMANDS: usize = 4096;
 // Single-consumer slot; receiver is moved into run_on_main_thread().
 static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex::new(None);
 static RENDER: Mutex<Option<RenderMap>> = Mutex::new(None);
@@ -97,13 +137,13 @@ struct RenderMap {
     /// Frozen launch-time config used as the template for lazily-created
     /// cursors (its palette is overridden per-key via `Palette::for_instance`).
     template: CursorConfig,
-    /// Render-side tombstone of permanently-ended session cursor keys. A `Cmd`
+    /// Render-side tombstone of ended session cursor keys. A `Cmd`
     /// for a key in here is dropped WITHOUT get-or-create, so an in-flight
     /// click/move from another task that lands AFTER the owning session's
     /// `Remove` can never resurrect the just-removed cursor (the ghost-cursor
-    /// resurrection race). Keyed on session_id, which is unique per session, so
-    /// a permanent tombstone is correct (no cursor_id reuse across a
-    /// session_end boundary). "default" is never tombstoned.
+    /// resurrection race). An explicitly ordered `Revive` clears the matching
+    /// key when `start_session` intentionally reuses an id. "default" is never
+    /// tombstoned.
     ended: std::collections::HashSet<CursorKey>,
 }
 
@@ -144,6 +184,12 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
             }
             None
         }
+        OverlayMsg::Revive(key) => {
+            if key != "default" {
+                map.ended.remove(&key);
+            }
+            None
+        }
         OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }) => {
             // Drop a command for an already-ended session WITHOUT get-or-create
             // — this is the resurrection guard. Without it, a ClickPulse/MoveTo
@@ -166,8 +212,18 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
 
 /// Initialise global overlay state (call once, before run_on_main_thread).
 pub fn init(cfg: CursorConfig) {
-    let (tx, rx) = std::sync::mpsc::sync_channel(4096);
+    static REVIVE_HOOK_REGISTERED: OnceLock<()> = OnceLock::new();
+    REVIVE_HOOK_REGISTERED.get_or_init(|| {
+        cua_driver_core::session::register_session_revive_hook(|session_id| {
+            revive_cursor(session_id.to_owned());
+        });
+    });
+    // Commands and lifecycle events share one ordered, non-blocking producer
+    // queue. A stalled renderer can build a backlog, but it cannot block
+    // session end/revival or make those lifecycle events disappear.
+    let (tx, rx) = std::sync::mpsc::channel();
     let _ = CMD_TX.set(tx);
+    PENDING_COMMANDS.store(0, std::sync::atomic::Ordering::Release);
     *CMD_RX_CELL.lock().unwrap() = Some(rx);
     *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
     let mut cursors = IndexMap::new();
@@ -183,23 +239,75 @@ pub fn init(cfg: CursorConfig) {
     });
 }
 
-/// Send a keyed command from any thread (MCP tool, etc.).  Non-blocking; drops
-/// if the channel is full (old commands are less important than new ones).
-pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
+/// Send a keyed command from any thread (MCP tool, etc.). Non-blocking except
+/// for allocation; failure means the renderer receiver has stopped.
+pub fn send_command(key: CursorKey, cmd: OverlayCommand) -> bool {
     // Empty key is the explicit no-cursor sentinel → drop the command so a
     // cursor-less run never paints.
     if key.is_empty() {
-        return;
+        return false;
     }
-    if let Some(tx) = CMD_TX.get() {
-        let _ = tx.try_send(OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }));
+    try_send_command(CMD_TX.get(), key, cmd)
+}
+
+fn try_send_command(
+    sender: Option<&std::sync::mpsc::Sender<OverlayMsg>>,
+    key: CursorKey,
+    cmd: OverlayCommand,
+) -> bool {
+    try_send_command_with_depth(sender, key, cmd, &PENDING_COMMANDS)
+}
+
+fn try_send_command_with_depth(
+    sender: Option<&std::sync::mpsc::Sender<OverlayMsg>>,
+    key: CursorKey,
+    cmd: OverlayCommand,
+    pending: &std::sync::atomic::AtomicUsize,
+) -> bool {
+    let reserved = pending
+        .fetch_update(
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+            |count| (count < MAX_PENDING_COMMANDS).then_some(count + 1),
+        )
+        .is_ok();
+    if !reserved {
+        return false;
+    }
+    let sent = sender.is_some_and(|tx| {
+        tx.send(OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }))
+            .is_ok()
+    });
+    if !sent {
+        pending.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+    sent
+}
+
+fn note_command_dequeued(msg: &OverlayMsg) {
+    if matches!(msg, OverlayMsg::Cmd(_)) {
+        PENDING_COMMANDS.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+fn send_registered_move(
+    sender: Option<&std::sync::mpsc::Sender<OverlayMsg>>,
+    key: CursorKey,
+    cmd: OverlayCommand,
+    generation: u64,
+) -> bool {
+    if try_send_command(sender, key.clone(), cmd) {
+        true
+    } else {
+        arrival_cancel(&key, generation);
+        false
     }
 }
 
 /// Convenience for callsites not yet threaded with a session key: drives the
 /// seeded `"default"` cursor (the anonymous / one-shot identity).
 pub fn send_command_default(cmd: OverlayCommand) {
-    send_command("default".to_owned(), cmd);
+    let _ = send_command("default".to_owned(), cmd);
 }
 
 /// Remove a session's owned cursor from the render collection (fired from the
@@ -211,7 +319,20 @@ pub fn remove_cursor(key: CursorKey) {
         return;
     }
     if let Some(tx) = CMD_TX.get() {
-        let _ = tx.try_send(OverlayMsg::Remove(key));
+        let _ = tx.send(OverlayMsg::Remove(key));
+    }
+}
+
+/// Clear an ended session's render-side tombstone after an explicit
+/// `start_session` revival. It travels over the same channel as `Remove` and
+/// commands, so a late command queued before revival remains rejected while a
+/// command queued after revival is accepted.
+pub fn revive_cursor(key: CursorKey) {
+    if key.is_empty() || key == "default" {
+        return;
+    }
+    if let Some(tx) = CMD_TX.get() {
+        let _ = tx.send(OverlayMsg::Revive(key));
     }
 }
 
@@ -334,11 +455,12 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
     // Create a one-shot channel; store the sender (keyed) so the render thread
     // can fire it when this cursor's path finishes.
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-    arrival_register(key.clone(), tx);
+    let generation = arrival_register(key.clone(), tx);
 
     // Send the MoveTo command (click offset applied inside apply_command).
-    send_command(
-        key,
+    let sent = send_registered_move(
+        CMD_TX.get(),
+        key.clone(),
         OverlayCommand::MoveTo {
             x,
             y,
@@ -346,10 +468,16 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
             // convention and Swift reference (`endAngleDegrees: 45`).
             end_heading_radians: std::f64::consts::FRAC_PI_4,
         },
+        generation,
     );
 
-    // Await arrival signal (fired from render thread when Dubins path ends).
-    let _ = rx.await;
+    if !sent {
+        return;
+    }
+
+    // Await arrival signal (fired from render thread when Dubins path ends),
+    // but never let a stopped/stalled renderer hang a tool call indefinitely.
+    let _ = wait_for_arrival(&key, generation, rx, ARRIVAL_TIMEOUT).await;
 }
 
 /// Block the calling thread (must be the OS main thread) running the AppKit
@@ -903,10 +1031,12 @@ fn render_loop(
                     let mut had_msg = false;
                     if let Some(msg) = first_msg {
                         had_msg = true;
+                        note_command_dequeued(&msg);
                         let _ = apply_msg(map, msg);
                     }
                     while let Ok(msg) = rx.try_recv() {
                         had_msg = true;
+                        note_command_dequeued(&msg);
                         let _ = apply_msg(map, msg);
                     }
                     // Tick every cursor while an animation/fade is in progress
@@ -1284,6 +1414,10 @@ fn dispatch_window_lifecycle(win_ptr: usize, close: bool) {
             objc2::msg_send![win, orderOut: std::ptr::null_mut::<objc2::runtime::AnyObject>()];
         if close {
             let _: () = objc2::msg_send![win, close];
+            // `dispatch_create_cursor_window` owns the +1 from alloc/init and
+            // sets releasedWhenClosed=false. Balance that ownership here, on
+            // the AppKit main queue, after all earlier updates for this window.
+            let _: () = objc2::msg_send![win, release];
         }
     }
 
@@ -1565,7 +1699,7 @@ mod tests {
     }
 
     #[test]
-    fn tombstone_blocks_resurrection_after_remove() {
+    fn tombstone_blocks_late_command_then_explicit_revive_accepts_new_command() {
         // The resurrection race: a Cmd for a session lands AFTER its Remove
         // (an in-flight click from another task as the session dies). The
         // tombstone must drop it so the just-removed cursor is NOT re-created.
@@ -1594,6 +1728,117 @@ mod tests {
             1,
             "render map length must stay at default only"
         );
+
+        // An explicit start_session revival is ordered after the late command.
+        // It clears only this key's tombstone, so the next command can lazily
+        // create a fresh cursor again.
+        apply_msg(&mut map, OverlayMsg::Revive("sessA".to_owned()));
+        assert!(!map.ended.contains("sessA"));
+        let resolved = apply_msg(&mut map, move_msg("sessA", 55.0, 66.0));
+        assert_eq!(resolved.as_deref(), Some("sessA"));
+        assert!(map.cursors.contains_key("sessA"));
+    }
+
+    #[tokio::test]
+    async fn failed_move_send_and_timeout_both_clear_the_registered_waiter() {
+        static ARRIVAL_TEST_LOCK: Mutex<()> = Mutex::new(());
+        let _test_guard = ARRIVAL_TEST_LOCK.lock().unwrap();
+        *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
+
+        // A stopped renderer drops its receiver, so command delivery fails
+        // immediately without leaving the registered arrival behind.
+        let (command_tx, command_rx) = std::sync::mpsc::channel();
+        drop(command_rx);
+
+        let key = "send-failure".to_owned();
+        let (arrival_tx, arrival_rx) = tokio::sync::oneshot::channel();
+        let generation = arrival_register(key.clone(), arrival_tx);
+        let sent = send_registered_move(
+            Some(&command_tx),
+            key.clone(),
+            OverlayCommand::MoveTo {
+                x: 2.0,
+                y: 2.0,
+                end_heading_radians: 0.0,
+            },
+            generation,
+        );
+        assert!(!sent);
+        assert!(arrival_rx.await.is_err(), "cancel must close the waiter");
+        assert!(!ARRIVAL_TX
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .contains_key(&key));
+
+        // A renderer that accepts the command but never reports arrival is
+        // bounded by the cancellable timeout and leaves no stale waiter.
+        let key = "arrival-timeout".to_owned();
+        let (arrival_tx, arrival_rx) = tokio::sync::oneshot::channel();
+        let generation = arrival_register(key.clone(), arrival_tx);
+        assert!(
+            !wait_for_arrival(&key, generation, arrival_rx, Duration::ZERO).await,
+            "pending arrival must time out"
+        );
+        assert!(!ARRIVAL_TX
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .contains_key(&key));
+
+        *ARRIVAL_TX.lock().unwrap() = None;
+    }
+
+    #[test]
+    fn lifecycle_events_remain_ordered_behind_a_saturated_renderer_backlog() {
+        let (command_tx, command_rx) = std::sync::mpsc::channel();
+        let pending = std::sync::atomic::AtomicUsize::new(0);
+
+        // Saturate the command budget while the renderer is not draining.
+        // Further render updates are dropped, but lifecycle events still enter
+        // the same ordered queue without blocking.
+        for index in 0..MAX_PENDING_COMMANDS {
+            assert!(try_send_command_with_depth(
+                Some(&command_tx),
+                "sessA".to_owned(),
+                OverlayCommand::MoveTo {
+                    x: index as f64,
+                    y: 0.0,
+                    end_heading_radians: 0.0,
+                },
+                &pending,
+            ));
+        }
+        assert!(!try_send_command_with_depth(
+            Some(&command_tx),
+            "sessA".to_owned(),
+            OverlayCommand::MoveTo {
+                x: -1.0,
+                y: 0.0,
+                end_heading_radians: 0.0,
+            },
+            &pending,
+        ));
+        command_tx
+            .send(OverlayMsg::Remove("sessA".to_owned()))
+            .unwrap();
+        command_tx
+            .send(OverlayMsg::Revive("sessA".to_owned()))
+            .unwrap();
+
+        for _ in 0..MAX_PENDING_COMMANDS {
+            assert!(matches!(command_rx.recv().unwrap(), OverlayMsg::Cmd(_)));
+        }
+        assert!(matches!(
+            command_rx.recv().unwrap(),
+            OverlayMsg::Remove(key) if key == "sessA"
+        ));
+        assert!(matches!(
+            command_rx.recv().unwrap(),
+            OverlayMsg::Revive(key) if key == "sessA"
+        ));
     }
 
     #[test]

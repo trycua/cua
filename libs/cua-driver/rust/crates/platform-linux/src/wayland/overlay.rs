@@ -95,6 +95,9 @@ pub fn forward(msg: &OverlayMsg) -> bool {
             let _ = tx.try_send(WlOverlayCmd::Remove);
             true
         }
+        // The layer-shell backend owns one visual cursor and keeps no
+        // per-session tombstones. Revival only affects the keyed X11 render map.
+        OverlayMsg::Revive(_) => false,
         OverlayMsg::Cmd(kc) => {
             if matches!(&kc.cmd, OverlayCommand::ShowFocusRect(_)) {
                 return false;

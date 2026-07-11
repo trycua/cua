@@ -107,7 +107,9 @@ pub fn resolve_cursor_icon(value: &str) -> Result<CursorIconResolution> {
 /// Rasterised cursor shape.
 #[derive(Debug, Clone)]
 pub struct CursorShape {
-    /// Raw RGBA pixels, row-major top-to-bottom, 4 bytes per pixel.
+    /// Premultiplied RGBA pixels, row-major top-to-bottom, 4 bytes per pixel.
+    /// This is the representation required by `tiny_skia::PixmapRef`, the sole
+    /// consumer of cursor assets during compositing.
     pub pixels: Vec<u8>,
     pub width: u32,
     pub height: u32,
@@ -252,8 +254,10 @@ impl CursorShape {
             &mut pixmap.as_mut(),
         );
 
-        let raw = pixmap.take();
-        let pixels = unpremultiply(raw);
+        // resvg renders directly into tiny-skia's premultiplied RGBA format.
+        // Preserve it verbatim so the later PixmapRef does not interpret
+        // straight-alpha edge colors as over-bright premultiplied channels.
+        let pixels = pixmap.take();
         Ok(Self {
             pixels,
             width: size,
@@ -278,14 +282,8 @@ impl CursorShape {
 
     fn load_raster(path: &str) -> Result<Self> {
         let img = image::open(path)?.into_rgba8();
-        let resized = image::imageops::resize(
-            &img,
-            CURSOR_SIZE,
-            CURSOR_SIZE,
-            image::imageops::FilterType::Lanczos3,
-        );
         Ok(Self {
-            pixels: resized.into_raw(),
+            pixels: resize_raster_premultiplied(img, CURSOR_SIZE, CURSOR_SIZE),
             width: CURSOR_SIZE,
             height: CURSOR_SIZE,
             hotspot_x: CURSOR_SIZE as f32 / 2.0,
@@ -296,6 +294,25 @@ impl CursorShape {
     }
 }
 
+/// Premultiply before filtering so hidden RGB in transparent source pixels
+/// cannot bleed into antialiased cursor edges during resize.
+fn resize_raster_premultiplied(img: image::RgbaImage, width: u32, height: u32) -> Vec<u8> {
+    let (source_width, source_height) = img.dimensions();
+    let premultiplied = image::RgbaImage::from_raw(
+        source_width,
+        source_height,
+        premultiply_rgba(img.into_raw()),
+    )
+    .expect("premultiplication preserves the raster buffer size");
+    image::imageops::resize(
+        &premultiplied,
+        width,
+        height,
+        image::imageops::FilterType::Lanczos3,
+    )
+    .into_raw()
+}
+
 /// Destination pixel footprint for Sky at a backing scale.
 pub fn sky_size_for_backing_scale(backing_scale: f32) -> u32 {
     (CURSOR_DISPLAY_POINTS * backing_scale.max(1.0))
@@ -303,15 +320,15 @@ pub fn sky_size_for_backing_scale(backing_scale: f32) -> u32 {
         .max(1.0) as u32
 }
 
-/// Convert pre-multiplied RGBA → straight RGBA.
-fn unpremultiply(mut data: Vec<u8>) -> Vec<u8> {
+/// Convert straight RGBA, as returned by the `image` crate, into the
+/// premultiplied representation required by tiny-skia.
+fn premultiply_rgba(mut data: Vec<u8>) -> Vec<u8> {
     for px in data.chunks_exact_mut(4) {
         let a = px[3];
-        if a > 0 && a < 255 {
-            let scale = 255.0 / a as f32;
-            px[0] = (px[0] as f32 * scale).min(255.0) as u8;
-            px[1] = (px[1] as f32 * scale).min(255.0) as u8;
-            px[2] = (px[2] as f32 * scale).min(255.0) as u8;
+        if a < 255 {
+            for channel in &mut px[..3] {
+                *channel = ((*channel as u16 * a as u16 + 127) / 255) as u8;
+            }
         }
     }
     data
@@ -407,6 +424,7 @@ mod tests {
         );
 
         let mut alpha_pixels = 0usize;
+        let mut partial_alpha_pixels = 0usize;
         let mut near_white_pixels = 0usize;
         let mut mid_gray_pixels = 0usize;
         for px in sky.pixels.chunks_exact(4) {
@@ -414,21 +432,36 @@ mod tests {
             if a > 0 {
                 alpha_pixels += 1;
             }
-            if a > 0 && r >= 240 && g >= 240 && b >= 240 {
-                near_white_pixels += 1;
+            if a > 0 && a < 255 {
+                partial_alpha_pixels += 1;
             }
-            if a > 0
-                && (112..=144).contains(&r)
-                && (112..=144).contains(&g)
-                && (112..=144).contains(&b)
-            {
-                mid_gray_pixels += 1;
+            assert!(
+                r <= a && g <= a && b <= a,
+                "cursor assets must stay premultiplied, got rgba({r},{g},{b},{a})"
+            );
+            if a > 0 {
+                let straight =
+                    |channel: u8| ((channel as u16 * 255 + a as u16 / 2) / a as u16).min(255) as u8;
+                let (sr, sg, sb) = (straight(r), straight(g), straight(b));
+                if sr >= 240 && sg >= 240 && sb >= 240 {
+                    near_white_pixels += 1;
+                }
+                if (112..=144).contains(&sr)
+                    && (112..=144).contains(&sg)
+                    && (112..=144).contains(&sb)
+                {
+                    mid_gray_pixels += 1;
+                }
             }
         }
 
         assert!(
             alpha_pixels > 0,
             "Sky raster should contain non-transparent pixels"
+        );
+        assert!(
+            partial_alpha_pixels > 0,
+            "Sky raster should exercise antialiased partial-alpha edges"
         );
         assert!(
             near_white_pixels > 0,
@@ -476,6 +509,34 @@ mod tests {
         );
         assert!(!sky_2x.has_center_hotspot());
         assert!(!sky_2x.rotates_with_heading);
+    }
+
+    #[test]
+    fn straight_raster_pixels_are_premultiplied_exactly_once() {
+        let pixels = premultiply_rgba(vec![
+            255, 128, 64, 128, // translucent color
+            250, 200, 150, 0, // fully transparent color must become transparent black
+            7, 8, 9, 255, // opaque color is unchanged
+        ]);
+        assert_eq!(pixels, vec![128, 64, 32, 128, 0, 0, 0, 0, 7, 8, 9, 255]);
+    }
+
+    #[test]
+    fn raster_resize_filters_premultiplied_pixels_without_hidden_rgb_bleed() {
+        let source = image::RgbaImage::from_raw(
+            2,
+            1,
+            vec![
+                255, 0, 0, 0, // hidden red must not bleed from transparent input
+                0, 0, 255, 255,
+            ],
+        )
+        .unwrap();
+        let resized = resize_raster_premultiplied(source, 8, 1);
+        for pixel in resized.chunks_exact(4) {
+            assert_eq!(pixel[0], 0, "transparent source RGB leaked into the edge");
+            assert!(pixel[1] <= pixel[3] && pixel[2] <= pixel[3]);
+        }
     }
 
     /// `Teardrop` is the default silhouette. If this assertion changes, the

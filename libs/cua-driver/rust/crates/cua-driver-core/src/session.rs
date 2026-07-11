@@ -23,8 +23,10 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 type SessionEndHook = Box<dyn Fn(&str) + Send + Sync>;
+type SessionReviveHook = Box<dyn Fn(&str) + Send + Sync>;
 
 static SESSION_END_HOOKS: OnceLock<Mutex<Vec<SessionEndHook>>> = OnceLock::new();
+static SESSION_REVIVE_HOOKS: OnceLock<Mutex<Vec<SessionReviveHook>>> = OnceLock::new();
 
 /// Last-activity timestamp per live session id. A session is "touched" every
 /// time a tool call carries its explicit `session` id (see the daemon boundary
@@ -57,6 +59,10 @@ fn hooks() -> &'static Mutex<Vec<SessionEndHook>> {
     SESSION_END_HOOKS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+fn revive_hooks() -> &'static Mutex<Vec<SessionReviveHook>> {
+    SESSION_REVIVE_HOOKS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
 fn ended_sessions() -> &'static Mutex<HashSet<String>> {
     ENDED_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
 }
@@ -69,6 +75,14 @@ fn ended_sessions() -> &'static Mutex<HashSet<String>> {
 /// as a no-op.
 pub fn register_session_end_hook(hook: impl Fn(&str) + Send + Sync + 'static) {
     hooks().lock().unwrap().push(Box::new(hook));
+}
+
+/// Register a callback for an explicit reuse of an ended session id. Platform
+/// cursor overlays use this to order a `Revive` event after their prior
+/// `Remove`, preserving the late-command guard without making the tombstone
+/// permanent.
+pub fn register_session_revive_hook(hook: impl Fn(&str) + Send + Sync + 'static) {
+    revive_hooks().lock().unwrap().push(Box::new(hook));
 }
 
 /// Fan a session-end out to every registered cleanup hook. Called by the daemon
@@ -92,9 +106,9 @@ pub fn fire_session_end(session_id: &str) {
     }
 }
 
-/// Whether `fire_session_end` has already run for this `session_id`. The
-/// daemon-side authority for "this session is permanently gone"; the macOS
-/// overlay keeps its own render-side tombstone keyed on the same id.
+/// Whether `fire_session_end` has already run for this `session_id`. This is
+/// the daemon-side late-action guard until an explicit [`revive_session`] call;
+/// platform overlays keep an ordered render-side tombstone keyed on the same id.
 pub fn is_session_ended(session_id: &str) -> bool {
     ended_sessions().lock().unwrap().contains(session_id)
 }
@@ -113,7 +127,13 @@ pub fn revive_session(session_id: &str) -> bool {
     if !is_trackable(session_id) {
         return false;
     }
-    ended_sessions().lock().unwrap().remove(session_id)
+    let revived = ended_sessions().lock().unwrap().remove(session_id);
+    if revived {
+        for hook in revive_hooks().lock().unwrap().iter() {
+            hook(session_id);
+        }
+    }
+    revived
 }
 
 /// Record activity for an explicit session id, resetting its idle-TTL clock.
@@ -207,10 +227,15 @@ mod tests {
         let sid = "test-ttl-session-DDEEFF";
         touch_session(sid);
         // A huge TTL leaves it alone (just touched).
-        assert!(evict_idle(Duration::from_secs(3600)).iter().all(|s| s != sid));
+        assert!(evict_idle(Duration::from_secs(3600))
+            .iter()
+            .all(|s| s != sid));
         // A zero TTL treats any prior activity as idle → evicts it.
         let evicted = evict_idle(Duration::ZERO);
-        assert!(evicted.iter().any(|s| s == sid), "zero-TTL must evict a touched session");
+        assert!(
+            evicted.iter().any(|s| s == sid),
+            "zero-TTL must evict a touched session"
+        );
         assert!(is_session_ended(sid), "evicted session is ended");
     }
 
@@ -247,6 +272,25 @@ mod tests {
         // Reviving a live (or never-ended) id is a no-op returning false.
         assert!(!revive_session(sid), "reviving a live id is a no-op");
         assert!(!revive_session("test-never-ended-778899"));
+    }
+
+    #[test]
+    fn revive_notifies_hooks_once_after_an_actual_end() {
+        let sid = "test-revive-hook-session-A1B2C3";
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_hook = calls.clone();
+        let expected = sid.to_owned();
+        register_session_revive_hook(move |got| {
+            if got == expected {
+                calls_for_hook.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+
+        end_session(sid);
+        assert!(revive_session(sid));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert!(!revive_session(sid));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
     }
 
     #[test]

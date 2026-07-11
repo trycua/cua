@@ -33,8 +33,9 @@
 #![allow(non_snake_case, non_upper_case_globals)]
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use cursor_overlay::{
     CursorConfig, CursorKey, KeyedOverlayCommand, MotionConfig, OverlayCommand, OverlayMsg,
@@ -44,7 +45,10 @@ use indexmap::IndexMap;
 
 // ── Global channel ────────────────────────────────────────────────────────
 
-static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<OverlayMsg>> = OnceLock::new();
+static CMD_TX: OnceLock<std::sync::mpsc::Sender<OverlayMsg>> = OnceLock::new();
+static PENDING_COMMANDS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+const MAX_PENDING_COMMANDS: usize = 4096;
 static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex::new(None);
 static RENDER: Mutex<Option<RenderMap>> = Mutex::new(None);
 
@@ -55,24 +59,60 @@ static RENDER: Mutex<Option<RenderMap>> = Mutex::new(None);
 // so concurrent sessions never cross-cancel each other's arrivals. Mirrors
 // macOS so click handlers can `.await` until the cursor visually lands before
 // dispatching the actual UIA / PostMessage action.
-static ARRIVAL_TX: Mutex<Option<HashMap<CursorKey, tokio::sync::oneshot::Sender<()>>>> =
-    Mutex::new(None);
+struct ArrivalWaiter {
+    generation: u64,
+    tx: tokio::sync::oneshot::Sender<()>,
+}
 
-fn arrival_register(key: CursorKey, tx: tokio::sync::oneshot::Sender<()>) {
+static ARRIVAL_TX: Mutex<Option<HashMap<CursorKey, ArrivalWaiter>>> = Mutex::new(None);
+static ARRIVAL_GENERATION: AtomicU64 = AtomicU64::new(1);
+const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn arrival_register(key: CursorKey, tx: tokio::sync::oneshot::Sender<()>) -> u64 {
+    let generation = ARRIVAL_GENERATION.fetch_add(1, Ordering::Relaxed);
     let mut guard = ARRIVAL_TX.lock().unwrap();
     let map = guard.get_or_insert_with(HashMap::new);
     // Cancel only the same key's previous waiter (superseded by new animation).
-    if let Some(old_tx) = map.insert(key, tx) {
-        let _ = old_tx.send(());
+    if let Some(old_waiter) = map.insert(key, ArrivalWaiter { generation, tx }) {
+        let _ = old_waiter.tx.send(());
     }
+    generation
 }
 
 fn arrival_fire(key: &CursorKey) {
     if let Ok(mut guard) = ARRIVAL_TX.lock() {
         if let Some(map) = guard.as_mut() {
-            if let Some(tx) = map.remove(key) {
-                let _ = tx.send(());
+            if let Some(waiter) = map.remove(key) {
+                let _ = waiter.tx.send(());
             }
+        }
+    }
+}
+
+fn arrival_cancel(key: &CursorKey, generation: u64) {
+    if let Ok(mut guard) = ARRIVAL_TX.lock() {
+        if let Some(map) = guard.as_mut() {
+            if map
+                .get(key)
+                .is_some_and(|waiter| waiter.generation == generation)
+            {
+                map.remove(key);
+            }
+        }
+    }
+}
+
+async fn wait_for_arrival(
+    key: &CursorKey,
+    generation: u64,
+    rx: tokio::sync::oneshot::Receiver<()>,
+    timeout: Duration,
+) -> bool {
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(())) => true,
+        Ok(Err(_)) | Err(_) => {
+            arrival_cancel(key, generation);
+            false
         }
     }
 }
@@ -99,11 +139,12 @@ struct RenderMap {
     /// Frozen launch-time config used as the template for lazily-created
     /// cursors (its palette is overridden per-key via `Palette::for_instance`).
     template: CursorConfig,
-    /// Render-side tombstone of permanently-ended session cursor keys. A `Cmd`
+    /// Render-side tombstone of ended session cursor keys. A `Cmd`
     /// for a key in here is dropped WITHOUT get-or-create, so an in-flight
     /// click/move from another task that lands AFTER the owning session's
     /// `Remove` can never resurrect the just-removed cursor. "default" is never
-    /// tombstoned (it backs the anonymous / one-shot path).
+    /// tombstoned (it backs the anonymous / one-shot path). An explicit ordered
+    /// `Revive` clears a key that `start_session` intentionally reuses.
     ended: HashSet<CursorKey>,
     /// Cursor key whose target the overlay should currently sit above. A single
     /// layered window can occupy only one z-band, so the most-recently-touched
@@ -147,6 +188,12 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
             }
             None
         }
+        OverlayMsg::Revive(key) => {
+            if key != "default" {
+                map.ended.remove(&key);
+            }
+            None
+        }
         OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }) => {
             // Drop a command for an already-ended session WITHOUT get-or-create
             // — this is the resurrection guard. Without it, a ClickPulse/MoveTo
@@ -167,8 +214,15 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
 }
 
 pub fn init(cfg: CursorConfig) {
-    let (tx, rx) = std::sync::mpsc::sync_channel(4096);
+    static REVIVE_HOOK_REGISTERED: OnceLock<()> = OnceLock::new();
+    REVIVE_HOOK_REGISTERED.get_or_init(|| {
+        cua_driver_core::session::register_session_revive_hook(|session_id| {
+            revive_cursor(session_id.to_owned());
+        });
+    });
+    let (tx, rx) = std::sync::mpsc::channel();
     let _ = CMD_TX.set(tx);
+    PENDING_COMMANDS.store(0, Ordering::Release);
     *CMD_RX_CELL.lock().unwrap() = Some(rx);
     *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
     let mut cursors = IndexMap::new();
@@ -186,18 +240,50 @@ pub fn init(cfg: CursorConfig) {
     });
 }
 
-/// Send a keyed command from any thread (MCP tool, etc.). Non-blocking; drops
-/// if the channel is full (old commands are less important than new ones).
+/// Send a keyed command from any thread (MCP tool, etc.). Non-blocking except
+/// for allocation; failure means the renderer receiver has stopped.
 ///
 /// Empty key = anonymous (no session declared) → no cursor; the command is
 /// dropped so a cursor-less run never paints. See `tools::resolve_cursor_key`.
 pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
+    let _ = send_command_with_status(key, cmd);
+}
+
+fn send_command_with_status(key: CursorKey, cmd: OverlayCommand) -> bool {
     if key.is_empty() {
-        return;
+        return false;
     }
-    if let Some(tx) = CMD_TX.get() {
-        let _ = tx.try_send(OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }));
+    let reserved = PENDING_COMMANDS
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            (count < MAX_PENDING_COMMANDS).then_some(count + 1)
+        })
+        .is_ok();
+    if !reserved {
+        return false;
+    }
+    let sent = CMD_TX.get().is_some_and(|tx| {
+        tx.send(OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }))
+            .is_ok()
+    });
+    if !sent {
+        PENDING_COMMANDS.fetch_sub(1, Ordering::AcqRel);
+    }
+    if sent {
         wake_overlay();
+    }
+    sent
+}
+
+fn send_registered_move(
+    key: CursorKey,
+    cmd: OverlayCommand,
+    generation: u64,
+) -> bool {
+    if send_command_with_status(key.clone(), cmd) {
+        true
+    } else {
+        arrival_cancel(&key, generation);
+        false
     }
 }
 
@@ -247,7 +333,17 @@ pub fn remove_cursor(key: CursorKey) {
         return;
     }
     if let Some(tx) = CMD_TX.get() {
-        let _ = tx.try_send(OverlayMsg::Remove(key));
+        let _ = tx.send(OverlayMsg::Remove(key));
+        wake_overlay();
+    }
+}
+
+pub fn revive_cursor(key: CursorKey) {
+    if key.is_empty() || key == "default" {
+        return;
+    }
+    if let Some(tx) = CMD_TX.get() {
+        let _ = tx.send(OverlayMsg::Revive(key));
         wake_overlay();
     }
 }
@@ -293,7 +389,11 @@ pub fn current_position(key: &str) -> (f64, f64) {
     RENDER
         .lock()
         .ok()
-        .and_then(|g| g.as_ref().and_then(|m| m.cursors.get(key)).map(|rs| rs.core.pos))
+        .and_then(|g| {
+            g.as_ref()
+                .and_then(|m| m.cursors.get(key))
+                .map(|rs| rs.core.pos)
+        })
         .unwrap_or((-200.0, -200.0))
 }
 
@@ -304,7 +404,9 @@ pub fn current_position(key: &str) -> (f64, f64) {
 /// seed was applied. Mirrors `platform_macos::cursor::overlay::seed_start_*`.
 fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     let mut guard = RENDER.lock().unwrap();
-    let Some(map) = guard.as_mut() else { return false };
+    let Some(map) = guard.as_mut() else {
+        return false;
+    };
     seed_start_in_map(map, key, target_x, target_y)
 }
 
@@ -380,10 +482,10 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
     // thread's arrival-fire can never lose a race against an immediate
     // path-end (e.g. zero-length glide).
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-    arrival_register(key.clone(), tx);
+    let generation = arrival_register(key.clone(), tx);
 
-    send_command(
-        key,
+    let sent = send_registered_move(
+        key.clone(),
         OverlayCommand::MoveTo {
             x,
             y,
@@ -391,9 +493,14 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
             // Swift reference (`endAngleDegrees: 45`).
             end_heading_radians: std::f64::consts::FRAC_PI_4,
         },
+        generation,
     );
 
-    let _ = rx.await;
+    if !sent {
+        return;
+    }
+
+    let _ = wait_for_arrival(&key, generation, rx, ARRIVAL_TIMEOUT).await;
 }
 
 /// Spin up the overlay on a dedicated thread (STA for Win32 message loop).
@@ -491,10 +598,10 @@ fn render_map_needs_frame_tick(map: &RenderMap) -> bool {
 
 #[cfg(target_os = "windows")]
 fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMsg>) {
+    use windows::core::PCWSTR;
     use windows::Win32::Media::timeBeginPeriod;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::*;
-    use windows::core::PCWSTR;
 
     // Raise multimedia timer resolution to 1ms so SetTimer can deliver
     // WM_TIMER messages at ~8ms intervals (default is ~15ms).
@@ -662,7 +769,9 @@ unsafe extern "system" fn wnd_proc(
                 static FPS_PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
                 static FPS_FRAMES: AtomicU64 = AtomicU64::new(0);
                 static FPS_LAST: AtomicU64 = AtomicU64::new(0);
-                if let Some(path) = FPS_PATH.get_or_init(|| std::env::var("CUA_DRIVER_RS_OVERLAY_FPS_FILE").ok()) {
+                if let Some(path) =
+                    FPS_PATH.get_or_init(|| std::env::var("CUA_DRIVER_RS_OVERLAY_FPS_FILE").ok())
+                {
                     let n = FPS_FRAMES.fetch_add(1, Relaxed) + 1;
                     let last = FPS_LAST.load(Relaxed);
                     if last == 0 {
@@ -670,11 +779,22 @@ unsafe extern "system" fn wnd_proc(
                     } else if now_ms.wrapping_sub(last) >= 1000 {
                         let secs = (now_ms - last) as f64 / 1000.0;
                         let fps = n as f64 / secs.max(1e-3);
-                        let cursors = RENDER.lock().ok()
-                            .and_then(|g| g.as_ref().map(|m| m.cursors.len())).unwrap_or(0);
-                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                        let cursors = RENDER
+                            .lock()
+                            .ok()
+                            .and_then(|g| g.as_ref().map(|m| m.cursors.len()))
+                            .unwrap_or(0);
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(path)
+                        {
                             use std::io::Write;
-                            let _ = writeln!(f, "overlay fps={fps:.1} avg_dt_ms={:.1} cursors={cursors}", secs * 1000.0 / n as f64);
+                            let _ = writeln!(
+                                f,
+                                "overlay fps={fps:.1} avg_dt_ms={:.1} cursors={cursors}",
+                                secs * 1000.0 / n as f64
+                            );
                         }
                         FPS_FRAMES.store(0, Relaxed);
                         FPS_LAST.store(now_ms, Relaxed);
@@ -706,6 +826,9 @@ unsafe extern "system" fn wnd_proc(
                         if let Some(ref rx) = *rx_guard {
                             while let Ok(m) = rx.try_recv() {
                                 had_msg = true;
+                                if matches!(&m, OverlayMsg::Cmd(_)) {
+                                    PENDING_COMMANDS.fetch_sub(1, Ordering::AcqRel);
+                                }
                                 if let Some(k) = apply_msg(map, m) {
                                     map.last_active = Some(k);
                                 }
@@ -837,7 +960,8 @@ unsafe extern "system" fn wnd_proc(
             } else {
                 TIMER_MS_IDLE
             };
-            if TIMER_PERIOD_MS.swap(desired_ms, std::sync::atomic::Ordering::Relaxed) != desired_ms {
+            if TIMER_PERIOD_MS.swap(desired_ms, std::sync::atomic::Ordering::Relaxed) != desired_ms
+            {
                 unsafe {
                     SetTimer(hwnd, TIMER_ID, desired_ms, None);
                 }
@@ -927,7 +1051,10 @@ unsafe fn update_layered_window(
     }
 
     let pt_src = POINT { x: 0, y: 0 };
-    let pt_dst = POINT { x: virt_x, y: virt_y };
+    let pt_dst = POINT {
+        x: virt_x,
+        y: virt_y,
+    };
     let sz = SIZE { cx: w, cy: h };
     let blend = BLENDFUNCTION {
         BlendOp: 0, // AC_SRC_OVER
@@ -971,10 +1098,14 @@ struct WinZOrderEnforcer {
 unsafe fn topmost_of(ids: &[u64]) -> Option<u64> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{GetTopWindow, GetWindow, GW_HWNDNEXT};
-    if ids.is_empty() { return None; }
+    if ids.is_empty() {
+        return None;
+    }
     let mut h = GetTopWindow(None).unwrap_or(HWND(std::ptr::null_mut()));
     while !h.0.is_null() {
-        if ids.contains(&(h.0 as u64)) { return Some(h.0 as u64); }
+        if ids.contains(&(h.0 as u64)) {
+            return Some(h.0 as u64);
+        }
         h = GetWindow(h, GW_HWNDNEXT).unwrap_or(HWND(std::ptr::null_mut()));
     }
     ids.first().copied()
@@ -991,7 +1122,11 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
 
             let pinned_target = target.and_then(|wid| {
                 let h = HWND(wid as *mut _);
-                if IsWindow(h).as_bool() { Some(h) } else { None }
+                if IsWindow(h).as_bool() {
+                    Some(h)
+                } else {
+                    None
+                }
             });
 
             // The overlay must sit JUST above the pinned target window so the
@@ -1035,7 +1170,11 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
             let insert_after = match pinned_target {
                 Some(target) => {
                     let prev = GetWindow(target, GW_HWNDPREV).unwrap_or(HWND(std::ptr::null_mut()));
-                    if !prev.0.is_null() { prev } else { HWND_TOP }
+                    if !prev.0.is_null() {
+                        prev
+                    } else {
+                        HWND_TOP
+                    }
                 }
                 None => HWND_TOP,
             };
@@ -1067,7 +1206,10 @@ mod tests {
 
     fn empty_map() -> RenderMap {
         let mut cursors = IndexMap::new();
-        cursors.insert("default".to_owned(), RenderState::new(CursorConfig::default()));
+        cursors.insert(
+            "default".to_owned(),
+            RenderState::new(CursorConfig::default()),
+        );
         RenderMap {
             cursors,
             virt_x: 0,
@@ -1084,7 +1226,11 @@ mod tests {
     fn move_msg(key: &str, x: f64, y: f64) -> OverlayMsg {
         OverlayMsg::Cmd(KeyedOverlayCommand {
             key: key.to_owned(),
-            cmd: OverlayCommand::MoveTo { x, y, end_heading_radians: 0.0 },
+            cmd: OverlayCommand::MoveTo {
+                x,
+                y,
+                end_heading_radians: 0.0,
+            },
         })
     }
 
@@ -1150,7 +1296,7 @@ mod tests {
     }
 
     #[test]
-    fn tombstone_blocks_resurrection_after_remove() {
+    fn tombstone_rejects_late_command_then_explicit_revive_accepts_new_command() {
         let mut map = empty_map();
         apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
         assert_eq!(map.cursors.len(), 2); // default + sessA
@@ -1162,9 +1308,61 @@ mod tests {
         // A late in-flight Cmd for the ended session must be dropped WITHOUT
         // re-inserting (no get-or-create resurrection).
         let resolved = apply_msg(&mut map, move_msg("sessA", 99.0, 99.0));
-        assert!(resolved.is_none(), "ended-session Cmd must be dropped, not resolved");
-        assert!(!map.cursors.contains_key("sessA"), "tombstone must block resurrection");
+        assert!(
+            resolved.is_none(),
+            "ended-session Cmd must be dropped, not resolved"
+        );
+        assert!(
+            !map.cursors.contains_key("sessA"),
+            "tombstone must block resurrection"
+        );
         assert_eq!(map.cursors.len(), 1);
+
+        apply_msg(&mut map, OverlayMsg::Revive("sessA".to_owned()));
+        assert!(!map.ended.contains("sessA"));
+        let resolved = apply_msg(&mut map, move_msg("sessA", 55.0, 66.0));
+        assert_eq!(resolved.as_deref(), Some("sessA"));
+        assert!(map.cursors.contains_key("sessA"));
+    }
+
+    #[tokio::test]
+    async fn arrival_timeout_clears_only_its_registered_waiter() {
+        static ARRIVAL_TEST_LOCK: Mutex<()> = Mutex::new(());
+        let _test_guard = ARRIVAL_TEST_LOCK.lock().unwrap();
+        *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
+
+        let key = "send-failure".to_owned();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let generation = arrival_register(key.clone(), tx);
+        assert!(!send_registered_move(
+            key.clone(),
+            OverlayCommand::MoveTo {
+                x: 1.0,
+                y: 2.0,
+                end_heading_radians: 0.0,
+            },
+            generation,
+        ));
+        assert!(rx.await.is_err());
+        assert!(!ARRIVAL_TX
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .contains_key(&key));
+
+        let key = "arrival-timeout".to_owned();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let generation = arrival_register(key.clone(), tx);
+        assert!(!wait_for_arrival(&key, generation, rx, Duration::ZERO).await);
+        assert!(!ARRIVAL_TX
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .contains_key(&key));
+
+        *ARRIVAL_TX.lock().unwrap() = None;
     }
 
     #[test]
@@ -1182,11 +1380,14 @@ mod tests {
     #[test]
     fn seed_moves_sentinel_cursor_on_screen_for_first_action() {
         let mut map = empty_map(); // 100x100 frame at origin
-        // No "sessA" cursor exists yet — the seed must get-or-create it.
+                                   // No "sessA" cursor exists yet — the seed must get-or-create it.
         let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
         assert!(seeded, "sentinel cursor must be seeded");
         let pos = map.cursors["sessA"].core.pos;
-        assert!(pos.0 > -50.0 && pos.1 > -50.0, "seed must be on-screen, got {pos:?}");
+        assert!(
+            pos.0 > -50.0 && pos.1 > -50.0,
+            "seed must be on-screen, got {pos:?}"
+        );
         assert!(
             (pos.0 - 60.0).abs() > 4.0 || (pos.1 - 60.0).abs() > 4.0,
             "seed must differ from target to produce a visible glide, got {pos:?}"
@@ -1200,7 +1401,11 @@ mod tests {
         map.cursors.get_mut("sessA").unwrap().core.pos = (30.0, 30.0);
         let seeded_again = seed_start_in_map(&mut map, &"sessA".to_owned(), 80.0, 80.0);
         assert!(!seeded_again, "on-screen cursor must not be re-seeded");
-        assert_eq!(map.cursors["sessA"].core.pos, (30.0, 30.0), "pos must be untouched");
+        assert_eq!(
+            map.cursors["sessA"].core.pos,
+            (30.0, 30.0),
+            "pos must be untouched"
+        );
     }
 
     #[test]
@@ -1209,7 +1414,10 @@ mod tests {
         map.ended.insert("sessA".to_owned());
         let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
         assert!(!seeded, "ended session must not be seeded");
-        assert!(!map.cursors.contains_key("sessA"), "ended session must not be resurrected");
+        assert!(
+            !map.cursors.contains_key("sessA"),
+            "ended session must not be resurrected"
+        );
     }
 
     #[test]
@@ -1282,6 +1490,9 @@ mod tests {
         map.last_active = k;
         assert_eq!(map.last_active.as_deref(), Some("sessA"));
         apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
-        assert_eq!(map.last_active, None, "removing the active cursor must clear last_active");
+        assert_eq!(
+            map.last_active, None,
+            "removing the active cursor must clear last_active"
+        );
     }
 }

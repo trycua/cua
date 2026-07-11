@@ -20,6 +20,7 @@
 //! override-redirect visual, ShapeInput passthrough, and the XPutImage paint.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 #[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
@@ -33,26 +34,64 @@ use cursor_overlay::{
 
 // ── Global channel ────────────────────────────────────────────────────────
 
-static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<OverlayMsg>> = OnceLock::new();
+static CMD_TX: OnceLock<std::sync::mpsc::Sender<OverlayMsg>> = OnceLock::new();
+static PENDING_COMMANDS: AtomicU64 = AtomicU64::new(0);
+const MAX_PENDING_COMMANDS: u64 = 4096;
 static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex::new(None);
 static RENDER: Mutex<Option<RenderMap>> = Mutex::new(None);
-static ARRIVAL_TX: Mutex<Option<HashMap<CursorKey, tokio::sync::oneshot::Sender<()>>>> =
-    Mutex::new(None);
+struct ArrivalWaiter {
+    generation: u64,
+    tx: tokio::sync::oneshot::Sender<()>,
+}
 
-fn arrival_register(key: CursorKey, tx: tokio::sync::oneshot::Sender<()>) {
+static ARRIVAL_TX: Mutex<Option<HashMap<CursorKey, ArrivalWaiter>>> = Mutex::new(None);
+static ARRIVAL_GENERATION: AtomicU64 = AtomicU64::new(1);
+const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn arrival_register(key: CursorKey, tx: tokio::sync::oneshot::Sender<()>) -> u64 {
+    let generation = ARRIVAL_GENERATION.fetch_add(1, Ordering::Relaxed);
     let mut guard = ARRIVAL_TX.lock().unwrap();
     let map = guard.get_or_insert_with(HashMap::new);
-    if let Some(old_tx) = map.insert(key, tx) {
-        let _ = old_tx.send(());
+    if let Some(old_waiter) = map.insert(key, ArrivalWaiter { generation, tx }) {
+        let _ = old_waiter.tx.send(());
     }
+    generation
 }
 
 fn arrival_fire(key: &CursorKey) {
     if let Ok(mut guard) = ARRIVAL_TX.lock() {
         if let Some(map) = guard.as_mut() {
-            if let Some(tx) = map.remove(key) {
-                let _ = tx.send(());
+            if let Some(waiter) = map.remove(key) {
+                let _ = waiter.tx.send(());
             }
+        }
+    }
+}
+
+fn arrival_cancel(key: &CursorKey, generation: u64) {
+    if let Ok(mut guard) = ARRIVAL_TX.lock() {
+        if let Some(map) = guard.as_mut() {
+            if map
+                .get(key)
+                .is_some_and(|waiter| waiter.generation == generation)
+            {
+                map.remove(key);
+            }
+        }
+    }
+}
+
+async fn wait_for_arrival(
+    key: &CursorKey,
+    generation: u64,
+    rx: tokio::sync::oneshot::Receiver<()>,
+    timeout: Duration,
+) -> bool {
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(())) => true,
+        Ok(Err(_)) | Err(_) => {
+            arrival_cancel(key, generation);
+            false
         }
     }
 }
@@ -89,6 +128,12 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
             }
             None
         }
+        OverlayMsg::Revive(key) => {
+            if key != "default" {
+                map.ended.remove(&key);
+            }
+            None
+        }
         OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }) => {
             if map.ended.contains(&key) {
                 return None;
@@ -106,8 +151,15 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
 }
 
 pub fn init(cfg: CursorConfig) {
-    let (tx, rx) = std::sync::mpsc::sync_channel(4096);
+    static REVIVE_HOOK_REGISTERED: OnceLock<()> = OnceLock::new();
+    REVIVE_HOOK_REGISTERED.get_or_init(|| {
+        cua_driver_core::session::register_session_revive_hook(|session_id| {
+            revive_cursor(session_id.to_owned());
+        });
+    });
+    let (tx, rx) = std::sync::mpsc::channel();
     let _ = CMD_TX.set(tx);
+    PENDING_COMMANDS.store(0, Ordering::Release);
     *CMD_RX_CELL.lock().unwrap() = Some(rx);
     *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
     let mut cursors = HashMap::new();
@@ -127,15 +179,28 @@ pub fn send_command(cmd: OverlayCommand) {
 }
 
 pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
+    let _ = send_command_for_with_status(key, cmd);
+}
+
+fn send_command_for_with_status(key: CursorKey, cmd: OverlayCommand) -> bool {
     if key.is_empty() {
-        return;
+        return false;
     }
     let msg = OverlayMsg::Cmd(KeyedOverlayCommand {
         key: key.clone(),
         cmd: cmd.clone(),
     });
-    if let Some(tx) = CMD_TX.get() {
-        let _ = tx.try_send(msg.clone());
+    let reserved = PENDING_COMMANDS
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            (count < MAX_PENDING_COMMANDS).then_some(count + 1)
+        })
+        .is_ok();
+    let sent = reserved
+        && CMD_TX
+            .get()
+            .is_some_and(|tx| tx.send(msg.clone()).is_ok());
+    if reserved && !sent {
+        PENDING_COMMANDS.fetch_sub(1, Ordering::AcqRel);
     }
     // Also forward to the native-Wayland layer-shell overlay when Wayland
     // is opted in. The wayland overlay's `forward` is a no-op when its
@@ -160,6 +225,20 @@ pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
                 let _ = crate::wayland::overlay::forward(&msg);
             }
         }
+    }
+    sent
+}
+
+fn send_registered_move(
+    key: CursorKey,
+    cmd: OverlayCommand,
+    generation: u64,
+) -> bool {
+    if send_command_for_with_status(key.clone(), cmd) {
+        true
+    } else {
+        arrival_cancel(&key, generation);
+        false
     }
 }
 
@@ -264,18 +343,23 @@ pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
     }
 
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-    arrival_register(key.clone(), tx);
+    let generation = arrival_register(key.clone(), tx);
 
-    send_command_for(
-        key,
+    let sent = send_registered_move(
+        key.clone(),
         OverlayCommand::MoveTo {
             x,
             y,
             end_heading_radians: std::f64::consts::FRAC_PI_4,
         },
+        generation,
     );
 
-    let _ = rx.await;
+    if !sent {
+        return;
+    }
+
+    let _ = wait_for_arrival(&key, generation, rx, ARRIVAL_TIMEOUT).await;
 }
 
 pub fn remove_cursor(key: CursorKey) {
@@ -283,7 +367,16 @@ pub fn remove_cursor(key: CursorKey) {
         return;
     }
     if let Some(tx) = CMD_TX.get() {
-        let _ = tx.try_send(OverlayMsg::Remove(key));
+        let _ = tx.send(OverlayMsg::Remove(key));
+    }
+}
+
+pub fn revive_cursor(key: CursorKey) {
+    if key.is_empty() || key == "default" {
+        return;
+    }
+    if let Some(tx) = CMD_TX.get() {
+        let _ = tx.send(OverlayMsg::Revive(key));
     }
 }
 
@@ -483,6 +576,9 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
             let mut guard = RENDER.lock().unwrap();
             if let Some(map) = guard.as_mut() {
                 while let Ok(msg) = rx.try_recv() {
+                    if matches!(&msg, OverlayMsg::Cmd(_)) {
+                        PENDING_COMMANDS.fetch_sub(1, Ordering::AcqRel);
+                    }
                     if let Some(key) = apply_msg(map, msg) {
                         map.last_active = Some(key);
                     }
@@ -760,3 +856,91 @@ mod tests {
 
 #[cfg(not(target_os = "linux"))]
 fn run_overlay_thread(_cfg: CursorConfig, _rx: std::sync::mpsc::Receiver<OverlayMsg>) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_map() -> RenderMap {
+        let mut cursors = HashMap::new();
+        cursors.insert(
+            "default".to_owned(),
+            RenderState::new(CursorConfig::default()),
+        );
+        RenderMap {
+            cursors,
+            scr_w: 100,
+            scr_h: 100,
+            template: CursorConfig::default(),
+            ended: HashSet::new(),
+            last_active: None,
+        }
+    }
+
+    fn move_msg(key: &str) -> OverlayMsg {
+        OverlayMsg::Cmd(KeyedOverlayCommand {
+            key: key.to_owned(),
+            cmd: OverlayCommand::MoveTo {
+                x: 10.0,
+                y: 20.0,
+                end_heading_radians: 0.0,
+            },
+        })
+    }
+
+    #[test]
+    fn tombstone_rejects_late_command_then_explicit_revive_accepts_new_command() {
+        let mut map = empty_map();
+        apply_msg(&mut map, move_msg("sessA"));
+        apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
+        assert!(apply_msg(&mut map, move_msg("sessA")).is_none());
+        assert!(!map.cursors.contains_key("sessA"));
+
+        apply_msg(&mut map, OverlayMsg::Revive("sessA".to_owned()));
+        assert_eq!(
+            apply_msg(&mut map, move_msg("sessA")).as_deref(),
+            Some("sessA")
+        );
+        assert!(map.cursors.contains_key("sessA"));
+    }
+
+    #[tokio::test]
+    async fn arrival_timeout_clears_only_its_registered_waiter() {
+        static ARRIVAL_TEST_LOCK: Mutex<()> = Mutex::new(());
+        let _test_guard = ARRIVAL_TEST_LOCK.lock().unwrap();
+        *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
+
+        let key = "send-failure".to_owned();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let generation = arrival_register(key.clone(), tx);
+        assert!(!send_registered_move(
+            key.clone(),
+            OverlayCommand::MoveTo {
+                x: 1.0,
+                y: 2.0,
+                end_heading_radians: 0.0,
+            },
+            generation,
+        ));
+        assert!(rx.await.is_err());
+        assert!(!ARRIVAL_TX
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .contains_key(&key));
+
+        let key = "arrival-timeout".to_owned();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let generation = arrival_register(key.clone(), tx);
+        assert!(!wait_for_arrival(&key, generation, rx, Duration::ZERO).await);
+        assert!(!ARRIVAL_TX
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .contains_key(&key));
+
+        *ARRIVAL_TX.lock().unwrap() = None;
+    }
+}

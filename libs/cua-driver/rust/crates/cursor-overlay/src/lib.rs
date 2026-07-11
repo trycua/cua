@@ -289,14 +289,17 @@ pub struct KeyedOverlayCommand {
     pub cmd: OverlayCommand,
 }
 
-/// Message carried over the macOS overlay channel. Either a keyed render
-/// command or a lifecycle removal. A separate lifecycle enum (rather than an
-/// `OverlayCommand::Remove` variant) keeps `OverlayCommand` render-only and
-/// avoids forcing a no-op arm onto the Windows/Linux match.
+/// Message carried over a platform overlay channel. Commands are keyed render
+/// updates; removal and revival are ordered lifecycle events. Keeping lifecycle
+/// outside [`OverlayCommand`] leaves the shared render-state match render-only.
 #[derive(Debug, Clone)]
 pub enum OverlayMsg {
     Cmd(KeyedOverlayCommand),
     Remove(CursorKey),
+    /// An explicit `start_session` reused an ended id. Clear only that id's
+    /// resurrection tombstone so commands after the revive are accepted while
+    /// commands queued between `Remove` and `Revive` remain rejected.
+    Revive(CursorKey),
 }
 
 /// Commands sent from MCP tool handlers to the overlay's render thread.

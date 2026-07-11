@@ -43,8 +43,8 @@ use std::time::Duration;
 
 use cua_driver_testkit::e2e::{
     execute_case, native_background_case, native_foreground_case, native_readonly_case,
-    recording_evidence, CaseSpec, Delivery, DriverRoute, Evidence, Observation, OracleKind, Scope,
-    Targeting,
+    recording_evidence, CaseSpec, Delivery, DriverRoute, Evidence, Observation, OracleKind,
+    RefusalCode, Scope, Targeting,
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::{run_with_background_oracles, ForegroundSentinel};
@@ -557,19 +557,16 @@ fn harness_wpf_double_click() {
 #[test]
 #[ignore]
 fn harness_wpf_press_key_accelerator() {
-    // F5 binding rather than the Ctrl+Shift+H one: cua-driver's hotkey
-    // PostMessage path doesn't update OS modifier-key state (GetKeyState
-    // returns "not pressed" for VK_CONTROL), so WPF's KeyBinding with
-    // Modifiers=Control+Shift never matches. The UIA-worker SendInput
-    // path would handle modifiers but requires the cua-driver-uia.exe
-    // helper that isn't in our test config. F5 has no modifier and works
-    // on the PostMessage path.
+    // WPF's InputManager ignores posted key messages while another native
+    // window owns foreground, even for an unmodified F5 binding. The driver
+    // must refuse before posting instead of returning an unverifiable success.
     execute_case(
-        background_case("keyboard", DriverRoute::PostMessage),
+        background_case("keyboard", DriverRoute::PostMessage)
+            .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]),
         |evidence| {
             with_named_session("windows-wpf-keyboard-ax-background", |pid, wid, driver| {
                 *evidence = recording_evidence(driver.recording_dir());
-                let (response, passed) = observe_background(driver, pid, wid, |driver| {
+                let (response, mut passed) = observe_background(driver, pid, wid, |driver| {
                     driver.call(
                         "press_key",
                         serde_json::json!({
@@ -579,18 +576,22 @@ fn harness_wpf_press_key_accelerator() {
                     )
                 });
                 assert!(
-                    !response.is_error(),
-                    "press_key failed: {}",
+                    response.is_error(),
+                    "WPF background press_key unexpectedly reported delivery: {}",
                     response.text()
                 );
-                std::thread::sleep(Duration::from_millis(400));
+                let code = response.structured()["code"]
+                    .as_str()
+                    .and_then(RefusalCode::from_driver_code)
+                    .expect("WPF background key refusal needs a structured code");
                 let post = snapshot(driver, pid, wid);
                 assert!(
-                    post.text().contains("accel_fired=1"),
-                    "F5 KeyBinding did not fire: {}",
+                    post.text().contains("accel_fired=0"),
+                    "refused WPF key mutated fixture state: {}",
                     post.text().chars().take(500).collect::<String>()
                 );
-                delivered_with_fixture_state(passed)
+                passed.push(OracleKind::FixtureState);
+                Observation::refused(code, passed, response.text(), Evidence::default())
             })
             .expect("required WPF session did not start")
         },

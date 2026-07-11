@@ -155,15 +155,16 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
         return matches!(kind, MouseMove | MouseScroll | KeyCombo);
     }
     if is_wpf_target_window(hwnd) {
-        // WPF ignores posted pointer messages (its input manager drops
-        // WM_MOUSE* unless the live system cursor is over the window). It must
-        // be driven by coordinate-routed system-queue input for clicks/moves.
+        // WPF ignores posted pointer messages unless the live system cursor is
+        // over the window. Its InputManager also ignores posted key messages
+        // while another native window owns foreground; PostMessage still
+        // returns success, so both routes need an honest refusal.
         //
         // Do not classify WM_VSCROLL/WM_HSCROLL here: the scroll tool posts the
         // scrollbar messages directly to the top-level HWND, and WPF hosts that
         // explicitly handle those messages (including our harness hook) can
         // consume them without a foreground swap.
-        return matches!(kind, MouseClick | MouseMove);
+        return wpf_drops_event(kind, target_is_foreground(hwnd));
     }
     if is_tk_target_window(hwnd) {
         // Tk's Windows event loop does not treat posted WM_CHAR/WM_KEYDOWN as
@@ -204,6 +205,25 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
         return matches!(kind, Keystroke | KeyCombo);
     }
     false
+}
+
+fn wpf_drops_event(kind: EventKind, target_is_foreground: bool) -> bool {
+    matches!(kind, EventKind::MouseClick | EventKind::MouseMove)
+        || (!target_is_foreground && matches!(kind, EventKind::Keystroke | EventKind::KeyCombo))
+}
+
+fn target_is_foreground(hwnd: u64) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetForegroundWindow, GA_ROOT};
+    if hwnd == 0 {
+        return false;
+    }
+    unsafe {
+        let target = GetAncestor(HWND(hwnd as *mut _), GA_ROOT);
+        let foreground = GetForegroundWindow();
+        let foreground_root = GetAncestor(foreground, GA_ROOT);
+        !target.0.is_null() && target == foreground_root
+    }
 }
 
 /// Detect LibreOffice / OpenOffice (VCL framework) windows.
@@ -383,6 +403,18 @@ mod tests {
         assert!(is_tk_class_name("TkTopLevel.1"));
         assert!(!is_tk_class_name("TkChild"));
         assert!(!is_tk_class_name("Chrome_WidgetWin_1"));
+    }
+
+    #[test]
+    fn wpf_refuses_posted_pointer_and_keyboard_events() {
+        assert!(wpf_drops_event(EventKind::MouseClick, true));
+        assert!(wpf_drops_event(EventKind::MouseMove, true));
+        assert!(wpf_drops_event(EventKind::Keystroke, false));
+        assert!(wpf_drops_event(EventKind::KeyCombo, false));
+        assert!(!wpf_drops_event(EventKind::Keystroke, true));
+        assert!(!wpf_drops_event(EventKind::KeyCombo, true));
+        assert!(!wpf_drops_event(EventKind::TextInput, false));
+        assert!(!wpf_drops_event(EventKind::MouseScroll, false));
     }
     #[test]
     fn delivery_mode_parses_known_values() {

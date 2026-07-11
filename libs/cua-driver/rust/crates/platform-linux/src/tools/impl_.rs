@@ -3201,7 +3201,11 @@ impl Tool for ScrollTool {
             if delivery.is_foreground() {
                 let point = element_point
                     .and_then(|(_, screen)| screen)
-                    .or_else(|| window_screen_center(xid).ok())
+                    .or_else(|| {
+                        window_screen_center(xid)
+                            .ok()
+                            .map(|(x, y)| (x as f64, y as f64))
+                    })
                     .ok_or_else(|| anyhow::anyhow!("could not resolve foreground scroll point"))?;
                 crate::input::with_x11_foreground(xid, 80, || {
                     crate::input::send_click_xtest_desktop(

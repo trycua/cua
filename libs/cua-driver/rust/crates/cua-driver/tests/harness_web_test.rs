@@ -52,6 +52,36 @@ fn allocate_loopback_port() -> u16 {
     listener.local_addr().expect("read CDP port").port()
 }
 
+fn wait_for_page_text(
+    driver: &mut McpDriver,
+    pid: i64,
+    wid: u64,
+    javascript: &str,
+    expected: &str,
+) -> String {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let response = driver.call(
+            "page",
+            serde_json::json!({
+                "pid": pid,
+                "window_id": wid,
+                "action": "execute_javascript",
+                "javascript": javascript,
+            }),
+        );
+        let text = response.text().to_owned();
+        if text.contains(expected) {
+            return text;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "page state did not reach {expected:?}: {text:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// Launch the harness exe + a cua-driver child with `CUA_DRIVER_CDP_PORT`
 /// pointing at the harness's CDP endpoint. Polls list_windows until the
 /// host's window appears.
@@ -143,21 +173,12 @@ fn harness_webview_page_tool() {
                     "selector": "#btn-increment"
                 }),
             );
-            std::thread::sleep(Duration::from_millis(500));
-
-            let post = driver
-                .call(
-                    "page",
-                    serde_json::json!({
-                        "pid": pid, "window_id": wid, "action": "execute_javascript",
-                        "javascript": "document.getElementById('lbl-counter').textContent"
-                    }),
-                )
-                .text()
-                .to_string();
-            assert!(
-                post.contains("counter=1"),
-                "WebView2 counter didn't advance via page.click_element: {post:?}"
+            wait_for_page_text(
+                driver,
+                pid,
+                wid,
+                "document.getElementById('lbl-counter').textContent",
+                "counter=1",
             );
             println!("✅ harness_webview_page_tool: CDP+execute_javascript+click_element green");
         },
@@ -203,21 +224,12 @@ fn harness_electron_page_tool() {
                 "Electron execute_javascript click failed: {}",
                 click.text()
             );
-            std::thread::sleep(Duration::from_millis(300));
-
-            let post = driver
-                .call(
-                    "page",
-                    serde_json::json!({
-                        "pid": pid, "window_id": wid, "action": "execute_javascript",
-                        "javascript": "document.getElementById('lbl-counter').textContent"
-                    }),
-                )
-                .text()
-                .to_string();
-            assert!(
-                post.contains("counter=1"),
-                "Electron counter did not advance via execute_javascript: {post:?}"
+            wait_for_page_text(
+                driver,
+                pid,
+                wid,
+                "document.getElementById('lbl-counter').textContent",
+                "counter=1",
             );
             println!("✅ harness_electron_page_tool: CDP+execute_javascript green");
         },
@@ -262,22 +274,13 @@ fn harness_electron_click_element() {
                 !text.contains("probe JSON missing") && !text.contains("required field"),
                 "click_element probe parse regressed: {text:?}"
             );
-            std::thread::sleep(Duration::from_millis(400));
-
             // Verify the click actually fired in the DOM.
-            let post = driver
-                .call(
-                    "page",
-                    serde_json::json!({
-                        "pid": pid, "window_id": wid, "action": "execute_javascript",
-                        "javascript": "document.getElementById('lbl-counter').textContent"
-                    }),
-                )
-                .text()
-                .to_string();
-            assert!(
-                post.contains("counter=1"),
-                "Counter didn't advance after page.click_element: {post:?}"
+            wait_for_page_text(
+                driver,
+                pid,
+                wid,
+                "document.getElementById('lbl-counter').textContent",
+                "counter=1",
             );
             println!("✅ harness_electron_click_element: probe parsed, click fired, counter=1");
         },

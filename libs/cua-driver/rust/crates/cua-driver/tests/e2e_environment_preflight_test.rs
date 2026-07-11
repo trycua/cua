@@ -8,6 +8,8 @@ use std::panic::{self, AssertUnwindSafe};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+use cua_driver_testkit::e2e::DisplayServer;
 use cua_driver_testkit::e2e::{write_environment_from_env, EnvironmentRecord};
 use cua_driver_testkit::{driver_binary, harness_app, spawn_in_job, Driver, McpDriver};
 
@@ -143,6 +145,7 @@ fn run_preflight() {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     let child = spawn_in_job(&mut command).expect("preflight fixture failed to launch");
+    let launched_pid = child.id() as i64;
     driver.reaper().push(child);
 
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -163,10 +166,8 @@ fn run_preflight() {
                 })
             })
         {
-            if let (Some(pid), Some(window_id)) =
-                (window["pid"].as_i64(), window["window_id"].as_u64())
-            {
-                break (pid, window_id);
+            if let Some(window_id) = window["window_id"].as_u64() {
+                break (window["pid"].as_i64().unwrap_or(launched_pid), window_id);
             }
         }
         assert!(
@@ -178,16 +179,18 @@ fn run_preflight() {
 
     #[cfg(target_os = "linux")]
     {
-        let activated = driver.call(
-            "bring_to_front",
-            serde_json::json!({ "pid": pid, "window_id": window_id }),
-        );
-        assert!(
-            !activated.is_error(),
-            "preflight fixture could not be placed on the Linux desktop: {}",
-            activated.text()
-        );
-        std::thread::sleep(Duration::from_millis(300));
+        if DisplayServer::current() == DisplayServer::X11 {
+            let activated = driver.call(
+                "bring_to_front",
+                serde_json::json!({ "pid": pid, "window_id": window_id }),
+            );
+            assert!(
+                !activated.is_error(),
+                "preflight fixture could not be placed on the Linux desktop: {}",
+                activated.text()
+            );
+            std::thread::sleep(Duration::from_millis(300));
+        }
     }
 
     let deadline = Instant::now() + Duration::from_secs(15);

@@ -85,9 +85,9 @@ impl ForegroundSentinel {
         if is_wayland_session() {
             wait_for_journal(&journal_path, focus_deadline, r#""kind":"ready""#, "ready");
             activate_native_foreground(driver, target);
+            // Electron may already be focused before its preload listener is ready.
+            // The compositor observation is the authoritative Wayland focus gate.
             wait_for_native_focus_stable(target);
-            let focus_deadline = Instant::now() + Duration::from_secs(10);
-            wait_for_journal(&journal_path, focus_deadline, r#""kind":"focus""#, "focused");
         } else {
             loop {
                 let journal = fs::read_to_string(&journal_path).unwrap_or_default();

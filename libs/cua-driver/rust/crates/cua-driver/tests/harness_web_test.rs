@@ -12,6 +12,7 @@
 
 #![cfg(target_os = "windows")]
 
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -100,9 +101,12 @@ where
     let cell_id = case.cell_id.clone();
     execute_case(case, |evidence| {
         let cdp_port = allocate_loopback_port();
-        std::env::set_var("CUA_DRIVER_CDP_PORT", cdp_port.to_string());
-        let mut driver = McpDriver::spawn_named(&cell_id)
-            .expect("required source-built Windows driver did not start");
+        let cdp_port_string = cdp_port.to_string();
+        let mut driver = McpDriver::spawn_named_with_env(
+            &cell_id,
+            &[("CUA_DRIVER_CDP_PORT", cdp_port_string.as_str())],
+        )
+        .expect("required source-built Windows driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
 
         let env_var = if toolkit == "webview2" {
@@ -111,23 +115,53 @@ where
             "CUA_ELECTRON_CDP_PORT"
         };
         let mut cmd = Command::new(&host_exe);
-        cmd.env(env_var, cdp_port.to_string())
+        cmd.env(env_var, &cdp_port_string)
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        let app = spawn_in_job(&mut cmd).expect("spawn web harness");
+            .stderr(Stdio::piped());
+        let mut app = spawn_in_job(&mut cmd).expect("spawn web harness");
         let pid = app.id() as i64;
-        driver.reaper().push(app);
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        let (wid, _) = loop {
-            if let Some(window) = driver.find_window(pid, title_substr) {
-                break window;
+        let deadline = std::time::Instant::now() + Duration::from_secs(12);
+        let mut observed_titles = Vec::new();
+        let (wid, _) = 'ready: loop {
+            if let Some(status) = app.try_wait().expect("poll web harness process") {
+                let mut stderr = String::new();
+                if let Some(mut pipe) = app.stderr.take() {
+                    let _ = pipe.read_to_string(&mut stderr);
+                }
+                panic!(
+                    "{toolkit} fixture exited before readiness with {status}: {}",
+                    stderr.trim()
+                );
             }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "{toolkit} window with title containing {title_substr:?} did not become ready"
-            );
+            let response = driver.call("list_windows", serde_json::json!({ "pid": pid }));
+            observed_titles.clear();
+            if let Some(windows) = response.structured()["windows"].as_array() {
+                for window in windows {
+                    let title = window["title"].as_str().unwrap_or("");
+                    observed_titles.push(title.to_owned());
+                    if title.contains(title_substr) {
+                        if let Some(wid) = window["window_id"].as_u64() {
+                            break 'ready (wid, title.to_owned());
+                        }
+                    }
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = app.kill();
+                let _ = app.wait();
+                let mut stderr = String::new();
+                if let Some(mut pipe) = app.stderr.take() {
+                    let _ = pipe.read_to_string(&mut stderr);
+                }
+                panic!(
+                    "{toolkit} window with title containing {title_substr:?} did not become ready; \
+                     observed titles={observed_titles:?}; stderr={:?}",
+                    stderr.trim()
+                );
+            }
             std::thread::sleep(Duration::from_millis(100));
         };
+        driver.reaper().push(app);
         let (_, passed) = run_with_background_oracles(
             &mut driver,
             TargetWindow {

@@ -15,7 +15,10 @@ pub struct ChildReaper {
 
 impl ChildReaper {
     pub fn new() -> Self {
-        ChildReaper { children: Vec::new(), pids: Vec::new() }
+        ChildReaper {
+            children: Vec::new(),
+            pids: Vec::new(),
+        }
     }
 
     /// Spawn `cmd` into the kill-on-close job (Windows) and own the child.
@@ -55,6 +58,7 @@ impl Drop for ChildReaper {
             tree_kill(pid);
         }
         for c in &mut self.children {
+            tree_kill(c.id());
             let _ = c.kill();
             let _ = c.wait();
         }
@@ -100,8 +104,8 @@ mod win {
     use std::sync::OnceLock;
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
-        JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
@@ -112,7 +116,8 @@ mod win {
 
     fn job() -> HANDLE {
         let raw = *JOB.get_or_init(|| unsafe {
-            let h = CreateJobObjectW(None, windows::core::PCWSTR::null()).expect("CreateJobObjectW");
+            let h =
+                CreateJobObjectW(None, windows::core::PCWSTR::null()).expect("CreateJobObjectW");
             let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
             info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
             let _ = SetInformationJobObject(
@@ -130,7 +135,12 @@ mod win {
     pub(super) fn assign_child(child: &Child) {
         unsafe {
             let h = HANDLE(child.as_raw_handle() as *mut c_void);
-            let _ = AssignProcessToJobObject(job(), h);
+            if let Err(error) = AssignProcessToJobObject(job(), h) {
+                eprintln!(
+                    "[testkit] could not assign child {} to job: {error}",
+                    child.id()
+                );
+            }
         }
     }
 
@@ -139,7 +149,9 @@ mod win {
         unsafe {
             if let Ok(h) = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, false, pid) {
                 if !h.is_invalid() {
-                    let _ = AssignProcessToJobObject(job(), h);
+                    if let Err(error) = AssignProcessToJobObject(job(), h) {
+                        eprintln!("[testkit] could not assign pid {pid} to job: {error}");
+                    }
                     let _ = CloseHandle(h);
                 }
             }

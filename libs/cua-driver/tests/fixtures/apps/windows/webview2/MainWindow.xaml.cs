@@ -18,9 +18,6 @@ public partial class MainWindow : Window
     {
         try
         {
-            var userData = Path.Combine(Path.GetTempPath(), "CuaTestHarness.WebView.UserData");
-            Directory.CreateDirectory(userData);
-
             // Read the CDP port from CUA_WEBVIEW_CDP_PORT (default 9222).
             // cua-driver's `page` tool routes JS execution through CDP when
             // `--remote-debugging-port` is exposed; this is the analogue of
@@ -38,6 +35,14 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException(
                     $"Invalid CUA_WEBVIEW_CDP_PORT: '{portStr}'. Expected an integer in 1-65535.");
             }
+            // WebView2 requires every process sharing a user-data directory to
+            // use identical environment options. Each fixture gets a different
+            // CDP port, so isolate its browser environment by process and port.
+            var userData = Path.Combine(
+                Path.GetTempPath(),
+                "CuaTestHarness.WebView.UserData",
+                $"{Environment.ProcessId}-{cdpPort}");
+            Directory.CreateDirectory(userData);
             var opts = new CoreWebView2EnvironmentOptions
             {
                 AdditionalBrowserArguments = $"--remote-debugging-port={cdpPort}",
@@ -77,8 +82,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"WebView2 init failed: {ex.Message}", "harness", MessageBoxButton.OK, MessageBoxImage.Error);
-            throw;
+            Console.Error.WriteLine($"WebView2 init failed: {ex}");
+            Environment.Exit(1);
         }
     }
 

@@ -44,6 +44,11 @@ impl McpDriver {
         Self::spawn_internal(&[], Some(recording_label))
     }
 
+    /// Spawn a named driver with environment variables scoped to this child.
+    pub fn spawn_named_with_env(recording_label: &str, env: &[(&str, &str)]) -> Option<Self> {
+        Self::spawn_internal(env, Some(recording_label))
+    }
+
     /// Spawn the driver with extra environment variables set on the child.
     pub fn spawn_with_env(env: &[(&str, &str)]) -> Option<Self> {
         Self::spawn_internal(env, None)

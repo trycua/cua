@@ -306,23 +306,11 @@ pub(crate) fn locate_by_name(name: &str) -> Option<AppLocator> {
 }
 
 /// Read `CFBundleIdentifier` from an `.app` bundle's `Info.plist`.
-/// Falls back to shelling out to `plutil` (already used elsewhere in
-/// this file) to avoid pulling in a plist crate just for this.
+/// NSBundle reads both XML and binary property lists in-process.
 fn bundle_id_for_app_path(app_path: &str) -> Option<String> {
-    let plist = format!("{app_path}/Contents/Info.plist");
-    let out = Command::new("plutil")
-        .args(["-extract", "CFBundleIdentifier", "raw", "-o", "-", &plist])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let bid = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if bid.is_empty() {
-        None
-    } else {
-        Some(bid)
-    }
+    let bundle = app_bundle(std::path::Path::new(app_path))?;
+    let bundle_id = unsafe { bundle.bundleIdentifier()? }.to_string();
+    nonempty_string(bundle_id)
 }
 
 /// Return all apps: running apps merged with installed-but-not-running apps.
@@ -439,42 +427,15 @@ pub(crate) fn unix_secs_to_rfc3339(secs: i64) -> String {
 }
 
 fn read_app_plist(plist_path: &std::path::Path) -> Option<AppInfo> {
-    let bundle_id_out = Command::new("plutil")
-        .args(["-extract", "CFBundleIdentifier", "raw", "-o", "-",
-               plist_path.to_str()?])
-        .output().ok()?;
-    if !bundle_id_out.status.success() { return None; }
-    let bundle_id = String::from_utf8_lossy(&bundle_id_out.stdout).trim().to_string();
-    if bundle_id.is_empty() { return None; }
+    use objc2_foundation::ns_string;
 
-    let name_out = Command::new("plutil")
-        .args(["-extract", "CFBundleDisplayName", "raw", "-o", "-",
-               plist_path.to_str()?])
-        .output().ok();
-    let name = name_out
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| {
-            // Fallback: CFBundleName.
-            Command::new("plutil")
-                .args(["-extract", "CFBundleName", "raw", "-o", "-",
-                       plist_path.to_str().unwrap_or("")])
-                .output().ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| {
-                    plist_path.parent()
-                        .and_then(|p| p.parent())
-                        .and_then(|p| p.file_stem())
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("")
-                        .to_string()
-                })
-        });
-
-    if name.is_empty() { return None; }
+    let app_path = app_path_for_info_plist(plist_path)?;
+    let bundle = app_bundle(app_path)?;
+    let bundle_id = nonempty_string(unsafe { bundle.bundleIdentifier()? }.to_string())?;
+    let name = bundle_info_string(&bundle, ns_string!("CFBundleDisplayName"))
+        .or_else(|| bundle_info_string(&bundle, ns_string!("CFBundleName")))
+        .or_else(|| app_path.file_stem()?.to_str().map(str::to_owned))
+        .and_then(nonempty_string)?;
 
     Some(AppInfo {
         name,
@@ -486,6 +447,49 @@ fn read_app_plist(plist_path: &std::path::Path) -> Option<AppInfo> {
         kind: None,
         last_used: None,
     })
+}
+
+/// Return the `.app` directory containing `Contents/Info.plist`.
+fn app_path_for_info_plist(plist_path: &std::path::Path) -> Option<&std::path::Path> {
+    let contents = plist_path.parent()?;
+    if contents.file_name()?.to_str()? != "Contents"
+        || plist_path.file_name()?.to_str()? != "Info.plist"
+    {
+        return None;
+    }
+    contents.parent()
+}
+
+/// Load bundle metadata without spawning one or more `plutil` processes per app.
+fn app_bundle(app_path: &std::path::Path) -> Option<objc2::rc::Retained<objc2_foundation::NSBundle>> {
+    use objc2_foundation::{NSBundle, NSString};
+
+    let path = NSString::from_str(app_path.to_str()?);
+    unsafe { NSBundle::bundleWithPath(&path) }
+}
+
+fn bundle_info_string(
+    bundle: &objc2_foundation::NSBundle,
+    key: &objc2_foundation::NSString,
+) -> Option<String> {
+    use objc2::{msg_send, rc::Retained, ClassType};
+    use objc2_foundation::NSString;
+
+    let value = unsafe { bundle.infoDictionary()?.objectForKey(key)? };
+    let is_string: bool = unsafe { msg_send![&*value, isKindOfClass: NSString::class()] };
+    if !is_string {
+        return None;
+    }
+
+    // SAFETY: `isKindOfClass:` confirmed NSString or one of its immutable-compatible
+    // subclasses. The property-list dictionary retains the value for this call.
+    let value = unsafe { Retained::cast::<NSString>(value) };
+    nonempty_string(value.to_string())
+}
+
+fn nonempty_string(value: String) -> Option<String> {
+    let value = value.trim().to_owned();
+    (!value.is_empty()).then_some(value)
 }
 
 /// Return the pid of the current frontmost application via
@@ -578,7 +582,7 @@ pub fn format_app_list(apps: &[AppInfo]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::unix_secs_to_rfc3339;
+    use super::{app_path_for_info_plist, read_app_plist, unix_secs_to_rfc3339};
 
     #[test]
     fn rfc3339_epoch() {
@@ -616,6 +620,50 @@ mod tests {
         // 2023-12-31T23:59:59Z = 1704067199; +1 second wraps to 2024-01-01.
         assert_eq!(unix_secs_to_rfc3339(1_704_067_199), "2023-12-31T23:59:59Z");
         assert_eq!(unix_secs_to_rfc3339(1_704_067_200), "2024-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn info_plist_path_resolves_its_app_bundle() {
+        let path = std::path::Path::new("/Applications/Example.app/Contents/Info.plist");
+        assert_eq!(
+            app_path_for_info_plist(path),
+            Some(std::path::Path::new("/Applications/Example.app"))
+        );
+        assert_eq!(app_path_for_info_plist(std::path::Path::new("/tmp/Info.plist")), None);
+    }
+
+    #[test]
+    fn reads_bundle_id_and_display_name_in_process() {
+        let root = std::env::temp_dir().join(format!(
+            "cua-driver-app-plist-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let app = root.join("Fixture.app");
+        let contents = app.join("Contents");
+        std::fs::create_dir_all(&contents).unwrap();
+        let plist = contents.join("Info.plist");
+        std::fs::write(
+            &plist,
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>dev.trycua.fixture</string>
+<key>CFBundleDisplayName</key><string>Fixture Display Name</string>
+<key>CFBundleName</key><string>Ignored Name</string>
+</dict></plist>"#,
+        )
+        .unwrap();
+
+        let info = read_app_plist(&plist).expect("fixture bundle metadata");
+        assert_eq!(info.bundle_id.as_deref(), Some("dev.trycua.fixture"));
+        assert_eq!(info.name, "Fixture Display Name");
+        assert!(!info.running);
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

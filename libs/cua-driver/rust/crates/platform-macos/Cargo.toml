@@ -32,7 +32,7 @@ block2 = "0.5"
 # objc2 and its AppKit/CoreFoundation bindings
 objc2 = "0.5"
 objc2-foundation = { version = "0.2", features = [
-    "NSArray", "NSString", "NSDictionary", "NSRunLoop",
+    "NSArray", "NSBundle", "NSString", "NSDictionary", "NSRunLoop",
     "NSThread", "NSObject", "NSValue",
     "NSAppleEventDescriptor", "NSNotification", "NSOperation",
     "NSAppleScript",

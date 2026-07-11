@@ -16,7 +16,7 @@
 //!
 //! ```text
 //! ┌─ cmux cua Permissions ──────────────────────┐
-//! │  Set up cmux cua                            │
+//! │  Enable Cua Driver Computer Use             │
 //! │  Two macOS permissions are required.        │
 //! │                                             │
 //! │  ○ Accessibility                    [Allow] │
@@ -847,13 +847,22 @@ unsafe fn update_row(
 // ── User-facing copy ────────────────────────────────────────────────────
 
 fn heading_for(status: PermissionsStatus, product_name: &str) -> String {
+    let feature_name = computer_use_feature_name(product_name);
     match status.grant_state() {
-        PermissionGrantState::BothGranted => format!("{product_name} is ready"),
+        PermissionGrantState::BothGranted => format!("{feature_name} is ready"),
         PermissionGrantState::AccessibilityGranted
         | PermissionGrantState::ScreenRecordingGranted => {
-            format!("Finish enabling {product_name}")
+            format!("Finish enabling {feature_name}")
         }
-        PermissionGrantState::NoneGranted => format!("Enable {product_name}"),
+        PermissionGrantState::NoneGranted => format!("Enable {feature_name}"),
+    }
+}
+
+fn computer_use_feature_name(product_name: &str) -> String {
+    if product_name.to_ascii_lowercase().contains("computer use") {
+        product_name.to_owned()
+    } else {
+        format!("{product_name} Computer Use")
     }
 }
 
@@ -918,7 +927,7 @@ fn product_name() -> String {
             }
         }
     }
-    "cmux cua".into()
+    "Cua Driver".into()
 }
 
 unsafe fn build_application_icon(
@@ -1439,25 +1448,35 @@ mod tests {
             accessibility: a,
             screen_recording: sr,
         };
-        assert_eq!(heading_for(st(false, false), "cmux cua"), "Enable cmux cua");
         assert_eq!(
-            heading_for(st(true, false), "cmux cua"),
-            "Finish enabling cmux cua"
+            heading_for(st(false, false), "Cua Driver"),
+            "Enable Cua Driver Computer Use"
         );
         assert_eq!(
-            heading_for(st(false, true), "cmux cua"),
-            "Finish enabling cmux cua"
+            heading_for(st(true, false), "Cua Driver"),
+            "Finish enabling Cua Driver Computer Use"
         );
-        assert_eq!(heading_for(st(true, true), "cmux cua"), "cmux cua is ready");
-        assert!(subheading_for(st(true, false), "cmux cua").contains("Screen Recording"));
-        assert!(subheading_for(st(false, true), "cmux cua").contains("Accessibility"));
         assert_eq!(
-            subheading_for(st(false, false), "cmux cua"),
-            "cmux cua needs these permissions to use apps on your Mac.\n\
-             Continue only if you trust the app or client that started cmux cua."
+            heading_for(st(false, true), "Cua Driver"),
+            "Finish enabling Cua Driver Computer Use"
         );
-        assert!(footer_for(st(false, false), "cmux cua").contains("not your terminal"));
-        assert!(footer_for(st(false, false), "cmux cua").contains("Connected clients"));
+        assert_eq!(
+            heading_for(st(true, true), "Cua Driver"),
+            "Cua Driver Computer Use is ready"
+        );
+        assert_eq!(
+            heading_for(st(false, false), "Codex Computer Use"),
+            "Enable Codex Computer Use"
+        );
+        assert!(subheading_for(st(true, false), "Cua Driver").contains("Screen Recording"));
+        assert!(subheading_for(st(false, true), "Cua Driver").contains("Accessibility"));
+        assert_eq!(
+            subheading_for(st(false, false), "Cua Driver"),
+            "Cua Driver needs these permissions to use apps on your Mac.\n\
+             Continue only if you trust the app or client that started Cua Driver."
+        );
+        assert!(footer_for(st(false, false), "Cua Driver").contains("not your terminal"));
+        assert!(footer_for(st(false, false), "Cua Driver").contains("Connected clients"));
     }
 
     #[test]

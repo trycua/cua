@@ -53,7 +53,7 @@ pub fn minimize_hosted_runner_console() -> Result<&'static str, String> {
         TRUE
     }
 
-    let mut windows = Vec::new();
+    let mut windows: Vec<HWND> = Vec::new();
     unsafe {
         let _ = EnumWindows(
             Some(collect),

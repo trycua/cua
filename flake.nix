@@ -112,7 +112,10 @@
               sway
               wf-recorder
               wtype
-              (python3.withPackages (pythonPackages: [ pythonPackages.pygobject3 ]))
+              # Python 3.13 + PyGObject can double-register AtkImplementorIface
+              # while importing GTK3 in the headless Wayland session. Keep the
+              # fixture interpreter on the mature GTK3/PyGObject combination.
+              (python312.withPackages (pythonPackages: [ pythonPackages.pygobject3 ]))
             ]);
             buildInputs = waylandE2eLibraries;
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath waylandE2eLibraries;

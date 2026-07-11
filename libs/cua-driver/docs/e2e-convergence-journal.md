@@ -9,6 +9,10 @@ convergence work. It omits machine names, credentials, and partner names.
 | --- | --- | --- |
 | `7623f7be` to `55307b38` | Added canonical native WebView2 and WPF PX background single-left-click rows with fixture-owned state and foreground geometry probes | An active Windows RDP replay passed both rows through UIA Invoke. Each result proved FixtureState, Focus, ZOrder, NoLeakedInput, and Cursor and produced complete before/after evidence plus video. WebView2 derives its real DOM screen point through CDP, proves it with a foreground PX click, then dispatches the occluded PX action. WPF reads an atomic JSON state file written by the fixture. All 31 testkit tests, strict testkit Clippy, and host compile checks passed. |
 | `6aaa914b` | Restored direct Chromium/Electron single-left background clicks through `PostMessage` for both AX-resolved and PX-resolved targets | In an active Azure RDP session, raw UIA delivered the click but raised Electron and displaced the occlusion sentinel. A VM-only `PostMessage` diagnostic then delivered both AX and PX cells in 3/3 seeded runs while FixtureState, Focus, ZOrder, NoLeakedInput, and Cursor all passed. The production build passed all 12 Electron left/right/double-click rows; only the two single-left background rows changed from refusal to delivery. |
+| `768f0650` to `6e05424a` | Completed the macOS convergence pass and bound local evidence to a clean exact source SHA | The full local matrix passed 83/83 contractual outcomes: 79 deliveries and 4 exact refusals. Fixes cover PX background hit-testing, foreground typing's first character, structured scroll/drag refusals, desktop HID scope, AppKit fixture stability, and per-connection daemon sessions. |
+| `d39c71c9` | Made the Windows sentinel physically acquire foreground before each background action | Hosted runs no longer fail during sentinel posture. WinUI3, WebView2, WPF background actions, and the shared catalog all reach their behavior boundary with the original focus, z-order, cursor, and leaked-input checks intact. |
+| `0c2331b4` to `3f6fbd53` | Completed foreground PX activation, removed volatile UIA metadata from the WPF drag-refusal oracle, and aligned WPF combo selection with the background UIA recipe | The replay passed 19/20 WPF rows, all WinUI3 and WebView2 rows, and all capture/scope rows; its only native failure was the separately owned minimized-launch contract. Electron child-window delivery and keyboard refusal codes were updated from empirical side-effect-clean results. |
+| `00a29c49` and `e43c2946` | Tested `CreateProcessW` startup show-state control, then made minimized launch fail closed when Windows cannot guarantee no activation | Electron can override `STARTF_USESHOWWINDOW`, so startup hints alone are insufficient. The driver now returns exact `background_unavailable` before spawning when the foreground lock is denied; the canonical refusal proves no new window and no desktop side effect. |
 
 ## 2026-07-10
 
@@ -97,10 +101,11 @@ gestures retain their existing refusal behavior.
 | --- | --- | --- | --- |
 | Windows | Azure RDP focused replay | Recheck occluded Electron AX/PX background left-click delivery and neighboring pointer contracts at `6aaa914b` | The background-safe `PostMessage` diagnostic delivered AX and PX in 3/3 runs with all five side-effect oracles. The production build then passed 12/12 Electron left/right/double-click rows and emitted a video for every row. |
 | Windows | `29149710089` | Final exact full matrix at `516cddb2` with strengthened desktop oracles and external WinUI3 readiness | Passed all 110 rows: 87 delivered and 23 exact refusals, with 0 failures or skips. All three lane summaries identify the full source SHA; 110 cell videos plus 3 preflight videos were uploaded and parsed successfully. |
+| Windows | `29166454913` | Exact converged matrix at `e43c2946` after macOS parity, native PX, sentinel, and launch-contract work | Passed all 113 rows: 92 delivered and 21 exact refusals, with 0 failures or skips. Shared passed 54/18, native passed 30/3, and capture/scope passed 8/0. The three lane artifacts contain 113 cell videos plus 3 preflight videos; every row links its exact trajectory path. |
 | Nix Linux source | `29150690892` | Package build, Linux unit/protocol gate, and source identity at `3b67ee30` | Passed. The package and source-owned Rust tests completed in the pinned Nix environment at the final code SHA. |
 | Linux X11 | `29148643166` | Exact supported Linux matrix at `69d3538c` with strengthened occlusion and scope gates | Passed all 80 rows: 48 delivered and 32 exact refusals, with 0 failures or skips. All three summaries and environment records identify the full source SHA; 80 cell videos plus 3 preflight videos were uploaded. |
 | Linux Wayland | `29150698432` | Exact experimental pure Sway/AT-SPI matrix at `3b67ee30` | Executed all 80 rows: 6 delivered and 74 failed, with 0 refusals or skips. Sentinel startup failures fell from 18 to 0. The remaining groups are 18 target-posture metadata failures, 36 missing Tauri renderer AX trees, 11 Electron input no-effects, 2 AT-SPI geometry fallbacks, and 7 missing GTK windows. All 81 videos parsed successfully; issue `#1922` owns the backlog. |
-| macOS | Local complete matrix after `106d1287` | Validate the converged shared, native, capture, and desktop-scope catalog with stable TCC identity | Passed all 83 declared rows from the final working tree: 79 delivered and 4 exact refusals, with 0 failures or skips. Every row produced a typed result and video. An exact-commit replay follows the implementation commit. |
+| macOS | Local complete matrix at `6e05424a` | Validate the converged shared, native, capture, and desktop-scope catalog with stable TCC identity | Passed all 83 declared rows: 79 delivered and 4 exact refusals, with 0 failures or skips. Every row produced a typed result and video, and both the summary and environment record contain the full source SHA. |
 
 The macOS replay fixed PX background click focus steals, foreground PX typing's
 first-character loss, silent web-content background scroll/drag no-effects,
@@ -109,3 +114,9 @@ daemon transport loss of structured refusal codes. Electron background scroll
 and Electron/Tauri background drag now return exact `background_unavailable`
 refusals. SwiftUI popover activation stays optional because AX reports success
 without an externally observable transient view.
+
+Repeated local runs also exposed two evidence-harness defects. The macOS
+runner now refuses a dirty tracked tree and derives a full source SHA when CI
+does not supply one. Desktop-scope tests no longer reuse a fixed daemon session
+ID after that session has ended; each proxy connection keeps its own minted
+session identity.

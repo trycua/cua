@@ -11,6 +11,10 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
 use core_foundation::boolean::{kCFBooleanTrue, CFBoolean};
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+use core_foundation::runloop::{
+    kCFRunLoopDefaultMode, CFRunLoopAddSource, CFRunLoopGetCurrent, CFRunLoopRef,
+    CFRunLoopRemoveSource, CFRunLoopRunInMode, CFRunLoopSourceRef, CFRunLoopStop,
+};
 use core_foundation::string::CFString;
 use cua_driver_core::{
     protocol::{Content, ToolResult},
@@ -18,10 +22,12 @@ use cua_driver_core::{
 };
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ffi::c_void;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex, OnceLock,
 };
+use std::time::{Duration, Instant};
 
 use super::ToolState;
 use crate::ax::bindings::{
@@ -32,10 +38,39 @@ use crate::ax::bindings::{
 
 const ANONYMOUS_SESSION: &str = "__codex_compat_connection__";
 const MAX_CLICK_COUNT: u64 = 10;
+const MAX_SCROLL_PAGES: f64 = 10.0;
+const WINDOW_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[repr(C)]
+struct __AXObserver(c_void);
+type AXObserverRef = *mut __AXObserver;
+type AXObserverCallback = extern "C" fn(
+    observer: AXObserverRef,
+    element: AXUIElementRef,
+    notification: core_foundation::string::CFStringRef,
+    context: *mut c_void,
+);
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn CGSessionCopyCurrentDictionary() -> CFDictionaryRef;
+    fn AXObserverCreate(
+        application: i32,
+        callback: AXObserverCallback,
+        observer: *mut AXObserverRef,
+    ) -> crate::ax::bindings::AXError;
+    fn AXObserverAddNotification(
+        observer: AXObserverRef,
+        element: AXUIElementRef,
+        notification: core_foundation::string::CFStringRef,
+        context: *mut c_void,
+    ) -> crate::ax::bindings::AXError;
+    fn AXObserverRemoveNotification(
+        observer: AXObserverRef,
+        element: AXUIElementRef,
+        notification: core_foundation::string::CFStringRef,
+    ) -> crate::ax::bindings::AXError;
+    fn AXObserverGetRunLoopSource(observer: AXObserverRef) -> CFRunLoopSourceRef;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -384,6 +419,14 @@ impl SnapshotStore {
         Ok(snapshot)
     }
 
+    fn invalidate(&self, session: &str, snapshot: &AppSnapshot) {
+        let mut inner = self.inner.lock().unwrap();
+        let key = (session.to_owned(), snapshot.app.pid, snapshot.window_id);
+        if inner.latest_by_window.get(&key) == Some(&snapshot.generation) {
+            inner.latest_by_window.remove(&key);
+        }
+    }
+
     fn clear_session(&self, session: &str) {
         let mut inner = self.inner.lock().unwrap();
         inner.by_session.remove(session);
@@ -623,6 +666,10 @@ impl CompatState {
             return action_error(&action_name, action_result);
         }
 
+        // The action may have changed layout, focus, or window identity. Retire
+        // its input snapshot before attempting perception refresh so a failed
+        // screenshot cannot leave stale element handles reusable.
+        self.snapshots.invalidate(&session, &snapshot);
         let action_summary = first_text(&action_result);
         let action_structured = action_result.structured_content.clone();
         let mut refreshed = self.get_app_state(&args).await;
@@ -681,7 +728,12 @@ impl CompatState {
             };
             native_args["element_index"] = json!(native_index);
         } else {
-            let (native_x, native_y) = compat_point_to_native(snapshot, x.unwrap(), y.unwrap());
+            let compat_x = x.unwrap();
+            let compat_y = y.unwrap();
+            if let Err(result) = validate_compat_point(snapshot, compat_x, compat_y, "click") {
+                return result;
+            }
+            let (native_x, native_y) = compat_point_to_native(snapshot, compat_x, compat_y);
             native_args["x"] = json!(native_x);
             native_args["y"] = json!(native_y);
         }
@@ -724,6 +776,11 @@ impl CompatState {
             Ok(value) => value,
             Err(result) => return result,
         };
+        for (label, x, y) in [("drag start", from_x, from_y), ("drag end", to_x, to_y)] {
+            if let Err(result) = validate_compat_point(snapshot, x, y, label) {
+                return result;
+            }
+        }
         let (from_x, from_y) = compat_point_to_native(snapshot, from_x, from_y);
         let (to_x, to_y) = compat_point_to_native(snapshot, to_x, to_y);
         super::drag::DragTool::new(snapshot.native.clone())
@@ -767,32 +824,49 @@ impl CompatState {
             }
         };
         let element_ptr = guard.as_ptr();
-        let result = tokio::task::spawn_blocking(move || {
-            let available = unsafe { copy_action_names(element_ptr as AXUIElementRef) };
-            let requested = canonical_ax_action(&action);
-            let actual = available
-                .iter()
-                .find(|candidate| candidate.eq_ignore_ascii_case(&requested))
-                .cloned()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Element does not expose secondary action '{action}'. Available actions: {}",
-                        if available.is_empty() {
-                            "none".to_owned()
-                        } else {
-                            available.join(", ")
-                        }
-                    )
-                })?;
-            let error = unsafe { perform_action(element_ptr as AXUIElementRef, &actual) };
-            if error != kAXErrorSuccess {
-                anyhow::bail!("AXUIElementPerformAction({actual}) failed with error {error}");
-            }
-            Ok::<String, anyhow::Error>(actual)
-        })
+        let prior_frontmost = crate::apps::frontmost_pid();
+        let window_snapshot =
+            crate::window_change_detector::WindowChangeDetector::snapshot(prior_frontmost);
+        let result = with_compat_focus_guard(
+            snapshot.app.pid,
+            prior_frontmost,
+            "codex_compat.perform_secondary_action",
+            || async move {
+                tokio::task::spawn_blocking(move || {
+                    let available = unsafe { copy_action_names(element_ptr as AXUIElementRef) };
+                    let requested = canonical_ax_action(&action);
+                    let actual = available
+                        .iter()
+                        .find(|candidate| candidate.eq_ignore_ascii_case(&requested))
+                        .cloned()
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "Element does not expose secondary action '{action}'. Available actions: {}",
+                                if available.is_empty() {
+                                    "none".to_owned()
+                                } else {
+                                    available.join(", ")
+                                }
+                            )
+                        })?;
+                    let error = unsafe { perform_action(element_ptr as AXUIElementRef, &actual) };
+                    if error != kAXErrorSuccess {
+                        anyhow::bail!(
+                            "AXUIElementPerformAction({actual}) failed with error {error}"
+                        );
+                    }
+                    Ok::<String, anyhow::Error>(actual)
+                })
+                .await
+            },
+        )
         .await;
+        let changes = window_snapshot.detect_async().await;
         match result {
-            Ok(Ok(actual)) => ToolResult::text(format!("Performed {actual} on element {index}.")),
+            Ok(Ok(actual)) => ToolResult::text(format!(
+                "Performed {actual} on element {index}.{}",
+                changes.result_suffix()
+            )),
             Ok(Err(error)) => ToolResult::error(error.to_string()),
             Err(error) => ToolResult::error(format!("Secondary action task failed: {error}")),
         }
@@ -832,10 +906,10 @@ impl CompatState {
             Ok(_) => return ToolResult::error("direction must be up, down, left, or right."),
             Err(result) => return result,
         };
-        let pages = args.get("pages").and_then(Value::as_f64).unwrap_or(1.0);
-        if !pages.is_finite() || pages <= 0.0 {
-            return ToolResult::error("pages must be a positive finite number.");
-        }
+        let pages = match validated_scroll_pages(args) {
+            Ok(pages) => pages,
+            Err(result) => return result,
+        };
         // One native page is five 120px line steps. Integral page counts stay
         // page-granular; fractions use line granularity so 0.2-page increments
         // remain meaningful without changing the native API.
@@ -904,18 +978,33 @@ impl CompatState {
             }
         };
         let element_ptr = guard.as_ptr();
-        let result = tokio::task::spawn_blocking(move || {
-            select_text_range(
-                element_ptr,
-                &text,
-                prefix.as_deref(),
-                suffix.as_deref(),
-                &selection,
-            )
-        })
+        let prior_frontmost = crate::apps::frontmost_pid();
+        let window_snapshot =
+            crate::window_change_detector::WindowChangeDetector::snapshot(prior_frontmost);
+        let result = with_compat_focus_guard(
+            snapshot.app.pid,
+            prior_frontmost,
+            "codex_compat.select_text",
+            || async move {
+                tokio::task::spawn_blocking(move || {
+                    select_text_range(
+                        element_ptr,
+                        &text,
+                        prefix.as_deref(),
+                        suffix.as_deref(),
+                        &selection,
+                    )
+                })
+                .await
+            },
+        )
         .await;
+        let changes = window_snapshot.detect_async().await;
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Updated text selection on element {index}.")),
+            Ok(Ok(())) => ToolResult::text(format!(
+                "Updated text selection on element {index}.{}",
+                changes.result_suffix()
+            )),
             Ok(Err(error)) => ToolResult::error(error.to_string()),
             Err(error) => ToolResult::error(format!("Text selection task failed: {error}")),
         }
@@ -1020,6 +1109,37 @@ fn validated_click_count(args: &Value) -> Result<u64, ToolResult> {
     Ok(count)
 }
 
+fn validated_scroll_pages(args: &Value) -> Result<f64, ToolResult> {
+    let Some(value) = args.get("pages") else {
+        return Ok(1.0);
+    };
+    let Some(pages) = value.as_f64() else {
+        return Err(ToolResult::error("pages must be a positive number."));
+    };
+    if !pages.is_finite() || pages <= 0.0 || pages > MAX_SCROLL_PAGES {
+        return Err(ToolResult::error(format!(
+            "pages must be greater than 0 and at most {MAX_SCROLL_PAGES}."
+        )));
+    }
+    Ok(pages)
+}
+
+fn validate_compat_point(
+    snapshot: &AppSnapshot,
+    x: f64,
+    y: f64,
+    label: &str,
+) -> Result<(), ToolResult> {
+    let width = snapshot.logical_width as f64;
+    let height = snapshot.logical_height as f64;
+    if !x.is_finite() || !y.is_finite() || x < 0.0 || y < 0.0 || x >= width || y >= height {
+        return Err(ToolResult::error(format!(
+            "{label} point ({x}, {y}) is outside the latest app screenshot bounds 0≤x<{width}, 0≤y<{height}. Call get_app_state again and use coordinates from that screenshot."
+        )));
+    }
+    Ok(())
+}
+
 fn session_key(args: &Value) -> String {
     args.get("_session_id")
         .or_else(|| args.get("session"))
@@ -1064,6 +1184,25 @@ fn action_error(action_name: &str, result: ToolResult) -> ToolResult {
         result.structured_content.unwrap_or(Value::Null),
     )
     .into_result()
+}
+
+async fn with_compat_focus_guard<F, Fut, R>(
+    target_pid: i32,
+    prior_frontmost: Option<i32>,
+    origin: &'static str,
+    action: F,
+) -> R
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = R>,
+{
+    crate::focus_guard::with_focus_suppressed(
+        Some(target_pid),
+        prior_frontmost,
+        origin,
+        action,
+    )
+    .await
 }
 
 fn refresh_warning_after_success(
@@ -1574,6 +1713,8 @@ fn enforce_target_policy(app: &AppIdentity) -> Result<(), CompatError> {
     let driver_target = bundle_lower == "com.trycua.driver"
         || name_lower == "cuadriver"
         || name_lower == "cua driver";
+    let protected_host_app = is_protected_host_app(&bundle_lower, &name_lower);
+    let protected_terminal = is_protected_terminal_target(&bundle_lower, &name_lower);
     let protected_bundle = matches!(
         bundle_lower.as_str(),
         "com.apple.loginwindow"
@@ -1583,8 +1724,6 @@ fn enforce_target_policy(app: &AppIdentity) -> Result<(), CompatError> {
             | "com.apple.keychainaccess"
             | "com.apple.passwords"
             | "com.apple.systempreferences"
-            | "com.apple.terminal"
-            | "com.mitchellh.ghostty"
     ) || bundle_lower.starts_with("com.apple.localauthentication.")
         || bundle_lower.starts_with("com.apple.authenticationservices.");
     let protected_name = matches!(
@@ -1598,10 +1737,15 @@ fn enforce_target_policy(app: &AppIdentity) -> Result<(), CompatError> {
             | "passwords"
             | "system settings"
             | "system preferences"
-            | "terminal"
-            | "ghostty"
     );
-    if self_target || host_target || driver_target || protected_bundle || protected_name {
+    if self_target
+        || host_target
+        || driver_target
+        || protected_host_app
+        || protected_terminal
+        || protected_bundle
+        || protected_name
+    {
         return Err(CompatError::new(
             "target_not_allowed",
             format!(
@@ -1611,6 +1755,45 @@ fn enforce_target_policy(app: &AppIdentity) -> Result<(), CompatError> {
         ));
     }
     Ok(())
+}
+
+fn is_protected_host_app(bundle: &str, name: &str) -> bool {
+    matches!(
+        bundle,
+        "com.openai.codex"
+            | "com.openai.chat"
+            | "com.openai.chatgpt"
+            | "com.openai.chatgpt.mac"
+            | "com.openai.chatgpt.desktop"
+    ) || bundle.starts_with("com.openai.chatgpt.")
+        || matches!(name, "codex" | "chatgpt" | "chat gpt")
+}
+
+fn is_protected_terminal_target(bundle: &str, name: &str) -> bool {
+    matches!(
+        bundle,
+        "com.apple.terminal"
+            | "com.mitchellh.ghostty"
+            | "com.googlecode.iterm2"
+            | "net.kovidgoyal.kitty"
+            | "org.alacritty"
+            | "com.github.wez.wezterm"
+            | "co.zeit.hyper"
+            | "co.vercel.hyper"
+    ) || bundle.starts_with("dev.warp.")
+        || matches!(
+            name,
+            "terminal"
+                | "ghostty"
+                | "iterm"
+                | "iterm2"
+                | "warp"
+                | "warp preview"
+                | "kitty"
+                | "alacritty"
+                | "wezterm"
+                | "hyper"
+        )
 }
 
 fn ensure_interactive_session_unlocked() -> Result<(), CompatError> {
@@ -1673,29 +1856,189 @@ fn stale_snapshot_error(app_ref: &str) -> CompatError {
 }
 
 async fn wait_for_key_window(pid: i32) -> Result<(u32, String), CompatError> {
-    for _ in 0..50 {
-        let window = tokio::task::spawn_blocking(move || {
-            let id =
-                key_window_id(pid).or_else(|| crate::windows::resolve_main_window_id(pid).ok())?;
-            let title = crate::windows::all_windows()
-                .into_iter()
-                .find(|window| window.pid == pid && window.window_id == id)
-                .map(|window| window.title)
-                .unwrap_or_default();
-            Some((id, title))
-        })
+    tokio::task::spawn_blocking(move || wait_for_key_window_blocking(pid))
         .await
-        .ok()
-        .flatten();
-        if let Some(window) = window {
-            return Ok(window);
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        .map_err(|error| {
+            CompatError::new(
+                "window_observer_failed",
+                format!("The key-window observer task failed for pid {pid}: {error}"),
+            )
+        })?
+}
+
+fn wait_for_key_window_blocking(pid: i32) -> Result<(u32, String), CompatError> {
+    if let Some(window) = resolve_key_window_info(pid) {
+        return Ok(window);
     }
-    Err(CompatError::new(
-        "app_has_no_window",
-        format!("App pid {pid} did not expose a key window within 5 seconds."),
-    ))
+
+    let mut observer = WindowNotificationObserver::new(pid)?;
+    resolve_after_notifications(
+        WINDOW_WAIT_TIMEOUT,
+        || resolve_key_window_info(pid),
+        |remaining| observer.wait(remaining),
+    )
+    .ok_or_else(|| {
+        CompatError::new(
+            "app_has_no_window",
+            format!("App pid {pid} did not expose a key window within 5 seconds."),
+        )
+    })
+}
+
+fn resolve_key_window_info(pid: i32) -> Option<(u32, String)> {
+    let id = key_window_id(pid).or_else(|| crate::windows::resolve_main_window_id(pid).ok())?;
+    let title = crate::windows::all_windows()
+        .into_iter()
+        .find(|window| window.pid == pid && window.window_id == id)
+        .map(|window| window.title)
+        .unwrap_or_default();
+    Some((id, title))
+}
+
+fn resolve_after_notifications<T, Resolve, Wait>(
+    timeout: Duration,
+    mut resolve: Resolve,
+    mut wait: Wait,
+) -> Option<T>
+where
+    Resolve: FnMut() -> Option<T>,
+    Wait: FnMut(Duration) -> bool,
+{
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(value) = resolve() {
+            return Some(value);
+        }
+        let remaining = deadline.checked_duration_since(Instant::now())?;
+        if remaining.is_zero() || !wait(remaining) {
+            return resolve();
+        }
+    }
+}
+
+struct WindowObserverContext {
+    run_loop: CFRunLoopRef,
+    signaled: AtomicBool,
+}
+
+struct WindowNotificationObserver {
+    observer: AXObserverRef,
+    app: AXUIElementRef,
+    source: CFRunLoopSourceRef,
+    run_loop: CFRunLoopRef,
+    context: Box<WindowObserverContext>,
+    notifications: Vec<CFString>,
+}
+
+impl WindowNotificationObserver {
+    fn new(pid: i32) -> Result<Self, CompatError> {
+        unsafe {
+            let app = AXUIElementCreateApplication(pid);
+            if app.is_null() {
+                return Err(CompatError::new(
+                    "window_observer_failed",
+                    format!("Could not create an accessibility application element for pid {pid}."),
+                ));
+            }
+
+            let mut observer = std::ptr::null_mut();
+            let create_error = AXObserverCreate(pid, window_notification_callback, &mut observer);
+            if create_error != kAXErrorSuccess || observer.is_null() {
+                CFRelease(app as CFTypeRef);
+                return Err(CompatError::new(
+                    "window_observer_failed",
+                    format!("AXObserverCreate failed for pid {pid} with error {create_error}."),
+                ));
+            }
+
+            let run_loop = CFRunLoopGetCurrent();
+            let source = AXObserverGetRunLoopSource(observer);
+            if run_loop.is_null() || source.is_null() {
+                CFRelease(observer as CFTypeRef);
+                CFRelease(app as CFTypeRef);
+                return Err(CompatError::new(
+                    "window_observer_failed",
+                    format!("AXObserver did not provide a run-loop source for pid {pid}."),
+                ));
+            }
+
+            let mut context = Box::new(WindowObserverContext {
+                run_loop,
+                signaled: AtomicBool::new(false),
+            });
+            let context_ptr = context.as_mut() as *mut WindowObserverContext as *mut c_void;
+            let mut notifications = Vec::new();
+            for name in ["AXWindowCreated", "AXFocusedWindowChanged", "AXMainWindowChanged"] {
+                let notification = CFString::new(name);
+                let error = AXObserverAddNotification(
+                    observer,
+                    app,
+                    notification.as_concrete_TypeRef(),
+                    context_ptr,
+                );
+                if error == kAXErrorSuccess {
+                    notifications.push(notification);
+                }
+            }
+            if notifications.is_empty() {
+                CFRelease(observer as CFTypeRef);
+                CFRelease(app as CFTypeRef);
+                return Err(CompatError::new(
+                    "window_observer_failed",
+                    format!("App pid {pid} exposes no observable window notifications."),
+                ));
+            }
+
+            CFRunLoopAddSource(run_loop, source, kCFRunLoopDefaultMode);
+            Ok(Self {
+                observer,
+                app,
+                source,
+                run_loop,
+                context,
+                notifications,
+            })
+        }
+    }
+
+    fn wait(&mut self, timeout: Duration) -> bool {
+        self.context.signaled.store(false, Ordering::Release);
+        unsafe {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout.as_secs_f64(), 0);
+        }
+        self.context.signaled.swap(false, Ordering::AcqRel)
+    }
+}
+
+impl Drop for WindowNotificationObserver {
+    fn drop(&mut self) {
+        unsafe {
+            CFRunLoopRemoveSource(self.run_loop, self.source, kCFRunLoopDefaultMode);
+            for notification in &self.notifications {
+                let _ = AXObserverRemoveNotification(
+                    self.observer,
+                    self.app,
+                    notification.as_concrete_TypeRef(),
+                );
+            }
+            CFRelease(self.observer as CFTypeRef);
+            CFRelease(self.app as CFTypeRef);
+        }
+    }
+}
+
+extern "C" fn window_notification_callback(
+    _observer: AXObserverRef,
+    _element: AXUIElementRef,
+    _notification: core_foundation::string::CFStringRef,
+    context: *mut c_void,
+) {
+    if context.is_null() {
+        return;
+    }
+    let context = unsafe { &*(context as *const WindowObserverContext) };
+    context.signaled.store(true, Ordering::Release);
+    unsafe { CFRunLoopStop(context.run_loop) };
 }
 
 fn key_window_id(pid: i32) -> Option<u32> {
@@ -2153,7 +2496,39 @@ mod tests {
     }
 
     #[test]
-    fn target_policy_blocks_driver_auth_terminal_and_ghostty_but_allows_cmux() {
+    fn degraded_refresh_after_success_leaves_consumed_snapshot_stale() {
+        let store = SnapshotStore::default();
+        let stored = store.insert(
+            "session-a",
+            snapshot("AppA", Arc::new(ToolState::default())),
+        );
+        store.invalidate("session-a", &stored);
+        let result = refresh_warning_after_success(
+            "click",
+            "clicked".to_owned(),
+            None,
+            CompatError::new("screen_capture_failed", "capture failed").into_result(),
+        );
+        assert_ne!(result.is_error, Some(true));
+        assert!(matches!(
+            store.lookup("session-a", "AppA"),
+            Err(SnapshotLookupError::Stale)
+        ));
+
+        let replacement = store.insert(
+            "session-a",
+            snapshot("AppA", Arc::new(ToolState::default())),
+        );
+        store.invalidate("session-a", &stored);
+        assert_eq!(
+            store.lookup("session-a", "AppA").unwrap().generation,
+            replacement.generation,
+            "invalidating an old action snapshot must not retire a concurrent refresh"
+        );
+    }
+
+    #[test]
+    fn target_policy_blocks_driver_auth_hosts_and_terminal_families_but_allows_cmux() {
         let identity = |name: &str, bundle: &str| AppIdentity {
             requested: name.to_owned(),
             name: name.to_owned(),
@@ -2165,13 +2540,44 @@ mod tests {
             ("CuaDriver", "com.trycua.driver"),
             ("SecurityAgent", "com.apple.SecurityAgent"),
             ("System Settings", "com.apple.systempreferences"),
+            ("Codex", "com.openai.codex"),
+            ("ChatGPT", "com.openai.chat"),
             ("Terminal", "com.apple.Terminal"),
             ("Ghostty", "com.mitchellh.ghostty"),
+            ("iTerm2", "com.googlecode.iterm2"),
+            ("Warp", "dev.warp.Warp-Stable"),
+            ("kitty", "net.kovidgoyal.kitty"),
+            ("Alacritty", "org.alacritty"),
+            ("WezTerm", "com.github.wez.wezterm"),
+            ("Hyper", "co.zeit.hyper"),
         ] {
             let error = enforce_target_policy(&identity(name, bundle)).unwrap_err();
             assert_eq!(error.code, "target_not_allowed", "{name} should be blocked");
         }
         assert!(enforce_target_policy(&identity("cmux", "com.cmuxterm.app")).is_ok());
+        assert!(enforce_target_policy(&identity("cmux NIGHTLY", "com.cmuxterm.app.nightly")).is_ok());
+
+        for name in [
+            "Terminal",
+            "Ghostty",
+            "iTerm",
+            "iTerm2",
+            "Warp",
+            "Warp Preview",
+            "kitty",
+            "Alacritty",
+            "WezTerm",
+            "Hyper",
+        ] {
+            assert_eq!(
+                enforce_target_policy(&identity(name, "com.example.unknown"))
+                    .unwrap_err()
+                    .code,
+                "target_not_allowed",
+                "{name} should be blocked by exact terminal name"
+            );
+        }
+        assert!(enforce_target_policy(&identity("Hyperdrive", "com.example.hyperdrive")).is_ok());
     }
 
     #[test]
@@ -2293,6 +2699,44 @@ mod tests {
     }
 
     #[test]
+    fn compat_points_must_be_finite_and_inside_latest_screenshot() {
+        let app_snapshot = snapshot("Bounds", Arc::new(ToolState::default()));
+        assert!(validate_compat_point(&app_snapshot, 0.0, 0.0, "point").is_ok());
+        assert!(validate_compat_point(&app_snapshot, 231.999, 407.999, "point").is_ok());
+        for (x, y) in [
+            (-0.1, 0.0),
+            (0.0, -0.1),
+            (232.0, 0.0),
+            (0.0, 408.0),
+            (f64::NAN, 0.0),
+            (0.0, f64::INFINITY),
+        ] {
+            assert!(
+                validate_compat_point(&app_snapshot, x, y, "point").is_err(),
+                "({x}, {y}) must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn scroll_pages_are_runtime_capped_without_schema_constraints() {
+        assert_eq!(validated_scroll_pages(&json!({})).unwrap(), 1.0);
+        assert_eq!(validated_scroll_pages(&json!({"pages": 0.25})).unwrap(), 0.25);
+        assert_eq!(validated_scroll_pages(&json!({"pages": 10})).unwrap(), 10.0);
+        for invalid in [
+            json!({"pages": 0}),
+            json!({"pages": -1}),
+            json!({"pages": 10.01}),
+            json!({"pages": "many"}),
+        ] {
+            assert_eq!(validated_scroll_pages(&invalid).unwrap_err().is_error, Some(true));
+        }
+        let schema = &defs()[CompatKind::Scroll.index()].input_schema["properties"]["pages"];
+        assert!(schema.get("maximum").is_none());
+        assert!(schema.get("exclusiveMinimum").is_none());
+    }
+
+    #[test]
     fn completed_action_with_failed_refresh_is_degraded_success_not_retryable_error() {
         let result = refresh_warning_after_success(
             "click",
@@ -2312,5 +2756,58 @@ mod tests {
         assert_eq!(canonical_ax_action("Raise"), "AXRaise");
         assert_eq!(canonical_ax_action("Move previous"), "AXMovePrevious");
         assert_eq!(canonical_ax_action("AXShowMenu"), "AXShowMenu");
+    }
+
+    #[test]
+    fn notification_wait_resolves_immediately_without_waiting() {
+        let mut waited = false;
+        let result = resolve_after_notifications(
+            Duration::from_secs(1),
+            || Some(7),
+            |_| {
+                waited = true;
+                false
+            },
+        );
+        assert_eq!(result, Some(7));
+        assert!(!waited);
+    }
+
+    #[test]
+    fn notification_wait_rechecks_after_each_signal_and_stops_on_timeout() {
+        let mut resolutions = 0;
+        let mut signals = 0;
+        let result = resolve_after_notifications(
+            Duration::from_secs(1),
+            || {
+                resolutions += 1;
+                (resolutions == 3).then_some("window")
+            },
+            |remaining| {
+                assert!(!remaining.is_zero());
+                signals += 1;
+                true
+            },
+        );
+        assert_eq!(result, Some("window"));
+        assert_eq!(signals, 2);
+
+        let mut final_resolve_count = 0;
+        let timed_out: Option<()> = resolve_after_notifications(
+            Duration::from_secs(1),
+            || {
+                final_resolve_count += 1;
+                None
+            },
+            |_| false,
+        );
+        assert!(timed_out.is_none());
+        assert_eq!(final_resolve_count, 2, "timeout performs one final race-closing resolve");
+    }
+
+    #[tokio::test]
+    async fn compat_focus_guard_seam_runs_action_without_frontmost_app() {
+        let value = with_compat_focus_guard(42, None, "test.compat_focus", || async { 17 }).await;
+        assert_eq!(value, 17);
     }
 }

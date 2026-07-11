@@ -43,13 +43,13 @@ are unchanged. Compat MCP sessions use a dedicated daemon socket and PID file,
 so a concurrently running native daemon cannot supply the wrong tool catalog or
 cursor configuration.
 
-The compatibility layer blocks the driver/host, macOS authentication services,
-System Settings, Terminal, and Ghostty. It does not implement an approval UI or
-MCP elicitation; the embedding host remains responsible for confirmation policy
-before risky UI actions. Its tree uses cua-driver-generated indices, which are
-not numerically identical to Codex's proprietary indices. Compatibility mode
-preserves and indexes meaningful containers and static text. The native tree
-remains action-only.
+The compatibility layer blocks the driver/host, Codex and ChatGPT, macOS
+authentication services, System Settings, and common terminal apps. It does not
+implement an approval UI or MCP elicitation; the embedding host remains
+responsible for confirmation policy before risky UI actions. Its tree uses
+cua-driver-generated indices, which are not numerically identical to Codex's
+proprietary indices. Compatibility mode preserves and indexes meaningful
+containers and static text. The native tree remains action-only.
 
 ## Tests
 

@@ -170,22 +170,24 @@ async fn accessible_for<'a>(
     conn: &'a AccessibilityConnection,
     oref: &RawObjectRef,
 ) -> Result<AccessibleProxy<'a>> {
-    // Keep the atspi crate's peer-to-peer path for normal AT-SPI unique names.
-    // Electron/Chromium uses this path for focused-child input delivery. The
-    // raw string path below is only needed for WebKitGTK's well-known
-    // WebProcess references, which cannot be represented as ObjectRef names.
+    // Keep the atspi crate's peer-to-peer path when this connection actually
+    // knows the peer. Late WebKit WebProcess children are not in the initial
+    // peer snapshot; object_as_accessible's bus fallback omits their destination
+    // and targets the Accessible interface name instead. Build an explicit bus
+    // proxy below for those late peers and for well-known references.
     if oref.name.starts_with(':') {
         let name = atspi::zbus::names::UniqueName::try_from(oref.name.clone())
             .map_err(|e| anyhow!("bad a11y unique name: {e}"))?;
-        let path = atspi::zbus::zvariant::ObjectPath::try_from(oref.path.clone())
-            .map_err(|e| anyhow!("bad a11y path: {e}"))?;
-        let object = atspi::ObjectRef::new_owned(name, path);
-        // `object_as_accessible` chooses a P2P peer when the toolkit exposes
-        // one and falls back to the shared accessibility bus otherwise.
-        return conn
-            .object_as_accessible(&object)
-            .await
-            .map_err(|e| anyhow!("AccessibleProxy build failed: {e}"));
+        let bus_name = atspi::zbus::names::BusName::Unique(name.as_ref());
+        if conn.get_peer(&bus_name).is_some() {
+            let path = atspi::zbus::zvariant::ObjectPath::try_from(oref.path.clone())
+                .map_err(|e| anyhow!("bad a11y path: {e}"))?;
+            let object = atspi::ObjectRef::new_owned(name, path);
+            return conn
+                .object_as_accessible(&object)
+                .await
+                .map_err(|e| anyhow!("AccessibleProxy build failed: {e}"));
+        }
     }
     AccessibleProxy::builder(conn.connection())
         .cache_properties(atspi::zbus::proxy::CacheProperties::No)

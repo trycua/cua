@@ -83,7 +83,11 @@ function createWindow() {
           mainWindow.show();
           mainWindow.focus();
         } else {
-          mainWindow.showInactive();
+          // Xvfb/Openbox can keep a showInactive window inspectable through
+          // AT-SPI while never mapping it onto the captured root desktop.
+          // Show it normally; background cells subsequently foreground the
+          // occlusion sentinel before taking their desktop snapshot.
+          mainWindow.show();
         }
       }
     })

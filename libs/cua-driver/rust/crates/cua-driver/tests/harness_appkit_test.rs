@@ -29,6 +29,12 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use cua_driver_testkit::ax::{element_index_by_id, has_id, looks_empty};
+use cua_driver_testkit::e2e::{
+    execute_case, native_background_case, native_readonly_case, recording_evidence, DriverRoute,
+    Evidence, Observation, OracleKind, Targeting,
+};
+use cua_driver_testkit::observer::TargetWindow;
+use cua_driver_testkit::sentinel::run_with_background_oracles;
 use cua_driver_testkit::{Driver, McpDriver, ToolResponse};
 
 // ── paths ────────────────────────────────────────────────────────────────────
@@ -97,59 +103,104 @@ fn snapshot_elements(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolRe
     )
 }
 
+fn run_case(
+    case: cua_driver_testkit::e2e::CaseSpec,
+    test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
+) {
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let harness = Harness::launch();
+        let (wid, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
+        test(harness.pid, wid, &mut driver)
+    });
+}
+
+fn run_background_case(
+    action: &str,
+    route: DriverRoute,
+    test: impl FnOnce(u32, u64, &mut McpDriver),
+) {
+    run_case(
+        native_background_case("appkit", action, Targeting::Ax, route),
+        |pid, wid, driver| {
+            let (_, passed) = run_with_background_oracles(
+                driver,
+                TargetWindow {
+                    pid,
+                    native_id: wid,
+                },
+                |driver| test(pid, wid, driver),
+            )
+            .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+            Observation::delivered_with_fixture_state(passed)
+        },
+    );
+}
+
 // ── tests ────────────────────────────────────────────────────────────────────
 
 #[test]
 #[ignore]
 fn harness_appkit_smoke() {
-    let mut driver = McpDriver::spawn_macos_daemon_proxy().expect("start macOS daemon proxy");
-    let harness = Harness::launch();
-    println!("harness pid={}", harness.pid);
+    run_case(
+        native_readonly_case(
+            "appkit",
+            "ax_tree",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, wid, driver| {
+            let snap = snapshot_elements(driver, pid, wid);
 
-    let (wid, title) = driver
-        .find_window(harness.pid as i64, "CuaTestHarness AppKit")
-        .expect("main window not found via list_windows");
-    println!("main window: id={wid} title={title:?}");
+            assert!(
+                !looks_empty(snap.tree_text()),
+                "required AppKit AX tree is empty"
+            );
 
-    let snap = snapshot_elements(&mut driver, harness.pid, wid);
+            let text = snap.tree_text();
+            println!("snapshot:\n{text}");
 
-    assert!(!looks_empty(snap.tree_text()), "required AppKit AX tree is empty");
+            // AppKit AX quirk (mirrors the WPF behavior documented in
+            // harness_wpf_test.rs::harness_wpf_smoke): NSTextField in label mode
+            // and other AXStaticText leaves do NOT propagate
+            // setAccessibilityIdentifier into the AX tree's identifier slot, so
+            // we don't assert on ids for labels. We assert on text-presence for
+            // those, and on AX ids only for actionable controls (Buttons,
+            // TextFields).
+            for aid in [
+                "wnd-main", // NSWindow
+                "btn-increment",
+                "btn-reset",      // NSButton
+                "txt-input",      // editable NSTextField
+                "menu-test-item", // NSMenuItem (Mac-specific)
+                "btn-exit",
+            ] {
+                assert!(
+                    has_id(snap.tree_text(), aid),
+                    "missing AX identifier {aid} in AppKit snapshot"
+                );
+            }
 
-    let text = snap.tree_text();
-    println!("snapshot:\n{text}");
-
-    // AppKit AX quirk (mirrors the WPF behavior documented in
-    // harness_wpf_test.rs::harness_wpf_smoke): NSTextField in label mode
-    // and other AXStaticText leaves do NOT propagate
-    // setAccessibilityIdentifier into the AX tree's identifier slot, so
-    // we don't assert on ids for labels. We assert on text-presence for
-    // those, and on AX ids only for actionable controls (Buttons,
-    // TextFields).
-    for aid in [
-        "wnd-main", // NSWindow
-        "btn-increment",
-        "btn-reset",      // NSButton
-        "txt-input",      // editable NSTextField
-        "menu-test-item", // NSMenuItem (Mac-specific)
-        "btn-exit",
-    ] {
-        assert!(
-            has_id(snap.tree_text(), aid),
-            "missing AX identifier {aid} in AppKit snapshot"
-        );
-    }
-
-    // text_body marker carried by the visible string of the NSTextField
-    assert!(
-        text.contains("HARNESS_TEXT_MARKER_v1"),
-        "text_body marker not in AppKit snapshot"
-    );
-    // The two label-mode NSTextFields under click_target render as
-    // AXStaticText nodes — assert on their starting text instead of ids.
-    assert!(text.contains("clicks=0"), "click_count label missing");
-    assert!(
-        text.contains("last_action=none"),
-        "last_action label missing"
+            // text_body marker carried by the visible string of the NSTextField
+            assert!(
+                text.contains("HARNESS_TEXT_MARKER_v1"),
+                "text_body marker not in AppKit snapshot"
+            );
+            // The two label-mode NSTextFields under click_target render as
+            // AXStaticText nodes — assert on their starting text instead of ids.
+            assert!(text.contains("clicks=0"), "click_count label missing");
+            assert!(
+                text.contains("last_action=none"),
+                "last_action label missing"
+            );
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
     );
 }
 
@@ -159,36 +210,40 @@ fn harness_appkit_smoke() {
 #[test]
 #[ignore]
 fn harness_appkit_text_input() {
-    let mut driver = McpDriver::spawn_macos_daemon_proxy().expect("start macOS daemon proxy");
-    let harness = Harness::launch();
-
-    let (wid, _) = driver
-        .find_window(harness.pid as i64, "CuaTestHarness AppKit")
-        .expect("main window not found");
-    let snap_pre = snapshot_elements(&mut driver, harness.pid, wid);
-    assert!(!looks_empty(snap_pre.tree_text()), "required AppKit AX tree is empty");
-    let idx = element_index_by_id(snap_pre.tree_text(), "txt-input")
-        .expect("txt-input element_index not found");
-
-    // set_value via AX is the deterministic background path; type_text would
-    // also work but races with cursor focus on cold-launched windows.
-    let resp = driver.call(
+    run_background_case(
         "set_value",
-        serde_json::json!({
-            "pid": harness.pid as i64,
-            "window_id": wid,
-            "element_index": idx,
-            "value": "hello-cua"
-        }),
-    );
-    println!("set_value resp: {}", resp.text());
+        DriverRoute::MacosAxValue,
+        |pid, wid, driver| {
+            let snap_pre = snapshot_elements(driver, pid, wid);
+            assert!(
+                !looks_empty(snap_pre.tree_text()),
+                "required AppKit AX tree is empty"
+            );
+            let idx = element_index_by_id(snap_pre.tree_text(), "txt-input")
+                .expect("txt-input element_index not found");
 
-    std::thread::sleep(Duration::from_millis(250));
-    let snap_post = snapshot_elements(&mut driver, harness.pid, wid);
-    let post_text = snap_post.tree_text().to_owned();
-    assert!(
-        post_text.contains("hello-cua"),
-        "text_input value did not propagate to mirror; snapshot:\n{post_text}"
+            // set_value via AX is the deterministic background path; type_text would
+            // also work but races with cursor focus on cold-launched windows.
+            let resp = driver.call(
+                "set_value",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_index": idx,
+                    "value": "hello-cua"
+                }),
+            );
+            assert!(!resp.is_error(), "AppKit set_value failed: {}", resp.text());
+            println!("set_value resp: {}", resp.text());
+
+            std::thread::sleep(Duration::from_millis(250));
+            let snap_post = snapshot_elements(driver, pid, wid);
+            let post_text = snap_post.tree_text().to_owned();
+            assert!(
+                post_text.contains("hello-cua"),
+                "text_input value did not propagate to mirror; snapshot:\n{post_text}"
+            );
+        },
     );
 }
 
@@ -198,46 +253,51 @@ fn harness_appkit_text_input() {
 #[test]
 #[ignore]
 fn harness_appkit_type_text_keystroke() {
-    let mut driver = McpDriver::spawn_macos_daemon_proxy().expect("start macOS daemon proxy");
-    let harness = Harness::launch();
+    run_background_case("type_text", DriverRoute::Composite, |pid, wid, driver| {
+        let snap_pre = snapshot_elements(driver, pid, wid);
+        assert!(
+            !looks_empty(snap_pre.tree_text()),
+            "required AppKit AX tree is empty"
+        );
+        let idx = element_index_by_id(snap_pre.tree_text(), "txt-input")
+            .expect("txt-input element_index not found");
 
-    let (wid, _) = driver
-        .find_window(harness.pid as i64, "CuaTestHarness AppKit")
-        .expect("main window not found");
-    let snap_pre = snapshot_elements(&mut driver, harness.pid, wid);
-    assert!(!looks_empty(snap_pre.tree_text()), "required AppKit AX tree is empty");
-    let idx = element_index_by_id(snap_pre.tree_text(), "txt-input")
-        .expect("txt-input element_index not found");
+        // Focus the field first so the keystrokes land in it. AX press on
+        // a text field has the side effect of giving it keyboard focus.
+        let focus = driver.call(
+            "click",
+            serde_json::json!({
+                "pid": pid as i64, "window_id": wid, "element_index": idx,
+                "action": "press", "delivery_mode": "background"
+            }),
+        );
+        assert!(
+            !focus.is_error(),
+            "AppKit AX field press failed: {}",
+            focus.text()
+        );
+        std::thread::sleep(Duration::from_millis(150));
 
-    // Focus the field first so the keystrokes land in it. AX press on
-    // a text field has the side effect of giving it keyboard focus.
-    let _ = driver.call(
-        "click",
-        serde_json::json!({
-            "pid": harness.pid as i64, "window_id": wid,
-            "element_index": idx, "action": "press"
-        }),
-    );
-    std::thread::sleep(Duration::from_millis(150));
+        // CGEvent-based type_text against the focused field (does NOT use
+        // set_value — exercises the keystroke synthesis chain).
+        let resp = driver.call(
+            "type_text",
+            serde_json::json!({
+                "pid": pid as i64, "window_id": wid,
+                "text": "kbd-cua", "delivery_mode": "background"
+            }),
+        );
+        assert!(!resp.is_error(), "AppKit type_text failed: {}", resp.text());
+        println!("type_text resp: {}", resp.text());
+        std::thread::sleep(Duration::from_millis(250));
 
-    // CGEvent-based type_text against the focused field (does NOT use
-    // set_value — exercises the keystroke synthesis chain).
-    let resp = driver.call(
-        "type_text",
-        serde_json::json!({
-            "pid": harness.pid as i64, "window_id": wid,
-            "text": "kbd-cua"
-        }),
-    );
-    println!("type_text resp: {}", resp.text());
-    std::thread::sleep(Duration::from_millis(250));
-
-    let snap_post = snapshot_elements(&mut driver, harness.pid, wid);
-    let post = snap_post.tree_text().to_owned();
-    assert!(
-        post.contains("kbd-cua"),
-        "type_text keystroke did not land in the text field; snapshot:\n{post}"
-    );
+        let snap_post = snapshot_elements(driver, pid, wid);
+        let post = snap_post.tree_text().to_owned();
+        assert!(
+            post.contains("kbd-cua"),
+            "type_text keystroke did not land in the text field; snapshot:\n{post}"
+        );
+    });
 }
 
 /// scroll: scroll the NSScrollView downward, verify the offset label
@@ -270,7 +330,10 @@ fn harness_appkit_scroll_optional_known_gap() {
         .find_window(harness.pid as i64, "CuaTestHarness AppKit")
         .expect("main window not found");
     let snap_pre = snapshot_elements(&mut driver, harness.pid, wid);
-    assert!(!looks_empty(snap_pre.tree_text()), "required AppKit AX tree is empty");
+    assert!(
+        !looks_empty(snap_pre.tree_text()),
+        "required AppKit AX tree is empty"
+    );
     // Pre-condition: offset label should be at "0" (the controller
     // initial state). The label text appears as an AXStaticText leaf
     // immediately after the AXTextArea body in the rendered tree.
@@ -321,41 +384,50 @@ fn harness_appkit_scroll_optional_known_gap() {
 #[test]
 #[ignore]
 fn harness_appkit_counter() {
-    let mut driver = McpDriver::spawn_macos_daemon_proxy().expect("start macOS daemon proxy");
-    let harness = Harness::launch();
+    run_background_case(
+        "left_click",
+        DriverRoute::MacosAxAction,
+        |pid, wid, driver| {
+            let snap_pre = snapshot_elements(driver, pid, wid);
+            assert!(
+                !looks_empty(snap_pre.tree_text()),
+                "required AppKit AX tree is empty"
+            );
+            let pre_text = snap_pre.tree_text().to_owned();
+            assert!(
+                pre_text.contains("\"0\""),
+                "counter not 0 pre-click; snapshot:\n{pre_text}"
+            );
 
-    let (wid, _) = driver
-        .find_window(harness.pid as i64, "CuaTestHarness AppKit")
-        .expect("main window not found");
-    let snap_pre = snapshot_elements(&mut driver, harness.pid, wid);
-    assert!(!looks_empty(snap_pre.tree_text()), "required AppKit AX tree is empty");
-    let pre_text = snap_pre.tree_text().to_owned();
-    assert!(
-        pre_text.contains("\"0\""),
-        "counter not 0 pre-click; snapshot:\n{pre_text}"
-    );
+            let idx = element_index_by_id(snap_pre.tree_text(), "btn-increment")
+                .expect("btn-increment element_index not found");
 
-    let idx = element_index_by_id(snap_pre.tree_text(), "btn-increment")
-        .expect("btn-increment element_index not found");
+            let click_resp = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_index": idx,
+                    "action": "press",
+                    "delivery_mode": "background"
+                }),
+            );
+            assert!(
+                !click_resp.is_error(),
+                "AppKit counter click failed: {}",
+                click_resp.text()
+            );
+            println!("click resp: {}", click_resp.text());
 
-    let click_resp = driver.call(
-        "click",
-        serde_json::json!({
-            "pid": harness.pid as i64,
-            "window_id": wid,
-            "element_index": idx,
-            "action": "press"
-        }),
-    );
-    println!("click resp: {}", click_resp.text());
+            // Let the AppKit run-loop process the press and refresh the label.
+            std::thread::sleep(Duration::from_millis(200));
 
-    // Let the AppKit run-loop process the press and refresh the label.
-    std::thread::sleep(Duration::from_millis(200));
-
-    let snap_post = snapshot_elements(&mut driver, harness.pid, wid);
-    let post_text = snap_post.tree_text().to_owned();
-    assert!(
-        post_text.contains("\"1\""),
-        "counter did not advance to 1 after press; post snapshot:\n{post_text}"
+            let snap_post = snapshot_elements(driver, pid, wid);
+            let post_text = snap_post.tree_text().to_owned();
+            assert!(
+                post_text.contains("\"1\""),
+                "counter did not advance to 1 after press; post snapshot:\n{post_text}"
+            );
+        },
     );
 }

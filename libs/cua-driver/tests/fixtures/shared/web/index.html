@@ -350,6 +350,9 @@
     for (const event of ['input', 'change', 'keydown', 'pointerup', 'scroll']) {
       document.addEventListener(event, queuePublish, true);
     }
+    // Keep the external oracle live even when its first loopback POST races
+    // fixture startup or a host bridge drops one fire-and-forget message.
+    setInterval(queuePublish, 250);
     queuePublish();
   })();
   </script>

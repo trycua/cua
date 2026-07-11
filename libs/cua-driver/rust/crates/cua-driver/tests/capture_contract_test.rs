@@ -22,6 +22,11 @@ use std::time::{Duration, Instant};
 use cua_driver_testkit::{harness_app, Driver, McpDriver, ToolResponse};
 
 #[cfg(target_os = "windows")]
+use cua_driver_testkit::e2e::{
+    execute_case, recording_evidence, CaseSpec, Delivery, DriverRoute, Evidence, Observation,
+    OracleKind, Scope, Targeting,
+};
+#[cfg(target_os = "windows")]
 use cua_driver_testkit::observer::TargetWindow;
 #[cfg(target_os = "windows")]
 use cua_driver_testkit::sentinel::ForegroundSentinel;
@@ -350,40 +355,58 @@ fn deprecated_capture_mode_is_ignored() {
 #[test]
 #[ignore]
 fn background_screenshot_preserves_desktop() {
-    let Some(mut driver) = test_driver() else {
-        return;
-    };
-    let Some((pid, wid)) = launch(&mut driver) else {
-        return;
-    };
-    let sentinel = ForegroundSentinel::launch(&mut driver);
-    let (response, passed) = sentinel
-        .observe_background(
-            TargetWindow {
-                pid,
-                native_id: wid,
-            },
-            || driver.call("screenshot", serde_json::json!({ "window_id": wid })),
-        )
-        .unwrap_or_else(|error| panic!("background screenshot disturbed the desktop: {error}"));
-    assert!(
-        !response.is_error(),
-        "background screenshot failed: {}",
-        response.text()
+    let case = CaseSpec::delivered(
+        "windows-wpf-screenshot-px-background",
+        "wpf",
+        "win32",
+        "screenshot",
+        Targeting::Px,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::WindowsPrintWindow,
+        vec![
+            OracleKind::Pixels,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::Cursor,
+            OracleKind::NoLeakedInput,
+        ],
     );
-    assert!(
-        has_image(&response),
-        "background screenshot returned no image"
-    );
-    for required in [
-        cua_driver_testkit::e2e::OracleKind::Focus,
-        cua_driver_testkit::e2e::OracleKind::ZOrder,
-        cua_driver_testkit::e2e::OracleKind::Cursor,
-        cua_driver_testkit::e2e::OracleKind::NoLeakedInput,
-    ] {
+    execute_case(case, |evidence| {
+        let mut driver = test_driver().expect("required source-built driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, wid) = launch(&mut driver).expect("required WPF capture harness did not start");
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        let (response, mut passed) = sentinel
+            .observe_background(
+                TargetWindow {
+                    pid,
+                    native_id: wid,
+                },
+                || driver.call("screenshot", serde_json::json!({ "window_id": wid })),
+            )
+            .unwrap_or_else(|error| panic!("background screenshot disturbed the desktop: {error}"));
         assert!(
-            passed.contains(&required),
-            "background screenshot omitted required {required:?} oracle"
+            !response.is_error(),
+            "background screenshot failed: {}",
+            response.text()
         );
-    }
+        assert!(
+            has_image(&response),
+            "background screenshot returned no image"
+        );
+        for required in [
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::Cursor,
+            OracleKind::NoLeakedInput,
+        ] {
+            assert!(
+                passed.contains(&required),
+                "background screenshot omitted required {required:?} oracle"
+            );
+        }
+        passed.push(OracleKind::Pixels);
+        Observation::delivered(passed, Evidence::default())
+    });
 }

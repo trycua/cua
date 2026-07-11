@@ -5,7 +5,10 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use cua_driver_testkit::e2e::OracleKind;
+use cua_driver_testkit::e2e::{
+    execute_case, recording_evidence, CaseSpec, Delivery, DriverRoute, Evidence, Observation,
+    OracleKind, Scope, Targeting,
+};
 use cua_driver_testkit::sentinel::ForegroundSentinel;
 use cua_driver_testkit::{harness_app, Driver, McpDriver};
 use windows::Win32::Foundation::HWND;
@@ -14,41 +17,64 @@ use windows::Win32::UI::WindowsAndMessaging::IsIconic;
 #[test]
 #[ignore]
 fn launch_app_minimized_preserves_foreground() {
-    let executable = harness_app("harness-electron", "CuaTestHarness.Electron.exe");
-    assert!(
-        executable.exists(),
-        "required Electron launch harness is missing: {}",
-        executable.display()
+    let case = CaseSpec::delivered(
+        "windows-electron-launch-app-background",
+        "electron",
+        "chromium",
+        "launch_app",
+        Targeting::NotApplicable,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::WindowsShellExecute,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::Cursor,
+            OracleKind::NoLeakedInput,
+        ],
     );
-    let mut driver = McpDriver::spawn_named("windows-launch-minimized")
-        .expect("required source-built driver did not start");
-    let before = window_ids(&mut driver);
-    let sentinel = ForegroundSentinel::launch(&mut driver);
+    execute_case(case, |evidence| {
+        let executable = harness_app("harness-electron", "CuaTestHarness.Electron.exe");
+        assert!(
+            executable.exists(),
+            "required Electron launch harness is missing: {}",
+            executable.display()
+        );
+        let mut driver = McpDriver::spawn_named("windows-launch-minimized")
+            .expect("required source-built driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+        let before = window_ids(&mut driver);
+        let sentinel = ForegroundSentinel::launch(&mut driver);
 
-    let ((pid, window_id), passed) = sentinel
-        .observe_background(sentinel.target(), || {
-            let response = driver.call(
-                "launch_app",
-                serde_json::json!({
-                    "path": executable.to_string_lossy(),
-                    "start_minimized": true
-                }),
-            );
-            assert!(
-                !response.is_error(),
-                "launch_app(start_minimized=true) failed: {}",
-                response.text()
-            );
-            wait_for_new_window(&mut driver, &before)
-        })
-        .unwrap_or_else(|error| panic!("minimized launch disturbed the desktop: {error}"));
-    assert_required_background_oracles(&passed);
-    driver.reaper().track_pid(pid);
-    let minimized = unsafe { IsIconic(HWND(window_id as *mut _)).as_bool() };
-    assert!(
-        minimized,
-        "launch_app(start_minimized=true) created a restored window: HWND 0x{window_id:x}"
-    );
+        let ((pid, window_id), passed) = sentinel
+            .observe_background(sentinel.target(), || {
+                let response = driver.call(
+                    "launch_app",
+                    serde_json::json!({
+                        "path": executable.to_string_lossy(),
+                        "start_minimized": true
+                    }),
+                );
+                assert!(
+                    !response.is_error(),
+                    "launch_app(start_minimized=true) failed: {}",
+                    response.text()
+                );
+                wait_for_new_window(&mut driver, &before)
+            })
+            .unwrap_or_else(|error| panic!("minimized launch disturbed the desktop: {error}"));
+        assert_required_background_oracles(&passed);
+        driver.reaper().track_pid(pid);
+        let minimized = unsafe { IsIconic(HWND(window_id as *mut _)).as_bool() };
+        assert!(
+            minimized,
+            "launch_app(start_minimized=true) created a restored window: HWND 0x{window_id:x}"
+        );
+        let mut passed = passed;
+        passed.push(OracleKind::FixtureState);
+        Observation::delivered(passed, Evidence::default())
+    });
 }
 
 fn window_ids(driver: &mut McpDriver) -> HashSet<u64> {

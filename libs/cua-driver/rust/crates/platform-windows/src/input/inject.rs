@@ -84,6 +84,10 @@ impl ForegroundLockGuard {
         }
         Self { held: state.locked }
     }
+
+    pub fn acquired(&self) -> bool {
+        self.held
+    }
 }
 
 impl Drop for ForegroundLockGuard {

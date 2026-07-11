@@ -1786,6 +1786,22 @@ impl Tool for LaunchAppTool {
         } else {
             None
         };
+        if foreground_lock
+            .as_ref()
+            .is_some_and(|guard| !guard.acquired())
+        {
+            return ToolResult::error(
+                "Background minimized launch is unavailable because Windows did not grant the \
+                 foreground lock required to prevent the new process from activating. No process \
+                 was started. Launch without start_minimized only when a foreground change is \
+                 acceptable.",
+            )
+            .with_structured(json!({
+                "code": "background_unavailable",
+                "delivery_mode": "background",
+                "event_kind": "app_launch",
+            }));
+        }
 
         // Branch: AUMID activation if we resolved one; else legacy
         // ShellExecuteExW. Both branches still need to handle `urls`

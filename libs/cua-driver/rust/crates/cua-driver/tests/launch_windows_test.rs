@@ -3,18 +3,18 @@
 #![cfg(target_os = "windows")]
 
 use std::collections::HashSet;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use cua_driver_testkit::e2e::{
     execute_case, recording_evidence, CaseSpec, Delivery, DriverRoute, Evidence, Observation,
-    OracleKind, Scope, Targeting,
+    OracleKind, RefusalCode, Scope, Targeting,
 };
 use cua_driver_testkit::sentinel::ForegroundSentinel;
 use cua_driver_testkit::{harness_app, Driver, McpDriver};
 use windows::core::BOOL;
 use windows::Win32::Foundation::{HWND, LPARAM, TRUE};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+    EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
 };
 
 #[test]
@@ -36,7 +36,8 @@ fn launch_app_minimized_preserves_foreground() {
             OracleKind::Cursor,
             OracleKind::NoLeakedInput,
         ],
-    );
+    )
+    .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
     execute_case(case, |evidence| {
         let executable = harness_app("harness-electron", "CuaTestHarness.Electron.exe");
         assert!(
@@ -47,37 +48,41 @@ fn launch_app_minimized_preserves_foreground() {
         let mut driver = McpDriver::spawn_named("windows-electron-launch-app-background")
             .expect("required source-built driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
-        let before = window_ids();
         let sentinel = ForegroundSentinel::launch(&mut driver);
+        let before = window_ids();
         driver.start_behavior_recording();
 
-        let ((pid, window_id), passed) = sentinel
+        let (response, mut passed) = sentinel
             .observe_desktop(|| {
-                let response = driver.call(
+                driver.call(
                     "launch_app",
                     serde_json::json!({
                         "path": executable.to_string_lossy(),
                         "start_minimized": true
                     }),
-                );
-                assert!(
-                    !response.is_error(),
-                    "launch_app(start_minimized=true) failed: {}",
-                    response.text()
-                );
-                wait_for_new_window(&before)
+                )
             })
             .unwrap_or_else(|error| panic!("minimized launch disturbed the desktop: {error}"));
         assert_required_background_oracles(&passed);
-        driver.reaper().track_pid(pid);
-        let minimized = unsafe { IsIconic(HWND(window_id as *mut _)).as_bool() };
-        assert!(
-            minimized,
-            "launch_app(start_minimized=true) created a restored window: HWND 0x{window_id:x}"
+        assert!(response.is_error(), "minimized launch unexpectedly proceeded");
+        assert_eq!(
+            response.structured()["code"].as_str(),
+            Some("background_unavailable"),
+            "minimized launch returned the wrong refusal: {}",
+            response.text()
         );
-        let mut passed = passed;
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(
+            window_ids().is_subset(&before),
+            "refused minimized launch created a new desktop window"
+        );
         passed.push(OracleKind::FixtureState);
-        Observation::delivered(passed, Evidence::default())
+        Observation::refused(
+            RefusalCode::BackgroundUnavailable,
+            passed,
+            response.text(),
+            Evidence::default(),
+        )
     });
 }
 
@@ -116,24 +121,6 @@ fn window_ids() -> HashSet<u64> {
         .into_iter()
         .map(|(_, window_id, _)| window_id)
         .collect()
-}
-
-fn wait_for_new_window(before: &HashSet<u64>) -> (u32, u64) {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if let Some((pid, window_id, _)) = native_windows().into_iter().find(|(_, id, title)| {
-            !before.contains(id) && title.contains("CuaTestHarness Electron")
-        }) {
-            let found = (pid, window_id);
-            assert_ne!(found.0, 0, "launched Electron window has no process id");
-            return found;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "launch_app succeeded but no Electron harness window appeared"
-        );
-        std::thread::sleep(Duration::from_millis(150));
-    }
 }
 
 fn assert_required_background_oracles(passed: &[OracleKind]) {

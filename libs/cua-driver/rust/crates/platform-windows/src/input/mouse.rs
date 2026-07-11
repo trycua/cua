@@ -4,24 +4,25 @@
 //! (via ChildWindowFromPointEx), so the message never reaches the top-level
 //! chrome that would call SetForegroundWindow in response to WM_LBUTTONDOWN.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::thread::sleep;
 use std::time::Duration;
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL,
-    MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
-    MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK,
-    MOUSEEVENTF_WHEEL, MOUSEINPUT,
+    INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN,
+    MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE,
+    MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL,
+    MOUSEINPUT, SendInput,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    ChildWindowFromPointEx, GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW,
-    PostMessageW, SetCursorPos, SetWindowPos, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE,
-    CWP_SKIPTRANSPARENT, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, SM_CXVIRTUALSCREEN,
-    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
-    WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_TOPMOST,
+    ChildWindowFromPointEx, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT,
+    GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW, PostMessageW,
+    SetCursorPos, SetWindowPos, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST,
+    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_TOPMOST,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP,
 };
 
 const MK_LBUTTON: u32 = 0x0001;
@@ -39,13 +40,10 @@ fn deepest_child(root: HWND, screen_pt: POINT) -> (HWND, POINT) {
     let mut current = root;
     for _ in 0..16 {
         let mut client = screen_pt;
-        unsafe {
-            let _ = ScreenToClient(current, &mut client);
-        }
+        unsafe { let _ = ScreenToClient(current, &mut client); }
         let child = unsafe {
             ChildWindowFromPointEx(
-                current,
-                client,
+                current, client,
                 CWP_SKIPINVISIBLE | CWP_SKIPDISABLED | CWP_SKIPTRANSPARENT,
             )
         };
@@ -62,9 +60,7 @@ fn deepest_child(root: HWND, screen_pt: POINT) -> (HWND, POINT) {
     }
     // Return child-local client coordinates for `current`.
     let mut client = screen_pt;
-    unsafe {
-        let _ = ScreenToClient(current, &mut client);
-    }
+    unsafe { let _ = ScreenToClient(current, &mut client); }
     (current, client)
 }
 
@@ -77,9 +73,7 @@ pub fn post_click(root: u64, x: i32, y: i32, count: usize, button: &str) -> Resu
 
     // Convert root-local client → screen.
     let mut screen_pt = POINT { x, y };
-    unsafe {
-        let _ = ClientToScreen(root_hwnd, &mut screen_pt);
-    }
+    unsafe { let _ = ClientToScreen(root_hwnd, &mut screen_pt); }
 
     // Find deepest child and its local client coordinates.
     let (target, client) = deepest_child(root_hwnd, screen_pt);
@@ -106,13 +100,13 @@ fn post_click_on(hwnd: HWND, x: i32, y: i32, count: usize, button: &str) -> Resu
     }
 
     let (down_msg, up_msg, mk_flag) = match button {
-        "right" => (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON),
+        "right"  => (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON),
         "middle" => (WM_MBUTTONDOWN, WM_MBUTTONUP, MK_MBUTTON),
-        _ => (WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON),
+        _        => (WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON),
     };
-    let lparam = make_lparam(x, y);
-    let wdown = WPARAM(mk_flag as usize);
-    let wup = WPARAM(0);
+    let lparam  = make_lparam(x, y);
+    let wdown   = WPARAM(mk_flag as usize);
+    let wup     = WPARAM(0);
 
     for i in 0..count {
         unsafe {
@@ -144,17 +138,13 @@ pub fn post_drag(
 ) -> Result<()> {
     let root = HWND(hwnd as *mut _);
     let (down_msg, up_msg, mk_flag) = match button {
-        "right" => (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON),
+        "right"  => (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON),
         "middle" => (WM_MBUTTONDOWN, WM_MBUTTONUP, MK_MBUTTON),
-        _ => (WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON),
+        _        => (WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON),
     };
     let wparam = WPARAM(mk_flag as usize);
     let steps = steps.max(1);
-    let step_delay_ms = if steps > 1 {
-        duration_ms / steps as u64
-    } else {
-        duration_ms
-    };
+    let step_delay_ms = if steps > 1 { duration_ms / steps as u64 } else { duration_ms };
 
     unsafe {
         PostMessageW(root, down_msg, wparam, make_lparam(from_x, from_y))?;
@@ -200,40 +190,23 @@ pub fn post_drag_screen(
     button: &str,
 ) -> Result<()> {
     let root_hwnd = HWND(root as *mut _);
-    let (target, c_from) = deepest_child(
-        root_hwnd,
-        POINT {
-            x: sx_from,
-            y: sy_from,
-        },
-    );
+    let (target, c_from) = deepest_child(root_hwnd, POINT { x: sx_from, y: sy_from });
     let mut c_to = POINT { x: sx_to, y: sy_to };
-    unsafe {
-        let _ = ScreenToClient(target, &mut c_to);
-    }
+    unsafe { let _ = ScreenToClient(target, &mut c_to); }
     if let Some(msg) = crate::input::post_message_blocked_by_uipi(target.0 as u64) {
         anyhow::bail!(msg);
     }
     let (down_msg, up_msg, mk_flag) = match button {
-        "right" => (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON),
+        "right"  => (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON),
         "middle" => (WM_MBUTTONDOWN, WM_MBUTTONUP, MK_MBUTTON),
-        _ => (WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON),
+        _        => (WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON),
     };
     let wparam = WPARAM(mk_flag as usize);
     let steps = steps.max(1);
-    let step_delay_ms = if steps > 1 {
-        duration_ms / steps as u64
-    } else {
-        duration_ms
-    };
+    let step_delay_ms = if steps > 1 { duration_ms / steps as u64 } else { duration_ms };
     unsafe {
         // Pre-drag MOUSEMOVE (wParam=0, no buttons down yet) then DOWN at from.
-        PostMessageW(
-            target,
-            WM_MOUSEMOVE,
-            WPARAM(0),
-            make_lparam(c_from.x, c_from.y),
-        )?;
+        PostMessageW(target, WM_MOUSEMOVE, WPARAM(0), make_lparam(c_from.x, c_from.y))?;
         PostMessageW(target, down_msg, wparam, make_lparam(c_from.x, c_from.y))?;
     }
     sleep(Duration::from_millis(CLICK_DELAY_MS));
@@ -241,9 +214,7 @@ pub fn post_drag_screen(
         let t = i as f64 / steps as f64;
         let ix = c_from.x + ((c_to.x - c_from.x) as f64 * t).round() as i32;
         let iy = c_from.y + ((c_to.y - c_from.y) as f64 * t).round() as i32;
-        unsafe {
-            PostMessageW(target, WM_MOUSEMOVE, wparam, make_lparam(ix, iy))?;
-        }
+        unsafe { PostMessageW(target, WM_MOUSEMOVE, wparam, make_lparam(ix, iy))?; }
         if step_delay_ms > 0 {
             sleep(Duration::from_millis(step_delay_ms));
         }
@@ -279,8 +250,8 @@ fn make_lparam(x: i32, y: i32) -> LPARAM {
             let clamp = |v: i32| v.clamp(i16::MIN as i32, i16::MAX as i32);
             let cx = clamp(x);
             let cy = clamp(y);
-            let packed =
-                crate::lparam::pack_xy(cx, cy).expect("clamped values always fit in i16 range");
+            let packed = crate::lparam::pack_xy(cx, cy)
+                .expect("clamped values always fit in i16 range");
             LPARAM(packed as isize)
         }
     }
@@ -453,9 +424,9 @@ fn send_click_synthesized_mods_impl(
     }
 
     let (down_flag, up_flag) = match button {
-        "right" => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+        "right"  => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
         "middle" => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
-        _ => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+        _        => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
     };
 
     // Convert screen pixel coords to normalized absolute coords spanning the
@@ -500,12 +471,9 @@ fn send_click_synthesized_mods_impl(
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
             mi: MOUSEINPUT {
-                dx: norm_x,
-                dy: norm_y,
-                mouseData: 0,
+                dx: norm_x, dy: norm_y, mouseData: 0,
                 dwFlags: down_flag | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
-                time: 0,
-                dwExtraInfo: 0,
+                time: 0, dwExtraInfo: 0,
             },
         },
     };
@@ -513,12 +481,9 @@ fn send_click_synthesized_mods_impl(
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
             mi: MOUSEINPUT {
-                dx: norm_x,
-                dy: norm_y,
-                mouseData: 0,
+                dx: norm_x, dy: norm_y, mouseData: 0,
                 dwFlags: up_flag | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
-                time: 0,
-                dwExtraInfo: 0,
+                time: 0, dwExtraInfo: 0,
             },
         },
     };
@@ -549,17 +514,10 @@ fn send_click_synthesized_mods_impl(
         };
         // Capture whether the target was ALREADY always-on-top so we don't strip
         // that state on restore — only demote below if WE promoted it.
-        let was_topmost = (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32) & WS_EX_TOPMOST.0 != 0;
+        let was_topmost =
+            (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32) & WS_EX_TOPMOST.0 != 0;
         if !activate {
-            let _ = SetWindowPos(
-                target,
-                HWND_TOPMOST,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-            );
+            let _ = SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
         }
 
         // Move the cursor so the OS hover state matches before the click; the
@@ -596,36 +554,19 @@ fn send_click_synthesized_mods_impl(
             SendInput(&mod_ups, std::mem::size_of::<INPUT>() as i32);
         }
 
-        // Let the target process mouse-up before any background-route restore.
-        // Retained-mode frameworks establish capture/focus on mouse-down and can
-        // lose the click if the real cursor is warped away while those queued
-        // messages are still being dispatched.
-        sleep(Duration::from_millis(if activate { 120 } else { 40 }));
+        // Brief settle so the target processes the click, then restore z-order:
+        // demote the target out of the topmost band and restack the user's
+        // window on top (no activation), and restore the cursor.
+        sleep(Duration::from_millis(40));
         if !activate {
             if !was_topmost {
-                let _ = SetWindowPos(
-                    target,
-                    HWND_NOTOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-                );
+                let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
             }
             if !prev_fg.0.is_null() && prev_fg != target {
-                let _ = SetWindowPos(
-                    prev_fg,
-                    HWND_TOP,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-                );
+                let _ = SetWindowPos(prev_fg, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
             }
-            let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
         }
+        let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
         drop(noactivate);
         if !sent_ok {
             bail!("SendInput inserted fewer mouse events than expected for the foreground click.");
@@ -655,10 +596,8 @@ fn send_click_synthesized_mods_impl(
 /// for reliable operation.
 pub fn send_drag_synthesized(
     target: u64,
-    sx_from: i32,
-    sy_from: i32,
-    sx_to: i32,
-    sy_to: i32,
+    sx_from: i32, sy_from: i32,
+    sx_to:   i32, sy_to:   i32,
     duration_ms: u64,
     steps: usize,
     button: &str,
@@ -672,9 +611,9 @@ pub fn send_drag_synthesized(
     }
 
     let (down_flag, up_flag) = match button {
-        "right" => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+        "right"  => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
         "middle" => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
-        _ => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+        _        => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
     };
 
     let (vd_x, vd_y, vd_w, vd_h) = unsafe {
@@ -694,22 +633,15 @@ pub fn send_drag_synthesized(
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
             mi: MOUSEINPUT {
-                dx,
-                dy,
-                mouseData: 0,
+                dx, dy, mouseData: 0,
                 dwFlags: flags | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
-                time: 0,
-                dwExtraInfo: 0,
+                time: 0, dwExtraInfo: 0,
             },
         },
     };
 
     let steps = steps.max(1);
-    let step_delay_ms = if steps > 1 {
-        duration_ms / steps as u64
-    } else {
-        0
-    };
+    let step_delay_ms = if steps > 1 { duration_ms / steps as u64 } else { 0 };
 
     unsafe {
         let prev_fg = GetForegroundWindow();
@@ -723,16 +655,9 @@ pub fn send_drag_synthesized(
         let _noact = crate::input::NoActivateGuard::arm(target);
         // Capture whether the target was ALREADY always-on-top so we only demote
         // below if WE promoted it (else we'd strip a legitimate topmost window).
-        let was_topmost = (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32) & WS_EX_TOPMOST.0 != 0;
-        let _ = SetWindowPos(
-            target,
-            HWND_TOPMOST,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-        );
+        let was_topmost =
+            (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32) & WS_EX_TOPMOST.0 != 0;
+        let _ = SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
 
         // 1. Move + press at the start of the drag.
         let (nfx, nfy) = norm(sx_from, sy_from);
@@ -744,32 +669,13 @@ pub fn send_drag_synthesized(
         let sent = SendInput(&prelude, std::mem::size_of::<INPUT>() as i32);
         if sent as usize != prelude.len() {
             if !was_topmost {
-                let _ = SetWindowPos(
-                    target,
-                    HWND_NOTOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-                );
+                let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
             }
             if !prev_fg.0.is_null() && prev_fg != target {
-                let _ = SetWindowPos(
-                    prev_fg,
-                    HWND_TOP,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-                );
+                let _ = SetWindowPos(prev_fg, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
             }
             let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
-            bail!(
-                "SendInput drag-prelude inserted {sent}/{} events",
-                prelude.len()
-            );
+            bail!("SendInput drag-prelude inserted {sent}/{} events", prelude.len());
         }
 
         // 2. Interpolate the path. SetCursorPos + MOUSEEVENTF_MOVE in lockstep
@@ -798,26 +704,10 @@ pub fn send_drag_synthesized(
         // window — no activation) and the cursor.
         sleep(Duration::from_millis(40));
         if !was_topmost {
-            let _ = SetWindowPos(
-                target,
-                HWND_NOTOPMOST,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-            );
+            let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
         }
         if !prev_fg.0.is_null() && prev_fg != target {
-            let _ = SetWindowPos(
-                prev_fg,
-                HWND_TOP,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-            );
+            let _ = SetWindowPos(prev_fg, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
         }
         let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
         drop(_noact);
@@ -856,11 +746,7 @@ fn wheel_mouse_data(ticks: i32) -> u32 {
 /// delivery follows the cursor, so positioning the cursor is sufficient. The
 /// cursor is restored to its previous position afterward.
 pub fn send_wheel_synthesized(sx: i32, sy: i32, ticks: i32, horizontal: bool) -> Result<()> {
-    let flag = if horizontal {
-        MOUSEEVENTF_HWHEEL
-    } else {
-        MOUSEEVENTF_WHEEL
-    };
+    let flag = if horizontal { MOUSEEVENTF_HWHEEL } else { MOUSEEVENTF_WHEEL };
     let mouse_data = wheel_mouse_data(ticks);
 
     let wheel_input = INPUT {

@@ -161,8 +161,15 @@ else
   cp "$elecDir/preload.js" "$appDir/"
   cp "$elecDir/package.json" "$appDir/"
   cp -r "$elecDir/web" "$appDir/web"
-  mv "$outDir/electron" "$outDir/CuaTestHarness.Electron"
-  chmod +x "$outDir/CuaTestHarness.Electron"
+  mv "$outDir/electron" "$outDir/CuaTestHarness.Electron.bin"
+  cat > "$outDir/CuaTestHarness.Electron" <<'LAUNCHER'
+#!/bin/sh
+# Electron is a prebuilt host binary. A Nix dev shell's glibc-bearing library
+# path is ABI-incompatible with it, so keep that path out of this child only.
+unset LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH
+exec "$(dirname "$0")/CuaTestHarness.Electron.bin" "$@"
+LAUNCHER
+  chmod +x "$outDir/CuaTestHarness.Electron" "$outDir/CuaTestHarness.Electron.bin"
 
   cat <<EOF
 [OK]    Staged: $outDir/CuaTestHarness.Electron

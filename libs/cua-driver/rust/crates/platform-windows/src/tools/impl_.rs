@@ -134,6 +134,11 @@ fn bitmap_to_screen(hwnd: u64, px: i32, py: i32) -> (i32, i32) {
     }
 }
 
+fn screen_to_bitmap(hwnd: u64, sx: i32, sy: i32) -> (i32, i32) {
+    let (origin_x, origin_y) = bitmap_to_screen(hwnd, 0, 0);
+    (sx - origin_x, sy - origin_y)
+}
+
 /// Animate the agent cursor to (sx, sy) in screen coordinates and wait for the
 /// glide to finish before returning.  No-op when the overlay is not enabled.
 ///
@@ -4102,33 +4107,31 @@ impl Tool for PressKeyTool {
                 Ok(point) => point,
                 Err(message) => return ToolResult::error(message),
             };
-            let already_focused = self
-                .state
-                .element_cache
-                .element_has_keyboard_focus(pid, hwnd, idx as usize)
-                .unwrap_or(false);
-            if !already_focused {
-                let focus_result = tokio::task::spawn_blocking(move || {
-                    crate::input::post_click_screen(hwnd, cx, cy, 1, "left")
-                })
-                .await;
-                match focus_result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => return ToolResult::error(e.to_string()),
-                    Err(e) => return ToolResult::error(format!("WebView focus task failed: {e}")),
-                }
+            let (mut px, mut py) = screen_to_bitmap(hwnd, cx, cy);
+            if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+                px = (px as f64 / ratio).round() as i32;
+                py = (py as f64 / ratio).round() as i32;
             }
-            // WebView2 establishes renderer focus asynchronously after the
-            // posted click. Keeping WS_EX_NOACTIVATE armed during that round
-            // trip blocks its per-queue SetFocus. The click burst itself was
-            // guarded by post_click_screen, so release the outer guard and use
-            // the same settle period as the proven background pixel route.
-            // GUITHREADINFO does not consistently expose WebView2's renderer
-            // focus on hosted runners, so it cannot be a delivery oracle here;
-            // the caller still receives an explicitly unverifiable result and
-            // the E2E fixture verifies the externally visible effect.
+            // Release the outer guard before the shared pixel helper. ClickTool
+            // owns a guard around the click itself, then releases it before its
+            // renderer settle period. This is the exact route already proven by
+            // the PX background cell, including targeted injection fallback.
             drop(noact.take());
-            tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+            if let Err(error) = focus_by_pixel(
+                &self.state,
+                pid,
+                Some(hwnd),
+                px as f64,
+                py as f64,
+                false,
+                args.opt_str("session"),
+                args.opt_str("_session_id"),
+                false,
+            )
+            .await
+            {
+                return error;
+            }
         } else if let Some(idx) = elem_idx {
             let state = self.state.clone();
             let focused = tokio::task::spawn_blocking(move || {

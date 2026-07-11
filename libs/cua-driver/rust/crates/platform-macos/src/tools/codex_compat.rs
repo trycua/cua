@@ -9,8 +9,6 @@
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
-use core_foundation::boolean::{kCFBooleanTrue, CFBoolean};
-use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
 use core_foundation::runloop::{
     kCFRunLoopDefaultMode, CFRunLoopAddSource, CFRunLoopGetCurrent, CFRunLoopRef,
     CFRunLoopRemoveSource, CFRunLoopRunInMode, CFRunLoopSourceRef, CFRunLoopStop,
@@ -36,6 +34,7 @@ use crate::ax::bindings::{
     AXUIElementSetAttributeValue, AXValueRef, _AXUIElementGetWindow, kAXErrorSuccess,
     kAXValueCFRangeType,
 };
+use crate::session::{SessionLockEpoch, SessionLockError, SessionLockGuardian};
 
 const ANONYMOUS_SESSION: &str = "__codex_compat_connection__";
 const MAX_CLICK_COUNT: u64 = 10;
@@ -54,7 +53,6 @@ type AXObserverCallback = extern "C" fn(
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
-    fn CGSessionCopyCurrentDictionary() -> CFDictionaryRef;
     fn AXObserverCreate(
         application: i32,
         callback: AXObserverCallback,
@@ -141,6 +139,7 @@ impl Tool for CompatTool {
 pub(super) fn register_all(registry: &mut ToolRegistry) {
     let state = Arc::new(CompatState::new());
     register_session_cleanup(&state);
+    register_lock_cleanup(&state);
 
     for kind in CompatKind::ALL {
         registry.register(Box::new(CompatTool {
@@ -154,6 +153,7 @@ fn register_session_cleanup(state: &Arc<CompatState>) {
     let snapshots = state.snapshots.clone();
     let native_sessions = state.native_sessions.clone();
     let operation_locks = state.operation_locks.clone();
+    let lock_removed_cursors = state.lock_removed_cursors.clone();
     cua_driver_core::session::register_session_end_hook(move |session_id| {
         snapshots.clear_session(session_id);
         let native = native_sessions.lock().unwrap().remove(session_id);
@@ -162,7 +162,17 @@ fn register_session_cleanup(state: &Arc<CompatState>) {
             native.cursor_registry.remove(session_id);
         }
         crate::cursor::overlay::remove_cursor(session_id.to_owned());
+        lock_removed_cursors.lock().unwrap().remove(session_id);
         operation_locks.lock().unwrap().remove(session_id);
+    });
+}
+
+fn register_lock_cleanup(state: &Arc<CompatState>) {
+    let weak = Arc::downgrade(state);
+    state.guardian.register_lock_hook(move || {
+        if let Some(state) = weak.upgrade() {
+            state.invalidate_for_session_lock();
+        }
     });
 }
 
@@ -457,21 +467,105 @@ impl SnapshotStore {
             .latest_by_window
             .retain(|(owner, _, _), _| owner != session);
     }
+
+    fn clear_all(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.by_session.clear();
+        inner.latest_by_window.clear();
+    }
 }
 
 struct CompatState {
     snapshots: Arc<SnapshotStore>,
     native_sessions: Arc<Mutex<HashMap<String, Arc<ToolState>>>>,
     operation_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    lock_removed_cursors: Arc<Mutex<HashSet<String>>>,
+    guardian: Arc<SessionLockGuardian>,
 }
 
 impl CompatState {
     fn new() -> Self {
+        Self::with_guardian(crate::session::lock_guardian().clone())
+    }
+
+    fn with_guardian(guardian: Arc<SessionLockGuardian>) -> Self {
         Self {
             snapshots: Arc::new(SnapshotStore::default()),
             native_sessions: Arc::new(Mutex::new(HashMap::new())),
             operation_locks: Arc::new(Mutex::new(HashMap::new())),
+            lock_removed_cursors: Arc::new(Mutex::new(HashSet::new())),
+            guardian,
         }
+    }
+
+    fn invalidate_for_session_lock(&self) {
+        self.snapshots.clear_all();
+        let native_sessions = {
+            let mut sessions = self.native_sessions.lock().unwrap();
+            std::mem::take(&mut *sessions)
+        };
+        let mut removed = self.lock_removed_cursors.lock().unwrap();
+        for (session_id, native) in native_sessions {
+            native.session_config.clear(&session_id);
+            native.cursor_registry.remove(&session_id);
+            removed.insert(session_id);
+        }
+        let cursor_ids = removed.iter().cloned().collect::<Vec<_>>();
+        drop(removed);
+        for session_id in cursor_ids {
+            // Re-sending Remove is deliberate. It closes the race where a
+            // state capture queued Revive immediately after the lifecycle
+            // hook's first Remove but observed the new lock at its final gate.
+            crate::cursor::overlay::remove_cursor(session_id);
+        }
+    }
+
+    fn begin_lock_epoch(&self) -> Result<SessionLockEpoch, CompatError> {
+        self.reconcile_direct_lock_probe()?;
+        self.guardian.begin().map_err(lock_guard_error)
+    }
+
+    fn validate_lock_epoch(&self, epoch: SessionLockEpoch) -> Result<(), CompatError> {
+        let result = self
+            .reconcile_direct_lock_probe()
+            .and_then(|()| self.guardian.validate(epoch).map_err(lock_guard_error));
+        if result.is_err() {
+            // A native state may have been lazily created after the lifecycle
+            // hook drained the maps. Repeating cleanup is idempotent and closes
+            // that race before the guarded operation returns.
+            self.invalidate_for_session_lock();
+        }
+        result
+    }
+
+    fn reconcile_direct_lock_probe(&self) -> Result<(), CompatError> {
+        let Some(locked) = crate::session::current_screen_locked() else {
+            self.invalidate_for_session_lock();
+            return Err(CompatError::new(
+                "session_state_unavailable",
+                "Computer Use could not verify the current macOS login session. Refusing to inspect or control apps until an unlocked GUI session is available.",
+            ));
+        };
+        self.guardian.observe(locked);
+        if locked {
+            return Err(lock_guard_error(SessionLockError::Locked));
+        }
+        Ok(())
+    }
+
+    fn revive_cursor_after_fresh_state(&self, session: &str) -> bool {
+        let should_revive = self.lock_removed_cursors.lock().unwrap().contains(session);
+        if should_revive
+            && !cua_driver_core::session::is_session_ended(session)
+        {
+            crate::cursor::overlay::revive_cursor(session.to_owned());
+        }
+        should_revive
+    }
+
+    fn require_current_lock_epoch(&self, epoch: SessionLockEpoch) -> Result<(), ToolResult> {
+        self.validate_lock_epoch(epoch)
+            .map_err(CompatError::into_result)
     }
 
     fn native_for_session(&self, session: &str) -> Arc<ToolState> {
@@ -569,14 +663,17 @@ impl CompatState {
         session: &str,
         resolve_mode: AppResolveMode,
     ) -> ToolResult {
-        if let Err(error) = ensure_interactive_session_unlocked() {
-            return error.into_result();
-        }
-        let native = self.native_for_session(session);
+        let lock_epoch = match self.begin_lock_epoch() {
+            Ok(epoch) => epoch,
+            Err(error) => return error.into_result(),
+        };
         let app = match resolve_or_launch_app(app_ref, resolve_mode).await {
             Ok(app) => app,
             Err(error) => return error.into_result(),
         };
+        if let Err(error) = self.validate_lock_epoch(lock_epoch) {
+            return error.into_result();
+        }
         if let Err(error) = enforce_target_policy(&app) {
             return error.into_result();
         }
@@ -585,7 +682,11 @@ impl CompatState {
             Ok(window) => window,
             Err(error) => return error.into_result(),
         };
+        if let Err(error) = self.validate_lock_epoch(lock_epoch) {
+            return error.into_result();
+        }
 
+        let native = self.native_for_session(session);
         let native_args = json!({
             "pid": app.pid,
             "window_id": window_id,
@@ -595,9 +696,22 @@ impl CompatState {
             "max_depth": 20,
             "_codex_compat_full_ax_map": true,
         });
-        let native_result = super::get_window_state::GetWindowStateTool::new(native.clone())
-            .invoke(native_args)
-            .await;
+        let native_result = match run_guarded_capture(&self.guardian, lock_epoch, || async {
+            super::get_window_state::GetWindowStateTool::new(native.clone())
+                .invoke(native_args)
+                .await
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                self.invalidate_for_session_lock();
+                return lock_guard_error(error).into_result();
+            }
+        };
+        if let Err(error) = self.validate_lock_epoch(lock_epoch) {
+            return error.into_result();
+        }
         if native_result.is_error == Some(true) {
             return compat_error_from_native("app_state_failed", native_result);
         }
@@ -635,6 +749,9 @@ impl CompatState {
             .as_ref()
             .map(|bounds| bounds.height.round().max(1.0) as u32)
             .unwrap_or(native_height.max(1.0) as u32);
+        if let Err(error) = self.validate_lock_epoch(lock_epoch) {
+            return error.into_result();
+        }
         let snapshot = self.snapshots.insert(
             session,
             AppSnapshot {
@@ -650,10 +767,21 @@ impl CompatState {
                 native,
             },
         );
-        match state_result(native_result, &snapshot) {
+        let revived_cursor = self.revive_cursor_after_fresh_state(session);
+        if let Err(error) = self.validate_lock_epoch(lock_epoch) {
+            return error.into_result();
+        }
+        if revived_cursor {
+            self.lock_removed_cursors.lock().unwrap().remove(session);
+        }
+        let result = match state_result(native_result, &snapshot) {
             Ok(result) => result,
             Err(error) => error.into_result(),
+        };
+        if let Err(error) = self.validate_lock_epoch(lock_epoch) {
+            return error.into_result();
         }
+        result
     }
 
     async fn run_action(&self, kind: CompatKind, args: Value) -> ToolResult {
@@ -699,30 +827,60 @@ impl CompatState {
             .into_result();
         }
 
-        if let Err(error) = ensure_interactive_session_unlocked() {
+        let lock_epoch = match self.begin_lock_epoch() {
+            Ok(epoch) => epoch,
+            Err(error) => return error.into_result(),
+        };
+        if let Err(error) = validate_live_snapshot(&snapshot) {
             return error.into_result();
         }
-
-        if let Err(error) = validate_live_snapshot(&snapshot) {
+        if let Err(error) = self.validate_lock_epoch(lock_epoch) {
             return error.into_result();
         }
 
         let action_name = defs()[kind.index()].name.clone();
-        let action_result = match kind {
-            CompatKind::Click => self.click(&snapshot, &args, &session).await,
-            CompatKind::Drag => self.drag(&snapshot, &args, &session).await,
-            CompatKind::PerformSecondaryAction => {
-                self.perform_secondary_action(&snapshot, &args).await
+        let action_result = match run_guarded_dispatch(&self.guardian, lock_epoch, || async {
+            match kind {
+                CompatKind::Click => self.click(&snapshot, &args, &session, lock_epoch).await,
+                CompatKind::Drag => self.drag(&snapshot, &args, &session, lock_epoch).await,
+                CompatKind::PerformSecondaryAction => {
+                    self.perform_secondary_action(&snapshot, &args, lock_epoch)
+                        .await
+                }
+                CompatKind::PressKey => {
+                    self.press_key(&snapshot, &args, &session, lock_epoch)
+                        .await
+                }
+                CompatKind::Scroll => {
+                    self.scroll(&snapshot, &args, &session, lock_epoch)
+                        .await
+                }
+                CompatKind::SelectText => self.select_text(&snapshot, &args, lock_epoch).await,
+                CompatKind::SetValue => {
+                    self.set_value(&snapshot, &args, &session, lock_epoch)
+                        .await
+                }
+                CompatKind::TypeText => {
+                    self.type_text(&snapshot, &args, &session, lock_epoch)
+                        .await
+                }
+                CompatKind::ListApps | CompatKind::GetAppState => unreachable!(),
             }
-            CompatKind::PressKey => self.press_key(&snapshot, &args, &session).await,
-            CompatKind::Scroll => self.scroll(&snapshot, &args, &session).await,
-            CompatKind::SelectText => self.select_text(&snapshot, &args).await,
-            CompatKind::SetValue => self.set_value(&snapshot, &args, &session).await,
-            CompatKind::TypeText => self.type_text(&snapshot, &args, &session).await,
-            CompatKind::ListApps | CompatKind::GetAppState => unreachable!(),
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                self.invalidate_for_session_lock();
+                return lock_guard_error(error).into_result();
+            }
         };
 
+        let action_lock_status = self.validate_lock_epoch(lock_epoch);
         if action_result.is_error == Some(true) {
+            if let Err(error) = action_lock_status {
+                return error.into_result();
+            }
             return action_error(&action_name, action_result);
         }
 
@@ -732,6 +890,14 @@ impl CompatState {
         self.snapshots.invalidate(&session, &snapshot);
         let action_summary = first_text(&action_result);
         let action_structured = action_result.structured_content.clone();
+        if let Err(error) = action_lock_status {
+            return refresh_warning_after_success(
+                &action_name,
+                action_summary,
+                action_structured,
+                error.into_result(),
+            );
+        }
         let mut refreshed = self
             .capture_app_state(&app_ref, &session, AppResolveMode::RunningOnly)
             .await;
@@ -752,7 +918,13 @@ impl CompatState {
         refreshed
     }
 
-    async fn click(&self, snapshot: &AppSnapshot, args: &Value, session: &str) -> ToolResult {
+    async fn click(
+        &self,
+        snapshot: &AppSnapshot,
+        args: &Value,
+        session: &str,
+        lock_epoch: SessionLockEpoch,
+    ) -> ToolResult {
         let element_index = args.get("element_index").and_then(Value::as_str);
         let x = args.get("x").and_then(Value::as_f64);
         let y = args.get("y").and_then(Value::as_f64);
@@ -789,7 +961,21 @@ impl CompatState {
                 Ok(index) => index,
                 Err(result) => return result,
             };
-            match element_click_pixel_fallback(snapshot, native_index, button).await {
+            if let Err(result) = self.require_current_lock_epoch(lock_epoch) {
+                return result;
+            }
+            let fallback = element_click_pixel_fallback(
+                snapshot,
+                native_index,
+                button,
+                self.guardian.clone(),
+                lock_epoch,
+            )
+            .await;
+            if let Err(result) = self.require_current_lock_epoch(lock_epoch) {
+                return result;
+            }
+            match fallback {
                 Ok(Some((native_x, native_y))) => {
                     native_args["x"] = json!(native_x);
                     native_args["y"] = json!(native_y);
@@ -817,6 +1003,9 @@ impl CompatState {
         if uses_ax_element && click_count > 1 {
             let mut last = ToolResult::default();
             for _ in 0..click_count {
+                if let Err(result) = self.require_current_lock_epoch(lock_epoch) {
+                    return result;
+                }
                 last = super::click::ClickTool::new(snapshot.native.clone())
                     .invoke(native_args.clone())
                     .await;
@@ -826,13 +1015,22 @@ impl CompatState {
             }
             last
         } else {
+            if let Err(result) = self.require_current_lock_epoch(lock_epoch) {
+                return result;
+            }
             super::click::ClickTool::new(snapshot.native.clone())
                 .invoke(native_args)
                 .await
         }
     }
 
-    async fn drag(&self, snapshot: &AppSnapshot, args: &Value, session: &str) -> ToolResult {
+    async fn drag(
+        &self,
+        snapshot: &AppSnapshot,
+        args: &Value,
+        session: &str,
+        lock_epoch: SessionLockEpoch,
+    ) -> ToolResult {
         let from_x = match required_number(args, "from_x") {
             Ok(value) => value,
             Err(result) => return result,
@@ -856,6 +1054,9 @@ impl CompatState {
         }
         let (from_x, from_y) = compat_point_to_native(snapshot, from_x, from_y);
         let (to_x, to_y) = compat_point_to_native(snapshot, to_x, to_y);
+        if let Err(result) = self.require_current_lock_epoch(lock_epoch) {
+            return result;
+        }
         super::drag::DragTool::new(snapshot.native.clone())
             .invoke(json!({
                 "pid": snapshot.app.pid,
@@ -869,7 +1070,12 @@ impl CompatState {
             .await
     }
 
-    async fn perform_secondary_action(&self, snapshot: &AppSnapshot, args: &Value) -> ToolResult {
+    async fn perform_secondary_action(
+        &self,
+        snapshot: &AppSnapshot,
+        args: &Value,
+        lock_epoch: SessionLockEpoch,
+    ) -> ToolResult {
         let index = match required_string(args, "element_index") {
             Ok(value) => value,
             Err(result) => return result,
@@ -900,35 +1106,43 @@ impl CompatState {
         let prior_frontmost = crate::apps::frontmost_pid();
         let window_snapshot =
             crate::window_change_detector::WindowChangeDetector::snapshot(prior_frontmost);
+        if let Err(result) = self.require_current_lock_epoch(lock_epoch) {
+            return result;
+        }
+        let guardian = self.guardian.clone();
         let result = with_compat_focus_guard(
             snapshot.app.pid,
             prior_frontmost,
             "codex_compat.perform_secondary_action",
             || async move {
                 tokio::task::spawn_blocking(move || {
-                    let available = unsafe { copy_action_names(element_ptr as AXUIElementRef) };
-                    let requested = canonical_ax_action(&action);
-                    let actual = available
-                        .iter()
-                        .find(|candidate| candidate.eq_ignore_ascii_case(&requested))
-                        .cloned()
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "Element does not expose secondary action '{action}'. Available actions: {}",
-                                if available.is_empty() {
-                                    "none".to_owned()
-                                } else {
-                                    available.join(", ")
-                                }
-                            )
-                        })?;
-                    let error = unsafe { perform_action(element_ptr as AXUIElementRef, &actual) };
-                    if error != kAXErrorSuccess {
-                        anyhow::bail!(
-                            "AXUIElementPerformAction({actual}) failed with error {error}"
-                        );
-                    }
-                    Ok::<String, anyhow::Error>(actual)
+                    dispatch_if_epoch_current(&guardian, lock_epoch, || {
+                        let available =
+                            unsafe { copy_action_names(element_ptr as AXUIElementRef) };
+                        let requested = canonical_ax_action(&action);
+                        let actual = available
+                            .iter()
+                            .find(|candidate| candidate.eq_ignore_ascii_case(&requested))
+                            .cloned()
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "Element does not expose secondary action '{action}'. Available actions: {}",
+                                    if available.is_empty() {
+                                        "none".to_owned()
+                                    } else {
+                                        available.join(", ")
+                                    }
+                                )
+                            })?;
+                        let error =
+                            unsafe { perform_action(element_ptr as AXUIElementRef, &actual) };
+                        if error != kAXErrorSuccess {
+                            anyhow::bail!(
+                                "AXUIElementPerformAction({actual}) failed with error {error}"
+                            );
+                        }
+                        Ok(actual)
+                    })
                 })
                 .await
             },
@@ -945,7 +1159,13 @@ impl CompatState {
         }
     }
 
-    async fn press_key(&self, snapshot: &AppSnapshot, args: &Value, session: &str) -> ToolResult {
+    async fn press_key(
+        &self,
+        snapshot: &AppSnapshot,
+        args: &Value,
+        session: &str,
+        lock_epoch: SessionLockEpoch,
+    ) -> ToolResult {
         let raw_key = match required_string(args, "key") {
             Ok(value) => value,
             Err(result) => return result,
@@ -954,6 +1174,9 @@ impl CompatState {
             Ok(parsed) => parsed,
             Err(message) => return ToolResult::error(message),
         };
+        if let Err(result) = self.require_current_lock_epoch(lock_epoch) {
+            return result;
+        }
         super::press_key::PressKeyTool::new(snapshot.native.clone())
             .invoke(json!({
                 "pid": snapshot.app.pid,
@@ -965,7 +1188,13 @@ impl CompatState {
             .await
     }
 
-    async fn scroll(&self, snapshot: &AppSnapshot, args: &Value, session: &str) -> ToolResult {
+    async fn scroll(
+        &self,
+        snapshot: &AppSnapshot,
+        args: &Value,
+        session: &str,
+        lock_epoch: SessionLockEpoch,
+    ) -> ToolResult {
         let index = match required_string(args, "element_index") {
             Ok(value) => value,
             Err(result) => return result,
@@ -991,6 +1220,9 @@ impl CompatState {
         } else {
             ("line", (pages * 5.0).round().clamp(1.0, 50.0) as u64)
         };
+        if let Err(result) = self.require_current_lock_epoch(lock_epoch) {
+            return result;
+        }
         super::scroll::ScrollTool::new(snapshot.native.clone())
             .invoke(json!({
                 "pid": snapshot.app.pid,
@@ -1004,7 +1236,12 @@ impl CompatState {
             .await
     }
 
-    async fn select_text(&self, snapshot: &AppSnapshot, args: &Value) -> ToolResult {
+    async fn select_text(
+        &self,
+        snapshot: &AppSnapshot,
+        args: &Value,
+        lock_epoch: SessionLockEpoch,
+    ) -> ToolResult {
         let index = match required_string(args, "element_index") {
             Ok(value) => value,
             Err(result) => return result,
@@ -1054,19 +1291,25 @@ impl CompatState {
         let prior_frontmost = crate::apps::frontmost_pid();
         let window_snapshot =
             crate::window_change_detector::WindowChangeDetector::snapshot(prior_frontmost);
+        if let Err(result) = self.require_current_lock_epoch(lock_epoch) {
+            return result;
+        }
+        let guardian = self.guardian.clone();
         let result = with_compat_focus_guard(
             snapshot.app.pid,
             prior_frontmost,
             "codex_compat.select_text",
             || async move {
                 tokio::task::spawn_blocking(move || {
-                    select_text_range(
-                        element_ptr,
-                        &text,
-                        prefix.as_deref(),
-                        suffix.as_deref(),
-                        &selection,
-                    )
+                    dispatch_if_epoch_current(&guardian, lock_epoch, || {
+                        select_text_range(
+                            element_ptr,
+                            &text,
+                            prefix.as_deref(),
+                            suffix.as_deref(),
+                            &selection,
+                        )
+                    })
                 })
                 .await
             },
@@ -1083,7 +1326,13 @@ impl CompatState {
         }
     }
 
-    async fn set_value(&self, snapshot: &AppSnapshot, args: &Value, session: &str) -> ToolResult {
+    async fn set_value(
+        &self,
+        snapshot: &AppSnapshot,
+        args: &Value,
+        session: &str,
+        lock_epoch: SessionLockEpoch,
+    ) -> ToolResult {
         let index = match required_string(args, "element_index") {
             Ok(value) => value,
             Err(result) => return result,
@@ -1096,6 +1345,9 @@ impl CompatState {
             Ok(index) => index,
             Err(result) => return result,
         };
+        if let Err(result) = self.require_current_lock_epoch(lock_epoch) {
+            return result;
+        }
         super::set_value::SetValueTool::new(snapshot.native.clone())
             .invoke(json!({
                 "pid": snapshot.app.pid,
@@ -1107,11 +1359,20 @@ impl CompatState {
             .await
     }
 
-    async fn type_text(&self, snapshot: &AppSnapshot, args: &Value, session: &str) -> ToolResult {
+    async fn type_text(
+        &self,
+        snapshot: &AppSnapshot,
+        args: &Value,
+        session: &str,
+        lock_epoch: SessionLockEpoch,
+    ) -> ToolResult {
         let text = match required_string(args, "text") {
             Ok(value) => value,
             Err(result) => return result,
         };
+        if let Err(result) = self.require_current_lock_epoch(lock_epoch) {
+            return result;
+        }
         super::type_text::TypeTextTool::new(snapshot.native.clone())
             .invoke(json!({
                 "pid": snapshot.app.pid,
@@ -1136,6 +1397,8 @@ async fn element_click_pixel_fallback(
     snapshot: &AppSnapshot,
     element_index: usize,
     button: &str,
+    guardian: Arc<SessionLockGuardian>,
+    lock_epoch: SessionLockEpoch,
 ) -> Result<Option<(f64, f64)>, ToolResult> {
     let guard = snapshot
         .native
@@ -1150,17 +1413,19 @@ async fn element_click_pixel_fallback(
         })?;
     let button = button.to_owned();
     let inspection = tokio::task::spawn_blocking(move || {
-        let element = guard.as_ptr() as AXUIElementRef;
-        let actions = unsafe { copy_action_names(element) };
-        if element_supports_native_click(&actions, &button) {
-            return Ok(None);
-        }
-        if actions.iter().any(|action| action == "AXScrollToVisible") {
-            let _ = unsafe { perform_action(element, "AXScrollToVisible") };
-        }
-        unsafe { element_screen_center(element) }
-            .map(Some)
-            .ok_or_else(|| anyhow::anyhow!("the element has no usable on-screen frame"))
+        dispatch_if_epoch_current(&guardian, lock_epoch, || {
+            let element = guard.as_ptr() as AXUIElementRef;
+            let actions = unsafe { copy_action_names(element) };
+            if element_supports_native_click(&actions, &button) {
+                return Ok(None);
+            }
+            if actions.iter().any(|action| action == "AXScrollToVisible") {
+                let _ = unsafe { perform_action(element, "AXScrollToVisible") };
+            }
+            unsafe { element_screen_center(element) }
+                .map(Some)
+                .ok_or_else(|| anyhow::anyhow!("the element has no usable on-screen frame"))
+        })
     })
     .await
     .map_err(|error| ToolResult::error(format!("Element click inspection failed: {error}")))?
@@ -1439,7 +1704,7 @@ fn state_result(
         .unwrap_or_else(|| snapshot.app.name.clone());
     let bundle = snapshot.app.bundle_id.as_deref().unwrap_or("unknown");
     let text = format!(
-        "Computer Use state (cmux-cua Codex compatibility)\n<app_state>\n\
+        "Cua Driver Computer Use state\n<app_state>\n\
          App={path} (bundleID {bundle}, pid {})\n\
          Window: \"{}\", App: {}.\n{}\n\
          </app_state>",
@@ -1920,7 +2185,7 @@ fn enforce_target_policy(app: &AppIdentity) -> Result<(), CompatError> {
         return Err(CompatError::new(
             "target_not_allowed",
             format!(
-                "Computer Use is not allowed to target '{}' ({bundle}). The driver/host and macOS security-sensitive or authentication surfaces are protected.",
+                "Computer Use is not allowed to target '{}' ({bundle}). The driver/host, terminal apps, and macOS security-sensitive or authentication surfaces are protected.",
                 app.name
             ),
         ));
@@ -1948,6 +2213,7 @@ fn is_protected_terminal_target(bundle: &str, name: &str) -> bool {
     matches!(
         bundle,
         "com.apple.terminal"
+            | "com.cmuxterm.app"
             | "com.mitchellh.ghostty"
             | "com.googlecode.iterm2"
             | "net.kovidgoyal.kitty"
@@ -1955,10 +2221,15 @@ fn is_protected_terminal_target(bundle: &str, name: &str) -> bool {
             | "com.github.wez.wezterm"
             | "co.zeit.hyper"
             | "co.vercel.hyper"
-    ) || bundle.starts_with("dev.warp.")
+    ) || bundle.starts_with("com.cmuxterm.app.")
+        || bundle.starts_with("dev.warp.")
         || matches!(
             name,
             "terminal"
+                | "cmux"
+                | "cmux beta"
+                | "cmux dev"
+                | "cmux nightly"
                 | "ghostty"
                 | "iterm"
                 | "iterm2"
@@ -1971,28 +2242,56 @@ fn is_protected_terminal_target(bundle: &str, name: &str) -> bool {
         )
 }
 
-fn ensure_interactive_session_unlocked() -> Result<(), CompatError> {
-    let raw = unsafe { CGSessionCopyCurrentDictionary() };
-    if raw.is_null() {
-        return Err(CompatError::new(
-            "session_state_unavailable",
-            "Computer Use could not verify the current macOS login session. Refusing to inspect or control apps until an unlocked GUI session is available.",
-        ));
-    }
-    let session: CFDictionary<CFString, CFBoolean> =
-        unsafe { TCFType::wrap_under_create_rule(raw) };
-    let key = CFString::new("CGSSessionScreenIsLocked");
-    let locked = session
-        .find(&key)
-        .map(|value| value.as_concrete_TypeRef() == unsafe { kCFBooleanTrue })
-        .unwrap_or(false);
-    if locked {
-        return Err(CompatError::new(
+fn lock_guard_error(error: SessionLockError) -> CompatError {
+    match error {
+        SessionLockError::Locked => CompatError::new(
             "screen_locked",
             "Computer Use is unavailable while the macOS screen is locked.",
-        ));
+        ),
+        SessionLockError::EpochChanged => CompatError::new(
+            "session_lock_changed",
+            "The macOS lock state changed during Computer Use. Call get_app_state again after the screen is unlocked.",
+        ),
     }
-    Ok(())
+}
+
+fn dispatch_if_epoch_current<T>(
+    guardian: &SessionLockGuardian,
+    epoch: SessionLockEpoch,
+    dispatch: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    guardian
+        .validate(epoch)
+        .map_err(|error| anyhow::anyhow!(lock_guard_error(error).message))?;
+    dispatch()
+}
+
+async fn run_guarded_dispatch<F, Fut, T>(
+    guardian: &SessionLockGuardian,
+    epoch: SessionLockEpoch,
+    dispatch: F,
+) -> Result<T, SessionLockError>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
+    guardian.validate(epoch)?;
+    Ok(dispatch().await)
+}
+
+async fn run_guarded_capture<F, Fut, T>(
+    guardian: &SessionLockGuardian,
+    epoch: SessionLockEpoch,
+    capture: F,
+) -> Result<T, SessionLockError>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
+    guardian.validate(epoch)?;
+    let result = capture().await;
+    guardian.validate(epoch)?;
+    Ok(result)
 }
 
 fn validate_live_snapshot(snapshot: &AppSnapshot) -> Result<(), CompatError> {
@@ -2701,6 +3000,79 @@ mod tests {
         assert!(store.is_current("session-a", &replacement));
     }
 
+    #[tokio::test]
+    async fn lock_between_validation_and_dispatch_prevents_native_work() {
+        let guardian = SessionLockGuardian::for_test(false);
+        let epoch = guardian.begin().unwrap();
+        guardian.validate(epoch).unwrap();
+
+        // Inject the lifecycle edge in the exact gap between app/snapshot
+        // validation and the native-dispatch gate.
+        guardian.observe(true);
+        let dispatched = Arc::new(AtomicBool::new(false));
+        let dispatched_in_call = dispatched.clone();
+        let result = run_guarded_dispatch(&guardian, epoch, move || async move {
+            dispatched_in_call.store(true, Ordering::SeqCst);
+        })
+        .await;
+
+        assert_eq!(result, Err(SessionLockError::Locked));
+        assert!(!dispatched.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn lock_during_refresh_discards_the_capture() {
+        let guardian = SessionLockGuardian::for_test(false);
+        let epoch = guardian.begin().unwrap();
+        let guardian_in_capture = guardian.clone();
+
+        let result = run_guarded_capture(&guardian, epoch, move || async move {
+            guardian_in_capture.observe(true);
+            "captured state"
+        })
+        .await;
+
+        assert_eq!(result, Err(SessionLockError::Locked));
+    }
+
+    #[test]
+    fn lock_clears_every_compat_snapshot_and_cursor_until_fresh_state() {
+        let guardian = SessionLockGuardian::for_test(false);
+        let state = Arc::new(CompatState::with_guardian(guardian.clone()));
+        register_lock_cleanup(&state);
+
+        for session in ["lock-cleanup-a", "lock-cleanup-b"] {
+            let native = state.native_for_session(session);
+            native.cursor_registry.update_position(session, 40.0, 50.0);
+            state
+                .snapshots
+                .insert(session, snapshot("AppA", native.clone()));
+            assert!(native.cursor_registry.get(session).is_some());
+        }
+
+        guardian.observe(true);
+        assert!(state.native_sessions.lock().unwrap().is_empty());
+        for session in ["lock-cleanup-a", "lock-cleanup-b"] {
+            assert!(matches!(
+                state.snapshots.lookup(session, "AppA"),
+                Err(SnapshotLookupError::Missing)
+            ));
+            assert!(state
+                .lock_removed_cursors
+                .lock()
+                .unwrap()
+                .contains(session));
+        }
+
+        guardian.observe(false);
+        for session in ["lock-cleanup-a", "lock-cleanup-b"] {
+            assert!(matches!(
+                state.snapshots.lookup(session, "AppA"),
+                Err(SnapshotLookupError::Missing)
+            ));
+        }
+    }
+
     #[test]
     fn compat_session_end_clears_state_and_cursor_before_explicit_revival() {
         let session = "compat-cleanup-session-71D2A9";
@@ -2788,7 +3160,7 @@ mod tests {
     }
 
     #[test]
-    fn target_policy_blocks_driver_auth_hosts_and_terminal_families_but_allows_cmux() {
+    fn target_policy_blocks_driver_auth_hosts_and_all_terminal_families() {
         let identity = |name: &str, bundle: &str| AppIdentity {
             requested: name.to_owned(),
             name: name.to_owned(),
@@ -2805,6 +3177,8 @@ mod tests {
             ("SkyComputerUseClient", "com.example.unknown-helper"),
             ("ChatGPT", "com.openai.chat"),
             ("Terminal", "com.apple.Terminal"),
+            ("cmux", "com.cmuxterm.app"),
+            ("cmux NIGHTLY", "com.cmuxterm.app.nightly"),
             ("Ghostty", "com.mitchellh.ghostty"),
             ("iTerm2", "com.googlecode.iterm2"),
             ("Warp", "dev.warp.Warp-Stable"),
@@ -2816,13 +3190,13 @@ mod tests {
             let error = enforce_target_policy(&identity(name, bundle)).unwrap_err();
             assert_eq!(error.code, "target_not_allowed", "{name} should be blocked");
         }
-        assert!(enforce_target_policy(&identity("cmux", "com.cmuxterm.app")).is_ok());
-        assert!(
-            enforce_target_policy(&identity("cmux NIGHTLY", "com.cmuxterm.app.nightly")).is_ok()
-        );
 
         for name in [
             "Terminal",
+            "cmux",
+            "cmux BETA",
+            "cmux DEV",
+            "cmux NIGHTLY",
             "Ghostty",
             "iTerm",
             "iTerm2",

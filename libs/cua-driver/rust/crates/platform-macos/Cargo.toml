@@ -36,7 +36,7 @@ objc2-foundation = { version = "0.2", features = [
     "NSThread", "NSObject", "NSValue",
     "NSAppleEventDescriptor", "NSNotification", "NSOperation",
     "NSAppleScript",
-    "NSURL", "NSDate", "NSError",
+    "NSURL", "NSDate", "NSError", "NSDistributedNotificationCenter",
     "block2", "libc",
 ] }
 objc2-app-kit = { version = "0.2", features = [

@@ -15,8 +15,8 @@
 //!   Confirmed against Electron 31 on port 9223 (verified manually via
 //!   curl: instant 200, JSON body present). Fix: parse `Content-Length`
 //!   and `read_exact` that many bytes, or honour `Transfer-Encoding:
-//!   chunked`. The page-tool tests cover discovery and the DOM round-trip
-//!   together.
+//!   chunked`. Tracked in this test as a structural assertion (window
+//!   discoverable) rather than a behavioural one (page tool round-trip).
 //!
 //! - **WebView2 `--remote-debugging-port` ignored** — passing
 //!   `AdditionalBrowserArguments = "--remote-debugging-port=9222"` via
@@ -38,18 +38,14 @@ use cua_driver_testkit::{harness_app, spawn_in_job, Driver, McpDriver};
 fn webview_exe() -> PathBuf {
     if let Ok(p) = std::env::var("HARNESS_WEBVIEW_EXE") {
         let pb = PathBuf::from(p);
-        if pb.exists() {
-            return pb;
-        }
+        if pb.exists() { return pb; }
     }
     harness_app("harness-webview", "CuaTestHarness.WebView.exe")
 }
 fn electron_exe() -> PathBuf {
     if let Ok(p) = std::env::var("HARNESS_ELECTRON_EXE") {
         let pb = PathBuf::from(p);
-        if pb.exists() {
-            return pb;
-        }
+        if pb.exists() { return pb; }
     }
     harness_app("harness-electron", "CuaTestHarness.Electron.exe")
 }
@@ -70,9 +66,7 @@ fn wait_port_free(port: u16) {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    eprintln!(
-        "warning: CDP port {port} still bound after 5s — prior host may not have released it"
-    );
+    eprintln!("warning: CDP port {port} still bound after 5s — prior host may not have released it");
 }
 
 /// Launch the harness exe + a cua-driver child with `CUA_DRIVER_CDP_PORT`
@@ -83,9 +77,7 @@ where
     F: FnOnce(i64, u64, &mut McpDriver),
 {
     if !host_exe.exists() {
-        eprintln!(
-            "{label} host exe not found at {host_exe:?} — run tests/fixtures/build/windows.ps1"
-        );
+        eprintln!("{label} host exe not found at {host_exe:?} — run tests/fixtures/build/windows.ps1");
         return;
     }
     // A prior test's host may still hold this fixed CDP port — wait for it to
@@ -94,16 +86,10 @@ where
     // Set the CDP port the daemon should probe; the spawned cua-driver child
     // inherits it from this process's environment.
     std::env::set_var("CUA_DRIVER_CDP_PORT", cdp_port.to_string());
-    let Some(mut driver) = McpDriver::spawn() else {
-        return;
-    };
+    let Some(mut driver) = McpDriver::spawn() else { return };
 
     // Set the CDP port the host should use so the daemon can find it.
-    let env_var = if label == "webview" {
-        "CUA_WEBVIEW_CDP_PORT"
-    } else {
-        "CUA_ELECTRON_CDP_PORT"
-    };
+    let env_var = if label == "webview" { "CUA_WEBVIEW_CDP_PORT" } else { "CUA_ELECTRON_CDP_PORT" };
     let mut cmd = Command::new(&host_exe);
     cmd.env(env_var, cdp_port.to_string())
         .stdout(Stdio::null())
@@ -114,14 +100,23 @@ where
     println!("{label} pid={pid} cdp_port={cdp_port}");
     std::thread::sleep(Duration::from_secs(2)); // small cold-start for runtime spin-up
 
-    let (wid, _title) = driver.find_window(pid, title_substr).unwrap_or_else(|| {
-        panic!("{label} window with title containing {title_substr:?} not found")
-    });
+    let (wid, _title) = driver
+        .find_window(pid, title_substr)
+        .unwrap_or_else(|| panic!("{label} window with title containing {title_substr:?} not found"));
 
     f(pid, wid, &mut driver);
 }
 
-// ── WebView2 page tool ──────────────────────────────────────────────────────
+// ── WebView2 structural + page tool ─────────────────────────────────────────
+
+#[test]
+#[ignore]
+fn harness_webview_window_discoverable() {
+    run_with_session("webview", webview_exe(), "CuaTestHarness WebView", 9222,
+        |pid, wid, _driver| {
+        println!("✅ harness_webview_window_discoverable: pid={pid} wid={wid}");
+    });
+}
 
 #[test]
 #[ignore]
@@ -130,51 +125,43 @@ fn harness_webview_page_tool() {
     // CoreWebView2EnvironmentOptions.AdditionalBrowserArguments.
     // Combined with the `/json` Content-Length fix in mcp-server/src/cdp.rs,
     // the page tool now reaches WebView2's DOM via CDP just like Electron.
-    run_with_session(
-        "webview",
-        webview_exe(),
-        "CuaTestHarness WebView",
-        9222,
+    run_with_session("webview", webview_exe(), "CuaTestHarness WebView", 9222,
         |pid, wid, driver| {
-            let marker = driver.call("page", serde_json::json!({
+
+        let marker = driver.call("page", serde_json::json!({
             "pid": pid, "window_id": wid, "action": "execute_javascript",
             "javascript": "document.querySelector('[data-cua-id=\"page-marker\"]').textContent"
         })).text().to_string();
-            assert!(
-                marker.contains("WEB_HARNESS_MARKER_v1"),
-                "WebView2 CDP execute_javascript marker fetch: {marker:?}"
-            );
+        assert!(marker.contains("WEB_HARNESS_MARKER_v1"),
+            "WebView2 CDP execute_javascript marker fetch: {marker:?}");
 
-            // click_element via DOM selector + counter readback.
-            let _ = driver.call(
-                "page",
-                serde_json::json!({
-                    "pid": pid, "window_id": wid, "action": "click_element",
-                    "selector": "#btn-increment"
-                }),
-            );
-            std::thread::sleep(Duration::from_millis(500));
+        // click_element via DOM selector + counter readback.
+        let _ = driver.call("page", serde_json::json!({
+            "pid": pid, "window_id": wid, "action": "click_element",
+            "selector": "#btn-increment"
+        }));
+        std::thread::sleep(Duration::from_millis(500));
 
-            let post = driver
-                .call(
-                    "page",
-                    serde_json::json!({
-                        "pid": pid, "window_id": wid, "action": "execute_javascript",
-                        "javascript": "document.getElementById('lbl-counter').textContent"
-                    }),
-                )
-                .text()
-                .to_string();
-            assert!(
-                post.contains("counter=1"),
-                "WebView2 counter didn't advance via page.click_element: {post:?}"
-            );
-            println!("✅ harness_webview_page_tool: CDP+execute_javascript+click_element green");
-        },
-    );
+        let post = driver.call("page", serde_json::json!({
+            "pid": pid, "window_id": wid, "action": "execute_javascript",
+            "javascript": "document.getElementById('lbl-counter').textContent"
+        })).text().to_string();
+        assert!(post.contains("counter=1"),
+            "WebView2 counter didn't advance via page.click_element: {post:?}");
+        println!("✅ harness_webview_page_tool: CDP+execute_javascript+click_element green");
+    });
 }
 
-// ── Electron page tool ───────────────────────────────────────────────────────
+// ── Electron structural + page tool ──────────────────────────────────────────
+
+#[test]
+#[ignore]
+fn harness_electron_window_discoverable() {
+    run_with_session("electron", electron_exe(), "CuaTestHarness Electron", 9223,
+        |pid, wid, _driver| {
+        println!("✅ harness_electron_window_discoverable: pid={pid} wid={wid}");
+    });
+}
 
 #[test]
 #[ignore]
@@ -182,51 +169,34 @@ fn harness_electron_page_tool() {
     // Regression guard for the CDP /json discovery fix (parse
     // Content-Length / Transfer-Encoding instead of read_to_end).
     // cua-driver's page tool now reaches Electron's CDP successfully.
-    run_with_session(
-        "electron",
-        electron_exe(),
-        "CuaTestHarness Electron",
-        9223,
+    run_with_session("electron", electron_exe(), "CuaTestHarness Electron", 9223,
         |pid, wid, driver| {
-            // 1. execute_javascript via CDP.
-            let marker = driver.call("page", serde_json::json!({
+
+        // 1. execute_javascript via CDP.
+        let marker = driver.call("page", serde_json::json!({
             "pid": pid, "window_id": wid, "action": "execute_javascript",
             "javascript": "document.querySelector('[data-cua-id=\"page-marker\"]').textContent"
         })).text().to_string();
-            assert!(
-                marker.contains("WEB_HARNESS_MARKER_v1"),
-                "Electron CDP execute_javascript marker fetch: {marker:?}"
-            );
+        assert!(marker.contains("WEB_HARNESS_MARKER_v1"),
+            "Electron CDP execute_javascript marker fetch: {marker:?}");
 
-            // 2. Increment counter via direct execute_javascript (the
-            //    click_element path has a separate probe-JSON-parsing gap
-            //    documented below — track separately).
-            let _ = driver.call(
-                "page",
-                serde_json::json!({
-                    "pid": pid, "window_id": wid, "action": "execute_javascript",
-                    "javascript": "document.getElementById('btn-increment').click()"
-                }),
-            );
-            std::thread::sleep(Duration::from_millis(300));
+        // 2. Increment counter via direct execute_javascript (the
+        //    click_element path has a separate probe-JSON-parsing gap
+        //    documented below — track separately).
+        let _ = driver.call("page", serde_json::json!({
+            "pid": pid, "window_id": wid, "action": "execute_javascript",
+            "javascript": "document.getElementById('btn-increment').click()"
+        }));
+        std::thread::sleep(Duration::from_millis(300));
 
-            let post = driver
-                .call(
-                    "page",
-                    serde_json::json!({
-                        "pid": pid, "window_id": wid, "action": "execute_javascript",
-                        "javascript": "document.getElementById('lbl-counter').textContent"
-                    }),
-                )
-                .text()
-                .to_string();
-            assert!(
-                post.contains("counter=1"),
-                "Electron counter did not advance via execute_javascript: {post:?}"
-            );
-            println!("✅ harness_electron_page_tool: CDP+execute_javascript green");
-        },
-    );
+        let post = driver.call("page", serde_json::json!({
+            "pid": pid, "window_id": wid, "action": "execute_javascript",
+            "javascript": "document.getElementById('lbl-counter').textContent"
+        })).text().to_string();
+        assert!(post.contains("counter=1"),
+            "Electron counter did not advance via execute_javascript: {post:?}");
+        println!("✅ harness_electron_page_tool: CDP+execute_javascript green");
+    });
 }
 
 /// Regression guard for the page.click_element double-encode fix.
@@ -241,50 +211,29 @@ fn harness_electron_page_tool() {
 #[test]
 #[ignore]
 fn harness_electron_click_element() {
-    run_with_session(
-        "electron",
-        electron_exe(),
-        "CuaTestHarness Electron",
-        9223,
+    run_with_session("electron", electron_exe(), "CuaTestHarness Electron", 9223,
         |pid, wid, driver| {
-            let resp = driver.call(
-                "page",
-                serde_json::json!({
-                    "pid": pid, "window_id": wid, "action": "click_element",
-                    "selector": "#btn-increment"
-                }),
-            );
-            // Prefer the tool text; fall back to a JSON-RPC error message.
-            let text = if resp.text().is_empty() {
-                resp.raw["error"]["message"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string()
-            } else {
-                resp.text().to_string()
-            };
-            assert!(
-                !text.contains("probe JSON missing") && !text.contains("required field"),
-                "click_element probe parse regressed: {text:?}"
-            );
-            std::thread::sleep(Duration::from_millis(400));
+        let resp = driver.call("page", serde_json::json!({
+            "pid": pid, "window_id": wid, "action": "click_element",
+            "selector": "#btn-increment"
+        }));
+        // Prefer the tool text; fall back to a JSON-RPC error message.
+        let text = if resp.text().is_empty() {
+            resp.raw["error"]["message"].as_str().unwrap_or("").to_string()
+        } else {
+            resp.text().to_string()
+        };
+        assert!(!text.contains("probe JSON missing") && !text.contains("required field"),
+            "click_element probe parse regressed: {text:?}");
+        std::thread::sleep(Duration::from_millis(400));
 
-            // Verify the click actually fired in the DOM.
-            let post = driver
-                .call(
-                    "page",
-                    serde_json::json!({
-                        "pid": pid, "window_id": wid, "action": "execute_javascript",
-                        "javascript": "document.getElementById('lbl-counter').textContent"
-                    }),
-                )
-                .text()
-                .to_string();
-            assert!(
-                post.contains("counter=1"),
-                "Counter didn't advance after page.click_element: {post:?}"
-            );
-            println!("✅ harness_electron_click_element: probe parsed, click fired, counter=1");
-        },
-    );
+        // Verify the click actually fired in the DOM.
+        let post = driver.call("page", serde_json::json!({
+            "pid": pid, "window_id": wid, "action": "execute_javascript",
+            "javascript": "document.getElementById('lbl-counter').textContent"
+        })).text().to_string();
+        assert!(post.contains("counter=1"),
+            "Counter didn't advance after page.click_element: {post:?}");
+        println!("✅ harness_electron_click_element: probe parsed, click fired, counter=1");
+    });
 }

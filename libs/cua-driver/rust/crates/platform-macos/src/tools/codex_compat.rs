@@ -139,6 +139,7 @@ impl Tool for CompatTool {
 
 pub(super) fn register_all(registry: &mut ToolRegistry) {
     let state = Arc::new(CompatState::new());
+    crate::app_approval::register_session_cleanup();
     register_session_cleanup(&state);
     register_lock_cleanup(&state);
 
@@ -371,6 +372,21 @@ impl AppIdentity {
         }
         aliases
     }
+}
+
+fn check_app_approval(
+    gate: &crate::app_approval::ApprovalGate,
+    app: &AppIdentity,
+    session_id: &str,
+) -> Result<crate::app_approval::ApprovalCheck, CompatError> {
+    let target = crate::app_approval::AppApprovalTarget::from_app(
+        &app.name,
+        app.bundle_id.as_deref(),
+        app.launch_path.as_deref(),
+    )
+    .map_err(|error| CompatError::new("app_approval_unavailable", error.to_string()))?;
+    gate.check(session_id, &target)
+        .map_err(|error| CompatError::new("app_approval_unavailable", error.to_string()))
 }
 
 #[derive(Clone)]
@@ -675,8 +691,8 @@ impl CompatState {
         let _dispatch_registration =
             crate::dispatch_gate::install(session, self.guardian.clone(), lock_epoch);
         let dispatch_gate = NativeDispatchGate::for_session(session);
-        let app = match resolve_or_launch_app(app_ref, resolve_mode, &dispatch_gate).await {
-            Ok(app) => app,
+        let (app, needs_launch) = match resolve_app(app_ref, resolve_mode).await {
+            Ok(resolved) => resolved,
             Err(error) => {
                 if let Err(lock_error) = self.validate_lock_epoch(lock_epoch) {
                     return lock_error.into_result();
@@ -688,6 +704,48 @@ impl CompatState {
             return error.into_result();
         }
         if let Err(error) = enforce_target_policy(&app) {
+            return error.into_result();
+        }
+        if resolve_mode == AppResolveMode::LaunchIfNeeded {
+            match check_app_approval(
+                crate::app_approval::global(),
+                &app,
+                session,
+            ) {
+                Ok(crate::app_approval::ApprovalCheck::Approved) => {}
+                Ok(crate::app_approval::ApprovalCheck::Required(challenge)) => {
+                    return CompatError::new(
+                        "app_approval_required",
+                        format!(
+                            "Computer Use approval is required for app '{}'.",
+                            challenge.display_name
+                        ),
+                    )
+                    .with_detail(
+                        "approval",
+                        json!({
+                            "challenge": challenge.id,
+                            "app": challenge.app_identifier,
+                            "displayName": challenge.display_name,
+                            "allowPersistentApproval": challenge.allow_persistent_approval,
+                        }),
+                    )
+                    .into_result();
+                }
+                Err(error) => return error.into_result(),
+            }
+        }
+
+        let app = match launch_resolved_app(app, needs_launch, &dispatch_gate).await {
+            Ok(app) => app,
+            Err(error) => {
+                if let Err(lock_error) = self.validate_lock_epoch(lock_epoch) {
+                    return lock_error.into_result();
+                }
+                return error.into_result();
+            }
+        };
+        if let Err(error) = self.validate_lock_epoch(lock_epoch) {
             return error.into_result();
         }
 
@@ -1997,11 +2055,10 @@ fn xml_value_after_key<'a>(xml: &'a str, key: &str, tag: &str) -> Option<&'a str
     Some(value.trim())
 }
 
-async fn resolve_or_launch_app(
+async fn resolve_app(
     app_ref: &str,
     mode: AppResolveMode,
-    dispatch_gate: &NativeDispatchGate,
-) -> Result<AppIdentity, CompatError> {
+) -> Result<(AppIdentity, bool), CompatError> {
     let query = app_ref.to_owned();
     let apps = tokio::task::spawn_blocking(crate::apps::list_all_apps)
         .await
@@ -2018,11 +2075,19 @@ async fn resolve_or_launch_app(
         }
         Err(error) => return Err(error),
     };
-    let (mut identity, needs_launch) = identity_and_launch_requirement(&query, &info, mode)?;
+    identity_and_launch_requirement(&query, &info, mode)
+}
+
+async fn launch_resolved_app(
+    mut identity: AppIdentity,
+    needs_launch: bool,
+    dispatch_gate: &NativeDispatchGate,
+) -> Result<AppIdentity, CompatError> {
     if !needs_launch {
         return Ok(identity);
     }
 
+    let query = identity.requested.clone();
     let launch_ref = if query.contains('/') {
         identity
             .launch_path
@@ -3045,6 +3110,39 @@ mod tests {
             identity_and_launch_requirement("Calculator", &running, AppResolveMode::RunningOnly)
                 .unwrap();
         assert!(!needs_launch);
+    }
+
+    #[test]
+    fn unapproved_resolved_target_challenges_before_launch_dispatch() {
+        let stopped = app_info(
+            "Calculator",
+            "com.apple.calculator",
+            "/System/Applications/Calculator.app",
+            0,
+        );
+        let (identity, needs_launch) = identity_and_launch_requirement(
+            "Calculator",
+            &stopped,
+            AppResolveMode::LaunchIfNeeded,
+        )
+        .unwrap();
+        assert!(needs_launch);
+
+        let directory = tempfile::tempdir().unwrap();
+        let gate = crate::app_approval::ApprovalGate::new(
+            directory.path().join("private/app-approvals.json"),
+            true,
+        );
+        gate.register_broker("session-a", "daemon-broker-token");
+        let approval = check_app_approval(&gate, &identity, "session-a").unwrap();
+        assert!(matches!(
+            approval,
+            crate::app_approval::ApprovalCheck::Required(_)
+        ));
+
+        let raw = check_app_approval(&gate, &identity, "raw-session").unwrap_err();
+        assert_eq!(raw.code, "app_approval_unavailable");
+        assert!(raw.message.contains("authenticated MCP elicitation session"));
     }
 
     #[test]

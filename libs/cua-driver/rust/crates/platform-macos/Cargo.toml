@@ -69,3 +69,6 @@ futures-util = "0.3"
 
 [build-dependencies]
 cc = "1"
+
+[dev-dependencies]
+tempfile = "3"

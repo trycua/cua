@@ -2010,6 +2010,7 @@ dependencies = [
  "screencapturekit",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tiny-skia",
  "tokio",

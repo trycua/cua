@@ -4,9 +4,11 @@
 
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 struct CompatDriver {
     child: Child,
@@ -526,6 +528,13 @@ fn explicit_socket_proxy_rejects_mismatched_daemon_profile() {
     let native = DaemonDriver::spawn(native_socket.clone(), false);
     let compat = DaemonDriver::spawn(compat_socket.clone(), true);
 
+    let matching_compat = run_proxy_to_explicit_socket(&compat_socket, true);
+    assert!(
+        matching_compat.status.success(),
+        "matching compat proxy must authenticate its approval broker: {}",
+        String::from_utf8_lossy(&matching_compat.stderr)
+    );
+
     let compat_to_native = run_proxy_to_explicit_socket(&native_socket, true);
     assert!(!compat_to_native.status.success());
     let stderr = String::from_utf8_lossy(&compat_to_native.stderr);
@@ -587,4 +596,225 @@ fn status_and_stop_manage_native_and_compat_daemons_independently() {
     let stop_native = run_profile_lifecycle_command(home.path(), "stop", false);
     assert!(stop_native.status.success(), "native stop: {stop_native:?}");
     assert!(native.child.wait().expect("wait for native daemon").success());
+}
+
+#[test]
+fn compat_proxy_brokers_nested_app_approval_and_retries_once() {
+    let root = unique_daemon_root();
+    std::fs::create_dir_all(&root).unwrap();
+    let socket = root.join("approval.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let stopping = Arc::new(AtomicBool::new(false));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let resolutions = Arc::new(AtomicUsize::new(0));
+    let server = {
+        let stopping = stopping.clone();
+        let calls = calls.clone();
+        let resolutions = resolutions.clone();
+        std::thread::spawn(move || {
+            let mut workers = Vec::new();
+            while !stopping.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let calls = calls.clone();
+                        let resolutions = resolutions.clone();
+                        workers.push(std::thread::spawn(move || {
+                            let mut reader = BufReader::new(stream.try_clone().unwrap());
+                            let mut line = String::new();
+                            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                                return;
+                            }
+                            let request: Value = serde_json::from_str(line.trim()).unwrap();
+                            let method = request["method"].as_str().unwrap_or("");
+                            let response = match method {
+                                "session_begin" => serde_json::json!({
+                                    "ok": true,
+                                    "result": {
+                                        "session_begin": true,
+                                        "profile": "codex-computer-use-compat",
+                                        "approval_broker_token": "daemon-broker-token",
+                                    }
+                                }),
+                                "list" => {
+                                    let names = [
+                                        "list_apps",
+                                        "get_app_state",
+                                        "click",
+                                        "perform_secondary_action",
+                                        "set_value",
+                                        "select_text",
+                                        "scroll",
+                                        "drag",
+                                        "press_key",
+                                        "type_text",
+                                    ];
+                                    serde_json::json!({
+                                        "ok": true,
+                                        "result": {
+                                            "profile": "codex-computer-use-compat",
+                                            "capability_version": "1",
+                                            "schema_version": "1",
+                                            "tools": names.iter().map(|name| serde_json::json!({
+                                                "name": name,
+                                                "description": name,
+                                                "input_schema": {"type":"object","properties":{}},
+                                                "read_only": false,
+                                                "destructive": false,
+                                                "idempotent": false,
+                                                "open_world": false,
+                                            })).collect::<Vec<_>>(),
+                                        }
+                                    })
+                                }
+                                "call" => {
+                                    let attempt = calls.fetch_add(1, Ordering::SeqCst);
+                                    if attempt == 0 {
+                                        serde_json::json!({
+                                            "ok": false,
+                                            "error": "approval required",
+                                            "exit_code": 1,
+                                            "result": {
+                                                "content": [{"type":"text","text":"approval required"}],
+                                                "isError": true,
+                                                "structuredContent": {
+                                                    "code": "app_approval_required",
+                                                    "message": "approval required",
+                                                    "approval": {
+                                                        "challenge": "challenge-1",
+                                                        "app": "com.apple.calculator",
+                                                        "displayName": "Calculator",
+                                                        "allowPersistentApproval": true,
+                                                    }
+                                                }
+                                            }
+                                        })
+                                    } else {
+                                        serde_json::json!({
+                                            "ok": true,
+                                            "result": {
+                                                "content": [{"type":"text","text":"approved state"}],
+                                                "isError": false,
+                                            }
+                                        })
+                                    }
+                                }
+                                "app_approval_resolve" => {
+                                    resolutions.fetch_add(1, Ordering::SeqCst);
+                                    assert_eq!(request["args"]["challenge"], "challenge-1");
+                                    assert_eq!(
+                                        request["args"]["broker_token"],
+                                        "daemon-broker-token"
+                                    );
+                                    assert_eq!(request["args"]["action"], "accept");
+                                    assert_eq!(request["args"]["persist"], "session");
+                                    serde_json::json!({
+                                        "ok": true,
+                                        "result": {"resolution":"approved","persistent":false}
+                                    })
+                                }
+                                other => panic!("unexpected fake daemon method {other}"),
+                            };
+                            writeln!(stream, "{response}").unwrap();
+                            stream.flush().unwrap();
+                            if method == "session_begin" {
+                                loop {
+                                    line.clear();
+                                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                                        break;
+                                    }
+                                }
+                            }
+                        }));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("fake daemon accept failed: {error}"),
+                }
+            }
+            for worker in workers {
+                let _ = worker.join();
+            }
+        })
+    };
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .arg("mcp")
+        .arg("--socket")
+        .arg(&socket)
+        .arg("--codex-computer-use-compat")
+        .arg("--no-overlay")
+        .env("CUA_DRIVER_RS_MCP_FORCE_PROXY", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"initialize",
+            "params":{"capabilities":{"elicitation":{}}},
+        })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    let mut line = String::new();
+    stdout.read_line(&mut line).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(line.trim()).unwrap()["id"], 1);
+
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({
+            "jsonrpc":"2.0",
+            "id":2,
+            "method":"tools/call",
+            "params":{"name":"get_app_state","arguments":{"app":"Calculator"}},
+        })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    line.clear();
+    stdout.read_line(&mut line).unwrap();
+    let elicitation: Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(elicitation["method"], "elicitation/create");
+    assert_eq!(
+        elicitation["params"]["message"],
+        "Allow Computer Use to use \"Calculator\"?"
+    );
+    assert_eq!(
+        elicitation["params"]["_meta"]["persist"],
+        serde_json::json!(["session", "always"])
+    );
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({
+            "jsonrpc":"2.0",
+            "id":elicitation["id"],
+            "result":{"action":"accept"},
+        })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    line.clear();
+    stdout.read_line(&mut line).unwrap();
+    let response: Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(response["id"], 2);
+    assert_eq!(response["result"]["isError"], false);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(resolutions.load(Ordering::SeqCst), 1);
+
+    let _ = child.kill();
+    let _ = child.wait();
+    stopping.store(true, Ordering::SeqCst);
+    server.join().unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }

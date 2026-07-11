@@ -26,7 +26,7 @@
 use std::sync::Arc;
 
 use cua_driver_core::protocol::{initialize_result, Request, Response};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
 
 use crate::serve::{
@@ -38,7 +38,9 @@ use crate::serve::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ControlConnectionState {
     Connecting,
-    Ready,
+    Ready {
+        approval_broker_token: Option<String>,
+    },
     Rejected(String),
 }
 
@@ -111,7 +113,7 @@ pub async fn run_proxy(
         });
     }
 
-    wait_for_control_connection(control_ready_rx.clone()).await?;
+    let _ = wait_for_control_connection(control_ready_rx.clone()).await?;
 
     // Cache the tool list once at startup. The daemon's registry is
     // static for the lifetime of the daemon, so polling on every
@@ -126,6 +128,7 @@ pub async fn run_proxy(
     let mut reader = BufReader::new(stdin);
     let mut writer = tokio::io::BufWriter::new(stdout);
     let mut line = String::new();
+    let mut client_supports_elicitation = false;
 
     loop {
         line.clear();
@@ -150,15 +153,44 @@ pub async fn run_proxy(
             }
             Ok(req) => {
                 let id = req.id.clone().unwrap_or(serde_json::Value::Null);
-                handle_proxy_request(
-                    req,
-                    id,
-                    &socket_path,
-                    &cached_tools_list,
-                    &session_id,
-                    &control_ready_rx,
-                )
-                .await
+                if req.method == "initialize" {
+                    client_supports_elicitation = supports_elicitation(&req);
+                }
+                if req.method == "tools/call"
+                    && expected_profile == DaemonProfile::CodexComputerUseCompat
+                {
+                    match req.tool_call() {
+                        Err(error) => Response::error(
+                            id,
+                            -32602,
+                            format!("Invalid params: {error}"),
+                        ),
+                        Ok(call) => {
+                            forward_tool_call_with_approval(
+                                id,
+                                call.name,
+                                call.args,
+                                &socket_path,
+                                &session_id,
+                                &control_ready_rx,
+                                client_supports_elicitation,
+                                &mut reader,
+                                &mut writer,
+                            )
+                            .await
+                        }
+                    }
+                } else {
+                    handle_proxy_request(
+                        req,
+                        id,
+                        &socket_path,
+                        &cached_tools_list,
+                        &session_id,
+                        &control_ready_rx,
+                    )
+                    .await
+                }
             }
         };
 
@@ -208,7 +240,8 @@ async fn run_control_connection(
     let begin = DaemonRequest {
         method: "session_begin".into(),
         name: None,
-        args: None,
+        args: (expected_profile == DaemonProfile::CodexComputerUseCompat)
+            .then(|| serde_json::json!({"approval_broker": true})),
         session_id: Some(session_id.clone()),
     };
     let line = match serde_json::to_string(&begin) {
@@ -287,11 +320,13 @@ async fn run_control_connection(
 
 async fn wait_for_control_connection(
     mut readiness: tokio::sync::watch::Receiver<ControlConnectionState>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<String>> {
     tokio::time::timeout(std::time::Duration::from_secs(10), async move {
         loop {
             match readiness.borrow().clone() {
-                ControlConnectionState::Ready => return Ok(()),
+                ControlConnectionState::Ready {
+                    approval_broker_token,
+                } => return Ok(approval_broker_token),
                 ControlConnectionState::Rejected(error) => anyhow::bail!(error),
                 ControlConnectionState::Connecting => {}
             }
@@ -308,7 +343,10 @@ async fn wait_for_control_connection(
     })?
 }
 
-fn validate_control_ack(line: &str, expected_profile: DaemonProfile) -> anyhow::Result<()> {
+fn validate_control_ack(
+    line: &str,
+    expected_profile: DaemonProfile,
+) -> anyhow::Result<Option<String>> {
     let response: DaemonResponse = serde_json::from_str(line)
         .map_err(|error| anyhow::anyhow!("decode session_begin response: {error}"))?;
     if !response.ok {
@@ -331,7 +369,21 @@ fn validate_control_ack(line: &str, expected_profile: DaemonProfile) -> anyhow::
              reports `{reported_profile}`"
         );
     }
-    Ok(())
+    let approval_broker_token = response
+        .result
+        .as_ref()
+        .and_then(|result| result.get("approval_broker_token"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|token| !token.is_empty())
+        .map(str::to_owned);
+    if expected_profile == DaemonProfile::CodexComputerUseCompat
+        && approval_broker_token.is_none()
+    {
+        anyhow::bail!(
+            "session_begin ACK did not include an authenticated app approval broker token"
+        );
+    }
+    Ok(approval_broker_token)
 }
 
 #[cfg(unix)]
@@ -384,10 +436,11 @@ async fn run_unix_control_connection_once(
             return Ok(true);
         }
     }
-    if let Err(error) = validate_control_ack(buffer.trim(), expected_profile) {
-        return Err(error.to_string());
-    }
-    let _ = readiness.send(ControlConnectionState::Ready);
+    let approval_broker_token = validate_control_ack(buffer.trim(), expected_profile)
+        .map_err(|error| error.to_string())?;
+    let _ = readiness.send(ControlConnectionState::Ready {
+        approval_broker_token,
+    });
     debug!(session_id, "control connection established (session_begin acknowledged)");
 
     loop {
@@ -451,10 +504,11 @@ async fn run_windows_control_connection_once(
             return Ok(true);
         }
     }
-    if let Err(error) = validate_control_ack(buffer.trim(), expected_profile) {
-        return Err(error.to_string());
-    }
-    let _ = readiness.send(ControlConnectionState::Ready);
+    let approval_broker_token = validate_control_ack(buffer.trim(), expected_profile)
+        .map_err(|error| error.to_string())?;
+    let _ = readiness.send(ControlConnectionState::Ready {
+        approval_broker_token,
+    });
     debug!(session_id, "control connection established (session_begin acknowledged)");
 
     loop {
@@ -643,6 +697,385 @@ fn fetch_tools_list_from_daemon(
     }))
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AppApprovalChallenge {
+    challenge: String,
+    app_identifier: String,
+    display_name: String,
+    allow_persistent_approval: bool,
+}
+
+impl AppApprovalChallenge {
+    fn from_daemon_response(response: &DaemonResponse) -> Option<Self> {
+        let structured = response
+            .result
+            .as_ref()?
+            .get("structuredContent")?;
+        if structured.get("code")?.as_str()? != "app_approval_required" {
+            return None;
+        }
+        let approval = structured.get("approval")?;
+        Some(Self {
+            challenge: approval.get("challenge")?.as_str()?.to_owned(),
+            app_identifier: approval.get("app")?.as_str()?.to_owned(),
+            display_name: approval.get("displayName")?.as_str()?.to_owned(),
+            allow_persistent_approval: approval
+                .get("allowPersistentApproval")
+                .and_then(serde_json::Value::as_bool)
+                .or_else(|| {
+                    approval
+                        .get("allow_persistent_approval")
+                        .and_then(serde_json::Value::as_bool)
+                })
+                .unwrap_or(false),
+        })
+    }
+
+    fn elicitation_request(&self, request_id: &str) -> serde_json::Value {
+        let persist = if self.allow_persistent_approval {
+            serde_json::json!(["session", "always"])
+        } else {
+            serde_json::json!(["session"])
+        };
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "elicitation/create",
+            "params": {
+                "message": format!(
+                    "Allow Computer Use to use \"{}\"?",
+                    self.display_name
+                ),
+                "requestedSchema": {
+                    "type": "object",
+                    "properties": {},
+                },
+                "_meta": {
+                    "codex_approval_kind": "mcp_tool_call",
+                    "connector_id": "computer-use",
+                    "connector_name": "Computer Use",
+                    "persist": persist,
+                    "riskLevel": "low",
+                    "tool_params": {"app": self.app_identifier},
+                    "tool_params_display": [{
+                        "name": "app",
+                        "display_name": "App",
+                        "value": self.display_name,
+                    }],
+                },
+            },
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ElicitationAction {
+    Accept,
+    Decline,
+    Cancel,
+}
+
+impl ElicitationAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Accept => "accept",
+            Self::Decline => "decline",
+            Self::Cancel => "cancel",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ElicitationDecision {
+    action: ElicitationAction,
+    persistence: Option<String>,
+}
+
+fn supports_elicitation(request: &Request) -> bool {
+    request
+        .params
+        .as_ref()
+        .and_then(|params| params.get("capabilities"))
+        .and_then(|capabilities| capabilities.get("elicitation"))
+        .is_some_and(serde_json::Value::is_object)
+}
+
+fn parse_elicitation_decision(
+    response: &serde_json::Value,
+    expected_id: &str,
+) -> Result<ElicitationDecision, String> {
+    if response.get("id").and_then(serde_json::Value::as_str) != Some(expected_id) {
+        return Err("elicitation response id did not match the pending request".to_owned());
+    }
+    if let Some(error) = response.get("error") {
+        return Err(format!("MCP client rejected app approval elicitation: {error}"));
+    }
+    let result = response
+        .get("result")
+        .ok_or_else(|| "elicitation response did not include a result".to_owned())?;
+    let action = match result.get("action").and_then(serde_json::Value::as_str) {
+        Some("accept") => ElicitationAction::Accept,
+        Some("decline") => ElicitationAction::Decline,
+        Some("cancel") => ElicitationAction::Cancel,
+        Some(other) => return Err(format!("unsupported elicitation action '{other}'")),
+        None => return Err("elicitation response did not include an action".to_owned()),
+    };
+    let persistence = result
+        .get("_meta")
+        .and_then(|meta| meta.get("persist"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    Ok(ElicitationDecision {
+        action,
+        persistence,
+    })
+}
+
+async fn write_json_value<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    value: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let serialized = serde_json::to_vec(value)?;
+    writer.write_all(&serialized).await?;
+    writer.write_all(b"\n").await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+async fn await_elicitation_decision<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    request_id: &str,
+) -> Result<ElicitationDecision, String>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let bytes = reader
+            .read_line(&mut line)
+            .await
+            .map_err(|error| format!("read elicitation response: {error}"))?;
+        if bytes == 0 {
+            return Err("MCP client disconnected during app approval elicitation".to_owned());
+        }
+        let value: serde_json::Value = serde_json::from_str(line.trim())
+            .map_err(|error| format!("decode elicitation response: {error}"))?;
+        if value.get("id").and_then(serde_json::Value::as_str) == Some(request_id) {
+            return parse_elicitation_decision(&value, request_id);
+        }
+
+        // MCP permits notifications while a server request is pending. Ignore
+        // those, but fail an interleaved client request explicitly so the
+        // caller does not wait forever for a response that cannot run yet.
+        if value.get("method").is_some() && value.get("id").is_some() {
+            let id = value.get("id").cloned().unwrap_or(serde_json::Value::Null);
+            let response = Response::error(
+                id,
+                -32000,
+                "another MCP request cannot run while app approval is pending",
+            );
+            let response = serde_json::to_value(response)
+                .map_err(|error| format!("encode pending-request response: {error}"))?;
+            write_json_value(writer, &response)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+    }
+}
+
+async fn send_daemon_request_async(
+    socket_path: &str,
+    request: DaemonRequest,
+    context: &str,
+) -> Result<DaemonResponse, String> {
+    let socket = socket_path.to_owned();
+    let blocking = tokio::task::spawn_blocking(move || send_request(&socket, &request)).await;
+    match blocking {
+        Err(error) => Err(format!("internal join error {context}: {error}")),
+        Ok(Err(error)) => Err(format!("daemon transport error {context}: {error}")),
+        Ok(Ok(response)) => Ok(response),
+    }
+}
+
+async fn call_daemon_tool(
+    socket_path: &str,
+    session_id: &str,
+    name: &str,
+    args: serde_json::Value,
+) -> Result<DaemonResponse, String> {
+    send_daemon_request_async(
+        socket_path,
+        DaemonRequest {
+            method: "call".to_owned(),
+            name: Some(name.to_owned()),
+            args: Some(args),
+            session_id: Some(session_id.to_owned()),
+        },
+        &format!("forwarding `{name}`"),
+    )
+    .await
+}
+
+fn app_approval_error_response(
+    id: serde_json::Value,
+    code: &str,
+    message: impl Into<String>,
+) -> Response {
+    let message = message.into();
+    Response::ok(
+        id,
+        serde_json::json!({
+            "content": [{"type": "text", "text": message}],
+            "isError": true,
+            "structuredContent": {"code": code, "message": message},
+        }),
+    )
+}
+
+async fn forward_tool_call_with_approval<R, W>(
+    id: serde_json::Value,
+    name: String,
+    args: serde_json::Value,
+    socket_path: &str,
+    session_id: &str,
+    control_ready: &tokio::sync::watch::Receiver<ControlConnectionState>,
+    client_supports_elicitation: bool,
+    reader: &mut R,
+    writer: &mut W,
+) -> Response
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let broker_token = match wait_for_control_connection(control_ready.clone()).await {
+        Ok(Some(token)) => token,
+        Ok(None) => {
+            return Response::error(
+                id,
+                -32603,
+                "daemon did not provide an authenticated app approval broker token",
+            )
+        }
+        Err(error) => {
+            return Response::error(
+                id,
+                -32603,
+                format!(
+                    "daemon session control connection unavailable before forwarding `{name}`: {error}"
+                ),
+            )
+        }
+    };
+
+    let first = match call_daemon_tool(socket_path, session_id, &name, args.clone()).await {
+        Ok(response) => response,
+        Err(error) => return Response::error(id, -32603, error),
+    };
+    let Some(challenge) = AppApprovalChallenge::from_daemon_response(&first) else {
+        return daemon_response_to_mcp(id, &name, first);
+    };
+
+    if !client_supports_elicitation {
+        return app_approval_error_response(
+            id,
+            "elicitation_not_supported",
+            format!(
+                "Computer Use requires app approval for '{}', but this MCP client did not negotiate the elicitation capability.",
+                challenge.display_name
+            ),
+        );
+    }
+
+    let elicitation_id = format!("cua-app-approval-{}", uuid::Uuid::new_v4());
+    if let Err(error) = write_json_value(writer, &challenge.elicitation_request(&elicitation_id)).await {
+        return Response::error(
+            id,
+            -32603,
+            format!("write app approval elicitation: {error}"),
+        );
+    }
+    let decision = match await_elicitation_decision(reader, writer, &elicitation_id).await {
+        Ok(decision) => decision,
+        Err(error) => {
+            return app_approval_error_response(id, "app_approval_unavailable", error)
+        }
+    };
+
+    let resolution = match send_daemon_request_async(
+        socket_path,
+        DaemonRequest {
+            method: "app_approval_resolve".to_owned(),
+            name: None,
+            args: Some(serde_json::json!({
+                "challenge": challenge.challenge,
+                "broker_token": broker_token,
+                "action": decision.action.as_str(),
+                "persist": decision.persistence.as_deref().unwrap_or("session"),
+            })),
+            session_id: Some(session_id.to_owned()),
+        },
+        "resolving app approval",
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => return Response::error(id, -32603, error),
+    };
+    if !resolution.ok {
+        return app_approval_error_response(
+            id,
+            "app_approval_unavailable",
+            resolution
+                .error
+                .unwrap_or_else(|| "Computer Use could not resolve app approval.".to_owned()),
+        );
+    }
+    let resolution = resolution.result.unwrap_or_default();
+    match resolution
+        .get("resolution")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("approved") => {
+            let retry = match call_daemon_tool(socket_path, session_id, &name, args).await {
+                Ok(response) => response,
+                Err(error) => return Response::error(id, -32603, error),
+            };
+            if AppApprovalChallenge::from_daemon_response(&retry).is_some() {
+                return app_approval_error_response(
+                    id,
+                    "app_approval_unavailable",
+                    "Computer Use approval was accepted, but the daemon requested approval again.",
+                );
+            }
+            daemon_response_to_mcp(id, &name, retry)
+        }
+        Some("declined") => app_approval_error_response(
+            id,
+            "app_approval_denied",
+            resolution
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("Computer Use approval was declined."),
+        ),
+        Some("canceled") => app_approval_error_response(
+            id,
+            "app_approval_canceled",
+            resolution
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("Computer Use approval was canceled."),
+        ),
+        _ => app_approval_error_response(
+            id,
+            "app_approval_unavailable",
+            "Computer Use daemon returned an invalid app approval resolution.",
+        ),
+    }
+}
+
 /// JSON-RPC method dispatcher for the proxy. Mirrors
 /// `cua_driver_core::server::handle_request`:
 ///   - `initialize`     → static `initialize_result()` (same envelope
@@ -717,39 +1150,19 @@ async fn forward_tool_call(
             ),
         );
     }
-    let req = DaemonRequest {
-        method: "call".into(),
-        name: Some(name.clone()),
-        args: Some(args),
-        session_id: Some(session_id.to_owned()),
+    let response = match call_daemon_tool(socket_path, session_id, &name, args).await {
+        Ok(response) => response,
+        Err(error) => return Response::error(id, -32603, error),
     };
+    daemon_response_to_mcp(id, &name, response)
+}
 
-    // The daemon client is sync, so jump to a blocking thread to keep
-    // the tokio reactor responsive while the AX-heavy call (e.g.
-    // `screenshot`, `get_window_state`) does its thing on the daemon
-    // side.
-    let socket = socket_path.to_owned();
-    let blocking = tokio::task::spawn_blocking(move || send_request(&socket, &req)).await;
-
-    let resp = match blocking {
-        Err(join_err) => {
-            return Response::error(
-                id,
-                -32603,
-                format!("internal join error forwarding to daemon: {join_err}"),
-            );
-        }
-        Ok(Err(e)) => {
-            return Response::error(
-                id,
-                -32603,
-                format!("daemon transport error forwarding `{name}`: {e}"),
-            );
-        }
-        Ok(Ok(r)) => r,
-    };
-
-    if !resp.ok {
+fn daemon_response_to_mcp(
+    id: serde_json::Value,
+    _name: &str,
+    response: DaemonResponse,
+) -> Response {
+    if !response.ok {
         // MCP separates two failure modes:
         //   - JSON-RPC errors → `Response::error(...)`, used for
         //     transport / protocol failures (unknown method, bad
@@ -766,14 +1179,16 @@ async fn forward_tool_call(
         // it as `Response::ok` with `isError: true`. Mirror that
         // shape here so MCP clients see identical envelopes either
         // way — CodeRabbit #2.
-        if let Some(result) = resp
+        if let Some(result) = response
             .result
             .filter(|result| result.get("isError").and_then(|value| value.as_bool()) == Some(true))
         {
             return Response::ok(id, result);
         }
-        let msg = resp.error.unwrap_or_else(|| "daemon reported failure".into());
-        let exit_code = resp.exit_code.unwrap_or(1);
+        let msg = response
+            .error
+            .unwrap_or_else(|| "daemon reported failure".into());
+        let exit_code = response.exit_code.unwrap_or(1);
         let result = serde_json::json!({
             "content": [{ "type": "text", "text": msg }],
             "isError": true,
@@ -782,7 +1197,7 @@ async fn forward_tool_call(
         return Response::ok(id, result);
     }
 
-    let result = resp.result.unwrap_or_else(|| {
+    let result = response.result.unwrap_or_else(|| {
         serde_json::json!({
             "content": [],
             "isError": false
@@ -803,6 +1218,223 @@ async fn forward_tool_call(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn approval_challenge_response(allow_persistent: bool) -> DaemonResponse {
+        DaemonResponse::tool_error(
+            serde_json::json!({
+                "content": [{"type":"text","text":"approval required"}],
+                "isError": true,
+                "structuredContent": {
+                    "code": "app_approval_required",
+                    "message": "approval required",
+                    "approval": {
+                        "challenge": "challenge-1",
+                        "app": "com.apple.calculator",
+                        "displayName": "Calculator",
+                        "allowPersistentApproval": allow_persistent,
+                    }
+                }
+            }),
+            "approval required",
+            1,
+        )
+    }
+
+    #[test]
+    fn initialize_capability_negotiation_is_explicit() {
+        let supported: Request = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"capabilities": {"elicitation": {}}},
+        }))
+        .unwrap();
+        assert!(supports_elicitation(&supported));
+
+        let unsupported: Request = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"capabilities": {}},
+        }))
+        .unwrap();
+        assert!(!supports_elicitation(&unsupported));
+    }
+
+    #[test]
+    fn approval_challenge_builds_codex_computer_use_elicitation_metadata() {
+        let challenge = AppApprovalChallenge::from_daemon_response(
+            &approval_challenge_response(true),
+        )
+        .unwrap();
+        let request = challenge.elicitation_request("approval-request-1");
+        assert_eq!(request["method"], "elicitation/create");
+        assert_eq!(
+            request["params"]["message"],
+            "Allow Computer Use to use \"Calculator\"?"
+        );
+        assert_eq!(
+            request["params"]["requestedSchema"],
+            serde_json::json!({"type":"object","properties":{}})
+        );
+        let meta = &request["params"]["_meta"];
+        assert_eq!(meta["codex_approval_kind"], "mcp_tool_call");
+        assert_eq!(meta["connector_id"], "computer-use");
+        assert_eq!(meta["connector_name"], "Computer Use");
+        assert_eq!(meta["persist"], serde_json::json!(["session", "always"]));
+        assert_eq!(meta["riskLevel"], "low");
+        assert_eq!(meta["tool_params"]["app"], "com.apple.calculator");
+        assert_eq!(meta["tool_params_display"][0]["value"], "Calculator");
+
+        let session_only = AppApprovalChallenge::from_daemon_response(
+            &approval_challenge_response(false),
+        )
+        .unwrap()
+        .elicitation_request("approval-request-2");
+        assert_eq!(
+            session_only["params"]["_meta"]["persist"],
+            serde_json::json!(["session"])
+        );
+    }
+
+    #[test]
+    fn elicitation_decisions_distinguish_accept_decline_cancel_and_persistence() {
+        for (action, expected) in [
+            ("accept", ElicitationAction::Accept),
+            ("decline", ElicitationAction::Decline),
+            ("cancel", ElicitationAction::Cancel),
+        ] {
+            let decision = parse_elicitation_decision(
+                &serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": "approval-1",
+                    "result": {"action": action},
+                }),
+                "approval-1",
+            )
+            .unwrap();
+            assert_eq!(decision.action, expected);
+            assert_eq!(decision.persistence, None);
+        }
+
+        let persistent = parse_elicitation_decision(
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "approval-1",
+                "result": {"action": "accept", "_meta": {"persist": "always"}},
+            }),
+            "approval-1",
+        )
+        .unwrap();
+        assert_eq!(persistent.action, ElicitationAction::Accept);
+        assert_eq!(persistent.persistence.as_deref(), Some("always"));
+    }
+
+    #[tokio::test]
+    async fn nested_elicitation_response_is_read_as_a_response_not_a_request() {
+        let (proxy_stream, mut client_stream) = tokio::io::duplex(2048);
+        let (proxy_read, mut proxy_write) = tokio::io::split(proxy_stream);
+        let mut proxy_read = BufReader::new(proxy_read);
+        tokio::spawn(async move {
+            client_stream
+                .write_all(
+                    b"{\"jsonrpc\":\"2.0\",\"id\":\"approval-7\",\"result\":{\"action\":\"accept\",\"_meta\":{\"persist\":\"always\"}}}\n",
+                )
+                .await
+                .unwrap();
+        });
+        let decision = await_elicitation_decision(
+            &mut proxy_read,
+            &mut proxy_write,
+            "approval-7",
+        )
+        .await
+        .unwrap();
+        assert_eq!(decision.action, ElicitationAction::Accept);
+        assert_eq!(decision.persistence.as_deref(), Some("always"));
+    }
+
+    #[test]
+    fn unsupported_client_error_is_a_tool_failure() {
+        let response = app_approval_error_response(
+            serde_json::json!(9),
+            "elicitation_not_supported",
+            "client did not negotiate elicitation",
+        );
+        let response = serde_json::to_value(response).unwrap();
+        assert!(response.get("error").is_none());
+        assert_eq!(response["result"]["isError"], true);
+        assert_eq!(
+            response["result"]["structuredContent"]["code"],
+            "elicitation_not_supported"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unsupported_client_does_not_elicit_resolve_or_retry() {
+        use tokio::net::UnixListener;
+
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("approval.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut line = String::new();
+            {
+                let mut reader = BufReader::new(&mut stream);
+                reader.read_line(&mut line).await.unwrap();
+            }
+            let request: DaemonRequest = serde_json::from_str(line.trim()).unwrap();
+            assert_eq!(request.method, "call");
+            assert_eq!(request.name.as_deref(), Some("get_app_state"));
+            let response = approval_challenge_response(true);
+            stream
+                .write_all(
+                    format!("{}\n", serde_json::to_string(&response).unwrap()).as_bytes(),
+                )
+                .await
+                .unwrap();
+            stream.flush().await.unwrap();
+
+            assert!(
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(250),
+                    listener.accept(),
+                )
+                .await
+                .is_err(),
+                "unsupported client must not resolve or retry the challenge"
+            );
+        });
+
+        let (_control_tx, control_rx) = tokio::sync::watch::channel(
+            ControlConnectionState::Ready {
+                approval_broker_token: Some("daemon-broker-token".to_owned()),
+            },
+        );
+        let (proxy_stream, _client_stream) = tokio::io::duplex(1024);
+        let (proxy_read, mut proxy_write) = tokio::io::split(proxy_stream);
+        let mut proxy_read = BufReader::new(proxy_read);
+        let response = forward_tool_call_with_approval(
+            serde_json::json!(4),
+            "get_app_state".to_owned(),
+            serde_json::json!({"app":"Calculator"}),
+            socket.to_str().unwrap(),
+            "session-a",
+            &control_rx,
+            false,
+            &mut proxy_read,
+            &mut proxy_write,
+        )
+        .await;
+        let response = serde_json::to_value(response).unwrap();
+        assert_eq!(
+            response["result"]["structuredContent"]["code"],
+            "elicitation_not_supported"
+        );
+        server.await.unwrap();
+    }
 
     /// Reconstruct the `!resp.ok` branch in isolation so we can assert
     /// on the serialized shape without spinning up a real daemon /
@@ -961,6 +1593,18 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("did not report"));
+
+        let compat_without_broker = DaemonResponse::ok(serde_json::json!({
+            "session_begin": true,
+            "profile": DaemonProfile::CodexComputerUseCompat,
+        }));
+        assert!(validate_control_ack(
+            &serde_json::to_string(&compat_without_broker).unwrap(),
+            DaemonProfile::CodexComputerUseCompat,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("approval broker token"));
     }
 
     #[cfg(unix)]
@@ -1028,7 +1672,10 @@ mod tests {
         drop(first_listener);
         drop(first_stream);
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            while *ready_rx.borrow() == ControlConnectionState::Ready {
+            while matches!(
+                &*ready_rx.borrow(),
+                ControlConnectionState::Ready { .. }
+            ) {
                 ready_rx.changed().await.expect("readiness sender alive");
             }
         })

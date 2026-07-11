@@ -194,6 +194,84 @@ fn write_private_pid_file(pid_path: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Authenticate the private approval broker against the executable serving the
+/// daemon. Normal tool calls remain available to every same-user socket peer,
+/// but only another process running this exact installed `cua-driver` binary
+/// may establish the long-lived approval control session.
+#[cfg(all(unix, target_os = "macos"))]
+fn approval_broker_peer_is_trusted(stream: &tokio::net::UnixStream) -> bool {
+    use std::ffi::CStr;
+    use std::os::fd::AsRawFd;
+
+    const SOL_LOCAL: libc::c_int = 0;
+    const LOCAL_PEERPID: libc::c_int = 0x002;
+    const PROC_PIDPATHINFO_MAXSIZE: usize = 4 * 1024;
+
+    extern "C" {
+        fn proc_pidpath(
+            pid: libc::c_int,
+            buffer: *mut libc::c_void,
+            buffersize: u32,
+        ) -> libc::c_int;
+    }
+
+    let mut peer_pid: libc::pid_t = 0;
+    let mut length = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+    let peer_ok = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            SOL_LOCAL,
+            LOCAL_PEERPID,
+            (&mut peer_pid as *mut libc::pid_t).cast(),
+            &mut length,
+        )
+    } == 0;
+    if !peer_ok || peer_pid <= 0 {
+        tracing::warn!("approval broker rejected: could not resolve Unix peer pid");
+        return false;
+    }
+
+    let mut buffer = vec![0u8; PROC_PIDPATHINFO_MAXSIZE];
+    let written = unsafe {
+        proc_pidpath(
+            peer_pid,
+            buffer.as_mut_ptr().cast(),
+            buffer.len() as u32,
+        )
+    };
+    if written <= 0 {
+        tracing::warn!(peer_pid, "approval broker rejected: could not resolve peer executable");
+        return false;
+    }
+    let Ok(peer_path) = CStr::from_bytes_until_nul(&buffer) else {
+        tracing::warn!(peer_pid, "approval broker rejected: invalid peer executable path");
+        return false;
+    };
+    let Ok(peer_path) = std::fs::canonicalize(std::path::Path::new(peer_path.to_string_lossy().as_ref())) else {
+        tracing::warn!(peer_pid, "approval broker rejected: peer executable disappeared");
+        return false;
+    };
+    let Ok(daemon_path) = std::env::current_exe().and_then(std::fs::canonicalize) else {
+        tracing::warn!("approval broker rejected: could not resolve daemon executable");
+        return false;
+    };
+    let trusted = peer_path == daemon_path;
+    if !trusted {
+        tracing::warn!(
+            peer_pid,
+            peer = %peer_path.display(),
+            daemon = %daemon_path.display(),
+            "approval broker rejected: peer executable does not match daemon"
+        );
+    }
+    trusted
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn approval_broker_peer_is_trusted(_stream: &tokio::net::UnixStream) -> bool {
+    false
+}
+
 // ── Recording idle-TTL backstop (#1764) ─────────────────────────────────────────
 
 /// Default TTL of zero `call` activity after which an active recording is
@@ -583,6 +661,20 @@ fn daemon_permission_status(profile: DaemonProfile) -> serde_json::Value {
     })
 }
 
+fn app_approval_broker_matches(
+    brokers: &std::sync::Mutex<std::collections::HashMap<String, String>>,
+    session_id: &str,
+    broker_token: &str,
+) -> bool {
+    !broker_token.is_empty()
+        && brokers
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .map(String::as_str)
+            == Some(broker_token)
+}
+
 // ── Client ────────────────────────────────────────────────────────────────────
 
 /// Probe whether a daemon is listening on `socket_path`.
@@ -822,6 +914,14 @@ pub async fn run_serve(
     maybe_start_http_transport(registry.clone(), profile);
     register_recording_session_end_hook(registry.recording.clone());
 
+    // Session id to one-time-random broker credential. Only an authenticated
+    // long-lived control connection can populate this map. The credential is
+    // injected into get_app_state inside the daemon, so raw callers cannot
+    // self-assert approval fields in public tool arguments.
+    let approval_brokers = std::sync::Arc::new(std::sync::Mutex::new(
+        std::collections::HashMap::<String, String>::new(),
+    ));
+
     loop {
         tokio::select! {
             result = listener.accept() => {
@@ -829,6 +929,8 @@ pub async fn run_serve(
                 let reg = registry.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
                 let last_activity = last_activity.clone();
+                let approval_peer_trusted = approval_broker_peer_is_trusted(&stream);
+                let approval_brokers = approval_brokers.clone();
 
                 tokio::spawn(async move {
                     let (reader, mut writer) = stream.into_split();
@@ -841,6 +943,7 @@ pub async fn run_serve(
                     // connection EOFs (graceful proxy exit OR kill -9, both
                     // kernel-guaranteed), the post-loop block reaps the session.
                     let mut control_session_id: Option<String> = None;
+                    let mut control_approval_token: Option<(String, String)> = None;
 
                     while let Ok(Some(line)) = lines.next_line().await {
                         let req: DaemonRequest = match serde_json::from_str(&line) {
@@ -1020,6 +1123,89 @@ pub async fn run_serve(
                                     }
                                 }
                             }
+                            "app_approval_resolve" => {
+                                #[cfg(target_os = "macos")]
+                                let resp = if profile != DaemonProfile::CodexComputerUseCompat {
+                                    DaemonResponse::err(
+                                        "app approval resolution is available only for the Codex Computer Use compatibility profile",
+                                        64,
+                                    )
+                                } else {
+                                    let args = req.args.as_ref();
+                                    let session_id = req.session_id.as_deref().unwrap_or("");
+                                    let broker_token = args
+                                        .and_then(|value| value.get("broker_token"))
+                                        .and_then(serde_json::Value::as_str)
+                                        .unwrap_or("");
+                                    let authenticated = app_approval_broker_matches(
+                                        &approval_brokers,
+                                        session_id,
+                                        broker_token,
+                                    );
+                                    if !authenticated {
+                                        DaemonResponse::err(
+                                            "Computer Use approval resolution requires the authenticated MCP control session.",
+                                            77,
+                                        )
+                                    } else {
+                                        let challenge = args
+                                            .and_then(|value| value.get("challenge"))
+                                            .and_then(serde_json::Value::as_str)
+                                            .unwrap_or("");
+                                        let action = args
+                                            .and_then(|value| value.get("action"))
+                                            .and_then(serde_json::Value::as_str)
+                                            .and_then(platform_macos::app_approval::ApprovalAction::parse);
+                                        let persistence = platform_macos::app_approval::ApprovalPersistence::parse(
+                                            args.and_then(|value| value.get("persist"))
+                                                .and_then(serde_json::Value::as_str),
+                                        );
+                                        match (action, persistence) {
+                                            (Some(action), Ok(persistence)) if !challenge.is_empty() => {
+                                                match platform_macos::app_approval::global().resolve(
+                                                    session_id,
+                                                    broker_token,
+                                                    challenge,
+                                                    action,
+                                                    persistence,
+                                                ) {
+                                                    Ok(platform_macos::app_approval::ApprovalResolution::Approved { persistent }) => {
+                                                        DaemonResponse::ok(serde_json::json!({
+                                                            "resolution": "approved",
+                                                            "persistent": persistent,
+                                                        }))
+                                                    }
+                                                    Ok(platform_macos::app_approval::ApprovalResolution::Declined { message }) => {
+                                                        DaemonResponse::ok(serde_json::json!({
+                                                            "resolution": "declined",
+                                                            "message": message,
+                                                        }))
+                                                    }
+                                                    Ok(platform_macos::app_approval::ApprovalResolution::Canceled { message }) => {
+                                                        DaemonResponse::ok(serde_json::json!({
+                                                            "resolution": "canceled",
+                                                            "message": message,
+                                                        }))
+                                                    }
+                                                    Err(error) => DaemonResponse::err(error.to_string(), 1),
+                                                }
+                                            }
+                                            _ => DaemonResponse::err(
+                                                "invalid app approval resolution request",
+                                                64,
+                                            ),
+                                        }
+                                    }
+                                };
+                                #[cfg(not(target_os = "macos"))]
+                                let resp = DaemonResponse::err(
+                                    "app approval resolution is available only on macOS",
+                                    64,
+                                );
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
                             "call" => {
                                 // Recording idle-TTL liveness: any serviced tool
                                 // call counts as activity (#1764).
@@ -1114,6 +1300,27 @@ pub async fn run_serve(
                                 // session in the post-loop block below. This is
                                 // the ONLY place a connection is marked control;
                                 // per-call connections never send this. ACK ok.
+                                let approval_broker_requested = req
+                                    .args
+                                    .as_ref()
+                                    .and_then(|args| args.get("approval_broker"))
+                                    .and_then(serde_json::Value::as_bool)
+                                    .unwrap_or(false);
+                                if approval_broker_requested
+                                    && profile == DaemonProfile::CodexComputerUseCompat
+                                    && !approval_peer_trusted
+                                {
+                                    let resp = DaemonResponse::err(
+                                        "Computer Use approval broker authentication failed.",
+                                        77,
+                                    );
+                                    let _ = writer.write_all(
+                                        (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                    ).await;
+                                    continue;
+                                }
+
+                                let mut approval_broker_token = None;
                                 if let Some(sid) = req.session_id.as_deref() {
                                     // A proxy reconnect after daemon re-exec uses the same
                                     // session id. If the old control connection died while
@@ -1122,11 +1329,26 @@ pub async fn run_serve(
                                     // before accepting more calls.
                                     cua_driver_core::session::revive_session(sid);
                                     control_session_id = Some(sid.to_owned());
+                                    if approval_broker_requested
+                                        && profile == DaemonProfile::CodexComputerUseCompat
+                                    {
+                                        let token = uuid::Uuid::new_v4().to_string();
+                                        approval_brokers
+                                            .lock()
+                                            .unwrap()
+                                            .insert(sid.to_owned(), token.clone());
+                                        platform_macos::app_approval::global()
+                                            .register_broker(sid, &token);
+                                        control_approval_token =
+                                            Some((sid.to_owned(), token.clone()));
+                                        approval_broker_token = Some(token);
+                                    }
                                 }
                                 let resp = DaemonResponse::ok(
                                     serde_json::json!({
                                         "session_begin": true,
                                         "profile": profile,
+                                        "approval_broker_token": approval_broker_token,
                                     })
                                 );
                                 let _ = writer.write_all(
@@ -1190,6 +1412,14 @@ pub async fn run_serve(
                     // idempotent, so racing a legacy explicit session_end is
                     // benign.
                     if let Some(sid) = control_session_id {
+                        if let Some((owner, token)) = control_approval_token.take() {
+                            let mut brokers = approval_brokers.lock().unwrap();
+                            if brokers.get(&owner) == Some(&token) {
+                                brokers.remove(&owner);
+                                platform_macos::app_approval::global()
+                                    .unregister_broker(&owner, &token);
+                            }
+                        }
                         // stop_owner can SYNCHRONOUSLY finalize the recording's
                         // mp4 — on macOS it hits SCStream::stop_capture(), which
                         // blocks on disk I/O (video_sckit.rs). Run it on a
@@ -2299,5 +2529,35 @@ mod session_boundary_tests {
             serde_json::to_value(DaemonProfile::CodexComputerUseCompat).unwrap(),
             json!("codex-computer-use-compat")
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn approval_resolution_requires_the_daemon_minted_broker_token() {
+        use super::app_approval_broker_matches;
+        use std::collections::HashMap;
+        use std::sync::Mutex;
+
+        let brokers = Mutex::new(HashMap::new());
+        assert!(!app_approval_broker_matches(
+            &brokers,
+            "raw-session",
+            "caller-forged"
+        ));
+
+        brokers
+            .lock()
+            .unwrap()
+            .insert("proxy-session".to_owned(), "daemon-minted".to_owned());
+        assert!(!app_approval_broker_matches(
+            &brokers,
+            "proxy-session",
+            "caller-forged"
+        ));
+        assert!(app_approval_broker_matches(
+            &brokers,
+            "proxy-session",
+            "daemon-minted"
+        ));
     }
 }

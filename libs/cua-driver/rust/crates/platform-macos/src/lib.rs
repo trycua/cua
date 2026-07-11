@@ -11,6 +11,8 @@ pub mod ax;
 #[cfg(target_os = "macos")]
 pub mod apps;
 #[cfg(target_os = "macos")]
+pub mod app_approval;
+#[cfg(target_os = "macos")]
 pub mod windows;
 #[cfg(target_os = "macos")]
 pub mod input;

@@ -260,9 +260,9 @@ fn window_scope_rejects_windowless_click() {
             "click",
             serde_json::json!({ "x": 100, "y": 100, "scope": "window", "session": SESSION }),
         );
-        let txt = r.text().to_lowercase();
         assert!(
-            r.is_error() || txt.contains("desktop scope") || txt.contains("desktop_scope_disabled"),
+            r.is_error()
+                && r.structured()["code"].as_str() == Some("desktop_scope_disabled"),
             "window-scope window-less click was NOT rejected: {}",
             r.text()
         );

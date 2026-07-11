@@ -107,7 +107,15 @@ impl ForegroundSentinel {
 
     pub fn observe(&self) -> (Vec<OracleKind>, Vec<String>) {
         std::thread::sleep(Duration::from_millis(200));
-        let journal = fs::read_to_string(&self.journal_path).unwrap_or_default();
+        let journal = match fs::read_to_string(&self.journal_path) {
+            Ok(journal) => journal,
+            Err(error) => {
+                return (
+                    Vec::new(),
+                    vec![format!("foreground sentinel journal could not be read: {error}")],
+                )
+            }
+        };
         let mut passed = Vec::new();
         let mut violations = Vec::new();
         if journal.contains(r#""kind":"blur""#) {
@@ -143,6 +151,13 @@ impl ForegroundSentinel {
         action: impl FnOnce() -> R,
     ) -> Result<(R, Vec<OracleKind>), String> {
         let mut observer = DesktopObserver::new(NativeObserver::new(), target);
+        let before = observer.snapshot().map_err(|error| error.to_string())?;
+        if before.target_z != crate::observer::TargetZ::BackgroundOccluded {
+            return Err(format!(
+                "background target was not fully occluded before dispatch: {:?}",
+                before.target_z
+            ));
+        }
         let mut native_oracles = vec![OracleKind::Focus, OracleKind::ZOrder];
         if std::env::var("XDG_SESSION_TYPE")
             .map(|session| !session.eq_ignore_ascii_case("wayland"))

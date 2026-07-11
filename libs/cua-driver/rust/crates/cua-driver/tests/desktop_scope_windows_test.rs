@@ -285,11 +285,9 @@ fn window_scope_rejects_windowless_click() {
         *evidence = recording_evidence(driver.recording_dir());
         set_scope(&mut driver, "window");
         let response = driver.call("click", serde_json::json!({ "x": 100, "y": 100 }));
-        let text = response.text().to_lowercase();
         assert!(
             response.is_error()
-                || text.contains("desktop scope")
-                || text.contains("desktop_scope_disabled"),
+                && response.structured()["code"].as_str() == Some("desktop_scope_disabled"),
             "window-scope window-less click was not rejected: {}",
             response.text()
         );

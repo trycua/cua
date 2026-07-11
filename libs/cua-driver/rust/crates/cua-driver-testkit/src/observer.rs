@@ -154,6 +154,10 @@ impl<B: ObserverBackend> DesktopObserver<B> {
         self
     }
 
+    pub fn snapshot(&self) -> Result<DesktopSnapshot, ObserverError> {
+        self.backend.snapshot(self.target)
+    }
+
     pub fn observe<R>(
         &mut self,
         requested: &[OracleKind],

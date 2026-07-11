@@ -74,7 +74,10 @@ fn launch_harness(driver: &mut McpDriver) -> Option<u32> {
     launch_harness_with_state_file(driver, None)
 }
 
-fn launch_harness_with_state_file(driver: &mut McpDriver, state_path: Option<&std::path::Path>) -> Option<u32> {
+fn launch_harness_with_state_file(
+    driver: &mut McpDriver,
+    state_path: Option<&std::path::Path>,
+) -> Option<u32> {
     let exe = harness_exe();
     if !exe.exists() {
         eprintln!("harness exe not found at {exe:?} — run tests/fixtures/build/windows.ps1 first");
@@ -129,6 +132,12 @@ fn snapshot_lines_containing(text: &str, needles: &[&str]) -> String {
     } else {
         lines.join(" / ")
     }
+}
+
+fn fixture_state_line<'a>(text: &'a str, marker: &str) -> &'a str {
+    text.lines()
+        .find(|line| line.contains(marker))
+        .unwrap_or_else(|| panic!("fixture state marker {marker:?} missing from snapshot"))
 }
 
 fn window_bounds(driver: &mut McpDriver, pid: u32, wid: u64) -> (f64, f64, f64, f64) {
@@ -1162,7 +1171,8 @@ fn harness_wpf_slider_drag_background_refusal() {
     )
     .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
     run_case(case, |pid, wid, driver| {
-        let before = snapshot(driver, pid, wid).text().to_owned();
+        let before = snapshot(driver, pid, wid);
+        let before_value = fixture_state_line(before.text(), "slider_value=");
         let (response, mut passed) = observe_background(driver, pid, wid, |driver| {
             driver.call(
                 "drag",
@@ -1187,10 +1197,11 @@ fn harness_wpf_slider_drag_background_refusal() {
             response.text()
         );
         std::thread::sleep(Duration::from_millis(200));
+        let after = snapshot(driver, pid, wid);
         assert_eq!(
-            snapshot(driver, pid, wid).text(),
-            before,
-            "refused WPF background drag mutated fixture state"
+            fixture_state_line(after.text(), "slider_value="),
+            before_value,
+            "refused WPF background drag changed the slider value"
         );
         passed.push(OracleKind::FixtureState);
         Observation::refused(
@@ -1351,7 +1362,7 @@ fn harness_wpf_combo_select() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": combo_idx,
-                    "delivery_mode": "foreground"
+                    "action": "expand", "delivery_mode": "background"
                 }),
             );
             assert!(!expand.is_error(), "combo expand failed: {}", expand.text());

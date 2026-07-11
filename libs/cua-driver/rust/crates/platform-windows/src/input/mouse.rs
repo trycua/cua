@@ -543,20 +543,19 @@ fn send_click_synthesized_mods_impl(
         // restore" for pointer input, done the one Windows way that doesn't
         // need UIAccess — the technique the OG GTK path used. (Keyboard
         // foreground still needs *real* focus; only pointer can be z-routed.)
-        let noactivate = if activate {
-            if !crate::input::force_foreground_attached(target) {
-                bail!("Could not activate target HWND for the foreground click.");
-            }
-            None
-        } else {
-            Some(crate::input::NoActivateGuard::arm(target))
-        };
         // Capture whether the target was ALREADY always-on-top so we don't strip
         // that state on restore — only demote below if WE promoted it.
         let was_topmost =
             (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32) & WS_EX_TOPMOST.0 != 0;
-        if !activate {
-            let _ = SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        let foreground_attach_failed = activate && !crate::input::force_foreground_attached(target);
+        let noactivate = (!activate).then(|| crate::input::NoActivateGuard::arm(target));
+        if !activate || foreground_attach_failed {
+            let flags = if activate {
+                SWP_NOMOVE | SWP_NOSIZE
+            } else {
+                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE
+            };
+            let _ = SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, flags);
         }
 
         // Move the cursor so the OS hover state matches before the click; the
@@ -601,10 +600,10 @@ fn send_click_synthesized_mods_impl(
         // lose the click if the real cursor is warped away while those queued
         // messages are still being dispatched.
         sleep(Duration::from_millis(if activate { 120 } else { 40 }));
+        if !was_topmost && (!activate || foreground_attach_failed) {
+            let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        }
         if !activate {
-            if !was_topmost {
-                let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
-            }
             if !prev_fg.0.is_null() && prev_fg != target {
                 let _ = SetWindowPos(prev_fg, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
             }
@@ -613,6 +612,13 @@ fn send_click_synthesized_mods_impl(
         drop(noactivate);
         if !sent_ok {
             bail!("SendInput inserted fewer mouse events than expected for the foreground click.");
+        }
+        if activate {
+            let foreground_root = GetAncestor(GetForegroundWindow(), GA_ROOT);
+            let target_root = GetAncestor(target, GA_ROOT);
+            if foreground_root != target_root {
+                bail!("The foreground click did not activate its target window.");
+            }
         }
     }
 

@@ -11,8 +11,10 @@ use cua_driver_testkit::e2e::{
 };
 use cua_driver_testkit::sentinel::ForegroundSentinel;
 use cua_driver_testkit::{harness_app, Driver, McpDriver};
-use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::WindowsAndMessaging::IsIconic;
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE};
+use windows::Win32::UI::WindowsAndMessaging::{
+    EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+};
 
 #[test]
 #[ignore]
@@ -44,7 +46,7 @@ fn launch_app_minimized_preserves_foreground() {
         let mut driver = McpDriver::spawn_named("windows-electron-launch-app-background")
             .expect("required source-built driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
-        let before = window_ids(&mut driver);
+        let before = window_ids();
         let sentinel = ForegroundSentinel::launch(&mut driver);
 
         let ((pid, window_id), passed) = sentinel
@@ -61,7 +63,7 @@ fn launch_app_minimized_preserves_foreground() {
                     "launch_app(start_minimized=true) failed: {}",
                     response.text()
                 );
-                wait_for_new_window(&mut driver, &before)
+                wait_for_new_window(&before)
             })
             .unwrap_or_else(|error| panic!("minimized launch disturbed the desktop: {error}"));
         assert_required_background_oracles(&passed);
@@ -77,35 +79,50 @@ fn launch_app_minimized_preserves_foreground() {
     });
 }
 
-fn window_ids(driver: &mut McpDriver) -> HashSet<u64> {
-    driver
-        .call("list_windows", serde_json::json!({}))
-        .structured()["windows"]
-        .as_array()
-        .map(|windows| {
-            windows
-                .iter()
-                .filter_map(|window| window["window_id"].as_u64())
-                .collect()
-        })
-        .unwrap_or_default()
+fn native_windows() -> Vec<(u32, u64, String)> {
+    unsafe extern "system" fn callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let windows = &mut *(lparam.0 as *mut Vec<(u32, u64, String)>);
+        let title_len = GetWindowTextLengthW(hwnd);
+        if title_len > 0 {
+            let mut title = vec![0u16; title_len as usize + 1];
+            let copied = GetWindowTextW(hwnd, &mut title);
+            if copied > 0 {
+                let mut pid = 0u32;
+                GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                windows.push((
+                    pid,
+                    hwnd.0 as u64,
+                    String::from_utf16_lossy(&title[..copied as usize]),
+                ));
+            }
+        }
+        TRUE
+    }
+
+    let mut windows = Vec::new();
+    unsafe {
+        let _ = EnumWindows(
+            Some(callback),
+            LPARAM(&mut windows as *mut Vec<(u32, u64, String)> as isize),
+        );
+    }
+    windows
 }
 
-fn wait_for_new_window(driver: &mut McpDriver, before: &HashSet<u64>) -> (u32, u64) {
+fn window_ids() -> HashSet<u64> {
+    native_windows()
+        .into_iter()
+        .map(|(_, window_id, _)| window_id)
+        .collect()
+}
+
+fn wait_for_new_window(before: &HashSet<u64>) -> (u32, u64) {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
-        let response = driver.call("list_windows", serde_json::json!({}));
-        if let Some(found) = response.structured()["windows"]
-            .as_array()
-            .and_then(|windows| {
-                windows.iter().find_map(|window| {
-                    let id = window["window_id"].as_u64()?;
-                    let title = window["title"].as_str().unwrap_or("");
-                    (!before.contains(&id) && title.contains("CuaTestHarness Electron"))
-                        .then(|| (window["pid"].as_u64().unwrap_or(0) as u32, id))
-                })
-            })
-        {
+        if let Some((pid, window_id, _)) = native_windows().into_iter().find(|(_, id, title)| {
+            !before.contains(id) && title.contains("CuaTestHarness Electron")
+        }) {
+            let found = (pid, window_id);
             assert_ne!(found.0, 0, "launched Electron window has no process id");
             return found;
         }

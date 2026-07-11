@@ -2162,6 +2162,7 @@ impl Tool for LaunchAppTool {
             // minimize a user's unrelated app that started during the 5 s
             // poll window.
             let parent_pid = pid;
+            let immediate_hwnds_for_poll = immediate_hwnds.clone();
             let _ = tokio::task::spawn_blocking(move || {
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWMINNOACTIVE};
@@ -2172,7 +2173,10 @@ impl Tool for LaunchAppTool {
                 }
             })
             .await;
-            // Detached polling for launcher-stub late-window cases.
+            // Poll launcher-stub late-window cases before returning. The
+            // start_minimized contract is observable at response time; a
+            // detached task allowed callers to see a transient restored
+            // window immediately after a successful launch.
             // Strategy: every 200 ms for 5 s, find pids that
             //   (a) weren't in the pre-launch snapshot, AND
             //   (b) are part of the launched app's family — either a
@@ -2192,14 +2196,14 @@ impl Tool for LaunchAppTool {
             let pre_pids = pre_launch_pids.clone();
             let basename_for_poll = stub_basename.clone();
             let launch_foreground_lock = foreground_lock.take();
-            tokio::spawn(async move {
+            (async move {
                 use std::collections::HashSet;
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWMINNOACTIVE};
                 let _foreground_lock = launch_foreground_lock;
-                let mut minimized: HashSet<u64> = HashSet::new();
+                let mut minimized: HashSet<u64> = immediate_hwnds_for_poll.into_iter().collect();
                 let mut idle_ticks_after_any_hit: u8 = 0;
-                let mut hit_count_total: usize = 0;
+                let mut hit_count_total = minimized.len();
                 for _ in 0..25 {
                     let pre_pids_clone = pre_pids.clone();
                     let basename_clone = basename_for_poll.clone();
@@ -2254,7 +2258,8 @@ impl Tool for LaunchAppTool {
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 }
-            });
+            })
+            .await;
         }
 
         // Match Swift text format 1:1.

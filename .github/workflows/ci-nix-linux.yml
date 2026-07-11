@@ -1,14 +1,13 @@
 name: "CI: Nix Linux Rust source"
 
-# This is the automatic Nix lane. Desktop-heavy legacy checks live in
-# nix-build.yml and nix-wayland.yml and are maintainer-dispatched instead.
+# Nix owns reproducible Linux package and Rust-source builds. Interactive
+# desktop behavior is owned by the Rust E2E workflows.
 on:
   pull_request:
     paths:
       - "flake.nix"
       - "flake.lock"
-      - "nix/cua-driver/package.nix"
-      - "nix/cua-driver/tests/rust-unit.nix"
+      - "nix/cua-driver/**"
       - "libs/cua-driver/rust/**"
       - ".github/workflows/ci-nix-linux.yml"
   push:
@@ -16,8 +15,7 @@ on:
     paths:
       - "flake.nix"
       - "flake.lock"
-      - "nix/cua-driver/package.nix"
-      - "nix/cua-driver/tests/rust-unit.nix"
+      - "nix/cua-driver/**"
       - "libs/cua-driver/rust/**"
       - ".github/workflows/ci-nix-linux.yml"
   workflow_dispatch:
@@ -41,5 +39,9 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-      - name: Run source-built Rust check
-        run: nix build .#checks.x86_64-linux.cua-driver-linux-rust-unit --print-build-logs --show-trace
+      - name: Build package and source-owned Rust tests
+        run: >-
+          nix build
+          .#checks.x86_64-linux.cua-driver-build
+          .#checks.x86_64-linux.cua-driver-linux-rust-unit
+          --print-build-logs --show-trace

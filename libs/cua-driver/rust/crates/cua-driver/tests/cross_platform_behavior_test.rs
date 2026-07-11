@@ -800,9 +800,13 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         oracles.extend([
             OracleKind::Focus,
             OracleKind::ZOrder,
-            OracleKind::Cursor,
             OracleKind::NoLeakedInput,
         ]);
+        if cua_driver_testkit::e2e::DisplayServer::current()
+            != cua_driver_testkit::e2e::DisplayServer::Wayland
+        {
+            oracles.push(OracleKind::Cursor);
+        }
         if !expected_background_refusal
             && cfg!(target_os = "windows")
             && (matches!(action, "press_key" | "hotkey")

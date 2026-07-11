@@ -56,10 +56,9 @@ if [[ "$SKIP" != "gtk3" && "$ONLY" == *",gtk3,"* ]]; then
 
     cat > "$STAGE/CuaTestHarness.Gtk3" <<'LAUNCHER'
 #!/usr/bin/env bash
-# Force the X11 backend so the window is enumerable via cua-driver's X11
-# list_windows (_NET_CLIENT_LIST) — under a Wayland session this routes through
-# Xwayland; on a pure-X11 session it's a no-op. AT-SPI works over D-Bus either way.
-export GDK_BACKEND=x11
+# X11 remains the default for the canonical Xvfb lane. A native Wayland lane
+# exports GDK_BACKEND=wayland before launching this repo-owned fixture.
+export GDK_BACKEND="${GDK_BACKEND:-x11}"
 exec python3 "$(dirname "$(readlink -f "$0")")/main.py" "$@"
 LAUNCHER
     chmod +x "$STAGE/CuaTestHarness.Gtk3"

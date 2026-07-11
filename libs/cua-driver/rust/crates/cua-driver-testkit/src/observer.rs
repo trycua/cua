@@ -751,6 +751,7 @@ pub mod macos {
 
 #[cfg(target_os = "linux")]
 pub mod linux {
+    use std::process::Command;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::thread::JoinHandle;
@@ -815,19 +816,28 @@ pub mod linux {
 
     impl ObserverBackend for LinuxObserver {
         fn capabilities(&self) -> ObserverCapabilities {
-            let supported = self.session == SessionKind::X11;
-            ObserverCapabilities {
-                focus: supported,
-                z_order: supported,
-                cursor: supported,
-                leaked_input: false,
+            match self.session {
+                SessionKind::X11 => ObserverCapabilities {
+                    focus: true,
+                    z_order: true,
+                    cursor: true,
+                    leaked_input: false,
+                },
+                SessionKind::Wayland => ObserverCapabilities {
+                    focus: true,
+                    z_order: true,
+                    cursor: false,
+                    leaked_input: false,
+                },
+                SessionKind::Missing => ObserverCapabilities::default(),
             }
         }
 
         fn snapshot(&self, target: TargetWindow) -> Result<DesktopSnapshot, ObserverError> {
             match self.session {
                 SessionKind::X11 => x11_snapshot(target),
-                SessionKind::Wayland | SessionKind::Missing => Ok(DesktopSnapshot {
+                SessionKind::Wayland => sway_snapshot(target),
+                SessionKind::Missing => Ok(DesktopSnapshot {
                     foreground: None,
                     input_focus: None,
                     target_z: TargetZ::NotFound,
@@ -842,15 +852,21 @@ pub mod linux {
             }
             self.stop.store(false, Ordering::Release);
             self.events.lock().expect("focus journal lock").clear();
-            if self.session != SessionKind::X11 {
+            if self.session == SessionKind::Missing {
                 return Ok(());
             }
+            let session = self.session;
             let stop = Arc::clone(&self.stop);
             let events = Arc::clone(&self.events);
             self.sampler = Some(std::thread::spawn(move || {
-                let mut previous = x11_focus_identity().ok().flatten();
+                let focus_identity = || match session {
+                    SessionKind::X11 => x11_focus_identity(),
+                    SessionKind::Wayland => sway_focus_identity(),
+                    SessionKind::Missing => Ok(None),
+                };
+                let mut previous = focus_identity().ok().flatten();
                 while !stop.load(Ordering::Acquire) {
-                    if let Ok(current) = x11_focus_identity() {
+                    if let Ok(current) = focus_identity() {
                         if current != previous {
                             events.lock().expect("focus journal lock").push(FocusEvent {
                                 from: previous,
@@ -891,6 +907,77 @@ pub mod linux {
     fn x11_connection() -> Result<(RustConnection, usize), ObserverError> {
         x11rb::connect(None)
             .map_err(|error| ObserverError::new(format!("X11 connect failed: {error}")))
+    }
+
+    #[derive(Default)]
+    struct SwayTreeState {
+        focused: Option<u64>,
+        focused_fullscreen: Option<u64>,
+        target: Option<(u64, bool)>,
+    }
+
+    fn sway_tree() -> Result<serde_json::Value, ObserverError> {
+        let output = Command::new("swaymsg")
+            .args(["-r", "-t", "get_tree"])
+            .output()
+            .map_err(|error| ObserverError::new(format!("swaymsg get_tree failed: {error}")))?;
+        if !output.status.success() {
+            return Err(ObserverError::new(format!(
+                "swaymsg get_tree exited with {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| ObserverError::new(format!("invalid sway tree JSON: {error}")))
+    }
+
+    fn walk_sway_tree(node: &serde_json::Value, target_pid: u32, state: &mut SwayTreeState) {
+        let id = node["id"].as_u64();
+        let focused = node["focused"].as_bool().unwrap_or(false);
+        if focused {
+            state.focused = id;
+            if node["fullscreen_mode"].as_i64().unwrap_or(0) != 0 {
+                state.focused_fullscreen = id;
+            }
+        }
+        if node["pid"].as_u64() == Some(u64::from(target_pid)) {
+            if let Some(id) = id {
+                state.target = Some((id, node["visible"].as_bool().unwrap_or(true)));
+            }
+        }
+        for child in ["nodes", "floating_nodes"]
+            .into_iter()
+            .flat_map(|key| node[key].as_array().into_iter().flatten())
+        {
+            walk_sway_tree(child, target_pid, state);
+        }
+    }
+
+    fn sway_snapshot(target: TargetWindow) -> Result<DesktopSnapshot, ObserverError> {
+        let tree = sway_tree()?;
+        let mut state = SwayTreeState::default();
+        walk_sway_tree(&tree, target.pid, &mut state);
+        let target_z = match state.target {
+            None => TargetZ::NotFound,
+            Some((_, false)) => TargetZ::Minimized,
+            Some((id, _)) if state.focused == Some(id) => TargetZ::Foreground,
+            Some(_) if state.focused_fullscreen.is_some() => TargetZ::BackgroundOccluded,
+            Some(_) => TargetZ::BackgroundVisible,
+        };
+        Ok(DesktopSnapshot {
+            foreground: state.focused,
+            input_focus: state.focused,
+            target_z,
+            cursor_pos: None,
+        })
+    }
+
+    fn sway_focus_identity() -> Result<Option<u64>, ObserverError> {
+        let tree = sway_tree()?;
+        let mut state = SwayTreeState::default();
+        walk_sway_tree(&tree, 0, &mut state);
+        Ok(state.focused)
     }
 
     fn x11_snapshot(target: TargetWindow) -> Result<DesktopSnapshot, ObserverError> {

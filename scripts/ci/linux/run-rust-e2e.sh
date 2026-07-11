@@ -60,7 +60,13 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
   export CUA_ATSPI_DEBUG=1
 fi
 
-command -v ffmpeg >/dev/null || { echo "ffmpeg is required for E2E trajectory videos" >&2; exit 1; }
+if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
+  command -v wf-recorder >/dev/null || { echo "wf-recorder is required for native Wayland E2E videos" >&2; exit 1; }
+  command -v grim >/dev/null || { echo "grim is required for native Wayland capture fallback" >&2; exit 1; }
+  command -v wtype >/dev/null || { echo "wtype is required for native Wayland keyboard input" >&2; exit 1; }
+else
+  command -v ffmpeg >/dev/null || { echo "ffmpeg is required for X11 E2E trajectory videos" >&2; exit 1; }
+fi
 command -v ffprobe >/dev/null || { echo "ffprobe is required for E2E trajectory validation" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq is required for E2E ownership validation" >&2; exit 1; }
 

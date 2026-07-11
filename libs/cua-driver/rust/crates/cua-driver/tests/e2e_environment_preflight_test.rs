@@ -184,7 +184,7 @@ fn run_preflight() {
         );
         assert!(
             !activated.is_error(),
-            "preflight fixture could not be placed on the X11 desktop: {}",
+            "preflight fixture could not be placed on the Linux desktop: {}",
             activated.text()
         );
         std::thread::sleep(Duration::from_millis(300));

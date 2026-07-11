@@ -1,0 +1,78 @@
+name: "E2E: Rust Linux Wayland interactive"
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Optional commit, branch, or tag override"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  wayland:
+    name: "Linux / native Wayland Rust matrix"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - name: Install Nix
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Run complete native Wayland matrix
+        run: >-
+          nix develop .#cua-driver-wayland-e2e
+          -c dbus-run-session --
+          scripts/ci/linux/run-rust-e2e-wayland.sh
+      - name: Upload Wayland results
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: rust-linux-wayland
+          path: artifacts/cua-driver/linux
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 14
+
+  summary:
+    if: always()
+    needs: [wayland]
+    name: "Linux / native Wayland summary"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - name: Download Wayland results
+        continue-on-error: true
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4
+        with:
+          name: rust-linux-wayland
+          path: artifacts/rust-linux-wayland
+      - name: Publish typed matrix summary
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          summary="artifacts/rust-linux-wayland/summary.md"
+          artifact_id=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.name == "rust-linux-wayland") | .id' | head -n 1)
+          if [[ -f "$summary" && -n "$artifact_id" ]]; then
+            artifact_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts/$artifact_id"
+            scripts/ci/link-e2e-evidence.sh "$summary" "$artifact_url" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ -f "$summary" ]]; then
+            cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "# CUA Rust Linux Wayland E2E" >> "$GITHUB_STEP_SUMMARY"
+            echo >> "$GITHUB_STEP_SUMMARY"
+            echo "No typed matrix summary was produced; inspect the Wayland job log." >> "$GITHUB_STEP_SUMMARY"
+          fi

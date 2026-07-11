@@ -144,11 +144,15 @@ impl ForegroundSentinel {
         action: impl FnOnce() -> R,
     ) -> Result<(R, Vec<OracleKind>), String> {
         let mut observer = DesktopObserver::new(NativeObserver::new(), target);
+        let mut native_oracles = vec![OracleKind::Focus, OracleKind::ZOrder];
+        if std::env::var("XDG_SESSION_TYPE")
+            .map(|session| !session.eq_ignore_ascii_case("wayland"))
+            .unwrap_or(true)
+        {
+            native_oracles.push(OracleKind::Cursor);
+        }
         let (result, delta) = observer
-            .observe(
-                &[OracleKind::Focus, OracleKind::ZOrder, OracleKind::Cursor],
-                action,
-            )
+            .observe(&native_oracles, action)
             .map_err(|error| error.to_string())?;
         delta
             .ensure_supported()

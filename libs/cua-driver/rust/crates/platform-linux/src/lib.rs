@@ -44,6 +44,9 @@ pub mod a11y;
 #[cfg(target_os = "linux")]
 pub mod wayland;
 
+#[cfg(target_os = "linux")]
+pub mod video_wayland;
+
 // `terminal` is OS-independent (pure string matching + a thin x11 hook).
 // Keeping it un-gated lets the unit tests run on any host.
 pub mod terminal;

@@ -131,6 +131,7 @@ pub enum DriverRoute {
     LinuxXSendEvent,
     LinuxXTest,
     LinuxLibei,
+    LinuxWaylandVirtualPointer,
     Cdp,
     Composite,
 }
@@ -194,7 +195,9 @@ pub fn shared_web_route(
             Ok(Route::Composite)
         }
 
-        (Platform::Linux, DisplayServer::Wayland, Targeting::Px, _) => Ok(Route::LinuxLibei),
+        (Platform::Linux, DisplayServer::Wayland, Targeting::Px, _) => {
+            Ok(Route::LinuxWaylandVirtualPointer)
+        }
         (Platform::Linux, DisplayServer::X11, Targeting::Px, _) => {
             pointer_or_key_route(Route::LinuxXSendEvent, Route::LinuxXTest)
         }
@@ -221,7 +224,7 @@ pub fn shared_web_route(
             DisplayServer::Wayland,
             Targeting::Ax,
             "right_click" | "double_click" | "press_key" | "hotkey",
-        ) => Ok(Route::LinuxLibei),
+        ) => Ok(Route::LinuxWaylandVirtualPointer),
         (
             Platform::Linux,
             DisplayServer::X11 | DisplayServer::Wayland,

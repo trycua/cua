@@ -168,6 +168,12 @@ impl ForegroundSentinel {
         let (result, delta) = observer
             .observe(&native_oracles, action)
             .map_err(|error| error.to_string())?;
+        if delta.before.target_z != crate::observer::TargetZ::BackgroundOccluded {
+            return Err(format!(
+                "background target was not fully occluded at dispatch: {:?}",
+                delta.before.target_z
+            ));
+        }
         delta
             .ensure_supported()
             .map_err(|error| error.to_string())?;

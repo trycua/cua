@@ -2721,6 +2721,52 @@ impl Tool for ClickTool {
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
+            // Chromium exposes InvokePattern for DOM buttons, but Invoke()
+            // can return S_OK without dispatching a DOM click. Do not accept
+            // that false-positive as delivery. The targeted pointer injector
+            // is the proven background route for Chrome/Electron and preserves
+            // foreground, z-order, and the real cursor.
+            if delivery == DeliveryMode::Background
+                && btn == "left"
+                && count == 1
+                && crate::input::is_chromium_target_window(hwnd)
+            {
+                let (cx, cy) = match resolve_onscreen_point_with_scroll(
+                    &self.state.element_cache,
+                    pid,
+                    hwnd,
+                    idx,
+                    cx,
+                    cy,
+                    "clicking Chromium content",
+                ) {
+                    Ok(point) => point,
+                    Err(message) => return ToolResult::error(message),
+                };
+                let injected = tokio::task::spawn_blocking(move || {
+                    crate::input::inject_click_screen(hwnd, cx, cy, count, &btn)
+                })
+                .await;
+                return match injected {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Injected click on Chromium element [{idx}] at screen ({cx},{cy}) \
+                         (background, no foreground swap)."
+                    ))
+                    .with_structured(json!({
+                        "path": "targeted_injection",
+                        "verified": false,
+                        "effect": "unverifiable"
+                    })),
+                    Ok(Err(error)) => {
+                        crate::input::delivery::background_unavailable_error_with_cause(
+                            hwnd,
+                            EventKind::MouseClick,
+                            error.to_string(),
+                        )
+                    }
+                    Err(error) => ToolResult::error(format!("Task error: {error}")),
+                };
+            }
             // delivery_mode:"background" on WinUI3 for double / right / middle: single
             // left falls through to the UIA Invoke path below (already drives
             // WinUI3). Double-left lands via a double UIA Invoke; right/middle

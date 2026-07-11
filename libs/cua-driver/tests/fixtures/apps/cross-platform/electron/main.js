@@ -88,6 +88,7 @@ function createWindow() {
           // Show it normally; background cells subsequently foreground the
           // occlusion sentinel before taking their desktop snapshot.
           mainWindow.show();
+          mainWindow.focus();
         }
       }
     })

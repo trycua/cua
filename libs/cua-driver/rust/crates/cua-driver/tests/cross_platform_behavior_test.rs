@@ -715,6 +715,23 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
             OracleKind::NoLeakedInput,
         ]);
     }
+    let route = if cfg!(target_os = "windows")
+        && spec.name == "electron"
+        && action == "left_click"
+        && targeting == Targeting::Ax
+        && delivery_kind == Delivery::Background
+    {
+        cua_driver_testkit::e2e::DriverRoute::WindowsTargetedInjection
+    } else {
+        shared_web_route(
+            cua_driver_testkit::e2e::Platform::current(),
+            cua_driver_testkit::e2e::DisplayServer::current(),
+            action,
+            targeting,
+            delivery_kind,
+        )
+        .unwrap_or_else(|error| panic!("{error}"))
+    };
     CaseSpec::delivered(
         cell_id,
         spec.name,
@@ -727,14 +744,7 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         targeting,
         delivery_kind,
         Scope::Window,
-        shared_web_route(
-            cua_driver_testkit::e2e::Platform::current(),
-            cua_driver_testkit::e2e::DisplayServer::current(),
-            action,
-            targeting,
-            delivery_kind,
-        )
-        .unwrap_or_else(|error| panic!("{error}")),
+        route,
         oracles,
     )
 }

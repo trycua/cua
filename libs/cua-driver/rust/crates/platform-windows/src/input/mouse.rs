@@ -538,9 +538,16 @@ fn send_click_synthesized_mods_impl(
         let count = count.max(1);
         let mut sent_ok = true;
         for i in 0..count {
-            let events = [move_input, down_input, up_input];
-            let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
-            if sent as usize != events.len() {
+            // Submit a real pointer lifecycle instead of one move/down/up
+            // batch. Retained-mode frameworks such as WPF establish hover and
+            // capture asynchronously; an immediate batched release can arrive
+            // before that state is visible to the dispatcher.
+            let moved = SendInput(&[move_input], std::mem::size_of::<INPUT>() as i32);
+            sleep(Duration::from_millis(8));
+            let pressed = SendInput(&[down_input], std::mem::size_of::<INPUT>() as i32);
+            sleep(Duration::from_millis(16));
+            let released = SendInput(&[up_input], std::mem::size_of::<INPUT>() as i32);
+            if moved != 1 || pressed != 1 || released != 1 {
                 sent_ok = false;
                 break;
             }

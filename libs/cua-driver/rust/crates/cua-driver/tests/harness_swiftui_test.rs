@@ -42,20 +42,17 @@ struct Harness {
 }
 
 impl Harness {
-    fn launch() -> Option<Self> {
+    fn launch() -> Self {
         let exe = harness_exe();
-        if !exe.exists() {
-            eprintln!("harness exe not found at {exe:?}");
-            return None;
-        }
+        assert!(exe.exists(), "required SwiftUI harness is missing: {exe:?}");
         let app = Command::new(&exe)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .ok()?;
+            .unwrap_or_else(|error| panic!("launch SwiftUI harness {exe:?}: {error}"));
         let pid = app.id();
         std::thread::sleep(Duration::from_millis(900));
-        Some(Self { _app: app, pid })
+        Self { _app: app, pid }
     }
 }
 
@@ -81,18 +78,10 @@ fn snapshot_elements(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolRe
 #[test]
 #[ignore]
 fn harness_swiftui_smoke() {
-    let harness = match Harness::launch() {
-        Some(h) => h,
-        None => {
-            eprintln!("harness not built — skipping");
-            return;
-        }
-    };
+    let harness = Harness::launch();
     println!("harness pid={}", harness.pid);
 
-    let Some(mut driver) = McpDriver::spawn_macos_daemon_proxy() else {
-        return;
-    };
+    let mut driver = McpDriver::spawn_macos_daemon_proxy().expect("start macOS daemon proxy");
 
     let (wid, title) = driver
         .find_window(harness.pid as i64, "CuaTestHarness SwiftUI")
@@ -100,10 +89,7 @@ fn harness_swiftui_smoke() {
     println!("main window: id={wid} title={title:?}");
 
     let snap = snapshot_elements(&mut driver, harness.pid, wid);
-    if looks_empty(snap.tree_text()) {
-        eprintln!("AX empty — TCC not granted; skipping element-assertions");
-        return;
-    }
+    assert!(!looks_empty(snap.tree_text()), "required SwiftUI AX tree is empty");
     let text = snap.tree_text();
     println!("snapshot:\n{text}");
 
@@ -135,26 +121,15 @@ fn harness_swiftui_smoke() {
 #[test]
 #[ignore]
 fn harness_swiftui_popover() {
-    let harness = match Harness::launch() {
-        Some(h) => h,
-        None => {
-            eprintln!("harness not built — skipping");
-            return;
-        }
-    };
+    let harness = Harness::launch();
 
-    let Some(mut driver) = McpDriver::spawn_macos_daemon_proxy() else {
-        return;
-    };
+    let mut driver = McpDriver::spawn_macos_daemon_proxy().expect("start macOS daemon proxy");
 
     let (wid, _) = driver
         .find_window(harness.pid as i64, "CuaTestHarness SwiftUI")
         .expect("main window not found");
     let snap_pre = snapshot_elements(&mut driver, harness.pid, wid);
-    if looks_empty(snap_pre.tree_text()) {
-        eprintln!("AX empty — TCC not granted; skipping");
-        return;
-    }
+    assert!(!looks_empty(snap_pre.tree_text()), "required SwiftUI AX tree is empty");
     // Verify popover body is NOT yet in the tree.
     let pre_text = snap_pre.tree_text().to_owned();
     assert!(
@@ -162,13 +137,8 @@ fn harness_swiftui_popover() {
         "popover body unexpectedly present BEFORE open"
     );
 
-    let trigger_idx: u64 =
-        if let Some(i) = element_index_by_id(snap_pre.tree_text(), "btn-open-popover") {
-            i
-        } else {
-            eprintln!("popover trigger not found, skipping");
-            return;
-        };
+    let trigger_idx = element_index_by_id(snap_pre.tree_text(), "btn-open-popover")
+        .expect("popover trigger not found");
     let click = driver.call(
         "click",
         serde_json::json!({

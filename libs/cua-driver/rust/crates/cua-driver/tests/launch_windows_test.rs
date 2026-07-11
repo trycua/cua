@@ -11,7 +11,8 @@ use cua_driver_testkit::e2e::{
 };
 use cua_driver_testkit::sentinel::ForegroundSentinel;
 use cua_driver_testkit::{harness_app, Driver, McpDriver};
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE};
+use windows::core::BOOL;
+use windows::Win32::Foundation::{HWND, LPARAM, TRUE};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
 };

@@ -2427,6 +2427,25 @@ impl Tool for ClickTool {
             let sx = args.f64_or("x", 0.0) as i32;
             let sy = args.f64_or("y", 0.0) as i32;
 
+            // Resolve the application window before moving the agent cursor.
+            // WindowFromPoint can return a transparent layered overlay, and the
+            // cursor overlay is about to occupy this exact screen point.
+            let root = unsafe {
+                use windows::Win32::Foundation::POINT;
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    GetAncestor, WindowFromPoint, GA_ROOT,
+                };
+                let target = WindowFromPoint(POINT { x: sx, y: sy });
+                if target.0.is_null() {
+                    return ToolResult::error(format!(
+                        "No window under screen point ({sx},{sy})."
+                    ));
+                }
+                let root = GetAncestor(target, GA_ROOT);
+                if root.0.is_null() { target } else { root }
+            };
+            let hwnd_u = root.0 as u64;
+
             // Animate the agent cursor to the screen point, then click.
             overlay_glide_to(&cursor_key, sx as f64, sy as f64).await;
             crate::overlay::send_command(
@@ -2437,33 +2456,15 @@ impl Tool for ClickTool {
                 },
             );
 
-            // Resolve the HWND that owns this screen pixel and click it via
-            // send_click_synthesized — it does the foreground-swap + UIPI checks
-            // on whatever owns the pixel, which is what lands Chromium-content
-            // clicks. WindowFromPoint walks to the leaf window at the point.
-            // (send_click_synthesized restores the previous foreground + cursor
-            // itself ~40ms after the click, so no extra restore guard here.)
+            // Click the HWND that owned the pixel before the driver overlay
+            // moved there. The active SendInput path performs the foreground
+            // swap and UIPI checks needed for Chromium and retained-mode apps.
             let send_result = tokio::task::spawn_blocking(move || -> anyhow::Result<u64> {
-                use windows::Win32::Foundation::POINT;
-                use windows::Win32::UI::WindowsAndMessaging::{
-                    GetAncestor, WindowFromPoint, GA_ROOT,
-                };
-                let target = unsafe { WindowFromPoint(POINT { x: sx, y: sy }) };
-                if target.0.is_null() {
-                    anyhow::bail!("No window under screen point ({sx},{sy}).");
-                }
-                let root = unsafe {
-                    let root = GetAncestor(target, GA_ROOT);
-                    if root.0.is_null() {
-                        target
-                    } else {
-                        root
-                    }
-                };
+                use windows::Win32::Foundation::HWND;
+                let root = HWND(hwnd_u as *mut _);
                 if !unsafe { crate::input::force_foreground_attached(root) } {
                     anyhow::bail!("Could not activate the window under desktop point ({sx},{sy})");
                 }
-                let hwnd_u = root.0 as u64;
                 let mod_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 crate::input::send_click_synthesized_active_mods(
                     hwnd_u, sx, sy, count, &button, &mod_refs,

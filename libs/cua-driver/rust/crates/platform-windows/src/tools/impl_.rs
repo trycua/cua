@@ -1549,7 +1549,7 @@ impl Tool for LaunchAppTool {
                 "cdp_debugging_port":{"type":"integer","description":"Accepted for cross-platform parity; currently no-op on Windows."},
                 "webkit_inspector_port":{"type":"integer","description":"Accepted for cross-platform parity; no-op on Windows."},
                 "creates_new_application_instance":{"type":"boolean","description":"Accepted for parity; no-op on Windows (ShellExecuteEx always creates a new process)."},
-                "start_minimized":{"type":"boolean","description":"When true, launch the app's window minimized to the taskbar instead of restored-but-not-activated. Use this when the agent wants to drive the app entirely in the background — the user's previously-frontmost window (e.g. terminal) stays visually on top. Implementation uses SW_SHOWMINNOACTIVE for the ShellExecuteEx path and a follow-up ShowWindow(SW_MINIMIZE) on the AUMID path. UIA / background dispatch still work on a minimized window; only `screenshot` and `delivery_mode:\"foreground\"` need it restored."}
+                "start_minimized":{"type":"boolean","description":"When true, launch the app's window minimized to the taskbar instead of restored-but-not-activated. Use this when the agent wants to drive the app entirely in the background — the user's previously-frontmost window (e.g. terminal) stays visually on top. Desktop launches hold the foreground lock through startup and use SW_SHOWMINNOACTIVE; packaged-app activation remains broker-controlled and receives a best-effort SW_SHOWMINNOACTIVE post-pass. UIA / background dispatch still work on a minimized window; only `screenshot` and `delivery_mode:\"foreground\"` need it restored."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: true,
         })
@@ -1771,6 +1771,15 @@ impl Tool for LaunchAppTool {
             } else {
                 (target.clone(), base_extra)
             }
+        };
+
+        // Strict no-activation is available only for the desktop launch path.
+        // UWP activation is broker-controlled and retains its existing
+        // restore-after-activation behavior.
+        let mut foreground_lock = if start_minimized && aumid_for_uwp.is_none() {
+            Some(crate::input::ForegroundLockGuard::acquire())
+        } else {
+            None
         };
 
         // Branch: AUMID activation if we resolved one; else legacy
@@ -2130,12 +2139,9 @@ impl Tool for LaunchAppTool {
         // and minimizes anything that materializes. The task runs detached
         // so the launch_app response isn't held up by it.
         //
-        // SW_MINIMIZE itself activates "the next top-level window in z-order"
-        // which would shift the user's focus, but the foreground-restore
-        // polling task (spawned earlier in this method via
-        // `restore_foreground_polling_best_effort`) flips foreground back to
-        // the pre-launch window, so the net effect is "minimize and leave
-        // the user's window where it was".
+        // SW_SHOWMINNOACTIVE preserves the foreground while minimizing. Using
+        // SW_MINIMIZE here would itself activate the next z-order window and
+        // force a visible restore-after-steal cycle.
         if start_minimized {
             // First, minimize anything already resolved (covers the common
             // single-process path where windows_json was populated).
@@ -2158,10 +2164,10 @@ impl Tool for LaunchAppTool {
             let parent_pid = pid;
             let _ = tokio::task::spawn_blocking(move || {
                 use windows::Win32::Foundation::HWND;
-                use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_MINIMIZE};
+                use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWMINNOACTIVE};
                 for h in immediate_hwnds {
                     unsafe {
-                        let _ = ShowWindow(HWND(h as *mut _), SW_MINIMIZE);
+                        let _ = ShowWindow(HWND(h as *mut _), SW_SHOWMINNOACTIVE);
                     }
                 }
             })
@@ -2185,10 +2191,12 @@ impl Tool for LaunchAppTool {
             // app has its main window up within ~2 s of launch.
             let pre_pids = pre_launch_pids.clone();
             let basename_for_poll = stub_basename.clone();
+            let launch_foreground_lock = foreground_lock.take();
             tokio::spawn(async move {
                 use std::collections::HashSet;
                 use windows::Win32::Foundation::HWND;
-                use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_MINIMIZE};
+                use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWMINNOACTIVE};
+                let _foreground_lock = launch_foreground_lock;
                 let mut minimized: HashSet<u64> = HashSet::new();
                 let mut idle_ticks_after_any_hit: u8 = 0;
                 let mut hit_count_total: usize = 0;
@@ -2227,7 +2235,8 @@ impl Tool for LaunchAppTool {
                                 hit_count_total += 1;
                                 let hwnd_iso = w.hwnd as usize;
                                 let _ = tokio::task::spawn_blocking(move || unsafe {
-                                    let _ = ShowWindow(HWND(hwnd_iso as *mut _), SW_MINIMIZE);
+                                    let _ =
+                                        ShowWindow(HWND(hwnd_iso as *mut _), SW_SHOWMINNOACTIVE);
                                 })
                                 .await;
                             }

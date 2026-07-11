@@ -14,7 +14,9 @@ pub mod keyboard;
 pub mod delivery;
 pub mod inject;
 
-pub use inject::{inject_click_screen, point_in_window_bounds, NoActivateGuard};
+pub use inject::{
+    inject_click_screen, point_in_window_bounds, ForegroundLockGuard, NoActivateGuard,
+};
 pub use mouse::{is_chromium_target_window, post_click, post_click_screen, send_click_synthesized, send_click_synthesized_mods, send_wheel_synthesized};
 pub use keyboard::{
     is_xaml_host_hwnd, post_char, post_key, post_type_text, post_type_text_with_delay,

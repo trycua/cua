@@ -34,6 +34,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use windows::Win32::Foundation::{HANDLE, HWND, POINT, RECT};
+use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Controls::{
     CreateSyntheticPointerDevice, DestroySyntheticPointerDevice, HSYNTHETICPOINTERDEVICE,
     POINTER_FEEDBACK_DEFAULT, POINTER_TYPE_INFO, POINTER_TYPE_INFO_0,
@@ -42,12 +43,63 @@ use windows::Win32::UI::Input::Pointer::{
     InjectSyntheticPointerInput, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT, POINTER_FLAG_INRANGE,
     POINTER_FLAG_UP, POINTER_FLAG_UPDATE, POINTER_INFO, POINTER_PEN_INFO, POINTER_TOUCH_INFO,
 };
-use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowThreadProcessId,
-    IsWindow, SetCursorPos, SetForegroundWindow, SetWindowLongPtrW, WindowFromPoint, GA_ROOT,
-    GWL_EXSTYLE, PT_PEN, PT_TOUCH, WS_EX_NOACTIVATE,
+    IsWindow, LockSetForegroundWindow, SetCursorPos, SetForegroundWindow, SetWindowLongPtrW,
+    WindowFromPoint, GA_ROOT, GWL_EXSTYLE, LSFW_LOCK, LSFW_UNLOCK, PT_PEN, PT_TOUCH,
+    WS_EX_NOACTIVATE,
 };
+
+#[derive(Default)]
+struct ForegroundLockState {
+    holders: usize,
+    locked: bool,
+}
+
+static FOREGROUND_LOCK_STATE: Mutex<ForegroundLockState> = Mutex::new(ForegroundLockState {
+    holders: 0,
+    locked: false,
+});
+
+/// Prevent other processes from taking the foreground during a background
+/// launch. Windows automatically clears this lock on genuine user input; Drop
+/// still balances the documented unlock call and overlapping driver launches.
+pub struct ForegroundLockGuard {
+    held: bool,
+}
+
+impl ForegroundLockGuard {
+    pub fn acquire() -> Self {
+        let mut state = FOREGROUND_LOCK_STATE.lock().unwrap();
+        if state.holders == 0 {
+            state.locked = unsafe { LockSetForegroundWindow(LSFW_LOCK) }.is_ok();
+            if state.locked {
+                tracing::debug!(target: "launch_app.focus_lock", "locked foreground changes during background launch");
+            } else {
+                tracing::warn!(target: "launch_app.focus_lock", "could not lock foreground changes during background launch");
+            }
+        }
+        if state.locked {
+            state.holders += 1;
+        }
+        Self { held: state.locked }
+    }
+}
+
+impl Drop for ForegroundLockGuard {
+    fn drop(&mut self) {
+        if !self.held {
+            return;
+        }
+        let mut state = FOREGROUND_LOCK_STATE.lock().unwrap();
+        state.holders = state.holders.saturating_sub(1);
+        if state.holders == 0 {
+            let _ = unsafe { LockSetForegroundWindow(LSFW_UNLOCK) };
+            state.locked = false;
+            tracing::debug!(target: "launch_app.focus_lock", "unlocked foreground changes after background launch");
+        }
+    }
+}
 
 /// Bring `target` to the foreground using the AttachThreadInput trick, which
 /// inherits the current foreground thread's FG-lock token so the swap is
@@ -537,4 +589,3 @@ pub fn inject_drag_screen(
 // WPF/terminal text) is now reported as `background_unavailable`; the agent
 // escalates to `delivery_mode:"foreground"`, which uses the explicit
 // SetForegroundWindow path (send_key_synthesized / send_text_synthesized).
-

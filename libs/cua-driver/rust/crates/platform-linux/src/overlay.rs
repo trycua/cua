@@ -198,6 +198,21 @@ pub fn current_position_for(key: &str) -> (f64, f64) {
         .unwrap_or((-200.0, -200.0))
 }
 
+pub fn current_motion_for(key: &str) -> cursor_overlay::MotionConfig {
+    RENDER
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard.as_ref().and_then(|map| {
+                map.cursors
+                    .get(key)
+                    .or_else(|| map.cursors.get("default"))
+                    .map(|state| state.core.motion.clone())
+            })
+        })
+        .unwrap_or_default()
+}
+
 fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     const SEED_OFFSET: f64 = 140.0;
     let mut guard = RENDER.lock().unwrap();

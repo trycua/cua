@@ -5162,13 +5162,19 @@ impl Tool for SetAgentCursorMotionTool {
     fn def(&self) -> &ToolDef {
         CURSOR_DEF.get_or_init(|| ToolDef {
             name: "set_agent_cursor_motion".into(),
-            description: format!("Configure the visual appearance of an agent cursor instance.\n\n\
+            description: format!("Configure the visual appearance and motion curve of an agent cursor instance.\n\n\
                 - cursor_id: instance name (default='default')\n\
                 - cursor_icon: built-in ({}) or a path to a PNG/JPEG/SVG/ICO file; '' reverts to the default cursor\n\
                 - cursor_color: hex color e.g. '#00FFFF' or CSS name\n\
                 - cursor_label: short text shown near the cursor\n\
                 - cursor_size: dot radius in points (default=16)\n\
-                - cursor_opacity: 0.0–1.0 (default=0.85)",
+                - cursor_opacity: 0.0–1.0 (default=0.85)\n\n\
+                Motion curve (Bezier):\n\
+                - arc_size: perpendicular deflection as fraction of path length [0,1]. Default 0.25\n\
+                - spring: settle damping [0.3,1.0]; 1.0=no overshoot. Default 0.72\n\
+                - glide_duration_ms: fixed flight duration per move [50,5000]; omit for speed-based\n\
+                - dwell_after_click_ms: pause after click ripple [0,5000]. Default 80\n\
+                - idle_hide_ms: auto-hide delay [0,60000]; 0=never. Default 20000",
                 cursor_overlay::BuiltinShape::names_help()),
             input_schema: json!({
                 "type":"object","properties":{
@@ -5178,13 +5184,30 @@ impl Tool for SetAgentCursorMotionTool {
                     "cursor_color":{"type":"string"},
                     "cursor_label":{"type":"string"},
                     "cursor_size":{"type":"number"},
-                    "cursor_opacity":{"type":"number"}
+                    "cursor_opacity":{"type":"number"},
+                    "start_handle":{"type":"number","description":"Start-handle fraction [0,1]. Default 0.3."},
+                    "end_handle":{"type":"number","description":"End-handle fraction [0,1]. Default 0.3."},
+                    "arc_size":{"type":"number","description":"Arc deflection as fraction of path length [0,1]. Default 0.25."},
+                    "arc_flow":{"type":"number","description":"Asymmetry bias [-1,1]. Default 0.0."},
+                    "spring":{"type":"number","description":"Settle damping [0.3,1.0]. Default 0.72."},
+                    "glide_duration_ms":{"type":"number","minimum":50,"maximum":5000},
+                    "dwell_after_click_ms":{"type":"number","minimum":0,"maximum":5000},
+                    "idle_hide_ms":{"type":"number","minimum":0,"maximum":60000},
+                    "turn_radius":{"type":"number","minimum":1,"maximum":1000}
                 },"additionalProperties":false
             }),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
+        fn num(value: Option<&Value>) -> Option<f64> {
+            value.and_then(|value| {
+                value
+                    .as_f64()
+                    .or_else(|| value.as_i64().map(|integer| integer as f64))
+            })
+        }
+
         let cursor_id = resolve_cursor_key(&args);
         // Resolve `cursor_icon` (built-in name or image path — same vocabulary as
         // the CLI flags) to a shape override and dispatch it, so the overlay
@@ -5224,7 +5247,44 @@ impl Tool for SetAgentCursorMotionTool {
         if let Some(cmd) = shape_cmd {
             crate::overlay::send_command_for(cursor_id.clone(), cmd);
         }
-        ToolResult::text(format!("Cursor '{cursor_id}' config updated.")).with_structured(args)
+
+        let motion = crate::overlay::current_motion_for(&cursor_id).with_overrides(
+            num(args.get("start_handle")),
+            num(args.get("end_handle")),
+            num(args.get("arc_size")),
+            num(args.get("arc_flow")),
+            num(args.get("spring")),
+            num(args.get("glide_duration_ms")),
+            num(args.get("dwell_after_click_ms")),
+            num(args.get("idle_hide_ms")),
+            None,
+            num(args.get("turn_radius")),
+        );
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::SetMotion(motion.clone()),
+        );
+
+        ToolResult::text(format!(
+            "Cursor '{cursor_id}' config updated. Motion: arc={:.2} spring={:.2} glide={}ms dwell={}ms idle={}ms",
+            motion.arc_size,
+            motion.spring,
+            motion.glide_duration_ms as u32,
+            motion.dwell_after_click_ms as u32,
+            motion.idle_hide_ms as u32,
+        ))
+        .with_structured(json!({
+            "cursor_id": cursor_id,
+            "start_handle": motion.start_handle,
+            "end_handle": motion.end_handle,
+            "arc_size": motion.arc_size,
+            "arc_flow": motion.arc_flow,
+            "spring": motion.spring,
+            "glide_duration_ms": motion.glide_duration_ms,
+            "dwell_after_click_ms": motion.dwell_after_click_ms,
+            "idle_hide_ms": motion.idle_hide_ms,
+            "turn_radius": motion.turn_radius,
+        }))
     }
 }
 

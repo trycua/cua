@@ -112,3 +112,42 @@ fn tools_list_schema_shape() {
             "set_config capture_mode should have enum: {:?}", sc["inputSchema"]["properties"]);
     }
 }
+
+#[test]
+#[cfg(target_os = "linux")]
+fn linux_cursor_motion_knobs_are_applied() {
+    let mut driver = RawDriver::spawn().expect("spawn source-built Linux driver");
+    driver.send(&serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {}
+    }));
+    driver.recv();
+
+    driver.send(&serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "set_agent_cursor_motion",
+            "arguments": {
+                "session": "schema-linux",
+                "arc_size": 0.4,
+                "spring": 0.85,
+                "glide_duration_ms": 500,
+                "dwell_after_click_ms": 200,
+                "idle_hide_ms": 5000
+            }
+        }
+    }));
+    let response = driver.recv();
+    assert!(
+        !response["result"]["isError"].as_bool().unwrap_or(false),
+        "Linux cursor motion update failed: {response:?}"
+    );
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["arc_size"].as_f64(), Some(0.4));
+    assert_eq!(structured["glide_duration_ms"].as_f64(), Some(500.0));
+    assert_eq!(structured["idle_hide_ms"].as_f64(), Some(5000.0));
+}

@@ -1,4 +1,4 @@
-//! Modality axis: the best-effort-background dispatch ladder (macOS).
+//! Optional TextEdit background-delivery integration check for macOS.
 //!
 //! Covers the `{path, verified}` structured outcome on a real Cocoa app.
 //!

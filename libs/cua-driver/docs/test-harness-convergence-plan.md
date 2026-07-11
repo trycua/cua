@@ -280,9 +280,8 @@ Canonical invocations set strict mode. Missing required capabilities produce
 | `capture_contract_test.rs` | Sole owner for tree/image inclusion behavior; canonical prerequisites fail instead of skipping |
 | `desktop_scope_<os>_test.rs` | Platform-specific window/desktop scope contracts |
 | `modality_focus_test.rs` | Deleted; shared click/type cells own focus preservation and launch focus has a separate optional owner |
-| `modality_launch_focus_macos_test.rs` | Optional real-app lane with issue ownership; never part of canonical harness counts |
-| `modality_dispatch_test.rs` | Move schema assertions to protocol tests and real GUI assertions to platform cells, then delete |
-| `modality_dispatch_linux_test.rs` | Keep only real X11/Wayland delivery behavior; move schema checks to protocol tests |
+| `installed_app_launch_macos_test.rs` | Optional real-app lane with issue ownership; never part of canonical harness counts |
+| `installed_app_textedit_macos_test.rs` | Optional real TextEdit AX integration; schema assertions remain in protocol tests |
 | `harness_libreoffice_test.rs` | Optional installed-app lane; exclude from `all` and canonical counts |
 | `protocol_*`, schema, transport tests | Unit/protocol gate; no desktop video and no behavioral matrix rows |
 | `tests/fixtures/shared/scenarios.json` | Prune only after selector and marker-reference audit |

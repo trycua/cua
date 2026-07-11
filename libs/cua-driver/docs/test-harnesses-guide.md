@@ -178,8 +178,9 @@ Runner: `scripts/ci/macos/run-rust-e2e.sh`
 | Desktop scope | `desktop_scope_macos_test.rs` | macOS window and desktop scope |
 
 The WKWebView fixture exists, but it does not yet have a dedicated Rust E2E
-target in the canonical runner. `modality_launch_focus_macos_test.rs` is an
-optional real-app check for Calculator/TextEdit and is not part of `all`.
+target in the canonical runner. `installed_app_launch_macos_test.rs` and
+`installed_app_textedit_macos_test.rs` are optional real-app checks for
+Calculator/TextEdit and are not part of `all`.
 
 ### Linux
 
@@ -189,7 +190,6 @@ Runner: `scripts/ci/linux/run-rust-e2e.sh`
 | --- | --- | --- |
 | Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri |
 | Native controls | `harness_gtk3_test.rs` | Repo-local GTK3 app |
-| Delivery dispatch | `modality_dispatch_linux_test.rs` | Linux desktop/session behavior |
 | Capture contract | `capture_contract_test.rs` | Linux capture backend |
 | Desktop scope | `desktop_scope_linux_test.rs` | X11/Wayland desktop scope |
 

@@ -124,5 +124,7 @@ desktop state outside the repo-local fixtures:
 - `harness_libreoffice_test.rs`: Windows LibreOffice Writer/Calc. Requires
   LibreOffice installed, or `LO_SWRITER_EXE` / `LO_SCALC_EXE` pointing at the
   executables.
-- `modality_launch_focus_macos_test.rs`: macOS Calculator/TextEdit launch focus
+- `installed_app_launch_macos_test.rs`: macOS Calculator/TextEdit launch focus
   checks. Requires a logged-in GUI session and usable System Events scripting.
+- `installed_app_textedit_macos_test.rs`: real TextEdit background AX write and
+  verification. Requires a logged-in GUI session and Accessibility permission.

@@ -111,7 +111,8 @@ operation and does not have a background/foreground delivery dimension.
 | AppKit | `harness_appkit_test.rs` | Native AX controls, text, pointer actions, menus, popups, scroll, drag |
 | SwiftUI | `harness_swiftui_test.rs` | SwiftUI controls, popovers, toggles, sliders, context menus, scroll |
 | WKWebView | `tests/fixtures/apps/macos/wkwebview/` | Fixture is built from the shared web page; a dedicated Rust E2E target is still a coverage gap |
-| Launch/focus checks | `modality_launch_focus_macos_test.rs` | Real Calculator/TextEdit launch and focus behavior, when explicitly enabled |
+| Installed-app launch/focus | `installed_app_launch_macos_test.rs` | Real Calculator/TextEdit launch and focus behavior, when explicitly enabled |
+| Installed-app text | `installed_app_textedit_macos_test.rs` | Real TextEdit AX background write and verification, when explicitly enabled |
 
 macOS uses the installed ScreenCaptureKit/AX permissions for GUI runs. The
 repo-local harnesses are canonical; Calculator and TextEdit are supporting
@@ -125,7 +126,6 @@ real-app checks.
 | Tauri | `cross_platform_behavior_test.rs` | X11; Wayland support is explicitly gated | Shared web action matrix |
 | GTK3 | `harness_gtk3_test.rs` | X11/AT-SPI and Wayland/AT-SPI where configured | Native GTK controls and input |
 | Desktop scope | `desktop_scope_linux_test.rs` | X11/Wayland | Desktop versus window scope |
-| Dispatch | `modality_dispatch_linux_test.rs` | X11/Wayland | Background and foreground delivery ladder |
 
 Nix provides the Linux build and desktop environment. X11 and Wayland are
 separate matrix dimensions because their capture and input contracts differ.

@@ -5,7 +5,7 @@
 //! they exercise external apps and a live user desktop, so run them explicitly.
 //!
 //! Run:
-//!   cargo test -p cua-driver --test modality_launch_focus_macos_test -- --ignored --nocapture --test-threads=1
+//!   cargo test -p cua-driver --test installed_app_launch_macos_test -- --ignored --nocapture --test-threads=1
 
 #![cfg(target_os = "macos")]
 

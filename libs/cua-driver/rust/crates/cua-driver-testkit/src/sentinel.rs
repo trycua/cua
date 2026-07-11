@@ -175,8 +175,14 @@ impl ForegroundSentinel {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn activate_native_foreground(driver: &mut impl Driver, target: TargetWindow) {
+    #[cfg(target_os = "linux")]
+    if std::env::var("XDG_SESSION_TYPE")
+        .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
+    {
+        return;
+    }
     let response = driver.call(
         "bring_to_front",
         serde_json::json!({
@@ -191,12 +197,19 @@ fn activate_native_foreground(driver: &mut impl Driver, target: TargetWindow) {
     );
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 fn activate_native_foreground(_driver: &mut impl Driver, _target: TargetWindow) {}
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn wait_for_native_focus_stable(target: TargetWindow) {
     use crate::observer::{ObserverBackend, TargetZ};
+
+    #[cfg(target_os = "linux")]
+    if std::env::var("XDG_SESSION_TYPE")
+        .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
+    {
+        return;
+    }
 
     let backend = NativeObserver::new();
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -222,7 +235,7 @@ fn wait_for_native_focus_stable(target: TargetWindow) {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 fn wait_for_native_focus_stable(_target: TargetWindow) {}
 
 pub fn run_with_background_oracles<D: Driver, R>(

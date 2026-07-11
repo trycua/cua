@@ -109,6 +109,7 @@ impl Tool for DragTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let dispatch_gate = crate::dispatch_gate::NativeDispatchGate::for_args(&args);
         let pid = match args.require_i32("pid") {
             Ok(v) => v,
             Err(e) => return e,
@@ -265,6 +266,7 @@ impl Tool for DragTool {
         // Dispatch blocking drag synthesis.
         let mods_owned = modifiers.clone();
         let fg = delivery_mode.is_foreground() && window_id.is_some();
+        let gate = dispatch_gate.clone();
         let result = focus_guard::with_focus_suppressed(
             // Foreground drag deliberately activates the target so the global
             // HID stream carries the pressed-button state. A suppression lease
@@ -275,6 +277,7 @@ impl Tool for DragTool {
             "drag.CGEvent",
             || async move {
                 tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                    let action_gate = gate.clone();
                     let do_it = move || -> anyhow::Result<()> {
                         let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
                         if fg {
@@ -283,9 +286,10 @@ impl Tool for DragTool {
                             // gesture begins. The SkyLight flash can be
                             // unavailable for Electron child windows; the
                             // documented Cocoa activation is the fallback.
+                            action_gate.check()?;
                             apps::activate_pid(pid);
                             std::thread::sleep(std::time::Duration::from_millis(40));
-                            return crate::input::mouse::drag_at_xy_foreground(
+                            return crate::input::mouse::drag_at_xy_foreground_guarded(
                                 from_sx,
                                 from_sy,
                                 to_sx,
@@ -294,9 +298,10 @@ impl Tool for DragTool {
                                 steps,
                                 &m,
                                 button,
+                                &action_gate,
                             );
                         }
-                        crate::input::mouse::drag_at_xy(
+                        crate::input::mouse::drag_at_xy_guarded(
                             pid,
                             from_sx,
                             from_sy,
@@ -310,6 +315,7 @@ impl Tool for DragTool {
                             &m,
                             button,
                             fg,
+                            &action_gate,
                         )
                     };
                     // Foreground rung: activate for the complete HID gesture,
@@ -320,7 +326,10 @@ impl Tool for DragTool {
                             std::thread::sleep(std::time::Duration::from_millis(100));
                             if let Some(previous_pid) = prior_front {
                                 if previous_pid != pid {
-                                    apps::activate_pid(previous_pid);
+                                    if result.is_ok() {
+                                        gate.check()?;
+                                        apps::activate_pid(previous_pid);
+                                    }
                                 }
                             }
                             result?;

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::windows::WindowBounds;
+use crate::dispatch_gate::NativeDispatchGate;
 
 pub struct BrowserJs;
 
@@ -44,6 +45,21 @@ impl BrowserJs {
         bundle_id: &str,
         window_id: u32,
     ) -> anyhow::Result<String> {
+        Self::execute_guarded(
+            javascript,
+            bundle_id,
+            window_id,
+            NativeDispatchGate::default(),
+        )
+        .await
+    }
+
+    pub(crate) async fn execute_guarded(
+        javascript: &str,
+        bundle_id: &str,
+        window_id: u32,
+        gate: NativeDispatchGate,
+    ) -> anyhow::Result<String> {
         if !Self::supports(bundle_id) {
             anyhow::bail!("Unsupported browser bundle: {bundle_id}");
         }
@@ -55,7 +71,7 @@ impl BrowserJs {
         .await
         .context("Preparing native browser Apple Event failed")??;
 
-        execute_script_on_main_queue(script).await
+        execute_script_on_main_queue(script, gate).await
     }
 
     /// Patch the browser Preferences JSON to enable Allow JavaScript from Apple Events,
@@ -149,6 +165,7 @@ struct MainThreadScript {
     script: String,
     reply: tokio::sync::oneshot::Sender<anyhow::Result<String>>,
     state: Arc<AtomicU8>,
+    gate: NativeDispatchGate,
 }
 
 const SCRIPT_QUEUED: u8 = 0;
@@ -202,11 +219,15 @@ extern "C" {
 /// documented threading contract. The binary entry points keep the AppKit run
 /// loop alive even when the cursor overlay is disabled, so this dispatch is
 /// serviced in MCP, daemon, and one-shot CLI modes.
-async fn execute_script_on_main_queue(script: String) -> anyhow::Result<String> {
+async fn execute_script_on_main_queue(
+    script: String,
+    gate: NativeDispatchGate,
+) -> anyhow::Result<String> {
     if !crate::session::has_graphic_access() {
         anyhow::bail!("Browser automation requires an active macOS graphic session");
     }
     if let Some(main_thread) = objc2_foundation::MainThreadMarker::new() {
+        gate.check()?;
         return execute_script_on_main_thread(main_thread, &script);
     }
     if !crate::pip::appkit_main_loop_available() {
@@ -224,6 +245,7 @@ async fn execute_script_on_main_queue(script: String) -> anyhow::Result<String> 
         script,
         reply,
         state: state.clone(),
+        gate,
     });
     unsafe {
         let main_queue = &raw const _dispatch_main_q as *const c_void;
@@ -269,6 +291,7 @@ unsafe extern "C" fn execute_script_main_cb(context: *mut c_void) {
     // A panic must never cross libdispatch's C callback boundary. Convert it
     // into the same Result channel used for ordinary script failures.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        request.gate.check()?;
         execute_script_if_main_thread(&request.script)
     }))
     .unwrap_or_else(|_| {
@@ -725,7 +748,10 @@ mod tests {
             return;
         }
         crate::pip::prepare_appkit_main_loop();
-        let error = execute_script_on_main_queue("return 1".to_owned())
+        let error = execute_script_on_main_queue(
+            "return 1".to_owned(),
+            NativeDispatchGate::default(),
+        )
             .await
             .unwrap_err();
         assert!(error.to_string().contains("registered AppKit main loop"));

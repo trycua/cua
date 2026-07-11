@@ -137,6 +137,7 @@ impl Tool for ClickTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let dispatch_gate = crate::dispatch_gate::NativeDispatchGate::for_args(&args);
 
         // ── Window-less screen-absolute branch (scope="desktop") ──────
         // x,y given with NO pid and NO window_id → the coordinates are TRUE
@@ -226,12 +227,13 @@ impl Tool for ClickTool {
                 .update_position(&cursor_key, sx, sy);
 
             let btn = button.clone();
+            let gate = dispatch_gate.clone();
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                 // Desktop scope is explicitly foreground and vision-driven: post
                 // at the global HID tap so WindowServer delivers to the window
                 // actually visible at this point. PID-posting here would silently
                 // turn the foreground contract back into background delivery.
-                crate::input::mouse::click_at_xy_desktop(sx, sy, count, &btn)
+                crate::input::mouse::click_at_xy_desktop_guarded(sx, sy, count, &btn, &gate)
             })
             .await;
             let button_label = match button.as_str() {
@@ -378,9 +380,10 @@ impl Tool for ClickTool {
                     .update_position(&cursor_key, cx, cy);
 
                 let mods_owned = modifiers.clone();
+                let gate = dispatch_gate.clone();
                 let result = tokio::task::spawn_blocking(move || {
                     let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                    crate::input::mouse::middle_click_at_xy(pid, cx, cy, &m)
+                    crate::input::mouse::middle_click_at_xy_guarded(pid, cx, cy, &m, &gate)
                 })
                 .await;
                 return match result {
@@ -431,6 +434,7 @@ impl Tool for ClickTool {
             // not the shared "default" one (which would light the wrong cursor
             // and stomp default for a non-default session).
             let ck = cursor_key.clone();
+            let gate = dispatch_gate.clone();
             let result = focus_guard::with_focus_suppressed(
                 if foreground { None } else { Some(pid) },
                 prior_front,
@@ -450,6 +454,7 @@ impl Tool for ClickTool {
                                         wid,
                                         &action_clone,
                                         &ck,
+                                        &gate,
                                     )?);
                                     std::thread::sleep(std::time::Duration::from_millis(150));
                                     Ok(())
@@ -460,7 +465,15 @@ impl Tool for ClickTool {
                             })?;
                             Ok((outcome, fronted))
                         } else {
-                            perform_ax_click(element_ptr, idx, pid, wid, &action_clone, &ck)
+                            perform_ax_click(
+                                element_ptr,
+                                idx,
+                                pid,
+                                wid,
+                                &action_clone,
+                                &ck,
+                                &gate,
+                            )
                                 .map(|outcome| (outcome, false))
                         }
                     })
@@ -726,6 +739,7 @@ impl Tool for ClickTool {
             // clicks. Needs window_id to front; without one it degrades to
             // background (and is labelled as such).
             let fg = delivery_mode.is_foreground() && window_id.is_some();
+            let gate = dispatch_gate.clone();
 
             let result = focus_guard::with_focus_suppressed(
                 Some(pid),
@@ -733,24 +747,29 @@ impl Tool for ClickTool {
                 "click.pixel",
                 || async move {
                     tokio::task::spawn_blocking(move || {
+                        let action_gate = gate.clone();
                         let do_click = move || -> anyhow::Result<()> {
                             let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
                             match button_kind.as_str() {
                                 "right" => {
                                     if let Some(wid) = window_id {
-                                        return crate::input::mouse::right_click_at_xy_with_window_local(
-                                            pid, screen_x, screen_y, win_local_x, win_local_y, wid, &m,
+                                        return crate::input::mouse::right_click_at_xy_with_window_local_guarded(
+                                            pid, screen_x, screen_y, win_local_x, win_local_y, wid, &m, &action_gate,
                                         );
                                     }
-                                    crate::input::mouse::right_click_at_xy(pid, screen_x, screen_y, &m)
+                                    crate::input::mouse::right_click_at_xy_guarded(
+                                        pid, screen_x, screen_y, &m, &action_gate,
+                                    )
                                 }
                                 "middle" => {
                                     if let Some(_wid) = window_id {
-                                        return crate::input::mouse::middle_click_at_xy_with_window_local(
-                                            pid, screen_x, screen_y, win_local_x, win_local_y, &m,
+                                        return crate::input::mouse::middle_click_at_xy_with_window_local_guarded(
+                                            pid, screen_x, screen_y, win_local_x, win_local_y, &m, &action_gate,
                                         );
                                     }
-                                    crate::input::mouse::middle_click_at_xy(pid, screen_x, screen_y, &m)
+                                    crate::input::mouse::middle_click_at_xy_guarded(
+                                        pid, screen_x, screen_y, &m, &action_gate,
+                                    )
                                 }
                                 // "left" (default) or anything else — preserve legacy left-click path.
                                 _ => {
@@ -760,19 +779,21 @@ impl Tool for ClickTool {
                                     // for better backgrounded-target delivery.
                                     if let Some(wid) = window_id {
                                         if fg {
-                                            return crate::input::mouse::click_at_xy_with_window_local(
+                                            return crate::input::mouse::click_at_xy_with_window_local_guarded(
                                                 pid, screen_x, screen_y,
                                                 win_local_x, win_local_y,
-                                                wid, count, &m,
+                                                wid, count, &m, &action_gate,
                                             );
                                         }
-                                        return crate::input::mouse::click_at_xy_chromium(
+                                        return crate::input::mouse::click_at_xy_chromium_guarded(
                                             pid, screen_x, screen_y,
                                             win_local_x, win_local_y,
-                                            wid, count, &m,
+                                            wid, count, &m, &action_gate,
                                         );
                                     }
-                                    crate::input::mouse::click_at_xy(pid, screen_x, screen_y, count, &m)
+                                    crate::input::mouse::click_at_xy_guarded(
+                                        pid, screen_x, screen_y, count, &m, &action_gate,
+                                    )
                                 }
                             }
                         };
@@ -780,8 +801,8 @@ impl Tool for ClickTool {
                         // Returns whether the window was ACTUALLY fronted, so the
                         // reported `path` honestly reflects the rung that ran.
                         match (fg, window_id) {
-                            (true, Some(wid)) => crate::input::skylight::with_foreground_assist(
-                                pid as libc::pid_t, wid, do_click,
+                            (true, Some(wid)) => crate::input::skylight::with_foreground_assist_guarded(
+                                pid as libc::pid_t, wid, &gate, do_click,
                             ),
                             _ => do_click().map(|_| false),
                         }
@@ -842,6 +863,7 @@ fn perform_ax_click(
     window_id: u32,
     action_str: &str,
     cursor_key: &str,
+    gate: &crate::dispatch_gate::NativeDispatchGate,
 ) -> anyhow::Result<(String, bool, bool)> {
     let ax_action = map_action(action_str);
     let element = element_ptr as AXUIElementRef;
@@ -850,6 +872,7 @@ fn perform_ax_click(
     // (AX returns success even when the element doesn't advertise the action).
     let advertised = unsafe { copy_action_names(element) };
 
+    gate.check()?;
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
     if err != crate::ax::bindings::kAXErrorSuccess {
         anyhow::bail!("AXUIElementPerformAction({ax_action}) returned {err}");

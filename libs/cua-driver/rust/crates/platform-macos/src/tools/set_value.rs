@@ -96,6 +96,7 @@ impl Tool for SetValueTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let dispatch_gate = crate::dispatch_gate::NativeDispatchGate::for_args(&args);
         let pid = match args.require_i32("pid") {
             Ok(v) => v,
             Err(e) => return e,
@@ -166,6 +167,8 @@ impl Tool for SetValueTool {
         // child option which can trigger app activation in some setups.
         let prior_front = apps::frontmost_pid();
         let snapshot = WindowChangeDetector::snapshot(prior_front);
+        let blocking_gate = dispatch_gate.clone();
+        let js_gate = dispatch_gate.clone();
 
         let result: anyhow::Result<String> = focus_guard::with_focus_suppressed(
             Some(pid),
@@ -174,14 +177,23 @@ impl Tool for SetValueTool {
             || async move {
                 let dispatch = tokio::task::spawn_blocking(move || {
                     let element_ptr = element_guard.as_ptr();
-                    set_value_blocking(element_ptr, element_index, pid, window_id, &value)
+                    set_value_blocking(
+                        element_ptr,
+                        element_index,
+                        pid,
+                        window_id,
+                        &value,
+                        &blocking_gate,
+                    )
                 })
                 .await
                 .context("set_value blocking task failed")??;
 
                 match dispatch {
                     SetValueDispatch::Complete(message) => Ok(message),
-                    SetValueDispatch::SafariSelect(request) => set_select_via_js(request).await,
+                    SetValueDispatch::SafariSelect(request) => {
+                        set_select_via_js(request, js_gate).await
+                    }
                 }
             },
         )
@@ -219,6 +231,7 @@ fn set_value_blocking(
     pid: i32,
     window_id: u32,
     value: &str,
+    gate: &crate::dispatch_gate::NativeDispatchGate,
 ) -> anyhow::Result<SetValueDispatch> {
     let element = element_ptr as AXUIElementRef;
 
@@ -233,6 +246,7 @@ fn set_value_blocking(
             window_id,
             value,
             &element_title,
+            gate,
         )
     } else {
         // Default path: write AXValue directly. Numeric controls (AXSlider /
@@ -246,14 +260,19 @@ fn set_value_blocking(
         let numeric_target = value.trim().parse::<f64>().ok();
         let err = match numeric_target {
             Some(n) => {
+                gate.check()?;
                 let e = unsafe { set_number_attr(element, "AXValue", n) };
                 if e == kAXErrorSuccess {
                     e
                 } else {
+                    gate.check()?;
                     unsafe { set_string_attr(element, "AXValue", value) }
                 }
             }
-            None => unsafe { set_string_attr(element, "AXValue", value) },
+            None => {
+                gate.check()?;
+                unsafe { set_string_attr(element, "AXValue", value) }
+            }
         };
         if err == kAXErrorSuccess {
             Ok(SetValueDispatch::Complete(format!(
@@ -262,7 +281,7 @@ fn set_value_blocking(
         } else if let Some(target) = numeric_target {
             // Both direct writes failed for a numeric target — fall back to
             // stepping the control via AXIncrement / AXDecrement actions.
-            if step_to_value(element, target) {
+            if step_to_value(element, target, gate)? {
                 Ok(SetValueDispatch::Complete(format!(
                     "✅ Set AXValue on [{element_index}] {role} via AXIncrement/AXDecrement stepping."
                 )))
@@ -284,11 +303,15 @@ fn set_value_blocking(
 ///
 /// Returns `true` once the control's value lands within half of the last
 /// observed step of `target`, `false` if it can't be read or can't be moved.
-fn step_to_value(element: AXUIElementRef, target: f64) -> bool {
+fn step_to_value(
+    element: AXUIElementRef,
+    target: f64,
+    gate: &crate::dispatch_gate::NativeDispatchGate,
+) -> anyhow::Result<bool> {
     // Can't target precisely without feedback — bail if AXValue is unreadable.
     let mut current = match unsafe { copy_number_attr(element, "AXValue") } {
         Some(v) => v,
-        None => return false,
+        None => return Ok(false),
     };
 
     // Half of the last observed step. Start near-zero so we never declare the
@@ -301,7 +324,7 @@ fn step_to_value(element: AXUIElementRef, target: f64) -> bool {
     // Hard cap to prevent runaway on a control that never quite converges.
     for _ in 0..500 {
         if (current - target).abs() <= step_radius {
-            return true;
+            return Ok(true);
         }
 
         let action = if current < target {
@@ -309,17 +332,18 @@ fn step_to_value(element: AXUIElementRef, target: f64) -> bool {
         } else {
             "AXDecrement"
         };
+        gate.check()?;
         let _ = unsafe { perform_action(element, action) };
 
         let next = match unsafe { copy_number_attr(element, "AXValue") } {
             Some(v) => v,
-            None => return false,
+            None => return Ok(false),
         };
 
         // The action didn't move the value — the control can't be stepped (or
         // has hit a min/max bound short of target). Stop to avoid looping.
         if next == current {
-            return false;
+            return Ok(false);
         }
 
         // Refine the stop threshold to half of the actual step the control took.
@@ -331,7 +355,7 @@ fn step_to_value(element: AXUIElementRef, target: f64) -> bool {
     }
 
     // Exhausted the iteration cap without converging.
-    (current - target).abs() <= step_radius
+    Ok((current - target).abs() <= step_radius)
 }
 
 // ── AXPopUpButton path ───────────────────────────────────────────────────────
@@ -343,6 +367,7 @@ fn select_popup_option(
     window_id: u32,
     value: &str,
     element_title: &str,
+    gate: &crate::dispatch_gate::NativeDispatchGate,
 ) -> anyhow::Result<SetValueDispatch> {
     let children = unsafe { copy_children(element) };
 
@@ -368,14 +393,19 @@ fn select_popup_option(
             let child = children[i];
             let opt_title =
                 unsafe { copy_string_attr(child, "AXTitle") }.unwrap_or_else(|| value.to_string());
-            let err = unsafe { perform_action(child, "AXPress") };
-            if err == kAXErrorSuccess {
-                Ok(format!(
-                    "✅ Selected '{opt_title}' in AXPopUpButton [{element_index}] \
-                     \"{element_title}\" via AX child AXPress."
-                ))
-            } else {
-                anyhow::bail!("AXPress on child option failed with error {err}")
+            match gate.check() {
+                Ok(()) => {
+                    let err = unsafe { perform_action(child, "AXPress") };
+                    if err == kAXErrorSuccess {
+                        Ok(format!(
+                            "✅ Selected '{opt_title}' in AXPopUpButton [{element_index}] \
+                             \"{element_title}\" via AX child AXPress."
+                        ))
+                    } else {
+                        anyhow::bail!("AXPress on child option failed with error {err}")
+                    }
+                }
+                Err(error) => Err(error.into()),
             }
         } else {
             let avail = available
@@ -423,7 +453,10 @@ fn select_popup_option(
 /// Set an HTML `<select>` value in Safari via its in-process Apple Event suite.
 /// Searches all `<select>` elements for an `<option>` whose text or value matches
 /// `value` (case-insensitive), then sets it and dispatches a `change` event.
-async fn set_select_via_js(request: SafariSelectRequest) -> anyhow::Result<String> {
+async fn set_select_via_js(
+    request: SafariSelectRequest,
+    gate: crate::dispatch_gate::NativeDispatchGate,
+) -> anyhow::Result<String> {
     let SafariSelectRequest {
         window_id,
         element_index,
@@ -455,7 +488,7 @@ async fn set_select_via_js(request: SafariSelectRequest) -> anyhow::Result<Strin
          }})()"
     );
 
-    let raw = BrowserJs::execute(&js, "com.apple.Safari", window_id).await?;
+    let raw = BrowserJs::execute_guarded(&js, "com.apple.Safari", window_id, gate).await?;
     interpret_select_js_result(&raw, element_index, &element_title, &value)
 }
 

@@ -20,6 +20,7 @@ use std::ffi::{CStr, c_void};
 use std::os::raw::{c_int, c_uint, c_char};
 use std::sync::OnceLock;
 use libc::pid_t;
+use crate::dispatch_gate::NativeDispatchGate;
 
 // ── Function-pointer typedefs ──────────────────────────────────────────────
 
@@ -339,17 +340,30 @@ pub fn main_connection_id() -> Option<u32> {
 ///
 /// Returns `true` when all SPIs resolved and both posts succeeded.
 pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
+    activate_without_raise_guarded(
+        target_pid,
+        target_wid,
+        &NativeDispatchGate::default(),
+    )
+    .unwrap_or(false)
+}
+
+pub(crate) fn activate_without_raise_guarded(
+    target_pid: pid_t,
+    target_wid: u32,
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<bool> {
     let post_fn = match post_event_record_to_fn() {
         Some(f) => f,
-        None => return false,
+        None => return Ok(false),
     };
     let get_front = match get_front_process_fn() {
         Some(f) => f,
-        None => return false,
+        None => return Ok(false),
     };
     let get_pid_psn = match get_process_for_pid_fn() {
         Some(f) => f,
-        None => return false,
+        None => return Ok(false),
     };
 
     // 8-byte PSN buffers (two UInt32s).
@@ -357,10 +371,10 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
     let mut target_psn = [0u8; 8];
 
     let ok_prev = unsafe { get_front(prev_psn.as_mut_ptr() as *mut c_void) } == 0;
-    if !ok_prev { return false; }
+    if !ok_prev { return Ok(false); }
 
     let ok_target = unsafe { get_pid_psn(target_pid, target_psn.as_mut_ptr() as *mut c_void) } == 0;
-    if !ok_target { return false; }
+    if !ok_target { return Ok(false); }
 
     // Build the 248-byte event buffer.
     let mut buf = [0u8; 0xF8];
@@ -374,17 +388,19 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
 
     // Step 3: defocus previous front.
     buf[0x8A] = 0x02;
+    gate.check()?;
     let defocus_ok = unsafe {
         post_fn(prev_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0
     };
 
     // Step 4: focus target.
     buf[0x8A] = 0x01;
+    gate.check()?;
     let focus_ok = unsafe {
         post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0
     };
 
-    defocus_ok && focus_ok
+    Ok(defocus_ok && focus_ok)
 }
 
 // ── NSMenu shortcut activation ────────────────────────────────────────────────
@@ -429,7 +445,21 @@ pub fn with_foreground_assist(
     target_wid: u32,
     body: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
-    with_menu_shortcut_activation(target_pid, target_wid, body)
+    with_foreground_assist_guarded(
+        target_pid,
+        target_wid,
+        &NativeDispatchGate::default(),
+        body,
+    )
+}
+
+pub(crate) fn with_foreground_assist_guarded(
+    target_pid: libc::pid_t,
+    target_wid: u32,
+    gate: &NativeDispatchGate,
+    body: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    with_menu_shortcut_activation_guarded(target_pid, target_wid, gate, body)
 }
 
 /// Activate `target_pid`'s window `target_wid` for NSMenu key dispatch, run `action`,
@@ -443,6 +473,20 @@ pub fn with_foreground_assist(
 pub fn with_menu_shortcut_activation(
     target_pid: libc::pid_t,
     target_wid: u32,
+    action: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    with_menu_shortcut_activation_guarded(
+        target_pid,
+        target_wid,
+        &NativeDispatchGate::default(),
+        action,
+    )
+}
+
+pub(crate) fn with_menu_shortcut_activation_guarded(
+    target_pid: libc::pid_t,
+    target_wid: u32,
+    gate: &NativeDispatchGate,
     action: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
     let set_front = match set_front_process_fn() {
@@ -469,6 +513,7 @@ pub fn with_menu_shortcut_activation(
     }
 
     // Make target WindowServer-frontmost (kCPSNoWindows = 0x400).
+    gate.check()?;
     unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
 
     // Run action then restore — even if action fails.
@@ -476,6 +521,7 @@ pub fn with_menu_shortcut_activation(
 
     // Restore prior frontmost (windowID=0, options=0x400).
     if prev_ok {
+        gate.check()?;
         unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
     }
 

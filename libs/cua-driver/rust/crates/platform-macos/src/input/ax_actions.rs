@@ -1,10 +1,24 @@
 //! AX action dispatch — the preferred click/interaction path for indexed elements.
 
 use crate::ax::bindings::*;
+use crate::dispatch_gate::NativeDispatchGate;
 
 /// Perform an AX action on a cached element.
 pub fn perform_ax_action(element_ptr: usize, action: &str) -> anyhow::Result<()> {
+    perform_ax_action_guarded(
+        element_ptr,
+        action,
+        &NativeDispatchGate::default(),
+    )
+}
+
+pub(crate) fn perform_ax_action_guarded(
+    element_ptr: usize,
+    action: &str,
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
     let ax_action = map_action(action);
+    gate.check()?;
     let err = unsafe {
         perform_action(element_ptr as AXUIElementRef, ax_action)
     };
@@ -30,6 +44,14 @@ fn map_action(action: &str) -> &'static str {
 
 /// Set AXFocused=true on an element (for pre-focusing before key press).
 pub fn focus_element(element_ptr: usize) -> anyhow::Result<()> {
+    focus_element_guarded(element_ptr, &NativeDispatchGate::default())
+}
+
+pub(crate) fn focus_element_guarded(
+    element_ptr: usize,
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
+    gate.check()?;
     let err = unsafe {
         set_bool_attr_true(element_ptr as AXUIElementRef, "AXFocused")
     };
@@ -44,6 +66,15 @@ pub fn focus_element(element_ptr: usize) -> anyhow::Result<()> {
 
 /// Set the AXValue of an element (for dropdowns, text fields, etc.).
 pub fn set_ax_value(element_ptr: usize, value: &str) -> anyhow::Result<()> {
+    set_ax_value_guarded(element_ptr, value, &NativeDispatchGate::default())
+}
+
+pub(crate) fn set_ax_value_guarded(
+    element_ptr: usize,
+    value: &str,
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
+    gate.check()?;
     let err = unsafe {
         set_string_attr(element_ptr as AXUIElementRef, "AXValue", value)
     };

@@ -71,6 +71,7 @@ impl Tool for PressKeyTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let dispatch_gate = crate::dispatch_gate::NativeDispatchGate::for_args(&args);
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
         let key_raw = match args.require_str("key") { Ok(v) => v, Err(e) => return e };
         let mut modifiers: Vec<String> = args.str_array("modifiers");
@@ -157,6 +158,8 @@ impl Tool for PressKeyTool {
         // wildcard snapshot suppressor and the targeted FocusGuard lease.
         let prior_front = apps::frontmost_pid();
         let snapshot = WindowChangeDetector::snapshot(prior_front);
+        let focus_gate = dispatch_gate.clone();
+        let key_gate = dispatch_gate.clone();
 
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
@@ -167,7 +170,10 @@ impl Tool for PressKeyTool {
                 // side-effects are captured by the snapshot + lease.
                 if let Some(element_ptr) = pre_focus_ptr {
                     let _ = tokio::task::spawn_blocking(move || {
-                        crate::input::ax_actions::focus_element(element_ptr)
+                        crate::input::ax_actions::focus_element_guarded(
+                            element_ptr,
+                            &focus_gate,
+                        )
                     }).await;
                     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
                 }
@@ -180,15 +186,18 @@ impl Tool for PressKeyTool {
                     if fg && !px_focus {
                         if let Some(wid) = window_id {
                             if element_index.is_none() {
-                                crate::input::skylight::with_menu_shortcut_activation(pid as libc::pid_t, wid, || {
-                                    crate::input::keyboard::press_key_no_auth(pid, &key, &m)
+                                let action_gate = key_gate.clone();
+                                crate::input::skylight::with_menu_shortcut_activation_guarded(pid as libc::pid_t, wid, &key_gate, || {
+                                    crate::input::keyboard::press_key_no_auth_guarded(
+                                        pid, &key, &m, &action_gate,
+                                    )
                                 })?;
                                 return Ok(());
                             }
                         }
                     }
                     // background (default): auth-envelope post, no raise.
-                    crate::input::keyboard::press_key(pid, &key, &m)
+                    crate::input::keyboard::press_key_guarded(pid, &key, &m, &key_gate)
                 })
                 .await
             },

@@ -124,6 +124,7 @@ impl Tool for TypeTextTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let dispatch_gate = crate::dispatch_gate::NativeDispatchGate::for_args(&args);
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
         let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
         // Strip trailing agent-protocol closing tags — see
@@ -220,6 +221,7 @@ impl Tool for TypeTextTool {
         // Skip the AX path entirely so the caller never sees the
         // "success but nothing typed" symptom.
         let is_terminal_target = crate::terminal::is_terminal_pid(pid);
+        let gate = dispatch_gate.clone();
 
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
@@ -235,6 +237,7 @@ impl Tool for TypeTextTool {
                         is_terminal_target,
                         delivery_mode,
                         window_id,
+                        &gate,
                     )
                 })
                 .await
@@ -457,13 +460,14 @@ fn cgevent_type_verified(
     clear_first: bool,
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
     settle_ms: u64,
+    gate: &crate::dispatch_gate::NativeDispatchGate,
 ) -> anyhow::Result<bool> {
     // Focus the target element first so the keystrokes land in IT. Critical in
     // foreground mode: a freshly-fronted window's keyboard focus may be on the
     // search box or nowhere, so without this the text goes into the void (or the
     // wrong field). AXFocused is best-effort — harmless when unsupported.
     if let Some((ptr, _)) = element_ptr_and_idx {
-        let _ = crate::input::ax_actions::focus_element(ptr);
+        crate::input::ax_actions::focus_element_guarded(ptr, gate)?;
     }
     // First-keystroke settle (foreground rung only — caller passes `settle_ms > 0`).
     // After a window is fronted (with_foreground_assist) and the element focused,
@@ -481,12 +485,12 @@ fn cgevent_type_verified(
             // after activation even after their AX focus is visible. Prime
             // that channel with disposable text, then clear it before the
             // requested payload. Never do this for a nonempty field.
-            let _ = crate::input::keyboard::type_text_with_delay(pid, " ", delay_ms);
+            crate::input::keyboard::type_text_with_delay_guarded(pid, " ", delay_ms, gate)?;
         }
-        let _ = crate::input::keyboard::press_key(pid, "a", &["cmd"]);
-        let _ = crate::input::keyboard::press_key(pid, "delete", &[]);
+        crate::input::keyboard::press_key_guarded(pid, "a", &["cmd"], gate)?;
+        crate::input::keyboard::press_key_guarded(pid, "delete", &[], gate)?;
     }
-    crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
+    crate::input::keyboard::type_text_with_delay_guarded(pid, text, delay_ms, gate)?;
     let after = read_axvalue(pid, element_ptr_and_idx);
     Ok(verify_typed(before, after.as_deref(), text))
 }
@@ -510,6 +514,7 @@ fn type_text_blocking(
     is_terminal_target: bool,
     delivery_mode: super::DeliveryMode,
     window_id: Option<u32>,
+    gate: &crate::dispatch_gate::NativeDispatchGate,
 ) -> anyhow::Result<(String, &'static str, bool)> {
     // Original field value before ANY rung — drives both the read-back delta and
     // the clear-then-type idempotency decision.
@@ -531,6 +536,7 @@ fn type_text_blocking(
         let do_type = || cgevent_type_verified(
             pid, text, delay_ms, before.as_deref(), clear_first, element_ptr_and_idx,
             FOREGROUND_SETTLE_MS,
+            gate,
         );
         let (verified, fronted) = match window_id {
             Some(wid) => {
@@ -539,9 +545,10 @@ fn type_text_blocking(
                 // fronted (Ok(false) when the fronting SPIs are unavailable —
                 // the keystrokes still ran, just as background input).
                 let mut typed_verified = false;
-                let fronted = crate::input::skylight::with_foreground_assist(
+                let fronted = crate::input::skylight::with_foreground_assist_guarded(
                     pid as libc::pid_t,
                     wid,
+                    gate,
                     || {
                         typed_verified = do_type()?;
                         Ok(())
@@ -571,6 +578,7 @@ fn type_text_blocking(
         let verified = cgevent_type_verified(
             pid, text, delay_ms, before.as_deref(), /*clear_first=*/ false, element_ptr_and_idx,
             /*settle_ms=*/ 0,
+            gate,
         )?;
         return Ok((
             format!(" via CGEvent (terminal emulator, {delay_ms}ms delay)"),
@@ -587,6 +595,12 @@ fn type_text_blocking(
     if let Some((element, owns, idx_opt)) = ax_target {
         let role  = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
         let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
+        if let Err(error) = gate.check() {
+            if owns {
+                unsafe { CFRelease(element as _) };
+            }
+            return Err(error.into());
+        }
         let err = unsafe { set_string_attr(element, "AXSelectedText", text) };
         // Landed iff the API succeeded AND a read-back positively confirms the
         // intended `text` — it now contains `text`, or the field grew vs
@@ -617,6 +631,7 @@ fn type_text_blocking(
     let verified = cgevent_type_verified(
         pid, text, delay_ms, before.as_deref(), /*clear_first=*/ false, element_ptr_and_idx,
         /*settle_ms=*/ 0,
+        gate,
     )?;
     Ok((
         format!(" via CGEvent ({delay_ms}ms delay)"),
@@ -650,6 +665,7 @@ mod tests {
         let r = type_text_blocking(
             -1, "x", None, 0, /*is_terminal_target=*/ true,
             super::super::DeliveryMode::Background, None,
+            &crate::dispatch_gate::NativeDispatchGate::default(),
         );
         // We don't care whether r is Ok or Err — what matters is that
         // calling it with is_terminal_target=true is safe and never

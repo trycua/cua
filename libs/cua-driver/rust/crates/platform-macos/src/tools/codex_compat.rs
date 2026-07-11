@@ -34,6 +34,7 @@ use crate::ax::bindings::{
     AXUIElementSetAttributeValue, AXValueRef, _AXUIElementGetWindow, kAXErrorSuccess,
     kAXValueCFRangeType,
 };
+use crate::dispatch_gate::{DispatchGateError, NativeDispatchGate};
 use crate::session::{SessionLockEpoch, SessionLockError, SessionLockGuardian};
 
 const ANONYMOUS_SESSION: &str = "__codex_compat_connection__";
@@ -671,9 +672,17 @@ impl CompatState {
             Ok(epoch) => epoch,
             Err(error) => return error.into_result(),
         };
-        let app = match resolve_or_launch_app(app_ref, resolve_mode).await {
+        let _dispatch_registration =
+            crate::dispatch_gate::install(session, self.guardian.clone(), lock_epoch);
+        let dispatch_gate = NativeDispatchGate::for_session(session);
+        let app = match resolve_or_launch_app(app_ref, resolve_mode, &dispatch_gate).await {
             Ok(app) => app,
-            Err(error) => return error.into_result(),
+            Err(error) => {
+                if let Err(lock_error) = self.validate_lock_epoch(lock_epoch) {
+                    return lock_error.into_result();
+                }
+                return error.into_result();
+            }
         };
         if let Err(error) = self.validate_lock_epoch(lock_epoch) {
             return error.into_result();
@@ -839,6 +848,8 @@ impl CompatState {
             Ok(epoch) => epoch,
             Err(error) => return error.into_result(),
         };
+        let _dispatch_registration =
+            crate::dispatch_gate::install(&session, self.guardian.clone(), lock_epoch);
         if let Err(error) = validate_live_snapshot(&snapshot) {
             return error.into_result();
         }
@@ -1143,8 +1154,13 @@ impl CompatState {
                                     }
                                 )
                             })?;
-                        let error =
-                            unsafe { perform_action(element_ptr as AXUIElementRef, &actual) };
+                        let error = dispatch_if_epoch_current(
+                            &guardian,
+                            lock_epoch,
+                            || Ok(unsafe {
+                                perform_action(element_ptr as AXUIElementRef, &actual)
+                            }),
+                        )?;
                         if error != kAXErrorSuccess {
                             anyhow::bail!(
                                 "AXUIElementPerformAction({actual}) failed with error {error}"
@@ -1317,6 +1333,7 @@ impl CompatState {
                             prefix.as_deref(),
                             suffix.as_deref(),
                             &selection,
+                            || dispatch_if_epoch_current(&guardian, lock_epoch, || Ok(())),
                         )
                     })
                 })
@@ -1429,7 +1446,10 @@ async fn element_click_pixel_fallback(
                 return Ok(None);
             }
             if actions.iter().any(|action| action == "AXScrollToVisible") {
-                let _ = unsafe { perform_action(element, "AXScrollToVisible") };
+                dispatch_if_epoch_current(&guardian, lock_epoch, || {
+                    let _ = unsafe { perform_action(element, "AXScrollToVisible") };
+                    Ok(())
+                })?;
             }
             unsafe { element_screen_center(element) }
                 .map(Some)
@@ -1980,6 +2000,7 @@ fn xml_value_after_key<'a>(xml: &'a str, key: &str, tag: &str) -> Option<&'a str
 async fn resolve_or_launch_app(
     app_ref: &str,
     mode: AppResolveMode,
+    dispatch_gate: &NativeDispatchGate,
 ) -> Result<AppIdentity, CompatError> {
     let query = app_ref.to_owned();
     let apps = tokio::task::spawn_blocking(crate::apps::list_all_apps)
@@ -2013,13 +2034,17 @@ async fn resolve_or_launch_app(
         identity.name.clone()
     };
     let apple_event_bundle_id = identity.bundle_id.clone();
+    let dispatch_gate = dispatch_gate.clone();
     let pid = tokio::task::spawn_blocking(move || {
         let config = crate::apps::nsworkspace::OpenConfig {
             apple_event_bundle_id,
             ..Default::default()
         };
-        let app = crate::apps::nsworkspace::open_application(&launch_ref, &config)
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let app = guarded_app_launch(&dispatch_gate, || {
+            crate::apps::nsworkspace::open_application(&launch_ref, &config)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))
+        })
+        .map_err(|error| anyhow::anyhow!(error.message))?;
         Ok::<i32, anyhow::Error>(unsafe { app.processIdentifier() })
     })
     .await
@@ -2037,6 +2062,30 @@ async fn resolve_or_launch_app(
     })?;
     identity.pid = pid;
     Ok(identity)
+}
+
+fn guarded_app_launch<T>(
+    dispatch_gate: &NativeDispatchGate,
+    launch: impl FnOnce() -> anyhow::Result<T>,
+) -> Result<T, CompatError> {
+    dispatch_gate.dispatch(launch).map_err(|error| {
+        let message = error.to_string();
+        dispatch_gate_compat_error(error.downcast_ref::<DispatchGateError>(), &message)
+    })
+}
+
+fn dispatch_gate_compat_error(error: Option<&DispatchGateError>, message: &str) -> CompatError {
+    match error.copied() {
+        Some(DispatchGateError::ScreenLocked) => lock_guard_error(SessionLockError::Locked),
+        Some(DispatchGateError::EpochChanged) => {
+            lock_guard_error(SessionLockError::EpochChanged)
+        }
+        Some(DispatchGateError::SessionStateUnavailable) => CompatError::new(
+            "session_state_unavailable",
+            "Computer Use could not verify the current macOS login session. Refusing to mutate apps until an unlocked GUI session is available.",
+        ),
+        None => CompatError::new("app_launch_failed", message),
+    }
 }
 
 fn identity_and_launch_requirement(
@@ -2291,6 +2340,13 @@ fn dispatch_if_epoch_current<T>(
     epoch: SessionLockEpoch,
     dispatch: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
+    let Some(locked) = crate::session::current_screen_locked() else {
+        guardian.observe(true);
+        anyhow::bail!(
+            "Computer Use could not verify the current macOS login session"
+        );
+    };
+    guardian.observe(locked);
     guardian
         .validate(epoch)
         .map_err(|error| anyhow::anyhow!(lock_guard_error(error).message))?;
@@ -2652,6 +2708,7 @@ fn select_text_range(
     prefix: Option<&str>,
     suffix: Option<&str>,
     selection: &str,
+    before_mutation: impl Fn() -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     if text.is_empty() {
         anyhow::bail!("text must not be empty for select_text");
@@ -2689,6 +2746,7 @@ fn select_text_range(
                     continue;
                 }
                 let attr = CFString::new("AXSelectedTextRange");
+                before_mutation()?;
                 let error = AXUIElementSetAttributeValue(
                     current,
                     attr.as_concrete_TypeRef(),
@@ -2765,6 +2823,32 @@ fn find_text_match(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    #[test]
+    fn lock_before_guarded_launch_prevents_app_mutation() {
+        let guardian = SessionLockGuardian::for_test(false);
+        let epoch = guardian.begin().unwrap();
+        let locked = Arc::new(AtomicBool::new(true));
+        let probe_locked = locked.clone();
+        let _registration = crate::dispatch_gate::install_for_test(
+            "launch-lock",
+            guardian,
+            epoch,
+            move || Some(probe_locked.load(Ordering::SeqCst)),
+        );
+        let gate = NativeDispatchGate::for_session("launch-lock");
+        let launches = AtomicUsize::new(0);
+
+        let error = guarded_app_launch(&gate, || {
+            launches.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert_eq!(error.code, "screen_locked");
+        assert_eq!(launches.load(Ordering::SeqCst), 0);
+    }
 
     fn app_info(name: &str, bundle_id: &str, path: &str, pid: i32) -> crate::apps::AppInfo {
         crate::apps::AppInfo {

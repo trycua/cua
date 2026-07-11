@@ -40,6 +40,8 @@ pub mod video_sckit;
 pub mod pip;
 #[cfg(target_os = "macos")]
 pub mod session;
+#[cfg(target_os = "macos")]
+pub(crate) mod dispatch_gate;
 
 use cua_driver_core::tool::ToolRegistry;
 

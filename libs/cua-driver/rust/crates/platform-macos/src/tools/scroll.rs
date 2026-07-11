@@ -115,6 +115,7 @@ impl Tool for ScrollTool {
             Ok(v) => v,
             Err(e) => return e,
         };
+        let dispatch_gate = crate::dispatch_gate::NativeDispatchGate::for_args(&args);
         // delivery_mode: foreground briefly fronts the window before the
         // pixel-wheel dispatch (the explicit last resort for surfaces that drop
         // background CGEvents). Only the pixel-wheel path honors it; the
@@ -290,6 +291,7 @@ impl Tool for ScrollTool {
             // coordinates and window bounds are logical top-left points, so no
             // Retina scaling is needed here.
             let wid = window_id;
+            let gate = dispatch_gate.clone();
             tokio::task::spawn_blocking(move || {
                 // Web content can be present in AX while its frame is below
                 // the outer page viewport. Ask the accessibility hierarchy to
@@ -297,10 +299,14 @@ impl Tool for ScrollTool {
                 // otherwise the wheel is posted outside the rendered window
                 // and nested overflow regions never receive it.
                 unsafe {
-                    let _ = crate::ax::bindings::perform_action(
-                        element_ptr as AXUIElementRef,
-                        "AXScrollToVisible",
-                    );
+                    if gate.check().is_ok() {
+                        let _ = crate::ax::bindings::perform_action(
+                            element_ptr as AXUIElementRef,
+                            "AXScrollToVisible",
+                        );
+                    } else {
+                        return None;
+                    }
                 }
                 std::thread::sleep(std::time::Duration::from_millis(40));
                 let center = unsafe { element_screen_center(element_ptr as AXUIElementRef) };
@@ -415,14 +421,16 @@ impl Tool for ScrollTool {
             } = target;
             let amount_ticks = amount;
             let fg = delivery_mode.is_foreground() && wid.is_some();
+            let gate = dispatch_gate.clone();
             let result = focus_guard::with_focus_suppressed(
                 Some(pid),
                 prior_front,
                 "scroll.CGScrollWheel",
                 || async move {
                     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                        let action_gate = gate.clone();
                         let do_it = move || -> anyhow::Result<()> {
-                            crate::input::mouse::scroll_wheel_at_xy(
+                            crate::input::mouse::scroll_wheel_at_xy_guarded(
                                 pid,
                                 screen_x,
                                 screen_y,
@@ -431,15 +439,14 @@ impl Tool for ScrollTool {
                                 delta_y,
                                 delta_x,
                                 amount_ticks,
+                                &action_gate,
                             )
                         };
                         // Foreground rung: brief front → wheel → restore prior frontmost.
                         match (fg, wid) {
                             (true, Some(w)) => {
-                                crate::input::skylight::with_foreground_assist(
-                                    pid as libc::pid_t,
-                                    w,
-                                    do_it,
+                                crate::input::skylight::with_foreground_assist_guarded(
+                                    pid as libc::pid_t, w, &gate, do_it,
                                 )?;
                                 Ok(())
                             }
@@ -493,6 +500,8 @@ impl Tool for ScrollTool {
         // snapshot suppressor and the targeted FocusGuard lease.
         let prior_front = apps::frontmost_pid();
         let snapshot = WindowChangeDetector::snapshot(prior_front);
+        let focus_gate = dispatch_gate.clone();
+        let key_gate = dispatch_gate.clone();
 
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
@@ -503,15 +512,22 @@ impl Tool for ScrollTool {
                 // side-effects are captured by the snapshot + lease.
                 if let Some(element_ptr) = pre_focus_ptr {
                     let _ = tokio::task::spawn_blocking(move || {
-                        crate::input::ax_actions::focus_element(element_ptr)
-                    })
-                    .await;
+                        crate::input::ax_actions::focus_element_guarded(
+                            element_ptr,
+                            &focus_gate,
+                        )
+                    }).await;
                     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
                 }
 
                 tokio::task::spawn_blocking(move || {
                     for _ in 0..amount {
-                        if let Err(e) = crate::input::keyboard::press_key(pid, &key, &[]) {
+                        if let Err(e) = crate::input::keyboard::press_key_guarded(
+                            pid,
+                            &key,
+                            &[],
+                            &key_gate,
+                        ) {
                             return Err(e);
                         }
                         std::thread::sleep(std::time::Duration::from_millis(50));

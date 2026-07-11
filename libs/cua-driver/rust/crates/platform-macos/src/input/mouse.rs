@@ -17,6 +17,8 @@ use core_graphics::{
 };
 use foreign_types::ForeignType;
 
+use crate::dispatch_gate::NativeDispatchGate;
+
 /// Left-click at `(x, y)` screen coordinates, posted to `pid`.
 ///
 /// Window-local coordinates for backgrounded targets: if `window_local` is
@@ -29,7 +31,25 @@ pub fn click_at_xy(
     count: usize,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    click_at_xy_inner(pid, x, y, None, None, count, modifiers)
+    click_at_xy_guarded(
+        pid,
+        x,
+        y,
+        count,
+        modifiers,
+        &NativeDispatchGate::default(),
+    )
+}
+
+pub(crate) fn click_at_xy_guarded(
+    pid: i32,
+    x: f64,
+    y: f64,
+    count: usize,
+    modifiers: &[&str],
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
+    click_at_xy_inner(pid, x, y, None, None, count, modifiers, gate)
 }
 
 /// Screen-absolute click posted to the GLOBAL HID tap (`CGEventTapLocation::HID`),
@@ -43,6 +63,16 @@ pub fn click_at_xy(
 /// (it lands on whatever is visually on top at the point) — exactly the
 /// foreground, vision-driven model that complements the background contract.
 pub fn click_at_xy_desktop(x: f64, y: f64, count: usize, button: &str) -> anyhow::Result<()> {
+    click_at_xy_desktop_guarded(x, y, count, button, &NativeDispatchGate::default())
+}
+
+pub(crate) fn click_at_xy_desktop_guarded(
+    x: f64,
+    y: f64,
+    count: usize,
+    button: &str,
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
     use core_graphics::display::CGDisplay;
     use core_graphics::event::CGEventTapLocation;
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
@@ -70,19 +100,34 @@ pub fn click_at_xy_desktop(x: f64, y: f64, count: usize, button: &str) -> anyhow
     // cursor, and AppKit hit-tests some clicks against the actual cursor
     // position, so without the warp the down/up can miss the target. Desktop
     // scope is the foreground modality, so moving the visible cursor is expected.
+    gate.check()?;
     let _ = CGDisplay::warp_mouse_cursor_position(point);
     // Re-couple cursor + mouse-delta so the synthesized click hit-tests at the
     // warped point, not the pre-warp one.
+    gate.check()?;
     unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
     std::thread::sleep(std::time::Duration::from_millis(40));
     for _ in 0..count.max(1) {
         let down = CGEvent::new_mouse_event(source.clone(), down_ty, point, btn)
             .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(down) failed"))?;
-        down.post(CGEventTapLocation::HID);
-        std::thread::sleep(std::time::Duration::from_millis(20));
         let up = CGEvent::new_mouse_event(source.clone(), up_ty, point, btn)
             .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(up) failed"))?;
-        up.post(CGEventTapLocation::HID);
+        guarded_mouse_pair(
+            gate,
+            std::time::Duration::from_millis(20),
+            || {
+                down.post(CGEventTapLocation::HID);
+                Ok(())
+            },
+            || {
+                up.post(CGEventTapLocation::HID);
+                Ok(())
+            },
+            || {
+                up.post(CGEventTapLocation::HID);
+                Ok(())
+            },
+        )?;
     }
     Ok(())
 }
@@ -91,6 +136,48 @@ extern "C" {
     /// Reconnect the mouse-delta stream to the (just-warped) cursor position so a
     /// synthesized click hit-tests at the new location, not the pre-warp one.
     fn CGAssociateMouseAndMouseCursorPosition(connected: bool) -> i32;
+}
+
+fn guarded_mouse_pair(
+    gate: &NativeDispatchGate,
+    down_up_gap: std::time::Duration,
+    mut post_down: impl FnMut() -> anyhow::Result<()>,
+    mut post_up: impl FnMut() -> anyhow::Result<()>,
+    mut release_without_gate: impl FnMut() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    gate.check()?;
+    if let Err(error) = post_down() {
+        let _ = release_without_gate();
+        return Err(error);
+    }
+    std::thread::sleep(down_up_gap);
+    if let Err(error) = gate.check() {
+        if let Err(release_error) = release_without_gate() {
+            tracing::warn!(%release_error, "failed to release mouse after dispatch gate closed");
+        }
+        return Err(error.into());
+    }
+    if let Err(error) = post_up() {
+        let _ = release_without_gate();
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn post_while_mouse_pressed(
+    gate: &NativeDispatchGate,
+    post: impl FnOnce() -> anyhow::Result<()>,
+    release_without_gate: impl FnOnce(),
+) -> anyhow::Result<()> {
+    if let Err(error) = gate.check() {
+        release_without_gate();
+        return Err(error.into());
+    }
+    if let Err(error) = post() {
+        release_without_gate();
+        return Err(error);
+    }
+    Ok(())
 }
 
 /// Like `click_at_xy` but also stamps window-local `(wx, wy)` onto the event.
@@ -106,7 +193,40 @@ pub fn click_at_xy_with_window_local(
     count: usize,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    click_at_xy_inner(pid, x, y, Some((wx, wy)), Some(wid), count, modifiers)
+    click_at_xy_with_window_local_guarded(
+        pid,
+        x,
+        y,
+        wx,
+        wy,
+        wid,
+        count,
+        modifiers,
+        &NativeDispatchGate::default(),
+    )
+}
+
+pub(crate) fn click_at_xy_with_window_local_guarded(
+    pid: i32,
+    x: f64,
+    y: f64,
+    wx: f64,
+    wy: f64,
+    wid: u32,
+    count: usize,
+    modifiers: &[&str],
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
+    click_at_xy_inner(
+        pid,
+        x,
+        y,
+        Some((wx, wy)),
+        Some(wid),
+        count,
+        modifiers,
+        gate,
+    )
 }
 
 fn click_at_xy_inner(
@@ -117,6 +237,7 @@ fn click_at_xy_inner(
     wid: Option<u32>,
     count: usize,
     modifiers: &[&str],
+    gate: &NativeDispatchGate,
 ) -> anyhow::Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -138,7 +259,15 @@ fn click_at_xy_inner(
     // so an AppKit NSButton / NSView hit-tests the down at the right point
     // (Swift recipe Step 3). Without it the synthetic mouseDown on a
     // backgrounded AppKit control is silently ignored.
-    post_mouse_moved_primer(pid, &source, point, window_local, wid, click_group_id);
+    post_mouse_moved_primer_guarded(
+        pid,
+        &source,
+        point,
+        window_local,
+        wid,
+        click_group_id,
+        gate,
+    )?;
     std::thread::sleep(std::time::Duration::from_millis(12));
 
     for pair_index in 0..count {
@@ -155,22 +284,6 @@ fn click_at_xy_inner(
             down.set_flags(flags);
         }
 
-        post_mouse_event(
-            pid,
-            &down,
-            window_local,
-            wid,
-            click_group_id,
-            click_state,
-            0,
-            3,
-        );
-        // 28 ms down→up gap: an NSButton's mouseDown enters a modal tracking
-        // loop that polls for the matching mouseUp; too tight a gap can race the
-        // loop's first poll and the click is dropped. 16 ms was under that
-        // threshold for some controls.
-        std::thread::sleep(std::time::Duration::from_millis(28));
-
         let up = CGEvent::new_mouse_event(
             source.clone(),
             CGEventType::LeftMouseUp,
@@ -182,16 +295,49 @@ fn click_at_xy_inner(
             up.set_flags(flags);
         }
 
-        post_mouse_event(
-            pid,
-            &up,
-            window_local,
-            wid,
-            click_group_id,
-            click_state,
-            0,
-            3,
-        );
+        guarded_mouse_pair(
+            gate,
+            std::time::Duration::from_millis(28),
+            || {
+                post_mouse_event_guarded(
+                    pid,
+                    &down,
+                    window_local,
+                    wid,
+                    click_group_id,
+                    click_state,
+                    0,
+                    3,
+                    gate,
+                )
+            },
+            || {
+                post_mouse_event_guarded(
+                    pid,
+                    &up,
+                    window_local,
+                    wid,
+                    click_group_id,
+                    click_state,
+                    0,
+                    3,
+                    gate,
+                )
+            },
+            || {
+                post_mouse_event(
+                    pid,
+                    &up,
+                    window_local,
+                    wid,
+                    click_group_id,
+                    click_state,
+                    0,
+                    3,
+                );
+                Ok(())
+            },
+        )?;
 
         if count > 1 {
             std::thread::sleep(std::time::Duration::from_millis(80));
@@ -231,8 +377,42 @@ pub fn click_at_xy_chromium(
     count: usize,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
+    click_at_xy_chromium_guarded(
+        pid,
+        screen_x,
+        screen_y,
+        win_local_x,
+        win_local_y,
+        wid,
+        count,
+        modifiers,
+        &NativeDispatchGate::default(),
+    )
+}
+
+pub(crate) fn click_at_xy_chromium_guarded(
+    pid: i32,
+    screen_x: f64,
+    screen_y: f64,
+    win_local_x: f64,
+    win_local_y: f64,
+    wid: u32,
+    count: usize,
+    modifiers: &[&str],
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    // Chromium's first-mouse handling rejects a background click delivered to
+    // a non-key window. This SkyLight focus record keys the requested window
+    // without raising it or moving the user's cursor.
+    if crate::input::skylight::activate_without_raise_guarded(
+        pid as libc::pid_t,
+        wid,
+        gate,
+    )? {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let target = CGPoint::new(screen_x, screen_y);
@@ -280,6 +460,14 @@ pub fn click_at_xy_chromium(
         crate::input::skylight::post_to_pid(pid as libc::pid_t, ptr, false);
         event.post_to_pid(pid as libc::pid_t);
     };
+    let post_guarded = |event: &CGEvent| -> anyhow::Result<()> {
+        let ptr = event.as_ptr() as *mut std::ffi::c_void;
+        gate.check()?;
+        crate::input::skylight::post_to_pid(pid as libc::pid_t, ptr, false);
+        gate.check()?;
+        event.post_to_pid(pid as libc::pid_t);
+        Ok(())
+    };
 
     // Step 1: mouseMoved at target (phase=2, clickState=0).
     let move_event = CGEvent::new_mouse_event(
@@ -290,7 +478,7 @@ pub fn click_at_xy_chromium(
     )
     .map_err(|_| anyhow::anyhow!("mouseMoved event creation failed"))?;
     stamp(&move_event, win_local, 0, 2);
-    post(&move_event);
+    post_guarded(&move_event)?;
     std::thread::sleep(std::time::Duration::from_millis(15));
 
     // Step 2: off-screen primer click — opens Chromium user-activation gate
@@ -303,9 +491,6 @@ pub fn click_at_xy_chromium(
     )
     .map_err(|_| anyhow::anyhow!("primer down event creation failed"))?;
     stamp(&primer_down, off_local, 1, 1);
-    post(&primer_down);
-    std::thread::sleep(std::time::Duration::from_millis(1));
-
     let primer_up = CGEvent::new_mouse_event(
         source.clone(),
         CGEventType::LeftMouseUp,
@@ -314,7 +499,16 @@ pub fn click_at_xy_chromium(
     )
     .map_err(|_| anyhow::anyhow!("primer up event creation failed"))?;
     stamp(&primer_up, off_local, 1, 2);
-    post(&primer_up);
+    guarded_mouse_pair(
+        gate,
+        std::time::Duration::from_millis(1),
+        || post_guarded(&primer_down),
+        || post_guarded(&primer_up),
+        || {
+            post(&primer_up);
+            Ok(())
+        },
+    )?;
     // ≥1 frame so Chromium sees primer + target as separate gestures, not run-on.
     std::thread::sleep(std::time::Duration::from_millis(100));
 
@@ -331,9 +525,6 @@ pub fn click_at_xy_chromium(
         )
         .map_err(|_| anyhow::anyhow!("target down event creation failed"))?;
         stamp(&down, win_local, click_state, 3);
-        post(&down);
-        std::thread::sleep(std::time::Duration::from_millis(1));
-
         let up = CGEvent::new_mouse_event(
             source.clone(),
             CGEventType::LeftMouseUp,
@@ -342,7 +533,16 @@ pub fn click_at_xy_chromium(
         )
         .map_err(|_| anyhow::anyhow!("target up event creation failed"))?;
         stamp(&up, win_local, click_state, 3);
-        post(&up);
+        guarded_mouse_pair(
+            gate,
+            std::time::Duration::from_millis(1),
+            || post_guarded(&down),
+            || post_guarded(&up),
+            || {
+                post(&up);
+                Ok(())
+            },
+        )?;
 
         if pair_index < click_pairs {
             // ~80 ms between pairs — under the system double-click threshold,
@@ -377,6 +577,41 @@ pub fn drag_at_xy(
     modifiers: &[&str],
     button: DragButton,
     foreground_release: bool,
+) -> anyhow::Result<()> {
+    drag_at_xy_guarded(
+        pid,
+        from_x,
+        from_y,
+        to_x,
+        to_y,
+        from_local,
+        to_local,
+        wid,
+        duration_ms,
+        steps,
+        modifiers,
+        button,
+        foreground_release,
+        &NativeDispatchGate::default(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn drag_at_xy_guarded(
+    pid: i32,
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+    from_local: Option<(f64, f64)>,
+    to_local: Option<(f64, f64)>,
+    wid: Option<u32>,
+    duration_ms: u64,
+    steps: usize,
+    modifiers: &[&str],
+    button: DragButton,
+    foreground_release: bool,
+    gate: &NativeDispatchGate,
 ) -> anyhow::Result<()> {
     use core_graphics::event::CGEventTapLocation;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -426,6 +661,21 @@ pub fn drag_at_xy(
         duration_ms
     };
 
+    // Build the release first so any gate failure after mouseDown can safely
+    // terminate pointer capture without authorizing another action event.
+    let to_pt = CGPoint::new(to_x, to_y);
+    let up = CGEvent::new_mouse_event(source.clone(), up_type, to_pt, cg_button)
+        .map_err(|_| anyhow::anyhow!("drag mouseUp failed"))?;
+    if flags != CGEventFlags::CGEventFlagNull {
+        up.set_flags(flags);
+    }
+    let release_without_gate = || {
+        post_mouse_event(pid, &up, to_local, wid, click_group_id, 1, button_number, 0);
+        if foreground_release {
+            up.post(CGEventTapLocation::HID);
+        }
+    };
+
     // MouseDown at start.
     let from_pt = CGPoint::new(from_x, from_y);
     let down = CGEvent::new_mouse_event(source.clone(), down_type, from_pt, cg_button)
@@ -433,7 +683,8 @@ pub fn drag_at_xy(
     if flags != CGEventFlags::CGEventFlagNull {
         down.set_flags(flags);
     }
-    post_mouse_event(
+    gate.check()?;
+    if let Err(error) = post_mouse_event_guarded(
         pid,
         &down,
         from_local,
@@ -442,7 +693,11 @@ pub fn drag_at_xy(
         1,
         button_number,
         0,
-    );
+        gate,
+    ) {
+        release_without_gate();
+        return Err(error);
+    }
     std::thread::sleep(std::time::Duration::from_millis(16));
 
     // Interpolated drag steps.
@@ -459,7 +714,23 @@ pub fn drag_at_xy(
         if flags != CGEventFlags::CGEventFlagNull {
             drag.set_flags(flags);
         }
-        post_mouse_event(pid, &drag, il, wid, click_group_id, 1, button_number, 0);
+        post_while_mouse_pressed(
+            gate,
+            || {
+                post_mouse_event_guarded(
+                    pid,
+                    &drag,
+                    il,
+                    wid,
+                    click_group_id,
+                    1,
+                    button_number,
+                    0,
+                    gate,
+                )
+            },
+            || release_without_gate(),
+        )?;
         if step_delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
         }
@@ -469,17 +740,28 @@ pub fn drag_at_xy(
     // Give Chromium one run-loop turn to process the final dragged event at
     // the drop point before releasing pointer capture.
     std::thread::sleep(std::time::Duration::from_millis(50));
-    let to_pt = CGPoint::new(to_x, to_y);
-    let up = CGEvent::new_mouse_event(source.clone(), up_type, to_pt, cg_button)
-        .map_err(|_| anyhow::anyhow!("drag mouseUp failed"))?;
-    if flags != CGEventFlags::CGEventFlagNull {
-        up.set_flags(flags);
-    }
-    post_mouse_event(pid, &up, to_local, wid, click_group_id, 1, button_number, 0);
+    post_while_mouse_pressed(
+        gate,
+        || {
+            post_mouse_event_guarded(
+                pid,
+                &up,
+                to_local,
+                wid,
+                click_group_id,
+                1,
+                button_number,
+                0,
+                gate,
+            )
+        },
+        || release_without_gate(),
+    )?;
     if foreground_release {
         // A frontmost Chromium surface can consume PID-routed down/move
         // events yet filter the synthetic release. Re-post only the release
         // through the HID tap while the foreground assist still holds focus.
+        gate.check()?;
         up.post(CGEventTapLocation::HID);
     }
     // Chromium may process the final pointerup on the next run-loop turn. In
@@ -506,6 +788,31 @@ pub fn drag_at_xy_foreground(
     steps: usize,
     modifiers: &[&str],
     button: DragButton,
+) -> anyhow::Result<()> {
+    drag_at_xy_foreground_guarded(
+        from_x,
+        from_y,
+        to_x,
+        to_y,
+        duration_ms,
+        steps,
+        modifiers,
+        button,
+        &NativeDispatchGate::default(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn drag_at_xy_foreground_guarded(
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+    duration_ms: u64,
+    steps: usize,
+    modifiers: &[&str],
+    button: DragButton,
+    gate: &NativeDispatchGate,
 ) -> anyhow::Result<()> {
     use core_graphics::display::CGDisplay;
     use core_graphics::event::CGEventTapLocation;
@@ -545,7 +852,9 @@ pub fn drag_at_xy_foreground(
     // Keep WindowServer's hardware cursor and event stream coupled. AppKit
     // hit-tests some pointer-capture surfaces against the actual cursor even
     // when the HID event carries an explicit location.
+    gate.check()?;
     let _ = CGDisplay::warp_mouse_cursor_position(CGPoint::new(from_x, from_y));
+    gate.check()?;
     unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
     std::thread::sleep(std::time::Duration::from_millis(40));
 
@@ -556,9 +865,22 @@ pub fn drag_at_xy_foreground(
         CGPoint::new(from_x, from_y),
         cg_button,
     ) {
+        gate.check()?;
         post(&move_event);
     }
     std::thread::sleep(std::time::Duration::from_millis(30));
+
+    let up = CGEvent::new_mouse_event(
+        source.clone(),
+        up_type,
+        CGPoint::new(to_x, to_y),
+        cg_button,
+    )
+    .map_err(|_| anyhow::anyhow!("foreground drag mouseUp failed"))?;
+    if flags != CGEventFlags::CGEventFlagNull {
+        up.set_flags(flags);
+    }
+    up.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, 1);
 
     let down = CGEvent::new_mouse_event(
         source.clone(),
@@ -571,35 +893,49 @@ pub fn drag_at_xy_foreground(
         down.set_flags(flags);
     }
     down.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, 1);
+    gate.check()?;
     down.post(CGEventTapLocation::HID);
     std::thread::sleep(std::time::Duration::from_millis(16));
 
     for i in 1..=steps {
         let t = i as f64 / steps as f64;
-        let event = CGEvent::new_mouse_event(
+        let event = match CGEvent::new_mouse_event(
             source.clone(),
             dragged_type,
             CGPoint::new(from_x + (to_x - from_x) * t, from_y + (to_y - from_y) * t),
             cg_button,
-        )
-        .map_err(|_| anyhow::anyhow!("foreground drag mouseDragged failed"))?;
+        ) {
+            Ok(event) => event,
+            Err(_) => {
+                post(&up);
+                anyhow::bail!("foreground drag mouseDragged failed");
+            }
+        };
         if flags != CGEventFlags::CGEventFlagNull {
             event.set_flags(flags);
         }
         event.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, 1);
-        post(&event);
+        post_while_mouse_pressed(
+            gate,
+            || {
+                post(&event);
+                Ok(())
+            },
+            || post(&up),
+        )?;
         if step_delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
         }
     }
 
-    let up = CGEvent::new_mouse_event(source, up_type, CGPoint::new(to_x, to_y), cg_button)
-        .map_err(|_| anyhow::anyhow!("foreground drag mouseUp failed"))?;
-    if flags != CGEventFlags::CGEventFlagNull {
-        up.set_flags(flags);
-    }
-    up.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, 1);
-    post(&up);
+    post_while_mouse_pressed(
+        gate,
+        || {
+            post(&up);
+            Ok(())
+        },
+        || post(&up),
+    )?;
     // The foreground wrapper restores the previous app immediately after this
     // function returns. Let the target's run loop consume the queued HID
     // gesture, including pointer-capture release, before that restore happens.
@@ -622,7 +958,23 @@ pub enum DragButton {
 /// left- and right-click primitives use. Window-local stamping mirrors
 /// `right_click_at_xy_with_window_local`.
 pub fn middle_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow::Result<()> {
-    middle_click_at_xy_inner(pid, x, y, None, modifiers)
+    middle_click_at_xy_guarded(
+        pid,
+        x,
+        y,
+        modifiers,
+        &NativeDispatchGate::default(),
+    )
+}
+
+pub(crate) fn middle_click_at_xy_guarded(
+    pid: i32,
+    x: f64,
+    y: f64,
+    modifiers: &[&str],
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
+    middle_click_at_xy_inner(pid, x, y, None, modifiers, gate)
 }
 
 /// Like `middle_click_at_xy` but stamps the window-local `(wx, wy)` point.
@@ -634,7 +986,27 @@ pub fn middle_click_at_xy_with_window_local(
     wy: f64,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    middle_click_at_xy_inner(pid, x, y, Some((wx, wy)), modifiers)
+    middle_click_at_xy_with_window_local_guarded(
+        pid,
+        x,
+        y,
+        wx,
+        wy,
+        modifiers,
+        &NativeDispatchGate::default(),
+    )
+}
+
+pub(crate) fn middle_click_at_xy_with_window_local_guarded(
+    pid: i32,
+    x: f64,
+    y: f64,
+    wx: f64,
+    wy: f64,
+    modifiers: &[&str],
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
+    middle_click_at_xy_inner(pid, x, y, Some((wx, wy)), modifiers, gate)
 }
 
 fn middle_click_at_xy_inner(
@@ -643,6 +1015,7 @@ fn middle_click_at_xy_inner(
     y: f64,
     window_local: Option<(f64, f64)>,
     modifiers: &[&str],
+    gate: &NativeDispatchGate,
 ) -> anyhow::Result<()> {
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
@@ -659,9 +1032,6 @@ fn middle_click_at_xy_inner(
     if flags != CGEventFlags::CGEventFlagNull {
         down.set_flags(flags);
     }
-    post_mouse_event(pid, &down, window_local, None, None, 1, 2, 3);
-    std::thread::sleep(std::time::Duration::from_millis(16));
-
     let up = CGEvent::new_mouse_event(
         source,
         CGEventType::OtherMouseUp,
@@ -672,14 +1042,37 @@ fn middle_click_at_xy_inner(
     if flags != CGEventFlags::CGEventFlagNull {
         up.set_flags(flags);
     }
-    post_mouse_event(pid, &up, window_local, None, None, 1, 2, 3);
-
-    Ok(())
+    guarded_mouse_pair(
+        gate,
+        std::time::Duration::from_millis(16),
+        || post_mouse_event_guarded(pid, &down, window_local, None, None, 1, 2, 3, gate),
+        || post_mouse_event_guarded(pid, &up, window_local, None, None, 1, 2, 3, gate),
+        || {
+            post_mouse_event(pid, &up, window_local, None, None, 1, 2, 3);
+            Ok(())
+        },
+    )
 }
 
 /// Right-click at `(x, y)` with optional modifier keys (no window routing).
 pub fn right_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow::Result<()> {
-    right_click_at_xy_inner(pid, x, y, None, None, modifiers)
+    right_click_at_xy_guarded(
+        pid,
+        x,
+        y,
+        modifiers,
+        &NativeDispatchGate::default(),
+    )
+}
+
+pub(crate) fn right_click_at_xy_guarded(
+    pid: i32,
+    x: f64,
+    y: f64,
+    modifiers: &[&str],
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
+    right_click_at_xy_inner(pid, x, y, None, None, modifiers, gate)
 }
 
 /// Like `right_click_at_xy` but stamps `CGEventSetWindowLocation` with the
@@ -700,7 +1093,29 @@ pub fn right_click_at_xy_with_window_local(
     wid: u32,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    right_click_at_xy_inner(pid, x, y, Some((wx, wy)), Some(wid), modifiers)
+    right_click_at_xy_with_window_local_guarded(
+        pid,
+        x,
+        y,
+        wx,
+        wy,
+        wid,
+        modifiers,
+        &NativeDispatchGate::default(),
+    )
+}
+
+pub(crate) fn right_click_at_xy_with_window_local_guarded(
+    pid: i32,
+    x: f64,
+    y: f64,
+    wx: f64,
+    wy: f64,
+    wid: u32,
+    modifiers: &[&str],
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
+    right_click_at_xy_inner(pid, x, y, Some((wx, wy)), Some(wid), modifiers, gate)
 }
 
 fn right_click_at_xy_inner(
@@ -710,6 +1125,7 @@ fn right_click_at_xy_inner(
     window_local: Option<(f64, f64)>,
     wid: Option<u32>,
     modifiers: &[&str],
+    gate: &NativeDispatchGate,
 ) -> anyhow::Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -727,6 +1143,7 @@ fn right_click_at_xy_inner(
 
     // Prime cursor-tracking state at the target so AppKit hit-tests the
     // right-down at the right NSView (same rationale as the left path).
+    gate.check()?;
     post_mouse_moved_primer(pid, &source, point, window_local, wid, click_group_id);
     std::thread::sleep(std::time::Duration::from_millis(12));
 
@@ -742,9 +1159,6 @@ fn right_click_at_xy_inner(
     }
     // button_number = 1 (right). Stamping 0 here routes the event as a left
     // button-number on the receiving side even though the type is rightMouseDown.
-    post_mouse_event(pid, &down, window_local, wid, click_group_id, 1, 1, 3);
-    std::thread::sleep(std::time::Duration::from_millis(28));
-
     let up = CGEvent::new_mouse_event(
         source,
         CGEventType::RightMouseUp,
@@ -755,9 +1169,16 @@ fn right_click_at_xy_inner(
     if flags != CGEventFlags::CGEventFlagNull {
         up.set_flags(flags);
     }
-    post_mouse_event(pid, &up, window_local, wid, click_group_id, 1, 1, 3);
-
-    Ok(())
+    guarded_mouse_pair(
+        gate,
+        std::time::Duration::from_millis(28),
+        || post_mouse_event_guarded(pid, &down, window_local, wid, click_group_id, 1, 1, 3, gate),
+        || post_mouse_event_guarded(pid, &up, window_local, wid, click_group_id, 1, 1, 3, gate),
+        || {
+            post_mouse_event(pid, &up, window_local, wid, click_group_id, 1, 1, 3);
+            Ok(())
+        },
+    )
 }
 
 /// Post a mouse event to `pid`.
@@ -794,6 +1215,62 @@ fn post_mouse_event(
     button_number: i64,
     subtype: i64,
 ) {
+    prepare_mouse_event(
+        pid,
+        event,
+        window_local,
+        wid,
+        click_group_id,
+        click_state,
+        button_number,
+        subtype,
+    );
+    let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
+
+    crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
+    event.post_to_pid(pid as libc::pid_t);
+}
+
+fn post_mouse_event_guarded(
+    pid: i32,
+    event: &CGEvent,
+    window_local: Option<(f64, f64)>,
+    wid: Option<u32>,
+    click_group_id: Option<i64>,
+    click_state: i64,
+    button_number: i64,
+    subtype: i64,
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
+    prepare_mouse_event(
+        pid,
+        event,
+        window_local,
+        wid,
+        click_group_id,
+        click_state,
+        button_number,
+        subtype,
+    );
+    let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
+
+    gate.check()?;
+    crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
+    gate.check()?;
+    event.post_to_pid(pid as libc::pid_t);
+    Ok(())
+}
+
+fn prepare_mouse_event(
+    pid: i32,
+    event: &CGEvent,
+    window_local: Option<(f64, f64)>,
+    wid: Option<u32>,
+    click_group_id: Option<i64>,
+    click_state: i64,
+    button_number: i64,
+    subtype: i64,
+) {
     let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
 
     // Stamp window-local point for backgrounded window targeting.
@@ -819,13 +1296,6 @@ fn post_mouse_event(
     // Always stamp f40 = target pid (Chromium synthetic-event filter).
     crate::input::skylight::set_integer_field(event_ptr, 40, pid as i64);
 
-    // SkyLight path: activity-monitor tickle → reaches Catalyst/Chromium.
-    // Mouse events skip the auth-message envelope (Swift: attachAuthMessage: false).
-    crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
-
-    // Public path: delivers to AppKit targets where SkyLight mouse drops.
-    // Belt+suspenders — both fire unconditionally (matches Swift `postBoth`).
-    event.post_to_pid(pid as libc::pid_t);
 }
 
 /// Post a stamped `mouseMoved` to `pid` at `point` before a down/up pair.
@@ -855,6 +1325,36 @@ fn post_mouse_moved_primer(
     ) {
         post_mouse_event(pid, &mv, window_local, wid, click_group_id, 0, 0, 3);
     }
+}
+
+fn post_mouse_moved_primer_guarded(
+    pid: i32,
+    source: &CGEventSource,
+    point: CGPoint,
+    window_local: Option<(f64, f64)>,
+    wid: Option<u32>,
+    click_group_id: Option<i64>,
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
+    if let Ok(mv) = CGEvent::new_mouse_event(
+        source.clone(),
+        CGEventType::MouseMoved,
+        point,
+        CGMouseButton::Left,
+    ) {
+        post_mouse_event_guarded(
+            pid,
+            &mv,
+            window_local,
+            wid,
+            click_group_id,
+            0,
+            0,
+            3,
+            gate,
+        )?;
+    }
+    Ok(())
 }
 
 /// Synthesize a targeted mouse-wheel scroll at `(screen_x, screen_y)`,
@@ -897,6 +1397,30 @@ pub fn scroll_wheel_at_xy(
     delta_x_per_tick: i32,
     ticks: usize,
 ) -> anyhow::Result<()> {
+    scroll_wheel_at_xy_guarded(
+        pid,
+        screen_x,
+        screen_y,
+        window_local,
+        wid,
+        delta_y_per_tick,
+        delta_x_per_tick,
+        ticks,
+        &NativeDispatchGate::default(),
+    )
+}
+
+pub(crate) fn scroll_wheel_at_xy_guarded(
+    pid: i32,
+    screen_x: f64,
+    screen_y: f64,
+    window_local: Option<(f64, f64)>,
+    wid: Option<u32>,
+    delta_y_per_tick: i32,
+    delta_x_per_tick: i32,
+    ticks: usize,
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
     use core_graphics::event::ScrollEventUnit;
 
     // Prime AppKit/WebKit's tracking state at the target before the wheel
@@ -905,7 +1429,7 @@ pub fn scroll_wheel_at_xy(
     // the event is successfully posted to the target pid.
     let primer_source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-    post_mouse_moved_primer(
+    post_mouse_moved_primer_guarded(
         pid,
         &primer_source,
         CGPoint::new(screen_x, screen_y),
@@ -917,7 +1441,8 @@ pub fn scroll_wheel_at_xy(
                 .unwrap_or_default()
                 .subsec_nanos() as i64,
         ),
-    );
+        gate,
+    )?;
     std::thread::sleep(std::time::Duration::from_millis(12));
 
     for _ in 0..ticks.max(1) {
@@ -963,7 +1488,9 @@ pub fn scroll_wheel_at_xy(
 
         // Belt+suspenders post: SkyLight reaches backgrounded Chromium/Catalyst;
         // the public path lands on AppKit/WKWebView. Mouse-class → no auth envelope.
+        gate.check()?;
         crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
+        gate.check()?;
         event.post_to_pid(pid as libc::pid_t);
 
         std::thread::sleep(std::time::Duration::from_millis(30));
@@ -993,4 +1520,46 @@ fn parse_modifier_flags(modifiers: &[&str]) -> CGEventFlags {
         }
     }
     flags
+}
+
+#[cfg(test)]
+mod tests {
+    use super::post_while_mouse_pressed;
+    use crate::dispatch_gate::{NativeDispatchGate, install_for_test};
+    use crate::session::SessionLockGuardian;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
+
+    #[test]
+    fn lock_mid_drag_skips_next_move_and_releases_button() {
+        let guardian = SessionLockGuardian::for_test(false);
+        let epoch = guardian.begin().unwrap();
+        let locked = Arc::new(AtomicBool::new(false));
+        let probe_locked = locked.clone();
+        let _registration = install_for_test("mouse-mid-drag", guardian, epoch, move || {
+            Some(probe_locked.load(Ordering::SeqCst))
+        });
+        let gate = NativeDispatchGate::for_session("mouse-mid-drag");
+        let moves = AtomicUsize::new(0);
+        let releases = AtomicUsize::new(0);
+
+        locked.store(true, Ordering::SeqCst);
+        let error = post_while_mouse_pressed(
+            &gate,
+            || {
+                moves.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+            || {
+                releases.fetch_add(1, Ordering::SeqCst);
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("screen is locked"));
+        assert_eq!(moves.load(Ordering::SeqCst), 0);
+        assert_eq!(releases.load(Ordering::SeqCst), 1);
+    }
 }

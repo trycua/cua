@@ -11,29 +11,56 @@ use core_graphics::{
 };
 use foreign_types::ForeignType;
 
+use crate::dispatch_gate::NativeDispatchGate;
+
 /// Press and release a single key, delivered to `pid` without stealing focus.
 pub fn press_key(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+    press_key_guarded(pid, key, modifiers, &NativeDispatchGate::default())
+}
+
+/// Press and release a key while revalidating the compatibility session at
+/// each event post. A rejected key-up still emits one release event so a lock
+/// edge cannot leave a modifier or key held in the target process.
+pub(crate) fn press_key_guarded(
+    pid: i32,
+    key: &str,
+    modifiers: &[&str],
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
     // Handle "+" / "plus" → Shift+= (US keyboard layout).
     if key == "+" || key.to_lowercase() == "plus" {
         let flags = modifier_flags(&["shift"]);
         let eq_code = key_name_to_code("=")?;
-        post_key(pid, eq_code, true,  modifier_flags(modifiers) | flags)?;
-        std::thread::sleep(std::time::Duration::from_millis(8));
-        post_key(pid, eq_code, false, modifier_flags(modifiers) | flags)?;
-        return Ok(());
+        let flags = modifier_flags(modifiers) | flags;
+        return guarded_key_pair(
+            gate,
+            || post_key_guarded(pid, eq_code, true, flags, gate),
+            || post_key_guarded(pid, eq_code, false, flags, gate),
+            || post_key(pid, eq_code, false, flags),
+        );
     }
 
     let key_code = key_name_to_code(key)?;
     let flags = modifier_flags(modifiers);
 
-    post_key(pid, key_code, true, flags)?;
-    std::thread::sleep(std::time::Duration::from_millis(8));
-    post_key(pid, key_code, false, flags)?;
-    Ok(())
+    guarded_key_pair(
+        gate,
+        || post_key_guarded(pid, key_code, true, flags, gate),
+        || post_key_guarded(pid, key_code, false, flags, gate),
+        || post_key(pid, key_code, false, flags),
+    )
 }
 
 /// Type a string character-by-character to `pid`.
 pub fn type_text(pid: i32, text: &str) -> anyhow::Result<()> {
+    type_text_guarded(pid, text, &NativeDispatchGate::default())
+}
+
+pub(crate) fn type_text_guarded(
+    pid: i32,
+    text: &str,
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
 
@@ -46,14 +73,23 @@ pub fn type_text(pid: i32, text: &str) -> anyhow::Result<()> {
         // state; without this, uppercase chars (e.g. 'E') are seen as Shift+e
         // and the modifier leaks into the next character (Swift fix: event.flags = []).
         down.set_flags(CGEventFlags::CGEventFlagNull);
-        post_keyboard_event(pid, &down);
-        std::thread::sleep(std::time::Duration::from_millis(8));
-
         let up = CGEvent::new_keyboard_event(source.clone(), 0, false)
             .map_err(|_| anyhow::anyhow!("CGEvent keyboard up failed"))?;
         up.set_string(&ch_str);
         up.set_flags(CGEventFlags::CGEventFlagNull);
-        post_keyboard_event(pid, &up);
+        guarded_key_pair(
+            gate,
+            || {
+                post_keyboard_event_guarded(pid, &down, gate)
+            },
+            || {
+                post_keyboard_event_guarded(pid, &up, gate)
+            },
+            || {
+                post_keyboard_event(pid, &up);
+                Ok(())
+            },
+        )?;
         std::thread::sleep(std::time::Duration::from_millis(8));
     }
     Ok(())
@@ -62,6 +98,20 @@ pub fn type_text(pid: i32, text: &str) -> anyhow::Result<()> {
 /// Type a string character-by-character with an extra `inter_char_delay_ms`
 /// pause after each character (on top of the internal 8 ms down/up gap).
 pub fn type_text_with_delay(pid: i32, text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
+    type_text_with_delay_guarded(
+        pid,
+        text,
+        inter_char_delay_ms,
+        &NativeDispatchGate::default(),
+    )
+}
+
+pub(crate) fn type_text_with_delay_guarded(
+    pid: i32,
+    text: &str,
+    inter_char_delay_ms: u64,
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
 
@@ -71,14 +121,23 @@ pub fn type_text_with_delay(pid: i32, text: &str, inter_char_delay_ms: u64) -> a
             .map_err(|_| anyhow::anyhow!("CGEvent keyboard down failed"))?;
         down.set_string(&ch_str);
         down.set_flags(CGEventFlags::CGEventFlagNull);
-        post_keyboard_event(pid, &down);
-        std::thread::sleep(std::time::Duration::from_millis(8));
-
         let up = CGEvent::new_keyboard_event(source.clone(), 0, false)
             .map_err(|_| anyhow::anyhow!("CGEvent keyboard up failed"))?;
         up.set_string(&ch_str);
         up.set_flags(CGEventFlags::CGEventFlagNull);
-        post_keyboard_event(pid, &up);
+        guarded_key_pair(
+            gate,
+            || {
+                post_keyboard_event_guarded(pid, &down, gate)
+            },
+            || {
+                post_keyboard_event_guarded(pid, &up, gate)
+            },
+            || {
+                post_keyboard_event(pid, &up);
+                Ok(())
+            },
+        )?;
 
         // Additional inter-character delay on top of the 8 ms internal gap.
         if inter_char_delay_ms > 0 {
@@ -102,22 +161,69 @@ pub fn hotkey(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
 /// sees those events. Without the envelope the path goes through IOHIDPostEvent
 /// so NSApplication.sendEvent: dispatches NSMenu key equivalents.
 pub fn hotkey_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+    hotkey_no_auth_guarded(pid, key, modifiers, &NativeDispatchGate::default())
+}
+
+pub(crate) fn hotkey_no_auth_guarded(
+    pid: i32,
+    key: &str,
+    modifiers: &[&str],
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
     let key_code = key_name_to_code(key)?;
     let flags = modifier_flags(modifiers);
-    post_key_no_auth(pid, key_code, true, flags)?;
-    std::thread::sleep(std::time::Duration::from_millis(8));
-    post_key_no_auth(pid, key_code, false, flags)?;
-    Ok(())
+    guarded_key_pair(
+        gate,
+        || post_key_no_auth_guarded(pid, key_code, true, flags, gate),
+        || post_key_no_auth_guarded(pid, key_code, false, flags, gate),
+        || post_key_no_auth(pid, key_code, false, flags),
+    )
 }
 
 /// Press and release a single key to `pid` WITHOUT the auth-message envelope.
 /// Works for single keys as well as combinations (same as hotkey_no_auth for single key).
 pub fn press_key_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+    press_key_no_auth_guarded(pid, key, modifiers, &NativeDispatchGate::default())
+}
+
+pub(crate) fn press_key_no_auth_guarded(
+    pid: i32,
+    key: &str,
+    modifiers: &[&str],
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
     let key_code = key_name_to_code(key)?;
     let flags = modifier_flags(modifiers);
-    post_key_no_auth(pid, key_code, true, flags)?;
+    guarded_key_pair(
+        gate,
+        || post_key_no_auth_guarded(pid, key_code, true, flags, gate),
+        || post_key_no_auth_guarded(pid, key_code, false, flags, gate),
+        || post_key_no_auth(pid, key_code, false, flags),
+    )
+}
+
+fn guarded_key_pair(
+    gate: &NativeDispatchGate,
+    mut post_down: impl FnMut() -> anyhow::Result<()>,
+    mut post_up: impl FnMut() -> anyhow::Result<()>,
+    mut release_without_gate: impl FnMut() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    gate.check()?;
+    if let Err(error) = post_down() {
+        let _ = release_without_gate();
+        return Err(error);
+    }
     std::thread::sleep(std::time::Duration::from_millis(8));
-    post_key_no_auth(pid, key_code, false, flags)?;
+    if let Err(error) = gate.check() {
+        if let Err(release_error) = release_without_gate() {
+            tracing::warn!(%release_error, "failed to release key after dispatch gate closed");
+        }
+        return Err(error.into());
+    }
+    if let Err(error) = post_up() {
+        let _ = release_without_gate();
+        return Err(error);
+    }
     Ok(())
 }
 
@@ -129,6 +235,20 @@ fn post_keyboard_event(pid: i32, event: &CGEvent) {
     if !crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, true) {
         event.post_to_pid(pid as libc::pid_t);
     }
+}
+
+fn post_keyboard_event_guarded(
+    pid: i32,
+    event: &CGEvent,
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
+    let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
+    gate.check()?;
+    if !crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, true) {
+        gate.check()?;
+        event.post_to_pid(pid as libc::pid_t);
+    }
+    Ok(())
 }
 
 fn post_key(pid: i32, key_code: u16, key_down: bool, flags: CGEventFlags) -> anyhow::Result<()> {
@@ -143,6 +263,23 @@ fn post_key(pid: i32, key_code: u16, key_down: bool, flags: CGEventFlags) -> any
     Ok(())
 }
 
+fn post_key_guarded(
+    pid: i32,
+    key_code: u16,
+    key_down: bool,
+    flags: CGEventFlags,
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    let event = CGEvent::new_keyboard_event(source, key_code, key_down)
+        .map_err(|_| anyhow::anyhow!("CGEvent::new_keyboard_event failed"))?;
+    if flags != CGEventFlags::CGEventFlagNull {
+        event.set_flags(flags);
+    }
+    post_keyboard_event_guarded(pid, &event, gate)
+}
+
 fn post_key_no_auth(pid: i32, key_code: u16, key_down: bool, flags: CGEventFlags) -> anyhow::Result<()> {
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
@@ -154,6 +291,29 @@ fn post_key_no_auth(pid: i32, key_code: u16, key_down: bool, flags: CGEventFlags
     let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
     // attach_auth_message = false → IOHIDPostEvent path → NSMenu fires
     if !crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false) {
+        event.post_to_pid(pid as libc::pid_t);
+    }
+    Ok(())
+}
+
+fn post_key_no_auth_guarded(
+    pid: i32,
+    key_code: u16,
+    key_down: bool,
+    flags: CGEventFlags,
+    gate: &NativeDispatchGate,
+) -> anyhow::Result<()> {
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    let event = CGEvent::new_keyboard_event(source, key_code, key_down)
+        .map_err(|_| anyhow::anyhow!("CGEvent::new_keyboard_event failed"))?;
+    if flags != CGEventFlags::CGEventFlagNull {
+        event.set_flags(flags);
+    }
+    let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
+    gate.check()?;
+    if !crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false) {
+        gate.check()?;
         event.post_to_pid(pid as libc::pid_t);
     }
     Ok(())
@@ -213,11 +373,53 @@ fn key_name_to_code(key: &str) -> anyhow::Result<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::key_name_to_code;
+    use super::{guarded_key_pair, key_name_to_code};
+    use crate::dispatch_gate::{NativeDispatchGate, install_for_test};
+    use crate::session::SessionLockGuardian;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
 
     #[test]
     fn keypad_zero_keeps_its_distinct_hardware_keycode() {
         assert_eq!(key_name_to_code("0").unwrap(), 29);
         assert_eq!(key_name_to_code("KP_0").unwrap(), 82);
+    }
+
+    #[test]
+    fn lock_between_key_down_and_up_only_allows_safe_release() {
+        let guardian = SessionLockGuardian::for_test(false);
+        let epoch = guardian.begin().unwrap();
+        let locked = Arc::new(AtomicBool::new(false));
+        let probe_locked = locked.clone();
+        let _registration = install_for_test("keyboard-mid-pair", guardian, epoch, move || {
+            Some(probe_locked.load(Ordering::SeqCst))
+        });
+        let gate = NativeDispatchGate::for_session("keyboard-mid-pair");
+        let downs = AtomicUsize::new(0);
+        let ups = AtomicUsize::new(0);
+
+        let error = guarded_key_pair(
+            &gate,
+            || {
+                downs.fetch_add(1, Ordering::SeqCst);
+                locked.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+            || {
+                ups.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+            || {
+                ups.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("screen is locked"));
+        assert_eq!(downs.load(Ordering::SeqCst), 1);
+        assert_eq!(ups.load(Ordering::SeqCst), 1);
     }
 }

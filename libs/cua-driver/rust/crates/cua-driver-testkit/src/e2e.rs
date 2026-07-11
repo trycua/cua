@@ -3,8 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
+use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -637,6 +638,69 @@ pub fn write_result_from_env(result: &CaseResult) -> io::Result<()> {
         return Ok(());
     };
     append_json_line(&PathBuf::from(path), result)
+}
+
+/// Execute one declared E2E cell, persist its typed result even when the body
+/// panics, and preserve Cargo's failing-test signal.
+pub fn execute_case(case: CaseSpec, test: impl FnOnce(&mut Evidence) -> Observation) -> CaseResult {
+    write_declaration_from_env(&case).expect("write E2E case declaration");
+    let started = Instant::now();
+    let mut evidence = Evidence::default();
+    let outcome = panic::catch_unwind(AssertUnwindSafe(|| test(&mut evidence)));
+    let observation = match outcome {
+        Ok(mut observation) => {
+            if observation.evidence == Evidence::default() {
+                observation.evidence = evidence;
+            }
+            observation
+        }
+        Err(payload) => Observation::error(panic_message(&payload), evidence),
+    };
+    let result = CaseResult::evaluate(case, observation, started.elapsed());
+    write_result_from_env(&result).expect("write E2E case result");
+    assert_eq!(
+        result.test_status,
+        TestStatus::Pass,
+        "{}: {}",
+        result.case.cell_id,
+        result.message
+    );
+    result
+}
+
+pub fn recording_evidence(recording_dir: Option<&Path>) -> Evidence {
+    let Some(recording_dir) = recording_dir else {
+        return Evidence::default();
+    };
+    let relative_dir = std::env::var_os("CUA_E2E_RECORDINGS_ROOT")
+        .map(PathBuf::from)
+        .and_then(|root| recording_dir.strip_prefix(root).ok().map(PathBuf::from))
+        .unwrap_or_else(|| {
+            recording_dir
+                .file_name()
+                .map(PathBuf::from)
+                .unwrap_or_default()
+        });
+    let artifact_dir = PathBuf::from("recordings").join(relative_dir);
+    let path = |name: &str| artifact_dir.join(name).to_string_lossy().replace('\\', "/");
+    Evidence {
+        video: Some(path("recording.mp4")),
+        trajectory: Some(path("trajectory.json")),
+        screenshot: None,
+        log: None,
+    }
+}
+
+fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+    payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| {
+            payload
+                .downcast_ref::<&str>()
+                .map(|message| (*message).to_owned())
+        })
+        .unwrap_or_else(|| "E2E cell panicked without a string payload".to_owned())
 }
 
 pub fn write_environment_from_env(record: &EnvironmentRecord) -> io::Result<()> {

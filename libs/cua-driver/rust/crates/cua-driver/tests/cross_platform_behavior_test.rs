@@ -24,8 +24,9 @@ use std::time::{Duration, Instant};
 
 use cua_driver_testkit::ax::{element_index_by_id, element_index_containing};
 use cua_driver_testkit::e2e::{
-    shared_web_route, write_declaration_from_env, write_result_from_env, CaseResult, CaseSpec,
-    Delivery, Evidence, Observation, OracleKind, RefusalCode, Scope, Targeting,
+    recording_evidence, shared_web_route, write_declaration_from_env, write_result_from_env,
+    CaseResult, CaseSpec, Delivery, Evidence, Observation, OracleKind, RefusalCode, Scope,
+    Targeting,
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::ForegroundSentinel;
@@ -214,26 +215,7 @@ struct Fixture {
 }
 
 fn evidence_for_driver(driver: &McpDriver) -> Evidence {
-    let Some(recording_dir) = driver.recording_dir() else {
-        return Evidence::default();
-    };
-    let relative_dir = std::env::var_os("CUA_E2E_RECORDINGS_ROOT")
-        .map(PathBuf::from)
-        .and_then(|root| recording_dir.strip_prefix(root).ok().map(PathBuf::from))
-        .unwrap_or_else(|| {
-            recording_dir
-                .file_name()
-                .map(PathBuf::from)
-                .unwrap_or_default()
-        });
-    let artifact_dir = PathBuf::from("recordings").join(relative_dir);
-    let artifact_path = |name: &str| artifact_dir.join(name).to_string_lossy().replace('\\', "/");
-    Evidence {
-        video: Some(artifact_path("recording.mp4")),
-        trajectory: Some(artifact_path("trajectory.json")),
-        screenshot: None,
-        log: None,
-    }
+    recording_evidence(driver.recording_dir())
 }
 
 fn launch_host_with_evidence(

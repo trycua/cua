@@ -131,7 +131,7 @@ pub struct CursorShape {
 pub const CURSOR_DISPLAY_POINTS: f32 = 26.0;
 
 /// Source rasterisation size. Sized as 2× the runtime display target
-/// (26 px) so the downscale ratio stays a clean 2:1 —
+/// (26 px) so the downscale ratio stays a clean 2:1.
 /// bilinear handles that without smearing, and on 2× retina displays the
 /// pixmap maps 1:1 to physical pixels for perfect crispness. Non-integer
 /// ratios (e.g. 64→26 = 0.41×) produce visible downscale blur.
@@ -366,8 +366,8 @@ mod tests {
         assert_eq!(BuiltinShape::parse("diamond"), None);
         assert_eq!(BuiltinShape::parse("arrow "), None); // whitespace-significant
         assert_eq!(BuiltinShape::parse("cua_brand"), None); // legacy name no longer recognised
-                                                            // The invented MCP names that never existed in the renderer must NOT parse —
-                                                            // they were doc-only fiction and are gone now.
+        // The invented MCP names that never existed in the renderer must not parse.
+        // They were documentation-only fiction and are gone now.
         assert_eq!(BuiltinShape::parse("crosshair"), None);
         assert_eq!(BuiltinShape::parse("hand"), None);
         assert_eq!(BuiltinShape::parse("dot"), None);

@@ -618,7 +618,7 @@ impl CompatState {
                 flags.push(format!("uses={use_count}"));
             }
             lines.push(format!(
-                "{} — {} — {}{}",
+                "{} | {} | {}{}",
                 app.info.name,
                 path,
                 bundle,

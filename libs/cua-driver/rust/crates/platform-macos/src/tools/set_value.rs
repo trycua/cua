@@ -406,7 +406,7 @@ fn select_popup_option(
     if bundle_id != "com.apple.Safari" {
         anyhow::bail!(
             "AXPopUpButton [{element_index}] '{element_title}' has no AX children and \
-             target bundle is '{bundle_id}' (not Safari) — no fallback available."
+             target bundle is '{bundle_id}' (not Safari), so no fallback is available."
         )
     }
 

@@ -2094,7 +2094,7 @@ mod tests {
         // seeded on-screen (pos.0 > -50) so the immediately-following MoveTo
         // glides instead of silently snapping via ClickPulse.
         let mut map = empty_map(); // 100x100 frame
-                                   // No "sessA" cursor exists yet — the seed must get-or-create it.
+        // No "sessA" cursor exists yet. The seed must get or create it.
         let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
         assert!(seeded, "sentinel cursor must be seeded");
         let pos = map.cursors["sessA"].core.pos;

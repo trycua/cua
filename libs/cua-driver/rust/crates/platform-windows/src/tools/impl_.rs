@@ -4073,7 +4073,7 @@ impl Tool for PressKeyTool {
         let background_webview_focus = elem_idx.is_some()
             && delivery == DeliveryMode::Background
             && crate::input::has_chromium_descendant(hwnd);
-        let _noact = if elem_idx.is_some() && delivery == DeliveryMode::Background {
+        let mut noact = if elem_idx.is_some() && delivery == DeliveryMode::Background {
             Some(crate::input::NoActivateGuard::arm(
                 windows::Win32::Foundation::HWND(hwnd as *mut _),
             ))
@@ -4118,6 +4118,12 @@ impl Tool for PressKeyTool {
                     Err(e) => return ToolResult::error(format!("WebView focus task failed: {e}")),
                 }
             }
+            // WebView2 establishes child focus asynchronously after the posted
+            // click. Keeping WS_EX_NOACTIVATE armed during that renderer round
+            // trip blocks its per-queue SetFocus. The click burst itself was
+            // guarded by post_click_screen, so release the outer guard before
+            // polling, matching the proven background pixel route.
+            drop(noact.take());
             if crate::input::wait_for_focused_descendant(
                 hwnd,
                 std::time::Duration::from_millis(500),

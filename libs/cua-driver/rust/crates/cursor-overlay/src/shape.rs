@@ -15,7 +15,7 @@ use anyhow::{bail, Result};
 ///
 /// `Teardrop` is the default; opt into another built-in with
 /// `--cursor-shape <name>` (CLI) or `cursor_icon: "<name>"` (MCP).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinShape {
     /// Procedural gradient diamond drawn from vector primitives — the
     /// original cua cursor. Sharp at any backing scale because nothing is
@@ -23,6 +23,7 @@ pub enum BuiltinShape {
     Arrow,
     /// Embedded `cursor-up` SVG (teardrop with notched bottom). Rasterised
     /// once into a 52 px RGBA buffer and blitted with a runtime transform.
+    #[default]
     Teardrop,
     /// Embedded Sky kite cursor. Rasterised at the destination display-pixel
     /// size by `paint_cursor`, with the kite tip as the hotspot.
@@ -68,12 +69,6 @@ impl BuiltinShape {
             .map(|n| format!("'{n}'"))
             .collect::<Vec<_>>()
             .join(" | ")
-    }
-}
-
-impl Default for BuiltinShape {
-    fn default() -> Self {
-        Self::Teardrop
     }
 }
 

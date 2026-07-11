@@ -3,7 +3,12 @@
 //! We call the C-level AX API directly rather than using a crate wrapper,
 //! because most available crates are incomplete or unmaintained.
 
-#![allow(non_upper_case_globals, non_camel_case_types, non_snake_case, dead_code)]
+#![allow(
+    non_upper_case_globals,
+    non_camel_case_types,
+    non_snake_case,
+    dead_code
+)]
 
 use core_foundation::{
     array::CFArrayRef,
@@ -54,20 +59,14 @@ extern "C" {
         element: AXUIElementRef,
         names: *mut CFArrayRef,
     ) -> AXError;
-    pub fn AXUIElementCopyActionNames(
-        element: AXUIElementRef,
-        names: *mut CFArrayRef,
-    ) -> AXError;
+    pub fn AXUIElementCopyActionNames(element: AXUIElementRef, names: *mut CFArrayRef) -> AXError;
     pub fn AXUIElementCopyElementAtPosition(
         application: AXUIElementRef,
         x: f32,
         y: f32,
         element: *mut AXUIElementRef,
     ) -> AXError;
-    pub fn AXUIElementPerformAction(
-        element: AXUIElementRef,
-        action: CFStringRef,
-    ) -> AXError;
+    pub fn AXUIElementPerformAction(element: AXUIElementRef, action: CFStringRef) -> AXError;
     pub fn AXUIElementSetAttributeValue(
         element: AXUIElementRef,
         attribute: CFStringRef,
@@ -79,7 +78,9 @@ extern "C" {
     /// `{kAXTrustedCheckOptionPrompt: true}` raises the system Accessibility
     /// prompt if the process isn't already trusted.  Returns the post-prompt
     /// trust state (may still be false if the user dismissed the prompt).
-    pub fn AXIsProcessTrustedWithOptions(options: core_foundation::dictionary::CFDictionaryRef) -> bool;
+    pub fn AXIsProcessTrustedWithOptions(
+        options: core_foundation::dictionary::CFDictionaryRef,
+    ) -> bool;
 
     /// Private SPI: maps an AX window element to its CGWindowID.
     /// Stable since macOS 10.9; used by yabai, Hammerspoon, Accessibility Inspector.
@@ -103,16 +104,16 @@ pub unsafe fn element_at_screen_position(pid: i32, x: f64, y: f64) -> Option<AXU
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     pub fn AXValueGetType(value: AXValueRef) -> AXValueType;
-    pub fn AXValueGetValue(value: AXValueRef, the_type: AXValueType, value_ptr: *mut c_void) -> bool;
+    pub fn AXValueGetValue(
+        value: AXValueRef,
+        the_type: AXValueType,
+        value_ptr: *mut c_void,
+    ) -> bool;
 }
 
 // ── Helper functions ──────────────────────────────────────────────────────────
 
-use core_foundation::{
-    array::CFArray,
-    base::TCFType,
-    string::CFString as CFStr,
-};
+use core_foundation::{array::CFArray, base::TCFType, string::CFString as CFStr};
 
 /// Copy a string attribute from an AX element. Returns `None` on any error.
 pub unsafe fn copy_string_attr(element: AXUIElementRef, attr_name: &str) -> Option<String> {
@@ -181,7 +182,10 @@ pub unsafe fn element_screen_center(element: AXUIElementRef) -> Option<(f64, f64
         return None;
     }
     #[repr(C)]
-    struct CGPoint { x: f64, y: f64 }
+    struct CGPoint {
+        x: f64,
+        y: f64,
+    }
     let mut pos = CGPoint { x: 0.0, y: 0.0 };
     let ok = AXValueGetValue(
         pos_ref as AXValueRef,
@@ -189,7 +193,9 @@ pub unsafe fn element_screen_center(element: AXUIElementRef) -> Option<(f64, f64
         &mut pos as *mut _ as *mut std::ffi::c_void,
     );
     CFRelease(pos_ref);
-    if !ok { return None; }
+    if !ok {
+        return None;
+    }
 
     // AXSize → CGSize
     let sz_attr = CFStr::new("AXSize");
@@ -199,7 +205,10 @@ pub unsafe fn element_screen_center(element: AXUIElementRef) -> Option<(f64, f64
         return None;
     }
     #[repr(C)]
-    struct CGSize { w: f64, h: f64 }
+    struct CGSize {
+        w: f64,
+        h: f64,
+    }
     let mut sz = CGSize { w: 0.0, h: 0.0 };
     let ok2 = AXValueGetValue(
         sz_ref as AXValueRef,
@@ -207,7 +216,9 @@ pub unsafe fn element_screen_center(element: AXUIElementRef) -> Option<(f64, f64
         &mut sz as *mut _ as *mut std::ffi::c_void,
     );
     CFRelease(sz_ref);
-    if !ok2 || sz.w < 1.0 || sz.h < 1.0 { return None; }
+    if !ok2 || sz.w < 1.0 || sz.h < 1.0 {
+        return None;
+    }
 
     Some((pos.x + sz.w / 2.0, pos.y + sz.h / 2.0))
 }
@@ -223,7 +234,10 @@ pub unsafe fn element_screen_rect(element: AXUIElementRef) -> Option<[f64; 4]> {
         return None;
     }
     #[repr(C)]
-    struct CGPoint { x: f64, y: f64 }
+    struct CGPoint {
+        x: f64,
+        y: f64,
+    }
     let mut pos = CGPoint { x: 0.0, y: 0.0 };
     let ok = AXValueGetValue(
         pos_ref as AXValueRef,
@@ -231,7 +245,9 @@ pub unsafe fn element_screen_rect(element: AXUIElementRef) -> Option<[f64; 4]> {
         &mut pos as *mut _ as *mut std::ffi::c_void,
     );
     CFRelease(pos_ref);
-    if !ok { return None; }
+    if !ok {
+        return None;
+    }
 
     // AXSize → CGSize
     let sz_attr = CFStr::new("AXSize");
@@ -241,7 +257,10 @@ pub unsafe fn element_screen_rect(element: AXUIElementRef) -> Option<[f64; 4]> {
         return None;
     }
     #[repr(C)]
-    struct CGSize { w: f64, h: f64 }
+    struct CGSize {
+        w: f64,
+        h: f64,
+    }
     let mut sz = CGSize { w: 0.0, h: 0.0 };
     let ok2 = AXValueGetValue(
         sz_ref as AXValueRef,
@@ -249,7 +268,9 @@ pub unsafe fn element_screen_rect(element: AXUIElementRef) -> Option<[f64; 4]> {
         &mut sz as *mut _ as *mut std::ffi::c_void,
     );
     CFRelease(sz_ref);
-    if !ok2 || sz.w < 1.0 || sz.h < 1.0 { return None; }
+    if !ok2 || sz.w < 1.0 || sz.h < 1.0 {
+        return None;
+    }
 
     Some([pos.x, pos.y, sz.w, sz.h])
 }
@@ -304,6 +325,25 @@ pub unsafe fn copy_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
             }
         })
         .collect()
+}
+
+/// Copy an AX element-valued attribute. The returned element is retained and
+/// must be released by the caller.
+pub unsafe fn copy_element_attr(
+    element: AXUIElementRef,
+    attr_name: &str,
+) -> Option<AXUIElementRef> {
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    if core_foundation::base::CFGetTypeID(value) != AXUIElementGetTypeID() {
+        CFRelease(value);
+        return None;
+    }
+    Some(value as AXUIElementRef)
 }
 
 /// Perform an AX action using a string attribute name.
@@ -371,7 +411,11 @@ pub unsafe fn enable_chromium_accessibility(app_element: AXUIElementRef) -> bool
 pub unsafe fn ax_get_window_id(element: AXUIElementRef) -> Option<u32> {
     let mut wid: u32 = 0;
     let err = _AXUIElementGetWindow(element, &mut wid);
-    if err == kAXErrorSuccess && wid != 0 { Some(wid) } else { None }
+    if err == kAXErrorSuccess && wid != 0 {
+        Some(wid)
+    } else {
+        None
+    }
 }
 
 /// Read the `AXWindows` attribute of an application element.

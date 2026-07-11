@@ -112,7 +112,7 @@ fn def() -> &'static ToolDef {
                 "delivery_mode": {
                     "type": "string",
                     "enum": ["background", "foreground"],
-                    "description": "Best-effort-background ladder rung for a PIXEL click (default \"background\"). \"background\": post the CGEvent to the pid without fronting. \"foreground\": briefly front the window, click, restore the prior frontmost — the explicit last resort for surfaces that drop background synthetic clicks. Requires window_id. A click is never driver-verifiable (no read-back), so both report verified:false — confirm the effect via screenshot. Use the agent loop: background AX (element_index) → screenshot → background pixel (x/y) → screenshot → delivery_mode:\"foreground\"."
+                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. A click is never driver-verifiable (no read-back), so both report verified:false — confirm the effect via screenshot. Use the agent loop: background AX (element_index) → screenshot → background pixel (x/y) → screenshot → delivery_mode:\"foreground\"."
                 },
                 "scope": {
                     "type": "string",
@@ -297,9 +297,8 @@ impl Tool for ClickTool {
         // "middle" has no AX equivalent and falls back to a pixel middle-click
         // at the element's screen-space center.
         let button_str = args.str_or("button", "left").to_lowercase();
-        // delivery_mode: per-call ladder rung. foreground only applies to the
-        // pixel path and needs a window_id to front (else it degrades to
-        // background). A click is never driver-verifiable either way.
+        // delivery_mode: per-call ladder rung. Foreground briefly activates the
+        // target for both AX and pixel paths, then restores the prior app.
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         // Reject unknown buttons explicitly so silent left-click fall-through can't
         // mask a typo. Keep "" → default left for old clients that never sent the field.
@@ -417,7 +416,12 @@ impl Tool for ClickTool {
             // new-window / foreground side-effects and append a one-liner
             // suffix matching Swift's wording.
             let prior_front = apps::frontmost_pid();
-            let snapshot = WindowChangeDetector::snapshot(prior_front);
+            let foreground = delivery_mode.is_foreground();
+            let snapshot = if foreground {
+                WindowChangeDetector::snapshot_without_suppression(prior_front)
+            } else {
+                WindowChangeDetector::snapshot(prior_front)
+            };
 
             // Run AX work on a blocking thread (can't block async executor).
             // Use `effective_action` so button=right rewrites press → show_menu.
@@ -428,12 +432,37 @@ impl Tool for ClickTool {
             // and stomp default for a non-default session).
             let ck = cursor_key.clone();
             let result = focus_guard::with_focus_suppressed(
-                Some(pid),
+                if foreground { None } else { Some(pid) },
                 prior_front,
                 "click.AXPress",
                 || async move {
                     tokio::task::spawn_blocking(move || {
-                        perform_ax_click(element_ptr, idx, pid, wid, &action_clone, &ck)
+                        if foreground {
+                            let mut outcome = None;
+                            let fronted = crate::input::skylight::with_foreground_assist(
+                                pid as libc::pid_t,
+                                wid,
+                                || {
+                                    outcome = Some(perform_ax_click(
+                                        element_ptr,
+                                        idx,
+                                        pid,
+                                        wid,
+                                        &action_clone,
+                                        &ck,
+                                    )?);
+                                    std::thread::sleep(std::time::Duration::from_millis(150));
+                                    Ok(())
+                                },
+                            )?;
+                            let outcome = outcome.ok_or_else(|| {
+                                anyhow::anyhow!("foreground AX click did not execute")
+                            })?;
+                            Ok((outcome, fronted))
+                        } else {
+                            perform_ax_click(element_ptr, idx, pid, wid, &action_clone, &ck)
+                                .map(|outcome| (outcome, false))
+                        }
                     })
                     .await
                 },
@@ -444,7 +473,7 @@ impl Tool for ClickTool {
             let changes = snapshot.detect_async().await;
 
             match result {
-                Ok(Ok((mut msg, needs_webkit_delay, suspected_noop))) => {
+                Ok(Ok(((mut msg, needs_webkit_delay, suspected_noop), fronted))) => {
                     // For text inputs, wait 800ms for WebKit DOM focus to settle
                     // before returning — matches the Swift reference behaviour.
                     if needs_webkit_delay {
@@ -461,7 +490,7 @@ impl Tool for ClickTool {
                     //   * unverifiable — dispatched fine, driver just can't confirm;
                     //     the caller verifies via screenshot.
                     let mut structured = serde_json::json!({
-                        "path": "ax",
+                        "path": if fronted { "ax_fg" } else { "ax" },
                         "verified": false,
                         "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
                     });

@@ -24,6 +24,7 @@ Foreground rows listed here are delivered for both AX and PX.
 | Windows | Tauri | left/right/double click AX/PX, type text AX/PX, press key AX/PX, child window AX/PX, scroll AX, editor save AX | hotkey AX/PX and scroll PX: `background_unavailable`; drag PX: `background_occluded` |
 | macOS | Electron | left/right/double click AX/PX, type text AX/PX, press key AX/PX, hotkey AX/PX, child window AX/PX, editor save AX | scroll AX/PX and drag PX: `background_unavailable` |
 | macOS | Tauri | left/right/double click AX/PX, type text AX/PX, press key AX/PX, hotkey AX/PX, scroll AX/PX, child window AX/PX, editor save AX | drag PX: `background_unavailable` |
+| macOS | WKWebView | left/right/double click AX/PX, type text AX/PX, press key AX/PX, hotkey AX/PX, scroll AX/PX, child window AX/PX, editor save AX | drag PX: `background_unavailable` |
 
 All shared background rows require fixture state, focus, z-order, cursor, and
 no-leaked-input evidence. Foreground rows require fixture state and retain a
@@ -45,9 +46,9 @@ integrity-level harness can exercise it.
 
 | Harness | Proven contracts | Refusals and gaps |
 | --- | --- | --- |
-| AppKit | AX tree/capture, AX background left click, AX background set value and type text, PX background left click through AX hit-testing, desktop PX foreground left click | Native right/double click, hotkey, press key, drag, and window-scoped foreground cells are unproven. AppKit scroll remains an optional known gap. |
-| SwiftUI | AX tree/capture | Popover activation is an optional known gap: `AXPress` reports success but the transient view does not materialize under the current background or brief foreground route. Other native action cells are unproven. |
-| WKWebView | Repo-local fixture builds | A dedicated canonical Rust target is still missing. Tauri covers WKWebView behavior through the shared page, but does not replace a native fixture row. |
+| AppKit | AX tree/capture; AX background left click, set value, and type text; PX background left/right/double click; PX foreground right/double click and slider drag; AX foreground/background scroll; desktop PX foreground left click | PX background slider drag returns exact `background_unavailable`. Native press key, hotkey, AX-addressed right/double click, and broader control combinations remain unproven. |
+| SwiftUI | AX tree/capture; AX background left click and set value; foreground popover-trigger activation | The fixture proves `popover_open=true`, but the transient panel remains absent from targeted AX enumeration. Other native pointer and keyboard combinations remain unproven. |
+| WKWebView | Full 36-cell shared-web catalog through the dedicated repo-local native host | PX background drag returns exact `background_unavailable`; the other 35 shared cells deliver. Native host-specific controls are outside this fixture. |
 
 ## Maintenance rule
 

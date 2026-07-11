@@ -82,10 +82,11 @@ The shared harness exposes deterministic external markers for these actions:
 | Editor | Type, save, saved-state readback | AX and PX where supported | Mode declared per action |
 
 The Rust shared catalog declares 36 evidence-bearing cells per harness
-application, or 72 shared cells across Electron and Tauri per platform: the full
-AX/PX and foreground/background cross-product for click, text, keyboard,
-scroll, and child-window actions, plus both delivery modes for PX drag and AX
-editor-save. A
+application. Windows and Linux run 72 shared cells across Electron and Tauri;
+macOS also runs the native WKWebView host for 108 shared cells. Each host covers
+the full AX/PX and foreground/background cross-product for click, text,
+keyboard, scroll, and child-window actions, plus both delivery modes for PX
+drag and AX editor-save. A
 background capability refusal is a valid result only when the test verifies the
 declared structured refusal and the no-focus/no-z-order/no-input-leak side
 effect. A refusal fails a cell whose contract requires delivery.
@@ -109,15 +110,16 @@ background delivery and attach desktop-side-effect oracles.
 
 | Harness | Source test | Coverage |
 | --- | --- | --- |
-| AppKit | `harness_appkit_test.rs` | AX tree/capture, background AX value and text input, background AX/PX left click, desktop PX foreground click |
-| SwiftUI | `harness_swiftui_test.rs` | AX tree/capture; popover activation remains an optional known gap |
-| WKWebView | `tests/fixtures/apps/macos/wkwebview/` | Fixture is built from the shared web page; a dedicated Rust E2E target is still a coverage gap |
+| AppKit | `harness_appkit_test.rs` | AX tree/capture, AX value/text, AX scroll, PX clicks, and foreground slider drag across the proven delivery modes; background drag is an exact refusal |
+| SwiftUI | `harness_swiftui_test.rs` | AX tree/capture, background click/value, and foreground popover-trigger state |
+| WKWebView | `cross_platform_behavior_test.rs` | Dedicated native host running the full 36-cell shared web catalog |
 | Installed-app launch/focus | `installed_app_launch_macos_test.rs` | Real Calculator/TextEdit launch and focus behavior, when explicitly enabled |
 | Installed-app text | `installed_app_textedit_macos_test.rs` | Real TextEdit AX background write and verification, when explicitly enabled |
 
 macOS uses the installed ScreenCaptureKit/AX permissions for GUI runs. The
 repo-local harnesses are canonical; Calculator and TextEdit are supporting
-real-app checks.
+real-app checks. SwiftUI's popover trigger is proven independently from the
+remaining transient-panel AX discovery gap.
 
 ## Harness E2E: Linux
 

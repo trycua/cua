@@ -85,6 +85,15 @@ fn host_specs() -> Vec<HostSpec> {
             args: Vec::new(),
             title: "CuaTestHarness Tauri",
         });
+        hosts.push(HostSpec {
+            name: "wkwebview",
+            path: harness_app(
+                "harness-wkwebview",
+                "CuaTestHarness.WKWebView.app/Contents/MacOS/CuaTestHarness.WKWebView",
+            ),
+            args: Vec::new(),
+            title: "CuaTestHarness WKWebView",
+        });
     }
 
     #[cfg(target_os = "linux")]
@@ -651,9 +660,10 @@ fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
     }
     assert!(
         !response.is_error(),
-        "{}: scroll {addressing}/{delivery} failed: {}",
+        "{}: scroll {addressing}/{delivery} failed: {}; raw={}",
         fixture.name,
-        response.text()
+        response.text(),
+        response.raw
     );
     thread::sleep(Duration::from_millis(250));
     let offset = fixture
@@ -669,9 +679,11 @@ fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
         .unwrap_or(0);
     assert!(
         offset > 0,
-        "{}: scroll did not advance the external oracle: {}",
+        "{}: scroll did not advance the external oracle: {}; response={}; raw={}",
         fixture.name,
-        fixture.journal.snapshot()
+        fixture.journal.snapshot(),
+        response.text(),
+        response.raw
     );
     delivered_observation()
 }
@@ -708,9 +720,10 @@ fn run_drag_action(fixture: &mut Fixture, delivery: &str) -> Observation {
     }
     assert!(
         !response.is_error(),
-        "{}: drag PX/{delivery} failed: {}",
+        "{}: drag PX/{delivery} failed: {}; raw={}",
         fixture.name,
-        response.text()
+        response.text(),
+        response.raw
     );
     assert_fixture_contains(fixture, "drag_status=dropped");
     delivered_observation()

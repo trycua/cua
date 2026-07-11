@@ -179,9 +179,11 @@ pub fn shared_web_route(
             pointer_or_key_route(Route::MacosCgEventPid, Route::MacosCgEventHid)
         }
         (Platform::Macos, DisplayServer::Quartz, Targeting::Ax, "left_click")
-        | (Platform::Macos, DisplayServer::Quartz, Targeting::Ax, "child_window")
-        | (Platform::Macos, DisplayServer::Quartz, Targeting::Ax, "scroll") => {
+        | (Platform::Macos, DisplayServer::Quartz, Targeting::Ax, "child_window") => {
             Ok(Route::MacosAxAction)
+        }
+        (Platform::Macos, DisplayServer::Quartz, Targeting::Ax, "scroll") => {
+            Ok(Route::Composite)
         }
         (Platform::Macos, DisplayServer::Quartz, Targeting::Ax, "type_text") => {
             Ok(Route::MacosAxValue)

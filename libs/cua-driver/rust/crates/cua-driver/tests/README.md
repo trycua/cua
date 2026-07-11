@@ -42,7 +42,8 @@ Staged outputs are read from `../../test-apps/harness-<name>/`.
 
 The canonical cross-platform matrix is
 `cross_platform_behavior_test.rs`. It runs the same external-state scenarios
-against Electron and Tauri on each supported host. CI and VM runners set
+against Electron and Tauri on each supported host, plus the native WKWebView
+host on macOS. CI and VM runners set
 `CUA_TEST_DRIVER_BIN`, `CUA_TEST_APPS_ROOT`, and
 `CUA_TEST_WORKSPACE_ROOT` when artifacts are built outside Cargo's default
 workspace paths. They also set `CUA_TEST_REQUIRE_FIXTURES=1`, turning a missing
@@ -76,6 +77,10 @@ The canonical Windows E2E entrypoint is
 It runs the complete Rust harness matrix; internal lane selectors are retained
 only for focused diagnosis. Optional
 external-app suites remain separate.
+
+The canonical macOS E2E entrypoint is
+`scripts/ci/macos/run-rust-e2e.sh`. It requires a logged-in user session and an
+installed driver with Accessibility and Screen Recording grants.
 
 Legacy Windows Sandbox runs use
 `../../../../tests/runners/windows-sandbox/run-tests-in-sandbox.ps1`, which

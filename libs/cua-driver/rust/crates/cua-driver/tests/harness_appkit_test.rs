@@ -28,10 +28,10 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-use cua_driver_testkit::ax::{element_index_by_id, has_id, looks_empty};
+use cua_driver_testkit::ax::{element_index_by_id, element_index_containing, has_id, looks_empty};
 use cua_driver_testkit::e2e::{
-    execute_case, native_background_case, native_readonly_case, recording_evidence, DriverRoute,
-    Evidence, Observation, OracleKind, Targeting,
+    execute_case, native_background_case, native_foreground_case, native_readonly_case,
+    recording_evidence, DriverRoute, Evidence, Observation, OracleKind, RefusalCode, Targeting,
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::run_with_background_oracles;
@@ -100,6 +100,36 @@ fn snapshot_elements(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolRe
             "window_id": window_id,
             "capture_mode": "ax"
         }),
+    )
+}
+
+fn element_pixel_frame(snapshot: &ToolResponse, identifier: &str) -> (f64, f64, f64, f64) {
+    let index = element_index_by_id(snapshot.tree_text(), identifier)
+        .unwrap_or_else(|| panic!("{identifier} element_index not found"));
+    let elements = snapshot.structured()["elements"]
+        .as_array()
+        .expect("AppKit structured elements");
+    let element = elements
+        .iter()
+        .find(|element| element["element_index"].as_u64() == Some(index))
+        .unwrap_or_else(|| panic!("{identifier} element frame not found"));
+    let window = elements
+        .iter()
+        .find(|element| element["role"].as_str() == Some("AXWindow"))
+        .expect("AppKit window frame");
+    let scale = snapshot.structured()["screenshot_width"]
+        .as_f64()
+        .unwrap_or(1.0)
+        / window["frame"]["w"].as_f64().unwrap_or(1.0).max(1.0);
+    (
+        (element["frame"]["x"].as_f64().unwrap_or(0.0)
+            - window["frame"]["x"].as_f64().unwrap_or(0.0))
+            * scale,
+        (element["frame"]["y"].as_f64().unwrap_or(0.0)
+            - window["frame"]["y"].as_f64().unwrap_or(0.0))
+            * scale,
+        element["frame"]["w"].as_f64().unwrap_or(0.0) * scale,
+        element["frame"]["h"].as_f64().unwrap_or(0.0) * scale,
     )
 }
 
@@ -303,83 +333,88 @@ fn harness_appkit_type_text_background() {
     );
 }
 
-/// scroll: scroll the NSScrollView downward, verify the offset label
-/// changes (it mirrors the clip view's documentVisibleRect.origin.y).
-///
-/// **Status:** EXPECTED-FAIL today (see notes below). The `scroll` tool
-/// itself works at the API level — `libs/cua-driver/tests/fixtures/smoke/macos.sh` confirms it
-/// PASSes against the same harness window. What this test would
-/// verify additionally is that the scroll event actually moved the
-/// scroll view's bounds (state-change observation, not just API
-/// success).
-///
-/// Why it's expected-fail: on macOS, `CGEvent.scroll` requires the
-/// cursor position to lie inside the target NSScrollView for the event
-/// to be routed to it (Cocoa scroll-routing is cursor-anchored). The
-/// `move_cursor` tool we expose is overlay-only — it doesn't move the
-/// OS hardware cursor on macOS. So state-change tests for scroll need
-/// either (a) an OS-cursor warp (intentionally not exposed) or (b) a
-/// different scroll dispatch primitive (NSEvent.otherEvent
-/// keyDown(.swipeUp) on focused window, or an AXScrollAreaScrollTo
-/// action). Both are open implementation work; tracking in the journal's
-/// "Open items" section.
 #[test]
 #[ignore]
-fn harness_appkit_scroll_optional_known_gap() {
-    let mut driver = McpDriver::spawn_macos_daemon_proxy().expect("start macOS daemon proxy");
-    let harness = Harness::launch();
+fn harness_appkit_scroll_foreground() {
+    run_case(
+        native_foreground_case(
+            "appkit",
+            "scroll",
+            Targeting::Ax,
+            DriverRoute::MacosAxAction,
+        ),
+        |pid, wid, driver| {
+            let pre = snapshot_elements(driver, pid, wid);
+            assert!(pre.tree_text().contains("scroll_offset=0"));
+            let index = element_index_by_id(pre.tree_text(), "scroll-tall")
+                .or_else(|| element_index_containing(pre.tree_text(), "SCROLL_TOP_MARKER_v1"))
+                .unwrap_or_else(|| {
+                    panic!("scroll-tall element_index not found:\n{}", pre.tree_text())
+                });
+            let response = driver.call(
+                "scroll",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_index": index,
+                    "direction": "down",
+                    "amount": 5,
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "AppKit foreground scroll failed: {}; raw={}",
+                response.text(),
+                response.raw
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            let post = snapshot_elements(driver, pid, wid);
+            assert!(
+                !post.tree_text().contains("scroll_offset=0"),
+                "AppKit foreground scroll did not move the NSScrollView; response={}; raw={}",
+                response.text(),
+                response.raw
+            );
+            Observation::delivered_with_fixture_state(Vec::new())
+        },
+    );
+}
 
-    let (wid, _) = driver
-        .find_window(harness.pid as i64, "CuaTestHarness AppKit")
-        .expect("main window not found");
-    let snap_pre = snapshot_elements(&mut driver, harness.pid, wid);
-    assert!(
-        !looks_empty(snap_pre.tree_text()),
-        "required AppKit AX tree is empty"
-    );
-    // Pre-condition: offset label should be at "0" (the controller
-    // initial state). The label text appears as an AXStaticText leaf
-    // immediately after the AXTextArea body in the rendered tree.
-    let pre = snap_pre.tree_text().to_owned();
-    let pre_has_zero_offset = pre.lines().any(|l| l.trim() == "- AXStaticText = \"0\"");
-    assert!(
-        pre_has_zero_offset,
-        "scroll offset label not at 0 pre-scroll"
-    );
-
-    // Scroll the scroll view down a few ticks. The scroll tool takes
-    // window-local pixel coords; pick a point inside the scroller
-    // (the scroll target sits roughly mid-window).
-    let resp = driver.call(
-        "scroll",
-        serde_json::json!({
-            "pid": harness.pid as i64, "window_id": wid,
-            "x": 180, "y": 450,            // inside the scroll view
-            "direction": "down",
-            "amount": 5
-        }),
-    );
-    println!("scroll resp: {}", resp.text());
-    std::thread::sleep(Duration::from_millis(250));
-
-    let snap_post = snapshot_elements(&mut driver, harness.pid, wid);
-    let post = snap_post.tree_text().to_owned();
-    // After scroll, the offset label should no longer be "0" — any
-    // positive integer indicates the bounds-change notification fired
-    // and the label updated. We don't pin a specific value (scroll
-    // wheel pixel delta varies by macOS version + accessibility setting).
-    let still_zero = post.lines().any(|l| l.trim() == "- AXStaticText = \"0\"");
-    let unchanged_count = post.matches("- AXStaticText = \"0\"").count();
-    let pre_count = pre.matches("- AXStaticText = \"0\"").count();
-    // Counter label is also "0" so the bare presence isn't a signal —
-    // instead check the COUNT decreased by 1 (only the offset label
-    // moved off zero, not the counter).
-    assert!(
-        unchanged_count < pre_count || !still_zero,
-        "scroll offset label did not advance from 0; pre: {} \"0\" leaves; post: {} \"0\" leaves",
-        pre_count,
-        unchanged_count
-    );
+#[test]
+#[ignore]
+fn harness_appkit_scroll_background() {
+    run_background_case("scroll", DriverRoute::MacosAxAction, |pid, wid, driver| {
+        let pre = snapshot_elements(driver, pid, wid);
+        assert!(pre.tree_text().contains("scroll_offset=0"));
+        let index = element_index_by_id(pre.tree_text(), "scroll-tall")
+            .or_else(|| element_index_containing(pre.tree_text(), "SCROLL_TOP_MARKER_v1"))
+            .unwrap_or_else(|| panic!("scroll-tall element_index not found:\n{}", pre.tree_text()));
+        let response = driver.call(
+            "scroll",
+            serde_json::json!({
+                "pid": pid as i64,
+                "window_id": wid,
+                "element_index": index,
+                "direction": "down",
+                "amount": 5,
+                "delivery_mode": "background"
+            }),
+        );
+        assert!(
+            !response.is_error(),
+            "AppKit background scroll failed: {}; raw={}",
+            response.text(),
+            response.raw
+        );
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            !snapshot_elements(driver, pid, wid)
+                .tree_text()
+                .contains("scroll_offset=0"),
+            "AppKit background AX scroll did not move the NSScrollView"
+        );
+    });
 }
 
 /// counter: click the increment button via element_index, verify the
@@ -447,36 +482,14 @@ fn harness_appkit_counter_px_background() {
         DriverRoute::MacosAxAction,
         |pid, wid, driver| {
             let pre = snapshot_elements(driver, pid, wid);
-            let index = element_index_by_id(pre.tree_text(), "btn-increment")
-                .expect("btn-increment element_index not found");
-            let elements = pre.structured()["elements"]
-                .as_array()
-                .expect("AppKit structured elements");
-            let button = elements
-                .iter()
-                .find(|element| element["element_index"].as_u64() == Some(index))
-                .expect("AppKit increment element frame");
-            let window = elements
-                .iter()
-                .find(|element| element["role"].as_str() == Some("AXWindow"))
-                .expect("AppKit window frame");
-            let scale = pre.structured()["screenshot_width"].as_f64().unwrap_or(1.0)
-                / window["frame"]["w"].as_f64().unwrap_or(1.0).max(1.0);
-            let x = (button["frame"]["x"].as_f64().unwrap_or(0.0)
-                - window["frame"]["x"].as_f64().unwrap_or(0.0)
-                + button["frame"]["w"].as_f64().unwrap_or(0.0) / 2.0)
-                * scale;
-            let y = (button["frame"]["y"].as_f64().unwrap_or(0.0)
-                - window["frame"]["y"].as_f64().unwrap_or(0.0)
-                + button["frame"]["h"].as_f64().unwrap_or(0.0) / 2.0)
-                * scale;
+            let (x, y, width, height) = element_pixel_frame(&pre, "btn-increment");
             let response = driver.call(
                 "click",
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "x": x,
-                    "y": y,
+                    "x": x + width / 2.0,
+                    "y": y + height / 2.0,
                     "delivery_mode": "background"
                 }),
             );
@@ -494,4 +507,267 @@ fn harness_appkit_counter_px_background() {
             );
         },
     );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_right_click_px_foreground() {
+    run_case(
+        native_foreground_case(
+            "appkit",
+            "right_click",
+            Targeting::Px,
+            DriverRoute::MacosCgEventHid,
+        ),
+        |pid, wid, driver| {
+            let pre = snapshot_elements(driver, pid, wid);
+            let (x, y, width, height) = element_pixel_frame(&pre, "btn-clicktarget");
+            let response = driver.call(
+                "right_click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "x": x + width / 2.0,
+                    "y": y + height / 2.0,
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "AppKit right click failed: {}",
+                response.text()
+            );
+            std::thread::sleep(Duration::from_millis(250));
+            assert!(
+                snapshot_elements(driver, pid, wid)
+                    .tree_text()
+                    .contains("last_action=right_click"),
+                "AppKit right-click handler did not fire"
+            );
+            Observation::delivered_with_fixture_state(Vec::new())
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_right_click_px_background() {
+    run_background_case_targeting(
+        "right_click",
+        Targeting::Px,
+        DriverRoute::MacosCgEventPid,
+        |pid, wid, driver| {
+            let pre = snapshot_elements(driver, pid, wid);
+            let (x, y, width, height) = element_pixel_frame(&pre, "btn-clicktarget");
+            let response = driver.call(
+                "right_click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "x": x + width / 2.0,
+                    "y": y + height / 2.0,
+                    "delivery_mode": "background"
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "AppKit right click failed: {}",
+                response.text()
+            );
+            std::thread::sleep(Duration::from_millis(250));
+            assert!(
+                snapshot_elements(driver, pid, wid)
+                    .tree_text()
+                    .contains("last_action=right_click"),
+                "AppKit background right-click handler did not fire"
+            );
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_double_click_px_foreground() {
+    run_case(
+        native_foreground_case(
+            "appkit",
+            "double_click",
+            Targeting::Px,
+            DriverRoute::MacosCgEventHid,
+        ),
+        |pid, wid, driver| {
+            let pre = snapshot_elements(driver, pid, wid);
+            let (x, y, width, height) = element_pixel_frame(&pre, "btn-clicktarget");
+            let response = driver.call(
+                "double_click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "x": x + width / 2.0,
+                    "y": y + height / 2.0,
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "AppKit double click failed: {}",
+                response.text()
+            );
+            std::thread::sleep(Duration::from_millis(250));
+            assert!(
+                snapshot_elements(driver, pid, wid)
+                    .tree_text()
+                    .contains("last_action=double_click"),
+                "AppKit double-click handler did not fire"
+            );
+            Observation::delivered_with_fixture_state(Vec::new())
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_double_click_px_background() {
+    run_background_case_targeting(
+        "double_click",
+        Targeting::Px,
+        DriverRoute::MacosCgEventPid,
+        |pid, wid, driver| {
+            let pre = snapshot_elements(driver, pid, wid);
+            let (x, y, width, height) = element_pixel_frame(&pre, "btn-clicktarget");
+            let response = driver.call(
+                "double_click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "x": x + width / 2.0,
+                    "y": y + height / 2.0,
+                    "delivery_mode": "background"
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "AppKit double click failed: {}",
+                response.text()
+            );
+            std::thread::sleep(Duration::from_millis(250));
+            assert!(
+                snapshot_elements(driver, pid, wid)
+                    .tree_text()
+                    .contains("last_action=double_click"),
+                "AppKit background double-click handler did not fire"
+            );
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_slider_drag_px_foreground() {
+    run_case(
+        native_foreground_case(
+            "appkit",
+            "slider_drag",
+            Targeting::Px,
+            DriverRoute::MacosCgEventHid,
+        ),
+        |pid, wid, driver| {
+            let pre = snapshot_elements(driver, pid, wid);
+            assert!(pre.tree_text().contains("slider_value=0"));
+            let (x, y, width, height) = element_pixel_frame(&pre, "sld-value");
+            let response = driver.call(
+                "drag",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "from_x": x + width * 0.05,
+                    "from_y": y + height / 2.0,
+                    "to_x": x + width * 0.90,
+                    "to_y": y + height / 2.0,
+                    "duration_ms": 500,
+                    "steps": 30,
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "AppKit slider drag failed: {}",
+                response.text()
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            assert!(
+                !snapshot_elements(driver, pid, wid)
+                    .tree_text()
+                    .contains("slider_value=0"),
+                "AppKit foreground drag did not move the slider"
+            );
+            Observation::delivered_with_fixture_state(Vec::new())
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_slider_drag_px_background() {
+    let case = native_background_case(
+        "appkit",
+        "slider_drag",
+        Targeting::Px,
+        DriverRoute::MacosCgEventPid,
+    )
+    .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
+    run_case(case, |pid, wid, driver| {
+        let pre = snapshot_elements(driver, pid, wid);
+        assert!(pre.tree_text().contains("slider_value=0"));
+        let (x, y, width, height) = element_pixel_frame(&pre, "sld-value");
+        let (response, mut passed) = run_with_background_oracles(
+            driver,
+            TargetWindow {
+                pid,
+                native_id: wid,
+            },
+            |driver| {
+                driver.call(
+                    "drag",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "from_x": x + width * 0.05,
+                        "from_y": y + height / 2.0,
+                        "to_x": x + width * 0.90,
+                        "to_y": y + height / 2.0,
+                        "duration_ms": 500,
+                        "steps": 30,
+                        "delivery_mode": "background"
+                    }),
+                )
+            },
+        )
+        .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+        assert!(
+            response.is_error(),
+            "AppKit background drag unexpectedly reported delivery: {}",
+            response.text()
+        );
+        assert_eq!(
+            response.structured()["code"].as_str(),
+            Some("background_unavailable"),
+            "AppKit background drag returned the wrong refusal: {}",
+            response.text()
+        );
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            snapshot_elements(driver, pid, wid)
+                .tree_text()
+                .contains("slider_value=0"),
+            "refused AppKit background drag changed the slider"
+        );
+        passed.push(OracleKind::FixtureState);
+        Observation::refused(
+            RefusalCode::BackgroundUnavailable,
+            passed,
+            response.text(),
+            Evidence::default(),
+        )
+    });
 }

@@ -158,7 +158,7 @@ else
     run_tool click            "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"x\":120,\"y\":80}"
     run_tool double_click     "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"x\":120,\"y\":80}"
     run_tool right_click      "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"x\":120,\"y\":80}"
-    run_tool drag             "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"from_x\":120,\"from_y\":80,\"to_x\":180,\"to_y\":120}"
+    run_tool drag             "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"from_x\":120,\"from_y\":80,\"to_x\":180,\"to_y\":120,\"delivery_mode\":\"foreground\"}"
     run_tool scroll           "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"x\":200,\"y\":400,\"direction\":\"down\"}"
     run_tool type_text        "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"text\":\"hi\"}"
     run_tool press_key        "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"key\":\"a\"}"

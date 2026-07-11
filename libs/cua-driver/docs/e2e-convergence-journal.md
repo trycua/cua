@@ -13,6 +13,7 @@ convergence work. It omits machine names, credentials, and partner names.
 | `d39c71c9` | Made the Windows sentinel physically acquire foreground before each background action | Hosted runs no longer fail during sentinel posture. WinUI3, WebView2, WPF background actions, and the shared catalog all reach their behavior boundary with the original focus, z-order, cursor, and leaked-input checks intact. |
 | `0c2331b4` to `3f6fbd53` | Completed foreground PX activation, removed volatile UIA metadata from the WPF drag-refusal oracle, and aligned WPF combo selection with the background UIA recipe | The replay passed 19/20 WPF rows, all WinUI3 and WebView2 rows, and all capture/scope rows; its only native failure was the separately owned minimized-launch contract. Electron child-window delivery and keyboard refusal codes were updated from empirical side-effect-clean results. |
 | `00a29c49` and `e43c2946` | Tested `CreateProcessW` startup show-state control, then made minimized launch fail closed when Windows cannot guarantee no activation | Electron can override `STARTF_USESHOWWINDOW`, so startup hints alone are insufficient. The driver now returns exact `background_unavailable` before spawning when the foreground lock is denied; the canonical refusal proves no new window and no desktop side effect. |
+| Current macOS pass | Added the native WKWebView shared catalog, fixed AppKit AX scroll, separated SwiftUI popover activation from transient AX discovery, and expanded native AppKit/SwiftUI action rows | WKWebView passed all 36 shared cells in a focused run. AppKit foreground/background AX scroll, foreground/background PX right and double click, foreground slider drag, SwiftUI background click/value, and SwiftUI foreground popover activation passed focused fixture-state checks. AppKit background drag was a silent no-op, so the driver now returns exact `background_unavailable`; the refusal row proves unchanged fixture state, focus, z-order, cursor, and input journal. |
 
 ## 2026-07-10
 
@@ -107,13 +108,17 @@ gestures retain their existing refusal behavior.
 | Linux Wayland | `29150698432` | Exact experimental pure Sway/AT-SPI matrix at `3b67ee30` | Executed all 80 rows: 6 delivered and 74 failed, with 0 refusals or skips. Sentinel startup failures fell from 18 to 0. The remaining groups are 18 target-posture metadata failures, 36 missing Tauri renderer AX trees, 11 Electron input no-effects, 2 AT-SPI geometry fallbacks, and 7 missing GTK windows. All 81 videos parsed successfully; issue `#1922` owns the backlog. |
 | macOS | Local complete matrix at `6e05424a` | Validate the converged shared, native, capture, and desktop-scope catalog with stable TCC identity | Passed all 83 declared rows: 79 delivered and 4 exact refusals, with 0 failures or skips. Every row produced a typed result and video, and both the summary and environment record contain the full source SHA. |
 
-The macOS replay fixed PX background click focus steals, foreground PX typing's
+The earlier macOS replay fixed PX background click focus steals, foreground PX typing's
 first-character loss, silent web-content background scroll/drag no-effects,
 desktop-scope HID delivery, AppKit native PX background click coverage, and
 daemon transport loss of structured refusal codes. Electron background scroll
 and Electron/Tauri background drag now return exact `background_unavailable`
-refusals. SwiftUI popover activation stays optional because AX reports success
-without an externally observable transient view.
+refusals. The current pass proves SwiftUI popover activation through fixture
+state; only transient-panel AX enumeration remains unproven. A targeted CDP
+wheel experiment could mutate Electron while visible or ordinarily
+backgrounded, but had no effect under the canonical full-occlusion sentinel.
+The experiment was removed, and Electron background scroll keeps its exact
+`background_unavailable` contract.
 
 Repeated local runs also exposed two evidence-harness defects. The macOS
 runner now refuses a dirty tracked tree and derives a full source SHA when CI

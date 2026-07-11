@@ -94,6 +94,7 @@ required_fixtures+=("${CUA_TEST_APPS_ROOT}/harness-electron/CuaTestHarness.Elect
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
   required_fixtures+=(
     "${CUA_TEST_APPS_ROOT}/harness-tauri/CuaTestHarness.Tauri.app"
+    "${CUA_TEST_APPS_ROOT}/harness-wkwebview/CuaTestHarness.WKWebView.app"
   )
 fi
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
@@ -155,13 +156,27 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_smoke \
     harness_appkit_text_input \
     harness_appkit_type_text_background \
+    harness_appkit_scroll_foreground \
+    harness_appkit_scroll_background \
     harness_appkit_counter \
-    harness_appkit_counter_px_background; do
+    harness_appkit_counter_px_background \
+    harness_appkit_right_click_px_foreground \
+    harness_appkit_right_click_px_background \
+    harness_appkit_double_click_px_foreground \
+    harness_appkit_double_click_px_background \
+    harness_appkit_slider_drag_px_foreground \
+    harness_appkit_slider_drag_px_background; do
     run_test "appkit-${appkit_test}" cargo test -p cua-driver --test harness_appkit_test -- \
       --ignored --exact "${appkit_test}" --nocapture --test-threads=1
   done
-  run_test swiftui-native-harness cargo test -p cua-driver --test harness_swiftui_test -- \
-    --ignored --exact harness_swiftui_smoke --nocapture --test-threads=1
+  for swiftui_test in \
+    harness_swiftui_smoke \
+    harness_swiftui_counter_background \
+    harness_swiftui_set_value_background \
+    harness_swiftui_popover_foreground; do
+    run_test "swiftui-${swiftui_test}" cargo test -p cua-driver --test harness_swiftui_test -- \
+      --ignored --exact "${swiftui_test}" --nocapture --test-threads=1
+  done
 fi
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
   run_test capture-contract cargo test -p cua-driver --test capture_contract_test -- \

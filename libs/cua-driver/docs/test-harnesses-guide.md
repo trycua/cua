@@ -176,13 +176,14 @@ Runner: `scripts/ci/macos/run-rust-e2e.sh`
 | Runner area | Rust test | Real harness or app |
 | --- | --- | --- |
 | Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri |
+| Native web matrix | `cross_platform_behavior_test.rs` | Repo-local WKWebView host |
 | Native controls | `harness_appkit_test.rs` | Repo-local AppKit app |
 | Native controls | `harness_swiftui_test.rs` | Repo-local SwiftUI app |
 | Capture contract | `capture_contract_test.rs` | Installed driver and macOS capture APIs |
 | Desktop scope | `desktop_scope_macos_test.rs` | macOS window and desktop scope |
 
-The WKWebView fixture exists, but it does not yet have a dedicated Rust E2E
-target in the canonical runner. `installed_app_launch_macos_test.rs` and
+The WKWebView host runs the same 36 typed shared-web cells as Electron and
+Tauri. `installed_app_launch_macos_test.rs` and
 `installed_app_textedit_macos_test.rs` are optional real-app checks for
 Calculator/TextEdit and are not part of the canonical run.
 
@@ -321,15 +322,13 @@ need normal test output and logs; they do not need desktop video.
 The remaining work is platform coverage and validation, not another test
 hierarchy:
 
-1. **Complete macOS web coverage.** Add a dedicated Rust WKWebView E2E target
-   if WKWebView remains a supported harness.
-2. **Broaden native action rows.** The shared web matrix covers every declared
+1. **Broaden native action rows.** The shared web matrix covers every declared
    AX/PX and foreground/background cell. AppKit, SwiftUI, WPF, WinUI3, and
    WebView2 still have unproven native combinations listed in
    [`action-support.md`](action-support.md).
-3. **Preserve exact-source validation.** Accepted Windows and macOS runs must
+2. **Preserve exact-source validation.** Accepted Windows and macOS runs must
    record one immutable source SHA and retain the typed evidence contract.
-4. **Close pure-Wayland gaps.** Supported X11 and the Nix source gate pass.
+3. **Close pure-Wayland gaps.** Supported X11 and the Nix source gate pass.
    Exact run `29150698432` executed all 80 Sway rows with no skips: 6 delivered
    and 74 remained visible failures. Issue `#1922` tracks the grouped backend
    work.

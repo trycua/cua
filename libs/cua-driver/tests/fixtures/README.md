@@ -42,6 +42,7 @@ Build scripts stage outputs into `libs/cua-driver/rust/test-apps/`.
 # macOS: AppKit, SwiftUI, WKWebView, Electron, Tauri
 libs/cua-driver/tests/fixtures/build/macos.sh
 libs/cua-driver/tests/fixtures/build/macos.sh --skip electron
+libs/cua-driver/tests/fixtures/build/macos.sh --only wkwebview
 
 # Linux: GTK3, Electron, Tauri
 libs/cua-driver/tests/fixtures/build/linux.sh

@@ -2,6 +2,17 @@
 
 #[cfg(target_os = "linux")]
 pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return std::thread::spawn(move || app_state_json_for_blocking(window_id, pid))
+            .join()
+            .ok()
+            .flatten();
+    }
+    app_state_json_for_blocking(window_id, pid)
+}
+
+#[cfg(target_os = "linux")]
+fn app_state_json_for_blocking(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
     let pid = u32::try_from(pid?).ok()?;
     let window_id = window_id.or_else(|| {
         crate::wayland::list_windows_dispatch(Some(pid))

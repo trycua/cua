@@ -111,20 +111,6 @@ fn element_center(state: &cua_driver_testkit::ToolResponse, id: &str) -> (i64, i
     )
 }
 
-fn marker_value(state: &cua_driver_testkit::ToolResponse, marker: &str) -> u64 {
-    let start = state
-        .tree_text()
-        .find(marker)
-        .unwrap_or_else(|| panic!("missing marker {marker:?}: {}", state.tree_text()))
-        + marker.len();
-    state.tree_text()[start..]
-        .chars()
-        .take_while(|ch| ch.is_ascii_digit())
-        .collect::<String>()
-        .parse()
-        .expect("numeric fixture marker")
-}
-
 fn set_scope(driver: &mut McpDriver, scope: &str) {
     let r = driver.call(
         "set_config",
@@ -221,8 +207,7 @@ fn desktop_scope_windowless_click_lands_on_control() {
         DriverRoute::WindowsSendInput,
         |pid, wid, driver| {
             let pre = snapshot(driver, pid, wid);
-            let (x, y) = element_center(&pre, "btn-increment");
-            let before = marker_value(&pre, "counter=");
+            let (x, y) = element_center(&pre, "border-click-target");
             let response = driver.call("click", serde_json::json!({ "x": x, "y": y }));
             assert!(
                 !response.is_error(),
@@ -230,10 +215,11 @@ fn desktop_scope_windowless_click_lands_on_control() {
                 response.text()
             );
             std::thread::sleep(Duration::from_millis(400));
-            let after = marker_value(&snapshot(driver, pid, wid), "counter=");
+            let after = snapshot(driver, pid, wid);
             assert!(
-                after > before,
-                "desktop click did not advance the WPF counter"
+                after.tree_text().contains("last_action=left_click"),
+                "desktop click did not update the WPF click oracle: {}",
+                after.tree_text()
             );
         },
     );
@@ -247,8 +233,12 @@ fn desktop_scope_windowless_scroll_lands_on_control() {
         DriverRoute::WindowsSendInput,
         |pid, wid, driver| {
             let pre = snapshot(driver, pid, wid);
-            let (x, y) = element_center(&pre, "scroll-tall");
-            let before = marker_value(&pre, "scroll_offset=");
+            // The fixture's outer ScrollViewer is visible while the nested
+            // scroll-tall region begins below a 768px CI desktop. Wheel over a
+            // visible child and verify the outer viewport moved by observing a
+            // lower AX element's fresh screen coordinate.
+            let (x, y) = element_center(&pre, "border-click-target");
+            let (_, before_y) = element_center(&pre, "btn-increment");
             let response = driver.call(
                 "scroll",
                 serde_json::json!({ "x": x, "y": y, "direction": "down", "amount": 5 }),
@@ -259,10 +249,11 @@ fn desktop_scope_windowless_scroll_lands_on_control() {
                 response.text()
             );
             std::thread::sleep(Duration::from_millis(500));
-            let after = marker_value(&snapshot(driver, pid, wid), "scroll_offset=");
+            let after = snapshot(driver, pid, wid);
+            let (_, after_y) = element_center(&after, "btn-increment");
             assert!(
-                after > before,
-                "desktop scroll did not advance the WPF scroll offset"
+                after_y < before_y,
+                "desktop scroll did not move the WPF outer viewport: before_y={before_y}, after_y={after_y}"
             );
         },
     );

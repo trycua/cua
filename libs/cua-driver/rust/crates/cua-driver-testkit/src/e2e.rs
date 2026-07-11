@@ -108,7 +108,6 @@ pub enum Scope {
 #[serde(rename_all = "snake_case")]
 pub enum DriverRoute {
     UiaInvoke,
-    UiaLegacyDefaultAction,
     UiaValue,
     UiaScroll,
     PostMessage,

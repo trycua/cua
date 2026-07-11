@@ -87,9 +87,10 @@ state rather than the older 60-cell proposal.
 
 - The three older shared tests are removed. The typed catalog is the sole
   shared behavior owner.
-- `guard_ux_test.rs` and `modality_background_test.rs` overlap and still allow
-  many runtime skips. `modality_input_e2e_test.rs` has been removed after its
-  externally verified web actions moved to the typed shared catalog.
+- `guard_ux_test.rs` remains until minimized launch passes its strict typed
+  replacement. `modality_background_test.rs` and `modality_input_e2e_test.rs`
+  have been removed after their externally verified actions moved to typed
+  shared, WPF, and capture owners.
 - Windows `all` still exposes `guard` and `modality` as test families and does
   not run the Windows desktop-scope target.
 - Linux `all` still reports schema-only dispatch checks as E2E behavior.
@@ -275,7 +276,7 @@ Canonical invocations set strict mode. Missing required capabilities produce
 | `harness_gtk3_test.rs` | Minimal GTK3/AT-SPI rows for X11 and Wayland |
 | `guard_ux_test.rs` | Migrate observations into the desktop observer, then delete |
 | `modality_input_e2e_test.rs` | Deleted; shared cells own web actions and the Notepad row had no delivery oracle |
-| `modality_background_test.rs` | Move WPF actions into WPF cells and capture checks into capture ownership, then delete |
+| `modality_background_test.rs` | Deleted; typed WPF background action rows and capture ownership passed the replacement audit |
 | `capture_contract_test.rs` | Sole owner for tree/image inclusion behavior; canonical prerequisites fail instead of skipping |
 | `desktop_scope_<os>_test.rs` | Platform-specific window/desktop scope contracts |
 | `modality_focus_test.rs` | Deleted; shared click/type cells own focus preservation and launch focus has a separate optional owner |

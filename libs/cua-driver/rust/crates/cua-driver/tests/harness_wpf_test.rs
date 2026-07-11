@@ -198,7 +198,17 @@ fn with_session<F, R>(f: F) -> Option<R>
 where
     F: FnOnce(u32, u64, &mut McpDriver) -> R,
 {
-    let mut driver = McpDriver::spawn()?;
+    with_named_session(None, f)
+}
+
+fn with_named_session<F, R>(label: Option<&str>, f: F) -> Option<R>
+where
+    F: FnOnce(u32, u64, &mut McpDriver) -> R,
+{
+    let mut driver = match label {
+        Some(label) => McpDriver::spawn_named(label)?,
+        None => McpDriver::spawn()?,
+    };
     let pid = launch_harness(&mut driver)?;
     let (wid, _) = driver
         .find_window(pid as i64, "CuaTestHarness WPF")
@@ -354,7 +364,7 @@ fn harness_wpf_type_text() {
 #[ignore]
 fn harness_wpf_set_value() {
     execute_case(background_case("set_value", DriverRoute::UiaValue), |evidence| {
-        with_session(|pid, wid, driver| {
+        with_named_session(Some("windows-wpf-set-value-ax-background"), |pid, wid, driver| {
             *evidence = recording_evidence(driver.recording_dir());
             let snap = snapshot(driver, pid, wid);
             let idx = ax::element_index_by_id(snap.text(), "txt-input")
@@ -477,7 +487,7 @@ fn harness_wpf_press_key_accelerator() {
     // helper that isn't in our test config. F5 has no modifier and works
     // on the PostMessage path.
     execute_case(background_case("keyboard", DriverRoute::PostMessage), |evidence| {
-        with_session(|pid, wid, driver| {
+        with_named_session(Some("windows-wpf-keyboard-ax-background"), |pid, wid, driver| {
             *evidence = recording_evidence(driver.recording_dir());
             let (response, passed) = observe_background(driver, pid, wid, |driver| {
                 driver.call("press_key", serde_json::json!({
@@ -500,7 +510,7 @@ fn harness_wpf_press_key_accelerator() {
 #[ignore]
 fn harness_wpf_scroll() {
     execute_case(background_case("scroll", DriverRoute::UiaScroll), |evidence| {
-      with_session(|pid, wid, driver| {
+      with_named_session(Some("windows-wpf-scroll-ax-background"), |pid, wid, driver| {
         *evidence = recording_evidence(driver.recording_dir());
         // Pre-snapshot to populate the cache + read initial offset.
         let pre = snapshot(driver, pid, wid);

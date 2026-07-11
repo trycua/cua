@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
 
@@ -54,9 +55,25 @@ public partial class MainWindow : Window
                     htmlPath);
             }
             var fileUri  = new Uri(htmlPath).AbsoluteUri;
+            var navigation = new TaskCompletionSource<CoreWebView2NavigationCompletedEventArgs>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnNavigationCompleted(
+                object? navigationSender,
+                CoreWebView2NavigationCompletedEventArgs navigationArgs)
+            {
+                Wv.NavigationCompleted -= OnNavigationCompleted;
+                navigation.TrySetResult(navigationArgs);
+            }
+            Wv.NavigationCompleted += OnNavigationCompleted;
             Wv.Source = new Uri(fileUri);
+            var navigationResult = await navigation.Task;
+            if (!navigationResult.IsSuccess)
+            {
+                throw new InvalidOperationException(
+                    $"Web fixture navigation failed: {navigationResult.WebErrorStatus}");
+            }
             LblPageUrl.Text = fileUri;
-            Title = $"CuaTestHarness WebView [cdp={cdpPort}]";
+            Title = $"CuaTestHarness WebView [ready cdp={cdpPort}]";
         }
         catch (Exception ex)
         {

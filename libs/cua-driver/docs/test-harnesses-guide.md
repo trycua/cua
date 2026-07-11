@@ -308,9 +308,9 @@ The overall structure exists, but the plan is not completely finished:
 2. **Structured result adoption.** The shared matrix emits v2 case/result
    records. Native harnesses still need to adopt the same `CaseSpec` and result
    writer instead of relying on Cargo output.
-3. **Finish Windows convergence.** Move the remaining useful assertions from
-   `guard_ux_test.rs` and `modality_background_test.rs` into typed native,
-   capture, launch, or desktop-scope owners, then remove both duplicate targets.
+3. **Finish Windows convergence.** The old modality-background assertions now
+   have typed WPF and capture owners and that duplicate target is gone. Finish
+   validating minimized launch, then remove `guard_ux_test.rs` and its lane.
 4. **Per-cell GitHub evidence links.** The summary should link the matching
    video, trajectory, and log in each row, rather than only linking a whole
    lane archive.
@@ -369,8 +369,8 @@ the row is testing background delivery. The row then records both outcomes:
    do not restore its hard-coded Notepad coordinates or focus-only assertions.
 4. Add equivalent focus observers for macOS and Linux, then enable the same
    oracle fields in their background action rows.
-5. Delete the two temporary standalone files only after a coverage checklist
-   confirms that every former test has a new owning row and evidence path.
+5. Delete `guard_ux_test.rs` only after its minimized-launch replacement passes;
+   the modality-background file already passed this ownership check and is gone.
 6. Remove the diagnostic `guard`/input lane selectors after the files are gone;
    the canonical `all` runner remains the only user-facing command.
 

@@ -2722,59 +2722,20 @@ impl Tool for ClickTool {
                 };
             }
             // Chromium can return S_OK from InvokePattern without dispatching
-            // a DOM click while fully occluded. Its legacy accessibility
-            // provider exposes the same control's target-bound default action,
-            // which does not depend on screen hit-testing.
+            // a DOM click while fully occluded. Do not report that silent loss
+            // as delivery: Chromium does not expose a target-bound default
+            // action for this control, and coordinate injection cannot reach an
+            // occluded window without changing z-order.
             if delivery == DeliveryMode::Background
                 && btn == "left"
                 && count == 1
                 && crate::input::is_chromium_target_window(hwnd)
             {
-                let state = self.state.clone();
-                let invoked = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-                    let element = state
-                        .element_cache
-                        .get_element_retained(pid, hwnd, idx)
-                        .ok_or_else(|| anyhow::anyhow!("Element {idx} not in cache."))?;
-                    if !element.is_uia() {
-                        anyhow::bail!("Chromium element {idx} is not a UIA element");
-                    }
-                    use windows::core::Interface;
-                    use windows::Win32::UI::Accessibility::{
-                        IUIAutomationElement, IUIAutomationLegacyIAccessiblePattern,
-                        UIA_LegacyIAccessiblePatternId,
-                    };
-                    let raw = element.as_ptr();
-                    let element: IUIAutomationElement =
-                        unsafe { IUIAutomationElement::from_raw(raw as *mut _) };
-                    let pattern = unsafe {
-                        element.GetCurrentPattern(UIA_LegacyIAccessiblePatternId)?
-                    };
-                    let legacy: IUIAutomationLegacyIAccessiblePattern = pattern.cast()?;
-                    unsafe { legacy.DoDefaultAction()? };
-                    std::mem::forget(element);
-                    Ok(())
-                })
-                .await;
-                return match invoked {
-                    Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Performed UIA LegacyIAccessible default action on Chromium element \
-                         [{idx}] (background, no foreground swap)."
-                    ))
-                    .with_structured(json!({
-                        "path": "uia_legacy_default_action",
-                        "verified": false,
-                        "effect": "unverifiable"
-                    })),
-                    Ok(Err(error)) => {
-                        crate::input::delivery::background_unavailable_error_with_cause(
-                            hwnd,
-                            EventKind::MouseClick,
-                            error.to_string(),
-                        )
-                    }
-                    Err(error) => ToolResult::error(format!("Task error: {error}")),
-                };
+                return crate::input::delivery::background_unavailable_error_with_cause(
+                    hwnd,
+                    EventKind::MouseClick,
+                    "Chromium UIA Invoke does not deliver to a fully occluded window",
+                );
             }
             // delivery_mode:"background" on WinUI3 for double / right / middle: single
             // left falls through to the UIA Invoke path below (already drives

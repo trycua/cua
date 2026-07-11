@@ -101,7 +101,7 @@ fn harness_webview_page_tool() {
     // CoreWebView2EnvironmentOptions.AdditionalBrowserArguments.
     // Combined with the `/json` Content-Length fix in mcp-server/src/cdp.rs,
     // the page tool now reaches WebView2's DOM via CDP just like Electron.
-    run_with_session("webview", webview_exe(), "CuaTestHarness WebView", 9222,
+    run_with_session("webview", webview_exe(), "CuaTestHarness WebView [ready", 9222,
         |pid, wid, driver| {
 
         let marker = driver.call("page", serde_json::json!({

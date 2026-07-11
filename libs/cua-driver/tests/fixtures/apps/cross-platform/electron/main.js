@@ -33,8 +33,10 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: sentinelMode ? 1280 : 940,
     height: sentinelMode ? 900 : 780,
-    x: sentinelMode ? 0 : undefined,
-    y: sentinelMode ? 0 : undefined,
+    // Keep the normal fixture inside virtual desktops whose window manager
+    // has no persisted placement policy (notably Openbox under Xvfb).
+    x: sentinelMode ? 0 : 120,
+    y: sentinelMode ? 0 : 120,
     title: fixedTitle,
     // Map the normal harness immediately. Xvfb/Openbox can enumerate a
     // deferred BrowserWindow while never painting it into the root desktop.

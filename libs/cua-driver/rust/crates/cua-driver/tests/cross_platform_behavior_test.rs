@@ -716,7 +716,16 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
     };
     let scenario = format!("{action}_{addressing}_{delivery}");
     let cell_id = format!("{}-{}-{scenario}", std::env::consts::OS, spec.name).replace('_', "-");
-    let mut oracles = vec![OracleKind::FixtureState];
+    let expected_background_refusal = cfg!(target_os = "windows")
+        && spec.name == "electron"
+        && action == "left_click"
+        && targeting == Targeting::Ax
+        && delivery_kind == Delivery::Background;
+    let mut oracles = if expected_background_refusal {
+        Vec::new()
+    } else {
+        vec![OracleKind::FixtureState]
+    };
     if delivery_kind == Delivery::Background {
         oracles.extend([
             OracleKind::Focus,
@@ -730,24 +739,15 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
             oracles.push(OracleKind::Protocol);
         }
     }
-    let route = if cfg!(target_os = "windows")
-        && spec.name == "electron"
-        && action == "left_click"
-        && targeting == Targeting::Ax
-        && delivery_kind == Delivery::Background
-    {
-        cua_driver_testkit::e2e::DriverRoute::UiaLegacyDefaultAction
-    } else {
-        shared_web_route(
-            cua_driver_testkit::e2e::Platform::current(),
-            cua_driver_testkit::e2e::DisplayServer::current(),
-            action,
-            targeting,
-            delivery_kind,
-        )
-        .unwrap_or_else(|error| panic!("{error}"))
-    };
-    CaseSpec::delivered(
+    let route = shared_web_route(
+        cua_driver_testkit::e2e::Platform::current(),
+        cua_driver_testkit::e2e::DisplayServer::current(),
+        action,
+        targeting,
+        delivery_kind,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let case = CaseSpec::delivered(
         cell_id,
         spec.name,
         if spec.name == "electron" {
@@ -761,7 +761,12 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         Scope::Window,
         route,
         oracles,
-    )
+    );
+    if expected_background_refusal {
+        case.expecting_refusal(vec![RefusalCode::BackgroundUnavailable])
+    } else {
+        case
+    }
 }
 
 fn cell_selected(case: &CaseSpec) -> bool {

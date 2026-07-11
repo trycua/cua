@@ -705,6 +705,22 @@ struct AppApprovalChallenge {
     allow_persistent_approval: bool,
 }
 
+const APPROVAL_BROKER_TOKEN_ARG: &str = "_cua_approval_broker_token";
+
+fn with_approval_broker_token(
+    mut args: serde_json::Value,
+    broker_token: &str,
+) -> serde_json::Value {
+    if !args.is_object() {
+        args = serde_json::Value::Object(serde_json::Map::new());
+    }
+    args.as_object_mut().unwrap().insert(
+        APPROVAL_BROKER_TOKEN_ARG.to_owned(),
+        serde_json::Value::String(broker_token.to_owned()),
+    );
+    args
+}
+
 impl AppApprovalChallenge {
     fn from_daemon_response(response: &DaemonResponse) -> Option<Self> {
         let structured = response
@@ -970,7 +986,16 @@ where
         }
     };
 
-    let first = match call_daemon_tool(socket_path, session_id, &name, args.clone()).await {
+    let authenticated_args = with_approval_broker_token(args, &broker_token);
+
+    let first = match call_daemon_tool(
+        socket_path,
+        session_id,
+        &name,
+        authenticated_args.clone(),
+    )
+    .await
+    {
         Ok(response) => response,
         Err(error) => return Response::error(id, -32603, error),
     };
@@ -1039,7 +1064,14 @@ where
         .and_then(serde_json::Value::as_str)
     {
         Some("approved") => {
-            let retry = match call_daemon_tool(socket_path, session_id, &name, args).await {
+            let retry = match call_daemon_tool(
+                socket_path,
+                session_id,
+                &name,
+                authenticated_args,
+            )
+            .await
+            {
                 Ok(response) => response,
                 Err(error) => return Response::error(id, -32603, error),
             };
@@ -1262,6 +1294,19 @@ mod tests {
     }
 
     #[test]
+    fn compat_calls_overwrite_caller_broker_fields_with_the_daemon_token() {
+        let args = with_approval_broker_token(
+            serde_json::json!({
+                "app": "Calculator",
+                (APPROVAL_BROKER_TOKEN_ARG): "caller-forged",
+            }),
+            "daemon-minted",
+        );
+        assert_eq!(args["app"], "Calculator");
+        assert_eq!(args[APPROVAL_BROKER_TOKEN_ARG], "daemon-minted");
+    }
+
+    #[test]
     fn approval_challenge_builds_codex_computer_use_elicitation_metadata() {
         let challenge = AppApprovalChallenge::from_daemon_response(
             &approval_challenge_response(true),
@@ -1388,6 +1433,10 @@ mod tests {
             let request: DaemonRequest = serde_json::from_str(line.trim()).unwrap();
             assert_eq!(request.method, "call");
             assert_eq!(request.name.as_deref(), Some("get_app_state"));
+            assert_eq!(
+                request.args.as_ref().unwrap()[APPROVAL_BROKER_TOKEN_ARG],
+                "daemon-broker-token"
+            );
             let response = approval_challenge_response(true);
             stream
                 .write_all(

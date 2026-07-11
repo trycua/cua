@@ -71,6 +71,14 @@ struct DaemonDriver {
 
 impl DaemonDriver {
     fn spawn(socket: PathBuf, compat: bool) -> Self {
+        Self::spawn_with_unverified_client_override(socket, compat, compat)
+    }
+
+    fn spawn_with_unverified_client_override(
+        socket: PathBuf,
+        compat: bool,
+        allow_unverified_client: bool,
+    ) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_cua-driver"));
         command
             .arg("serve")
@@ -80,9 +88,13 @@ impl DaemonDriver {
             .arg("--no-overlay")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::null())
+            .env_remove("CUA_DRIVER_CODEX_ALLOW_UNVERIFIED_CLIENT");
         if compat {
             command.arg("--codex-computer-use-compat");
+        }
+        if allow_unverified_client {
+            command.env("CUA_DRIVER_CODEX_ALLOW_UNVERIFIED_CLIENT", "1");
         }
         let mut child = command.spawn().expect("spawn cua-driver daemon");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -123,6 +135,18 @@ impl DaemonDriver {
             .map(|tool| tool["name"].as_str().unwrap().to_owned())
             .collect()
     }
+}
+
+fn send_raw_daemon_request(socket: &std::path::Path, request: Value) -> Value {
+    let mut stream = UnixStream::connect(socket).expect("connect daemon");
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    writeln!(stream, "{request}").unwrap();
+    stream.flush().unwrap();
+    let mut line = String::new();
+    BufReader::new(stream).read_line(&mut line).unwrap();
+    serde_json::from_str(line.trim()).unwrap()
 }
 
 impl Drop for DaemonDriver {
@@ -319,7 +343,10 @@ fn compat_tools_list_is_exact_v829_contract() {
         ("list_apps", &[]),
         ("get_app_state", &["app"]),
         ("click", &["app"]),
-        ("perform_secondary_action", &["app", "element_index", "action"]),
+        (
+            "perform_secondary_action",
+            &["app", "element_index", "action"],
+        ),
         ("set_value", &["app", "element_index", "value"]),
         ("select_text", &["app", "element_index", "text"]),
         ("scroll", &["app", "element_index", "direction"]),
@@ -368,19 +395,12 @@ fn compat_tools_list_is_exact_v829_contract() {
             .to_vec();
         expected.sort_unstable();
         assert_eq!(required, expected, "required mismatch for {name}");
-        for (property, schema) in tool["inputSchema"]["properties"]
-            .as_object()
-            .unwrap()
-        {
+        for (property, schema) in tool["inputSchema"]["properties"].as_object().unwrap() {
             let expected_type = match property.as_str() {
                 "click_count" => "integer",
-                "x" | "y" | "from_x" | "from_y" | "to_x" | "to_y" | "pages" => {
-                    "number"
-                }
-                "app" | "element_index" | "mouse_button" | "action" | "value"
-                | "text" | "prefix" | "suffix" | "selection" | "direction" | "key" => {
-                    "string"
-                }
+                "x" | "y" | "from_x" | "from_y" | "to_x" | "to_y" | "pages" => "number",
+                "app" | "element_index" | "mouse_button" | "action" | "value" | "text"
+                | "prefix" | "suffix" | "selection" | "direction" | "key" => "string",
                 other => panic!("missing expected type for {name}.{other}"),
             };
             assert_eq!(
@@ -561,6 +581,135 @@ fn explicit_socket_proxy_rejects_mismatched_daemon_profile() {
 }
 
 #[test]
+fn compat_approval_broker_fails_closed_without_signed_codex_parent() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = unique_daemon_root();
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let socket = root.join("compat.sock");
+    let daemon = DaemonDriver::spawn_with_unverified_client_override(socket.clone(), true, false);
+
+    let output = run_proxy_to_explicit_socket(&socket, true);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Only the signed OpenAI Codex app may use this profile"),
+        "unexpected unsigned-parent rejection: {stderr}"
+    );
+
+    drop(daemon);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn raw_client_cannot_reuse_a_live_compat_session_without_its_broker_token() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::mpsc;
+
+    let root = unique_daemon_root();
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let socket = root.join("compat.sock");
+    let daemon = DaemonDriver::spawn(socket.clone(), true);
+
+    let mut proxy = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .arg("mcp")
+        .arg("--socket")
+        .arg(&socket)
+        .arg("--codex-computer-use-compat")
+        .arg("--no-overlay")
+        .env("CUA_DRIVER_RS_MCP_FORCE_PROXY", "1")
+        .env("CUA_LOG", "cua_driver::proxy=debug")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut proxy_stdin = proxy.stdin.take().unwrap();
+    let mut proxy_stdout = BufReader::new(proxy.stdout.take().unwrap());
+    let proxy_stderr = proxy.stderr.take().unwrap();
+    let (session_tx, session_rx) = mpsc::channel();
+    let stderr_reader = std::thread::spawn(move || {
+        let mut session_id = None;
+        let mut sent = false;
+        for line in BufReader::new(proxy_stderr).lines().map_while(Result::ok) {
+            if let Some(field) = line.split_whitespace().find_map(|field| {
+                field
+                    .strip_prefix("session_id=")
+                    .map(|value| value.trim_matches('"').to_owned())
+            }) {
+                session_id = Some(field);
+            }
+            if !sent && line.contains("control connection established") {
+                let _ = session_tx.send(
+                    session_id
+                        .clone()
+                        .expect("control log includes session id"),
+                );
+                sent = true;
+            }
+        }
+    });
+    let session_id = session_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("proxy established authenticated control session");
+
+    writeln!(
+        proxy_stdin,
+        "{}",
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "not_a_real_tool", "arguments": {}},
+        })
+    )
+    .unwrap();
+    proxy_stdin.flush().unwrap();
+    let mut proxy_line = String::new();
+    proxy_stdout.read_line(&mut proxy_line).unwrap();
+    assert!(
+        proxy_line.contains("Unknown tool: not_a_real_tool"),
+        "authenticated proxy call did not reach the registry: {proxy_line}"
+    );
+
+    for args in [
+        serde_json::json!({}),
+        serde_json::json!({"_cua_approval_broker_token": "caller-forged"}),
+    ] {
+        let response = send_raw_daemon_request(
+            &socket,
+            serde_json::json!({
+                "method": "call",
+                "name": "list_apps",
+                "args": args,
+                "session_id": session_id,
+            }),
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["exit_code"], 77);
+        assert!(
+            response["error"]
+                .as_str()
+                .unwrap()
+                .contains("authenticated MCP control session")
+                || response["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("broker authentication failed"),
+            "unexpected raw-client rejection: {response}"
+        );
+    }
+
+    let _ = proxy.kill();
+    let _ = proxy.wait();
+    stderr_reader.join().unwrap();
+    drop(daemon);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn status_and_stop_manage_native_and_compat_daemons_independently() {
     let home = tempfile::Builder::new()
         .prefix("cua-lc-")
@@ -570,18 +719,30 @@ fn status_and_stop_manage_native_and_compat_daemons_independently() {
     let mut compat = spawn_default_profile_daemon(home.path(), true);
 
     let native_status = run_profile_lifecycle_command(home.path(), "status", false);
-    assert!(native_status.status.success(), "native status: {native_status:?}");
-    assert!(String::from_utf8_lossy(&native_status.stdout)
-        .contains(native.socket.to_str().unwrap()));
+    assert!(
+        native_status.status.success(),
+        "native status: {native_status:?}"
+    );
+    assert!(
+        String::from_utf8_lossy(&native_status.stdout).contains(native.socket.to_str().unwrap())
+    );
 
     let compat_status = run_profile_lifecycle_command(home.path(), "status", true);
-    assert!(compat_status.status.success(), "compat status: {compat_status:?}");
-    assert!(String::from_utf8_lossy(&compat_status.stdout)
-        .contains(compat.socket.to_str().unwrap()));
+    assert!(
+        compat_status.status.success(),
+        "compat status: {compat_status:?}"
+    );
+    assert!(
+        String::from_utf8_lossy(&compat_status.stdout).contains(compat.socket.to_str().unwrap())
+    );
 
     let stop_compat = run_profile_lifecycle_command(home.path(), "stop", true);
     assert!(stop_compat.status.success(), "compat stop: {stop_compat:?}");
-    assert!(compat.child.wait().expect("wait for compat daemon").success());
+    assert!(compat
+        .child
+        .wait()
+        .expect("wait for compat daemon")
+        .success());
     assert!(
         native.child.try_wait().unwrap().is_none(),
         "compat stop must not terminate the native daemon"
@@ -595,7 +756,11 @@ fn status_and_stop_manage_native_and_compat_daemons_independently() {
 
     let stop_native = run_profile_lifecycle_command(home.path(), "stop", false);
     assert!(stop_native.status.success(), "native stop: {stop_native:?}");
-    assert!(native.child.wait().expect("wait for native daemon").success());
+    assert!(native
+        .child
+        .wait()
+        .expect("wait for native daemon")
+        .success());
 }
 
 #[test]
@@ -668,6 +833,10 @@ fn compat_proxy_brokers_nested_app_approval_and_retries_once() {
                                     })
                                 }
                                 "call" => {
+                                    assert_eq!(
+                                        request["args"]["_cua_approval_broker_token"],
+                                        "daemon-broker-token"
+                                    );
                                     let attempt = calls.fetch_add(1, Ordering::SeqCst);
                                     if attempt == 0 {
                                         serde_json::json!({
@@ -809,7 +978,26 @@ fn compat_proxy_brokers_nested_app_approval_and_retries_once() {
     let response: Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(response["id"], 2);
     assert_eq!(response["result"]["isError"], false);
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({
+            "jsonrpc":"2.0",
+            "id":3,
+            "method":"tools/call",
+            "params":{"name":"click","arguments":{"app":"Calculator","x":10,"y":10}},
+        })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    line.clear();
+    stdout.read_line(&mut line).unwrap();
+    let action_response: Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(action_response["id"], 3);
+    assert_eq!(action_response["result"]["isError"], false);
+
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
     assert_eq!(resolutions.load(Ordering::SeqCst), 1);
 
     let _ = child.kill();

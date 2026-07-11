@@ -22,6 +22,7 @@ pip-preview = { path = "../pip-preview" }
 async-trait = "0.1"
 base64 = { workspace = true }
 uuid = { workspace = true }
+subtle = "2"
 # Telemetry HTTP client. `ureq` over `reqwest` for the small dep footprint:
 # PostHog ingest is a single fire-and-forget POST with a 3s timeout. Uses
 # rustls (default) so Linux/Windows builds don't require system OpenSSL.
@@ -52,6 +53,7 @@ libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 platform-macos = { path = "../platform-macos" }
+core-foundation = "0.10"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 platform-windows = { path = "../platform-windows" }

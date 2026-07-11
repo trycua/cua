@@ -194,82 +194,266 @@ fn write_private_pid_file(pid_path: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Authenticate the private approval broker against the executable serving the
-/// daemon. Normal tool calls remain available to every same-user socket peer,
-/// but only another process running this exact installed `cua-driver` binary
-/// may establish the long-lived approval control session.
+const CODEX_UNVERIFIED_CLIENT_ENV: &str = "CUA_DRIVER_CODEX_ALLOW_UNVERIFIED_CLIENT";
+const CODEX_PARENT_REQUIREMENT: &str =
+    "anchor apple generic and certificate leaf[subject.OU] = \"2DC432GLL2\" and identifier \"codex\"";
+
 #[cfg(all(unix, target_os = "macos"))]
-fn approval_broker_peer_is_trusted(stream: &tokio::net::UnixStream) -> bool {
-    use std::ffi::CStr;
+type SecurityCodeRef = *const libc::c_void;
+#[cfg(all(unix, target_os = "macos"))]
+type SecurityRequirementRef = *const libc::c_void;
+#[cfg(all(unix, target_os = "macos"))]
+type SecurityStatus = i32;
+#[cfg(all(unix, target_os = "macos"))]
+type SecurityFlags = u32;
+
+#[cfg(all(unix, target_os = "macos"))]
+#[link(name = "Security", kind = "framework")]
+extern "C" {
+    static kSecGuestAttributePid: core_foundation::string::CFStringRef;
+    fn SecCodeCopySelf(flags: SecurityFlags, code: *mut SecurityCodeRef) -> SecurityStatus;
+    fn SecCodeCopyDesignatedRequirement(
+        code: SecurityCodeRef,
+        flags: SecurityFlags,
+        requirement: *mut SecurityRequirementRef,
+    ) -> SecurityStatus;
+    fn SecCodeCopyGuestWithAttributes(
+        host: SecurityCodeRef,
+        attributes: core_foundation::dictionary::CFDictionaryRef,
+        flags: SecurityFlags,
+        guest: *mut SecurityCodeRef,
+    ) -> SecurityStatus;
+    fn SecRequirementCreateWithString(
+        text: core_foundation::string::CFStringRef,
+        flags: SecurityFlags,
+        requirement: *mut SecurityRequirementRef,
+    ) -> SecurityStatus;
+    fn SecCodeCheckValidity(
+        code: SecurityCodeRef,
+        flags: SecurityFlags,
+        requirement: SecurityRequirementRef,
+    ) -> SecurityStatus;
+}
+
+#[cfg(all(unix, target_os = "macos"))]
+fn approval_broker_peer_pid(stream: &tokio::net::UnixStream) -> Result<libc::pid_t, String> {
     use std::os::fd::AsRawFd;
-
-    const SOL_LOCAL: libc::c_int = 0;
-    const LOCAL_PEERPID: libc::c_int = 0x002;
-    const PROC_PIDPATHINFO_MAXSIZE: usize = 4 * 1024;
-
-    extern "C" {
-        fn proc_pidpath(
-            pid: libc::c_int,
-            buffer: *mut libc::c_void,
-            buffersize: u32,
-        ) -> libc::c_int;
-    }
 
     let mut peer_pid: libc::pid_t = 0;
     let mut length = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
     let peer_ok = unsafe {
         libc::getsockopt(
             stream.as_raw_fd(),
-            SOL_LOCAL,
-            LOCAL_PEERPID,
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERPID,
             (&mut peer_pid as *mut libc::pid_t).cast(),
             &mut length,
         )
     } == 0;
-    if !peer_ok || peer_pid <= 0 {
-        tracing::warn!("approval broker rejected: could not resolve Unix peer pid");
-        return false;
+    if peer_ok && peer_pid > 0 {
+        Ok(peer_pid)
+    } else {
+        Err("could not resolve the Unix peer pid".to_owned())
     }
+}
 
-    let mut buffer = vec![0u8; PROC_PIDPATHINFO_MAXSIZE];
+#[cfg(all(unix, target_os = "macos"))]
+fn process_path(pid: libc::pid_t) -> Result<std::path::PathBuf, String> {
+    use std::ffi::CStr;
+
+    let mut buffer = vec![0u8; 4 * 1024];
     let written = unsafe {
-        proc_pidpath(
-            peer_pid,
-            buffer.as_mut_ptr().cast(),
-            buffer.len() as u32,
-        )
+        libc::proc_pidpath(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32)
     };
     if written <= 0 {
-        tracing::warn!(peer_pid, "approval broker rejected: could not resolve peer executable");
-        return false;
+        return Err(format!("could not resolve executable path for pid {pid}"));
     }
-    let Ok(peer_path) = CStr::from_bytes_until_nul(&buffer) else {
-        tracing::warn!(peer_pid, "approval broker rejected: invalid peer executable path");
-        return false;
+    let path = CStr::from_bytes_until_nul(&buffer)
+        .map_err(|_| format!("pid {pid} returned an invalid executable path"))?;
+    std::fs::canonicalize(std::path::Path::new(path.to_string_lossy().as_ref()))
+        .map_err(|error| format!("could not canonicalize executable for pid {pid}: {error}"))
+}
+
+#[cfg(all(unix, target_os = "macos"))]
+fn process_parent_pid(pid: libc::pid_t) -> Result<libc::pid_t, String> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    let expected_size = std::mem::size_of::<libc::proc_bsdinfo>();
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            expected_size as libc::c_int,
+        )
     };
-    let Ok(peer_path) = std::fs::canonicalize(std::path::Path::new(peer_path.to_string_lossy().as_ref())) else {
-        tracing::warn!(peer_pid, "approval broker rejected: peer executable disappeared");
-        return false;
+    if written != expected_size as libc::c_int {
+        return Err(format!("could not resolve immediate parent pid for proxy pid {pid}"));
+    }
+    let parent = unsafe { info.assume_init() }.pbi_ppid as libc::pid_t;
+    if parent > 0 {
+        Ok(parent)
+    } else {
+        Err(format!("proxy pid {pid} has no live immediate parent"))
+    }
+}
+
+#[cfg(all(unix, target_os = "macos"))]
+fn unverified_codex_client_override_enabled(value: Option<&std::ffi::OsStr>) -> bool {
+    value == Some(std::ffi::OsStr::new("1"))
+}
+
+#[cfg(all(unix, target_os = "macos"))]
+fn dynamic_code_for_pid(pid: libc::pid_t, label: &str) -> Result<SecurityCodeRef, String> {
+    use core_foundation::base::TCFType;
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::number::CFNumber;
+    use core_foundation::string::CFString;
+
+    let pid_key = unsafe { CFString::wrap_under_get_rule(kSecGuestAttributePid) };
+    let attributes = CFDictionary::from_CFType_pairs(&[(pid_key, CFNumber::from(pid as i32))]);
+    let mut code: SecurityCodeRef = std::ptr::null();
+    let status = unsafe {
+        SecCodeCopyGuestWithAttributes(
+            std::ptr::null(),
+            attributes.as_concrete_TypeRef(),
+            0,
+            &mut code,
+        )
     };
-    let Ok(daemon_path) = std::env::current_exe().and_then(std::fs::canonicalize) else {
-        tracing::warn!("approval broker rejected: could not resolve daemon executable");
-        return false;
+    if status == 0 {
+        Ok(code)
+    } else {
+        Err(format!(
+            "Security.framework could not inspect {label} pid {pid} (OSStatus {status})"
+        ))
+    }
+}
+
+#[cfg(all(unix, target_os = "macos"))]
+fn validate_peer_matches_daemon_code(peer_pid: libc::pid_t) -> Result<(), String> {
+    use core_foundation::base::{CFRelease, CFTypeRef};
+
+    let mut daemon_code: SecurityCodeRef = std::ptr::null();
+    let self_status = unsafe { SecCodeCopySelf(0, &mut daemon_code) };
+    if self_status != 0 {
+        return Err(format!(
+            "Security.framework could not inspect the running daemon (OSStatus {self_status})"
+        ));
+    }
+
+    let mut daemon_requirement: SecurityRequirementRef = std::ptr::null();
+    let requirement_status = unsafe {
+        SecCodeCopyDesignatedRequirement(daemon_code, 0, &mut daemon_requirement)
     };
-    let trusted = peer_path == daemon_path;
-    if !trusted {
+    if requirement_status != 0 {
+        unsafe { CFRelease(daemon_code as CFTypeRef) };
+        return Err(format!(
+            "Security.framework could not derive the running daemon code requirement (OSStatus {requirement_status})"
+        ));
+    }
+
+    let peer_code = match dynamic_code_for_pid(peer_pid, "broker") {
+        Ok(code) => code,
+        Err(error) => {
+            unsafe {
+                CFRelease(daemon_requirement as CFTypeRef);
+                CFRelease(daemon_code as CFTypeRef);
+            }
+            return Err(error);
+        }
+    };
+    let validity_status = unsafe { SecCodeCheckValidity(peer_code, 0, daemon_requirement) };
+    unsafe {
+        CFRelease(peer_code as CFTypeRef);
+        CFRelease(daemon_requirement as CFTypeRef);
+        CFRelease(daemon_code as CFTypeRef);
+    }
+    if validity_status == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "broker pid {peer_pid} does not match the running daemon code identity (OSStatus {validity_status})"
+        ))
+    }
+}
+
+#[cfg(all(unix, target_os = "macos"))]
+fn validate_codex_dynamic_code(pid: libc::pid_t) -> Result<(), String> {
+    use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
+    use core_foundation::string::CFString;
+
+    let requirement_text = CFString::new(CODEX_PARENT_REQUIREMENT);
+    let mut requirement: SecurityRequirementRef = std::ptr::null();
+    let requirement_status = unsafe {
+        SecRequirementCreateWithString(
+            requirement_text.as_concrete_TypeRef(),
+            0,
+            &mut requirement,
+        )
+    };
+    if requirement_status != 0 {
+        return Err(format!(
+            "Security.framework could not compile the Codex code requirement (OSStatus {requirement_status})"
+        ));
+    }
+    let code = match dynamic_code_for_pid(pid, "Codex parent") {
+        Ok(code) => code,
+        Err(error) => {
+            unsafe { CFRelease(requirement as CFTypeRef) };
+            return Err(error);
+        }
+    };
+    let validity_status = unsafe { SecCodeCheckValidity(code, 0, requirement) };
+    unsafe {
+        CFRelease(code as CFTypeRef);
+        CFRelease(requirement as CFTypeRef);
+    }
+    if validity_status == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "immediate parent pid {pid} is not signed OpenAI Codex (OSStatus {validity_status})"
+        ))
+    }
+}
+
+/// Authenticate the broker process and the signed Codex process that launched
+/// it. The override skips only the Codex parent check and is intentionally
+/// exact for isolated tests or local driver development.
+#[cfg(all(unix, target_os = "macos"))]
+fn approval_broker_peer_is_trusted(peer_pid: libc::pid_t) -> Result<(), String> {
+    let peer_path = process_path(peer_pid)?;
+    let daemon_path = std::env::current_exe()
+        .and_then(std::fs::canonicalize)
+        .map_err(|error| format!("could not resolve daemon executable: {error}"))?;
+    if peer_path != daemon_path {
+        return Err(format!(
+            "peer executable {} does not match daemon executable {}",
+            peer_path.display(),
+            daemon_path.display()
+        ));
+    }
+    validate_peer_matches_daemon_code(peer_pid)?;
+    if unverified_codex_client_override_enabled(
+        std::env::var_os(CODEX_UNVERIFIED_CLIENT_ENV).as_deref(),
+    ) {
         tracing::warn!(
-            peer_pid,
-            peer = %peer_path.display(),
-            daemon = %daemon_path.display(),
-            "approval broker rejected: peer executable does not match daemon"
+            "DANGEROUS: skipping signed Codex parent validation because {CODEX_UNVERIFIED_CLIENT_ENV}=1; live broker code identity was still verified"
         );
+        return Ok(());
     }
-    trusted
+    validate_codex_dynamic_code(process_parent_pid(peer_pid)?)
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn approval_broker_peer_is_trusted(_stream: &tokio::net::UnixStream) -> bool {
-    false
+fn approval_broker_peer_pid(_stream: &tokio::net::UnixStream) -> Result<libc::pid_t, String> {
+    Err("Codex Computer Use approval brokers are supported only on macOS".to_owned())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn approval_broker_peer_is_trusted(_peer_pid: libc::pid_t) -> Result<(), String> {
+    Err("Codex Computer Use approval brokers are supported only on macOS".to_owned())
 }
 
 // ── Recording idle-TTL backstop (#1764) ─────────────────────────────────────────
@@ -666,13 +850,70 @@ fn app_approval_broker_matches(
     session_id: &str,
     broker_token: &str,
 ) -> bool {
-    !broker_token.is_empty()
-        && brokers
-            .lock()
-            .unwrap()
-            .get(session_id)
-            .map(String::as_str)
-            == Some(broker_token)
+    brokers
+        .lock()
+        .unwrap()
+        .get(session_id)
+        .is_some_and(|expected| broker_tokens_equal(expected, broker_token))
+}
+
+const APPROVAL_BROKER_TOKEN_ARG: &str = "_cua_approval_broker_token";
+
+fn broker_tokens_equal(expected: &str, supplied: &str) -> bool {
+    use subtle::ConstantTimeEq;
+
+    !supplied.is_empty() && bool::from(expected.as_bytes().ct_eq(supplied.as_bytes()))
+}
+
+fn authenticate_compat_call(
+    args: &mut serde_json::Value,
+    profile: DaemonProfile,
+    session_id: Option<&str>,
+    brokers: &std::sync::Mutex<std::collections::HashMap<String, String>>,
+) -> Result<(), String> {
+    if profile != DaemonProfile::CodexComputerUseCompat {
+        return Ok(());
+    }
+
+    let supplied_token = args
+        .as_object_mut()
+        .and_then(|object| object.remove(APPROVAL_BROKER_TOKEN_ARG))
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .ok_or_else(|| {
+            "Codex Computer Use tool calls require the authenticated MCP control session."
+                .to_owned()
+        })?;
+    let session_id = session_id.filter(|value| !value.is_empty()).ok_or_else(|| {
+        "Codex Computer Use tool calls require the authenticated MCP session id.".to_owned()
+    })?;
+    if !app_approval_broker_matches(brokers, session_id, &supplied_token) {
+        return Err("Codex Computer Use tool call broker authentication failed.".to_owned());
+    }
+
+    let object = args
+        .as_object_mut()
+        .expect("broker token could only be extracted from an object");
+    object.remove("session");
+    object.insert(
+        "_session_id".to_owned(),
+        serde_json::Value::String(session_id.to_owned()),
+    );
+    Ok(())
+}
+
+fn release_approval_broker_if_owner(
+    brokers: &std::sync::Mutex<std::collections::HashMap<String, String>>,
+    session_id: &str,
+    broker_token: &str,
+) -> bool {
+    let mut brokers = brokers.lock().unwrap();
+    let owns_session = brokers
+        .get(session_id)
+        .is_some_and(|expected| broker_tokens_equal(expected, broker_token));
+    if owns_session {
+        brokers.remove(session_id);
+    }
+    owns_session
 }
 
 // ── Client ────────────────────────────────────────────────────────────────────
@@ -929,7 +1170,7 @@ pub async fn run_serve(
                 let reg = registry.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
                 let last_activity = last_activity.clone();
-                let approval_peer_trusted = approval_broker_peer_is_trusted(&stream);
+                let approval_peer_pid = approval_broker_peer_pid(&stream);
                 let approval_brokers = approval_brokers.clone();
 
                 tokio::spawn(async move {
@@ -1207,12 +1448,6 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "call" => {
-                                // Recording idle-TTL liveness: any serviced tool
-                                // call counts as activity (#1764).
-                                last_activity.store(
-                                    now_unix_secs(),
-                                    std::sync::atomic::Ordering::Relaxed,
-                                );
                                 let raw_name = req.name.as_deref().unwrap_or("").to_owned();
                                 // Deprecated alias: `type_text_chars` → `type_text`.
                                 // Mirrors Swift's `ToolRegistry.call` aliasing.
@@ -1223,6 +1458,24 @@ pub async fn run_serve(
                                 let mut args = req.args.unwrap_or(serde_json::Value::Object(
                                     serde_json::Map::new()
                                 ));
+                                if let Err(error) = authenticate_compat_call(
+                                    &mut args,
+                                    profile,
+                                    req.session_id.as_deref(),
+                                    &approval_brokers,
+                                ) {
+                                    let resp = DaemonResponse::err(error, 77);
+                                    let _ = writer.write_all(
+                                        (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                    ).await;
+                                    continue;
+                                }
+                                // Only authenticated calls keep session-owned
+                                // recording state alive.
+                                last_activity.store(
+                                    now_unix_secs(),
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
                                 // Apply the caller-declared session identity
                                 // (explicit `session` → `_session_id`; minted id
                                 // as the recording/config fallback only). See
@@ -1306,18 +1559,33 @@ pub async fn run_serve(
                                     .and_then(|args| args.get("approval_broker"))
                                     .and_then(serde_json::Value::as_bool)
                                     .unwrap_or(false);
-                                if approval_broker_requested
-                                    && profile == DaemonProfile::CodexComputerUseCompat
-                                    && !approval_peer_trusted
-                                {
-                                    let resp = DaemonResponse::err(
-                                        "Computer Use approval broker authentication failed.",
-                                        77,
-                                    );
-                                    let _ = writer.write_all(
-                                        (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
-                                    ).await;
-                                    continue;
+                                if profile == DaemonProfile::CodexComputerUseCompat {
+                                    if !approval_broker_requested {
+                                        let resp = DaemonResponse::err(
+                                            "daemon profile mismatch for session control: MCP requested `native` but daemon reports `codex-computer-use-compat`",
+                                            78,
+                                        );
+                                        let _ = writer.write_all(
+                                            (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                        ).await;
+                                        continue;
+                                    }
+                                    let authentication = match approval_peer_pid.as_ref() {
+                                        Ok(peer_pid) => approval_broker_peer_is_trusted(*peer_pid),
+                                        Err(error) => Err(error.clone()),
+                                    };
+                                    if let Err(reason) = authentication {
+                                        let resp = DaemonResponse::err(
+                                            format!(
+                                                "Computer Use approval broker authentication failed: {reason}. Only the signed OpenAI Codex app may use this profile. For isolated tests or local driver development only, set {CODEX_UNVERIFIED_CLIENT_ENV}=1."
+                                            ),
+                                            77,
+                                        );
+                                        let _ = writer.write_all(
+                                            (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                        ).await;
+                                        continue;
+                                    }
                                 }
 
                                 let mut approval_broker_token = None;
@@ -1412,31 +1680,49 @@ pub async fn run_serve(
                     // idempotent, so racing a legacy explicit session_end is
                     // benign.
                     if let Some(sid) = control_session_id {
-                        if let Some((owner, token)) = control_approval_token.take() {
-                            let mut brokers = approval_brokers.lock().unwrap();
-                            if brokers.get(&owner) == Some(&token) {
-                                brokers.remove(&owner);
-                                platform_macos::app_approval::global()
-                                    .unregister_broker(&owner, &token);
+                        let owns_cleanup = if profile == DaemonProfile::CodexComputerUseCompat {
+                            match control_approval_token.take() {
+                                Some((owner, token))
+                                    if owner == sid
+                                        && release_approval_broker_if_owner(
+                                            &approval_brokers,
+                                            &owner,
+                                            &token,
+                                        ) =>
+                                {
+                                    platform_macos::app_approval::global()
+                                        .unregister_broker(&owner, &token);
+                                    true
+                                }
+                                _ => false,
                             }
+                        } else {
+                            true
+                        };
+                        if owns_cleanup {
+                            // stop_owner can SYNCHRONOUSLY finalize the recording's
+                            // mp4, on macOS it hits SCStream::stop_capture(), which
+                            // blocks on disk I/O (video_sckit.rs). Run it on a
+                            // blocking thread so it does not stall a runtime worker.
+                            // fire_session_end stays inline: its hooks (overlay
+                            // Remove, config-override clear) are non-blocking.
+                            // Mark the session ended FIRST so an in-flight start_recording
+                            // sees ended=true and bails (mark-before-reap; the cursor/config
+                            // hooks already reap inside fire_session_end after the mark).
+                            // stop_owner ignores is_session_ended, so reaping after is safe.
+                            cua_driver_core::session::fire_session_end(&sid);
+                            let reg2 = reg.clone();
+                            let sid_for_stop = sid.clone();
+                            let _ = tokio::task::spawn_blocking(move || {
+                                reg2.recording.stop_owner(Some(&sid_for_stop))
+                            })
+                            .await;
+                        } else {
+                            tracing::debug!(
+                                session_id = %sid,
+                                "stale Codex Computer Use control connection lost cleanup ownership"
+                            );
                         }
-                        // stop_owner can SYNCHRONOUSLY finalize the recording's
-                        // mp4 — on macOS it hits SCStream::stop_capture(), which
-                        // blocks on disk I/O (video_sckit.rs). Run it on a
-                        // blocking thread so it does not stall a runtime worker.
-                        // fire_session_end stays inline: its hooks (overlay
-                        // Remove, config-override clear) are non-blocking.
-                        // Mark the session ended FIRST so an in-flight start_recording
-                        // sees ended=true and bails (mark-before-reap; the cursor/config
-                        // hooks already reap inside fire_session_end after the mark).
-                        // stop_owner ignores is_session_ended, so reaping after is safe.
-                        cua_driver_core::session::fire_session_end(&sid);
-                        let reg2 = reg.clone();
-                        let sid_for_stop = sid.clone();
-                        let _ = tokio::task::spawn_blocking(move || {
-                            reg2.recording.stop_owner(Some(&sid_for_stop))
-                        })
-                        .await;
                     }
                 });
             }
@@ -2472,8 +2758,13 @@ mod gate_tests {
 
 #[cfg(test)]
 mod session_boundary_tests {
-    use super::{apply_session_identity, http_transport_allowed, DaemonProfile};
+    use super::{
+        apply_session_identity, authenticate_compat_call, http_transport_allowed,
+        release_approval_broker_if_owner, DaemonProfile, APPROVAL_BROKER_TOKEN_ARG,
+    };
     use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
 
     #[test]
     fn explicit_session_becomes_session_id_and_is_returned() {
@@ -2531,12 +2822,73 @@ mod session_boundary_tests {
         );
     }
 
+    #[test]
+    fn compat_broker_session_overwrites_caller_session_identity() {
+        let brokers = Mutex::new(HashMap::from([(
+            "authenticated-session".to_owned(),
+            "daemon-minted".to_owned(),
+        )]));
+        let mut args = json!({
+            "app": "Calculator",
+            "session": "victim-session",
+            "_session_id": "victim-session",
+            (APPROVAL_BROKER_TOKEN_ARG): "daemon-minted",
+        });
+
+        authenticate_compat_call(
+            &mut args,
+            DaemonProfile::CodexComputerUseCompat,
+            Some("authenticated-session"),
+            &brokers,
+        )
+        .unwrap();
+
+        assert_eq!(args["app"], "Calculator");
+        assert_eq!(args["_session_id"], "authenticated-session");
+        assert!(args.get("session").is_none());
+        assert!(args.get(APPROVAL_BROKER_TOKEN_ARG).is_none());
+    }
+
+    #[test]
+    fn stale_control_token_cannot_release_new_session_owner() {
+        let brokers = Mutex::new(HashMap::from([(
+            "shared-session".to_owned(),
+            "new-owner-token".to_owned(),
+        )]));
+
+        assert!(!release_approval_broker_if_owner(
+            &brokers,
+            "shared-session",
+            "stale-owner-token",
+        ));
+        assert_eq!(
+            brokers.lock().unwrap().get("shared-session").map(String::as_str),
+            Some("new-owner-token")
+        );
+        assert!(release_approval_broker_if_owner(
+            &brokers,
+            "shared-session",
+            "new-owner-token",
+        ));
+        assert!(!brokers.lock().unwrap().contains_key("shared-session"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unverified_codex_override_requires_exact_scary_value() {
+        use super::unverified_codex_client_override_enabled;
+        use std::ffi::OsStr;
+
+        assert!(!unverified_codex_client_override_enabled(None));
+        assert!(!unverified_codex_client_override_enabled(Some(OsStr::new("true"))));
+        assert!(!unverified_codex_client_override_enabled(Some(OsStr::new("0"))));
+        assert!(unverified_codex_client_override_enabled(Some(OsStr::new("1"))));
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn approval_resolution_requires_the_daemon_minted_broker_token() {
         use super::app_approval_broker_matches;
-        use std::collections::HashMap;
-        use std::sync::Mutex;
 
         let brokers = Mutex::new(HashMap::new());
         assert!(!app_approval_broker_matches(

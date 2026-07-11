@@ -54,12 +54,14 @@ impl MissingPermission {
     /// adapted from the Swift gate's SwiftUI subtitle copy.
     pub fn rationale(self) -> &'static str {
         match self {
-            Self::Accessibility =>
+            Self::Accessibility => {
                 "lets the driver read interface text and operate buttons, fields, menus, \
-                 and other app controls.",
-            Self::ScreenRecording =>
+                 and other app controls."
+            }
+            Self::ScreenRecording => {
                 "lets the driver see app windows so actions can be placed accurately \
-                 and their results verified.",
+                 and their results verified."
+            }
         }
     }
 
@@ -67,10 +69,12 @@ impl MissingPermission {
     /// Privacy pane.  Same strings the Swift gate uses.
     pub fn settings_url(self) -> &'static str {
         match self {
-            Self::Accessibility =>
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-            Self::ScreenRecording =>
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            Self::Accessibility => {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            }
+            Self::ScreenRecording => {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+            }
         }
     }
 }
@@ -193,6 +197,18 @@ const GATE_REEXEC_ENV: &str = "CUA_DRIVER_RS_GATE_REEXEC";
 /// (~10min) the deadline never triggers and the daemon re-execs forever.
 const GATE_START_ENV: &str = "CUA_DRIVER_RS_GATE_START_UNIX";
 
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReexecMode {
+    /// Return to the native panel after a fresh TCC preflight. This mode must
+    /// not set the silent-wait marker: a denied decision needs recoverable
+    /// per-row actions, not an invisible polling loop.
+    InteractivePanel,
+    /// Terminal fallback cache refresh. The restarted process resumes the
+    /// existing wait without raising prompts or reopening presentation UI.
+    SilentWait,
+}
+
 /// Run the gate if needed.  When called and the process already has both
 /// grants, this returns immediately without printing anything — the
 /// `serve` happy path is unaffected.
@@ -222,6 +238,8 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
         // inherit a stale "silent refresh" state.
         std::env::remove_var(GATE_REEXEC_ENV);
         std::env::remove_var(GATE_START_ENV);
+        #[cfg(target_os = "macos")]
+        crate::permissions::panel::clear_request_history();
         return Ok(());
     }
 
@@ -251,8 +269,18 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
             // show the panel again. It also avoids asking the user to quit and
             // manually reconstruct the daemon launch arguments.
             #[cfg(target_os = "macos")]
-            reexec_self();
-            return Ok(());
+            reexec_self(ReexecMode::InteractivePanel);
+            return wait_for_grants(&opts);
+        }
+        PanelPresentation::ShownRefreshRequired => {
+            // Returning from a TCC decision or System Settings is a progress
+            // signal, not proof of a grant. Re-exec immediately so cached
+            // false probes cannot strand the panel. A denied grant reopens
+            // the panel in its recoverable “Complete in System Settings”
+            // state; a granted one advances from fresh status.
+            #[cfg(target_os = "macos")]
+            reexec_self(ReexecMode::InteractivePanel);
+            return wait_for_grants(&opts);
         }
         PanelPresentation::ShownDismissed => {
             return Ok(());
@@ -298,6 +326,9 @@ enum PanelPresentation {
     /// Panel shown; its 1 Hz poll loop saw both grants flip green and
     /// dismissed automatically. Caller can skip the trailing wait loop.
     ShownAllGranted,
+    /// Panel shown; the user returned from system permission UI. The result
+    /// is deliberately unknown until a fresh process verifies it.
+    ShownRefreshRequired,
 }
 
 fn present_panel_if_available(initial: PermissionsStatus) -> PanelPresentation {
@@ -313,6 +344,7 @@ fn present_panel_if_available(initial: PermissionsStatus) -> PanelPresentation {
             panel::PanelOutcome::Unavailable => PanelPresentation::NotShown,
             panel::PanelOutcome::Dismissed => PanelPresentation::ShownDismissed,
             panel::PanelOutcome::AllGranted => PanelPresentation::ShownAllGranted,
+            panel::PanelOutcome::RefreshRequired => PanelPresentation::ShownRefreshRequired,
         }
     }
     #[cfg(not(target_os = "macos"))]
@@ -357,7 +389,10 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        match std::env::var(GATE_START_ENV).ok().and_then(|s| s.parse::<u64>().ok()) {
+        match std::env::var(GATE_START_ENV)
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+        {
             Some(orig) => Instant::now()
                 .checked_sub(Duration::from_secs(now_unix.saturating_sub(orig)))
                 .unwrap_or_else(Instant::now),
@@ -410,7 +445,7 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
                     fmt_missing(&last_missing)
                 );
                 let _ = std::io::stdout().flush();
-                reexec_self();
+                reexec_self(ReexecMode::SilentWait);
                 // `reexec_self` only returns on failure; if it does,
                 // continue the loop with a reset counter so we don't
                 // spin-exec.
@@ -461,7 +496,7 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
 /// function is never executed. Caller continues if the call fails so
 /// the gate keeps polling rather than aborting hard.
 #[cfg(target_os = "macos")]
-fn reexec_self() {
+fn reexec_self(mode: ReexecMode) {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStringExt;
 
@@ -483,8 +518,7 @@ fn reexec_self() {
     }
 
     // execvp takes a NULL-terminated argv. Build pointers + sentinel.
-    let mut argv_ptrs: Vec<*const libc::c_char> =
-        argv.iter().map(|s| s.as_ptr()).collect();
+    let mut argv_ptrs: Vec<*const libc::c_char> = argv.iter().map(|s| s.as_ptr()).collect();
     argv_ptrs.push(std::ptr::null());
 
     let exe_c = match CString::new(exe.into_os_string().into_vec()) {
@@ -499,12 +533,7 @@ fn reexec_self() {
     // polls silently (no re-prompt), and anchor the original gate start so
     // the deadline is cumulative across re-execs. execvp inherits the
     // environment, so the new image sees these.
-    std::env::set_var(GATE_REEXEC_ENV, "1");
-    if std::env::var(GATE_START_ENV).is_err() {
-        if let Ok(d) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-            std::env::set_var(GATE_START_ENV, d.as_secs().to_string());
-        }
-    }
+    prepare_reexec_environment(mode);
 
     // execvp returns -1 on failure; on success it does not return.
     // SAFETY: argv_ptrs is NULL-terminated; exe_c outlives the call.
@@ -514,6 +543,19 @@ fn reexec_self() {
     // If we get here the exec failed.
     let err = std::io::Error::last_os_error();
     eprintln!("[cua-driver] re-exec failed: {err}");
+}
+
+#[cfg(target_os = "macos")]
+fn prepare_reexec_environment(mode: ReexecMode) {
+    match mode {
+        ReexecMode::InteractivePanel => std::env::remove_var(GATE_REEXEC_ENV),
+        ReexecMode::SilentWait => std::env::set_var(GATE_REEXEC_ENV, "1"),
+    }
+    if std::env::var(GATE_START_ENV).is_err() {
+        if let Ok(d) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            std::env::set_var(GATE_START_ENV, d.as_secs().to_string());
+        }
+    }
 }
 
 fn print_banner(missing: &[MissingPermission], open_settings: bool) {
@@ -652,8 +694,10 @@ mod tests {
             let opts = GateOpts::from_env_and_flag(false);
             // "TrUe" is in the list intentionally — it must NOT opt out
             // (it's not in the off-sentinel set), so split the assertion.
-            let expected_opt_out =
-                matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off");
+            let expected_opt_out = matches!(
+                v.to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            );
             assert_eq!(
                 opts.opt_out, expected_opt_out,
                 "env={v:?} opt_out mismatch (expected {expected_opt_out})"
@@ -714,5 +758,32 @@ mod tests {
             MissingPermission::ScreenRecording.settings_url(),
             "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn interactive_refresh_reopens_panel_after_reexec() {
+        let _guard = env_lock();
+        std::env::set_var(GATE_REEXEC_ENV, "1");
+        std::env::remove_var(GATE_START_ENV);
+        prepare_reexec_environment(ReexecMode::InteractivePanel);
+        assert!(
+            std::env::var(GATE_REEXEC_ENV).is_err(),
+            "permission-decision refresh must not fall into silent polling"
+        );
+        assert!(std::env::var(GATE_START_ENV).is_ok());
+        std::env::remove_var(GATE_START_ENV);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn terminal_cache_refresh_remains_silent_after_reexec() {
+        let _guard = env_lock();
+        std::env::remove_var(GATE_REEXEC_ENV);
+        std::env::remove_var(GATE_START_ENV);
+        prepare_reexec_environment(ReexecMode::SilentWait);
+        assert_eq!(std::env::var(GATE_REEXEC_ENV).as_deref(), Ok("1"));
+        std::env::remove_var(GATE_REEXEC_ENV);
+        std::env::remove_var(GATE_START_ENV);
     }
 }

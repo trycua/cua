@@ -4,9 +4,9 @@
 //!
 //! * **AXPopUpButton**: Find the child option whose AXTitle or AXValue matches
 //!   `value` (case-insensitive) and AXPress it directly.  The native macOS popup
-//!   menu is never opened, so focus is never stolen.  Falls back to Safari
-//!   `osascript do JavaScript` for WebKit `<select>` elements that expose no AX
-//!   children when the popup is closed.
+//!   menu is never opened, so focus is never stolen. Falls back to Safari's
+//!   in-process Apple Event JavaScript suite for WebKit `<select>` elements
+//!   that expose no AX children when the popup is closed.
 //!
 //! * **Everything else**: Write `AXValue` directly (sliders, steppers, native
 //!   text fields that expose a settable AXValue).
@@ -21,6 +21,7 @@ use crate::ax::bindings::{
     copy_children, copy_number_attr, copy_string_attr, perform_action, set_number_attr,
     set_string_attr, kAXErrorSuccess, AXUIElementRef,
 };
+use crate::browser::BrowserJs;
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::CFRelease;
@@ -147,7 +148,7 @@ impl Tool for SetValueTool {
             "set_value.AXValue",
             || async move {
                 tokio::task::spawn_blocking(move || {
-                    set_value_blocking(element_ptr, element_index, pid, &value)
+                    set_value_blocking(element_ptr, element_index, pid, window_id, &value)
                 })
                 .await
             },
@@ -173,6 +174,7 @@ fn set_value_blocking(
     element_ptr: usize,
     element_index: usize,
     pid: i32,
+    window_id: u32,
     value: &str,
 ) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
@@ -183,7 +185,7 @@ fn set_value_blocking(
     if role == "AXPopUpButton" {
         let element_title = unsafe { copy_string_attr(element, "AXTitle") }
             .unwrap_or_default();
-        select_popup_option(element, element_index, pid, value, &element_title)
+        select_popup_option(element, element_index, pid, window_id, value, &element_title)
     } else {
         // Default path: write AXValue directly. Numeric controls (AXSlider /
         // AXStepper) reject a CFString with -25201 and need a CFNumber; text
@@ -284,6 +286,7 @@ fn select_popup_option(
     element: AXUIElementRef,
     element_index: usize,
     pid: i32,
+    window_id: u32,
     value: &str,
     element_title: &str,
 ) -> anyhow::Result<String> {
@@ -343,27 +346,27 @@ fn select_popup_option(
         return result;
     }
 
-    // Strategy 2: Safari/WebKit — no AX children when popup is closed.
-    // Use osascript do JavaScript to set the <select> element's DOM value.
-    let app_name = crate::apps::get_app_name_for_pid(pid)
-        .unwrap_or_default();
+    // Strategy 2: Safari/WebKit has no AX children when the popup is closed.
+    // Use the same window-scoped, in-process Apple Event path as the page tool.
+    let bundle_id = crate::apps::bundle_id_for_pid(pid).unwrap_or_default();
 
-    if app_name != "Safari" {
+    if bundle_id != "com.apple.Safari" {
         anyhow::bail!(
             "AXPopUpButton [{element_index}] '{element_title}' has no AX children and \
-             target is '{app_name}' (not Safari) — no fallback available."
+             target bundle is '{bundle_id}' (not Safari) — no fallback available."
         )
     }
 
-    set_select_via_js(element_index, element_title, value)
+    set_select_via_js(window_id, element_index, element_title, value)
 }
 
 // ── Safari JavaScript fallback ───────────────────────────────────────────────
 
-/// Set an HTML `<select>` value in Safari via `osascript do JavaScript`.
+/// Set an HTML `<select>` value in Safari via its in-process Apple Event suite.
 /// Searches all `<select>` elements for an `<option>` whose text or value matches
 /// `value` (case-insensitive), then sets it and dispatches a `change` event.
 fn set_select_via_js(
+    window_id: u32,
     element_index: usize,
     element_title: &str,
     value: &str,
@@ -393,41 +396,8 @@ fn set_select_via_js(
          }})()"
     );
 
-    let apple_script = format!(
-        "tell application \"Safari\" to do JavaScript \"{js}\" in front document"
-    );
-
-    // Spawn osascript with a 10-second deadline. A stuck Safari permission
-    // prompt or unresponsive renderer can cause wait() to block indefinitely,
-    // which would stall the MCP tool handler permanently.
-    let mut child = std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(&apple_script)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| anyhow::anyhow!("osascript launch failed: {e}"))?;
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) => {
-                if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    anyhow::bail!("osascript timed out after 10 seconds");
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            Err(e) => anyhow::bail!("osascript wait error: {e}"),
-        }
-    }
-    let out = child.wait_with_output()
-        .map_err(|e| anyhow::anyhow!("osascript output error: {e}"))?;
-
-    let raw = String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .to_string();
+    let raw = BrowserJs::execute_blocking(&js, "com.apple.Safari", window_id)?;
+    let raw = raw.trim();
 
     if raw.starts_with("SET:") {
         let dom_val = &raw[4..];
@@ -441,9 +411,6 @@ fn set_select_via_js(
             "No <option> matching '{value}' found in any <select>. \
              Available (text|value): {available}"
         )
-    } else if raw.is_empty() && !out.status.success() {
-        let err_text = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("osascript failed: {}", err_text.trim())
     } else {
         anyhow::bail!(
             "JavaScript returned unexpected output: {}",
@@ -475,5 +442,22 @@ fn hex_digit(n: u8) -> char {
         0..=9  => (b'0' + n) as char,
         10..=15 => (b'A' + n - 10) as char,
         _      => '0',
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn select_value_encoding_is_safe_for_javascript_literal() {
+        assert_eq!(
+            percent_encode_unreserved("Tea & 'Coffee'"),
+            "Tea%20%26%20%27Coffee%27"
+        );
+        assert_eq!(
+            percent_encode_unreserved("日本語"),
+            "%E6%97%A5%E6%9C%AC%E8%AA%9E"
+        );
     }
 }

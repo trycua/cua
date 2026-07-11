@@ -35,6 +35,7 @@ objc2-foundation = { version = "0.2", features = [
     "NSArray", "NSString", "NSDictionary", "NSRunLoop",
     "NSThread", "NSObject", "NSValue",
     "NSAppleEventDescriptor", "NSNotification", "NSOperation",
+    "NSAppleScript",
     "NSURL", "NSDate", "NSError",
     "block2", "libc",
 ] }

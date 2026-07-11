@@ -1,13 +1,16 @@
-//! BrowserJS: run JavaScript in Chrome/Brave/Edge/Safari via AppleScript/osascript.
+//! BrowserJS: run JavaScript in Chrome/Brave/Edge/Safari through the browsers'
+//! Apple Event suites.
 
-use std::time::Duration;
 use anyhow::Context;
+use std::collections::HashSet;
+use std::time::{Duration, Instant};
 
 use crate::windows::WindowBounds;
 
 pub struct BrowserJs;
 
 const CHROME_APP_BUNDLE_PREFIX: &str = "com.google.Chrome.app.";
+static OSA_EXECUTION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Clone, Debug)]
 struct NativeWindowTarget {
@@ -35,16 +38,31 @@ impl BrowserJs {
 
     /// Execute JavaScript in the browser window identified by window_id.
     pub async fn execute(javascript: &str, bundle_id: &str, window_id: u32) -> anyhow::Result<String> {
+        if !Self::supports(bundle_id) {
+            anyhow::bail!("Unsupported browser bundle: {bundle_id}");
+        }
+        let javascript = javascript.to_owned();
+        let bundle_id = bundle_id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            Self::execute_blocking(&javascript, &bundle_id, window_id)
+        })
+        .await
+        .context("Native browser Apple Event task failed")?
+    }
+
+    /// Synchronous implementation shared by the async `page` tool and AX
+    /// fallbacks that already run on a blocking worker.
+    pub(crate) fn execute_blocking(
+        javascript: &str,
+        bundle_id: &str,
+        window_id: u32,
+    ) -> anyhow::Result<String> {
         let app_name = app_name_for_bundle(bundle_id)
             .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
 
         // Resolve the WindowServer CGWindowID to stable properties that can be
-        // matched against the browser's AppleScript window model.
-        let target = {
-            let wid = window_id;
-            tokio::task::spawn_blocking(move || native_window_target(wid)).await?
-        }?;
-
+        // matched against the browser's scripting window model.
+        let target = native_window_target(window_id)?;
         let escaped_js = escape_js_for_applescript(javascript);
 
         let script = if bundle_id == "com.apple.Safari" {
@@ -68,7 +86,7 @@ end tell"#
             chromium_window_script(app_name, &target, &escaped_js, window_id)
         };
 
-        run_osascript(&script).await
+        execute_script_in_process(&script)
     }
 
     /// Patch the browser Preferences JSON to enable Allow JavaScript from Apple Events,
@@ -77,15 +95,15 @@ end tell"#
         let app_name = app_name_for_bundle(bundle_id)
             .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
 
-        // Quit the browser.
-        let quit_script = format!("tell application \"{app_name}\" to quit");
-        let _ = tokio::process::Command::new("/usr/bin/osascript")
-            .arg("-e")
-            .arg(&quit_script)
-            .output()
-            .await;
-
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        // Quit through NSRunningApplication and wait for the corresponding
+        // NSWorkspace termination notifications before touching Preferences.
+        // This avoids racing the browser's own shutdown-time preferences write.
+        let bundle_id_for_quit = bundle_id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            terminate_running_bundle(&bundle_id_for_quit, Duration::from_secs(15))
+        })
+        .await
+        .context("Native browser termination task failed")??;
 
         // Find profile directory.
         let home = std::env::var("HOME").unwrap_or_default();
@@ -106,14 +124,180 @@ end tell"#
             }
         }
 
-        // Relaunch.
-        tokio::process::Command::new("open")
-            .arg("-a")
-            .arg(app_name)
-            .spawn()?;
+        // Relaunch through NSWorkspace rather than the `open` executable.
+        crate::apps::launch_app(bundle_id)
+            .with_context(|| format!("Relaunching {app_name}"))?;
 
         Ok(())
     }
+}
+
+/// Run a script with Foundation's in-process OSA runtime. This preserves the
+/// browser scripting suites and their Automation/TCC attribution without a
+/// shell process, a temporary file, or a command-line script interpreter.
+fn execute_script_in_process(script: &str) -> anyhow::Result<String> {
+    use objc2::msg_send_id;
+    use objc2::rc::{autoreleasepool, Allocated, Retained};
+    use objc2::ClassType;
+    use objc2_foundation::{
+        NSDictionary, NSAppleEventDescriptor, NSAppleScript, NSString,
+    };
+
+    // Bound the Apple Event wait in the script itself. This tells OSA to
+    // cancel the pending event transaction if the browser stops responding.
+    let source = format!("with timeout of 15 seconds\n{script}\nend timeout");
+    // NSAppleScript uses process-global OSA component state. Concurrent
+    // executions can invalidate one another's compiled script identifiers.
+    let _execution_guard = OSA_EXECUTION_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    autoreleasepool(|_| {
+        let source = NSString::from_str(&source);
+        let allocated: Allocated<NSAppleScript> = NSAppleScript::alloc();
+        let compiled = unsafe { NSAppleScript::initWithSource(allocated, &source) }
+            .context("Could not initialize the in-process browser script")?;
+
+        let mut error: Option<Retained<NSDictionary<NSString, objc2::runtime::AnyObject>>> = None;
+        // The generated objc2-foundation 0.2 binding incorrectly marks this
+        // nullable Objective-C result as non-null, so call it explicitly with
+        // the correct Option return type.
+        let result: Option<Retained<NSAppleEventDescriptor>> = unsafe {
+            msg_send_id![&*compiled, executeAndReturnError: &mut error]
+        };
+
+        if let Some(error) = error {
+            let message = unsafe { error.descriptionInStringsFileFormat() }.to_string();
+            if message.contains("turned off") || message.contains("AppleScript is turned off") {
+                anyhow::bail!(
+                    "JavaScript from Apple Events is disabled. Use action=enable_javascript_apple_events \
+                     to enable it (requires browser restart)."
+                );
+            }
+            anyhow::bail!("Browser Apple Event failed: {message}");
+        }
+
+        let result = result.context("Browser Apple Event returned no result")?;
+        if let Some(value) = unsafe { result.stringValue() } {
+            return Ok(value.to_string());
+        }
+
+        // Preserve the public string result for scalar descriptors such as
+        // numbers and booleans by coercing them through the Apple Event Manager.
+        const TYPE_UTF8_TEXT: u32 = u32::from_be_bytes(*b"utf8");
+        let coerced: Option<Retained<NSAppleEventDescriptor>> = unsafe {
+            msg_send_id![&*result, coerceToDescriptorType: TYPE_UTF8_TEXT]
+        };
+        Ok(coerced
+            .and_then(|descriptor| unsafe { descriptor.stringValue() })
+            .map(|value| value.to_string())
+            .unwrap_or_default())
+    })
+}
+
+/// Cooperatively terminate every running instance for `bundle_id`, then wait
+/// for NSWorkspace lifecycle notifications. No polling delay or shell process
+/// is involved.
+fn terminate_running_bundle(bundle_id: &str, timeout: Duration) -> anyhow::Result<()> {
+    use block2::RcBlock;
+    use objc2::msg_send;
+    use objc2::rc::Allocated;
+    use objc2::runtime::AnyObject;
+    use objc2::ClassType;
+    use objc2_app_kit::{
+        NSRunningApplication, NSWorkspace, NSWorkspaceApplicationKey,
+        NSWorkspaceDidTerminateApplicationNotification,
+    };
+    use objc2_foundation::{NSNotification, NSOperationQueue, NSString};
+    use std::ptr::NonNull;
+
+    let bundle_id = NSString::from_str(bundle_id);
+    let applications = unsafe {
+        NSRunningApplication::runningApplicationsWithBundleIdentifier(&bundle_id)
+    };
+    let mut pending = (0..applications.len())
+        .filter_map(|index| applications.get(index))
+        .filter(|app| !unsafe { app.isTerminated() })
+        .map(|app| unsafe { app.processIdentifier() })
+        .collect::<HashSet<_>>();
+    if pending.is_empty() {
+        return Ok(());
+    }
+
+    let workspace = unsafe { NSWorkspace::sharedWorkspace() };
+    let center = unsafe { workspace.notificationCenter() };
+    let allocated: Allocated<NSOperationQueue> = NSOperationQueue::alloc();
+    let queue = unsafe { NSOperationQueue::init(allocated) };
+    unsafe { queue.setMaxConcurrentOperationCount(1) };
+    let (tx, rx) = std::sync::mpsc::channel();
+    let block = RcBlock::new(move |note_ptr: NonNull<NSNotification>| {
+        let note = unsafe { note_ptr.as_ref() };
+        let Some(info) = (unsafe { note.userInfo() }) else {
+            return;
+        };
+        let app_ptr: *mut AnyObject = unsafe {
+            msg_send![&*info, objectForKey: NSWorkspaceApplicationKey]
+        };
+        if app_ptr.is_null() {
+            return;
+        }
+        let pid: libc::pid_t = unsafe { msg_send![app_ptr, processIdentifier] };
+        let _ = tx.send(pid);
+    });
+    let observer = unsafe {
+        center.addObserverForName_object_queue_usingBlock(
+            Some(NSWorkspaceDidTerminateApplicationNotification),
+            None,
+            Some(&queue),
+            &block,
+        )
+    };
+
+    for index in 0..applications.len() {
+        let Some(app) = applications.get(index) else {
+            continue;
+        };
+        let pid = unsafe { app.processIdentifier() };
+        if pending.contains(&pid) && !unsafe { app.terminate() } {
+            unsafe { center.removeObserver(&observer) };
+            anyhow::bail!("Browser pid {pid} refused the cooperative terminate request");
+        }
+    }
+
+    // Close the notification race where an app exits between `terminate()`
+    // and the first receive.
+    for index in 0..applications.len() {
+        if let Some(app) = applications.get(index) {
+            if unsafe { app.isTerminated() } {
+                pending.remove(&unsafe { app.processIdentifier() });
+            }
+        }
+    }
+
+    let deadline = Instant::now() + timeout;
+    while !pending.is_empty() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            unsafe { center.removeObserver(&observer) };
+            anyhow::bail!("Timed out waiting for browser pids {pending:?} to terminate");
+        }
+        match rx.recv_timeout(remaining) {
+            Ok(pid) => {
+                pending.remove(&pid);
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                unsafe { center.removeObserver(&observer) };
+                anyhow::bail!("Timed out waiting for browser pids {pending:?} to terminate");
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                unsafe { center.removeObserver(&observer) };
+                anyhow::bail!("Browser termination observer disconnected");
+            }
+        }
+    }
+
+    unsafe { center.removeObserver(&observer) };
+    Ok(())
 }
 
 fn native_window_target(window_id: u32) -> anyhow::Result<NativeWindowTarget> {
@@ -271,50 +455,6 @@ fn escape_js_for_applescript(js: &str) -> String {
     lines.join(" & (ASCII character 10) & ")
 }
 
-/// Write script to a temp file and run osascript with a 15s timeout.
-pub async fn run_osascript(script: &str) -> anyhow::Result<String> {
-    let uuid = format!("{:x}", rand_u64());
-    let path = format!("/tmp/{uuid}.applescript");
-
-    tokio::fs::write(&path, script).await
-        .with_context(|| format!("Writing temp applescript to {path}"))?;
-
-    let out = tokio::time::timeout(
-        Duration::from_secs(15),
-        tokio::process::Command::new("/usr/bin/osascript")
-            .arg(&path)
-            .output()
-    ).await
-    .context("osascript timed out after 15s")?
-    .context("osascript failed to spawn")?;
-
-    // Clean up.
-    let _ = tokio::fs::remove_file(&path).await;
-
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    if stderr.contains("turned off") || stderr.contains("AppleScript is turned off") {
-        anyhow::bail!(
-            "JavaScript from Apple Events is disabled. Use action=enable_javascript_apple_events \
-             to enable it (requires browser restart)."
-        );
-    }
-
-    if !out.status.success() && out.stdout.is_empty() {
-        let msg = stderr.trim().to_owned();
-        anyhow::bail!("osascript error: {msg}");
-    }
-
-    Ok(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_owned())
-}
-
-fn rand_u64() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-    // Mix in thread id for uniqueness.
-    let tid = std::thread::current().id();
-    t.subsec_nanos() as u64 ^ t.as_secs().wrapping_mul(6364136223846793005) ^ format!("{tid:?}").len() as u64
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,5 +531,18 @@ mod tests {
                 height: 829.0,
             }
         ));
+    }
+
+    #[test]
+    fn in_process_script_returns_text_and_scalars() {
+        assert_eq!(execute_script_in_process("return \"native-ok\"").unwrap(), "native-ok");
+        assert_eq!(execute_script_in_process("return 42").unwrap(), "42");
+        assert_eq!(execute_script_in_process("return true").unwrap(), "true");
+    }
+
+    #[test]
+    fn in_process_script_surfaces_compile_errors() {
+        let error = execute_script_in_process("this is not valid syntax (").unwrap_err();
+        assert!(error.to_string().contains("Browser Apple Event failed"));
     }
 }

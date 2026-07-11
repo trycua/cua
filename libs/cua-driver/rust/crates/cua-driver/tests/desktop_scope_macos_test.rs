@@ -1,6 +1,6 @@
 //! macOS **desktop-scope** (vision/foreground) modality, exercised through the
 //! SAME cua-driver interface as the Windows `desktop_scope_windows_test`:
-//! `set_config capture_scope=desktop` + a window-less screen-absolute `click`
+//! a window-less screen-absolute `click` with `scope=desktop`
 //! (no `pid`, no `window_id`, no `list_windows`). The macOS actuator resolves
 //! the frontmost on-screen window under the point (the `WindowFromPoint` peer,
 //! via `CGWindowList`) and clicks it through the proven window-local pixel path,
@@ -13,9 +13,6 @@
 //! pixels window-less, and asserts the harness counter advanced. A second test
 //! asserts the `window`-scope gate rejects a window-less click
 //! (`desktop_scope_disabled`), matching the Windows contract.
-//!
-//! `set_config` is made session-scoped (a `session` arg → `_session_id`), so it
-//! is in-memory only and never writes the developer's `~/.cua-driver/config.json`.
 //!
 //! #[ignore] (needs a real desktop session + TCC Accessibility + the AppKit
 //! harness). Run:
@@ -31,10 +28,6 @@ use cua_driver_testkit::e2e::{
     OracleKind, Scope, Targeting,
 };
 use cua_driver_testkit::{harness_app, Driver, McpDriver};
-
-/// Session id so `set_config capture_scope=desktop` is session-scoped (no disk
-/// write) and the `click` resolves the same scope override.
-const SESSION: &str = "vf-desktop";
 
 fn harness_exe() -> std::path::PathBuf {
     std::env::var("HARNESS_APPKIT_APP")
@@ -216,7 +209,7 @@ fn desktop_scope_windowless_click_lands_on_control() {
         // Window-less screen-absolute click — no pid, no window_id; scope per-call.
         let clicked = driver.call(
             "click",
-            serde_json::json!({ "x": cx, "y": cy, "scope": "desktop", "session": SESSION }),
+            serde_json::json!({ "x": cx, "y": cy, "scope": "desktop" }),
         );
         assert!(
             !clicked.is_error(),
@@ -266,7 +259,7 @@ fn window_scope_rejects_windowless_click() {
         driver.start_behavior_recording();
         let r = driver.call(
             "click",
-            serde_json::json!({ "x": 100, "y": 100, "scope": "window", "session": SESSION }),
+            serde_json::json!({ "x": 100, "y": 100, "scope": "window" }),
         );
         assert!(
             r.is_error() && r.structured()["code"].as_str() == Some("desktop_scope_disabled"),

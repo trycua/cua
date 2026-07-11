@@ -503,9 +503,9 @@ Actions:
 
 Start trajectory recording. Every subsequent action-tool invocation (click, right_click, scroll, type_text, press_key, hotkey, set_value) writes a turn folder under `output_dir`:
 
-- `before_state.json` / `after_state.json` — application accessibility state immediately before and after the action.
+- `before_state.json` / `after_state.json` — application AX/UIA/AT-SPI state immediately before and after the action.
 - `before.png` / `after.png` — target-window screenshots immediately before and after the action.
-- `evidence.json` — capture status and a stable classification when expected capture is unavailable.
+- `evidence.json` — capture status and a stable classification when an expected artifact could not be captured.
 - `app_state.json` — post-action AX/UIA snapshot for the target pid.
 - `screenshot.png` — compatibility alias of `after.png`.
 - `action.json` — tool name, full input arguments, result summary, pid, click point (when applicable), ISO-8601 timestamp.

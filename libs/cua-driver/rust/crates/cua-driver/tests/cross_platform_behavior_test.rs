@@ -797,10 +797,7 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
     let expected_refusals = if cfg!(target_os = "windows") && delivery_kind == Delivery::Background
     {
         match (spec.name, action, targeting) {
-            ("electron", "right_click" | "double_click" | "child_window" | "drag", _) => {
-                vec![RefusalCode::BackgroundOccluded]
-            }
-            ("electron", "type_text" | "press_key" | "hotkey", Targeting::Px) => {
+            ("electron", "right_click" | "double_click" | "drag", _) => {
                 vec![RefusalCode::BackgroundOccluded]
             }
             ("electron", "type_text" | "press_key" | "hotkey" | "scroll" | "editor_save", _) => {

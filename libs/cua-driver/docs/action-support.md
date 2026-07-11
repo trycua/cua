@@ -20,7 +20,7 @@ Foreground rows listed here are delivered for both AX and PX.
 
 | OS | Harness | Background delivered | Background refused |
 | --- | --- | --- | --- |
-| Windows | Electron | left click AX/PX | right click and double click AX/PX, child window AX/PX, drag PX: `background_occluded`; type text, press key, and hotkey AX: `background_unavailable`; their PX rows: `background_occluded`; scroll AX/PX and editor save AX: `background_unavailable` |
+| Windows | Electron | left click and child window AX/PX | right click and double click AX/PX, plus drag PX: `background_occluded`; type text, press key, hotkey, and scroll AX/PX plus editor save AX: `background_unavailable` |
 | Windows | Tauri | left/right/double click AX/PX, type text AX/PX, press key AX/PX, child window AX/PX, scroll AX, editor save AX | hotkey AX/PX and scroll PX: `background_unavailable`; drag PX: `background_occluded` |
 | macOS | Electron | left/right/double click AX/PX, type text AX/PX, press key AX/PX, hotkey AX/PX, child window AX/PX, editor save AX | scroll AX/PX and drag PX: `background_unavailable` |
 | macOS | Tauri | left/right/double click AX/PX, type text AX/PX, press key AX/PX, hotkey AX/PX, scroll AX/PX, child window AX/PX, editor save AX | drag PX: `background_unavailable` |

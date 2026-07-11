@@ -56,9 +56,6 @@ fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
         eprintln!("[desktop-mac] AppKit harness not built ({exe:?}) — run tests/fixtures/build/macos.sh; skipping");
         return None;
     }
-    if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
-        panic!("required AppKit desktop-scope harness window never appeared");
-    }
     driver
         .reaper()
         .spawn(

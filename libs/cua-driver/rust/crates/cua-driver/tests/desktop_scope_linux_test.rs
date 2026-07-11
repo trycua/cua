@@ -47,9 +47,6 @@ fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
         eprintln!("[desktop-linux] GTK3 harness not built ({exe:?}) — run tests/fixtures/build/linux.sh; skipping");
         return None;
     }
-    if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
-        panic!("required GTK3 desktop-scope harness window never appeared");
-    }
     driver
         .reaper()
         .spawn(

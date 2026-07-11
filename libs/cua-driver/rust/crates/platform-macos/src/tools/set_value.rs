@@ -144,8 +144,9 @@ impl Tool for SetValueTool {
         };
 
         // Retain out of the cache so a concurrent get_window_state can't free
-        // the element mid-action (use-after-free → daemon crash). Guard lives
-        // to the end of this method, past the AX write below.
+        // the element mid-action (use-after-free → daemon crash). Ownership is
+        // moved into spawn_blocking below, so cancellation of this async invoke
+        // cannot release the AX object while the detached worker still uses it.
         let element_guard =
             match self
                 .state
@@ -159,8 +160,6 @@ impl Tool for SetValueTool {
                     ))
                 }
             };
-        let element_ptr = element_guard.as_ptr();
-
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations
         // in Chromium-based apps; the AXPopUpButton path also AXPresses a
@@ -174,6 +173,7 @@ impl Tool for SetValueTool {
             "set_value.AXValue",
             || async move {
                 let dispatch = tokio::task::spawn_blocking(move || {
+                    let element_ptr = element_guard.as_ptr();
                     set_value_blocking(element_ptr, element_index, pid, window_id, &value)
                 })
                 .await

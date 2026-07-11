@@ -174,6 +174,45 @@ fn build_macos_registry_with_compat(
 // ── macOS entry-point ─────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
+fn run_guarded_appkit_worker(name: &str, work: impl FnOnce()) -> i32 {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)) {
+        Ok(()) => 0,
+        Err(_) => {
+            eprintln!("[cua-driver] {name} worker panicked");
+            101
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn finish_appkit_worker(handle: std::thread::JoinHandle<i32>) {
+    let exit_code = handle.join().unwrap_or(101);
+    if exit_code != 0 {
+        std::process::exit(exit_code);
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod appkit_worker_tests {
+    use super::run_guarded_appkit_worker;
+
+    #[test]
+    fn worker_panic_becomes_failure_status_instead_of_stranding_main_loop() {
+        assert_eq!(run_guarded_appkit_worker("test", || {}), 0);
+        platform_macos::pip::prepare_appkit_main_loop();
+        platform_macos::pip::mark_appkit_main_loop_available();
+        let worker = std::thread::spawn(|| {
+            let status = run_guarded_appkit_worker("test", || panic!("worker failed"));
+            platform_macos::pip::request_appkit_main_loop_stop();
+            status
+        });
+        assert_eq!(worker.join().unwrap(), 101);
+        assert!(platform_macos::pip::appkit_main_loop_stop_requested());
+        assert!(!platform_macos::pip::appkit_main_loop_available());
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn main() {
     init_logging();
 
@@ -242,15 +281,20 @@ fn main() {
                 // Browser automation dispatches NSAppleScript to the AppKit
                 // main queue. Run the one-shot tool on a worker while main
                 // pumps that queue, then terminate with the tool's exit code.
+                platform_macos::pip::prepare_appkit_main_loop();
+                platform_macos::pip::mark_appkit_main_loop_available();
                 let call_handle = std::thread::Builder::new()
                     .name("cua-call".into())
                     .spawn(move || {
-                        cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
-                        std::process::exit(0);
+                        let exit_code = run_guarded_appkit_worker("call", || {
+                            cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
+                        });
+                        platform_macos::pip::request_appkit_main_loop_stop();
+                        exit_code
                     })
                     .expect("spawn call thread");
                 platform_macos::pip::run_appkit_main_loop();
-                let _ = call_handle.join();
+                finish_appkit_worker(call_handle);
             } else {
                 // Headless calls cannot target GUI browsers and must avoid
                 // registering NSApplication with a missing Window Server.
@@ -323,6 +367,8 @@ fn main() {
             let pid_path =
                 cli::daemon_pid_file_path(socket.as_deref(), codex_computer_use_compat);
             let sp = cli::daemon_socket_path(socket, codex_computer_use_compat);
+            let has_graphic_access = platform_macos::session::has_graphic_access();
+            platform_macos::pip::prepare_appkit_main_loop();
 
             // Bind the Unix socket FIRST, on a background thread, BEFORE
             // running the (blocking) permissions gate (#1761).
@@ -348,8 +394,11 @@ fn main() {
             let serve_handle = std::thread::Builder::new()
                 .name("cua-serve".into())
                 .spawn(move || {
-                    serve::run_serve_cmd(reg, &sp, Some(&pid_path));
-                    std::process::exit(0);
+                    let exit_code = run_guarded_appkit_worker("serve", || {
+                        serve::run_serve_cmd(reg, &sp, Some(&pid_path));
+                    });
+                    platform_macos::pip::request_appkit_main_loop_stop();
+                    exit_code
                 })
                 .expect("spawn serve thread");
 
@@ -377,7 +426,10 @@ fn main() {
             // queue dispatch. Without a cursor, keep a plain AppKit loop alive
             // whenever a Window Server is available. Headless daemons retain
             // the old join behavior and never touch NSApplication.
-            if cursor_cfg.enabled {
+            if has_graphic_access {
+                platform_macos::pip::mark_appkit_main_loop_available();
+            }
+            if cursor_cfg.enabled && has_graphic_access {
                 // Render the agent-cursor overlay: park the main thread in the
                 // AppKit run loop so the overlay NSWindow draws. `run_on_main_thread`
                 // self-guards on `has_graphic_access()` and returns immediately
@@ -385,12 +437,10 @@ fn main() {
                 // join so the daemon still serves headless. The serve thread runs
                 // on its background thread regardless.
                 platform_macos::cursor::overlay::run_on_main_thread();
-                let _ = serve_handle.join();
-            } else if platform_macos::session::has_graphic_access() {
+            } else if has_graphic_access {
                 platform_macos::pip::run_appkit_main_loop();
-            } else {
-                let _ = serve_handle.join();
             }
+            finish_appkit_worker(serve_handle);
             return;
         }
         cli::Command::Stop { socket } => {
@@ -541,40 +591,44 @@ fn main() {
     );
     maybe_init_pip();
 
-    std::thread::Builder::new()
+    let has_graphic_access = platform_macos::session::has_graphic_access();
+    platform_macos::pip::prepare_appkit_main_loop();
+    if has_graphic_access {
+        platform_macos::pip::mark_appkit_main_loop_available();
+    }
+    let mcp_handle = std::thread::Builder::new()
         .name("cua-mcp".into())
         .spawn(move || {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .expect("tokio runtime");
-            let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
-            let codex_compat = CODEX_COMPUTER_USE_COMPAT.load(Ordering::SeqCst);
-            rt.block_on(async move {
-                // Register tools; overlay init has already happened above.
-                let registry = Arc::new(build_macos_registry_with_compat(compat, codex_compat));
-                // Wire up replay tool's back-reference to the registry.
-                registry.init_self_weak();
-                if let Err(e) = cua_driver_core::server::run(registry).await {
-                    tracing::error!("MCP server error: {e}");
-                }
+            let exit_code = run_guarded_appkit_worker("mcp", || {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .expect("tokio runtime");
+                let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
+                let codex_compat = CODEX_COMPUTER_USE_COMPAT.load(Ordering::SeqCst);
+                rt.block_on(async move {
+                    // Register tools; overlay init has already happened above.
+                    let registry = Arc::new(build_macos_registry_with_compat(compat, codex_compat));
+                    // Wire up replay tool's back-reference to the registry.
+                    registry.init_self_weak();
+                    if let Err(e) = cua_driver_core::server::run(registry).await {
+                        tracing::error!("MCP server error: {e}");
+                    }
+                });
             });
-            // MCP server exited (stdin closed / client disconnected).
-            // The main thread is blocked in NSApplication.run() and won't
-            // exit on its own — force-exit the process cleanly.
-            std::process::exit(0);
+            platform_macos::pip::request_appkit_main_loop_stop();
+            exit_code
         })
         .expect("spawn mcp thread");
 
     // Main thread: AppKit overlay or plain event loop. Browser automation
     // requires main-queue dispatch even when `--no-overlay` is set.
-    if enabled {
+    if enabled && has_graphic_access {
         platform_macos::cursor::overlay::run_on_main_thread();
-    } else if platform_macos::session::has_graphic_access() {
+    } else if has_graphic_access {
         platform_macos::pip::run_appkit_main_loop();
     }
-    // No Window Server: park while the MCP background thread keeps running.
-    loop { std::thread::park(); }
+    finish_appkit_worker(mcp_handle);
 }
 
 // ── Non-macOS entry-point ─────────────────────────────────────────────────

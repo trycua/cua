@@ -4,6 +4,8 @@
 use anyhow::Context;
 use std::collections::HashSet;
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::windows::WindowBounds;
@@ -146,6 +148,44 @@ end tell"#
 struct MainThreadScript {
     script: String,
     reply: tokio::sync::oneshot::Sender<anyhow::Result<String>>,
+    state: Arc<AtomicU8>,
+}
+
+const SCRIPT_QUEUED: u8 = 0;
+const SCRIPT_RUNNING: u8 = 1;
+const SCRIPT_CANCELLED: u8 = 2;
+const SCRIPT_FINISHED: u8 = 3;
+
+fn cancel_queued_script(state: &AtomicU8) -> bool {
+    state
+        .compare_exchange(
+            SCRIPT_QUEUED,
+            SCRIPT_CANCELLED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_ok()
+}
+
+fn claim_queued_script(state: &AtomicU8) -> bool {
+    state
+        .compare_exchange(
+            SCRIPT_QUEUED,
+            SCRIPT_RUNNING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_ok()
+}
+
+struct QueuedScriptCancellation {
+    state: Arc<AtomicU8>,
+}
+
+impl Drop for QueuedScriptCancellation {
+    fn drop(&mut self) {
+        let _ = cancel_queued_script(&self.state);
+    }
 }
 
 #[link(name = "dispatch", kind = "dylib")]
@@ -163,12 +203,28 @@ extern "C" {
 /// loop alive even when the cursor overlay is disabled, so this dispatch is
 /// serviced in MCP, daemon, and one-shot CLI modes.
 async fn execute_script_on_main_queue(script: String) -> anyhow::Result<String> {
+    if !crate::session::has_graphic_access() {
+        anyhow::bail!("Browser automation requires an active macOS graphic session");
+    }
     if let Some(main_thread) = objc2_foundation::MainThreadMarker::new() {
         return execute_script_on_main_thread(main_thread, &script);
     }
+    if !crate::pip::appkit_main_loop_available() {
+        anyhow::bail!(
+            "Browser automation requires a registered AppKit main loop; the current host is not servicing main-queue work"
+        );
+    }
 
     let (reply, response) = tokio::sync::oneshot::channel();
-    let request = Box::new(MainThreadScript { script, reply });
+    let state = Arc::new(AtomicU8::new(SCRIPT_QUEUED));
+    let _cancel_on_drop = QueuedScriptCancellation {
+        state: state.clone(),
+    };
+    let request = Box::new(MainThreadScript {
+        script,
+        reply,
+        state: state.clone(),
+    });
     unsafe {
         let main_queue = &raw const _dispatch_main_q as *const c_void;
         dispatch_async_f(
@@ -178,14 +234,38 @@ async fn execute_script_on_main_queue(script: String) -> anyhow::Result<String> 
         );
     }
 
-    tokio::time::timeout(Duration::from_secs(20), response)
-        .await
-        .context("Timed out waiting for the AppKit main thread to run browser automation")?
-        .context("AppKit main-thread browser automation task was cancelled")?
+    let mut response = response;
+    match tokio::time::timeout(Duration::from_secs(20), &mut response).await {
+        Ok(reply) => reply.context("AppKit main-thread browser automation task was cancelled")?,
+        Err(_) => {
+            if cancel_queued_script(&state) {
+                anyhow::bail!(
+                    "Timed out before the AppKit main thread began browser automation; the queued script was cancelled"
+                );
+            }
+
+            // Execution won the race with the queue timeout. NSAppleScript's
+            // own 15-second Apple Event timeout is now authoritative; retain a
+            // short grace window so we do not report failure while the script
+            // is already performing the requested side effect.
+            tokio::time::timeout(Duration::from_secs(16), &mut response)
+                .await
+                .context(
+                    "Timed out while browser automation was running on the AppKit main thread",
+                )?
+                .context("AppKit main-thread browser automation task was cancelled")?
+        }
+    }
 }
 
 unsafe extern "C" fn execute_script_main_cb(context: *mut c_void) {
     let request = unsafe { Box::from_raw(context as *mut MainThreadScript) };
+    if !claim_queued_script(&request.state) {
+        let _ = request.reply.send(Err(anyhow::anyhow!(
+            "Queued browser automation was cancelled"
+        )));
+        return;
+    }
     // A panic must never cross libdispatch's C callback boundary. Convert it
     // into the same Result channel used for ordinary script failures.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -196,6 +276,7 @@ unsafe extern "C" fn execute_script_main_cb(context: *mut c_void) {
             "Browser automation panicked on the AppKit main thread"
         ))
     });
+    request.state.store(SCRIPT_FINISHED, Ordering::Release);
     let _ = request.reply.send(result);
 }
 
@@ -212,54 +293,52 @@ fn execute_script_on_main_thread(
     _main_thread: objc2_foundation::MainThreadMarker,
     script: &str,
 ) -> anyhow::Result<String> {
-    use objc2::msg_send_id;
-    use objc2::rc::{autoreleasepool, Allocated, Retained};
-    use objc2::ClassType;
-    use objc2_foundation::{NSAppleEventDescriptor, NSAppleScript, NSDictionary, NSString};
-
     // Bound the Apple Event wait in the script itself. This tells OSA to
     // cancel the pending event transaction if the browser stops responding.
     let source = format!("with timeout of 15 seconds\n{script}\nend timeout");
+    let source = std::ffi::CString::new(source)
+        .context("Browser script source contained an interior NUL byte")?;
+    let mut result_ptr = std::ptr::null_mut();
+    let mut error_ptr = std::ptr::null_mut();
+    let succeeded =
+        unsafe { cua_browser_execute_script(source.as_ptr(), &mut result_ptr, &mut error_ptr) };
+    let result = unsafe { take_browser_shim_string(result_ptr) };
+    let error = unsafe { take_browser_shim_string(error_ptr) };
 
-    autoreleasepool(|_| {
-        let source = NSString::from_str(&source);
-        let allocated: Allocated<NSAppleScript> = NSAppleScript::alloc();
-        let compiled = unsafe { NSAppleScript::initWithSource(allocated, &source) }
-            .context("Could not initialize the in-process browser script")?;
+    if succeeded {
+        return result.context("Browser Apple Event returned no UTF-8 result");
+    }
+    let message = error.unwrap_or_else(|| "Unknown browser Apple Event failure".to_owned());
+    if message.contains("turned off") || message.contains("AppleScript is turned off") {
+        anyhow::bail!(
+            "JavaScript from Apple Events is disabled. Use action=enable_javascript_apple_events \
+             to enable it (requires browser restart)."
+        );
+    }
+    anyhow::bail!("Browser Apple Event failed: {message}")
+}
 
-        let mut error: Option<Retained<NSDictionary<NSString, objc2::runtime::AnyObject>>> = None;
-        // The generated objc2-foundation 0.2 binding incorrectly marks this
-        // nullable Objective-C result as non-null, so call it explicitly with
-        // the correct Option return type.
-        let result: Option<Retained<NSAppleEventDescriptor>> =
-            unsafe { msg_send_id![&*compiled, executeAndReturnError: &mut error] };
+#[link(name = "cua_browser_exception_shim", kind = "static")]
+extern "C" {
+    fn cua_browser_execute_script(
+        source_utf8: *const std::ffi::c_char,
+        result_out: *mut *mut std::ffi::c_char,
+        error_out: *mut *mut std::ffi::c_char,
+    ) -> bool;
+    #[cfg(test)]
+    fn cua_browser_exception_boundary_probe(error_out: *mut *mut std::ffi::c_char) -> bool;
+    fn cua_browser_free_string(value: *mut std::ffi::c_char);
+}
 
-        if let Some(error) = error {
-            let message = unsafe { error.descriptionInStringsFileFormat() }.to_string();
-            if message.contains("turned off") || message.contains("AppleScript is turned off") {
-                anyhow::bail!(
-                    "JavaScript from Apple Events is disabled. Use action=enable_javascript_apple_events \
-                     to enable it (requires browser restart)."
-                );
-            }
-            anyhow::bail!("Browser Apple Event failed: {message}");
-        }
-
-        let result = result.context("Browser Apple Event returned no result")?;
-        if let Some(value) = unsafe { result.stringValue() } {
-            return Ok(value.to_string());
-        }
-
-        // Preserve the public string result for scalar descriptors such as
-        // numbers and booleans by coercing them through the Apple Event Manager.
-        const TYPE_UTF8_TEXT: u32 = u32::from_be_bytes(*b"utf8");
-        let coerced: Option<Retained<NSAppleEventDescriptor>> =
-            unsafe { msg_send_id![&*result, coerceToDescriptorType: TYPE_UTF8_TEXT] };
-        Ok(coerced
-            .and_then(|descriptor| unsafe { descriptor.stringValue() })
-            .map(|value| value.to_string())
-            .unwrap_or_default())
-    })
+unsafe fn take_browser_shim_string(value: *mut std::ffi::c_char) -> Option<String> {
+    if value.is_null() {
+        return None;
+    }
+    let output = unsafe { std::ffi::CStr::from_ptr(value) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe { cua_browser_free_string(value) };
+    Some(output)
 }
 
 /// Cooperatively terminate every running instance for `bundle_id`, then wait
@@ -615,5 +694,48 @@ mod tests {
             .expect("worker should not panic")
             .expect_err("NSAppleScript must reject a worker thread");
         assert!(error.to_string().contains("AppKit main thread"));
+    }
+
+    #[test]
+    fn queue_timeout_cancels_before_callback_can_claim_script() {
+        let state = AtomicU8::new(SCRIPT_QUEUED);
+        assert!(cancel_queued_script(&state));
+        assert!(!claim_queued_script(&state));
+
+        let state = AtomicU8::new(SCRIPT_QUEUED);
+        assert!(claim_queued_script(&state));
+        assert!(!cancel_queued_script(&state));
+    }
+
+    #[test]
+    fn dropping_waiter_cancels_script_that_is_still_queued() {
+        let state = Arc::new(AtomicU8::new(SCRIPT_QUEUED));
+        {
+            let _guard = QueuedScriptCancellation {
+                state: state.clone(),
+            };
+        }
+        assert_eq!(state.load(Ordering::Acquire), SCRIPT_CANCELLED);
+        assert!(!claim_queued_script(&state));
+    }
+
+    #[tokio::test]
+    async fn worker_dispatch_fails_before_queueing_without_registered_main_loop() {
+        if !crate::session::has_graphic_access() {
+            return;
+        }
+        crate::pip::prepare_appkit_main_loop();
+        let error = execute_script_on_main_queue("return 1".to_owned())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("registered AppKit main loop"));
+    }
+
+    #[test]
+    fn objective_c_exception_is_mapped_before_the_ffi_callback_boundary() {
+        let mut error_ptr = std::ptr::null_mut();
+        assert!(!unsafe { cua_browser_exception_boundary_probe(&mut error_ptr) });
+        let error = unsafe { take_browser_shim_string(error_ptr) }.unwrap();
+        assert!(error.contains("beyond bounds"));
     }
 }

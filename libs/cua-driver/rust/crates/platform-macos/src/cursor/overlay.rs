@@ -891,7 +891,7 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     // NSApplicationActivationPolicyAccessory = 1 (no Dock icon, no menu bar)
     // setActivationPolicy: returns BOOL (success), not void.
     let _: bool = msg_send![app, setActivationPolicy: 1i64];
-    // Finish launching without presenting a UI (needed for NSApp.run())
+    // Finish launching without presenting a UI before pumping AppKit events.
     let _: () = msg_send![app, finishLaunching];
 
     // ---- Main screen frame ----
@@ -944,8 +944,12 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         render_loop(rx, screen, frame_budget);
     });
 
-    // ---- NSApplication run loop (blocks until process exits) ----
-    let _: () = msg_send![app, run];
+    // ---- NSApplication run loop ----
+    if !crate::pip::appkit_main_loop_stop_requested() {
+        crate::pip::mark_appkit_main_loop_running();
+        crate::pip::run_appkit_event_loop(app);
+    }
+    crate::pip::mark_appkit_main_loop_stopped();
 }
 
 struct CursorWindowHandle {

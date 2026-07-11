@@ -1992,6 +1992,7 @@ dependencies = [
  "async-trait",
  "base64",
  "block2",
+ "cc",
  "core-foundation",
  "core-graphics",
  "cua-driver-core",

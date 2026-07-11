@@ -10,7 +10,7 @@
 //!
 //! - The MCP/tokio server runs on a background thread.
 //! - AppKit MUST run on the main thread, which `cua-driver/src/main.rs`
-//!   parks in `NSApplication.run()` for the cursor overlay.
+//!   keeps in a bounded event pump for the cursor overlay.
 //! - `push_frame()` is called from arbitrary tokio tasks. It packages
 //!   the frame into a heap-allocated `Box` and posts the actual UI
 //!   update onto the main queue via `dispatch_async_f`. The block
@@ -42,6 +42,7 @@
 //! `Mutex<Option<usize>>` and silently no-ops until init finishes.
 
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use pip_preview::{PipBackend, PipBackendFactory, PipConfig, PipFrame};
@@ -83,6 +84,13 @@ struct NativeHandles {
 }
 
 static HANDLES: Mutex<Option<NativeHandles>> = Mutex::new(None);
+
+// The binary registers an AppKit loop before starting a worker that may queue
+// browser automation. BrowserJs uses AVAILABLE as an explicit contract instead
+// of assuming a Window Server implies somebody is pumping the main queue.
+static APPKIT_LOOP_AVAILABLE: AtomicBool = AtomicBool::new(false);
+static APPKIT_LOOP_RUNNING: AtomicBool = AtomicBool::new(false);
+static APPKIT_STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 // ── libdispatch glue — same shape as cursor::overlay ──────────────────────
 
@@ -175,8 +183,8 @@ unsafe extern "C" fn push_frame_cb(ctx: *mut c_void) {
 }
 
 unsafe extern "C" fn shutdown_cb(_ctx: *mut c_void) {
-    use objc2::runtime::AnyObject;
     use objc2::msg_send;
+    use objc2::runtime::AnyObject;
 
     let handles = HANDLES.lock().unwrap().take();
     if let Some(h) = handles {
@@ -190,14 +198,70 @@ unsafe extern "C" fn shutdown_cb(_ctx: *mut c_void) {
 
 // ── AppKit main loop helper ──────────────────────────────────────────────
 
-/// Park the main thread in `NSApplication.run()`. Used by macOS Call, Serve,
-/// and MCP when the cursor overlay is absent so browser automation and PiP
-/// dispatches to the main queue are drained. Mirrors the cursor overlay's
-/// `run_appkit` startup (Accessory activation policy → finishLaunching → run)
-/// without installing the overlay's CALayer-backed window itself.
+/// Reset completion state before spawning a worker that will be paired with an
+/// AppKit main loop. This does not advertise the loop yet, so work received
+/// during setup or the permissions gate fails fast instead of queueing forever.
+pub fn prepare_appkit_main_loop() {
+    APPKIT_STOP_REQUESTED.store(false, Ordering::Release);
+    APPKIT_LOOP_RUNNING.store(false, Ordering::Release);
+    APPKIT_LOOP_AVAILABLE.store(false, Ordering::Release);
+}
+
+/// Advertise that the current process is about to pump the AppKit main queue.
+/// Embedders with their own AppKit loop may use the same explicit contract.
+pub fn mark_appkit_main_loop_available() {
+    APPKIT_LOOP_AVAILABLE.store(true, Ordering::Release);
+}
+
+/// Whether worker-thread AppKit dispatch is guaranteed to be serviced.
+pub fn appkit_main_loop_available() -> bool {
+    APPKIT_LOOP_AVAILABLE.load(Ordering::Acquire)
+}
+
+pub fn appkit_main_loop_stop_requested() -> bool {
+    APPKIT_STOP_REQUESTED.load(Ordering::Acquire)
+}
+
+pub fn mark_appkit_main_loop_running() {
+    APPKIT_LOOP_RUNNING.store(true, Ordering::Release);
+}
+
+pub fn mark_appkit_main_loop_stopped() {
+    APPKIT_LOOP_RUNNING.store(false, Ordering::Release);
+    APPKIT_LOOP_AVAILABLE.store(false, Ordering::Release);
+}
+
+/// Ask the paired AppKit loop to return. Safe before the loop starts: the
+/// request is latched and `run_appkit_main_loop` skips its event pump.
+pub fn request_appkit_main_loop_stop() {
+    // Close the dispatch gate before latching shutdown so a concurrent browser
+    // request cannot enter a queue that this loop is about to abandon.
+    APPKIT_LOOP_AVAILABLE.store(false, Ordering::Release);
+    APPKIT_STOP_REQUESTED.store(true, Ordering::Release);
+    if APPKIT_LOOP_RUNNING.load(Ordering::Acquire) {
+        // CFRunLoopStop/WakeUp are explicitly cross-thread APIs. The main
+        // event pump observes STOP_REQUESTED immediately after waking.
+        unsafe {
+            let run_loop = CFRunLoopGetMain();
+            CFRunLoopStop(run_loop);
+            CFRunLoopWakeUp(run_loop);
+        }
+    }
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFRunLoopGetMain() -> *mut c_void;
+    fn CFRunLoopStop(run_loop: *mut c_void);
+    fn CFRunLoopWakeUp(run_loop: *mut c_void);
+}
+
+/// Pump AppKit events on the main thread. Used by macOS Call, Serve, and MCP
+/// when the cursor overlay is absent so browser automation and PiP dispatches
+/// to the main queue are drained. Mirrors the cursor overlay's startup without
+/// installing the overlay's CALayer-backed window itself.
 ///
-/// Never returns normally. The background command thread exits the process
-/// when its work finishes, which tears down NSApp at the same time.
+/// Returns after [`request_appkit_main_loop_stop`] is serviced.
 pub fn run_appkit_main_loop() {
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
@@ -211,7 +275,42 @@ pub fn run_appkit_main_loop() {
         // the cursor overlay's NSApp setup.
         let _: bool = msg_send![app, setActivationPolicy: 1i64];
         let _: () = msg_send![app, finishLaunching];
-        let _: () = msg_send![app, run];
+        if !appkit_main_loop_stop_requested() {
+            mark_appkit_main_loop_available();
+            mark_appkit_main_loop_running();
+            run_appkit_event_loop(app);
+        }
+        mark_appkit_main_loop_stopped();
+    }
+}
+
+/// Pump AppKit events and the main CFRunLoop until the paired worker requests
+/// shutdown. A bounded `nextEvent` wait makes completion observable even if a
+/// platform wakeup is lost, while still routing normal PiP/cursor events.
+pub unsafe fn run_appkit_event_loop(app: *mut objc2::runtime::AnyObject) {
+    use objc2::rc::autoreleasepool;
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    use objc2_foundation::NSString;
+
+    let mode = NSString::from_str("kCFRunLoopDefaultMode");
+    while !appkit_main_loop_stop_requested() {
+        autoreleasepool(|_| unsafe {
+            let until: *mut AnyObject = msg_send![
+                class!(NSDate),
+                dateWithTimeIntervalSinceNow: 1.0f64
+            ];
+            let event: *mut AnyObject = msg_send![app,
+                nextEventMatchingMask: u64::MAX
+                untilDate: until
+                inMode: &*mode
+                dequeue: true
+            ];
+            if !event.is_null() {
+                let _: () = msg_send![app, sendEvent: event];
+            }
+            let _: () = msg_send![app, updateWindows];
+        });
     }
 }
 

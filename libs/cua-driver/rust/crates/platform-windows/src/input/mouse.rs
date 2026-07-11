@@ -554,10 +554,11 @@ fn send_click_synthesized_mods_impl(
             SendInput(&mod_ups, std::mem::size_of::<INPUT>() as i32);
         }
 
-        // Brief settle so the target processes the click, then restore z-order:
-        // demote the target out of the topmost band and restack the user's
-        // window on top (no activation), and restore the cursor.
-        sleep(Duration::from_millis(40));
+        // Let the target process mouse-up before any background-route restore.
+        // Retained-mode frameworks establish capture/focus on mouse-down and can
+        // lose the click if the real cursor is warped away while those queued
+        // messages are still being dispatched.
+        sleep(Duration::from_millis(if activate { 120 } else { 40 }));
         if !activate {
             if !was_topmost {
                 let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
@@ -565,8 +566,8 @@ fn send_click_synthesized_mods_impl(
             if !prev_fg.0.is_null() && prev_fg != target {
                 let _ = SetWindowPos(prev_fg, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
             }
+            let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
         }
-        let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
         drop(noactivate);
         if !sent_ok {
             bail!("SendInput inserted fewer mouse events than expected for the foreground click.");

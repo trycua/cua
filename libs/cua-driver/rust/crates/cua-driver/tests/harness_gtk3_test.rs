@@ -22,6 +22,12 @@
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use cua_driver_testkit::e2e::{
+    execute_case, native_background_case, native_readonly_case, recording_evidence, DriverRoute,
+    Evidence, Observation, OracleKind, Targeting,
+};
+use cua_driver_testkit::observer::TargetWindow;
+use cua_driver_testkit::sentinel::run_with_background_oracles;
 use cua_driver_testkit::{ax, harness_app, Driver, McpDriver};
 
 fn harness_exe() -> std::path::PathBuf {
@@ -92,129 +98,179 @@ fn ax_empty(text: &str) -> bool {
     ax::looks_empty(text)
 }
 
+fn run_case(
+    case: cua_driver_testkit::e2e::CaseSpec,
+    test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
+) {
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named(&cell_id).expect("start source-built Linux driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, wid) = launch(&mut driver);
+        test(pid, wid, &mut driver)
+    });
+}
+
+fn run_background_case(action: &str, test: impl FnOnce(u32, u64, &mut McpDriver)) {
+    run_case(
+        native_background_case("gtk3", action, Targeting::Ax, DriverRoute::LinuxAtSpiAction),
+        |pid, wid, driver| {
+            let (_, passed) = run_with_background_oracles(
+                driver,
+                TargetWindow {
+                    pid,
+                    native_id: wid,
+                },
+                |driver| test(pid, wid, driver),
+            )
+            .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+            Observation::delivered_with_fixture_state(passed)
+        },
+    );
+}
+
 #[test]
 #[ignore]
 fn harness_gtk3_smoke() {
-    let mut driver = McpDriver::spawn().expect("start source-built Linux driver");
-    let (pid, wid) = launch(&mut driver);
-    println!("gtk3 harness pid={pid} wid={wid}");
+    run_case(
+        native_readonly_case(
+            "gtk3",
+            "ax_tree",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, wid, driver| {
+            println!("gtk3 harness pid={pid} wid={wid}");
+            let text = snapshot(driver, pid, wid);
+            assert!(!ax_empty(&text), "required GTK3 AT-SPI tree is empty");
 
-    let text = snapshot(&mut driver, pid, wid);
-    assert!(!ax_empty(&text), "required GTK3 AT-SPI tree is empty");
-    println!("snapshot:\n{text}");
+            // Actionable controls expose their aid as the AT-SPI accessible name.
+            for name in [
+                "btn-increment",
+                "btn-reset",
+                "txt-input",
+                "btn-open-popover",
+                "btn-exit",
+            ] {
+                assert!(
+                    text.contains(name),
+                    "missing control named {name:?} in GTK3 AT-SPI tree"
+                );
+            }
+            // Marker label + counter label carry their text as the accessible name.
+            assert!(
+                text.contains("HARNESS_TEXT_MARKER_v1"),
+                "text_body marker not in tree"
+            );
+            assert!(
+                text.contains("counter=0"),
+                "initial counter label not in tree"
+            );
+            assert!(
+                text.contains("popover_open=False"),
+                "initial popover state not in tree"
+            );
 
-    // Actionable controls expose their aid as the AT-SPI accessible name.
-    for name in [
-        "btn-increment",
-        "btn-reset",
-        "txt-input",
-        "btn-open-popover",
-        "btn-exit",
-    ] {
-        assert!(
-            text.contains(name),
-            "missing control named {name:?} in GTK3 AT-SPI tree"
-        );
-    }
-    // Marker label + counter label carry their text as the accessible name.
-    assert!(
-        text.contains("HARNESS_TEXT_MARKER_v1"),
-        "text_body marker not in tree"
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
     );
-    assert!(
-        text.contains("counter=0"),
-        "initial counter label not in tree"
-    );
-    assert!(
-        text.contains("popover_open=False"),
-        "initial popover state not in tree"
-    );
-
-    println!("✅ harness_gtk3_smoke: all scenarios present in AT-SPI tree");
 }
 
 #[test]
 #[ignore]
 fn harness_gtk3_counter_click() {
-    let mut driver = McpDriver::spawn().expect("start source-built Linux driver");
-    let (pid, wid) = launch(&mut driver);
+    run_background_case("left_click", |pid, wid, driver| {
+        let pre = snapshot(driver, pid, wid);
+        assert!(!ax_empty(&pre), "required GTK3 AT-SPI tree is empty");
+        let idx = ax::element_index_containing(&pre, "btn-increment")
+            .expect("btn-increment not found in GTK3 tree");
+        let click = driver.call(
+            "click",
+            serde_json::json!({
+                "pid": pid as i64, "window_id": wid, "element_index": idx,
+                "delivery_mode": "background"
+            }),
+        );
+        assert!(
+            !click.is_error(),
+            "GTK3 counter click failed: {}",
+            click.text()
+        );
+        println!("click [{idx}] btn-increment: {}", click.text());
+        std::thread::sleep(Duration::from_millis(400));
 
-    let pre = snapshot(&mut driver, pid, wid);
-    assert!(!ax_empty(&pre), "required GTK3 AT-SPI tree is empty");
-    let idx = ax::element_index_containing(&pre, "btn-increment")
-        .expect("btn-increment not found in GTK3 tree");
-    let click = driver.call(
-        "click",
-        serde_json::json!({ "pid": pid as i64, "window_id": wid, "element_index": idx }),
-    );
-    println!("click [{idx}] btn-increment: {}", click.text());
-    std::thread::sleep(Duration::from_millis(400));
-
-    let post = snapshot(&mut driver, pid, wid);
-    assert!(
-        post.contains("counter=1"),
-        "counter did not advance after clicking btn-increment. counter lines: {}",
-        post.lines()
-            .filter(|l| l.contains("counter="))
-            .collect::<Vec<_>>()
-            .join(" / ")
-    );
-    println!("✅ harness_gtk3_counter_click: counter advanced via AT-SPI click");
+        let post = snapshot(driver, pid, wid);
+        assert!(
+            post.contains("counter=1"),
+            "counter did not advance after clicking btn-increment. counter lines: {}",
+            post.lines()
+                .filter(|l| l.contains("counter="))
+                .collect::<Vec<_>>()
+                .join(" / ")
+        );
+    });
 }
 
 #[test]
 #[ignore]
 fn harness_gtk3_popover() {
-    let mut driver = McpDriver::spawn().expect("start source-built Linux driver");
-    let (pid, wid) = launch(&mut driver);
+    run_background_case("popover_open", |pid, wid, driver| {
+        let pre = snapshot(driver, pid, wid);
+        assert!(!ax_empty(&pre), "required GTK3 AT-SPI tree is empty");
+        assert!(
+            pre.contains("popover_open=False"),
+            "popover state not initially closed"
+        );
 
-    let pre = snapshot(&mut driver, pid, wid);
-    assert!(!ax_empty(&pre), "required GTK3 AT-SPI tree is empty");
-    assert!(
-        pre.contains("popover_open=False"),
-        "popover state not initially closed"
-    );
+        let idx = ax::element_index_containing(&pre, "btn-open-popover")
+            .expect("btn-open-popover not found in GTK3 tree");
+        let open = driver.call(
+            "click",
+            serde_json::json!({
+                "pid": pid as i64, "window_id": wid, "element_index": idx,
+                "delivery_mode": "background"
+            }),
+        );
+        assert!(
+            !open.is_error(),
+            "GTK3 popover open failed: {}",
+            open.text()
+        );
+        std::thread::sleep(Duration::from_millis(500));
 
-    let idx = ax::element_index_containing(&pre, "btn-open-popover")
-        .expect("btn-open-popover not found in GTK3 tree");
-    let _ = driver.call(
-        "click",
-        serde_json::json!({ "pid": pid as i64, "window_id": wid, "element_index": idx }),
-    );
-    std::thread::sleep(Duration::from_millis(500));
-
-    // GtkPopover may surface as a separate top-level; check the main window
-    // first, then any new window of this pid.
-    let post = snapshot(&mut driver, pid, wid);
-    assert!(
-        post.contains("popover_open=True"),
-        "popover state did not flip open after click. Popover lines: {}",
-        post.lines()
-            .filter(|l| l.contains("popover_open="))
-            .collect::<Vec<_>>()
-            .join(" / ")
-    );
-    let mut found = post.contains("POPOVER_MARKER_v1");
-    if !found {
-        let r = driver.call("list_windows", serde_json::json!({}));
-        if let Some(wins) = r.structured()["windows"].as_array() {
-            for w in wins {
-                if w["pid"].as_u64() == Some(pid as u64) {
-                    if let Some(other) = w["window_id"].as_u64() {
-                        if other != wid
-                            && snapshot(&mut driver, pid, other).contains("POPOVER_MARKER_v1")
-                        {
-                            found = true;
-                            break;
+        // GtkPopover may surface as a separate top-level; check the main window
+        // first, then any new window of this pid.
+        let post = snapshot(driver, pid, wid);
+        assert!(
+            post.contains("popover_open=True"),
+            "popover state did not flip open after click. Popover lines: {}",
+            post.lines()
+                .filter(|l| l.contains("popover_open="))
+                .collect::<Vec<_>>()
+                .join(" / ")
+        );
+        let mut found = post.contains("POPOVER_MARKER_v1");
+        if !found {
+            let r = driver.call("list_windows", serde_json::json!({}));
+            if let Some(wins) = r.structured()["windows"].as_array() {
+                for w in wins {
+                    if w["pid"].as_u64() == Some(pid as u64) {
+                        if let Some(other) = w["window_id"].as_u64() {
+                            if other != wid
+                                && snapshot(driver, pid, other).contains("POPOVER_MARKER_v1")
+                            {
+                                found = true;
+                                break;
+                            }
                         }
                     }
                 }
             }
         }
-    }
-    assert!(
-        found,
-        "popover body marker POPOVER_MARKER_v1 not found after open"
-    );
-    println!("✅ harness_gtk3_popover: popover body enumerated after open");
+        assert!(
+            found,
+            "popover body marker POPOVER_MARKER_v1 not found after open"
+        );
+    });
 }

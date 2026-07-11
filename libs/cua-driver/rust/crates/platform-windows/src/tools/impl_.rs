@@ -2824,6 +2824,34 @@ impl Tool for ClickTool {
                     return r;
                 }
             }
+            // Chromium's UIA Invoke raises a fully occluded renderer, while a
+            // targeted PostMessage left click reaches the renderer without
+            // changing foreground, z-order, or the real cursor. Keep AX for
+            // target resolution and use the posted-message transport only for
+            // the empirically verified single-left-click shape.
+            if delivery == DeliveryMode::Background
+                && btn == "left"
+                && count == 1
+                && crate::input::is_chromium_target_window(hwnd)
+            {
+                let posted = tokio::task::spawn_blocking(move || {
+                    crate::input::post_click_screen(hwnd, cx, cy, count, &btn)
+                })
+                .await;
+                return match posted {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Posted click on Chromium element [{idx}] at screen ({cx},{cy}) \
+                         (background, no foreground swap)."
+                    ))
+                    .with_structured(json!({
+                        "path": "post_message",
+                        "verified": false,
+                        "effect": "unverifiable"
+                    })),
+                    Ok(Err(error)) => ToolResult::error(error.to_string()),
+                    Err(error) => ToolResult::error(format!("Task error: {error}")),
+                };
+            }
             // Try UIA Invoke first (it works for UWP / modern XAML / web
             // content where PostMessage(WM_LBUTTONDOWN) hits the outer
             // HWND but never reaches the inner XAML/composition element).
@@ -3110,6 +3138,32 @@ impl Tool for ClickTool {
                 {
                     return r;
                 }
+            }
+            // Match the AX-addressed Chromium route above: the point remains
+            // PX-resolved, but transport uses the background-safe posted
+            // message path proven against the fully occluded fixture.
+            if delivery == DeliveryMode::Background
+                && btn == "left"
+                && count == 1
+                && crate::input::is_chromium_target_window(hwnd)
+            {
+                let posted = tokio::task::spawn_blocking(move || {
+                    crate::input::post_click_screen(hwnd, sx_i, sy_i, count, &btn)
+                })
+                .await;
+                return match posted {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Posted click to Chromium pid {pid} at ({sx},{sy}) \
+                         (background, no foreground swap)."
+                    ))
+                    .with_structured(json!({
+                        "path": "post_message",
+                        "verified": false,
+                        "effect": "unverifiable"
+                    })),
+                    Ok(Err(error)) => ToolResult::error(error.to_string()),
+                    Err(error) => ToolResult::error(format!("Task error: {error}")),
+                };
             }
             // As above, bypass Chromium's false-positive UIA Invoke and use
             // the coordinate actuator before attempting any accessibility hit

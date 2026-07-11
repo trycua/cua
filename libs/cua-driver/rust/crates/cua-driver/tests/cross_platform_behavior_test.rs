@@ -803,7 +803,7 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         match (spec.name, action, targeting) {
             (
                 "electron",
-                "left_click" | "right_click" | "double_click" | "child_window" | "drag",
+                "right_click" | "double_click" | "child_window" | "drag",
                 _,
             ) => vec![RefusalCode::BackgroundOccluded],
             ("electron", "type_text" | "press_key" | "hotkey", Targeting::Px) => {
@@ -873,7 +873,7 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
             oracles.push(OracleKind::Protocol);
         }
     }
-    let route = shared_web_route(
+    let mut route = shared_web_route(
         cua_driver_testkit::e2e::Platform::current(),
         cua_driver_testkit::e2e::DisplayServer::current(),
         action,
@@ -881,6 +881,13 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         delivery_kind,
     )
     .unwrap_or_else(|error| panic!("{error}"));
+    if cfg!(target_os = "windows")
+        && spec.name == "electron"
+        && action == "left_click"
+        && delivery_kind == Delivery::Background
+    {
+        route = cua_driver_testkit::e2e::DriverRoute::PostMessage;
+    }
     let case = CaseSpec::delivered(
         cell_id,
         spec.name,

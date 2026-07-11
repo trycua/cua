@@ -46,7 +46,7 @@ pub fn minimize_hosted_runner_console() -> Result<&'static str, String> {
     if unsafe { IsIconic(hwnd) }.as_bool() {
         return Ok("already_minimized");
     }
-    unsafe { ShowWindow(hwnd, SW_MINIMIZE) };
+    let _ = unsafe { ShowWindow(hwnd, SW_MINIMIZE) };
     std::thread::sleep(std::time::Duration::from_millis(100));
     if !unsafe { IsIconic(hwnd) }.as_bool() {
         return Err("HostedComputeAgent console did not enter the minimized state".to_owned());

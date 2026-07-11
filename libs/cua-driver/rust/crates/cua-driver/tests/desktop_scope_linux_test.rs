@@ -47,14 +47,18 @@ fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
         eprintln!("[desktop-linux] GTK3 harness not built ({exe:?}) — run tests/fixtures/build/linux.sh; skipping");
         return None;
     }
-    driver
-        .reaper()
-        .spawn(
-            Command::new(&exe)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null()),
-        )
-        .ok()?;
+    let launched = driver.reaper().spawn(
+        Command::new(&exe)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    );
+    if let Err(error) = launched {
+        if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
+            panic!("failed to launch required GTK3 harness {exe:?}: {error}");
+        }
+        eprintln!("[desktop-linux] GTK3 harness launch failed: {error}; skipping");
+        return None;
+    }
     let deadline = Instant::now() + Duration::from_secs(14);
     while Instant::now() < deadline {
         let r = driver.call("list_windows", serde_json::json!({}));
@@ -75,6 +79,9 @@ fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
             }
         }
         std::thread::sleep(Duration::from_millis(400));
+    }
+    if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
+        panic!("required GTK3 harness window never appeared");
     }
     eprintln!("[desktop-linux] harness window never appeared — graphical session + AT-SPI available? skipping");
     None

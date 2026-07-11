@@ -49,14 +49,18 @@ fn launch_wpf(driver: &mut McpDriver) -> Option<(u32, u64)> {
         eprintln!("[desktop-scope] WPF harness not built ({exe:?}) — skipping window-target tests");
         return None;
     }
-    driver
-        .reaper()
-        .spawn(
-            Command::new(&exe)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null()),
-        )
-        .ok()?;
+    let launched = driver.reaper().spawn(
+        Command::new(&exe)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    );
+    if let Err(error) = launched {
+        if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
+            panic!("failed to launch required WPF harness {exe:?}: {error}");
+        }
+        eprintln!("[desktop-scope] WPF harness launch failed: {error}; skipping");
+        return None;
+    }
 
     let deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < deadline {

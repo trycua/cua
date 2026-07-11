@@ -105,7 +105,18 @@ async fn shared_connection() -> Result<&'static AccessibilityConnection> {
 /// Establish the process-lifetime listener before accessibility-aware apps are
 /// launched. Idempotent; later calls reuse the same connection.
 pub fn ensure_listener_active() -> Result<()> {
-    runtime().block_on(async { shared_connection().await.map(|_| ()) })
+    let connect = || runtime().block_on(async { shared_connection().await.map(|_| ()) });
+    if tokio::runtime::Handle::try_current().is_ok() {
+        // The daemon builds its registry from its Tokio entry-point. Calling
+        // Runtime::block_on there panics even though this module owns a separate
+        // runtime, so initialize the AT-SPI connection on a plain thread and
+        // wait for it before accessibility-aware apps can launch.
+        std::thread::spawn(connect)
+            .join()
+            .map_err(|_| anyhow!("AT-SPI listener initialization thread panicked"))?
+    } else {
+        connect()
+    }
 }
 
 /// A node discovered during the pre-order walk, with its proxy retained so the

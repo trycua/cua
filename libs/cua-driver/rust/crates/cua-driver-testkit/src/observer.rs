@@ -916,8 +916,9 @@ pub mod linux {
     #[derive(Default)]
     struct SwayTreeState {
         focused: Option<u64>,
+        focused_workspace: Option<u64>,
         focused_fullscreen: Option<u64>,
-        target: Option<(u64, bool)>,
+        target: Option<(u64, bool, Option<u64>)>,
     }
 
     fn sway_tree() -> Result<serde_json::Value, ObserverError> {
@@ -936,39 +937,61 @@ pub mod linux {
             .map_err(|error| ObserverError::new(format!("invalid sway tree JSON: {error}")))
     }
 
-    fn walk_sway_tree(node: &serde_json::Value, target_pid: u32, state: &mut SwayTreeState) {
+    fn walk_sway_tree(
+        node: &serde_json::Value,
+        target_pid: u32,
+        workspace: Option<u64>,
+        state: &mut SwayTreeState,
+    ) {
         let id = node["id"].as_u64();
+        let workspace = if node["type"].as_str() == Some("workspace") {
+            id
+        } else {
+            workspace
+        };
         let focused = node["focused"].as_bool().unwrap_or(false);
         if focused {
             state.focused = id;
+            state.focused_workspace = workspace;
             if node["fullscreen_mode"].as_i64().unwrap_or(0) != 0 {
                 state.focused_fullscreen = id;
             }
         }
         if node["pid"].as_u64() == Some(u64::from(target_pid)) {
             if let Some(id) = id {
-                state.target = Some((id, node["visible"].as_bool().unwrap_or(true)));
+                state.target = Some((id, node["visible"].as_bool().unwrap_or(true), workspace));
             }
         }
         for child in ["nodes", "floating_nodes"]
             .into_iter()
             .flat_map(|key| node[key].as_array().into_iter().flatten())
         {
-            walk_sway_tree(child, target_pid, state);
+            walk_sway_tree(child, target_pid, workspace, state);
+        }
+    }
+
+    fn classify_sway_target(state: &SwayTreeState) -> TargetZ {
+        match state.target {
+            None => TargetZ::NotFound,
+            Some((id, _, _)) if state.focused == Some(id) => TargetZ::Foreground,
+            Some((_, _, target_workspace))
+                if state.focused_fullscreen.is_some()
+                    && target_workspace == state.focused_workspace =>
+            {
+                // Sway reports windows hidden behind a fullscreen sibling as
+                // visible=false. They are occluded, not minimized.
+                TargetZ::BackgroundOccluded
+            }
+            Some((_, false, _)) => TargetZ::Minimized,
+            Some(_) => TargetZ::BackgroundVisible,
         }
     }
 
     fn sway_snapshot(target: TargetWindow) -> Result<DesktopSnapshot, ObserverError> {
         let tree = sway_tree()?;
         let mut state = SwayTreeState::default();
-        walk_sway_tree(&tree, target.pid, &mut state);
-        let target_z = match state.target {
-            None => TargetZ::NotFound,
-            Some((_, false)) => TargetZ::Minimized,
-            Some((id, _)) if state.focused == Some(id) => TargetZ::Foreground,
-            Some(_) if state.focused_fullscreen.is_some() => TargetZ::BackgroundOccluded,
-            Some(_) => TargetZ::BackgroundVisible,
-        };
+        walk_sway_tree(&tree, target.pid, None, &mut state);
+        let target_z = classify_sway_target(&state);
         Ok(DesktopSnapshot {
             foreground: state.focused,
             input_focus: state.focused,
@@ -980,7 +1003,7 @@ pub mod linux {
     fn sway_focus_identity() -> Result<Option<u64>, ObserverError> {
         let tree = sway_tree()?;
         let mut state = SwayTreeState::default();
-        walk_sway_tree(&tree, 0, &mut state);
+        walk_sway_tree(&tree, 0, None, &mut state);
         Ok(state.focused)
     }
 
@@ -1228,6 +1251,28 @@ pub mod linux {
                 sample_points(bounds),
                 [(-98, 22), (97, 22), (-98, 117), (97, 117), (0, 70)]
             );
+        }
+
+        #[test]
+        fn sway_hidden_target_behind_fullscreen_sibling_is_occluded() {
+            let state = SwayTreeState {
+                focused: Some(30),
+                focused_workspace: Some(10),
+                focused_fullscreen: Some(30),
+                target: Some((20, false, Some(10))),
+            };
+            assert_eq!(classify_sway_target(&state), TargetZ::BackgroundOccluded);
+        }
+
+        #[test]
+        fn sway_hidden_target_on_another_workspace_is_not_occluded() {
+            let state = SwayTreeState {
+                focused: Some(30),
+                focused_workspace: Some(10),
+                focused_fullscreen: Some(30),
+                target: Some((20, false, Some(11))),
+            };
+            assert_eq!(classify_sway_target(&state), TargetZ::Minimized);
         }
     }
 }

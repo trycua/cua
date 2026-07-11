@@ -49,8 +49,8 @@ fn launch(driver: &mut McpDriver) -> (u32, u64) {
         .reaper()
         .spawn(
             Command::new(&exe)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null()),
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit()),
         )
         .unwrap_or_else(|error| panic!("launch GTK3 harness {exe:?}: {error}"));
     // GTK app cold-start + window map + AT-SPI registration.

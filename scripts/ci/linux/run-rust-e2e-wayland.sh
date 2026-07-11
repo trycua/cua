@@ -58,6 +58,11 @@ export CUA_WAYLAND_RECORDING_OUTPUT=HEADLESS-1
 export ELECTRON_OZONE_PLATFORM_HINT=wayland
 export GDK_BACKEND=wayland
 export QT_QPA_PLATFORM=wayland
+# WebKitGTK's accelerated compositor requires a DRM render node. The canonical
+# Sway lane deliberately uses a software-only headless output, so keep Tauri's
+# renderer on WebKitGTK's non-composited software path.
+export WEBKIT_DISABLE_COMPOSITING_MODE=1
+export WEBKIT_FORCE_SANDBOX=0
 export NO_AT_BRIDGE=0
 export ACCESSIBILITY_ENABLED=1
 

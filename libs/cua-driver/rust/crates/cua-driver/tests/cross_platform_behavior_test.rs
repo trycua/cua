@@ -297,18 +297,19 @@ fn launch_host_with_evidence(
                         name: spec.name,
                     };
                     let ax_deadline = Instant::now() + Duration::from_secs(10);
+                    let mut last_tree = String::new();
                     while Instant::now() < ax_deadline {
-                        if snapshot(&mut fixture)
-                            .tree_text()
-                            .contains("WEB_HARNESS_MARKER_v1")
-                        {
+                        let state = snapshot(&mut fixture);
+                        last_tree.clear();
+                        last_tree.push_str(state.tree_text());
+                        if last_tree.contains("WEB_HARNESS_MARKER_v1") {
                             return Some(fixture);
                         }
                         thread::sleep(Duration::from_millis(250));
                     }
                     panic!(
-                        "{} fixture accessibility tree did not become ready",
-                        spec.name
+                        "{} fixture accessibility tree did not become ready; last tree:\n{}",
+                        spec.name, last_tree
                     );
                 }
             }

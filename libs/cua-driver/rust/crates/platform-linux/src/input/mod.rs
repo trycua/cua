@@ -2031,6 +2031,75 @@ pub fn send_click_xtest_desktop(x: i32, y: i32, button: u8, count: usize) -> Res
     Ok(())
 }
 
+/// Screen-absolute drag via XTest. The caller activates the target first; XTest
+/// then supplies one real press, interpolated pointer motion, and one release.
+/// This is the foreground counterpart to the window-addressed XSendEvent drag.
+pub fn send_drag_xtest_desktop(
+    from_x: i32,
+    from_y: i32,
+    to_x: i32,
+    to_y: i32,
+    button: u8,
+    duration_ms: u64,
+    steps: usize,
+) -> Result<()> {
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    let (conn, screen_num) = connect_x11_for_input()?;
+    let root = conn.setup().roots[screen_num].root;
+    let steps = steps.max(1);
+    let delay = duration_ms / steps as u64;
+
+    conn.xtest_fake_input(
+        MOTION_NOTIFY_EVENT,
+        0,
+        0,
+        root,
+        from_x as i16,
+        from_y as i16,
+        0,
+    )?;
+    conn.xtest_fake_input(
+        BUTTON_PRESS_EVENT,
+        button,
+        0,
+        root,
+        from_x as i16,
+        from_y as i16,
+        0,
+    )?;
+    conn.flush()?;
+    for step in 1..=steps {
+        let t = step as f64 / steps as f64;
+        let x = from_x as f64 + (to_x - from_x) as f64 * t;
+        let y = from_y as f64 + (to_y - from_y) as f64 * t;
+        conn.xtest_fake_input(
+            MOTION_NOTIFY_EVENT,
+            0,
+            0,
+            root,
+            x.round() as i16,
+            y.round() as i16,
+            0,
+        )?;
+        conn.flush()?;
+        if delay > 0 {
+            sleep(Duration::from_millis(delay));
+        }
+    }
+    conn.xtest_fake_input(
+        BUTTON_RELEASE_EVENT,
+        button,
+        0,
+        root,
+        to_x as i16,
+        to_y as i16,
+        0,
+    )?;
+    conn.flush()?;
+    let _ = conn.get_input_focus()?.reply();
+    Ok(())
+}
+
 /// Send a named key press to a window.
 pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
     send_key_to_target(xid, None, key, modifiers)

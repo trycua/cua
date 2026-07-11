@@ -767,6 +767,14 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
             ("tauri", "drag", Targeting::Px) => vec![RefusalCode::BackgroundOccluded],
             _ => Vec::new(),
         }
+    } else if cfg!(target_os = "linux")
+        && spec.name == "electron"
+        && delivery_kind == Delivery::Background
+    {
+        // Chromium's X11 renderer drops synthetic input addressed to a fully
+        // occluded, unfocused toplevel. The product contract is an exact typed
+        // refusal instead of a successful response followed by silent loss.
+        vec![RefusalCode::BackgroundUnavailable]
     } else {
         Vec::new()
     };

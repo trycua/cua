@@ -1673,6 +1673,13 @@ fn window_to_screen_offset(pid: u32, xid: u64) -> Option<(i32, i32)> {
     Some((ox + fl, oy + ft))
 }
 
+fn screen_extent_rebase(x11_origin: (i32, i32), accessible_frame_origin: (i32, i32)) -> (i32, i32) {
+    (
+        x11_origin.0 - accessible_frame_origin.0,
+        x11_origin.1 - accessible_frame_origin.1,
+    )
+}
+
 /// Screen-coordinate bounds for every action node in the tree, keyed by the
 /// same `element_index` used by [`walk_tree`]/`get_element_bounds`.
 ///
@@ -1711,9 +1718,47 @@ pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32
             } else {
                 CoordType::Screen
             };
-            let (offset_x, offset_y) = offset.unwrap_or((0, 0));
+            // Chromium on X11 labels its component extents as Screen while
+            // returning coordinates relative to the renderer frame. Rebase
+            // those values by comparing the top-level accessible frame with
+            // the actual X11 window origin. Correct screen-coordinate providers
+            // produce a zero delta; Chromium's local (0,0) frame produces the
+            // required window-origin delta. GTK's explicit Window-coordinate
+            // path above remains authoritative when available.
+            let screen_rebase = if offset.is_none() && !crate::wayland::is_wayland() && xid != 0 {
+                let x11_origin = x11_window_origin(xid);
+                let frame = visited.iter().find(|node| {
+                    node.has_component
+                        && matches!(
+                            node.role.to_ascii_lowercase().as_str(),
+                            "frame" | "window" | "dialog" | "alert" | "file chooser"
+                        )
+                });
+                if let (Some(origin), Some(frame)) = (x11_origin, frame) {
+                    let accessible_origin = match call(frame.acc.proxies()).await {
+                        Some(Ok(proxies)) => match call(proxies.component()).await {
+                            Some(Ok(component)) => {
+                                match call(component.get_extents(CoordType::Screen)).await {
+                                    Some(Ok((x, y, _, _))) => Some((x, y)),
+                                    _ => None,
+                                }
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    accessible_origin.map(|frame_origin| screen_extent_rebase(origin, frame_origin))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let (offset_x, offset_y) = offset.or(screen_rebase).unwrap_or((0, 0));
             if let Some((ox, oy)) = offset {
                 dlog!("element bounds: WINDOW coords + screen offset ({ox},{oy})");
+            } else if let Some((ox, oy)) = screen_rebase {
+                dlog!("element bounds: SCREEN coords + X11 frame rebase ({ox},{oy})");
             }
 
             let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
@@ -1773,7 +1818,13 @@ pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32
 #[cfg(test)]
 mod coord_tests {
     use super::parse_gtk_frame_extents;
-    use super::{is_passive_role, select_click_target};
+    use super::{is_passive_role, screen_extent_rebase, select_click_target};
+
+    #[test]
+    fn screen_extents_are_rebased_from_accessible_frame_to_x11_origin() {
+        assert_eq!(screen_extent_rebase((604, 80), (0, 0)), (604, 80));
+        assert_eq!(screen_extent_rebase((604, 80), (604, 80)), (0, 0));
+    }
 
     #[test]
     fn click_target_prefers_button_over_its_inner_label() {

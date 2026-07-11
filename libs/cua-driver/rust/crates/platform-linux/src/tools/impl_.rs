@@ -1150,6 +1150,23 @@ fn is_chromium_embedder(pid: u32) -> bool {
     false
 }
 
+/// Chromium's X11 renderer drops synthetic input sent to an occluded,
+/// unfocused toplevel. Returning success here would be a silent loss, so all
+/// input tools expose the same typed refusal and leave foreground activation
+/// as the explicit escalation.
+fn unavailable_chromium_background(
+    pid: u32,
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<ToolResult> {
+    if !delivery.is_foreground() && !crate::wayland::is_wayland() && is_chromium_embedder(pid) {
+        Some(crate::input::delivery::background_unavailable_error(
+            crate::input::delivery::BackgroundUnavailable::ChromiumInput,
+        ))
+    } else {
+        None
+    }
+}
+
 /// Screen-absolute center of a window (top-left from translate_coordinates plus
 /// half its geometry). Used to position the no-focus-steal scroll over the
 /// window's content. Blocking — call inside spawn_blocking.
@@ -1573,6 +1590,10 @@ impl Tool for ClickTool {
             Ok(v) => v,
             Err(e) => return e,
         };
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+            return refusal;
+        }
         let count = args.u64_or("count", 1) as usize;
         // Surface 5: reject unknown buttons so a typo can't silently fall through
         // to a left-click. Empty string keeps back-compat with old clients.
@@ -1745,7 +1766,6 @@ impl Tool for ClickTool {
         // delivery_mode: background (default) = no-focus-steal injection;
         // foreground = activate the target window (EWMH) first, then inject,
         // then restore prior active. Mirrors macOS/Windows.
-        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<&'static str> {
             if crate::wayland::is_wayland() {
                 // Vision/pixel click on native Wayland. Mutter drops synthetic
@@ -1964,6 +1984,10 @@ impl Tool for TypeTextTool {
                 }
             }
         };
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+            return refusal;
+        }
 
         // ── px form: focus by pixel-click, then type into the now-focused element ──
         // Pass x,y (no element_index/token) for an *element px action*: pixel-click
@@ -1980,7 +2004,6 @@ impl Tool for TypeTextTool {
                     "Pass either element_index (ax) or x,y (px) to type_text, not both.",
                 );
             }
-            let fg = crate::input::delivery::DeliveryMode::from_args(&args).is_foreground();
             let from_zoom = args.bool_or("from_zoom", false);
             if let Err(e) = focus_by_pixel(
                 &self.state,
@@ -1988,7 +2011,7 @@ impl Tool for TypeTextTool {
                 Some(xid),
                 cx,
                 cy,
-                fg,
+                delivery.is_foreground(),
                 args.opt_str("session"),
                 from_zoom,
             )
@@ -2100,6 +2123,47 @@ impl Tool for TypeTextTool {
         }
         let text_len = text.chars().count();
 
+        // Foreground means the caller explicitly permits activation. Chromium's
+        // EditableText bridge can acknowledge a write that its renderer never
+        // observes, so that embedder must use real XTest key events. Native
+        // toolkits keep their verifiable AT-SPI path below.
+        if delivery.is_foreground() && is_chromium_embedder(pid) {
+            if let Some(idx) = resolved_elem_idx {
+                let focused =
+                    tokio::task::spawn_blocking(move || crate::atspi::focus_element(pid, idx))
+                        .await;
+                match focused {
+                    Ok(Ok(true)) => {}
+                    Ok(Ok(false)) => {
+                        return ToolResult::error(format!(
+                            "AT-SPI Component.GrabFocus returned false for element {idx}"
+                        ))
+                    }
+                    Ok(Err(e)) => return ToolResult::error(e.to_string()),
+                    Err(e) => return ToolResult::error(format!("Task error: {e}")),
+                }
+            }
+            let text_f = text.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                crate::input::with_x11_foreground(xid, 80, || {
+                    crate::input::send_type_text_xtest(&text_f)
+                })
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Typed {text_len} character(s) (via X11, delivery_mode=foreground)."
+                ))
+                .with_structured(type_text_structured(
+                    "key_events_fg",
+                    text_len,
+                    false,
+                )),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
         // Prefer the focused widget — the element the user just clicked. If a
         // NON-editable input holds keyboard focus (a spreadsheet cell, a
         // terminal, a canvas), the focus-free AT-SPI editable search below would
@@ -2200,18 +2264,10 @@ impl Tool for TypeTextTool {
         // foreground = activate the window (EWMH), then synthesize REAL key
         // events to it via XTest — the escalation when background didn't land
         // (e.g. a GTK dialog whose widget ignores synthetic XSendEvent keys).
-        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<&'static str> {
             // Terminals: write to the pty master (focus-free, below the toolkit).
             if inject_terminal_input(pid, xid, &text)? {
                 return Ok("key_events");
-            }
-            if delivery.is_foreground() {
-                // Activate target → XTest real keystrokes → restore prior active.
-                return crate::input::with_x11_foreground(xid, 80, || {
-                    crate::input::send_type_text_xtest(&text)?;
-                    Ok("key_events_fg")
-                });
             }
             // GUI apps: X11 only routes keystrokes to the *focused* toplevel's
             // focused widget, so background XSendEvent typing doesn't land. Fill
@@ -2344,6 +2400,9 @@ impl Tool for PressKeyTool {
         // background path (the focus-click already handled fronting when fg). Pass x,y
         // (no element_index) for Chromium/Electron surfaces the AX path can't focus.
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+            return refusal;
+        }
 
         // An element-addressed keypress needs to establish the target's
         // focus before the window-level X11 key event is sent. AT-SPI's
@@ -2566,18 +2625,8 @@ impl Tool for HotkeyTool {
         let mods_for_wayland = mods.clone();
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
 
-        // X11 can address an unfocused native window with synthetic events, but
-        // Chromium's renderer only processes modifier chords for its focused
-        // input surface. Do not report the XSendEvent attempt as success: the
-        // explicit foreground rung is the only truthful fallback unless an
-        // EIS compositor can target the surface without focus.
-        if !delivery.is_foreground()
-            && is_chromium_embedder(pid)
-            && !crate::wayland::is_inject_mode()
-        {
-            return crate::input::delivery::background_unavailable_error(
-                crate::input::delivery::BackgroundUnavailable::ChromiumHotkey,
-            );
+        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+            return refusal;
         }
 
         // ── px form: pixel-click to focus, then the combo acts on the focused field ──
@@ -2821,6 +2870,9 @@ impl Tool for ScrollTool {
         };
 
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+            return refusal;
+        }
         if !delivery.is_foreground() {
             if let cua_driver_core::element_token::ResolvedElement::Element {
                 element_index, ..
@@ -2996,6 +3048,10 @@ impl Tool for DoubleClickTool {
             Ok(v) => v,
             Err(e) => return e,
         };
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+            return refusal;
+        }
         // Surface 6: element_token / element_index precedence.
         let resolved = match cua_driver_core::element_token::resolve_element_args(
             pid as i32,
@@ -3046,6 +3102,17 @@ impl Tool for DoubleClickTool {
                     let click_result = tokio::task::spawn_blocking(move || {
                         if crate::wayland::is_wayland() {
                             return crate::wayland::click(xid, lxi, lyi, 2, 1);
+                        }
+                        if delivery.is_foreground() {
+                            return crate::input::with_x11_foreground(xid, 80, || {
+                                let (sx, sy) = window_local_to_screen(xid, lxi as f64, lyi as f64)?;
+                                crate::input::send_click_xtest_desktop(
+                                    sx.round() as i32,
+                                    sy.round() as i32,
+                                    1,
+                                    2,
+                                )
+                            });
                         }
                         x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, lxi, lyi, 1, 2)
                     })
@@ -3112,7 +3179,6 @@ impl Tool for DoubleClickTool {
         }
         let (xi, yi) = (x as i32, y as i32);
         let cursor_id_for_task = cursor_id.clone();
-        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::is_wayland() {
                 return crate::wayland::click(xid, xi, yi, 2, 1);
@@ -3191,6 +3257,10 @@ impl Tool for RightClickTool {
             Ok(v) => v,
             Err(e) => return e,
         };
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+            return refusal;
+        }
         // Surface 6: element_token / element_index precedence.
         let resolved = match cua_driver_core::element_token::resolve_element_args(
             pid as i32,
@@ -3241,6 +3311,17 @@ impl Tool for RightClickTool {
                     let click_result = tokio::task::spawn_blocking(move || {
                         if crate::wayland::is_wayland() {
                             return crate::wayland::click(xid, lxi, lyi, 1, 3);
+                        }
+                        if delivery.is_foreground() {
+                            return crate::input::with_x11_foreground(xid, 80, || {
+                                let (sx, sy) = window_local_to_screen(xid, lxi as f64, lyi as f64)?;
+                                crate::input::send_click_xtest_desktop(
+                                    sx.round() as i32,
+                                    sy.round() as i32,
+                                    3,
+                                    1,
+                                )
+                            });
                         }
                         x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, lxi, lyi, 3, 1)
                     })
@@ -3307,7 +3388,6 @@ impl Tool for RightClickTool {
         }
         let (xi, yi) = (x as i32, y as i32);
         let cursor_id_for_task = cursor_id.clone();
-        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::is_wayland() {
                 return crate::wayland::click(xid, xi, yi, 1, 3);
@@ -3376,7 +3456,8 @@ impl Tool for DragTool {
                 "steps":{"type":"integer","minimum":1,"maximum":200,"description":"Intermediate MotionNotify events. Default: 20."},
                 "modifier": cua_driver_core::tool_schema::modifier_schema(),
                 "button": cua_driver_core::tool_schema::button_schema(),
-                "from_zoom":{"type":"boolean"}
+                "from_zoom":{"type":"boolean"},
+                "delivery_mode": crate::input::delivery::delivery_mode_schema()
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,
         })
@@ -3391,6 +3472,10 @@ impl Tool for DragTool {
             Some(v) => v,
             None => return ToolResult::error("window_id is required on Linux."),
         };
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+            return refusal;
+        }
 
         let coerce = |key: &str| -> Option<f64> {
             args.opt_f64(key)
@@ -3488,6 +3573,53 @@ impl Tool for DragTool {
                      from ({from_x:.0}, {from_y:.0}) → ({to_x:.0}, {to_y:.0}) \
                      in {duration_ms}ms / {steps} steps."
                 )),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
+        if delivery.is_foreground() {
+            let screen_points = tokio::task::spawn_blocking(move || {
+                Ok::<_, anyhow::Error>((
+                    window_local_to_screen(xid, from_x, from_y)?,
+                    window_local_to_screen(xid, to_x, to_y)?,
+                ))
+            })
+            .await;
+            let ((screen_from_x, screen_from_y), (screen_to_x, screen_to_y)) = match screen_points {
+                Ok(Ok(points)) => points,
+                Ok(Err(e)) => return ToolResult::error(e.to_string()),
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            };
+            let drag_result = tokio::task::spawn_blocking(move || {
+                crate::input::with_x11_foreground(xid, 80, || {
+                    crate::input::send_drag_xtest_desktop(
+                        screen_from_x.round() as i32,
+                        screen_from_y.round() as i32,
+                        screen_to_x.round() as i32,
+                        screen_to_y.round() as i32,
+                        button,
+                        duration_ms,
+                        steps,
+                    )
+                })
+            })
+            .await;
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::SetPressed(false),
+            );
+            return match drag_result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Dragged ({button_str}) to pid {pid} from ({from_x:.0}, {from_y:.0}) \
+                     to ({to_x:.0}, {to_y:.0}) in {duration_ms}ms / {steps} steps \
+                     (delivery_mode=foreground)."
+                ))
+                .with_structured(json!({
+                    "path": "x11_xtest_fg",
+                    "verified": false,
+                    "delivery_mode": "foreground"
+                })),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };

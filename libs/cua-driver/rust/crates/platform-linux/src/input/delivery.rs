@@ -95,16 +95,17 @@ pub enum BackgroundUnavailable {
     /// No libei backend (built without `portal-libei`, or the portal session
     /// was denied / unavailable). Input has no actuator at all.
     NoLibeiBackend,
-    /// X11/Chromium does not accept a key chord addressed to an unfocused
-    /// renderer without briefly moving focus, which background delivery forbids.
-    ChromiumHotkey,
+    /// X11/Chromium does not accept synthetic pointer or keyboard input
+    /// addressed to an occluded, unfocused renderer without briefly moving
+    /// focus, which background delivery forbids.
+    ChromiumInput,
 }
 
 impl BackgroundUnavailable {
     fn code(self) -> &'static str {
         match self {
             Self::NoLibeiBackend => "background_unavailable",
-            Self::ChromiumHotkey => "background_unavailable",
+            Self::ChromiumInput => "background_unavailable",
         }
     }
     fn detail(self) -> &'static str {
@@ -114,9 +115,10 @@ impl BackgroundUnavailable {
                  portal-libei, or the xdg-desktop-portal RemoteDesktop session was \
                  unavailable/denied): synthetic input has no actuator"
             }
-            Self::ChromiumHotkey => {
-                "Chromium/Electron does not accept a key chord addressed to an \
-                 unfocused renderer through X11 background injection"
+            Self::ChromiumInput => {
+                "Chromium/Electron does not accept pointer or keyboard input \
+                 addressed to an occluded, unfocused renderer through X11 \
+                 background injection"
             }
         }
     }

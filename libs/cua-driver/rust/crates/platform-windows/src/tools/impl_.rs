@@ -2721,39 +2721,48 @@ impl Tool for ClickTool {
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
-            // Chromium exposes InvokePattern for DOM buttons, but Invoke()
-            // can return S_OK without dispatching a DOM click. Do not accept
-            // that false-positive as delivery. The targeted pointer injector
-            // is the proven background route for Chrome/Electron and preserves
-            // foreground, z-order, and the real cursor.
+            // Chromium can return S_OK from InvokePattern without dispatching
+            // a DOM click while fully occluded. Its legacy accessibility
+            // provider exposes the same control's target-bound default action,
+            // which does not depend on screen hit-testing.
             if delivery == DeliveryMode::Background
                 && btn == "left"
                 && count == 1
                 && crate::input::is_chromium_target_window(hwnd)
             {
-                let (cx, cy) = match resolve_onscreen_point_with_scroll(
-                    &self.state.element_cache,
-                    pid,
-                    hwnd,
-                    idx,
-                    cx,
-                    cy,
-                    "clicking Chromium content",
-                ) {
-                    Ok(point) => point,
-                    Err(message) => return ToolResult::error(message),
-                };
-                let injected = tokio::task::spawn_blocking(move || {
-                    crate::input::inject_click_screen(hwnd, cx, cy, count, &btn)
+                let state = self.state.clone();
+                let invoked = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                    let element = state
+                        .element_cache
+                        .get_element_retained(pid, hwnd, idx)
+                        .ok_or_else(|| anyhow::anyhow!("Element {idx} not in cache."))?;
+                    if !element.is_uia() {
+                        anyhow::bail!("Chromium element {idx} is not a UIA element");
+                    }
+                    use windows::core::Interface;
+                    use windows::Win32::UI::Accessibility::{
+                        IUIAutomationElement, IUIAutomationLegacyIAccessiblePattern,
+                        UIA_LegacyIAccessiblePatternId,
+                    };
+                    let raw = element.as_ptr();
+                    let element: IUIAutomationElement =
+                        unsafe { IUIAutomationElement::from_raw(raw as *mut _) };
+                    let pattern = unsafe {
+                        element.GetCurrentPattern(UIA_LegacyIAccessiblePatternId)?
+                    };
+                    let legacy: IUIAutomationLegacyIAccessiblePattern = pattern.cast()?;
+                    unsafe { legacy.DoDefaultAction()? };
+                    std::mem::forget(element);
+                    Ok(())
                 })
                 .await;
-                return match injected {
+                return match invoked {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Injected click on Chromium element [{idx}] at screen ({cx},{cy}) \
-                         (background, no foreground swap)."
+                        "✅ Performed UIA LegacyIAccessible default action on Chromium element \
+                         [{idx}] (background, no foreground swap)."
                     ))
                     .with_structured(json!({
-                        "path": "targeted_injection",
+                        "path": "uia_legacy_default_action",
                         "verified": false,
                         "effect": "unverifiable"
                     })),

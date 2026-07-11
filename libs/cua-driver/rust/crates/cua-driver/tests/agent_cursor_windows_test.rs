@@ -32,7 +32,7 @@ fn agent_cursor_overlay_is_visible_without_moving_real_cursor() {
         ],
     );
     execute_case(case, |evidence| {
-        let mut driver = McpDriver::spawn_named("windows-agent-cursor")
+        let mut driver = McpDriver::spawn_named("windows-desktop-agent-cursor-px")
             .expect("required source-built driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
         let sentinel = ForegroundSentinel::launch(&mut driver);

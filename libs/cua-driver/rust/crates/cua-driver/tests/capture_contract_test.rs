@@ -358,7 +358,7 @@ fn background_screenshot_preserves_desktop() {
     let case = CaseSpec::delivered(
         "windows-wpf-screenshot-px-background",
         "wpf",
-        "win32",
+        "wpf",
         "screenshot",
         Targeting::Px,
         Delivery::Background,
@@ -373,7 +373,8 @@ fn background_screenshot_preserves_desktop() {
         ],
     );
     execute_case(case, |evidence| {
-        let mut driver = test_driver().expect("required source-built driver did not start");
+        let mut driver = McpDriver::spawn_named("windows-wpf-screenshot-px-background")
+            .expect("required source-built driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
         let (pid, wid) = launch(&mut driver).expect("required WPF capture harness did not start");
         let sentinel = ForegroundSentinel::launch(&mut driver);

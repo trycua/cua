@@ -41,7 +41,7 @@ fn launch_app_minimized_preserves_foreground() {
             "required Electron launch harness is missing: {}",
             executable.display()
         );
-        let mut driver = McpDriver::spawn_named("windows-launch-minimized")
+        let mut driver = McpDriver::spawn_named("windows-electron-launch-app-background")
             .expect("required source-built driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
         let before = window_ids(&mut driver);

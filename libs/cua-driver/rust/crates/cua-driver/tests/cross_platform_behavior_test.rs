@@ -478,6 +478,28 @@ fn delivered_observation() -> Observation {
     Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
 }
 
+fn unverified_background_protocol_oracle(
+    response: &ToolResponse,
+    delivery: &str,
+) -> Vec<OracleKind> {
+    if !cfg!(target_os = "windows") || delivery != "background" {
+        return Vec::new();
+    }
+    assert_eq!(
+        response.verified(),
+        Some(false),
+        "background dispatch without independent read-back must remain unverified: {}",
+        response.text()
+    );
+    assert_ne!(
+        response.structured()["verify"].as_str(),
+        Some("confirmed"),
+        "background dispatch overclaimed a confirmed read-back: {}",
+        response.text()
+    );
+    vec![OracleKind::Protocol]
+}
+
 fn background_refusal_code(response: &ToolResponse, delivery: &str) -> Option<RefusalCode> {
     if delivery != "background" || !response.is_error() {
         return None;
@@ -504,9 +526,13 @@ fn run_text_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> O
         fixture.name,
         response.text()
     );
+    let mut passed = vec![OracleKind::FixtureState];
+    if addressing == "px" {
+        passed.extend(unverified_background_protocol_oracle(&response, delivery));
+    }
     thread::sleep(Duration::from_millis(250));
     assert_tree_contains(fixture, &format!("mirror={text}"));
-    delivered_observation()
+    Observation::delivered(passed, Evidence::default())
 }
 
 fn run_keyboard_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
@@ -526,6 +552,8 @@ fn run_keyboard_action(fixture: &mut Fixture, addressing: &str, delivery: &str) 
         fixture.name,
         response.text()
     );
+    let mut passed = vec![OracleKind::FixtureState];
+    passed.extend(unverified_background_protocol_oracle(&response, delivery));
     assert_tree_contains(fixture, "key_state=enter");
 
     let post_press = snapshot(fixture);
@@ -546,7 +574,7 @@ fn run_keyboard_action(fixture: &mut Fixture, addressing: &str, delivery: &str) 
         response.text()
     );
     assert_tree_contains(fixture, "key_state=hotkey");
-    delivered_observation()
+    Observation::delivered(passed, Evidence::default())
 }
 
 fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
@@ -696,6 +724,11 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
             OracleKind::Cursor,
             OracleKind::NoLeakedInput,
         ]);
+        if cfg!(target_os = "windows")
+            && (action == "keyboard" || (action == "type_text" && targeting == Targeting::Px))
+        {
+            oracles.push(OracleKind::Protocol);
+        }
     }
     let route = if cfg!(target_os = "windows")
         && spec.name == "electron"
@@ -703,7 +736,7 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         && targeting == Targeting::Ax
         && delivery_kind == Delivery::Background
     {
-        cua_driver_testkit::e2e::DriverRoute::WindowsTargetedInjection
+        cua_driver_testkit::e2e::DriverRoute::UiaLegacyDefaultAction
     } else {
         shared_web_route(
             cua_driver_testkit::e2e::Platform::current(),

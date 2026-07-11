@@ -19,6 +19,107 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(unix)]
+fn secure_runtime_directory(
+    dir: &std::path::Path,
+    repair_legacy_permissions: bool,
+) -> anyhow::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+
+    if !dir.exists() {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true).mode(0o700).create(dir)?;
+    }
+
+    let metadata = std::fs::symlink_metadata(dir)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        anyhow::bail!("runtime path is not a real directory: {}", dir.display());
+    }
+
+    let effective_uid = unsafe { libc::geteuid() };
+    if metadata.uid() != effective_uid {
+        anyhow::bail!(
+            "runtime directory {} is owned by uid {}, expected {}",
+            dir.display(),
+            metadata.uid(),
+            effective_uid
+        );
+    }
+
+    let mode = metadata.permissions().mode() & 0o777;
+    if mode & 0o077 != 0 {
+        if !repair_legacy_permissions {
+            anyhow::bail!(
+                "runtime directory has unsafe permissions path={} mode={mode:o}",
+                dir.display()
+            );
+        }
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn remove_stale_socket(socket_path: &std::path::Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+    let metadata = match std::fs::symlink_metadata(socket_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_socket() {
+        anyhow::bail!(
+            "refusing to replace non-socket path: {}",
+            socket_path.display()
+        );
+    }
+
+    let effective_uid = unsafe { libc::geteuid() };
+    if metadata.uid() != effective_uid {
+        anyhow::bail!(
+            "socket {} is owned by uid {}, expected {}",
+            socket_path.display(),
+            metadata.uid(),
+            effective_uid
+        );
+    }
+
+    if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
+        anyhow::bail!("daemon is already listening on {}", socket_path.display());
+    }
+
+    std::fs::remove_file(socket_path)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_private_socket_permissions(socket_path: &std::path::Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn write_private_pid_file(pid_path: &std::path::Path) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(pid_path)?;
+    file.write_all(std::process::id().to_string().as_bytes())?;
+    file.sync_all()?;
+    std::fs::set_permissions(pid_path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
 // ── Recording idle-TTL backstop (#1764) ─────────────────────────────────────────
 
 /// Default TTL of zero `call` activity after which an active recording is
@@ -498,25 +599,32 @@ pub async fn run_serve(
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixListener;
 
-    // Create parent directory.
-    if let Some(dir) = std::path::Path::new(socket_path).parent() {
-        std::fs::create_dir_all(dir)?;
+    let socket = std::path::Path::new(socket_path);
+
+    // The daemon socket carries live desktop-control authority. Require every
+    // socket directory to be private to the current user. The default path may
+    // repair permissions left by older releases; custom paths fail closed so a
+    // typo cannot silently chmod a caller-managed directory.
+    if let Some(dir) = socket.parent() {
+        secure_runtime_directory(dir, socket_path == default_socket_path())?;
     }
 
     // Remove stale socket file (from a crashed previous daemon).
-    let _ = std::fs::remove_file(socket_path);
+    remove_stale_socket(socket)?;
 
     let listener = UnixListener::bind(socket_path)
         .map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
+    set_private_socket_permissions(socket)?;
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
 
     // Write PID file.
     if let Some(pid_path) = pid_file_path {
-        if let Some(dir) = std::path::Path::new(pid_path).parent() {
-            let _ = std::fs::create_dir_all(dir);
+        let pid = std::path::Path::new(pid_path);
+        if let Some(dir) = pid.parent() {
+            secure_runtime_directory(dir, pid_path == default_pid_file_path())?;
         }
-        let _ = std::fs::write(pid_path, std::process::id().to_string());
+        write_private_pid_file(pid)?;
     }
 
     // Shutdown channel.
@@ -1488,7 +1596,8 @@ mod gate_tests {
     //! a `start_session` re-declare REVIVES the id so its subsequent actions run
     //! again. Live and anonymous calls always pass through.
 
-    use super::{run_serve, send_request, DaemonRequest};
+    use super::{run_serve, secure_runtime_directory, send_request, DaemonRequest};
+    use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -1517,6 +1626,122 @@ mod gate_tests {
                 },
             }
         }
+    }
+
+    #[test]
+    fn runtime_directory_is_private_and_rejects_symlinks() {
+        let root = tempfile::tempdir().expect("temp root");
+        let runtime = root.path().join("runtime");
+        std::fs::create_dir(&runtime).expect("create runtime");
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o755))
+            .expect("make legacy mode");
+
+        secure_runtime_directory(&runtime, true).expect("harden runtime");
+        let mode = std::fs::metadata(&runtime)
+            .expect("runtime metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700);
+
+        let link = root.path().join("runtime-link");
+        std::os::unix::fs::symlink(&runtime, &link).expect("create symlink");
+        assert!(
+            secure_runtime_directory(&link, true).is_err(),
+            "runtime directory must not follow a symlink"
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_socket_rejects_unsafe_directory_and_non_socket_path() {
+        let root = tempfile::tempdir().expect("temp root");
+        let unsafe_dir = root.path().join("shared");
+        std::fs::create_dir(&unsafe_dir).expect("create shared directory");
+        std::fs::set_permissions(&unsafe_dir, std::fs::Permissions::from_mode(0o777))
+            .expect("make directory unsafe");
+
+        let registry = Arc::new(ToolRegistry::new());
+        let unsafe_socket = unsafe_dir.join("driver.sock");
+        let error = run_serve(
+            registry.clone(),
+            unsafe_socket.to_str().expect("unsafe socket path"),
+            None,
+        )
+        .await
+        .expect_err("unsafe custom socket directory must fail closed");
+        assert!(error.to_string().contains("unsafe permissions"));
+
+        let safe_dir = root.path().join("private");
+        std::fs::create_dir(&safe_dir).expect("create private directory");
+        std::fs::set_permissions(&safe_dir, std::fs::Permissions::from_mode(0o700))
+            .expect("make directory private");
+        let regular_file = safe_dir.join("driver.sock");
+        std::fs::write(&regular_file, b"do not delete").expect("create regular file");
+
+        let error = run_serve(
+            registry,
+            regular_file.to_str().expect("regular file path"),
+            None,
+        )
+        .await
+        .expect_err("non-socket path must not be replaced");
+        assert!(error.to_string().contains("non-socket"));
+        assert_eq!(
+            std::fs::read(&regular_file).expect("regular file preserved"),
+            b"do not delete"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn daemon_socket_and_pid_file_are_private() {
+        let root = tempfile::tempdir().expect("temp root");
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("make temp root private");
+        let socket = root.path().join("driver.sock");
+        let pid_file = root.path().join("driver.pid");
+        let socket_for_server = socket.clone();
+        let pid_for_server = pid_file.clone();
+        let registry = Arc::new(ToolRegistry::new());
+        let server = tokio::spawn(async move {
+            run_serve(
+                registry,
+                socket_for_server.to_str().expect("socket path"),
+                Some(pid_for_server.to_str().expect("pid path")),
+            )
+            .await
+        });
+
+        for _ in 0..100 {
+            if socket.exists() && pid_file.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        for path in [&socket, &pid_file] {
+            let mode = std::fs::metadata(path)
+                .unwrap_or_else(|error| panic!("{} metadata: {error}", path.display()))
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600, "{} must be private", path.display());
+        }
+
+        let shutdown = DaemonRequest {
+            method: "shutdown".into(),
+            name: None,
+            args: None,
+            session_id: None,
+        };
+        let socket_for_client = socket.to_string_lossy().into_owned();
+        let response = tokio::task::spawn_blocking(move || {
+            send_request(&socket_for_client, &shutdown)
+        })
+        .await
+        .expect("shutdown task")
+        .expect("shutdown response");
+        assert!(response.ok);
+        server.await.expect("server task").expect("server result");
     }
 
     #[async_trait]
@@ -1550,15 +1775,15 @@ mod gate_tests {
         reg.register(Box::new(cua_driver_core::session_tools::StartSessionTool));
         let registry = Arc::new(reg);
 
-        // Unique temp socket — never the default socket / CuaDriver.app daemon.
-        let socket = format!(
-            "/tmp/cua-driver-gate-test-{}-{}.sock",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
+        // Unique private temp socket, never the default socket or app daemon.
+        let socket_root = tempfile::tempdir().expect("socket temp root");
+        std::fs::set_permissions(socket_root.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("make socket temp root private");
+        let socket = socket_root
+            .path()
+            .join("driver.sock")
+            .to_string_lossy()
+            .into_owned();
         let socket_for_server = socket.clone();
         let reg_for_server = registry.clone();
         let server = tokio::spawn(async move {

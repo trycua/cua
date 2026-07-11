@@ -2191,7 +2191,7 @@ impl Tool for LaunchAppTool {
             // the regression CodeRabbit flagged.
             //
             // Loop ends early once we've minimized the first set of
-            // windows AND remained idle for one tick — the typical
+            // windows AND they remain minimized for three ticks — the typical
             // app has its main window up within ~2 s of launch.
             let pre_pids = pre_launch_pids.clone();
             let basename_for_poll = stub_basename.clone();
@@ -2199,7 +2199,9 @@ impl Tool for LaunchAppTool {
             (async move {
                 use std::collections::HashSet;
                 use windows::Win32::Foundation::HWND;
-                use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWMINNOACTIVE};
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    IsIconic, SW_SHOWMINNOACTIVE, ShowWindow,
+                };
                 let _foreground_lock = launch_foreground_lock;
                 let mut minimized: HashSet<u64> = immediate_hwnds_for_poll.into_iter().collect();
                 let mut idle_ticks_after_any_hit: u8 = 0;
@@ -2234,23 +2236,32 @@ impl Tool for LaunchAppTool {
                         .await
                         .unwrap_or_default();
                         for w in wins {
-                            if minimized.insert(w.hwnd) {
-                                tick_hits += 1;
+                            let is_new = minimized.insert(w.hwnd);
+                            if is_new {
                                 hit_count_total += 1;
-                                let hwnd_iso = w.hwnd as usize;
-                                let _ = tokio::task::spawn_blocking(move || unsafe {
-                                    let _ =
-                                        ShowWindow(HWND(hwnd_iso as *mut _), SW_SHOWMINNOACTIVE);
-                                })
-                                .await;
+                            }
+                            let hwnd_iso = w.hwnd as usize;
+                            let restored = tokio::task::spawn_blocking(move || unsafe {
+                                let hwnd = HWND(hwnd_iso as *mut _);
+                                if IsIconic(hwnd).as_bool() {
+                                    false
+                                } else {
+                                    let _ = ShowWindow(hwnd, SW_SHOWMINNOACTIVE);
+                                    true
+                                }
+                            })
+                            .await
+                            .unwrap_or(false);
+                            if is_new || restored {
+                                tick_hits += 1;
                             }
                         }
                     }
                     if tick_hits == 0 {
                         idle_ticks_after_any_hit += 1;
                         if hit_count_total > 0 && idle_ticks_after_any_hit >= 3 {
-                            // Stable: had hits, then 600 ms of nothing new.
-                            // Done.
+                            // Stable: known windows remained minimized and no
+                            // new window appeared for 600 ms.
                             break;
                         }
                     } else {

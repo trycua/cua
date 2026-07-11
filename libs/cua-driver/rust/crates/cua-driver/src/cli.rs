@@ -3587,9 +3587,17 @@ mod tests {
             ApprovalPersistence,
         };
 
-        fn persist(gate: &ApprovalGate, session: &str, bundle_id: &str, name: &str) {
+        fn persist(
+            gate: &ApprovalGate,
+            session: &str,
+            bundle_id: &str,
+            name: &str,
+            path: &std::path::Path,
+        ) -> String {
             gate.register_broker(session, &format!("broker-{session}"));
-            let target = AppApprovalTarget::from_app(name, Some(bundle_id), None).unwrap();
+            let target =
+                AppApprovalTarget::from_app(name, Some(bundle_id), path.to_str()).unwrap();
+            let stable_id = target.stable_id.clone();
             let challenge = match gate.check(session, &target).unwrap() {
                 ApprovalCheck::Required(challenge) => challenge,
                 ApprovalCheck::Approved => panic!("approval unexpectedly existed"),
@@ -3602,6 +3610,7 @@ mod tests {
                 ApprovalPersistence::Always,
             )
             .unwrap();
+            stable_id
         }
 
         let directory = tempfile::tempdir().unwrap();
@@ -3613,16 +3622,29 @@ mod tests {
         assert_eq!(empty.json["count"], 0);
         assert!(empty.human.contains("No permanent"));
 
-        persist(&gate, "one", "com.example.Alpha", "Alpha");
-        persist(&gate, "two", "com.example.Beta", "Beta");
+        let alpha_path = directory.path().join("Alpha.app");
+        let beta_path = directory.path().join("Beta.app");
+        std::fs::create_dir_all(&alpha_path).unwrap();
+        std::fs::create_dir_all(&beta_path).unwrap();
+        let alpha = persist(
+            &gate,
+            "one",
+            "com.example.Alpha",
+            "Alpha",
+            &alpha_path,
+        );
+        let beta = persist(
+            &gate,
+            "two",
+            "com.example.Beta",
+            "Beta",
+            &beta_path,
+        );
         let listed = execute_approvals(&gate, &ApprovalsSubcommand::List).unwrap();
         assert_eq!(listed.json["count"], 2);
         assert_eq!(
             listed.json["approvals"],
-            serde_json::json!([
-                "bundle:com.example.alpha",
-                "bundle:com.example.beta"
-            ])
+            serde_json::json!([alpha.clone(), beta.clone()])
         );
 
         let revoked = execute_approvals(
@@ -3633,7 +3655,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(revoked.json["removed"], true);
-        assert_eq!(gate.list_persistent().unwrap(), vec!["bundle:com.example.beta"]);
+        assert_eq!(gate.list_persistent().unwrap(), vec![beta]);
 
         let cleared = execute_approvals(&gate, &ApprovalsSubcommand::Clear).unwrap();
         assert_eq!(cleared.json["removed"], 1);

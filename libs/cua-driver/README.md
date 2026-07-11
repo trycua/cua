@@ -62,8 +62,11 @@ The driver blocks terminal-class apps, System Settings, authentication UI,
 and its embedding host. Before `get_app_state` can launch, inspect, or capture
 another app, the daemon requires an authenticated MCP session and asks the
 client for approval with `elicitation/create`. A plain accept lasts for the MCP
-session. Choosing permanent approval stores the app's stable bundle identity in
-a private local file. Raw and in-process calls cannot bypass this check.
+session. Choosing permanent approval stores the app's bundle ID plus canonical
+app path in a private local file. The daemon accepts compatibility sessions only
+from the matching live CuaDriver code launched by signed OpenAI Codex, and every
+tool call must prove ownership of that broker session. Raw and in-process calls
+cannot bypass this check.
 
 Manage permanent approvals without adding MCP tools:
 

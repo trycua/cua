@@ -126,8 +126,10 @@ The mode is macOS-only, uses the Sky cursor by default, and blocks the
 driver, its declared host, authentication UI, System Settings, and
 known terminal apps. `get_app_state` asks for per-app approval through
 MCP elicitation before launch, accessibility inspection, or capture.
-Plain accept lasts for the MCP session. Permanent approvals can be
-inspected or revoked with `cua-driver approvals list|revoke|clear`.
+The daemon accepts this profile only from signed OpenAI Codex and binds
+every call to that broker session. Plain accept lasts for the MCP
+session. Permanent approvals can be inspected or revoked with
+`cua-driver approvals list|revoke|clear`.
 
 #### Computer Use confirmations
 

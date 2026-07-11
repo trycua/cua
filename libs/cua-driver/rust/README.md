@@ -48,8 +48,10 @@ authentication services, System Settings, and common terminal apps. Before an
 app can launch or expose accessibility and screenshot state, the daemon issues
 an authenticated MCP `elicitation/create` request. Plain accept is scoped to the
 MCP session. A response with `_meta.persist: "always"` writes a permanent
-approval keyed by the stable bundle identity. Raw and in-process calls fail
-closed because they do not own an authenticated daemon broker session.
+approval keyed by the bundle ID and canonical app path. The daemon verifies
+that the broker is matching live CuaDriver code launched by signed OpenAI Codex,
+then requires its daemon-minted token on every tool call. Raw and in-process
+calls fail closed because they do not own that broker session.
 
 Permanent approvals have a local management surface that does not expand the
 ten-tool MCP catalog:
@@ -64,6 +66,10 @@ Each command accepts `--json`. The accessibility tree uses cua-driver-generated
 indices, which are not numerically identical to Codex's proprietary indices.
 Compatibility mode preserves and indexes meaningful containers and static text.
 The native tree remains action-only.
+
+Unsigned clients are rejected. Isolated tests and local driver development may
+set `CUA_DRIVER_CODEX_ALLOW_UNVERIFIED_CLIENT=1` to skip only the signed Codex
+parent check. The live CuaDriver code-identity and broker-token checks still run.
 
 ## Tests
 

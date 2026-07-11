@@ -37,26 +37,29 @@ impl AppApprovalTarget {
                 "the app has no display name".to_owned(),
             ));
         }
-        let (stable_id, app_identifier) = if let Some(bundle_id) =
-            bundle_id.map(str::trim).filter(|value| !value.is_empty())
-        {
-            (
-                format!("bundle:{}", bundle_id.to_lowercase()),
-                bundle_id.to_owned(),
-            )
-        } else if let Some(path) = launch_path.map(str::trim).filter(|value| !value.is_empty()) {
-            let canonical = std::fs::canonicalize(path).map_err(|error| {
-                ApprovalError::InvalidIdentity(format!(
-                    "the app has no bundle identifier and its launch path could not be canonicalized: {error}"
-                ))
+        let path = launch_path
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                ApprovalError::InvalidIdentity(
+                    "the app has no canonical launch path for approval".to_owned(),
+                )
             })?;
-            let path = canonical.to_string_lossy().into_owned();
-            (format!("path:{path}"), path)
-        } else {
-            return Err(ApprovalError::InvalidIdentity(
-                "the app has neither a bundle identifier nor a launch path".to_owned(),
-            ));
-        };
+        let canonical = std::fs::canonicalize(path).map_err(|error| {
+            ApprovalError::InvalidIdentity(format!(
+                "the app launch path could not be canonicalized for approval: {error}"
+            ))
+        })?;
+        let canonical_path = canonical.to_string_lossy().into_owned();
+        let (stable_id, app_identifier) =
+            if let Some(bundle_id) = bundle_id.map(str::trim).filter(|value| !value.is_empty()) {
+                (
+                    format!("bundle:{}|path:{canonical_path}", bundle_id.to_lowercase()),
+                    bundle_id.to_owned(),
+                )
+            } else {
+                (format!("path:{canonical_path}"), canonical_path)
+            };
         Ok(Self {
             stable_id,
             app_identifier,
@@ -197,6 +200,9 @@ impl ApprovalGate {
         }
         let mut state = self.state.lock().unwrap();
         state
+            .session_approvals
+            .retain(|(owner, _)| owner != session_id);
+        state
             .brokers
             .insert(session_id.to_owned(), broker_token.to_owned());
         state
@@ -208,6 +214,9 @@ impl ApprovalGate {
         let mut state = self.state.lock().unwrap();
         if state.brokers.get(session_id).map(String::as_str) == Some(broker_token) {
             state.brokers.remove(session_id);
+            state
+                .session_approvals
+                .retain(|(owner, _)| owner != session_id);
             state
                 .challenges
                 .retain(|_, challenge| challenge.session_id != session_id);
@@ -238,10 +247,9 @@ impl ApprovalGate {
             }
         }
 
-        let persistent = {
-            let _store = self.persistent_store_lock.lock().unwrap();
-            self.load_persistent_approvals_unlocked()?
-        };
+        let _store = self.persistent_store_lock.lock().unwrap();
+        let _file_store = StoreFileLock::acquire(&self.store_path)?;
+        let persistent = self.load_persistent_approvals_unlocked()?;
         let mut state = self.state.lock().unwrap();
         prune_expired_challenges(&mut state);
         if state.brokers.get(session_id) != Some(&broker_token) {
@@ -333,15 +341,16 @@ impl ApprovalGate {
                         )));
                     }
                     let _store = self.persistent_store_lock.lock().unwrap();
+                    let _file_store = StoreFileLock::acquire(&self.store_path)?;
                     let mut persistent = self.load_persistent_approvals_unlocked()?;
                     persistent.insert(challenge.stable_id.clone());
                     self.write_persistent_approvals_unlocked(&persistent)?;
                 }
-                self.state
-                    .lock()
-                    .unwrap()
-                    .session_approvals
-                    .insert((session_id.to_owned(), challenge.stable_id));
+                self.record_session_approval_if_broker_current(
+                    session_id,
+                    broker_token,
+                    challenge.stable_id,
+                )?;
                 Ok(ApprovalResolution::Approved {
                     persistent: persistence == ApprovalPersistence::Always,
                 })
@@ -360,10 +369,11 @@ impl ApprovalGate {
             .retain(|_, challenge| challenge.session_id != session_id);
     }
 
-    /// Return stable app identities approved permanently. This is the narrow
-    /// management seam used by a future settings or CLI revocation surface.
+    /// Return path-bound stable app identities approved permanently. The CLI
+    /// uses this narrow seam without expanding the public MCP tool roster.
     pub fn list_persistent(&self) -> Result<Vec<String>, ApprovalError> {
         let _store = self.persistent_store_lock.lock().unwrap();
+        let _file_store = StoreFileLock::acquire(&self.store_path)?;
         Ok(self
             .load_persistent_approvals_unlocked()?
             .into_iter()
@@ -375,8 +385,17 @@ impl ApprovalGate {
     pub fn revoke_persistent(&self, app_identity: &str) -> Result<bool, ApprovalError> {
         let key = normalize_management_identity(app_identity)?;
         let _store = self.persistent_store_lock.lock().unwrap();
+        let _file_store = StoreFileLock::acquire(&self.store_path)?;
         let mut approvals = self.load_persistent_approvals_unlocked()?;
-        let removed = approvals.remove(&key);
+        let original_count = approvals.len();
+        if key.starts_with("bundle:") && !key.contains("|path:") {
+            let path_bound_prefix = format!("{key}|path:");
+            approvals
+                .retain(|approval| approval != &key && !approval.starts_with(&path_bound_prefix));
+        } else {
+            approvals.remove(&key);
+        }
+        let removed = approvals.len() != original_count;
         if removed {
             self.write_persistent_approvals_unlocked(&approvals)?;
         }
@@ -385,12 +404,31 @@ impl ApprovalGate {
 
     pub fn clear_persistent(&self) -> Result<usize, ApprovalError> {
         let _store = self.persistent_store_lock.lock().unwrap();
+        let _file_store = StoreFileLock::acquire(&self.store_path)?;
         let approvals = self.load_persistent_approvals_unlocked()?;
         let count = approvals.len();
         if count > 0 {
             self.write_persistent_approvals_unlocked(&BTreeSet::new())?;
         }
         Ok(count)
+    }
+
+    fn record_session_approval_if_broker_current(
+        &self,
+        session_id: &str,
+        broker_token: &str,
+        stable_id: String,
+    ) -> Result<(), ApprovalError> {
+        let mut state = self.state.lock().unwrap();
+        if state.brokers.get(session_id).map(String::as_str) != Some(broker_token) {
+            return Err(ApprovalError::Unauthenticated(
+                "Computer Use approval session ended before the decision was committed.".to_owned(),
+            ));
+        }
+        state
+            .session_approvals
+            .insert((session_id.to_owned(), stable_id));
+        Ok(())
     }
 
     fn load_persistent_approvals_unlocked(&self) -> Result<BTreeSet<String>, ApprovalError> {
@@ -456,6 +494,71 @@ impl ApprovalGate {
     }
 }
 
+#[derive(Debug)]
+struct StoreFileLock {
+    file: std::fs::File,
+}
+
+impl StoreFileLock {
+    fn acquire(store_path: &Path) -> Result<Self, ApprovalError> {
+        Self::acquire_with_flags(store_path, libc::LOCK_EX)
+    }
+
+    #[cfg(test)]
+    fn try_acquire(store_path: &Path) -> Result<Self, ApprovalError> {
+        Self::acquire_with_flags(store_path, libc::LOCK_EX | libc::LOCK_NB)
+    }
+
+    fn acquire_with_flags(store_path: &Path, flags: libc::c_int) -> Result<Self, ApprovalError> {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+        let parent = store_path.parent().ok_or_else(|| {
+            ApprovalError::Store("Computer Use approval store has no parent directory.".to_owned())
+        })?;
+        ensure_private_directory(parent)?;
+        let lock_path = store_path.with_extension("lock");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&lock_path)
+            .map_err(store_error)?;
+        let metadata = file.metadata().map_err(store_error)?;
+        let expected_uid = unsafe { libc::geteuid() };
+        if !metadata.is_file()
+            || metadata.uid() != expected_uid
+            || metadata.permissions().mode() & 0o077 != 0
+        {
+            return Err(ApprovalError::Store(format!(
+                "Computer Use approval lock has unsafe ownership or permissions: {}",
+                lock_path.display()
+            )));
+        }
+
+        loop {
+            if unsafe { libc::flock(file.as_raw_fd(), flags) } == 0 {
+                return Ok(Self { file });
+            }
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::Interrupted {
+                return Err(store_error(error));
+            }
+        }
+    }
+}
+
+impl Drop for StoreFileLock {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd;
+        unsafe {
+            libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
+        }
+    }
+}
+
 fn prune_expired_challenges(state: &mut ApprovalState) {
     let now = Instant::now();
     state
@@ -470,8 +573,12 @@ fn normalize_management_identity(value: &str) -> Result<String, ApprovalError> {
             "app approval identity cannot be empty".to_owned(),
         ));
     }
-    if let Some(bundle_id) = value.strip_prefix("bundle:") {
-        Ok(format!("bundle:{}", bundle_id.to_lowercase()))
+    if let Some(bundle_identity) = value.strip_prefix("bundle:") {
+        if let Some((bundle_id, path)) = bundle_identity.split_once("|path:") {
+            Ok(format!("bundle:{}|path:{path}", bundle_id.to_lowercase()))
+        } else {
+            Ok(format!("bundle:{}", bundle_identity.to_lowercase()))
+        }
     } else if value.starts_with("path:") {
         Ok(value.to_owned())
     } else {
@@ -600,6 +707,30 @@ mod tests {
     }
 
     #[test]
+    fn approval_identity_binds_bundle_id_to_canonical_app_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory.path().join("First.app");
+        let second = directory.path().join("Second.app");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+
+        let first =
+            AppApprovalTarget::from_app("Editor", Some("com.example.Editor"), first.to_str())
+                .unwrap();
+        let second =
+            AppApprovalTarget::from_app("Editor", Some("com.example.Editor"), second.to_str())
+                .unwrap();
+        assert_ne!(first.stable_id, second.stable_id);
+        assert!(first
+            .stable_id
+            .starts_with("bundle:com.example.editor|path:"));
+        assert!(matches!(
+            AppApprovalTarget::from_app("Editor", Some("com.example.Editor"), None),
+            Err(ApprovalError::InvalidIdentity(_))
+        ));
+    }
+
+    #[test]
     fn no_broker_credential_fails_closed_without_a_challenge() {
         let (_directory, gate) = gate(true);
         let error = gate.check("raw-session", &target()).unwrap_err();
@@ -654,6 +785,36 @@ mod tests {
         assert!(matches!(
             gate.check("session-a", &target).unwrap(),
             ApprovalCheck::Required(_)
+        ));
+    }
+
+    #[test]
+    fn replacing_or_removing_a_broker_cannot_inherit_session_approval() {
+        let (_directory, gate) = gate(true);
+        let target = target();
+        gate.register_broker("session", "broker-a");
+        let challenge = match gate.check("session", &target).unwrap() {
+            ApprovalCheck::Required(challenge) => challenge,
+            ApprovalCheck::Approved => panic!("unexpected approval"),
+        };
+        gate.resolve(
+            "session",
+            "broker-a",
+            &challenge.id,
+            ApprovalAction::Accept,
+            ApprovalPersistence::Session,
+        )
+        .unwrap();
+
+        gate.register_broker("session", "broker-b");
+        assert!(matches!(
+            gate.check("session", &target).unwrap(),
+            ApprovalCheck::Required(_)
+        ));
+        gate.unregister_broker("session", "broker-b");
+        assert!(matches!(
+            gate.record_session_approval_if_broker_current("session", "broker-b", target.stable_id),
+            Err(ApprovalError::Unauthenticated(_))
         ));
     }
 
@@ -784,13 +945,72 @@ mod tests {
         .unwrap();
         assert_eq!(
             gate.list_persistent().unwrap(),
-            vec!["bundle:com.apple.calculator"]
+            vec![target.stable_id.clone()]
         );
         assert!(gate
             .revoke_persistent("bundle:com.apple.Calculator")
             .unwrap());
         assert!(gate.list_persistent().unwrap().is_empty());
         assert_eq!(gate.clear_persistent().unwrap(), 0);
+    }
+
+    #[test]
+    fn bundle_revoke_removes_every_path_bound_copy() {
+        let (directory, gate) = gate(true);
+        let first_path = directory.path().join("First.app");
+        let second_path = directory.path().join("Second.app");
+        std::fs::create_dir_all(&first_path).unwrap();
+        std::fs::create_dir_all(&second_path).unwrap();
+        let first = AppApprovalTarget::from_app(
+            "Editor",
+            Some("com.example.Editor"),
+            first_path.to_str(),
+        )
+        .unwrap();
+        let second = AppApprovalTarget::from_app(
+            "Editor",
+            Some("com.example.Editor"),
+            second_path.to_str(),
+        )
+        .unwrap();
+
+        for (session, broker, target) in [
+            ("first", "broker-first", &first),
+            ("second", "broker-second", &second),
+        ] {
+            gate.register_broker(session, broker);
+            let challenge = match gate.check(session, target).unwrap() {
+                ApprovalCheck::Required(challenge) => challenge,
+                ApprovalCheck::Approved => panic!("unexpected approval"),
+            };
+            gate.resolve(
+                session,
+                broker,
+                &challenge.id,
+                ApprovalAction::Accept,
+                ApprovalPersistence::Always,
+            )
+            .unwrap();
+        }
+        assert_eq!(gate.list_persistent().unwrap().len(), 2);
+        assert!(gate.revoke_persistent("com.example.Editor").unwrap());
+        assert!(gate.list_persistent().unwrap().is_empty());
+    }
+
+    #[test]
+    fn persistent_store_uses_an_exclusive_private_interprocess_lock() {
+        let (_directory, gate) = gate(true);
+        let first = StoreFileLock::acquire(&gate.store_path).unwrap();
+        let second = StoreFileLock::try_acquire(&gate.store_path).unwrap_err();
+        assert!(matches!(second, ApprovalError::Store(_)));
+        drop(first);
+        let reacquired = StoreFileLock::try_acquire(&gate.store_path).unwrap();
+        let lock_path = gate.store_path.with_extension("lock");
+        assert_eq!(
+            std::fs::metadata(lock_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        drop(reacquired);
     }
 
     #[test]

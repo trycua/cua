@@ -2713,22 +2713,26 @@ impl Tool for ClickTool {
                     let retained = state
                         .element_cache
                         .get_element_retained(pid, hwnd, idx)
-                        .ok_or_else(|| anyhow::anyhow!("element [{idx}] is not in the UIA cache"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("element [{idx}] is not in the UIA cache")
+                        })?;
                     if !retained.is_uia() {
                         anyhow::bail!("element [{idx}] is not a UIA element");
                     }
-                    let element = unsafe {
-                        IUIAutomationElement::from_raw(retained.as_ptr() as *mut _)
-                    };
+                    let element =
+                        unsafe { IUIAutomationElement::from_raw(retained.as_ptr() as *mut _) };
                     let pattern = unsafe {
                         element
                             .GetCurrentPattern(UIA_ExpandCollapsePatternId)
                             .and_then(|value| value.cast::<IUIAutomationExpandCollapsePattern>())
-                    };
-                    let result = crate::uia::fg_bypass::run_with_uwp_bypass(
-                        hwnd as isize,
-                        || unsafe { pattern.Expand() },
-                    );
+                    }
+                    .map_err(|error| {
+                        anyhow::anyhow!("ExpandCollapsePattern unavailable: {error}")
+                    })?;
+                    let result =
+                        crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || unsafe {
+                            pattern.Expand()
+                        });
                     std::mem::forget(element);
                     result.map_err(|error| anyhow::anyhow!("ExpandCollapse.Expand failed: {error}"))
                 })
@@ -3444,16 +3448,19 @@ impl Tool for TypeTextTool {
             // establish real system focus with the same foreground coordinate
             // actuator used by an indexed click before sending Unicode input.
             if let Some(idx) = elem_idx {
-                let (cx, cy) = match self.state.element_cache.get_element_center(
-                    pid,
-                    hwnd,
-                    idx as usize,
-                ) {
-                    Some(center) => center,
-                    None => return ToolResult::error(format!(
+                let (cx, cy) =
+                    match self
+                        .state
+                        .element_cache
+                        .get_element_center(pid, hwnd, idx as usize)
+                    {
+                        Some(center) => center,
+                        None => {
+                            return ToolResult::error(format!(
                         "Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first."
-                    )),
-                };
+                    ))
+                        }
+                    };
                 let (cx, cy) = match resolve_onscreen_point_with_scroll(
                     &self.state.element_cache,
                     pid,

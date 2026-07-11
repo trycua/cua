@@ -218,6 +218,12 @@ fn evidence_for_driver(driver: &McpDriver) -> Evidence {
     recording_evidence(driver.recording_dir())
 }
 
+fn allocate_loopback_port() -> u16 {
+    let listener =
+        std::net::TcpListener::bind(("127.0.0.1", 0)).expect("allocate an ephemeral fixture port");
+    listener.local_addr().expect("read fixture port").port()
+}
+
 fn launch_host_with_evidence(
     spec: &HostSpec,
     scenario: &str,
@@ -253,6 +259,12 @@ fn launch_host_with_evidence(
         .args(&spec.args)
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    if spec.name == "electron" {
+        command.env(
+            "CUA_ELECTRON_CDP_PORT",
+            allocate_loopback_port().to_string(),
+        );
+    }
     let before_windows = driver
         .call("list_windows", serde_json::json!({}))
         .structured()["windows"]

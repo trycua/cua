@@ -30,77 +30,53 @@ pub struct AppInfo {
     pub last_used: Option<String>,
 }
 
-/// Enumerate running apps with NSApplicationActivationPolicyRegular.
-/// Uses `osascript` to query System Events — no Accessibility permission needed.
+/// Enumerate running apps with `NSApplicationActivationPolicyRegular`.
+///
+/// This stays in-process through `NSWorkspace`. Querying System Events through
+/// AppleScript adds an unrelated Automation permission, can block on a prompt,
+/// and turns a denied prompt into an empty app list.
 pub fn list_running_apps() -> Vec<AppInfo> {
-    // Use `ps` + NSWorkspace via a brief Swift one-liner via swift-sh is heavy;
-    // instead use the Obj-C bridge via `osascript`.
-    // Fallback: parse `ps -axo pid,command` and cross-reference with bundle IDs.
-    // Better: use a native call via core-foundation bindings.
-    list_running_apps_native()
-}
+    use objc2_app_kit::{NSApplicationActivationPolicy, NSWorkspace};
 
-fn list_running_apps_native() -> Vec<AppInfo> {
-    // Use `lsappinfo list` which is a macOS system tool available on all versions.
-    // Alternatively we can use NSWorkspace via objc2 — but for simplicity and
-    // to match the Swift reference, we use a subprocess call to `osascript`.
-    let script = r#"
-set output to ""
-tell application "System Events"
-    set appList to every application process whose background only is false
-    repeat with proc in appList
-        set procName to name of proc
-        set procPid to unix id of proc
-        set bundleId to bundle identifier of proc
-        if bundleId is missing value then set bundleId to ""
-        set isFront to "0"
-        if frontmost of proc then set isFront to "1"
-        set output to output & procName & "|" & procPid & "|" & bundleId & "|" & isFront & linefeed
-    end repeat
-end tell
-return output
-"#;
+    unsafe {
+        let workspace = NSWorkspace::sharedWorkspace();
+        let applications = workspace.runningApplications();
+        (0..applications.len())
+            .filter_map(|index| applications.get(index))
+            .filter(|app| {
+                !app.isTerminated()
+                    && app.activationPolicy() == NSApplicationActivationPolicy::Regular
+            })
+            .filter_map(|app| {
+                let pid = app.processIdentifier();
+                if pid <= 0 {
+                    return None;
+                }
 
-    let out = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output();
+                let bundle_id = app.bundleIdentifier().map(|value| value.to_string());
+                let name = app
+                    .localizedName()
+                    .map(|value| value.to_string())
+                    .or_else(|| bundle_id.clone())
+                    .unwrap_or_else(|| format!("pid {pid}"));
+                let launch_path = app
+                    .bundleURL()
+                    .and_then(|url| url.path())
+                    .map(|path| path.to_string());
 
-    match out {
-        Err(_) => vec![],
-        Ok(o) => {
-            let text = String::from_utf8_lossy(&o.stdout);
-            parse_osascript_app_list(&text)
-        }
+                Some(AppInfo {
+                    name,
+                    pid,
+                    bundle_id,
+                    running: true,
+                    active: app.isActive(),
+                    launch_path,
+                    kind: Some("desktop".to_owned()),
+                    last_used: None,
+                })
+            })
+            .collect()
     }
-}
-
-fn parse_osascript_app_list(text: &str) -> Vec<AppInfo> {
-    let mut apps = Vec::new();
-    for line in text.lines() {
-        let parts: Vec<&str> = line.splitn(4, '|').collect();
-        if parts.len() < 2 { continue; }
-        let name = parts[0].trim().to_owned();
-        let pid: i32 = parts[1].trim().parse().unwrap_or(0);
-        let bundle_id = if parts.len() > 2 && !parts[2].trim().is_empty() {
-            Some(parts[2].trim().to_owned())
-        } else {
-            None
-        };
-        let active = parts.get(3).map(|s| s.trim() == "1").unwrap_or(false);
-        if name.is_empty() || pid == 0 { continue; }
-        apps.push(AppInfo {
-            name,
-            pid,
-            bundle_id,
-            running: true,
-            active,
-            launch_path: None,
-            kind: Some("desktop".to_owned()),
-            last_used: None,
-        });
-    }
-    apps
 }
 
 /// Launch an app by bundle ID via NSWorkspace, background only (no focus

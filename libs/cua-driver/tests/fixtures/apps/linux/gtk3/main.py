@@ -136,6 +136,8 @@ class HarnessWindow(Gtk.Window):
         open_pop = aid(Gtk.Button(label="Open Popover"), "btn-open-popover")
         open_pop.connect("clicked", self.on_open_popover)
         root.pack_start(open_pop, False, False, 0)
+        self.popover_status = Gtk.Label(label="popover_open=False", xalign=0)
+        root.pack_start(self.popover_status, False, False, 0)
         self.popover = Gtk.Popover.new(open_pop)
         self.popover.set_border_width(10)
         self.popover.add(Gtk.Label(label="POPOVER_MARKER_v1"))
@@ -191,6 +193,7 @@ class HarnessWindow(Gtk.Window):
 
     def on_open_popover(self, *_):
         self.popover.show_all()
+        self.popover_status.set_text("popover_open=True")
 
 
 def main():

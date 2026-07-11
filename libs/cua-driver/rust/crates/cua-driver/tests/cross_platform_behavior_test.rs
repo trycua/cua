@@ -931,11 +931,18 @@ fn cell_selected(case: &CaseSpec) -> bool {
     let Ok(filter) = std::env::var("CUA_E2E_CELL_FILTER") else {
         return true;
     };
-    filter
+    let mut parts = filter
         .split(',')
         .map(str::trim)
         .filter(|part| !part.is_empty())
-        .any(|part| case.cell_id == part || case.cell_id.contains(part))
+        .peekable();
+    parts.peek().is_none() || parts.any(|part| case.cell_id == part || case.cell_id.contains(part))
+}
+
+fn cell_filter_active() -> bool {
+    std::env::var("CUA_E2E_CELL_FILTER")
+        .map(|filter| filter.split(',').any(|part| !part.trim().is_empty()))
+        .unwrap_or(false)
 }
 
 #[test]
@@ -1030,7 +1037,7 @@ fn shared_web_action_matrix_is_state_verified() {
         }
     }
     assert!(
-        std::env::var_os("CUA_E2E_CELL_FILTER").is_none() || selected > 0,
+        !cell_filter_active() || selected > 0,
         "CUA_E2E_CELL_FILTER matched no shared E2E cells"
     );
     resume_first_failure(failure);

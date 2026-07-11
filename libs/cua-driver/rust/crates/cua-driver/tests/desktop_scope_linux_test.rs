@@ -16,7 +16,7 @@
 //! before asserting so a failure can't leave the sandbox in desktop scope.
 //!
 //! #[ignore] (needs an X11/Xwayland display + AT-SPI + the GTK3 harness). Run:
-//!   cargo test -p cua-driver --test modality_desktop_scope_linux_test -- --ignored --nocapture --test-threads=1
+//!   cargo test -p cua-driver --test desktop_scope_linux_test -- --ignored --nocapture --test-threads=1
 
 #![cfg(target_os = "linux")]
 

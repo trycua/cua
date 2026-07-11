@@ -12,7 +12,7 @@ SUITE="all"
 
 usage() {
   cat <<'EOF'
-Usage: run-rust-e2e.sh [--no-build] [--suite shared|native|modality|all]
+Usage: run-rust-e2e.sh [--no-build] [--suite shared|native|scope|all]
 
 The caller must provide a real or virtual Linux desktop session. For a
 headless session, wrap this command in xvfb-run and dbus-run-session.
@@ -30,7 +30,7 @@ while (($#)); do
 done
 
 case "$SUITE" in
-  shared|native|modality|all) ;;
+  shared|native|scope|all) ;;
   *) echo "unsupported suite: $SUITE" >&2; exit 2 ;;
 esac
 
@@ -140,12 +140,12 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
       --ignored --nocapture --test-threads=1
 fi
 
-if [[ "${SUITE}" == modality || "${SUITE}" == all ]]; then
+if [[ "${SUITE}" == scope || "${SUITE}" == all ]]; then
   run_test capture-contract \
     cargo test -p cua-driver --test capture_contract_test -- \
       --ignored --nocapture --test-threads=1
-  run_test modality-desktop-scope \
-    cargo test -p cua-driver --test modality_desktop_scope_linux_test -- \
+  run_test desktop-scope \
+    cargo test -p cua-driver --test desktop_scope_linux_test -- \
       --ignored --nocapture --test-threads=1
 fi
 

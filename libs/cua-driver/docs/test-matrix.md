@@ -124,7 +124,7 @@ real-app checks.
 | Electron | `cross_platform_behavior_test.rs` | X11 and supported AT-SPI sessions | Shared web action matrix |
 | Tauri | `cross_platform_behavior_test.rs` | X11; Wayland support is explicitly gated | Shared web action matrix |
 | GTK3 | `harness_gtk3_test.rs` | X11/AT-SPI and Wayland/AT-SPI where configured | Native GTK controls and input |
-| Desktop scope | `modality_desktop_scope_linux_test.rs` | X11/Wayland | Desktop versus window scope |
+| Desktop scope | `desktop_scope_linux_test.rs` | X11/Wayland | Desktop versus window scope |
 | Dispatch | `modality_dispatch_linux_test.rs` | X11/Wayland | Background and foreground delivery ladder |
 
 Nix provides the Linux build and desktop environment. X11 and Wayland are

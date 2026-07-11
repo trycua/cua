@@ -133,7 +133,7 @@ jobs:
 
   capture:
     if: inputs.suite == 'capture' || inputs.suite == 'all'
-    name: "Windows / capture contract"
+    name: "Windows / capture and desktop scope"
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
     steps:
@@ -148,7 +148,7 @@ jobs:
           }
           ffmpeg -version
           ffprobe -version
-      - name: Run capture contract
+      - name: Run capture and desktop-scope contracts
         shell: pwsh
         run: .\scripts\ci\windows\run-rust-e2e.ps1 -Suite capture -RequireGui
       - name: Collect logs
@@ -230,7 +230,7 @@ jobs:
           UX guards|rust-windows-guard
           Electron + Tauri|rust-windows-shared
           WPF + WinUI3 + WebView2|rust-windows-native
-          Capture contract|rust-windows-capture
+          Capture + desktop scope|rust-windows-capture
           EOF
           {
             echo

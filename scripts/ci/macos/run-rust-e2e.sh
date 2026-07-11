@@ -12,7 +12,7 @@ BUILD_FIXTURES=1
 
 usage() {
   cat <<'EOF'
-Usage: run-rust-e2e.sh [--no-build] [--suite shared|native|modality|all]
+Usage: run-rust-e2e.sh [--no-build] [--suite shared|native|scope|all]
 
 Run from a logged-in macOS desktop after install-local and TCC authorization.
 The testkit proxies MCP calls through the installed CuaDriver daemon.
@@ -30,7 +30,7 @@ while (($#)); do
 done
 
 case "$SUITE" in
-  shared|native|modality|all) ;;
+  shared|native|scope|all) ;;
   *) echo "unsupported suite: $SUITE" >&2; exit 2 ;;
 esac
 
@@ -144,10 +144,10 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
   run_test swiftui-native-harness cargo test -p cua-driver --test harness_swiftui_test -- \
     --ignored --nocapture --test-threads=1
 fi
-if [[ "${SUITE}" == modality || "${SUITE}" == all ]]; then
+if [[ "${SUITE}" == scope || "${SUITE}" == all ]]; then
   run_test capture-contract cargo test -p cua-driver --test capture_contract_test -- \
     --ignored --nocapture --test-threads=1
-  run_test modality-desktop-scope cargo test -p cua-driver --test modality_desktop_scope_macos_test -- \
+  run_test desktop-scope cargo test -p cua-driver --test desktop_scope_macos_test -- \
     --ignored --nocapture --test-threads=1
 fi
 

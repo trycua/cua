@@ -19,7 +19,7 @@ action, addressing mode, delivery mode, or OS-specific window-system case.
 | `protocol_*_test.rs` | yes | MCP/CLI protocol and schema behavior |
 | `schema_*_test.rs` | yes | Generated schema consistency |
 | `harness_<toolkit>_test.rs` | no, `#[ignore]` | Toolkit-specific harness apps |
-| `modality_<area>[_<os>]_test.rs` | no, `#[ignore]` | Capture, desktop scope, and transitional environment checks |
+| `desktop_scope_<os>_test.rs` | no, `#[ignore]` | Platform window/desktop scope contract |
 | `guard_*_test.rs` | usually ignored or self-skipping | UX guard and interactive desktop checks |
 
 ## Harness Requirements
@@ -69,14 +69,14 @@ lifecycle once before behavioral cells run.
 ```bash
 cargo test -p cua-driver --test protocol_handshake_test
 cargo test -p cua-driver --test harness_appkit_test -- --ignored --nocapture
-cargo test -p cua-driver --test modality_desktop_scope_macos_test -- --ignored --nocapture
+cargo test -p cua-driver --test desktop_scope_macos_test -- --ignored --nocapture
 ```
 
 The legacy Windows run-all uses
 `../../../../tests/runners/windows/run-all.ps1`. The current canonical E2E
 entrypoint is `scripts/ci/windows/run-rust-e2e.ps1 -Suite all -RequireGui`.
-It runs the complete Rust harness matrix; the guard, shared, native, and
-modality selectors are retained only for focused diagnosis. Optional
+It runs the complete Rust harness matrix; internal lane selectors are retained
+only for focused diagnosis. Optional
 external-app suites remain separate.
 
 Legacy Windows Sandbox runs use

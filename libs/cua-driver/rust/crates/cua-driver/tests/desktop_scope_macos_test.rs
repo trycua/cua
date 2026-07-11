@@ -1,5 +1,5 @@
 //! macOS **desktop-scope** (vision/foreground) modality, exercised through the
-//! SAME cua-driver interface as the Windows `modality_desktop_scope_test`:
+//! SAME cua-driver interface as the Windows `desktop_scope_windows_test`:
 //! `set_config capture_scope=desktop` + a window-less screen-absolute `click`
 //! (no `pid`, no `window_id`, no `list_windows`). The macOS actuator resolves
 //! the frontmost on-screen window under the point (the `WindowFromPoint` peer,
@@ -19,7 +19,7 @@
 //!
 //! #[ignore] (needs a real desktop session + TCC Accessibility + the AppKit
 //! harness). Run:
-//!   cargo test -p cua-driver --test modality_desktop_scope_macos_test -- --ignored --nocapture --test-threads=1
+//!   cargo test -p cua-driver --test desktop_scope_macos_test -- --ignored --nocapture --test-threads=1
 
 #![cfg(target_os = "macos")]
 

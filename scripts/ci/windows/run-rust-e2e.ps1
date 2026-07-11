@@ -193,6 +193,10 @@ if ($Suite -in @("capture", "all")) {
         "test", "-p", "cua-driver", "--test", "capture_contract_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
+    Invoke-CargoTest "Windows desktop scope" @(
+        "test", "-p", "cua-driver", "--test", "desktop_scope_windows_test", "--",
+        "--ignored", "--nocapture", "--test-threads=1"
+    )
 }
 
 $script:FailureCount += (Test-E2eRecordings)

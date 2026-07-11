@@ -7,7 +7,7 @@ name: "CI: cua-driver interactive modality suite (Linux)"
 #
 # What runs here:
 #   - capture_contract_test             (tree + image default and screenshot opt-out)
-#   - modality_desktop_scope_linux_test (window-less screen-absolute click via XTest + gate)
+#   - desktop_scope_linux_test (window-less screen-absolute click via XTest + gate)
 #
 # How the GUI session is provided: Xvfb for the display, a per-job D-Bus session
 # bus (so AT-SPI's `org.a11y.Bus` can activate), at-spi2-core for the bridge, and
@@ -111,7 +111,7 @@ jobs:
               # so that test runs on the real-desktop lanes (the GNOME/Azure VM run
               # + the recorded artifact), not here. See nix-wayland.yml for the
               # real-session follow-up that can host the landing assertion too.
-              cargo test -p cua-driver --test modality_desktop_scope_linux_test \
+              cargo test -p cua-driver --test desktop_scope_linux_test \
                 window_scope_rejects_windowless_click \
                 -- --ignored --nocapture --test-threads=1
             '

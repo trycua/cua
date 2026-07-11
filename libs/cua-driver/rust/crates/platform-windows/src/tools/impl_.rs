@@ -2445,12 +2445,25 @@ impl Tool for ClickTool {
             // itself ~40ms after the click, so no extra restore guard here.)
             let send_result = tokio::task::spawn_blocking(move || -> anyhow::Result<u64> {
                 use windows::Win32::Foundation::POINT;
-                use windows::Win32::UI::WindowsAndMessaging::WindowFromPoint;
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    GetAncestor, WindowFromPoint, GA_ROOT,
+                };
                 let target = unsafe { WindowFromPoint(POINT { x: sx, y: sy }) };
                 if target.0.is_null() {
                     anyhow::bail!("No window under screen point ({sx},{sy}).");
                 }
-                let hwnd_u = target.0 as u64;
+                let root = unsafe {
+                    let root = GetAncestor(target, GA_ROOT);
+                    if root.0.is_null() {
+                        target
+                    } else {
+                        root
+                    }
+                };
+                if !unsafe { crate::input::force_foreground_attached(root) } {
+                    anyhow::bail!("Could not activate the window under desktop point ({sx},{sy})");
+                }
+                let hwnd_u = root.0 as u64;
                 let mod_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 crate::input::send_click_synthesized_mods(
                     hwnd_u, sx, sy, count, &button, &mod_refs,

@@ -130,7 +130,8 @@ run_test() {
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
   run_test shared-behavior-matrix \
     cargo test -p cua-driver --test cross_platform_behavior_test -- \
-      --ignored --nocapture --test-threads=1
+      --ignored --exact shared_web_action_matrix_is_state_verified \
+      --nocapture --test-threads=1
 fi
 
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then

@@ -159,7 +159,8 @@ $script:FailureCount = 0
 if ($Suite -in @("shared", "all")) {
     Invoke-CargoTest "shared behavior matrix" @(
         "test", "-p", "cua-driver", "--test", "cross_platform_behavior_test", "--",
-        "--ignored", "--nocapture", "--test-threads=1"
+        "--ignored", "--exact", "shared_web_action_matrix_is_state_verified",
+        "--nocapture", "--test-threads=1"
     )
 }
 

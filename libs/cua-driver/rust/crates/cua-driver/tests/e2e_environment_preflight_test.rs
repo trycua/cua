@@ -144,12 +144,17 @@ fn run_preflight() {
         .args(fixture_args)
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
-    let child = spawn_in_job(&mut command).expect("preflight fixture failed to launch");
+    let mut child = spawn_in_job(&mut command).expect("preflight fixture failed to launch");
     let launched_pid = child.id() as i64;
-    driver.reaper().push(child);
 
     let deadline = Instant::now() + Duration::from_secs(20);
     let (pid, window_id) = loop {
+        if let Some(status) = child
+            .try_wait()
+            .expect("could not inspect preflight fixture process")
+        {
+            panic!("preflight fixture exited before mapping a window: {status}");
+        }
         let response = driver.call("list_windows", serde_json::json!({}));
         if let Some(window) = response.structured()["windows"]
             .as_array()
@@ -170,12 +175,14 @@ fn run_preflight() {
                 break (window["pid"].as_i64().unwrap_or(launched_pid), window_id);
             }
         }
-        assert!(
-            Instant::now() < deadline,
-            "preflight fixture window did not appear"
-        );
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("preflight fixture window did not appear");
+        }
         std::thread::sleep(Duration::from_millis(200));
     };
+    driver.reaper().push(child);
 
     #[cfg(target_os = "linux")]
     {

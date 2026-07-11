@@ -99,4 +99,11 @@ if [[ -z "${SWAYSOCK}" ]]; then
 fi
 
 echo "Native Wayland E2E session: ${WAYLAND_DISPLAY}"
+set +e
 "${SCRIPT_DIR}/run-rust-e2e.sh" "$@"
+status=$?
+set -e
+if [[ "${status}" != 0 ]]; then
+  swaymsg -t get_tree > "${REPO_ROOT}/artifacts/cua-driver/linux/sway-tree.json" 2>/dev/null || true
+fi
+exit "${status}"

@@ -76,7 +76,12 @@ fi
 # A private session bus does not activate the desktop accessibility stack by
 # itself. Start the repo-pinned AT-SPI launcher, then require org.a11y.Bus to
 # answer before any fixture or driver process inherits this session.
-at-spi-bus-launcher --launch-immediately > "${ATSPI_LOG}" 2>&1 &
+ATSPI_LAUNCHER="${CUA_AT_SPI_BUS_LAUNCHER:-$(command -v at-spi-bus-launcher || true)}"
+if [[ ! -x "${ATSPI_LAUNCHER}" ]]; then
+  echo "AT-SPI bus launcher is unavailable: ${ATSPI_LAUNCHER:-<not found>}" >&2
+  exit 1
+fi
+"${ATSPI_LAUNCHER}" --launch-immediately > "${ATSPI_LOG}" 2>&1 &
 ATSPI_PID=$!
 deadline=$((SECONDS + 15))
 while ((SECONDS < deadline)); do
@@ -98,6 +103,36 @@ if ! gdbus call --session \
     --object-path /org/a11y/bus \
     --method org.a11y.Bus.GetAddress >/dev/null 2>&1; then
   echo "org.a11y.Bus did not become ready within 15 seconds" >&2
+  cat "${ATSPI_LOG}" >&2
+  exit 1
+fi
+
+# The bus launcher and the registry daemon are separate services. Resolve the
+# private accessibility bus and require the registry to activate on it before
+# any toolkit inherits this session.
+a11y_address="$(
+  gdbus call --session \
+    --dest org.a11y.Bus \
+    --object-path /org/a11y/bus \
+    --method org.a11y.Bus.GetAddress \
+    | sed -e "s/^('//" -e "s/',)$//"
+)"
+if [[ -z "${a11y_address}" ]] || ! gdbus call \
+    --address "${a11y_address}" \
+    --dest org.a11y.atspi.Registry \
+    --object-path /org/a11y/atspi/accessible/root \
+    --method org.freedesktop.DBus.Properties.Get \
+    org.a11y.atspi.Accessible ChildCount >/dev/null 2>&1; then
+  echo "AT-SPI registry did not activate on the accessibility bus" >&2
+  cat "${ATSPI_LOG}" >&2
+  exit 1
+fi
+if ! gdbus call --session \
+    --dest org.a11y.Bus \
+    --object-path /org/a11y/bus \
+    --method org.freedesktop.DBus.Properties.Set \
+    org.a11y.Status IsEnabled '<true>' >/dev/null 2>&1; then
+  echo "Could not enable accessibility on org.a11y.Bus" >&2
   cat "${ATSPI_LOG}" >&2
   exit 1
 fi

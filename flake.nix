@@ -118,6 +118,7 @@
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath waylandE2eLibraries;
             shellHook = ''
               export NO_AT_BRIDGE=0
+              export CUA_AT_SPI_BUS_LAUNCHER="${hostAtSpi}/libexec/at-spi-bus-launcher"
               export XDG_DATA_DIRS="${hostAtSpi}/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
             '';
           };

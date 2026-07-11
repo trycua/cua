@@ -29,8 +29,7 @@ jobs:
       - name: Run complete native Wayland matrix
         run: >-
           nix develop .#cua-driver-wayland-e2e
-          -c dbus-run-session --
-          scripts/ci/linux/run-rust-e2e-wayland.sh
+          -c scripts/ci/linux/run-rust-e2e-wayland.sh
       - name: Upload Wayland results
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
@@ -76,4 +75,3 @@ jobs:
             echo >> "$GITHUB_STEP_SUMMARY"
             echo "No typed matrix summary was produced; inspect the Wayland job log." >> "$GITHUB_STEP_SUMMARY"
           fi
-

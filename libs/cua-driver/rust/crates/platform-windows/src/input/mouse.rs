@@ -17,11 +17,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     ChildWindowFromPointEx, GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW,
-    PostMessageW, SendMessageTimeoutW, SetCursorPos, SetWindowPos, CWP_SKIPDISABLED,
-    CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST,
-    SMTO_ABORTIFHUNG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
-    WM_MBUTTONUP, WM_MOUSEMOVE, WM_NULL, WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_TOPMOST,
+    PostMessageW, SetCursorPos, SetWindowPos, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE,
+    CWP_SKIPTRANSPARENT, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST,
+    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_TOPMOST,
 };
 
 const MK_LBUTTON: u32 = 0x0001;
@@ -503,7 +503,6 @@ fn send_click_synthesized_mods_impl(
         // restore" for pointer input, done the one Windows way that doesn't
         // need UIAccess — the technique the OG GTK path used. (Keyboard
         // foreground still needs *real* focus; only pointer can be z-routed.)
-        let changed_foreground = activate && prev_fg != target;
         let noactivate = if activate {
             if !crate::input::force_foreground_attached(target) {
                 bail!("Could not activate target HWND for the foreground click.");
@@ -518,24 +517,6 @@ fn send_click_synthesized_mods_impl(
             (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32) & WS_EX_TOPMOST.0 != 0;
         if !activate {
             let _ = SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
-        }
-
-        // SetForegroundWindow returns before retained-mode frameworks finish
-        // processing their activation messages. Synchronize with the target
-        // queue, then allow one dispatcher turn before sending pointer-down;
-        // otherwise the first click can activate the window without reaching
-        // the control beneath it. Already-active targets stay on the fast path.
-        if changed_foreground {
-            let _ = SendMessageTimeoutW(
-                target,
-                WM_NULL,
-                WPARAM(0),
-                LPARAM(0),
-                SMTO_ABORTIFHUNG,
-                250,
-                None,
-            );
-            sleep(Duration::from_millis(100));
         }
 
         // Move the cursor so the OS hover state matches before the click; the
@@ -559,12 +540,9 @@ fn send_click_synthesized_mods_impl(
             // Only the move record carries absolute coordinates. Button-only
             // records act at the current pointer position; adding ABSOLUTE to
             // them can prevent retained-mode controls from seeing the press.
-            let moved = SendInput(&[move_input], std::mem::size_of::<INPUT>() as i32);
-            sleep(Duration::from_millis(8));
-            let pressed = SendInput(&[down_input], std::mem::size_of::<INPUT>() as i32);
-            sleep(Duration::from_millis(16));
-            let released = SendInput(&[up_input], std::mem::size_of::<INPUT>() as i32);
-            if moved != 1 || pressed != 1 || released != 1 {
+            let events = [move_input, down_input, up_input];
+            let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
+            if sent as usize != events.len() {
                 sent_ok = false;
                 break;
             }

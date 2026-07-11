@@ -2696,6 +2696,53 @@ impl Tool for ClickTool {
             );
             let btn = button.clone();
 
+            // An explicit accessibility action is a semantic request, not a
+            // pixel gesture hint. Route expand through ExpandCollapsePattern
+            // even when foreground delivery was allowed; this reliably opens
+            // WPF/WinUI menus and tree nodes whose visual click target is
+            // transient or scroll-adjusted.
+            if action_req.as_deref() == Some("expand") {
+                let state = self.state.clone();
+                let expand = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                    use windows::core::Interface;
+                    use windows::Win32::UI::Accessibility::{
+                        IUIAutomationElement, IUIAutomationExpandCollapsePattern,
+                        UIA_ExpandCollapsePatternId,
+                    };
+
+                    let retained = state
+                        .element_cache
+                        .get_element_retained(pid, hwnd, idx)
+                        .ok_or_else(|| anyhow::anyhow!("element [{idx}] is not in the UIA cache"))?;
+                    if !retained.is_uia() {
+                        anyhow::bail!("element [{idx}] is not a UIA element");
+                    }
+                    let element = unsafe {
+                        IUIAutomationElement::from_raw(retained.as_ptr() as *mut _)
+                    };
+                    let pattern = unsafe {
+                        element
+                            .GetCurrentPattern(UIA_ExpandCollapsePatternId)
+                            .and_then(|value| value.cast::<IUIAutomationExpandCollapsePattern>())
+                    };
+                    let result = crate::uia::fg_bypass::run_with_uwp_bypass(
+                        hwnd as isize,
+                        || unsafe { pattern.Expand() },
+                    );
+                    std::mem::forget(element);
+                    result.map_err(|error| anyhow::anyhow!("ExpandCollapse.Expand failed: {error}"))
+                })
+                .await;
+                return match expand {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Expanded UIA element [{idx}] via ExpandCollapsePattern."
+                    ))
+                    .with_structured(json!({ "path": "uia_expand_collapse", "verified": false, "effect": "unverifiable" })),
+                    Ok(Err(error)) => ToolResult::error(error.to_string()),
+                    Err(error) => ToolResult::error(format!("Task error: {error}")),
+                };
+            }
+
             // delivery_mode:"foreground" — skip UIA Invoke and use SendInput at the
             // cached element center. The caller explicitly chose foreground
             // delivery; UIA Invoke would be background-safe (which they

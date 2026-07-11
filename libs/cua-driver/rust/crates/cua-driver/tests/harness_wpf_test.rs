@@ -1221,7 +1221,7 @@ fn harness_wpf_menu_invoke() {
     run_foreground_case(
         "menu_invoke",
         Targeting::Ax,
-        DriverRoute::Composite,
+        DriverRoute::UiaExpandCollapse,
         Vec::new(),
         |pid, wid, driver| {
             focus_harness(driver, pid, wid);
@@ -1239,6 +1239,7 @@ fn harness_wpf_menu_invoke() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": file_idx,
+                    "action": "expand",
                     "delivery_mode": "foreground"
                 }),
             );

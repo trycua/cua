@@ -3173,6 +3173,8 @@ impl Tool for ScrollTool {
             _ => 5,
         };
         let cursor_id_for_task = cursor_id.clone();
+        let direction_for_wayland = direction.clone();
+        let amount_u32 = amount as u32;
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::wayland_input_enabled() {
                 return crate::wayland::scroll(xid, &direction_for_wayland, amount_u32);

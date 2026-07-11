@@ -15,6 +15,7 @@ pub mod overlay;
 pub mod persistent_vptr;
 pub mod portal_screenshot;
 pub mod shell_helper;
+pub mod sway_ipc;
 // `portal_screencast` (PipeWire per-window capture) and `libei` (GNOME/KDE
 // input via xdg-desktop-portal RemoteDesktop) need libpipewire-0.3 and reis
 // at build time, which the cross-platform release container (debian:11,
@@ -37,7 +38,8 @@ pub mod portal_screencast;
 /// dispatch so that failure is reported instead of hidden. See #1982.
 pub const PORTAL_LIBEI_ENABLED: bool = cfg!(feature = "portal-libei");
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 
 use wayland_client::{
     event_created_child,
@@ -228,6 +230,62 @@ struct Toplevel {
     title: String,
     app_id: String,
     closed: bool,
+}
+
+#[derive(Clone, Debug)]
+struct ToplevelIdentity {
+    title: String,
+    app_id: String,
+}
+
+fn identity_registry() -> &'static Mutex<HashMap<u64, ToplevelIdentity>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<u64, ToplevelIdentity>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn remember_identity(id: u64, toplevel: &Toplevel) {
+    if let Ok(mut registry) = identity_registry().lock() {
+        registry.insert(
+            id,
+            ToplevelIdentity {
+                title: toplevel.title.clone(),
+                app_id: toplevel.app_id.clone(),
+            },
+        );
+    }
+}
+
+fn identity_for(id: u64) -> Option<ToplevelIdentity> {
+    identity_registry()
+        .lock()
+        .ok()
+        .and_then(|registry| registry.get(&id).cloned())
+        .or_else(|| {
+            sway_ipc::window_for_id(id).map(|window| ToplevelIdentity {
+                title: window.title,
+                app_id: window.app_id,
+            })
+        })
+}
+
+fn matching_handle(state: &State, id: u64) -> Option<ZwlrForeignToplevelHandleV1> {
+    if let Some(identity) = identity_for(id) {
+        let by_title = state.toplevels.iter().find_map(|(protocol_id, toplevel)| {
+            (!identity.title.is_empty() && toplevel.title == identity.title)
+                .then(|| state.handles.get(protocol_id).cloned())
+                .flatten()
+        });
+        return by_title.or_else(|| {
+            state.toplevels.iter().find_map(|(protocol_id, toplevel)| {
+                (!identity.app_id.is_empty() && toplevel.app_id == identity.app_id)
+                    .then(|| state.handles.get(protocol_id).cloned())
+                    .flatten()
+            })
+        });
+    }
+
+    let protocol_id = u32::try_from(id).ok()?;
+    state.handles.get(&protocol_id).cloned()
 }
 
 /// Per-capture in-flight state populated by the screencopy frame Dispatch.
@@ -517,6 +575,8 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
         queue.roundtrip(&mut state)?;
     }
 
+    let sway_windows = sway_ipc::list_windows().unwrap_or_default();
+    let mut used_sway_ids = HashSet::new();
     let mut out = Vec::new();
     for (id, tl) in &state.toplevels {
         if tl.closed {
@@ -527,14 +587,33 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
         } else {
             format!("{} [{}]", tl.title, tl.app_id)
         };
+        let sway = sway_windows
+            .iter()
+            .find(|window| {
+                !used_sway_ids.contains(&window.id)
+                    && !tl.title.is_empty()
+                    && window.title == tl.title
+            })
+            .or_else(|| {
+                sway_windows.iter().find(|window| {
+                    !used_sway_ids.contains(&window.id)
+                        && !tl.app_id.is_empty()
+                        && window.app_id == tl.app_id
+                })
+            });
+        let stable_id = sway.map(|window| window.id).unwrap_or(*id as u64);
+        if let Some(window) = sway {
+            used_sway_ids.insert(window.id);
+        }
+        remember_identity(stable_id, tl);
         out.push(WindowInfo {
-            xid: *id as u64,
-            pid: None,
+            xid: stable_id,
+            pid: sway.map(|window| window.pid),
             title,
-            x: 0,
-            y: 0,
-            width: 0,
-            height: 0,
+            x: sway.map(|window| window.x).unwrap_or(0),
+            y: sway.map(|window| window.y).unwrap_or(0),
+            width: sway.map(|window| window.width).unwrap_or(0),
+            height: sway.map(|window| window.height).unwrap_or(0),
         });
     }
     Ok(out)
@@ -909,7 +988,7 @@ pub struct VptrSession {
 /// client from knowing another window's on-screen geometry, so we drive every
 /// pointer event in *output* coordinates and rely on the activated toplevel
 /// covering the centre.
-pub fn open_vptr_session(activate_window_id: Option<u32>) -> anyhow::Result<VptrSession> {
+pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<VptrSession> {
     let conn = Connection::connect_to_env()?;
     let mut queue = conn.new_event_queue::<State>();
     let qh = queue.handle();
@@ -963,10 +1042,7 @@ pub fn open_vptr_session(activate_window_id: Option<u32>) -> anyhow::Result<Vptr
         .ok_or_else(|| anyhow::anyhow!("compositor exposed no wl_seat for virtual-pointer input"))?;
 
     if let Some(id) = activate_window_id {
-        let handle = state
-            .handles
-            .get(&id)
-            .cloned()
+        let handle = matching_handle(&state, id)
             .ok_or_else(|| anyhow::anyhow!("no native Wayland toplevel for window_id {id}"))?;
         handle.activate(&seat);
         queue.roundtrip(&mut state)?;
@@ -1048,7 +1124,7 @@ pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::
 /// wlroots virtual-pointer implementation of [`click`]. Falls back to libei via
 /// [`with_libei_fallback`] when the compositor exposes no virtual-pointer.
 fn click_vptr(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(Some(window_id as u32))?;
+    let mut sess = open_vptr_session(Some(window_id))?;
     let (w, h) = (sess.output_w, sess.output_h);
     let (px, py) = if x == 0 && y == 0 {
         ((w / 2) as i32, (h / 2) as i32)
@@ -1092,7 +1168,7 @@ pub fn scroll(window_id: u64, direction: &str, amount: u32) -> anyhow::Result<()
 
 /// wlroots virtual-pointer implementation of [`scroll`].
 fn scroll_vptr(window_id: u64, direction: &str, amount: u32) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(Some(window_id as u32))?;
+    let mut sess = open_vptr_session(Some(window_id))?;
     let (axis, sign): (Axis, i32) = match direction.to_ascii_lowercase().as_str() {
         "up" => (Axis::VerticalScroll, -1),
         "down" => (Axis::VerticalScroll, 1),
@@ -1160,7 +1236,7 @@ pub fn move_cursor_absolute(window_id: Option<u64>, x: i32, y: i32) -> anyhow::R
 
 /// wlroots virtual-pointer implementation of [`move_cursor_absolute`].
 fn move_cursor_absolute_vptr(window_id: Option<u64>, x: i32, y: i32) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(window_id.map(|w| w as u32))?;
+    let mut sess = open_vptr_session(window_id)?;
     let (w, h) = (sess.output_w, sess.output_h);
     let px = x.clamp(0, (w as i32).saturating_sub(1)) as u32;
     let py = y.clamp(0, (h as i32).saturating_sub(1)) as u32;
@@ -1204,7 +1280,7 @@ fn drag_vptr(
     steps: u32,
     button: u8,
 ) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(Some(window_id as u32))?;
+    let mut sess = open_vptr_session(Some(window_id))?;
     let (w, h) = (sess.output_w, sess.output_h);
     let btn = evdev_pointer_button(button);
     let clamp_xy = |x: i32, y: i32| -> (u32, u32) {
@@ -1878,7 +1954,25 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
         // wlroots compositors expose zwlr_foreign_toplevel_management — use it
         // (it has no pid, so filter_pid can't apply there).
         match list_windows() {
-            Ok(ws) if !ws.is_empty() => return ws,
+            Ok(ws) if !ws.is_empty() => {
+                if let Some(pid) = filter_pid {
+                    let filtered: Vec<_> = ws
+                        .into_iter()
+                        .filter(|window| window.pid == Some(pid))
+                        .collect();
+                    if !filtered.is_empty() {
+                        return filtered;
+                    }
+                } else {
+                    return ws;
+                }
+                // A compositor window without pid metadata cannot satisfy a
+                // pid-scoped request. Continue to the AT-SPI registry.
+                let ws = crate::atspi::list_windows(filter_pid);
+                if !ws.is_empty() {
+                    return ws;
+                }
+            }
             Ok(_) => {
                 // GNOME Mutter / KDE KWin don't implement foreign-toplevel, so the
                 // list came back empty. Native Wayland apps have no X11 XID either,

@@ -139,7 +139,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     --ignored --nocapture --test-threads=1
 fi
 if [[ "${SUITE}" == modality || "${SUITE}" == all ]]; then
-  run_test modality-capture cargo test -p cua-driver --test modality_capture_mode_test -- \
+  run_test capture-contract cargo test -p cua-driver --test capture_contract_test -- \
     --ignored --nocapture --test-threads=1
   run_test modality-desktop-scope cargo test -p cua-driver --test modality_desktop_scope_macos_test -- \
     --ignored --nocapture --test-threads=1

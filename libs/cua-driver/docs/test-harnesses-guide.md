@@ -174,7 +174,7 @@ Runner: `scripts/ci/macos/run-rust-e2e.sh`
 | Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri |
 | Native controls | `harness_appkit_test.rs` | Repo-local AppKit app |
 | Native controls | `harness_swiftui_test.rs` | Repo-local SwiftUI app |
-| Capture modality | `modality_capture_mode_test.rs` | Installed driver and macOS capture APIs |
+| Capture contract | `capture_contract_test.rs` | Installed driver and macOS capture APIs |
 | Desktop scope | `modality_desktop_scope_macos_test.rs` | macOS window and desktop scope |
 
 The WKWebView fixture exists, but it does not yet have a dedicated Rust E2E
@@ -190,7 +190,7 @@ Runner: `scripts/ci/linux/run-rust-e2e.sh`
 | Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri |
 | Native controls | `harness_gtk3_test.rs` | Repo-local GTK3 app |
 | Delivery dispatch | `modality_dispatch_linux_test.rs` | Linux desktop/session behavior |
-| Capture modality | `modality_capture_mode_test.rs` | Linux capture backend |
+| Capture contract | `capture_contract_test.rs` | Linux capture backend |
 | Desktop scope | `modality_desktop_scope_linux_test.rs` | X11/Wayland desktop scope |
 
 Linux has separate X11 and Wayland concerns. Nix supplies the reproducible
@@ -345,7 +345,7 @@ rust/crates/cua-driver/tests/
 |-- harness_appkit_test.rs          macOS AppKit action rows
 |-- harness_swiftui_test.rs         macOS SwiftUI action rows
 |-- harness_gtk3_test.rs            Linux GTK3 action rows
-|-- modality_capture_mode_test.rs   Capture-only invariants
+|-- capture_contract_test.rs        Tree and screenshot read contract
 |-- modality_desktop_scope_*.rs     Window/desktop scope invariants
 |-- protocol_*_test.rs              Protocol and schema tests
 |-- guard_ux_test.rs                Temporary migration file, then removed

@@ -187,6 +187,10 @@ if ($Suite -in @("native", "all")) {
 }
 
 if ($Suite -in @("modality", "all")) {
+    Invoke-CargoTest "capture contract" @(
+        "test", "-p", "cua-driver", "--test", "capture_contract_test", "--",
+        "--ignored", "--nocapture", "--test-threads=1"
+    )
     Invoke-CargoTest "Windows modality input e2e" @(
         "test", "-p", "cua-driver", "--test", "modality_input_e2e_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"

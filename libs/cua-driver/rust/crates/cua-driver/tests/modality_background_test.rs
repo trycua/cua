@@ -204,18 +204,6 @@ where F: FnOnce() {
 
 // ── BACKGROUND MODALITY: cua-driver must keep harness at z+1 ────────────────
 
-#[test]
-#[ignore]
-fn bg_modality_get_window_state_no_focus_steal() {
-    let (mut driver, pid, wid) = match setup() { Some(x) => x, None => return };
-    // Exercise the screenshot-bearing path (`vision`) — screen capture is the
-    // focus-sensitive operation; `ax` no longer grabs a frame at all.
-    assert_no_focus_steal("get_window_state(vision)", || {
-        let _ = driver.call("get_window_state",
-            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "vision"}));
-    });
-}
-
 /// Documents the cua-driver focus-steal gap for UIA Invoke on a WPF
 /// Button. Root cause: WPF's ButtonBase.OnClick handler synchronously
 /// calls `UIElement.Focus()` which routes through `SetForegroundWindow`
@@ -313,86 +301,4 @@ fn bg_modality_scroll_no_focus_steal() {
                 "direction": "down", "by": "line", "amount": 3
             }));
     });
-}
-
-// ── PERCEPTION: returns both tree + screenshot, with an opt-out ─────────────
-
-#[test]
-#[ignore]
-fn default_returns_tree_and_image() {
-    let (mut driver, pid, wid) = match setup() { Some(x) => x, None => return };
-    // Default (no capture_mode): BOTH the tree AND a screenshot.
-    let resp = driver.call("get_window_state",
-        serde_json::json!({"pid": pid as i64, "window_id": wid}));
-    assert!(resp.text().contains("id=btn-increment"),
-        "default tree missing btn-increment AID");
-    let has_image = resp.raw["result"]["content"].as_array()
-        .map(|a| a.iter().any(|c| c["type"].as_str() == Some("image")))
-        .unwrap_or(false);
-    assert!(has_image, "default get_window_state must return a screenshot alongside the tree");
-    println!("✅ default_returns_tree_and_image: tree + image both present");
-
-    assert_no_focus_steal("get_window_state(default)", || {
-        let _ = driver.call("get_window_state",
-            serde_json::json!({"pid": pid as i64, "window_id": wid}));
-    });
-}
-
-#[test]
-#[ignore]
-fn include_screenshot_false_returns_tree_only() {
-    let (mut driver, pid, wid) = match setup() { Some(x) => x, None => return };
-    // The perf opt-out: tree present, NO image (the cheap re-index path).
-    let resp = driver.call("get_window_state",
-        serde_json::json!({"pid": pid as i64, "window_id": wid, "include_screenshot": false}));
-    assert!(resp.text().contains("id=btn-increment"),
-        "tree-only snapshot missing btn-increment AID");
-    let has_image = resp.raw["result"]["content"].as_array()
-        .map(|a| a.iter().any(|c| c["type"].as_str() == Some("image")))
-        .unwrap_or(false);
-    assert!(!has_image,
-        "include_screenshot:false should NOT return image content (got one anyway)");
-    println!("✅ include_screenshot_false_returns_tree_only: tree present, no image");
-}
-
-#[test]
-#[ignore]
-fn deprecated_capture_mode_is_ignored() {
-    // The legacy `capture_mode:"vision"` used to suppress the tree. It is now
-    // ignored — both halves must still come back.
-    let (mut driver, pid, wid) = match setup() { Some(x) => x, None => return };
-    let resp = driver.call("get_window_state",
-        serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "vision"}));
-    assert!(resp.text().contains("id=btn-increment"),
-        "capture_mode=vision must NOT suppress the tree (it is deprecated/ignored)");
-    let has_image = resp.raw["result"]["content"].as_array()
-        .map(|a| a.iter().any(|c| c["type"].as_str() == Some("image")))
-        .unwrap_or(false);
-    assert!(has_image, "capture_mode=vision must NOT suppress the screenshot either");
-    println!("✅ deprecated_capture_mode_is_ignored: both tree and image returned");
-}
-
-#[test]
-#[ignore]
-fn ground_invoke_reground_roundtrip() {
-    // Ground (both tree + image) → find element → element ax action (Invoke) →
-    // re-ground and confirm the post-action state. Mirrors how an agent works.
-    let (mut driver, pid, wid) = match setup() { Some(x) => x, None => return };
-    let snap = driver.call("get_window_state",
-        serde_json::json!({"pid": pid as i64, "window_id": wid}));
-    let idx = element_index_by_id(snap.text(), "btn-increment").expect("btn-increment");
-
-    let _ = driver.call("click",
-        serde_json::json!({"pid": pid as i64, "window_id": wid, "element_index": idx}));
-    std::thread::sleep(Duration::from_millis(300));
-
-    let snap2 = driver.call("get_window_state",
-        serde_json::json!({"pid": pid as i64, "window_id": wid}));
-    let has_image = snap2.raw["result"]["content"].as_array()
-        .map(|a| a.iter().any(|c| c["type"].as_str() == Some("image")))
-        .unwrap_or(false);
-    assert!(has_image, "re-ground snapshot didn't return an image");
-    assert!(snap2.text().contains("counter=1"),
-        "counter didn't advance after UIA Invoke");
-    println!("✅ ground_invoke_reground_roundtrip: ground→invoke→reground (tree+image) green");
 }

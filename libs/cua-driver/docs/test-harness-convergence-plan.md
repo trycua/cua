@@ -275,7 +275,7 @@ Canonical invocations set strict mode. Missing required capabilities produce
 | `guard_ux_test.rs` | Migrate observations into the desktop observer, then delete |
 | `modality_input_e2e_test.rs` | Map each action and current failure into shared/native cells, then delete |
 | `modality_background_test.rs` | Move WPF actions into WPF cells and capture checks into capture ownership, then delete |
-| `modality_capture_mode_test.rs` | Rename to `capture_contract_test.rs`; one owner for tree/image inclusion behavior |
+| `capture_contract_test.rs` | Sole owner for tree/image inclusion behavior; canonical prerequisites fail instead of skipping |
 | `modality_desktop_scope_*.rs` | Rename to `desktop_scope_*_test.rs`; keep platform-specific scope contracts |
 | `modality_focus_test.rs` | Deleted; shared click/type cells own focus preservation and launch focus has a separate optional owner |
 | `modality_launch_focus_macos_test.rs` | Optional real-app lane with issue ownership; never part of canonical harness counts |

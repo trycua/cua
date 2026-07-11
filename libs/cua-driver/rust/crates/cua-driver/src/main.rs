@@ -790,6 +790,9 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
         cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
             platform_linux::recording_hooks::app_state_json_for(window_id, pid)
         });
+        cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+            platform_linux::recording_hooks::element_window_local_xy(wid, pid, idx)
+        });
         if platform_linux::wayland::is_wayland() {
             cua_driver_core::video::set_video_backend_factory(Box::new(
                 platform_linux::video_wayland::WfRecorderVideoBackendFactory,
@@ -886,6 +889,9 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
         });
         cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
             platform_linux::recording_hooks::app_state_json_for(window_id, pid)
+        });
+        cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+            platform_linux::recording_hooks::element_window_local_xy(wid, pid, idx)
         });
         if platform_linux::wayland::is_wayland() {
             cua_driver_core::video::set_video_backend_factory(Box::new(

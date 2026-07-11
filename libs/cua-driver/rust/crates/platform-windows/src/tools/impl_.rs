@@ -2465,7 +2465,7 @@ impl Tool for ClickTool {
                 }
                 let hwnd_u = root.0 as u64;
                 let mod_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                crate::input::send_click_synthesized_mods(
+                crate::input::send_click_synthesized_active_mods(
                     hwnd_u, sx, sy, count, &button, &mod_refs,
                 )?;
                 Ok(hwnd_u)
@@ -3063,7 +3063,7 @@ impl Tool for ClickTool {
                 let mods_owned = modifiers.clone();
                 let send_result = tokio::task::spawn_blocking(move || {
                     let mod_refs: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                    crate::input::send_click_synthesized_mods(
+                    crate::input::send_click_synthesized_active_mods(
                         hwnd, sx as i32, sy as i32, count, &btn, &mod_refs,
                     )
                 })

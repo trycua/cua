@@ -385,6 +385,33 @@ pub fn send_click_synthesized_mods(
     button: &str,
     modifiers: &[&str],
 ) -> Result<()> {
+    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, false)
+}
+
+/// SendInput click for an explicit foreground request. Unlike the historical
+/// z-order-assisted path, this activates the target and does not add
+/// `WS_EX_NOACTIVATE`, so retained-mode frameworks such as WPF process the
+/// system-queue pointer event. The caller owns any later foreground restore.
+pub fn send_click_synthesized_active_mods(
+    target: u64,
+    sx: i32,
+    sy: i32,
+    count: usize,
+    button: &str,
+    modifiers: &[&str],
+) -> Result<()> {
+    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, true)
+}
+
+fn send_click_synthesized_mods_impl(
+    target: u64,
+    sx: i32,
+    sy: i32,
+    count: usize,
+    button: &str,
+    modifiers: &[&str],
+    activate: bool,
+) -> Result<()> {
     let target = HWND(target as *mut _);
     if target.0.is_null() {
         bail!("invalid target hwnd");
@@ -477,12 +504,21 @@ pub fn send_click_synthesized_mods(
         // restore" for pointer input, done the one Windows way that doesn't
         // need UIAccess — the technique the OG GTK path used. (Keyboard
         // foreground still needs *real* focus; only pointer can be z-routed.)
-        let _noact = crate::input::NoActivateGuard::arm(target);
+        let noactivate = if activate {
+            if !crate::input::force_foreground_attached(target) {
+                bail!("Could not activate target HWND for the foreground click.");
+            }
+            None
+        } else {
+            Some(crate::input::NoActivateGuard::arm(target))
+        };
         // Capture whether the target was ALREADY always-on-top so we don't strip
         // that state on restore — only demote below if WE promoted it.
         let was_topmost =
             (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32) & WS_EX_TOPMOST.0 != 0;
-        let _ = SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        if !activate {
+            let _ = SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        }
 
         // Move the cursor so the OS hover state matches before the click; the
         // MOUSEEVENTF_MOVE input ensures Chromium's input filter sees a
@@ -522,14 +558,16 @@ pub fn send_click_synthesized_mods(
         // demote the target out of the topmost band and restack the user's
         // window on top (no activation), and restore the cursor.
         sleep(Duration::from_millis(40));
-        if !was_topmost {
-            let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
-        }
-        if !prev_fg.0.is_null() && prev_fg != target {
-            let _ = SetWindowPos(prev_fg, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        if !activate {
+            if !was_topmost {
+                let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+            }
+            if !prev_fg.0.is_null() && prev_fg != target {
+                let _ = SetWindowPos(prev_fg, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+            }
         }
         let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
-        drop(_noact);
+        drop(noactivate);
         if !sent_ok {
             bail!("SendInput inserted fewer mouse events than expected for the foreground click.");
         }

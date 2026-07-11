@@ -96,6 +96,7 @@ pub async fn run_proxy(
             run_control_connection(
                 socket,
                 sid,
+                expected_profile,
                 control_ready_tx,
             )
             .await;
@@ -193,6 +194,7 @@ pub async fn run_proxy(
 async fn run_control_connection(
     socket_path: String,
     session_id: String,
+    expected_profile: DaemonProfile,
     readiness: tokio::sync::watch::Sender<bool>,
 ) {
     let begin = DaemonRequest {
@@ -216,6 +218,7 @@ async fn run_control_connection(
                 &socket_path,
                 &session_id,
                 &line,
+                expected_profile,
                 &readiness,
             )
             .await;
@@ -238,6 +241,7 @@ async fn run_control_connection(
                 &socket_path,
                 &session_id,
                 &line,
+                expected_profile,
                 &readiness,
             )
             .await;
@@ -255,7 +259,7 @@ async fn run_control_connection(
 
     #[cfg(all(not(unix), not(target_os = "windows")))]
     {
-        let _ = (line, session_id, socket_path, readiness);
+        let _ = (line, session_id, socket_path, expected_profile, readiness);
     }
 }
 
@@ -283,7 +287,7 @@ async fn wait_for_control_connection(
     })?
 }
 
-fn validate_control_ack(line: &str) -> anyhow::Result<()> {
+fn validate_control_ack(line: &str, expected_profile: DaemonProfile) -> anyhow::Result<()> {
     let response: DaemonResponse = serde_json::from_str(line)
         .map_err(|error| anyhow::anyhow!("decode session_begin response: {error}"))?;
     if !response.ok {
@@ -294,6 +298,18 @@ fn validate_control_ack(line: &str) -> anyhow::Result<()> {
                 .unwrap_or_else(|| "unknown daemon error".to_owned())
         );
     }
+    let reported_profile = response
+        .result
+        .as_ref()
+        .and_then(|result| result.get("profile"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("session_begin ACK did not report a daemon profile"))?;
+    if reported_profile != expected_profile.as_str() {
+        anyhow::bail!(
+            "session_begin daemon profile mismatch: expected `{expected_profile}`, got \
+             `{reported_profile}`"
+        );
+    }
     Ok(())
 }
 
@@ -302,6 +318,7 @@ async fn run_unix_control_connection_once(
     socket_path: &str,
     session_id: &str,
     begin_line: &str,
+    expected_profile: DaemonProfile,
     readiness: &tokio::sync::watch::Sender<bool>,
 ) -> bool {
     use tokio::net::UnixStream;
@@ -346,7 +363,7 @@ async fn run_unix_control_connection_once(
             return true;
         }
     }
-    if let Err(error) = validate_control_ack(buffer.trim()) {
+    if let Err(error) = validate_control_ack(buffer.trim(), expected_profile) {
         warn!(session_id, "control connection rejected daemon: {error}");
         return true;
     }
@@ -369,6 +386,7 @@ async fn run_windows_control_connection_once(
     socket_path: &str,
     session_id: &str,
     begin_line: &str,
+    expected_profile: DaemonProfile,
     readiness: &tokio::sync::watch::Sender<bool>,
 ) -> bool {
     use tokio::net::windows::named_pipe::ClientOptions;
@@ -413,7 +431,7 @@ async fn run_windows_control_connection_once(
             return true;
         }
     }
-    if let Err(error) = validate_control_ack(buffer.trim()) {
+    if let Err(error) = validate_control_ack(buffer.trim(), expected_profile) {
         warn!(session_id, "control connection rejected daemon: {error}");
         return true;
     }
@@ -903,6 +921,29 @@ mod tests {
         assert!(error.to_string().contains("roster is invalid"));
     }
 
+    #[test]
+    fn reconnect_ack_must_preserve_the_requested_profile() {
+        let native = DaemonResponse::ok(serde_json::json!({
+            "session_begin": true,
+            "profile": DaemonProfile::Native,
+        }));
+        let native = serde_json::to_string(&native).unwrap();
+        validate_control_ack(&native, DaemonProfile::Native).expect("matching profile");
+        let error = validate_control_ack(
+            &native,
+            DaemonProfile::CodexComputerUseCompat,
+        )
+        .expect_err("a replacement daemon with the wrong profile must fail closed");
+        assert!(error.to_string().contains("profile mismatch"));
+
+        let missing = DaemonResponse::ok(serde_json::json!({"session_begin": true}));
+        let missing = serde_json::to_string(&missing).unwrap();
+        assert!(validate_control_ack(&missing, DaemonProfile::Native)
+            .unwrap_err()
+            .to_string()
+            .contains("did not report"));
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn control_connection_reconnects_after_daemon_rebind() {
@@ -956,6 +997,7 @@ mod tests {
         let task = tokio::spawn(run_control_connection(
             socket.to_string_lossy().into_owned(),
             session_id.clone(),
+            DaemonProfile::Native,
             ready_tx,
         ));
 

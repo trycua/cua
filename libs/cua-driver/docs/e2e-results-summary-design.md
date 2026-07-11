@@ -6,14 +6,14 @@ convergence sequence lives in `test-harness-convergence-plan.md`.
 
 ## Goals
 
-The run summary must answer:
+The typed artifacts and run summary together must answer:
 
 - Was the desktop environment ready?
 - Which declared behavioral cells delivered, refused, failed, or did not run?
 - Which harness, action, targeting mode, delivery mode, and driver route did
   each cell cover?
 - Which external and desktop oracles passed?
-- Where is that cell's video and trajectory evidence?
+- Which lane archive owns that cell's recording evidence?
 - Are any declared cells missing or duplicated?
 
 Cargo test names and lane exit codes do not answer these questions and are not
@@ -21,24 +21,22 @@ behavioral rows.
 
 ## Summary Layout
 
-The generated Markdown starts with the environment and rollup:
+The generated Markdown starts with aggregate behavioral totals, followed by a
+declared-coverage grid and the detailed rows:
 
 ```markdown
-# CUA Driver E2E: Windows
+# CUA Driver E2E
 
-**Environment:** Ready, `windows-latest`, Win32 interactive desktop
-**Source:** `0e9f1a48`, Rust `0.7.1`
 **Result:** 42 delivered, 3 refused, 2 failed, 0 skipped
 
-| Harness | Delivered | Refused | Failed | Skipped | Total |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Electron | 18 | 1 | 0 | 0 | 19 |
-| Tauri | 17 | 2 | 0 | 0 | 19 |
-| WPF | 7 | 0 | 2 | 0 | 9 |
+## Declared Coverage
+
+## Detailed Results
 ```
 
-An environment failure replaces the behavioral table with one error section.
-Behavioral cells do not run in that state.
+Environment readiness and source identity live in `environment.jsonl` and the
+workflow metadata. An environment failure prevents behavioral cells and makes
+the reporter fail; it is not converted into a partial green summary.
 
 ## Behavioral Table
 
@@ -47,8 +45,8 @@ One row represents one declared `cell_id`:
 ```markdown
 | Cell | Harness | Action | Targeting | Delivery | Route | Expected | Observed | Oracles | Status | Time | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: | --- |
-| windows-electron-click-ax-bg | Electron | Left click | AX | Background | UIA Invoke | Deliver | Delivered | Fixture, focus, z-order | PASS | 1.5s | [Cell artifact] |
-| windows-tauri-hotkey-ax-bg | Tauri | Hotkey | AX | Background | PostMessage | Deliver | Refused | Focus, z-order, no leak | FAIL | 2.1s | [Cell artifact] |
+| linux-electron-left-click-ax-background | Electron | Left click | AX | Background | AT-SPI action | Refuse | Refused | Focus, z-order, no leak | PASS | 1.5s | [recordings/.../recording.mp4] |
+| linux-electron-left-click-ax-foreground | Electron | Left click | AX | Foreground | AT-SPI action | Deliver | Delivered | Fixture | PASS | 2.1s | [recordings/.../recording.mp4] |
 ```
 
 The row does not label a refusal as pass unless the case declaration expects
@@ -56,18 +54,18 @@ refusal and every required no-side-effect oracle passed.
 
 ## Coverage Table
 
-The reporter also renders declared coverage, including omitted combinations:
+The reporter also renders declared coverage. A dash means that the Rust catalog
+does not declare that combination; it is not a pass or an inferred result:
 
 ```markdown
-| Action | AX/BG | AX/FG | PX/BG | PX/FG |
-| --- | --- | --- | --- | --- |
-| Left click | PASS | PASS | PASS | PASS |
-| Right click | PASS | Equivalent: PX/BG | PASS | PASS |
-| Drag | Unsupported | Unsupported | REFUSED | PASS |
+| Harness | Action | AX/BG | AX/FG | PX/BG | PX/FG | Page | NotApplicable |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| electron | left_click | REFUSED | PASS | REFUSED | PASS | - | - |
+| electron | drag | - | - | REFUSED | PASS | - | - |
 ```
 
-An omitted combination must name an equivalent cell or unsupported contract
-reason in the Rust catalog. Missing output is never displayed as `N/A`.
+The detailed table remains the authority for route, contract, oracle, and
+failure information for every declared cell.
 
 ## Validation
 
@@ -79,32 +77,39 @@ The reporter fails before publishing a green summary when it finds:
 - a serialized status that contradicts expected and observed behavior;
 - an unknown refusal code;
 - a passing cell missing a required oracle;
-- missing or empty required evidence;
+- missing or empty required video evidence when video is required;
 - more or fewer than one environment record.
 
-The reporter validates the exact files it renders. Workflow summary jobs may
-concatenate validated platform summaries, but they do not recalculate results.
+The reporter validates the exact video it renders. It records the trajectory
+path but does not currently validate that file independently. Workflow summary
+jobs may concatenate validated platform summaries, but they do not recalculate
+results.
 
 ## Evidence Packaging
 
-Each cell uses a stable artifact name derived from `cell_id`. Its bundle
-contains:
+Each internal workflow lane uploads one archive. Every cell owns a stable
+subdirectory derived from `cell_id` inside that archive:
 
 ```text
-recording.mp4
-trajectory.json
-action.json
-turn-*/screenshot.png
-cell.log
+recordings/<cell-label>-pid<pid>-<sequence>/
+|-- recording.mp4
+|-- trajectory.json
+|-- session.json
+|-- cursor.jsonl
+`-- turn-*/
+    |-- action.json
+    `-- screenshot.png
 ```
 
-The GitHub row links to the cell artifact download. GitHub artifact archives do
-not provide stable URLs to individual files, so the displayed row also lists
-the exact internal paths. A future static report may provide inline playback;
-it is not required for the initial GitHub summary.
+GitHub artifact archives do not provide stable URLs to individual files. The
+row therefore links its exact MP4 path text to the owning lane archive; the
+trajectory rollup links the same archive and reports its video count. A future
+static report may provide inline playback; it is not required for the GitHub
+summary. Cargo target logs sit at the lane root and diagnose runner or test
+failures; they are not invented as per-cell evidence.
 
 ## Unit And Protocol Results
 
-Unit, schema, transport, and CLI tests appear after the E2E section as suite
-rollups or JUnit annotations. They never share the behavioral case schema and
-do not require desktop video.
+Unit, schema, transport, and CLI tests remain separate workflow output. They do
+not share the behavioral case schema, appear as invented behavioral rows, or
+require desktop video.

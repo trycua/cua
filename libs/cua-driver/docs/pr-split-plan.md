@@ -1,17 +1,15 @@
 # Cua-driver PR Split Plan
 
-Status: draft for review
+Status: implemented historical record; PR #2135 is closed
 
 ## Decision
 
-Do not merge PR #2135 as one change. It currently contains 204 files and
-roughly 11.5k additions/deletions across fixture migration, Rust test
-ownership, Windows behavior, Linux/macOS behavior, and CI/Nix architecture.
+PR #2135 was not merged as one change. It contained 204 files and roughly 11.5k
+additions/deletions across fixture migration, Rust test ownership, Windows
+behavior, Linux/macOS behavior, and CI/Nix architecture.
 
-Keep the current branch as an untouched snapshot while smaller PRs are built
-from `main`. The historical commits are useful provenance, but several of them
-mix unrelated file families. Cherry-picking those commits wholesale would
-reintroduce the same review problem.
+The branch was kept as a snapshot while smaller PRs were built from `main`.
+This document remains as the review and sequencing record.
 
 ## Target PRs
 
@@ -139,7 +137,8 @@ Acceptance:
 
 - Windows unit and compile checks pass on `windows-latest`.
 - SSH/Session 0 runs skip GUI-only assertions with an explicit reason.
-- An active user-session run passes the guard and native harness suites.
+- An active user-session run passes the action-owned shared and native harness
+  matrix with the cross-cutting desktop observers attached.
 - W1-style background input never reports verified delivery without an
   external state change.
 - W8-style unsupported background delivery returns a structured refusal with

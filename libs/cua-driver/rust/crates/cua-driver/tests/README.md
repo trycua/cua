@@ -1,7 +1,7 @@
 # cua-driver Rust integration tests
 
 Tests in this directory exercise the public driver interface. Headless protocol
-tests run by default; GUI and modality tests are marked `#[ignore]` because they
+tests run by default; harness E2E tests are marked `#[ignore]` because they
 need staged harness apps and an interactive desktop.
 
 Start with the contributor overview in

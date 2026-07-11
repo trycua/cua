@@ -81,7 +81,7 @@ The shared harness exposes deterministic external markers for these actions:
 | State controls | Checkbox, radio, combo, slider | AX or PX by control | Mode declared per action |
 | Editor | Type, save, saved-state readback | AX and PX where supported | Mode declared per action |
 
-The Rust shared catalog declares 32 evidence-bearing cells per host: the full
+The Rust shared catalog declares 36 evidence-bearing cells per host: the full
 AX/PX and foreground/background cross-product for click, text, keyboard,
 scroll, and child-window actions, plus both delivery modes for PX drag and AX
 editor-save. A
@@ -101,8 +101,8 @@ Windows native harnesses are repo-local applications built from source:
 | Desktop invariants | Testkit `DesktopObserver` plus typed launch/capture/cursor owners | Cross-cutting focus, z-order, minimized-launch, screenshot, cursor, and desktop checks |
 
 Native controls use AX/UIA state as their oracle. Pointer actions also use PX
-where the tool contract requires coordinates. `set_value` is an AX/UIA
-operation and does not have a background/foreground delivery dimension.
+where the tool contract requires coordinates. Current `set_value` rows declare
+background delivery and attach desktop-side-effect oracles.
 
 ## Harness E2E: macOS
 
@@ -123,7 +123,7 @@ real-app checks.
 | Harness | Source test | Window system | Coverage |
 | --- | --- | --- | --- |
 | Electron | `cross_platform_behavior_test.rs` | X11 and supported AT-SPI sessions | Shared web action matrix |
-| Tauri | `cross_platform_behavior_test.rs` | X11; Wayland support is explicitly gated | Shared web action matrix |
+| Tauri | `cross_platform_behavior_test.rs` | X11 and native Wayland sessions | Shared web action matrix |
 | GTK3 | `harness_gtk3_test.rs` | X11/AT-SPI and Wayland/AT-SPI where configured | Native GTK controls and input |
 | Desktop scope | `desktop_scope_linux_test.rs` | X11/Wayland | Desktop versus window scope |
 
@@ -139,15 +139,15 @@ should cover both delivery modes:
 
 | Action | Background | Foreground | Addressing |
 | --- | --- | --- | --- |
-| Left click | Required | Required | AX, PX |
-| Right click | Required | Required | AX, PX |
-| Double click | Required | Required | AX, PX |
+| Left click | Required delivery or a declared refusal contract | Required | AX, PX |
+| Right click | Required delivery or a declared refusal contract | Required | AX, PX |
+| Double click | Required delivery or a declared refusal contract | Required | AX, PX |
 | Drag | Required delivery or a declared refusal contract | Required | PX, with AX discovery |
 | Scroll | Required delivery or a declared refusal contract | Required | AX, PX where supported |
 | Type text | Required delivery or a declared refusal contract | Required | AX, PX where supported |
 | Press key | Required delivery or a declared refusal contract | Required | AX, PX where supported |
 | Hotkey | Required delivery or a declared refusal contract | Required | AX, PX where supported |
-| Set value | N/A | N/A | AX/UIA/AXValue |
+| Set value | Required in current native rows | Not separately declared | AX/UIA/AXValue |
 | Screenshot | N/A | N/A | Window or desktop capture |
 | Page/CDP | N/A | N/A | Page selector/JavaScript |
 
@@ -159,29 +159,31 @@ allowed, and the desktop-side-effect oracles pass.
 
 | Gate | Environment | Entry point |
 | --- | --- | --- |
-| Unit | OS-scoped Linux/Windows CI | `cargo test --workspace --all-targets --locked` with GUI targets excluded |
+| Linux unit/source | Nix Linux CI | `nix build .#checks.x86_64-linux.cua-driver-build .#checks.x86_64-linux.cua-driver-linux-rust-unit` |
+| Windows unit/compile | `windows-latest` | Package-scoped `cargo test --all-targets --no-run --locked` |
 | Windows Harness E2E | Active Windows user session | `scripts/ci/windows/run-rust-e2e.ps1 -RequireGui` |
 | Linux Harness E2E | Nix X11 or Wayland session | `scripts/ci/linux/run-rust-e2e.sh` |
 | macOS Harness E2E | Logged-in macOS session with permissions | `scripts/ci/macos/run-rust-e2e.sh` |
 
-The workflow selects suites. Rust source owns scenario definitions, fixture
-oracles, and result records. OS runners only build the driver, stage the local
-harnesses, establish the desktop session, collect evidence, and publish the
-shared report.
+Workflows select private execution lanes. Rust source owns scenario definitions,
+fixture oracles, and result records. OS runners only build the driver, stage the
+local harnesses, establish the desktop session, collect evidence, and publish
+the shared report.
 
 ## Evidence And Ownership
 
 Every Harness E2E cell should produce:
 
 ```text
-recordings/<cell-id>/recording.mp4
-recordings/<cell-id>/trajectory.json
+recordings/<cell-label>-pid<pid>-<sequence>/recording.mp4
+recordings/<cell-label>-pid<pid>-<sequence>/trajectory.json
 results.jsonl
-logs/<cell-id>.log
+<rust-target>.log
 ```
 
-The GitHub summary should link evidence from the corresponding row. Unit tests
-need logs and test-result output, but do not need desktop video.
+The GitHub summary links the exact recording path from the corresponding row to
+its lane archive. Target logs remain lane-level diagnostics. Unit tests need
+logs and test-result output, but do not need desktop video.
 
 When a new action or modality is added, update this document, the shared fixture
 oracle, the Rust test, and the OS-specific runner selection together. This is

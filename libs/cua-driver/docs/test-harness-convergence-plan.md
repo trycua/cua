@@ -9,8 +9,8 @@ The original direction remains sound:
 - AX/PX targeting and foreground/background delivery are dimensions on an
   action. They are not test families.
 - Focus, z-order, cursor, and desktop checks are cross-cutting observations.
-- `all` is the contributor-facing command on every OS. CI may fan it into
-  internal jobs for failure isolation.
+- The selector-free contributor invocation runs the complete matrix on every
+  OS. CI may fan it into internal jobs for failure isolation.
 
 This review changes five parts of the earlier plan:
 
@@ -60,7 +60,7 @@ state rather than the older 60-cell proposal.
 
 ### Already present
 
-- `cross_platform_behavior_test.rs` has one typed 32-cell catalog per shared
+- `cross_platform_behavior_test.rs` has one typed 36-cell catalog per shared
   host. It covers AX and PX with foreground and background delivery for click,
   text, keyboard, scroll, and child-window actions; PX drag and AX editor-save
   each cover both delivery modes.
@@ -70,8 +70,10 @@ state rather than the older 60-cell proposal.
 - Background refusal matching uses the explicit structured set:
   `background_unavailable`, `background_occluded`, and
   `background_uipi_blocked`.
-- Every catalog route is explicit for Win32, Quartz, X11, and Wayland; the
-  Windows Chromium PX background route remains required delivery.
+- Every catalog route is explicit for Win32, Quartz, X11, and Wayland. Windows
+  Chromium PX background keeps its targeted-injection route metadata, while a
+  fully occluded target expects the exact `background_occluded` refusal because
+  temporarily raising the window would violate the desktop-side-effect contract.
 - Every background shared cell attaches independent focus, z-order, real
   cursor, leaked-input, and fixture-state observations. Windows, macOS, and X11
   use direct testkit observers; an occluding Electron sentinel supplies the
@@ -82,21 +84,28 @@ state rather than the older 60-cell proposal.
 - Rust validates duplicate, missing, contradictory, and evidence-less results
   before rendering the GitHub summary.
 - Per-cell source-driver recording support exists in `cua-driver-testkit`.
+- The typed catalog is the sole shared behavior owner; the three older shared
+  tests and duplicate guard/modality targets were removed after their unique
+  assertions moved to typed shared, native, launch, capture, cursor, and
+  desktop-scope rows.
+- WPF, WinUI3, WebView2, AppKit, SwiftUI, GTK3, capture, launch, cursor, and
+  desktop-scope owners emit the same typed result records as the shared matrix.
 
 ### Still incomplete
 
-- The three older shared tests are removed. The typed catalog is the sole
-  shared behavior owner.
-- Legacy guard and modality targets are removed after their externally verified
-  actions moved to typed shared, WPF, launch, capture, cursor, and desktop-scope
-  owners.
 - The macOS preflight is implemented, but this host currently reports an
-  ad-hoc-signed daemon without a reusable Screen Recording grant.
-- AppKit scroll remains an optional failing gap outside canonical `all`.
-- Native harness tests do not emit the same typed result records as the shared
-  matrix.
-- Fixed coordinates, fixed CDP ports, sleeps, and early-return skips remain in
-  canonical targets.
+  ad-hoc-signed daemon without reusable Accessibility or Screen Recording
+  grants. The installer preserves the live app on signing failure and cleans
+  interrupted signing state, but the stable private key still needs one
+  Keychain authorization.
+- AppKit scroll remains an optional failing gap outside the canonical run.
+- Linux X11 native and capture/scope lanes pass. The shared lane is down to
+  five explicit AX background failures: two Electron activation leaks, two
+  Tauri text/save refusals, and one Tauri scroll activation leak. Pure Wayland
+  now starts Sway and a live AT-SPI registry, but no fixture application enters
+  the registry tree, so strict preflight aborts before cells. Some native
+  targets still use fixed waits; shared and Windows web targets poll external
+  state and allocate CDP ports per process.
 
 ## Target Test Model
 
@@ -180,7 +189,7 @@ driver route:
 5. Every omitted combination names an `equivalent_to` cell or an unsupported
    contract reason.
 
-The shared catalog currently declares 32 cells per host. Add a missing
+The shared catalog currently declares 36 cells per host. Add a missing
 combination when it reaches a different driver route. Remove a combination
 only when another cell proves the same route with an equal or stronger oracle.
 
@@ -267,7 +276,7 @@ Canonical invocations set strict mode. Missing required capabilities produce
 | `harness_wpf_test.rs` | WPF-specific rows using the common case/result runner |
 | `harness_winui3_test.rs` | WinUI3-specific rows; keep only toolkit-distinct behavior |
 | `harness_web_test.rs` | WebView2 and Page/CDP behavior; do not mix Page targeting with AX/PX labels |
-| `harness_appkit_test.rs` | AppKit rows; scroll is an honest failing optional test outside canonical `all` |
+| `harness_appkit_test.rs` | AppKit rows; scroll is an honest failing optional test outside the canonical run |
 | `harness_swiftui_test.rs` | SwiftUI controls and popover behavior |
 | `harness_gtk3_test.rs` | Minimal GTK3/AT-SPI rows for X11 and Wayland |
 | Legacy Windows UX guard target | Deleted after typed launch, cursor, shared, capture, and desktop-scope owners passed the replacement audit |
@@ -278,14 +287,14 @@ Canonical invocations set strict mode. Missing required capabilities produce
 | `modality_focus_test.rs` | Deleted; shared click/type cells own focus preservation and launch focus has a separate optional owner |
 | `installed_app_launch_macos_test.rs` | Optional real-app lane with issue ownership; never part of canonical harness counts |
 | `installed_app_textedit_macos_test.rs` | Optional real TextEdit AX integration; schema assertions remain in protocol tests |
-| `harness_libreoffice_test.rs` | Optional installed-app lane; exclude from `all` and canonical counts |
+| `harness_libreoffice_test.rs` | Optional installed-app lane; exclude from the canonical run and counts |
 | `protocol_*`, schema, transport tests | Unit/protocol gate; no desktop video and no behavioral matrix rows |
 | `tests/fixtures/shared/scenarios.json` | Prune only after selector and marker-reference audit |
 
 ## CI Shape
 
-The contributor command stays `all`. Suite selectors remain internal and
-diagnostic.
+The contributor invocation stays selector-free. Lane selection remains private
+CI plumbing and diagnostic state.
 
 ### Pull requests
 
@@ -296,17 +305,16 @@ diagnostic.
 
 ### Maintainer E2E
 
-- Windows GitHub-hosted runners run the matrix when the preflight proves an
-  interactive desktop. Background/focus-sensitive cells also run on the
-  registered Azure RDP self-hosted runner, which is authoritative for that
-  contract.
+- Windows GitHub-hosted runners are canonical when the preflight proves an
+  interactive desktop. An Azure RDP runner is an optional environment-parity
+  replay, not a second source of behavioral truth.
 - Linux GitHub-hosted runners run the Nix-defined X11 lane. Wayland is a
   separate Nix-defined maintainer lane. Linux produces no GIF requirement.
 - macOS runs on a logged-in, TCC-authorized host through the canonical macOS
   runner. A future self-hosted runner must use the same preflight.
 
-CI may fan `all` into shared, native, capture/scope, and platform jobs. Those
-are execution partitions, not alternate public test suites.
+CI may fan the complete matrix into shared, native, and capture/scope jobs.
+Those are execution partitions, not alternate public test suites.
 
 ## Reporting And Evidence
 
@@ -314,19 +322,18 @@ Rust emits one record for every declared cell. A shared Rust reporter then:
 
 1. rejects duplicate or missing cell ids;
 2. verifies the result against the case contract;
-3. verifies every required evidence file exists and is readable;
+3. verifies required video evidence exists and is non-empty;
 4. renders the behavioral table and the declared coverage table;
-5. renders unit/protocol suites in a separate section;
-6. fails when a declared cell produced no result.
+5. fails when a declared cell produced no result.
 
 Do not parse `test ... ok` lines to create behavioral rows. Cargo/JUnit output
 may still provide failure annotations for unit tests.
 
-Upload one artifact bundle per behavioral cell with a stable artifact name.
-Each GitHub summary row links to that cell artifact and lists the exact video,
-trajectory, screenshot, and log paths. GitHub cannot deep-link to a file inside
-a multi-cell artifact archive, so a single lane archive cannot satisfy the
-per-row evidence-link requirement by itself.
+Upload one artifact archive per internal lane, with one stable evidence
+subdirectory per behavioral cell. Each GitHub summary row links its exact
+video path text to the owning lane archive and lists the trajectory path.
+GitHub cannot deep-link to a file inside an archive; the exact path keeps the
+row unambiguous without multiplying artifact uploads by the cell count.
 
 ## Implementation Slices
 
@@ -359,7 +366,7 @@ failures.
   WPF, WinUI3, capture, launch, or desktop-scope owners.
 - Preserve every current failing action as a failing required-delivery cell or
   an issue-linked optional cell. Do not convert it to a green refusal.
-- Add Windows desktop-scope to `all`.
+- Add Windows desktop-scope to the canonical run.
 - Delete the three transitional files only after cell-by-cell parity.
 
 Exit: Windows has no guard/modality family, and every background cell has both
@@ -390,9 +397,9 @@ or an unexplained sleep.
 
 ### Slice 6: CI validation and deletion
 
-- Run macOS `all` locally after install-local and TCC preflight.
-- Run Windows `all` on GitHub-hosted and Azure RDP runners.
-- Run Linux X11 `all`, then the Nix Wayland lane.
+- Run the complete macOS matrix locally after install-local and TCC preflight.
+- Run the complete Windows matrix on GitHub-hosted and optional RDP runners.
+- Run the complete Linux X11 matrix, then the Nix Wayland lane.
 - Compare old/new cells before each transitional file deletion.
 - Update contributor docs and the PR description from the generated catalog.
 
@@ -426,5 +433,5 @@ A test or fixture path may be deleted only when:
 - No orphaned target is counted as coverage.
 - Shared and native harnesses emit the same result/evidence shape.
 - Unit/protocol tests stay desktop-independent and video-free.
-- Windows, Linux X11/Wayland, and macOS `all` runs produce classified outcomes
+- Windows, Linux X11/Wayland, and macOS complete runs produce classified outcomes
   and per-cell evidence links.

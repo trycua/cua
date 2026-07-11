@@ -7,20 +7,27 @@ validator, and collect artifacts. They do not define behavioral rows, push
 code, or alter branches.
 
 For the test layout and the distinction between unit tests, shared harnesses,
-native harnesses, and modality tests, see
+and native harnesses, see
 `libs/cua-driver/docs/test-harnesses-guide.md`.
 
 | Runner | Session | Canonical command |
 | --- | --- | --- |
-| `linux/run-rust-e2e.sh` | Linux X11/Wayland desktop | no selector |
+| `linux/run-rust-e2e.sh` | Existing Linux X11 or Wayland desktop | no selector |
+| `linux/run-rust-e2e-wayland.sh` | Headless native Sway session | no selector |
 | `windows/run-rust-e2e.ps1` | Windows console/RDP user session | `-RequireGui` |
 | `macos/run-rust-e2e.sh` | Logged-in macOS session with TCC | no selector |
 
-Use the `all` command for the canonical run. The `shared`, `native`, `guard`,
-and `modality` selectors are retained only when diagnosing one lane locally or
-when the CI workflow fans the matrix out into independent jobs.
+Use the command without a selector for the canonical complete run. CI sets the
+private `CUA_E2E_INTERNAL_LANE` partition to `shared`, `native`, or `capture`
+when it fans the same matrix into independent jobs. Those values are not public
+alternate suites.
 
-The Windows workflow accepts a runner label so the same command can execute on
-the Azure VM's active-RDP runner when that self-hosted label is configured. A
-GitHub-hosted Windows runner is useful for smoke validation, but it is not a
-substitute for the Azure user-session run.
+Run the Wayland wrapper through `nix develop .#cua-driver-wayland-e2e`. It
+creates a pure Wayland session with Xwayland disabled and delegates every
+scenario to `run-rust-e2e.sh`.
+
+The GitHub-hosted Windows workflow is canonical when its strict preflight proves
+an interactive desktop. The workflow also accepts a runner label so maintainers
+can replay the same command on an Azure VM with an active RDP session for
+environment parity; that replay is not a separate test definition or source of
+behavioral truth.

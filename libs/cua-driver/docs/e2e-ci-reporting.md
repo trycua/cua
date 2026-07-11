@@ -4,9 +4,10 @@ Rust owns behavioral case declarations, observations, result classification,
 and report validation. OS runners build the environment, execute Rust targets,
 and upload the validated artifacts.
 
-## Canonical Command
+## Canonical Invocation
 
-The contributor-facing command is `all` on every OS:
+The contributor-facing invocation runs the complete matrix on every OS and
+takes no suite selector:
 
 ```text
 Windows: scripts/ci/windows/run-rust-e2e.ps1 -RequireGui
@@ -14,9 +15,9 @@ Linux:   scripts/ci/linux/run-rust-e2e.sh
 macOS:   scripts/ci/macos/run-rust-e2e.sh
 ```
 
-Workflows fan `all` into internal shared, native, and capture jobs so one
-failure does not hide another lane. These are execution partitions, not public
-suite choices or separate behavioral sources of truth.
+Workflows set a private lane value to fan that matrix into shared, native, and
+capture jobs so one failure does not hide another lane. These are execution
+partitions, not public suite choices or separate behavioral sources of truth.
 
 ## Execution Order
 
@@ -45,11 +46,14 @@ artifacts/cua-driver/<platform>/
 |-- summary.md
 |-- environment-preflight.log
 |-- <rust-target>.log
-`-- recordings/<cell-id>-pid<process>-<sequence>/
+`-- recordings/<cell-label>-pid<process>-<sequence>/
     |-- recording.mp4
     |-- trajectory.json
-    |-- action.json
+    |-- session.json
+    |-- cursor.jsonl
     `-- turn-*/
+        |-- action.json
+        `-- screenshot.png
 ```
 
 `cases.jsonl` is the executed catalog. `results.jsonl` contains one result for
@@ -82,26 +86,26 @@ fields into `cua-e2e-result/v2` and adds the observation:
 ```json
 {
   "schema": "cua-e2e-result/v2",
-  "cell_id": "windows-electron-left-click-ax-background",
+  "cell_id": "windows-tauri-left-click-ax-background",
   "platform": "windows",
   "display_server": "win32",
-  "harness": "electron",
-  "toolkit": "chromium",
+  "harness": "tauri",
+  "toolkit": "platform-webview",
   "action": "left_click",
   "targeting": "ax",
   "delivery": "background",
   "scope": "window",
-  "driver_route": "platform_default",
+  "driver_route": "uia_invoke",
   "expected_behavior": { "kind": "deliver" },
-  "oracles": ["fixture_state"],
+  "oracles": ["fixture_state", "focus", "z_order", "no_leaked_input", "cursor"],
   "test_status": "pass",
   "observed_behavior": "delivered",
-  "passed_oracles": ["fixture_state"],
+  "passed_oracles": ["fixture_state", "focus", "z_order", "no_leaked_input", "cursor"],
   "duration_ms": 1482,
   "message": "",
   "evidence": {
-    "video": "recordings/windows-electron-left-click-ax-background-pid123-001/recording.mp4",
-    "trajectory": "recordings/windows-electron-left-click-ax-background-pid123-001/trajectory.json"
+    "video": "recordings/windows-tauri-left-click-ax-background-pid123-001/recording.mp4",
+    "trajectory": "recordings/windows-tauri-left-click-ax-background-pid123-001/trajectory.json"
   }
 }
 ```
@@ -140,14 +144,15 @@ and `host=lane` rows. Cargo logs remain available for unit-test annotations and
 lane diagnostics, outside the behavioral population.
 
 The summary reports delivered passes, refused passes, failures, and skips
-separately. Native targets will adopt the same records during convergence;
-until then their exit status remains visible in their logs and workflow job,
-not as invented behavioral cells.
+separately. Shared and native targets emit the same typed records; a compile or
+runner failure that prevents declaration remains visible as a failed job and
+cannot be mistaken for a green behavioral row.
 
 ## Evidence Links
 
-Every canonical behavioral cell records an MP4, trajectory, screenshots, and
-log paths. GitHub cannot deep-link to a file inside a multi-cell artifact
-archive. Each summary row therefore displays the exact MP4 path as a link to
-the owning lane archive, while the trajectory rollup provides bulk-download
-links and video counts.
+Every canonical behavioral cell records a validated MP4 and trajectory. The
+recording directory also contains its session metadata and turn-level action
+and screenshot files; Cargo target logs remain lane-level diagnostics. GitHub
+cannot deep-link to a file inside a multi-cell artifact archive, so each summary
+row displays the exact MP4 path as a link to the owning lane archive while the
+trajectory rollup provides bulk-download links and video counts.

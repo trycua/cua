@@ -17,7 +17,8 @@ There are two main test layers:
 The Rust tests are the source of truth. Python tests, old shell runners, and
 historical recording scripts are not part of the canonical E2E path.
 
-The canonical E2E command on every OS is `all`:
+The canonical E2E command on every OS runs the complete matrix and takes no
+suite selector:
 
 ```text
 Linux:  scripts/ci/linux/run-rust-e2e.sh
@@ -25,36 +26,37 @@ Windows: .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
 macOS:  scripts/ci/macos/run-rust-e2e.sh
 ```
 
-The OS workflow may fan `all` out into independent jobs for reporting and
-failure isolation. That is an execution detail; contributors should think of
-the complete matrix as one canonical suite.
+The OS workflow may fan the complete matrix out into independent jobs for
+reporting and failure isolation. That is an execution detail; contributors
+should think of it as one canonical suite.
 
 ## Repository Map
 
 ```text
-libs/cua-driver/
-|-- rust/
-|   |-- crates/
-|   |   |-- cua-driver/              Rust driver and integration tests
-|   |   |-- cua-driver-core/         Shared driver logic and unit tests
-|   |   |-- cua-driver-testkit/      Shared Rust E2E helpers and evidence capture
-|   |   |-- platform-linux/           Linux backend
-|   |   |-- platform-macos/           macOS backend
-|   |   |-- platform-windows/         Windows backend
-|   |   `-- cursor-overlay/            Cursor evidence helper
-|   |-- test-apps/                    Built/staged native and web harness apps
-|   `-- Cargo.toml                    Rust workspace
-|-- tests/
-|   |-- fixtures/
-|   |   |-- shared/web/               Shared web page and external markers
-|   |   |-- apps/                     OS-specific fixture build outputs
-|   |   `-- build/                    macOS/Linux/Windows fixture builders
-|   `-- runners/                      Legacy runners, not canonical E2E entrypoints
-|-- scripts/ci/
-|   |-- linux/run-rust-e2e.sh         Linux canonical runner
-|   |-- windows/run-rust-e2e.ps1      Windows canonical runner
-|   `-- macos/run-rust-e2e.sh         macOS canonical runner
-`-- docs/                             Test matrix, reporting, and contributor docs
+cua/
+|-- libs/cua-driver/
+|   |-- rust/
+|   |   |-- crates/
+|   |   |   |-- cua-driver/          Rust driver and integration tests
+|   |   |   |-- cua-driver-core/     Shared driver logic and unit tests
+|   |   |   |-- cua-driver-testkit/  Shared Rust E2E helpers and evidence capture
+|   |   |   |-- platform-linux/      Linux backend
+|   |   |   |-- platform-macos/      macOS backend
+|   |   |   |-- platform-windows/    Windows backend
+|   |   |   `-- cursor-overlay/      Cursor evidence helper
+|   |   |-- test-apps/               Ignored staged harness binaries
+|   |   `-- Cargo.toml               Rust workspace
+|   |-- tests/
+|   |   |-- fixtures/
+|   |   |   |-- shared/web/           Shared web page and external markers
+|   |   |   |-- apps/                 Repo-local fixture sources
+|   |   |   `-- build/                macOS/Linux/Windows fixture builders
+|   |   `-- runners/                  Auxiliary VM and sandbox entrypoints
+|   `-- docs/                         Test matrix, reporting, and contributor docs
+`-- scripts/ci/
+    |-- linux/run-rust-e2e.sh         Linux canonical runner
+    |-- windows/run-rust-e2e.ps1      Windows canonical runner
+    `-- macos/run-rust-e2e.sh         macOS canonical runner
 ```
 
 The important separation is:
@@ -135,9 +137,10 @@ both. Capture and desktop scope are separate environment checks, while focus
 preservation is a cross-cutting oracle that can be attached to any action row.
 Focus, z-order, cursor, and desktop-state checks are cross-cutting invariants,
 not a separate family. These names describe responsibilities, not separate
-sources of truth or commands to run instead of the canonical `all` suite.
+sources of truth or commands to run instead of the selector-free canonical
+invocation.
 
-## What `all` Runs
+## What The Complete Run Includes
 
 ### Windows
 
@@ -150,6 +153,9 @@ Runner: `scripts/ci/windows/run-rust-e2e.ps1`
 | Native controls | `harness_winui3_test.rs` | Repo-local WinUI3 app |
 | Web integration | `harness_web_test.rs` | WebView2 and Electron |
 | Capture contract | `capture_contract_test.rs` | WPF plus driver tree/image output |
+| Launch contract | `launch_windows_test.rs` | Repo-local Electron launch and focus behavior |
+| Agent cursor | `agent_cursor_windows_test.rs` | Source-built cursor overlay and pixel evidence |
+| Desktop scope | `desktop_scope_windows_test.rs` | Windowless desktop input and scope rejection |
 
 Cross-cutting instrumentation used by these rows includes the testkit
 `DesktopObserver`, capture validation, cursor evidence, and desktop-scope
@@ -176,7 +182,7 @@ Runner: `scripts/ci/macos/run-rust-e2e.sh`
 The WKWebView fixture exists, but it does not yet have a dedicated Rust E2E
 target in the canonical runner. `installed_app_launch_macos_test.rs` and
 `installed_app_textedit_macos_test.rs` are optional real-app checks for
-Calculator/TextEdit and are not part of `all`.
+Calculator/TextEdit and are not part of the canonical run.
 
 ### Linux
 
@@ -215,10 +221,10 @@ allowed structured code and desktop-side-effect oracles. A refusal fails a
 cell that requires delivery. There should not be a separate "delivery" family
 whose only purpose is to repeat those same actions in the background.
 
-Native tests are less uniform today. For example, some WPF actions explicitly
-request foreground delivery, while several WinUI3 and modality calls rely on
-the driver's default background mode. This is a reporting and declaration gap,
-not a reason to create another test hierarchy.
+Native harness rows use the same typed case/result contract as the shared
+matrix. Current native `set_value` rows declare background delivery because
+their contract includes no-focus and no-raise observations; actions without a
+delivery concept use `not_applicable` explicitly.
 
 ## Cross-Cutting Invariants
 
@@ -258,19 +264,20 @@ Canonical GUI runs are expected to produce evidence per test cell:
 
 ```text
 artifacts/cua-driver/<os>/
-|-- recordings/<cell-id>/recording.mp4
-|-- recordings/<cell-id>/trajectory.json
+|-- recordings/<cell-label>-pid<pid>-<sequence>/recording.mp4
+|-- recordings/<cell-label>-pid<pid>-<sequence>/trajectory.json
 |-- cases.jsonl
 |-- environment.jsonl
 |-- results.jsonl
 |-- summary.md
-`-- logs/<cell-id>.log
+`-- <rust-target>.log
 ```
 
-The GitHub Actions summary should contain one row per meaningful behavioral
-cell, including its OS, harness, action, AX/PX targeting, delivery mode,
-driver route, expected and observed behavior, oracles, and evidence links. Unit tests need normal test output and
-logs; they do not need desktop video.
+The GitHub Actions summary contains one row per meaningful behavioral cell,
+including its OS, harness, action, AX/PX targeting, delivery mode, driver route,
+expected and observed behavior, oracles, and one evidence link. The link uses
+the exact video path as its label and opens the owning lane archive. Unit tests
+need normal test output and logs; they do not need desktop video.
 
 ## What Is Implemented Today
 
@@ -278,33 +285,30 @@ logs; they do not need desktop video.
 - Electron and Tauri use the same shared web fixture across supported OSs.
 - Native Windows, macOS, and Linux harnesses are repo-local applications built
   from source.
-- The three OS runners use `all` as their canonical entrypoint.
-- GUI runs collect trajectories and video where the platform runner supports
-  capture.
-- Missing fixtures can be configured to fail instead of silently skipping.
+- The three OS runners use a selector-free command for the complete matrix.
+- Shared and native harness owners emit the same typed v2 result records.
+- Canonical GUI rows collect a trajectory and MP4, validated before reporting.
+- Strict lane preflights fail on missing fixtures, desktop access, permissions,
+  accessibility, capture, or recording support instead of silently skipping.
+- GitHub summaries link every evidence-bearing row to its lane archive and
+  display the exact recording path. The trajectory path remains in the typed
+  evidence and archive.
 - Unit/protocol tests remain separate from interactive E2E tests.
 
 ## What Still Needs Implementation
 
-The overall structure exists, but the plan is not completely finished:
+The remaining work is platform coverage and validation, not another test
+hierarchy:
 
-1. **Structured result adoption.** The shared matrix emits v2 case/result
-   records. Native harnesses still need to adopt the same `CaseSpec` and result
-   writer instead of relying on Cargo output.
-2. **Per-cell GitHub evidence links.** The summary should link the matching
-   video, trajectory, and log in each row, rather than only linking a whole
-   lane archive.
-3. **Consistent delivery declarations.** Native tests should explicitly state
-   foreground or background intent instead of relying on an omitted field to
-   mean background.
-4. **Complete macOS web coverage.** Add a dedicated Rust WKWebView E2E target
+1. **Complete macOS web coverage.** Add a dedicated Rust WKWebView E2E target
    if WKWebView remains a supported harness.
-5. **Fresh OS validation.** Run the complete `all` matrix on Windows, Linux
+2. **Fresh OS validation.** Run the complete matrix on Windows, Linux
    X11/Wayland, and macOS, then classify actual failures as driver bugs,
    fixture bugs, environment failures, or expected refusals.
-6. **Legacy cleanup.** After the canonical matrix is stable, retire old Python
-   and recording-only runners that duplicate Rust coverage, while preserving
-   any still-supported external-app checks as explicitly optional.
+3. **Wayland validation.** Exercise the declared Wayland routes in a real
+   compositor session; Xvfb proves only the X11 dimension.
+4. **Flake cleanup.** Replace remaining fixed native waits with external-state
+   polling and add fixture reset tokens before reusing a harness process.
 
 ## File Convergence Plan
 
@@ -339,7 +343,7 @@ the row is testing background delivery. The row then records both outcomes:
 
 The deleted guard and modality files remain owned by the typed shared/native
 rows and the launch, cursor, capture, and desktop-scope contracts. The
-canonical `all` runner is the only user-facing command; lane selectors are
+canonical runner is the only user-facing command; lane selectors are
 internal diagnostics.
 
 ## Contributor Workflow
@@ -352,7 +356,7 @@ When adding a new scenario:
 4. Add the scenario to `docs/test-matrix.md` and this guide when it changes the
    cross-OS structure.
 5. Update only the OS runner selection when the test is platform-specific.
-6. Run the smallest Rust test locally, then run the OS `all` command before
+6. Run the smallest Rust test locally, then run the OS command before
    calling the matrix complete.
 
 The goal is one understandable Rust E2E model across platforms, with

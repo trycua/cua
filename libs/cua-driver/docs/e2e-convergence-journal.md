@@ -28,16 +28,21 @@ convergence work. It omits machine names, credentials, and partner names.
 | `ad891b48` | Made CDP page discovery wait for the first usable target | The earlier native run's only failure was WebView2 exposing a listener before `/json` contained a page. The DOM-state assertion remains unchanged. |
 | `10a1a749` | Preserved the old guard's anti-overclaim check in canonical background text/key rows and aligned action-owned video labels | Fable's deletion audit identified protocol honesty as the only unique old-guard assertion. Chromium AX background click now probes a target-bound LegacyIAccessible action rather than a coordinate route. |
 | `5bca25be` | Mapped the normal Electron harness at construction | Linux's deferred BrowserWindow was enumerable and capturable but absent from the X11 root recording. A focused preflight run is validating this lifecycle correction. |
+| `c83c99ac` | Limited each CI lane to the fixtures it consumes | Windows and Linux focused runs built only their internal shared, native, or capture partition while the contributor command remained `all`. |
+| `8e41859f` | Published WebView2 readiness after DOM navigation, gave typed WPF rows exact recording labels, removed the duplicate modality-background target, and classified strict Chromium AX background click as a refusal | Run `29135420638` passed all 18 WPF, 7 WinUI3, and 3 WebView2 tests plus all four typed WPF background rows. Run `29135420139` returned the exact `background_occluded` refusal with all desktop-side-effect oracles passing. |
+| `0a5352c5` | Reduced workflow dispatch to one canonical matrix and added row-level evidence links | Shared, native, and capture remain internal parallel jobs. The link renderer converts each exact MP4 path into a link to its owning lane artifact. |
+| `ac1f19cc` | Added scoped Windows foreground locking and X11 alpha-shaped cursor-overlay bounds | A placement-only Linux rerun (`29135421864`) retained the exact blank-root signature, confirming placement was not the cause. The X11 fix addresses the full-screen ARGB overlay on non-composited sessions; Windows now prevents activation before launch instead of restoring it afterward. |
+| `c190228e` | Tightened the controlled Chromium refusal declaration | The fully occluded test setup allows only `background_occluded`; generic or message-matched refusals remain rejected. |
 
 ## Active Validation
 
 | Platform | Run | Purpose | State |
 | --- | --- | --- | --- |
-| Windows | `29134898319` | Target-bound Chromium AX background click probe | Running |
-| Windows | `29134649191` | Typed WPF, launch, cursor, WinUI3, and WebView2 replacements | Running |
-| Windows | `29134649821` | Typed capture and desktop-scope replacements | Running |
-| Linux X11 | `29134942303` | Mapped Electron preflight and focused foreground cell | Running |
-| macOS | Local preflight | Verify installed source identity, TCC, fixture visibility, capture, and video | Blocked before cells: the installed app fell back to ad-hoc signing, so the existing Screen Recording grant no longer applies. |
+| Windows | `29135757986` | Full canonical shared, native, capture, and final legacy-guard comparison at `ac1f19cc` | Running |
+| Linux X11 | `29135758583` | Full canonical shared, GTK3, and capture matrix with alpha-shaped overlay at `ac1f19cc` | Running |
+| Windows | `29135132477` | Typed capture and desktop-scope replacements | Passed: typed WPF background screenshot and all seven capture/scope tests completed with playable videos. |
+| Windows | `29135420638` | Typed WPF, launch, cursor, WinUI3, and WebView2 replacements before foreground prevention | All replacement owners passed except the expected pre-fix minimized-launch focus steal. |
+| macOS | Local preflight | Reinstall current source, start the app-owned daemon, then verify TCC, fixture visibility, capture, and video | Blocked before cells: stable-identity signing failed and the ad-hoc app was denied ScreenCaptureKit access, so the prior Screen Recording grant cannot be reused. |
 
 The macOS preflight failure is separate from driver behavior. It must be fixed
 or re-authorized before any local macOS cell result is accepted.

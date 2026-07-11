@@ -99,6 +99,8 @@ pub enum BackgroundUnavailable {
     /// addressed to an occluded, unfocused renderer without briefly moving
     /// focus, which background delivery forbids.
     ChromiumInput,
+    /// The remaining backend can only inject into the globally focused widget.
+    FocusedInputOnly,
 }
 
 impl BackgroundUnavailable {
@@ -106,6 +108,7 @@ impl BackgroundUnavailable {
         match self {
             Self::NoLibeiBackend => "background_unavailable",
             Self::ChromiumInput => "background_unavailable",
+            Self::FocusedInputOnly => "background_unavailable",
         }
     }
     fn detail(self) -> &'static str {
@@ -119,6 +122,9 @@ impl BackgroundUnavailable {
                 "Chromium/Electron does not accept pointer or keyboard input \
                  addressed to an occluded, unfocused renderer through X11 \
                  background injection"
+            }
+            Self::FocusedInputOnly => {
+                "the requested target has no focus-free input backend; the remaining XTest/X11 route can only deliver to the globally focused widget"
             }
         }
     }

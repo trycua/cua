@@ -2083,22 +2083,35 @@ impl Tool for TypeTextTool {
         if pid_is_terminal || wm_class_is_terminal {
             let text_len = text.chars().count();
             let text_t = text.clone();
-            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let foreground = delivery.is_foreground();
+            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<&'static str> {
                 // pty-master injection is preferred — it skips the X event
                 // queue entirely. Falls through to XTest if the terminal
                 // isn't reachable that way (descendant pty unresolvable).
                 if inject_terminal_input(pid, xid, &text_t)? {
-                    return Ok(());
+                    return Ok("pty");
                 }
-                crate::input::send_type_text_xtest(&text_t)
+                if foreground {
+                    crate::input::with_x11_foreground(xid, 80, || {
+                        crate::input::send_type_text_xtest(&text_t)
+                    })?;
+                    Ok("key_events_fg")
+                } else {
+                    Ok("background_unavailable")
+                }
             })
             .await;
             return match result {
-                Ok(Ok(())) => ToolResult::text(format!(
+                Ok(Ok("background_unavailable")) => {
+                    crate::input::delivery::background_unavailable_error(
+                        crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                    )
+                }
+                Ok(Ok(path)) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (terminal emulator: pty/XTest key events)."
                 ))
                 .with_structured(type_text_structured(
-                    "key_events",
+                    path,
                     text_len,
                     false,
                 )),
@@ -2164,6 +2177,27 @@ impl Tool for TypeTextTool {
             };
         }
 
+        // AX addressing names one exact editable. Do not let the fallback pick
+        // a different focused or first field in the process.
+        if let Some(idx) = resolved_elem_idx {
+            let text_at = text.clone();
+            let targeted = tokio::task::spawn_blocking(move || {
+                crate::atspi::type_into_editable_at(pid, idx, &text_at)
+            })
+            .await;
+            match targeted {
+                Ok(Ok(())) => {
+                    return type_text_ax_confirm_result(pid, text_len, "via targeted AT-SPI");
+                }
+                Ok(Err(_)) | Err(_) if !delivery.is_foreground() => {
+                    return crate::input::delivery::background_unavailable_error(
+                        crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                    );
+                }
+                _ => {}
+            }
+        }
+
         // Prefer the focused widget — the element the user just clicked. If a
         // NON-editable input holds keyboard focus (a spreadsheet cell, a
         // terminal, a canvas), the focus-free AT-SPI editable search below would
@@ -2179,6 +2213,11 @@ impl Tool for TypeTextTool {
         .ok()
         .flatten();
         if focus_kind == Some(false) {
+            if !delivery.is_foreground() {
+                return crate::input::delivery::background_unavailable_error(
+                    crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                );
+            }
             let text_f = text.clone();
             let result = tokio::task::spawn_blocking(move || {
                 if inject_terminal_input(pid, xid, &text_f)? {
@@ -2188,7 +2227,9 @@ impl Tool for TypeTextTool {
                 // drop synthetic key events, so a spreadsheet cell / canvas would
                 // stay empty. The click that gave this widget focus already put it
                 // under the X input focus, so XTest-to-focus lands correctly.
-                crate::input::send_type_text_xtest(&text_f)
+                crate::input::with_x11_foreground(xid, 80, || {
+                    crate::input::send_type_text_xtest(&text_f)
+                })
             })
             .await;
             return match result {
@@ -2281,8 +2322,14 @@ impl Tool for TypeTextTool {
             if crate::input::inject_tk_send(&text).unwrap_or(false) {
                 return Ok("key_events");
             }
-            crate::input::send_type_text(xid, &text)?;
-            Ok("key_events")
+            if delivery.is_foreground() {
+                crate::input::with_x11_foreground(xid, 80, || {
+                    crate::input::send_type_text_xtest(&text)
+                })?;
+                Ok("key_events_fg")
+            } else {
+                Ok("background_unavailable")
+            }
         })
         .await;
         let mode_label = if delivery.is_foreground() {
@@ -2304,6 +2351,11 @@ impl Tool for TypeTextTool {
                 text_len,
                 &format!("via X11, delivery_mode={mode_label}"),
             ),
+            Ok(Ok("background_unavailable")) => {
+                crate::input::delivery::background_unavailable_error(
+                    crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                )
+            }
             Ok(Ok(path)) => ToolResult::text(format!(
                 "Typed {text_len} character(s) (via X11, delivery_mode={mode_label})."
             ))

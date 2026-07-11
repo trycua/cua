@@ -846,6 +846,10 @@ async fn write_into_editable(visited: &[Visited<'_>], text: &str) -> Result<bool
         Some(t) => t,
         None => return Ok(false),
     };
+    write_into_editable_target(target, text).await
+}
+
+async fn write_into_editable_target(target: &Visited<'_>, text: &str) -> Result<bool> {
     dlog!(
         "insert target: role={:?} in_web_doc={} focused={} has_component={}",
         target.role,
@@ -915,6 +919,35 @@ pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
             }
         },
         || Err(anyhow!("AT-SPI editable lookup timed out for pid {pid}")),
+    )
+}
+
+/// Write into the exact indexed editable exposed by the caller's snapshot.
+pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
+    bounded(
+        async {
+            let conn = shared_connection().await?;
+            let visited = collect_visited(conn, pid)
+                .await?
+                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+            let target = visited
+                .iter()
+                .filter(|node| is_indexable(node))
+                .nth(idx)
+                .ok_or_else(|| anyhow!("element {idx} not found (total: {})", visited.len()))?;
+            if write_into_editable_target(target, text).await? {
+                Ok(())
+            } else {
+                Err(anyhow!(
+                    "element {idx} is not writable through AT-SPI EditableText"
+                ))
+            }
+        },
+        || {
+            Err(anyhow!(
+                "AT-SPI editable write timed out for element {idx} in pid {pid}"
+            ))
+        },
     )
 }
 

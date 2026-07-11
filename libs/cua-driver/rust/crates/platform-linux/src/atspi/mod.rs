@@ -150,6 +150,11 @@ pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
     native::type_into_editable(pid, text)
 }
 
+/// Type into the exact indexed editable from the caller's accessibility snapshot.
+pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
+    native::type_into_editable_at(pid, idx, text)
+}
+
 /// Set the text value of element `idx` within pid's app tree via AT-SPI.
 /// Tries `EditableText.set_text_contents(value)` first, then
 /// `Value.set_current_value(float)`.

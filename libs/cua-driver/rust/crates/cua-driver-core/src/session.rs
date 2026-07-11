@@ -127,13 +127,17 @@ pub fn revive_session(session_id: &str) -> bool {
     if !is_trackable(session_id) {
         return false;
     }
-    let revived = ended_sessions().lock().unwrap().remove(session_id);
-    if revived {
-        for hook in revive_hooks().lock().unwrap().iter() {
-            hook(session_id);
-        }
+    // Keep the ended guard in place until every revive hook has enqueued its
+    // lifecycle event. A concurrent action blocks in `is_session_ended` and is
+    // admitted only after the overlay's ordered `Revive` is already queued.
+    let mut ended = ended_sessions().lock().unwrap();
+    if !ended.contains(session_id) {
+        return false;
     }
-    revived
+    for hook in revive_hooks().lock().unwrap().iter() {
+        hook(session_id);
+    }
+    ended.remove(session_id)
 }
 
 /// Record activity for an explicit session id, resetting its idle-TTL clock.
@@ -291,6 +295,35 @@ mod tests {
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert!(!revive_session(sid));
         assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn revive_hook_finishes_before_concurrent_actions_observe_the_session_live() {
+        let sid = "test-revive-order-session-D4E5F6";
+        let entered_hook = Arc::new(std::sync::Barrier::new(2));
+        let release_hook = Arc::new(std::sync::Barrier::new(2));
+        let expected = sid.to_owned();
+        let entered_for_hook = entered_hook.clone();
+        let release_for_hook = release_hook.clone();
+        register_session_revive_hook(move |got| {
+            if got == expected {
+                entered_for_hook.wait();
+                release_for_hook.wait();
+            }
+        });
+        end_session(sid);
+
+        let sid_for_revive = sid.to_owned();
+        let revive_thread = std::thread::spawn(move || revive_session(&sid_for_revive));
+        entered_hook.wait();
+        assert!(
+            ended_sessions().try_lock().is_err(),
+            "ended guard must stay locked until the revive hook is finished"
+        );
+
+        release_hook.wait();
+        assert!(revive_thread.join().unwrap());
+        assert!(!is_session_ended(sid));
     }
 
     #[test]

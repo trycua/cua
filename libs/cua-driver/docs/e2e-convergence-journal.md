@@ -3,6 +3,12 @@
 This journal records changes and test evidence for the Rust desktop harness
 convergence work. It omits machine names, credentials, and partner names.
 
+## 2026-07-11
+
+| Commit | Change | Verification or finding |
+| --- | --- | --- |
+| `6aaa914b` | Restored direct Chromium/Electron single-left background clicks through `PostMessage` for both AX-resolved and PX-resolved targets | In an active Azure RDP session, raw UIA delivered the click but raised Electron and displaced the occlusion sentinel. A VM-only `PostMessage` diagnostic then delivered both AX and PX cells in 3/3 seeded runs while FixtureState, Focus, ZOrder, NoLeakedInput, and Cursor all passed. The production build passed all 12 Electron left/right/double-click rows; only the two single-left background rows changed from refusal to delivery. |
+
 ## 2026-07-10
 
 | Commit | Change | Verification or finding |
@@ -74,18 +80,21 @@ convergence work. It omits machine names, credentials, and partner names.
 | `516cddb2` | Replaced WinUI3's cold-start sleep with external readiness polling | Run `29149160683` passed all 72 shared rows and all 8 capture rows. Its sole native failure was the first WinUI3 UIA lookup; six later WinUI3 rows passed. Native setup now polls the external UIA tree for the app marker and canonical checkbox before executing any WinUI3 cell. |
 | `3b67ee30` | Made compositor focus authoritative for pure-Wayland sentinel startup | Run `29149710714` proved the sentinel was natively foreground and stable, but Electron emitted no renderer focus event because the window could be focused before preload listeners attached. The startup gate now uses the compositor snapshot; action-time native focus, z-order, and journal input-leak checks remain mandatory. |
 
-The `0.6.8` Windows Chromium background-click path was not equivalent to the
-current no-side-effect contract. Its `ZorderGuard` briefly promoted the target
-to `HWND_TOPMOST` so coordinate-routed pen input would win hit-testing, then
-demoted it and restored the prior foreground window. That can produce a
-post-action focus pass while transiently uncovering the target. The current
-fully occluded contract forbids that z-order change, so an occluded Chromium
-target is refused unless a true target-addressed backend becomes available.
+The earlier conclusion that fully occluded Chromium clicks required a z-order
+change was incomplete. A VM-only diagnostic confirmed that UIA Invoke delivers
+but activates Electron, so UIA still violates the background contract. The
+same diagnostic also proved that `post_click_screen` reaches the renderer while
+it remains fully occluded: both AX-resolved and PX-resolved left clicks
+delivered in three consecutive runs without changing focus, z-order, or the
+real cursor. Commit `6aaa914b` restores that route only for the proven
+single-left-click shape; right-click, double-click, drag, and other unproven
+gestures retain their existing refusal behavior.
 
 ## Active Validation
 
 | Platform | Run | Purpose | State |
 | --- | --- | --- | --- |
+| Windows | Azure RDP focused replay | Recheck occluded Electron AX/PX background left-click delivery and neighboring pointer contracts at `6aaa914b` | The background-safe `PostMessage` diagnostic delivered AX and PX in 3/3 runs with all five side-effect oracles. The production build then passed 12/12 Electron left/right/double-click rows and emitted a video for every row. |
 | Windows | `29149710089` | Final exact full matrix at `516cddb2` with strengthened desktop oracles and external WinUI3 readiness | Passed all 110 rows: 87 delivered and 23 exact refusals, with 0 failures or skips. All three lane summaries identify the full source SHA; 110 cell videos plus 3 preflight videos were uploaded and parsed successfully. |
 | Nix Linux source | `29150690892` | Package build, Linux unit/protocol gate, and source identity at `3b67ee30` | Passed. The package and source-owned Rust tests completed in the pinned Nix environment at the final code SHA. |
 | Linux X11 | `29148643166` | Exact supported Linux matrix at `69d3538c` with strengthened occlusion and scope gates | Passed all 80 rows: 48 delivered and 32 exact refusals, with 0 failures or skips. All three summaries and environment records identify the full source SHA; 80 cell videos plus 3 preflight videos were uploaded. |

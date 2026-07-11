@@ -331,10 +331,7 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
         MissingPermission::Accessibility,
         opts.initial_status,
         &request_flow,
-        NSPoint {
-            x: PAD,
-            y: 210.0,
-        },
+        NSPoint { x: PAD, y: 210.0 },
         NSSize {
             width: WIN_W - 2.0 * PAD,
             height: ROW_H,
@@ -346,10 +343,7 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
         MissingPermission::ScreenRecording,
         opts.initial_status,
         &request_flow,
-        NSPoint {
-            x: PAD,
-            y: 82.0,
-        },
+        NSPoint { x: PAD, y: 82.0 },
         NSSize {
             width: WIN_W - 2.0 * PAD,
             height: ROW_H,
@@ -789,8 +783,7 @@ fn is_primary_allow(
     permission: MissingPermission,
     action: RowAction,
 ) -> bool {
-    action == RowAction::Allow
-        && primary_allow_permission(status, flow) == Some(permission)
+    action == RowAction::Allow && primary_allow_permission(status, flow) == Some(permission)
 }
 
 unsafe fn render_panel(handles: &PanelHandles, status: PermissionsStatus) {
@@ -866,14 +859,18 @@ fn heading_for(status: PermissionsStatus, product_name: &str) -> String {
 
 fn subheading_for(status: PermissionsStatus, product_name: &str) -> String {
     match status.grant_state() {
-        PermissionGrantState::BothGranted =>
-            "Both macOS permissions are active. Computer control can start now.".into(),
-        PermissionGrantState::AccessibilityGranted =>
-            "Accessibility is allowed. Allow Screen Recording to finish setup.".into(),
-        PermissionGrantState::ScreenRecordingGranted =>
-            "Screen Recording is allowed. Allow Accessibility to finish setup.".into(),
+        PermissionGrantState::BothGranted => {
+            "Both macOS permissions are active. Computer control can start now.".into()
+        }
+        PermissionGrantState::AccessibilityGranted => {
+            "Accessibility is allowed. Allow Screen Recording to finish setup.".into()
+        }
+        PermissionGrantState::ScreenRecordingGranted => {
+            "Screen Recording is allowed. Allow Accessibility to finish setup.".into()
+        }
         PermissionGrantState::NoneGranted => format!(
-            "{product_name} needs these permissions to use apps on your Mac.\n+             They are only used when you ask {product_name} to perform a task."
+            "{product_name} needs these permissions to use apps on your Mac.\n\
+             They are only used when you ask {product_name} to perform a task."
         ),
     }
 }
@@ -1006,11 +1003,7 @@ unsafe fn build_button(
     button
 }
 
-unsafe fn style_button(
-    button: *mut AnyObject,
-    action: RowAction,
-    primary: bool,
-) {
+unsafe fn style_button(button: *mut AnyObject, action: RowAction, primary: bool) {
     let _: () = msg_send![button, setEnabled: action.enabled()];
     if primary {
         let blue: *mut AnyObject = msg_send![class!(NSColor), systemBlueColor];
@@ -1024,8 +1017,7 @@ unsafe fn style_button(
         } else {
             msg_send![class!(NSColor), secondaryLabelColor]
         };
-        let _: () =
-            msg_send![button, setBezelColor: std::ptr::null::<AnyObject>()];
+        let _: () = msg_send![button, setBezelColor: std::ptr::null::<AnyObject>()];
         let _: () = msg_send![button, setContentTintColor: tint];
         let _: () = msg_send![button, setKeyEquivalent: ns_string("")];
     }
@@ -1061,10 +1053,7 @@ unsafe fn build_row(
 
     // Icon
     let icon_frame = NSRect {
-        origin: NSPoint {
-            x: 22.0,
-            y: 32.0,
-        },
+        origin: NSPoint { x: 22.0, y: 32.0 },
         size: NSSize {
             width: 48.0,
             height: 48.0,
@@ -1090,10 +1079,7 @@ unsafe fn build_row(
         permission.label(),
         15.0,
         /*bold=*/ true,
-        NSPoint {
-            x: 88.0,
-            y: 61.0,
-        },
+        NSPoint { x: 88.0, y: 61.0 },
         NSSize {
             width: size.width - 330.0,
             height: 24.0,
@@ -1154,10 +1140,8 @@ unsafe fn build_row(
 
 fn row_description(permission: MissingPermission) -> &'static str {
     match permission {
-        MissingPermission::Accessibility =>
-            "Access app interfaces to read and use controls.",
-        MissingPermission::ScreenRecording =>
-            "Capture app windows to know where to click.",
+        MissingPermission::Accessibility => "Access app interfaces to read and use controls.",
+        MissingPermission::ScreenRecording => "Capture app windows to know where to click.",
     }
 }
 
@@ -1467,7 +1451,11 @@ mod tests {
         assert_eq!(heading_for(st(true, true), "cmux cua"), "cmux cua is ready");
         assert!(subheading_for(st(true, false), "cmux cua").contains("Screen Recording"));
         assert!(subheading_for(st(false, true), "cmux cua").contains("Accessibility"));
-        assert!(subheading_for(st(false, false), "cmux cua").contains("only used"));
+        assert_eq!(
+            subheading_for(st(false, false), "cmux cua"),
+            "cmux cua needs these permissions to use apps on your Mac.\n\
+             They are only used when you ask cmux cua to perform a task."
+        );
         assert!(footer_for(st(false, false), "cmux cua").contains("not your terminal"));
     }
 

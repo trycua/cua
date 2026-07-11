@@ -42,6 +42,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: !sentinelMode,
       preload: path.join(__dirname, 'preload.js'),
     },
   });

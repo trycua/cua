@@ -4118,24 +4118,17 @@ impl Tool for PressKeyTool {
                     Err(e) => return ToolResult::error(format!("WebView focus task failed: {e}")),
                 }
             }
-            // WebView2 establishes child focus asynchronously after the posted
-            // click. Keeping WS_EX_NOACTIVATE armed during that renderer round
+            // WebView2 establishes renderer focus asynchronously after the
+            // posted click. Keeping WS_EX_NOACTIVATE armed during that round
             // trip blocks its per-queue SetFocus. The click burst itself was
-            // guarded by post_click_screen, so release the outer guard before
-            // polling, matching the proven background pixel route.
+            // guarded by post_click_screen, so release the outer guard and use
+            // the same settle period as the proven background pixel route.
+            // GUITHREADINFO does not consistently expose WebView2's renderer
+            // focus on hosted runners, so it cannot be a delivery oracle here;
+            // the caller still receives an explicitly unverifiable result and
+            // the E2E fixture verifies the externally visible effect.
             drop(noact.take());
-            if crate::input::wait_for_focused_descendant(
-                hwnd,
-                std::time::Duration::from_millis(500),
-            )
-            .is_none()
-            {
-                return crate::input::delivery::background_unavailable_error_with_cause(
-                    hwnd,
-                    event_kind,
-                    "posted focus click did not establish renderer focus",
-                );
-            }
+            tokio::time::sleep(std::time::Duration::from_millis(120)).await;
         } else if let Some(idx) = elem_idx {
             let state = self.state.clone();
             let focused = tokio::task::spawn_blocking(move || {

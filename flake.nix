@@ -30,6 +30,21 @@
             src = rustSrc;
           };
 
+          # nixpkgs builds the AT-SPI launcher for NixOS's system profile.
+          # The E2E shell also runs on non-NixOS hosts such as GitHub's Ubuntu
+          # image, so point its private accessibility bus at store binaries.
+          hostAtSpi = pkgs.at-spi2-core.overrideAttrs (old: {
+            mesonFlags = map (
+              flag:
+              if pkgs.lib.hasPrefix "-Ddbus_daemon=" flag then
+                "-Ddbus_daemon=${pkgs.dbus}/bin/dbus-daemon"
+              else if pkgs.lib.hasPrefix "-Ddbus_broker=" flag then
+                "-Ddbus_broker=${pkgs.dbus-broker}/bin/dbus-broker-launch"
+              else
+                flag
+            ) old.mesonFlags;
+          });
+
           waylandE2eLibraries = with pkgs; [
             alsa-lib
             atk
@@ -79,8 +94,9 @@
           };
 
           devShells.cua-driver-wayland-e2e = pkgs.mkShell {
-            packages = with pkgs; [
-              at-spi2-core
+            packages = [
+              hostAtSpi
+            ] ++ (with pkgs; [
               cargo
               clang
               dbus
@@ -97,11 +113,12 @@
               wf-recorder
               wtype
               (python3.withPackages (pythonPackages: [ pythonPackages.pygobject3 ]))
-            ];
+            ]);
             buildInputs = waylandE2eLibraries;
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath waylandE2eLibraries;
             shellHook = ''
               export NO_AT_BRIDGE=0
+              export XDG_DATA_DIRS="${hostAtSpi}/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
             '';
           };
         }

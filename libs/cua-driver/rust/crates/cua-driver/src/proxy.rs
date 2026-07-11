@@ -35,6 +35,13 @@ use crate::serve::{
     CODEX_COMPUTER_USE_TOOL_NAMES,
 };
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ControlConnectionState {
+    Connecting,
+    Ready,
+    Rejected(String),
+}
+
 /// Run the MCP stdio proxy. Reads JSON-RPC lines from stdin, forwards
 /// the body of each `tools/list` / `tools/call` to the daemon at
 /// `socket_path`, and writes the daemon's response back as a proper
@@ -88,7 +95,8 @@ pub async fn run_proxy(
     // retry/timeout, and a restarted daemon loses session state anyway, so a
     // missing control connection only degrades to no-reaper (the recording
     // idle-TTL still backstops a leaked recording). It must NOT bail the proxy.
-    let (control_ready_tx, control_ready_rx) = tokio::sync::watch::channel(false);
+    let (control_ready_tx, control_ready_rx) =
+        tokio::sync::watch::channel(ControlConnectionState::Connecting);
     {
         let socket = socket_path.clone();
         let sid = session_id.clone();
@@ -195,7 +203,7 @@ async fn run_control_connection(
     socket_path: String,
     session_id: String,
     expected_profile: DaemonProfile,
-    readiness: tokio::sync::watch::Sender<bool>,
+    readiness: tokio::sync::watch::Sender<ControlConnectionState>,
 ) {
     let begin = DaemonRequest {
         method: "session_begin".into(),
@@ -214,14 +222,21 @@ async fn run_control_connection(
     #[cfg(unix)]
     {
         loop {
-            let connected = run_unix_control_connection_once(
+            let connected = match run_unix_control_connection_once(
                 &socket_path,
                 &session_id,
                 &line,
                 expected_profile,
                 &readiness,
             )
-            .await;
+            .await
+            {
+                Ok(connected) => connected,
+                Err(error) => {
+                    let _ = readiness.send(ControlConnectionState::Rejected(error));
+                    return;
+                }
+            };
             debug!(
                 session_id = %session_id,
                 connected,
@@ -237,14 +252,21 @@ async fn run_control_connection(
     #[cfg(all(not(unix), target_os = "windows"))]
     {
         loop {
-            let connected = run_windows_control_connection_once(
+            let connected = match run_windows_control_connection_once(
                 &socket_path,
                 &session_id,
                 &line,
                 expected_profile,
                 &readiness,
             )
-            .await;
+            .await
+            {
+                Ok(connected) => connected,
+                Err(error) => {
+                    let _ = readiness.send(ControlConnectionState::Rejected(error));
+                    return;
+                }
+            };
             debug!(
                 session_id = %session_id,
                 connected,
@@ -264,19 +286,18 @@ async fn run_control_connection(
 }
 
 async fn wait_for_control_connection(
-    mut readiness: tokio::sync::watch::Receiver<bool>,
+    mut readiness: tokio::sync::watch::Receiver<ControlConnectionState>,
 ) -> anyhow::Result<()> {
-    if *readiness.borrow() {
-        return Ok(());
-    }
     tokio::time::timeout(std::time::Duration::from_secs(10), async move {
         loop {
+            match readiness.borrow().clone() {
+                ControlConnectionState::Ready => return Ok(()),
+                ControlConnectionState::Rejected(error) => anyhow::bail!(error),
+                ControlConnectionState::Connecting => {}
+            }
             readiness.changed().await.map_err(|_| {
                 anyhow::anyhow!("daemon control-connection task stopped unexpectedly")
             })?;
-            if *readiness.borrow() {
-                return Ok(());
-            }
         }
     })
     .await
@@ -306,8 +327,8 @@ fn validate_control_ack(line: &str, expected_profile: DaemonProfile) -> anyhow::
         .ok_or_else(|| anyhow::anyhow!("session_begin ACK did not report a daemon profile"))?;
     if reported_profile != expected_profile.as_str() {
         anyhow::bail!(
-            "session_begin daemon profile mismatch: expected `{expected_profile}`, got \
-             `{reported_profile}`"
+            "daemon profile mismatch: MCP requested `{expected_profile}`, but the daemon \
+             reports `{reported_profile}`"
         );
     }
     Ok(())
@@ -319,8 +340,8 @@ async fn run_unix_control_connection_once(
     session_id: &str,
     begin_line: &str,
     expected_profile: DaemonProfile,
-    readiness: &tokio::sync::watch::Sender<bool>,
-) -> bool {
+    readiness: &tokio::sync::watch::Sender<ControlConnectionState>,
+) -> Result<bool, String> {
     use tokio::net::UnixStream;
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
@@ -332,13 +353,13 @@ async fn run_unix_control_connection_once(
             }
             Err(error) => {
                 debug!(session_id, "control connect failed while daemon restarts: {error}");
-                return false;
+                return Ok(false);
             }
         }
     };
     if let Err(error) = stream.write_all(begin_line.as_bytes()).await {
         debug!(session_id, "control connection: write session_begin failed: {error}");
-        return true;
+        return Ok(true);
     }
     let _ = stream.flush().await;
     let mut reader = BufReader::new(stream);
@@ -352,22 +373,21 @@ async fn run_unix_control_connection_once(
         Ok(Ok(bytes)) if bytes > 0 => {}
         Ok(Ok(_)) => {
             debug!(session_id, "control connection closed before session_begin ACK");
-            return true;
+            return Ok(true);
         }
         Ok(Err(error)) => {
             debug!(session_id, "control connection ACK read failed: {error}");
-            return true;
+            return Ok(true);
         }
         Err(_) => {
             debug!(session_id, "control connection timed out waiting for session_begin ACK");
-            return true;
+            return Ok(true);
         }
     }
     if let Err(error) = validate_control_ack(buffer.trim(), expected_profile) {
-        warn!(session_id, "control connection rejected daemon: {error}");
-        return true;
+        return Err(error.to_string());
     }
-    let _ = readiness.send(true);
+    let _ = readiness.send(ControlConnectionState::Ready);
     debug!(session_id, "control connection established (session_begin acknowledged)");
 
     loop {
@@ -377,8 +397,8 @@ async fn run_unix_control_connection_once(
             Ok(_) => continue,
         }
     }
-    let _ = readiness.send(false);
-    true
+    let _ = readiness.send(ControlConnectionState::Connecting);
+    Ok(true)
 }
 
 #[cfg(all(not(unix), target_os = "windows"))]
@@ -387,8 +407,8 @@ async fn run_windows_control_connection_once(
     session_id: &str,
     begin_line: &str,
     expected_profile: DaemonProfile,
-    readiness: &tokio::sync::watch::Sender<bool>,
-) -> bool {
+    readiness: &tokio::sync::watch::Sender<ControlConnectionState>,
+) -> Result<bool, String> {
     use tokio::net::windows::named_pipe::ClientOptions;
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
@@ -400,13 +420,13 @@ async fn run_windows_control_connection_once(
             }
             Err(error) => {
                 debug!(session_id, "control pipe open failed while daemon restarts: {error}");
-                return false;
+                return Ok(false);
             }
         }
     };
     if let Err(error) = client.write_all(begin_line.as_bytes()).await {
         debug!(session_id, "control connection: write session_begin failed: {error}");
-        return true;
+        return Ok(true);
     }
     let _ = client.flush().await;
     let mut reader = BufReader::new(client);
@@ -420,22 +440,21 @@ async fn run_windows_control_connection_once(
         Ok(Ok(bytes)) if bytes > 0 => {}
         Ok(Ok(_)) => {
             debug!(session_id, "control connection closed before session_begin ACK");
-            return true;
+            return Ok(true);
         }
         Ok(Err(error)) => {
             debug!(session_id, "control connection ACK read failed: {error}");
-            return true;
+            return Ok(true);
         }
         Err(_) => {
             debug!(session_id, "control connection timed out waiting for session_begin ACK");
-            return true;
+            return Ok(true);
         }
     }
     if let Err(error) = validate_control_ack(buffer.trim(), expected_profile) {
-        warn!(session_id, "control connection rejected daemon: {error}");
-        return true;
+        return Err(error.to_string());
     }
-    let _ = readiness.send(true);
+    let _ = readiness.send(ControlConnectionState::Ready);
     debug!(session_id, "control connection established (session_begin acknowledged)");
 
     loop {
@@ -445,8 +464,8 @@ async fn run_windows_control_connection_once(
             Ok(_) => continue,
         }
     }
-    let _ = readiness.send(false);
-    true
+    let _ = readiness.send(ControlConnectionState::Connecting);
+    Ok(true)
 }
 
 /// Mint a session id unique among the live proxies sharing one daemon, for the
@@ -639,7 +658,7 @@ async fn handle_proxy_request(
     socket_path: &str,
     cached_tools_list: &Arc<serde_json::Value>,
     session_id: &str,
-    control_ready: &tokio::sync::watch::Receiver<bool>,
+    control_ready: &tokio::sync::watch::Receiver<ControlConnectionState>,
 ) -> Response {
     match req.method.as_str() {
         "initialize" => Response::ok(id, initialize_result()),
@@ -687,7 +706,7 @@ async fn forward_tool_call(
     args: serde_json::Value,
     socket_path: &str,
     session_id: &str,
-    control_ready: &tokio::sync::watch::Receiver<bool>,
+    control_ready: &tokio::sync::watch::Receiver<ControlConnectionState>,
 ) -> Response {
     if let Err(error) = wait_for_control_connection(control_ready.clone()).await {
         return Response::error(
@@ -993,7 +1012,8 @@ mod tests {
         let socket = root.path().join("daemon.sock");
         let first_listener = UnixListener::bind(&socket).expect("bind first daemon");
         let session_id = "proxy-reexec-test-session".to_owned();
-        let (ready_tx, mut ready_rx) = tokio::sync::watch::channel(false);
+        let (ready_tx, mut ready_rx) =
+            tokio::sync::watch::channel(ControlConnectionState::Connecting);
         let task = tokio::spawn(run_control_connection(
             socket.to_string_lossy().into_owned(),
             session_id.clone(),
@@ -1008,7 +1028,7 @@ mod tests {
         drop(first_listener);
         drop(first_stream);
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            while *ready_rx.borrow() {
+            while *ready_rx.borrow() == ControlConnectionState::Ready {
                 ready_rx.changed().await.expect("readiness sender alive");
             }
         })

@@ -109,7 +109,11 @@ pub enum Scope {
 pub enum DriverRoute {
     AxRead,
     UiaInvoke,
+    UiaToggle,
+    UiaSelection,
+    UiaExpandCollapse,
     UiaValue,
+    UiaRangeValue,
     UiaScroll,
     PostMessage,
     WindowsTargetedInjection,

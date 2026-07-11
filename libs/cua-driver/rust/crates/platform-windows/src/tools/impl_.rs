@@ -4874,9 +4874,9 @@ impl Tool for ScrollTool {
             );
         }
         if let Some(idx) = elem_idx {
-            let prev_fg = if delivery == DeliveryMode::Background {
+            let prev_fg_addr = if delivery == DeliveryMode::Background {
                 Some(unsafe {
-                    windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow()
+                    windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize
                 })
             } else {
                 None
@@ -4912,11 +4912,12 @@ impl Tool for ScrollTool {
                     // Keep WS_EX_NOACTIVATE armed through any WebView handler
                     // queued by the UIA operation.
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                    if let Some(previous) = prev_fg {
+                    if let Some(previous_addr) = prev_fg_addr {
                         use windows::Win32::Foundation::HWND;
                         use windows::Win32::UI::WindowsAndMessaging::{
                             GetAncestor, GetForegroundWindow, GA_ROOT,
                         };
+                        let previous = HWND(previous_addr as *mut _);
                         let current = unsafe { GetForegroundWindow() };
                         let current_root = unsafe { GetAncestor(current, GA_ROOT) };
                         let target_root = unsafe { GetAncestor(HWND(hwnd as *mut _), GA_ROOT) };

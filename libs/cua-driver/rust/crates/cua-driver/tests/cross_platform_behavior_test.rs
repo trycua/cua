@@ -763,7 +763,7 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         oracles,
     );
     if expected_background_refusal {
-        case.expecting_refusal(vec![RefusalCode::BackgroundUnavailable])
+        case.expecting_refusal(vec![RefusalCode::BackgroundOccluded])
     } else {
         case
     }

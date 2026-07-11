@@ -660,6 +660,32 @@ pub fn daemon_pid_file_path(
     crate::serve::codex_compat_default_pid_file_path()
 }
 
+#[cfg(any(test, not(target_os = "macos")))]
+fn codex_computer_use_platform_error(
+    enabled: bool,
+    target_is_macos: bool,
+) -> Option<&'static str> {
+    if enabled && !target_is_macos {
+        Some(
+            "--codex-computer-use-compat is supported only on macOS; this build \
+             cannot serve the Codex Computer Use app-oriented tool profile",
+        )
+    } else {
+        None
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn ensure_codex_computer_use_supported(enabled: bool) -> anyhow::Result<()> {
+    if let Some(message) = codex_computer_use_platform_error(
+        enabled,
+        cfg!(target_os = "macos"),
+    ) {
+        anyhow::bail!(message);
+    }
+    Ok(())
+}
+
 /// Non-macOS targets don't have TCC, but they DO have the equivalent
 /// problem of session attribution on Windows (Session 0 vs the user's
 /// interactive Session 1+). When the CLI is spawned via SSH or a
@@ -900,7 +926,12 @@ pub fn run_mcp_via_daemon_proxy(
         .enable_all()
         .build()
         .expect("tokio runtime");
-    rt.block_on(crate::proxy::run_proxy(socket_path))
+    rt.block_on(crate::proxy::run_proxy(
+        socket_path,
+        crate::serve::DaemonProfile::for_codex_compat(
+            codex_computer_use_compat,
+        ),
+    ))
 }
 
 /// Emit a stable, machine-readable JSON description of the cua-driver CLI
@@ -993,7 +1024,7 @@ pub fn build_manifest() -> serde_json::Value {
               ] },
             { "name": "mcp-config",
               "description": "Print the MCP server config snippet or a client-specific install command.",
-              "args": [ { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi, qwen, droid, zcode. Omit for the generic snippet." } ] },
+              "args": [ { "name": "--client", "type": "string", "description": "One of: claude, codex, codex-computer-use, cursor, hermes, antigravity, openclaw, opencode, pi, qwen, droid, zcode. Omit for the generic snippet." } ] },
             { "name": "manifest",
               "description": "Emit this machine-readable description of the CLI surface.",
               "args": [ { "name": "--pretty", "type": "flag", "description": "Pretty-print the JSON." } ] },
@@ -1053,8 +1084,20 @@ pub fn build_manifest() -> serde_json::Value {
 
 /// Print the MCP server config snippet or a client-specific install command.
 ///
-/// `--client <name>` selects one of: claude, codex, cursor, hermes,
-/// antigravity, openclaw, opencode, pi. Omit for the generic JSON snippet.
+/// `--client <name>` selects one of: claude, codex, codex-computer-use,
+/// cursor, hermes, antigravity, openclaw, opencode, pi. Omit for the generic
+/// JSON snippet.
+fn codex_mcp_add_command(binary: &str, computer_use_compat: bool) -> String {
+    if computer_use_compat {
+        format!(
+            "codex mcp add cua-computer-use -- {binary} mcp \
+             --codex-computer-use-compat"
+        )
+    } else {
+        format!("codex mcp add cua-driver -- {binary} mcp")
+    }
+}
+
 pub fn run_mcp_config(client: Option<&str>) {
     let binary = std::env::current_exe()
         .ok()
@@ -1119,7 +1162,10 @@ pub fn run_mcp_config(client: Option<&str>) {
             println!("claude mcp add-json --scope user cua-computer-use '{}'", json);
         }
         Some("codex") => {
-            println!("codex mcp add cua-driver -- {binary} mcp");
+            println!("{}", codex_mcp_add_command(&binary, false));
+        }
+        Some("codex-computer-use") => {
+            println!("{}", codex_mcp_add_command(&binary, true));
         }
         Some("cursor") => {
             println!(r#"{{
@@ -1260,7 +1306,7 @@ pub fn run_mcp_config(client: Option<&str>) {
             );
         }
         Some(other) => {
-            eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, qwen, droid, zcode.");
+            eprintln!("Unknown client '{other}'. Valid: claude, codex, codex-computer-use, cursor, antigravity, openclaw, opencode, hermes, pi, qwen, droid, zcode.");
             process::exit(2);
         }
     }
@@ -3101,6 +3147,27 @@ mod tests {
         assert_eq!(
             daemon_socket_path(Some("/tmp/cua-explicit.sock".to_owned()), true),
             "/tmp/cua-explicit.sock"
+        );
+    }
+
+    #[test]
+    fn codex_compat_platform_gate_rejects_non_macos_before_startup() {
+        assert!(codex_computer_use_platform_error(true, false)
+            .unwrap()
+            .contains("supported only on macOS"));
+        assert!(codex_computer_use_platform_error(true, true).is_none());
+        assert!(codex_computer_use_platform_error(false, false).is_none());
+    }
+
+    #[test]
+    fn codex_computer_use_config_emits_dedicated_profile_command() {
+        assert_eq!(
+            codex_mcp_add_command("/opt/cua-driver", false),
+            "codex mcp add cua-driver -- /opt/cua-driver mcp"
+        );
+        assert_eq!(
+            codex_mcp_add_command("/opt/cua-driver", true),
+            "codex mcp add cua-computer-use -- /opt/cua-driver mcp --codex-computer-use-compat"
         );
     }
 

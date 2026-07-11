@@ -395,7 +395,14 @@ fn main() {
                 .name("cua-serve".into())
                 .spawn(move || {
                     let exit_code = run_guarded_appkit_worker("serve", || {
-                        serve::run_serve_cmd(reg, &sp, Some(&pid_path));
+                        serve::run_serve_cmd(
+                            reg,
+                            &sp,
+                            Some(&pid_path),
+                            serve::DaemonProfile::for_codex_compat(
+                                codex_computer_use_compat,
+                            ),
+                        );
                     });
                     platform_macos::pip::request_appkit_main_loop_stop();
                     exit_code
@@ -688,6 +695,7 @@ fn main() -> anyhow::Result<()> {
             claude_code_compat,
             codex_computer_use_compat,
         } => {
+            cli::ensure_codex_computer_use_supported(codex_computer_use_compat)?;
             responsibility::reexec_disclaimed_if_needed();
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr.
@@ -709,7 +717,14 @@ fn main() -> anyhow::Result<()> {
             let sp = cli::daemon_socket_path(socket, codex_computer_use_compat);
             // run_serve_cmd builds its own runtime; must run on a fresh thread.
             std::thread::spawn(move || {
-                serve::run_serve_cmd(reg, &sp, Some(&pid_path));
+                serve::run_serve_cmd(
+                    reg,
+                    &sp,
+                    Some(&pid_path),
+                    serve::DaemonProfile::for_codex_compat(
+                        codex_computer_use_compat,
+                    ),
+                );
             }).join().ok();
             return Ok(());
         }
@@ -783,6 +798,7 @@ fn main() -> anyhow::Result<()> {
             claude_code_compat,
             codex_computer_use_compat,
         } => {
+            cli::ensure_codex_computer_use_supported(codex_computer_use_compat)?;
             CLAUDE_CODE_COMPAT.store(claude_code_compat, Ordering::SeqCst);
             CODEX_COMPUTER_USE_COMPAT.store(codex_computer_use_compat, Ordering::SeqCst);
             // Long-running MCP server — kick off the background update

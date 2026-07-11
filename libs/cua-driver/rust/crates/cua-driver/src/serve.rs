@@ -19,6 +19,77 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Tool surface owned by a daemon instance. The proxy validates this value
+/// before exposing any tools so an explicit socket cannot accidentally bridge
+/// a native client to the narrower Codex Computer Use daemon, or vice versa.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum DaemonProfile {
+    #[serde(rename = "native")]
+    Native,
+    #[serde(rename = "codex-computer-use-compat")]
+    CodexComputerUseCompat,
+}
+
+impl DaemonProfile {
+    pub fn for_codex_compat(enabled: bool) -> Self {
+        if enabled {
+            Self::CodexComputerUseCompat
+        } else {
+            Self::Native
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Native => "native",
+            Self::CodexComputerUseCompat => "codex-computer-use-compat",
+        }
+    }
+}
+
+impl std::fmt::Display for DaemonProfile {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Exact public roster for the Codex Computer Use compatibility profile.
+/// Order is part of the observed protocol contract and is checked by the MCP
+/// proxy before it advertises the daemon's tools.
+pub const CODEX_COMPUTER_USE_TOOL_NAMES: [&str; 10] = [
+    "list_apps",
+    "get_app_state",
+    "click",
+    "perform_secondary_action",
+    "set_value",
+    "select_text",
+    "scroll",
+    "drag",
+    "press_key",
+    "type_text",
+];
+
+fn http_transport_allowed(profile: DaemonProfile) -> bool {
+    profile != DaemonProfile::CodexComputerUseCompat
+}
+
+fn maybe_start_http_transport(
+    registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
+    profile: DaemonProfile,
+) {
+    let Some(port) = crate::mcp_http::configured_port() else {
+        return;
+    };
+    if !http_transport_allowed(profile) {
+        eprintln!(
+            "cua-driver: HTTP MCP transport on port {port} is disabled for the \
+             codex-computer-use-compat profile because that transport is not authenticated."
+        );
+        return;
+    }
+    crate::mcp_http::spawn(registry, port);
+}
+
 #[cfg(unix)]
 fn secure_runtime_directory(
     dir: &std::path::Path,
@@ -634,6 +705,7 @@ pub async fn run_serve(
     registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
     socket_path: &str,
     pid_file_path: Option<&str>,
+    profile: DaemonProfile,
 ) -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixListener;
@@ -683,9 +755,7 @@ pub async fn run_serve(
     let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
     spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
     spawn_session_idle_sweep();
-    if let Some(port) = crate::mcp_http::configured_port() {
-        crate::mcp_http::spawn(registry.clone(), port);
-    }
+    maybe_start_http_transport(registry.clone(), profile);
     register_recording_session_end_hook(registry.recording.clone());
 
     loop {
@@ -769,6 +839,7 @@ pub async fn run_serve(
                                     "tools": tools,
                                     "capability_version": cua_driver_core::tool::CAPABILITY_VERSION,
                                     "schema_version": "1",
+                                    "profile": profile,
                                 }));
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
@@ -892,10 +963,19 @@ pub async fn run_serve(
                                 // the ONLY place a connection is marked control;
                                 // per-call connections never send this. ACK ok.
                                 if let Some(sid) = req.session_id.as_deref() {
+                                    // A proxy reconnect after daemon re-exec uses the same
+                                    // session id. If the old control connection died while
+                                    // this daemon stayed alive, its EOF reaper tombstoned the
+                                    // session first; the new control declaration revives it
+                                    // before accepting more calls.
+                                    cua_driver_core::session::revive_session(sid);
                                     control_session_id = Some(sid.to_owned());
                                 }
                                 let resp = DaemonResponse::ok(
-                                    serde_json::json!({"session_begin": true})
+                                    serde_json::json!({
+                                        "session_begin": true,
+                                        "profile": profile,
+                                    })
                                 );
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
@@ -1180,6 +1260,7 @@ pub async fn run_serve(
     registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
     socket_path: &str,
     pid_file_path: Option<&str>,
+    profile: DaemonProfile,
 ) -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::ServerOptions;
@@ -1225,9 +1306,7 @@ pub async fn run_serve(
     let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
     spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
     spawn_session_idle_sweep();
-    if let Some(port) = crate::mcp_http::configured_port() {
-        crate::mcp_http::spawn(registry.clone(), port);
-    }
+    maybe_start_http_transport(registry.clone(), profile);
     register_recording_session_end_hook(registry.recording.clone());
 
     loop {
@@ -1319,6 +1398,7 @@ pub async fn run_serve(
                                     "tools": tools,
                                     "capability_version": cua_driver_core::tool::CAPABILITY_VERSION,
                                     "schema_version": "1",
+                                    "profile": profile,
                                 }));
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
@@ -1408,10 +1488,14 @@ pub async fn run_serve(
                                 // pipe instance's EOF / broken-pipe reaps the
                                 // session in the post-loop block below. ACK ok.
                                 if let Some(sid) = req.session_id.as_deref() {
+                                    cua_driver_core::session::revive_session(sid);
                                     control_session_id = Some(sid.to_owned());
                                 }
                                 let resp = DaemonResponse::ok(
-                                    serde_json::json!({"session_begin": true})
+                                    serde_json::json!({
+                                        "session_begin": true,
+                                        "profile": profile,
+                                    })
                                 );
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
@@ -1498,6 +1582,7 @@ pub async fn run_serve(
     _registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
     _socket_path: &str,
     _pid_file_path: Option<&str>,
+    _profile: DaemonProfile,
 ) -> anyhow::Result<()> {
     anyhow::bail!("cua-driver serve is not supported on this platform");
 }
@@ -1509,6 +1594,7 @@ pub fn run_serve_cmd(
     registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
     socket_path: &str,
     pid_file_path: Option<&str>,
+    profile: DaemonProfile,
 ) {
     let socket_path = socket_path.to_owned();
     let pid_file_path = pid_file_path.map(str::to_owned);
@@ -1560,6 +1646,7 @@ pub fn run_serve_cmd(
         registry,
         &socket_path,
         pid_file_path.as_deref(),
+        profile,
     )) {
         eprintln!("cua-driver serve error: {e}");
         std::process::exit(1);
@@ -1638,7 +1725,7 @@ mod gate_tests {
     use super::{
         codex_compat_default_pid_file_path, codex_compat_default_socket_path,
         is_managed_pid_file_path, is_managed_socket_path, run_serve,
-        secure_runtime_directory, send_request, DaemonRequest,
+        secure_runtime_directory, send_request, DaemonProfile, DaemonRequest,
     };
     use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1731,6 +1818,7 @@ mod gate_tests {
             registry.clone(),
             unsafe_socket.to_str().expect("unsafe socket path"),
             None,
+            DaemonProfile::Native,
         )
         .await
         .expect_err("unsafe custom socket directory must fail closed");
@@ -1747,6 +1835,7 @@ mod gate_tests {
             registry,
             regular_file.to_str().expect("regular file path"),
             None,
+            DaemonProfile::Native,
         )
         .await
         .expect_err("non-socket path must not be replaced");
@@ -1772,6 +1861,7 @@ mod gate_tests {
                 registry,
                 socket_for_server.to_str().expect("socket path"),
                 Some(pid_for_server.to_str().expect("pid path")),
+                DaemonProfile::Native,
             )
             .await
         });
@@ -1852,7 +1942,13 @@ mod gate_tests {
         let socket_for_server = socket.clone();
         let reg_for_server = registry.clone();
         let server = tokio::spawn(async move {
-            let _ = run_serve(reg_for_server, &socket_for_server, None).await;
+            let _ = run_serve(
+                reg_for_server,
+                &socket_for_server,
+                None,
+                DaemonProfile::Native,
+            )
+            .await;
         });
 
         // Wait for the daemon to bind.
@@ -1972,7 +2068,7 @@ mod gate_tests {
 
 #[cfg(test)]
 mod session_boundary_tests {
-    use super::apply_session_identity;
+    use super::{apply_session_identity, http_transport_allowed, DaemonProfile};
     use serde_json::json;
 
     #[test]
@@ -2009,5 +2105,25 @@ mod session_boundary_tests {
         let eff = apply_session_identity(&mut args, &Some("mcp-999".to_owned()));
         assert_eq!(args["_session_id"], "caller-set");
         assert_eq!(eff.as_deref(), Some("caller-set"));
+    }
+
+    #[test]
+    fn unauthenticated_http_transport_is_disabled_for_codex_compat() {
+        assert!(http_transport_allowed(DaemonProfile::Native));
+        assert!(!http_transport_allowed(
+            DaemonProfile::CodexComputerUseCompat
+        ));
+    }
+
+    #[test]
+    fn daemon_profiles_have_stable_wire_names() {
+        assert_eq!(
+            serde_json::to_value(DaemonProfile::Native).unwrap(),
+            json!("native")
+        );
+        assert_eq!(
+            serde_json::to_value(DaemonProfile::CodexComputerUseCompat).unwrap(),
+            json!("codex-computer-use-compat")
+        );
     }
 }

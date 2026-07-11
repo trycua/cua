@@ -153,6 +153,23 @@ fn mcp_tool_names(driver: &mut CompatDriver) -> Vec<String> {
         .collect()
 }
 
+fn run_proxy_to_explicit_socket(socket: &PathBuf, compat: bool) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cua-driver"));
+    command
+        .arg("mcp")
+        .arg("--socket")
+        .arg(socket)
+        .arg("--no-overlay")
+        .env("CUA_DRIVER_RS_MCP_FORCE_PROXY", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if compat {
+        command.arg("--codex-computer-use-compat");
+    }
+    command.output().expect("run explicit-socket MCP proxy")
+}
+
 #[test]
 fn compat_tools_list_is_exact_v829_contract() {
     let mut driver = CompatDriver::spawn(true);
@@ -424,6 +441,43 @@ fn native_and_codex_compat_daemons_coexist_with_isolated_rosters() {
     assert!(compat.child.try_wait().unwrap().is_none());
 
     drop(native_mcp);
+    drop(compat);
+    drop(native);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn explicit_socket_proxy_rejects_mismatched_daemon_profile() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = unique_daemon_root();
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let native_socket = root.join("native.sock");
+    let compat_socket = root.join("compat.sock");
+    let native = DaemonDriver::spawn(native_socket.clone(), false);
+    let compat = DaemonDriver::spawn(compat_socket.clone(), true);
+
+    let compat_to_native = run_proxy_to_explicit_socket(&native_socket, true);
+    assert!(!compat_to_native.status.success());
+    let stderr = String::from_utf8_lossy(&compat_to_native.stderr);
+    assert!(
+        stderr.contains("daemon profile mismatch")
+            && stderr.contains("MCP requested `codex-computer-use-compat`")
+            && stderr.contains("daemon reports `native`"),
+        "unexpected compat-to-native error: {stderr}"
+    );
+
+    let native_to_compat = run_proxy_to_explicit_socket(&compat_socket, false);
+    assert!(!native_to_compat.status.success());
+    let stderr = String::from_utf8_lossy(&native_to_compat.stderr);
+    assert!(
+        stderr.contains("daemon profile mismatch")
+            && stderr.contains("MCP requested `native`")
+            && stderr.contains("daemon reports `codex-computer-use-compat`"),
+        "unexpected native-to-compat error: {stderr}"
+    );
+
     drop(compat);
     drop(native);
     let _ = std::fs::remove_dir_all(root);

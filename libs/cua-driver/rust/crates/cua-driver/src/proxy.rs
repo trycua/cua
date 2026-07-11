@@ -29,7 +29,11 @@ use cua_driver_core::protocol::{initialize_result, Request, Response};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
 
-use crate::serve::{is_daemon_listening, send_request, DaemonRequest};
+use crate::serve::{
+    is_daemon_listening, send_request, DaemonProfile, DaemonRequest,
+    DaemonResponse,
+    CODEX_COMPUTER_USE_TOOL_NAMES,
+};
 
 /// Run the MCP stdio proxy. Reads JSON-RPC lines from stdin, forwards
 /// the body of each `tools/list` / `tools/call` to the daemon at
@@ -44,7 +48,10 @@ use crate::serve::{is_daemon_listening, send_request, DaemonRequest};
 /// clear startup error instead of a "successful" handshake that
 /// advertises zero tools and then errors on every call. Matches
 /// Swift `makeProxy`'s `fetchProxyToolList` pre-check.
-pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
+pub async fn run_proxy(
+    socket_path: String,
+    expected_profile: DaemonProfile,
+) -> anyhow::Result<()> {
     if !is_daemon_listening(&socket_path) {
         anyhow::bail!(
             "cua-driver-rs daemon not reachable on {socket_path}. Start it \
@@ -81,19 +88,28 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
     // retry/timeout, and a restarted daemon loses session state anyway, so a
     // missing control connection only degrades to no-reaper (the recording
     // idle-TTL still backstops a leaked recording). It must NOT bail the proxy.
+    let (control_ready_tx, control_ready_rx) = tokio::sync::watch::channel(false);
     {
         let socket = socket_path.clone();
         let sid = session_id.clone();
         tokio::spawn(async move {
-            run_control_connection(socket, sid).await;
+            run_control_connection(
+                socket,
+                sid,
+                control_ready_tx,
+            )
+            .await;
         });
     }
+
+    wait_for_control_connection(control_ready_rx.clone()).await?;
 
     // Cache the tool list once at startup. The daemon's registry is
     // static for the lifetime of the daemon, so polling on every
     // `tools/list` would waste a round-trip per call. Swift does the
     // same caching in `fetchProxyToolList`.
-    let cached_tools_list = fetch_tools_list_from_daemon(&socket_path, &session_id)?;
+    let cached_tools_list =
+        fetch_tools_list_from_daemon(&socket_path, &session_id, expected_profile)?;
     let cached_tools_list = Arc::new(cached_tools_list);
 
     let stdin = tokio::io::stdin();
@@ -125,7 +141,15 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
             }
             Ok(req) => {
                 let id = req.id.clone().unwrap_or(serde_json::Value::Null);
-                handle_proxy_request(req, id, &socket_path, &cached_tools_list, &session_id).await
+                handle_proxy_request(
+                    req,
+                    id,
+                    &socket_path,
+                    &cached_tools_list,
+                    &session_id,
+                    &control_ready_rx,
+                )
+                .await
             }
         };
 
@@ -160,11 +184,17 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
 /// `session_begin` and fires `session_end` when this connection EOFs — which
 /// the kernel triggers on proxy exit AND on kill -9.
 ///
-/// On any read result/error (daemon-side close, broken pipe), the loop exits
-/// and the task ends; the proxy keeps running on its per-call connections. A
-/// connect failure (racing daemon startup) is logged and swallowed — it must
-/// not bail the proxy.
-async fn run_control_connection(socket_path: String, session_id: String) {
+/// When the daemon closes the connection during a permission-triggered re-exec,
+/// reconnect with the same session identity and send `session_begin` again.
+/// The old daemon reaps the old connection before it exits; the replacement
+/// daemon then owns cleanup for the reconnected session. The task ends only
+/// when the proxy runtime drops it, which also closes the current connection
+/// and triggers the replacement daemon's EOF cleanup.
+async fn run_control_connection(
+    socket_path: String,
+    session_id: String,
+    readiness: tokio::sync::watch::Sender<bool>,
+) {
     let begin = DaemonRequest {
         method: "session_begin".into(),
         name: None,
@@ -181,91 +211,224 @@ async fn run_control_connection(socket_path: String, session_id: String) {
 
     #[cfg(unix)]
     {
-        use tokio::net::UnixStream;
-        // Retry the connect briefly — the daemon may still be spinning up
-        // (mirrors the windows pipe-open retry below). The is_daemon_listening
-        // precheck makes the window tiny, but keep both paths symmetric.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        let mut stream = loop {
-            match UnixStream::connect(&socket_path).await {
-                Ok(s) => break s,
-                Err(_) if std::time::Instant::now() < deadline => {
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                }
-                Err(e) => {
-                    debug!(session_id = %session_id, "control connect failed (daemon starting?): {e}");
-                    return;
-                }
-            }
-        };
-        if let Err(e) = stream.write_all(line.as_bytes()).await {
-            debug!("control connection: write session_begin failed: {e}");
-            return;
-        }
-        let _ = stream.flush().await;
-        debug!(session_id = %session_id, "control connection established (session_begin sent)");
-
-        // Park: read until the daemon closes (it ACKs session_begin then keeps
-        // the conn open; we drain anything and only return on EOF/error). The
-        // proxy never writes here again — the connection lives until process
-        // death, when the kernel closes it and the daemon reaps the session.
-        let mut reader = BufReader::new(stream);
-        let mut buf = String::new();
         loop {
-            buf.clear();
-            match reader.read_line(&mut buf).await {
-                Ok(0) | Err(_) => break, // daemon closed or error — task done.
-                Ok(_) => continue,       // ACK / stray line — ignore, keep parked.
-            }
+            let connected = run_unix_control_connection_once(
+                &socket_path,
+                &session_id,
+                &line,
+                &readiness,
+            )
+            .await;
+            debug!(
+                session_id = %session_id,
+                connected,
+                "control connection unavailable; waiting to reconnect"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(
+                if connected { 50 } else { 250 },
+            ))
+            .await;
         }
-        debug!(session_id = %session_id, "control connection closed");
     }
 
     #[cfg(all(not(unix), target_os = "windows"))]
     {
-        use tokio::net::windows::named_pipe::ClientOptions;
-        // Retry the pipe open briefly — the daemon may still be spinning up its
-        // next instance (mirrors send_request's open-retry).
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        let client = loop {
-            match ClientOptions::new().open(&socket_path) {
-                Ok(c) => break Some(c),
-                Err(_) if std::time::Instant::now() < deadline => {
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                }
-                Err(e) => {
-                    debug!(session_id = %session_id, "control pipe open failed (daemon starting?): {e}");
-                    break None;
-                }
-            }
-        };
-        let mut client = match client {
-            Some(c) => c,
-            None => return,
-        };
-        if let Err(e) = client.write_all(line.as_bytes()).await {
-            debug!("control connection: write session_begin failed: {e}");
-            return;
-        }
-        let _ = client.flush().await;
-        debug!(session_id = %session_id, "control connection established (session_begin sent)");
-
-        let mut reader = BufReader::new(client);
-        let mut buf = String::new();
         loop {
-            buf.clear();
-            match reader.read_line(&mut buf).await {
-                Ok(0) | Err(_) => break,
-                Ok(_) => continue,
-            }
+            let connected = run_windows_control_connection_once(
+                &socket_path,
+                &session_id,
+                &line,
+                &readiness,
+            )
+            .await;
+            debug!(
+                session_id = %session_id,
+                connected,
+                "control connection unavailable; waiting to reconnect"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(
+                if connected { 50 } else { 250 },
+            ))
+            .await;
         }
-        debug!(session_id = %session_id, "control connection closed");
     }
 
     #[cfg(all(not(unix), not(target_os = "windows")))]
     {
-        let _ = (line, session_id, socket_path);
+        let _ = (line, session_id, socket_path, readiness);
     }
+}
+
+async fn wait_for_control_connection(
+    mut readiness: tokio::sync::watch::Receiver<bool>,
+) -> anyhow::Result<()> {
+    if *readiness.borrow() {
+        return Ok(());
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+        loop {
+            readiness.changed().await.map_err(|_| {
+                anyhow::anyhow!("daemon control-connection task stopped unexpectedly")
+            })?;
+            if *readiness.borrow() {
+                return Ok(());
+            }
+        }
+    })
+    .await
+    .map_err(|_| {
+        anyhow::anyhow!(
+            "timed out waiting for the daemon session control connection"
+        )
+    })?
+}
+
+fn validate_control_ack(line: &str) -> anyhow::Result<()> {
+    let response: DaemonResponse = serde_json::from_str(line)
+        .map_err(|error| anyhow::anyhow!("decode session_begin response: {error}"))?;
+    if !response.ok {
+        anyhow::bail!(
+            "daemon rejected session_begin: {}",
+            response
+                .error
+                .unwrap_or_else(|| "unknown daemon error".to_owned())
+        );
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn run_unix_control_connection_once(
+    socket_path: &str,
+    session_id: &str,
+    begin_line: &str,
+    readiness: &tokio::sync::watch::Sender<bool>,
+) -> bool {
+    use tokio::net::UnixStream;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let mut stream = loop {
+        match UnixStream::connect(socket_path).await {
+            Ok(stream) => break stream,
+            Err(_) if std::time::Instant::now() < deadline => {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            Err(error) => {
+                debug!(session_id, "control connect failed while daemon restarts: {error}");
+                return false;
+            }
+        }
+    };
+    if let Err(error) = stream.write_all(begin_line.as_bytes()).await {
+        debug!(session_id, "control connection: write session_begin failed: {error}");
+        return true;
+    }
+    let _ = stream.flush().await;
+    let mut reader = BufReader::new(stream);
+    let mut buffer = String::new();
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        reader.read_line(&mut buffer),
+    )
+    .await
+    {
+        Ok(Ok(bytes)) if bytes > 0 => {}
+        Ok(Ok(_)) => {
+            debug!(session_id, "control connection closed before session_begin ACK");
+            return true;
+        }
+        Ok(Err(error)) => {
+            debug!(session_id, "control connection ACK read failed: {error}");
+            return true;
+        }
+        Err(_) => {
+            debug!(session_id, "control connection timed out waiting for session_begin ACK");
+            return true;
+        }
+    }
+    if let Err(error) = validate_control_ack(buffer.trim()) {
+        warn!(session_id, "control connection rejected daemon: {error}");
+        return true;
+    }
+    let _ = readiness.send(true);
+    debug!(session_id, "control connection established (session_begin acknowledged)");
+
+    loop {
+        buffer.clear();
+        match reader.read_line(&mut buffer).await {
+            Ok(0) | Err(_) => break,
+            Ok(_) => continue,
+        }
+    }
+    let _ = readiness.send(false);
+    true
+}
+
+#[cfg(all(not(unix), target_os = "windows"))]
+async fn run_windows_control_connection_once(
+    socket_path: &str,
+    session_id: &str,
+    begin_line: &str,
+    readiness: &tokio::sync::watch::Sender<bool>,
+) -> bool {
+    use tokio::net::windows::named_pipe::ClientOptions;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let mut client = loop {
+        match ClientOptions::new().open(socket_path) {
+            Ok(client) => break client,
+            Err(_) if std::time::Instant::now() < deadline => {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            Err(error) => {
+                debug!(session_id, "control pipe open failed while daemon restarts: {error}");
+                return false;
+            }
+        }
+    };
+    if let Err(error) = client.write_all(begin_line.as_bytes()).await {
+        debug!(session_id, "control connection: write session_begin failed: {error}");
+        return true;
+    }
+    let _ = client.flush().await;
+    let mut reader = BufReader::new(client);
+    let mut buffer = String::new();
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        reader.read_line(&mut buffer),
+    )
+    .await
+    {
+        Ok(Ok(bytes)) if bytes > 0 => {}
+        Ok(Ok(_)) => {
+            debug!(session_id, "control connection closed before session_begin ACK");
+            return true;
+        }
+        Ok(Err(error)) => {
+            debug!(session_id, "control connection ACK read failed: {error}");
+            return true;
+        }
+        Err(_) => {
+            debug!(session_id, "control connection timed out waiting for session_begin ACK");
+            return true;
+        }
+    }
+    if let Err(error) = validate_control_ack(buffer.trim()) {
+        warn!(session_id, "control connection rejected daemon: {error}");
+        return true;
+    }
+    let _ = readiness.send(true);
+    debug!(session_id, "control connection established (session_begin acknowledged)");
+
+    loop {
+        buffer.clear();
+        match reader.read_line(&mut buffer).await {
+            Ok(0) | Err(_) => break,
+            Ok(_) => continue,
+        }
+    }
+    let _ = readiness.send(false);
+    true
 }
 
 /// Mint a session id unique among the live proxies sharing one daemon, for the
@@ -282,6 +445,55 @@ fn mint_session_id() -> String {
     format!("mcp-{pid}-{nanos}")
 }
 
+fn validate_daemon_profile_and_roster(
+    result: &serde_json::Value,
+    expected_profile: DaemonProfile,
+    socket_path: &str,
+) -> anyhow::Result<()> {
+    let reported_profile = result
+        .get("profile")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "daemon on {socket_path} did not report a tool profile. Stop that daemon and \
+                 restart it with the current cua-driver binary before retrying."
+            )
+        })?;
+    if reported_profile != expected_profile.as_str() {
+        anyhow::bail!(
+            "daemon profile mismatch on {socket_path}: MCP requested `{expected_profile}`, \
+             but the daemon reports `{reported_profile}`. Stop it and restart the matching \
+             `cua-driver serve{}` profile.",
+            if expected_profile == DaemonProfile::CodexComputerUseCompat {
+                " --codex-computer-use-compat"
+            } else {
+                ""
+            }
+        );
+    }
+
+    if expected_profile == DaemonProfile::CodexComputerUseCompat {
+        let tools = result
+            .get("tools")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| anyhow::anyhow!("daemon list response missing `tools` array"))?;
+        let names: Vec<&str> = tools
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
+            .collect();
+        if names.as_slice() != CODEX_COMPUTER_USE_TOOL_NAMES {
+            anyhow::bail!(
+                "daemon on {socket_path} reports the Codex Computer Use profile, but its tool \
+                 roster is invalid: expected {:?}, got {:?}. Restart it with the current \
+                 cua-driver binary.",
+                CODEX_COMPUTER_USE_TOOL_NAMES,
+                names
+            );
+        }
+    }
+    Ok(())
+}
+
 /// One-shot daemon `list` over the UDS, reshaped into a MCP
 /// `tools/list` result. The daemon now returns the full ToolDef
 /// (`name`, `description`, `input_schema`, annotation hints) per
@@ -289,6 +501,7 @@ fn mint_session_id() -> String {
 fn fetch_tools_list_from_daemon(
     socket_path: &str,
     session_id: &str,
+    expected_profile: DaemonProfile,
 ) -> anyhow::Result<serde_json::Value> {
     let req = DaemonRequest {
         method: "list".into(),
@@ -306,6 +519,7 @@ fn fetch_tools_list_from_daemon(
     let result = resp.result.ok_or_else(|| {
         anyhow::anyhow!("daemon list response missing `result` field")
     })?;
+    validate_daemon_profile_and_roster(&result, expected_profile, socket_path)?;
     let tools_array = result
         .get("tools")
         .and_then(|v| v.as_array())
@@ -407,6 +621,7 @@ async fn handle_proxy_request(
     socket_path: &str,
     cached_tools_list: &Arc<serde_json::Value>,
     session_id: &str,
+    control_ready: &tokio::sync::watch::Receiver<bool>,
 ) -> Response {
     match req.method.as_str() {
         "initialize" => Response::ok(id, initialize_result()),
@@ -415,7 +630,17 @@ async fn handle_proxy_request(
 
         "tools/call" => match req.tool_call() {
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
-            Ok(call) => forward_tool_call(id, call.name, call.args, socket_path, session_id).await,
+            Ok(call) => {
+                forward_tool_call(
+                    id,
+                    call.name,
+                    call.args,
+                    socket_path,
+                    session_id,
+                    control_ready,
+                )
+                .await
+            }
         },
 
         other => {
@@ -444,7 +669,17 @@ async fn forward_tool_call(
     args: serde_json::Value,
     socket_path: &str,
     session_id: &str,
+    control_ready: &tokio::sync::watch::Receiver<bool>,
 ) -> Response {
+    if let Err(error) = wait_for_control_connection(control_ready.clone()).await {
+        return Response::error(
+            id,
+            -32603,
+            format!(
+                "daemon session control connection unavailable before forwarding `{name}`: {error}"
+            ),
+        );
+    }
     let req = DaemonRequest {
         method: "call".into(),
         name: Some(name.clone()),
@@ -531,7 +766,6 @@ async fn forward_tool_call(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::serve::DaemonResponse;
 
     /// Reconstruct the `!resp.ok` branch in isolation so we can assert
     /// on the serialized shape without spinning up a real daemon /
@@ -610,5 +844,144 @@ mod tests {
             })
             .expect("structured tool error");
         assert_eq!(result, original);
+    }
+
+    fn daemon_list_result(profile: &str, names: &[&str]) -> serde_json::Value {
+        serde_json::json!({
+            "profile": profile,
+            "tools": names.iter().map(|name| serde_json::json!({"name": name})).collect::<Vec<_>>()
+        })
+    }
+
+    #[test]
+    fn daemon_profile_mismatch_fails_closed() {
+        let native = daemon_list_result("native", &["click"]);
+        let error = validate_daemon_profile_and_roster(
+            &native,
+            DaemonProfile::CodexComputerUseCompat,
+            "/tmp/explicit.sock",
+        )
+        .expect_err("native daemon must not satisfy compat proxy");
+        assert!(error.to_string().contains("profile mismatch"));
+        assert!(error.to_string().contains("/tmp/explicit.sock"));
+
+        let compat = daemon_list_result(
+            "codex-computer-use-compat",
+            &CODEX_COMPUTER_USE_TOOL_NAMES,
+        );
+        let error = validate_daemon_profile_and_roster(
+            &compat,
+            DaemonProfile::Native,
+            "/tmp/explicit.sock",
+        )
+        .expect_err("compat daemon must not satisfy native proxy");
+        assert!(error.to_string().contains("profile mismatch"));
+    }
+
+    #[test]
+    fn compat_profile_requires_exact_ordered_ten_tool_roster() {
+        let exact = daemon_list_result(
+            "codex-computer-use-compat",
+            &CODEX_COMPUTER_USE_TOOL_NAMES,
+        );
+        validate_daemon_profile_and_roster(
+            &exact,
+            DaemonProfile::CodexComputerUseCompat,
+            "/tmp/compat.sock",
+        )
+        .expect("exact compat roster");
+
+        let mut reordered = CODEX_COMPUTER_USE_TOOL_NAMES;
+        reordered.swap(0, 1);
+        let wrong = daemon_list_result("codex-computer-use-compat", &reordered);
+        let error = validate_daemon_profile_and_roster(
+            &wrong,
+            DaemonProfile::CodexComputerUseCompat,
+            "/tmp/compat.sock",
+        )
+        .expect_err("reordered roster must fail closed");
+        assert!(error.to_string().contains("roster is invalid"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn control_connection_reconnects_after_daemon_rebind() {
+        use tokio::net::{UnixListener, UnixStream};
+
+        async fn accept_session_begin(
+            listener: &UnixListener,
+            expected_session: &str,
+        ) -> UnixStream {
+            let (mut stream, _) = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                listener.accept(),
+            )
+            .await
+            .expect("control connection timeout")
+            .expect("accept control connection");
+            let mut line = String::new();
+            {
+                let mut reader = BufReader::new(&mut stream);
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    reader.read_line(&mut line),
+                )
+                .await
+                .expect("session_begin timeout")
+                .expect("read session_begin");
+            }
+            let request: DaemonRequest =
+                serde_json::from_str(line.trim()).expect("decode session_begin");
+            assert_eq!(request.method, "session_begin");
+            assert_eq!(request.session_id.as_deref(), Some(expected_session));
+            let ack = DaemonResponse::ok(serde_json::json!({
+                "session_begin": true,
+                "profile": DaemonProfile::Native,
+            }));
+            stream
+                .write_all(
+                    format!("{}\n", serde_json::to_string(&ack).unwrap()).as_bytes(),
+                )
+                .await
+                .expect("write session_begin ACK");
+            stream.flush().await.expect("flush session_begin ACK");
+            stream
+        }
+
+        let root = tempfile::tempdir().expect("socket tempdir");
+        let socket = root.path().join("daemon.sock");
+        let first_listener = UnixListener::bind(&socket).expect("bind first daemon");
+        let session_id = "proxy-reexec-test-session".to_owned();
+        let (ready_tx, mut ready_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(run_control_connection(
+            socket.to_string_lossy().into_owned(),
+            session_id.clone(),
+            ready_tx,
+        ));
+
+        let first_stream = accept_session_begin(&first_listener, &session_id).await;
+        wait_for_control_connection(ready_rx.clone())
+            .await
+            .expect("first control connection ready");
+        drop(first_listener);
+        drop(first_stream);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while *ready_rx.borrow() {
+                ready_rx.changed().await.expect("readiness sender alive");
+            }
+        })
+        .await
+        .expect("first control connection closes");
+        std::fs::remove_file(&socket).expect("remove first daemon socket");
+
+        let second_listener = UnixListener::bind(&socket).expect("bind replacement daemon");
+        let second_stream = accept_session_begin(&second_listener, &session_id).await;
+        wait_for_control_connection(ready_rx.clone())
+            .await
+            .expect("replacement control connection ready");
+
+        task.abort();
+        let _ = task.await;
+        drop(second_stream);
     }
 }

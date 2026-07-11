@@ -3422,12 +3422,12 @@ impl Tool for TypeTextTool {
         };
         let text_len = text.chars().count();
 
-        // delivery_mode:"background" — TextInput is currently never flagged as
-        // silently dropped (Chromium accepts WM_CHAR through its IME path),
-        // but call the helper so the policy stays centralised in delivery.rs
-        // and future targets can be added without touching this site.
+        // Refuse known background drops before the final WM_CHAR path. WPF is
+        // conditional: indexed text still has a working UIA ValuePattern route,
+        // while unindexed text would be posted to the top-level and disappear.
         if delivery == DeliveryMode::Background
-            && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::TextInput)
+            && (crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::TextInput)
+                || (elem_idx.is_none() && crate::input::delivery::is_wpf_target_window(hwnd)))
         {
             return crate::input::delivery::background_unavailable_error(
                 hwnd,
@@ -4054,17 +4054,14 @@ impl Tool for PressKeyTool {
             }
         }
         let key_display = key.clone();
-        // Background mode: plain keystrokes (no modifiers) go through Chromium
-        // and GTK fine — would_be_silently_dropped returns false for the
-        // Keystroke variant by design. KeyCombo (modifiers) on Chromium IS
-        // dropped, so check that when modifiers are present.
+        // Background mode: classify plain keys and chords independently so
+        // framework-specific silent drops become structured refusals.
         let event_kind = if mods.is_empty() {
             EventKind::Keystroke
         } else {
             EventKind::KeyCombo
         };
-        if !px_focus
-            && delivery == DeliveryMode::Background
+        if delivery == DeliveryMode::Background
             && crate::input::delivery::would_be_silently_dropped(hwnd, event_kind)
         {
             // macOS-aligned contract: a `background` actuation never fronts. This

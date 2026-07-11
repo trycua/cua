@@ -165,6 +165,13 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
         // consume them without a foreground swap.
         return matches!(kind, MouseClick | MouseMove);
     }
+    if is_tk_target_window(hwnd) {
+        // Tk's Windows event loop does not treat posted WM_CHAR/WM_KEYDOWN as
+        // genuine keyboard input for the focused widget. The messages can be
+        // accepted by PostMessage while the Entry receives nothing, so refuse
+        // instead of reporting a false background success.
+        return matches!(kind, Keystroke | KeyCombo | TextInput);
+    }
     // NB: WinUI3 (`WinUIDesktopWin32WindowClass`) is deliberately NOT flagged
     // here. It looks WPF-like, but its composition input-site does NOT consume
     // the synthetic pen/touch the way WPF's stylus stack does — routing WinUI3
@@ -229,6 +236,16 @@ pub fn is_vcl_target_window(hwnd: u64) -> bool {
 /// `delivery_mode:"foreground"`); with an element_index it uses UIA ValuePattern.
 pub fn is_wpf_target_window(hwnd: u64) -> bool {
     read_class_name(hwnd).starts_with("HwndWrapper")
+}
+
+/// Detect Tk/Tkinter top-level windows. Tk registers this stable class name
+/// for its root and child toplevels on Windows.
+pub fn is_tk_target_window(hwnd: u64) -> bool {
+    is_tk_class_name(&read_class_name(hwnd))
+}
+
+fn is_tk_class_name(class: &str) -> bool {
+    class == "TkTopLevel" || class.starts_with("TkTopLevel.")
 }
 
 /// Detect WinUI3 / Windows-App-SDK desktop top-level windows. The frame is a
@@ -361,6 +378,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn detects_tk_toplevel_classes_without_matching_unrelated_windows() {
+        assert!(is_tk_class_name("TkTopLevel"));
+        assert!(is_tk_class_name("TkTopLevel.1"));
+        assert!(!is_tk_class_name("TkChild"));
+        assert!(!is_tk_class_name("Chrome_WidgetWin_1"));
+    }
+    #[test]
     fn delivery_mode_parses_known_values() {
         let j = |s: &str| serde_json::json!({"delivery_mode": s});
         assert_eq!(
@@ -410,17 +434,12 @@ mod tests {
         );
         let structured = result.structured_content.as_ref().expect("structured");
         assert_eq!(result.is_error, Some(true));
-        assert_eq!(
-            structured["code"].as_str(),
-            Some("background_occluded")
-        );
+        assert_eq!(structured["code"].as_str(), Some("background_occluded"));
         assert_eq!(structured["event_kind"].as_str(), Some("mouse_click"));
-        assert!(
-            structured["cause"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("occluded")
-        );
+        assert!(structured["cause"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("occluded"));
 
         let text = match &result.content[0] {
             cua_driver_core::protocol::Content::Text { text, .. } => text,

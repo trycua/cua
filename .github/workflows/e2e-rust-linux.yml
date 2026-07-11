@@ -7,6 +7,20 @@ on:
         description: "Optional full 40-character commit SHA; defaults to dispatch SHA"
         required: false
         default: ""
+      lane:
+        description: "Diagnostic lane; canonical dispatches use all"
+        required: false
+        type: choice
+        default: all
+        options:
+          - all
+          - shared
+          - native
+          - capture
+      cell_filter:
+        description: "Optional shared-cell substring for targeted diagnostics"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -34,12 +48,14 @@ jobs:
           echo "sha=${sha,,}" >> "$GITHUB_OUTPUT"
 
   shared:
+    if: inputs.lane == 'all' || inputs.lane == 'shared'
     name: "Linux / shared Electron + Tauri"
     needs: source
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+      CUA_E2E_CELL_FILTER: ${{ inputs.cell_filter }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -72,6 +88,7 @@ jobs:
           retention-days: 14
 
   native:
+    if: inputs.lane == 'all' || inputs.lane == 'native'
     name: "Linux / GTK3 native harness"
     needs: source
     runs-on: ubuntu-latest
@@ -110,6 +127,7 @@ jobs:
           retention-days: 14
 
   capture:
+    if: inputs.lane == 'all' || inputs.lane == 'capture'
     name: "Linux / capture and desktop scope"
     needs: source
     runs-on: ubuntu-latest

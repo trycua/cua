@@ -56,6 +56,7 @@ export CUA_TEST_DRIVER_BIN="${RUST_ROOT}/target/release/cua-driver"
 export CUA_TEST_APPS_ROOT="${RUST_ROOT}/test-apps"
 export CUA_TEST_REQUIRE_FIXTURES=1
 export CUA_TEST_DRIVER_STDERR=1
+export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
   export CUA_ATSPI_DEBUG=1
 fi

@@ -126,23 +126,6 @@ fn panic_message(payload: &Box<dyn Any + Send>) -> String {
         .unwrap_or_else(|| "test panicked without a string payload".to_owned())
 }
 
-fn run_host_case<F>(scenario: &str, spec: &HostSpec, test: F) -> Option<Box<dyn Any + Send>>
-where
-    F: FnOnce(Fixture),
-{
-    let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
-        let Some(fixture) = launch_host(spec, scenario) else {
-            return false;
-        };
-        test(fixture);
-        true
-    }));
-    match outcome {
-        Ok(true) | Ok(false) => None,
-        Err(payload) => Some(payload),
-    }
-}
-
 fn run_host_case_with_outcome<F>(
     case: CaseSpec,
     spec: &HostSpec,
@@ -404,10 +387,6 @@ fn evidence_for_driver(driver: &McpDriver) -> Evidence {
     }
 }
 
-fn launch_host(spec: &HostSpec, scenario: &str) -> Option<Fixture> {
-    launch_host_with_evidence(spec, scenario, &mut Evidence::default())
-}
-
 fn launch_host_with_evidence(
     spec: &HostSpec,
     scenario: &str,
@@ -609,26 +588,6 @@ fn assert_tree_contains(fixture: &mut Fixture, marker: &str) {
     );
 }
 
-fn click_ax(fixture: &mut Fixture, id: &str) {
-    let pre = snapshot(fixture);
-    let element_index = require_element(&pre, id);
-    let response = fixture.driver.call(
-        "click",
-        serde_json::json!({
-            "pid": fixture.pid as i64,
-            "window_id": fixture.wid,
-            "element_index": element_index,
-            "delivery_mode": "background"
-        }),
-    );
-    assert!(
-        !response.is_error(),
-        "{}: AX click {id} failed: {}",
-        fixture.name,
-        response.text()
-    );
-}
-
 fn action_target_args(
     fixture: &Fixture,
     state: &ToolResponse,
@@ -689,11 +648,6 @@ fn background_refusal_code(response: &ToolResponse, delivery: &str) -> Option<Re
     response.structured()["code"]
         .as_str()
         .and_then(RefusalCode::from_driver_code)
-}
-
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-fn is_background_refusal(response: &ToolResponse, delivery: &str) -> bool {
-    background_refusal_code(response, delivery).is_some()
 }
 
 fn run_text_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
@@ -1032,255 +986,5 @@ fn shared_web_action_matrix_is_state_verified() {
         std::env::var_os("CUA_E2E_CELL_FILTER").is_none() || selected > 0,
         "CUA_E2E_CELL_FILTER matched no shared E2E cells"
     );
-    resume_first_failure(failure);
-}
-
-#[test]
-#[ignore]
-fn shared_web_keyboard_routes_are_state_verified() {
-    let mut failure = None;
-    for spec in host_specs() {
-        let result = run_host_case("keyboard", &spec, |mut fixture| {
-            let pre = snapshot(&mut fixture);
-            let input = require_element(&pre, "keyboard-input");
-            let (origin_x, origin_y) = window_origin(&fixture, &pre);
-            let scale = screenshot_scale(&pre);
-            let (screen_x, screen_y) = element_center(&pre, input);
-            let focus = fixture.driver.call(
-                "click",
-                serde_json::json!({
-                    "pid": fixture.pid as i64,
-                    "window_id": fixture.wid,
-                    "x": (screen_x - origin_x) * scale,
-                    "y": (screen_y - origin_y) * scale,
-                    "delivery_mode": "background"
-                }),
-            );
-            assert!(
-                !focus.is_error(),
-                "{}: keyboard input focus click failed: {}",
-                fixture.name,
-                focus.text()
-            );
-            thread::sleep(Duration::from_millis(150));
-            let enter = fixture.driver.call(
-                "press_key",
-                serde_json::json!({
-                    "pid": fixture.pid as i64,
-                    "window_id": fixture.wid,
-                    "element_index": input,
-                    "key": "return",
-                    "delivery_mode": "background"
-                }),
-            );
-            assert!(
-                !enter.is_error(),
-                "{}: return failed: {}",
-                fixture.name,
-                enter.text()
-            );
-            assert_tree_contains(&mut fixture, "key_state=enter");
-
-            let hotkey = fixture.driver.call(
-                "hotkey",
-                serde_json::json!({
-                    "pid": fixture.pid as i64,
-                    "window_id": fixture.wid,
-                    "keys": ["ctrl", "shift", "7"],
-                    "x": (screen_x - origin_x) * scale,
-                    "y": (screen_y - origin_y) * scale,
-                    "delivery_mode": "background"
-                }),
-            );
-            #[cfg(target_os = "windows")]
-            {
-                if is_background_refusal(&hotkey, "background") {
-                    println!(
-                        "✅ {} keyboard AX route: background hotkey refused honestly",
-                        fixture.name
-                    );
-                    return;
-                }
-            }
-            #[cfg(target_os = "linux")]
-            {
-                if is_background_refusal(&hotkey, "background") {
-                    println!(
-                        "✅ {} keyboard AX route: background hotkey refused honestly",
-                        fixture.name
-                    );
-                    return;
-                }
-            }
-            assert!(
-                !hotkey.is_error(),
-                "{}: Ctrl+Shift+7 failed: {}",
-                fixture.name,
-                hotkey.text()
-            );
-            assert_tree_contains(&mut fixture, "key_state=hotkey");
-            println!("✅ {} keyboard AX routes", fixture.name);
-        });
-        if failure.is_none() {
-            failure = result;
-        }
-    }
-    resume_first_failure(failure);
-}
-
-#[test]
-#[ignore]
-fn shared_web_editor_and_scroll_are_state_verified() {
-    let mut failure = None;
-    for spec in host_specs() {
-        let result = run_host_case("editor_scroll", &spec, |mut fixture| {
-            let pre = snapshot(&mut fixture);
-            let editor = require_element(&pre, "editor-document");
-            let text = fixture.driver.call(
-                "type_text",
-                serde_json::json!({
-                    "pid": fixture.pid as i64,
-                    "window_id": fixture.wid,
-                    "element_index": editor,
-                    "text": "CUA saved this note.",
-                    "delivery_mode": "background"
-                }),
-            );
-            assert!(
-                !text.is_error(),
-                "{}: editor type_text failed: {}",
-                fixture.name,
-                text.text()
-            );
-            click_ax(&mut fixture, "editor-save");
-            assert_tree_contains(&mut fixture, "editor_status=saved:");
-
-            let scroll = require_element(&snapshot(&mut fixture), "scroll-tall");
-            let response = fixture.driver.call(
-                "scroll",
-                serde_json::json!({
-                    "pid": fixture.pid as i64,
-                    "window_id": fixture.wid,
-                    "element_index": scroll,
-                    "direction": "down",
-                    "by": "page",
-                    "amount": 4,
-                    "delivery_mode": "background"
-                }),
-            );
-            #[cfg(target_os = "windows")]
-            {
-                if is_background_refusal(&response, "background") {
-                    println!(
-                        "✅ {} editor + scroll: background scroll refused honestly",
-                        fixture.name
-                    );
-                    return;
-                }
-            }
-            assert!(
-                !response.is_error(),
-                "{}: scroll failed: {}",
-                fixture.name,
-                response.text()
-            );
-            let post = snapshot(&mut fixture);
-            let offset = post
-                .tree_text()
-                .lines()
-                .find_map(|line| line.split("scroll_offset=").nth(1))
-                .and_then(|tail| tail.split(|ch: char| !ch.is_ascii_digit()).next())
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(0);
-            assert!(
-                offset > 0,
-                "{}: successful background scroll did not advance the external scroll oracle: {}",
-                fixture.name,
-                post.tree_text()
-            );
-            println!("✅ {} editor + scroll state oracles", fixture.name);
-        });
-        if failure.is_none() {
-            failure = result;
-        }
-    }
-    resume_first_failure(failure);
-}
-
-#[test]
-#[ignore]
-fn shared_web_child_window_and_drag_have_external_oracles() {
-    let mut failure = None;
-    for spec in host_specs() {
-        let result = run_host_case("child_window_drag", &spec, |mut fixture| {
-            let pre = snapshot(&mut fixture);
-            let (window_x, window_y) = window_origin(&fixture, &pre);
-            let scale = screenshot_scale(&pre);
-            let source = require_element(&pre, "drag-source");
-            let frame = pre.structured()["elements"]
-                .as_array()
-                .and_then(|elements| {
-                    elements
-                        .iter()
-                        .find(|element| element["element_index"].as_u64() == Some(source))
-                })
-                .and_then(|element| element["frame"].as_object())
-                .unwrap_or_else(|| panic!("{}: drag-source has no frame", fixture.name));
-            let x = (frame["x"].as_f64().unwrap_or(0.0) - window_x
-                + frame["w"].as_f64().unwrap_or(0.0) / 2.0)
-                * scale;
-            let y = (frame["y"].as_f64().unwrap_or(0.0) - window_y
-                + frame["h"].as_f64().unwrap_or(0.0) / 2.0)
-                * scale;
-            let target_index = require_element(&pre, "drop-target");
-            let target = pre.structured()["elements"]
-                .as_array()
-                .and_then(|elements| {
-                    elements
-                        .iter()
-                        .find(|element| element["element_index"].as_u64() == Some(target_index))
-                })
-                .and_then(|element| element["frame"].as_object())
-                .unwrap_or_else(|| panic!("{}: drop-target has no frame", fixture.name));
-            let tx = (target["x"].as_f64().unwrap_or(0.0) - window_x
-                + target["w"].as_f64().unwrap_or(0.0) / 2.0)
-                * scale;
-            let ty = (target["y"].as_f64().unwrap_or(0.0) - window_y
-                + target["h"].as_f64().unwrap_or(0.0) / 2.0)
-                * scale;
-            #[cfg(not(target_os = "macos"))]
-            let _ = (x, y, tx, ty);
-            #[cfg(target_os = "macos")]
-            {
-                let drag = fixture.driver.call(
-                    "drag",
-                    serde_json::json!({
-                        "pid": fixture.pid as i64,
-                        "window_id": fixture.wid,
-                        "from_x": x,
-                        "from_y": y,
-                        "to_x": tx,
-                        "to_y": ty,
-                        "duration_ms": 500,
-                        "delivery_mode": "foreground"
-                    }),
-                );
-                assert!(
-                    !drag.is_error(),
-                    "{}: drag failed: {}",
-                    fixture.name,
-                    drag.text()
-                );
-                assert_tree_contains(&mut fixture, "drag_status=dropped");
-            }
-
-            click_ax(&mut fixture, "btn-open-child-window");
-            assert_tree_contains(&mut fixture, "child_windows=1");
-            println!("✅ {} child-window + drag state oracles", fixture.name);
-        });
-        if failure.is_none() {
-            failure = result;
-        }
-    }
     resume_first_failure(failure);
 }

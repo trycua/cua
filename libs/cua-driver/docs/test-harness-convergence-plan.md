@@ -85,8 +85,8 @@ state rather than the older 60-cell proposal.
 
 ### Still incomplete
 
-- Three older shared tests remain in source pending deletion, although the
-  canonical runners now select only the typed catalog.
+- The three older shared tests are removed. The typed catalog is the sole
+  shared behavior owner.
 - `guard_ux_test.rs`, `modality_input_e2e_test.rs`, and
   `modality_background_test.rs` overlap and still allow many runtime skips.
 - Windows `all` still exposes `guard` and `modality` as test families and does
@@ -265,7 +265,7 @@ Canonical invocations set strict mode. Missing required capabilities produce
 
 | Current file | Final owner or action |
 | --- | --- |
-| `cross_platform_behavior_test.rs` | Shared Electron/Tauri case catalog and external fixture-state oracles; remove the three legacy tests after parity |
+| `cross_platform_behavior_test.rs` | Shared Electron/Tauri case catalog and external fixture-state and desktop-side-effect oracles |
 | `harness_wpf_test.rs` | WPF-specific rows using the common case/result runner |
 | `harness_winui3_test.rs` | WinUI3-specific rows; keep only toolkit-distinct behavior |
 | `harness_web_test.rs` | WebView2 and Page/CDP behavior; do not mix Page targeting with AX/PX labels |
@@ -349,10 +349,12 @@ environment error, and a synthetic CaseSpec set renders a valid report.
 - Add any missing route cells; document every omitted equivalent.
 - Add the desktop observer to background and refusal cells.
 - Preserve editor-save and all existing external markers.
-- Run old and new shared tests side by side, then remove the three legacy tests.
+- Remove the three legacy shared tests after mapping every assertion.
 
 Exit: no fake drag pass, no arbitrary error accepted as refusal, no shared
-legacy test, and one result/evidence bundle per shared cell.
+legacy test, and one result/evidence bundle per shared cell. This source
+convergence is complete; platform delivery defects remain visible as cell
+failures.
 
 ### Slice 3: Windows convergence
 

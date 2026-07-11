@@ -67,7 +67,18 @@ impl CdpClient {
     /// "Allow remote debugging?" confirmation the Chrome-toggle path does,
     /// so there's no reason to route it through `CdpSessionCache`.
     pub async fn evaluate(javascript: &str, port: u16) -> anyhow::Result<String> {
-        let mut session = CdpSession::connect(port, None).await?;
+        Self::evaluate_targeted(javascript, port, None).await
+    }
+
+    /// Evaluate JavaScript against the unique page target selected by
+    /// `target_url_contains`. An explicit hint never falls back to another
+    /// page when it is absent or ambiguous.
+    pub async fn evaluate_targeted(
+        javascript: &str,
+        port: u16,
+        target_url_contains: Option<&str>,
+    ) -> anyhow::Result<String> {
+        let mut session = CdpSession::connect(port, target_url_contains).await?;
         let obj = tokio::time::timeout(
             Duration::from_secs(10),
             session.call("Runtime.evaluate", serde_json::json!({
@@ -419,24 +430,77 @@ async fn ws_url_for_page_target(port: u16, target_url_contains: Option<&str>) ->
     Ok((ws_url, target_url))
 }
 
-/// Pick the page target whose `url` contains `hint` (case-insensitive), or
-/// fall back to the first page in `pages` if no hint is given or nothing
-/// matches. Shared by both discovery paths (classic `/json` and
+/// Pick the unique page target whose `url` contains `hint`
+/// (case-insensitive), or the first page when no hint is given. Explicit
+/// hints fail closed when zero or multiple pages match. Shared by both
+/// discovery paths (classic `/json` and
 /// `Target.getTargets`) since a browser with more than one tab open is
 /// otherwise picked non-deterministically — CDP target ids carry no
 /// relationship to the caller's `window_id`.
 fn pick_target<'a>(pages: &[&'a serde_json::Value], hint: Option<&str>) -> Option<&'a serde_json::Value> {
-    if let Some(hint) = hint {
-        let hint_lower = hint.to_ascii_lowercase();
-        if let Some(t) = pages.iter().find(|t| {
-            t.get("url")
-                .and_then(|v| v.as_str())
-                .is_some_and(|url| url.to_ascii_lowercase().contains(&hint_lower))
-        }) {
-            return Some(t);
+    match hint {
+        None => pages.first().copied(),
+        Some(hint) => {
+            let hint_lower = hint.to_ascii_lowercase();
+            let mut matches = pages.iter().copied().filter(|target| {
+                target
+                    .get("url")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|url| url.to_ascii_lowercase().contains(&hint_lower))
+            });
+            let target = matches.next()?;
+            if matches.next().is_some() {
+                return None;
+            }
+            Some(target)
         }
     }
-    pages.first().copied()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pick_target;
+
+    fn pages() -> Vec<serde_json::Value> {
+        vec![
+            serde_json::json!({ "type": "page", "url": "app://fixture/#window-a" }),
+            serde_json::json!({ "type": "page", "url": "app://fixture/#window-b" }),
+        ]
+    }
+
+    #[test]
+    fn explicit_target_hint_selects_one_page() {
+        let pages = pages();
+        let refs = pages.iter().collect::<Vec<_>>();
+        assert_eq!(
+            pick_target(&refs, Some("#WINDOW-B")).and_then(|target| target["url"].as_str()),
+            Some("app://fixture/#window-b")
+        );
+    }
+
+    #[test]
+    fn explicit_target_hint_never_falls_back() {
+        let pages = pages();
+        let refs = pages.iter().collect::<Vec<_>>();
+        assert!(pick_target(&refs, Some("#missing")).is_none());
+    }
+
+    #[test]
+    fn ambiguous_target_hint_fails_closed() {
+        let pages = pages();
+        let refs = pages.iter().collect::<Vec<_>>();
+        assert!(pick_target(&refs, Some("app://fixture/")).is_none());
+    }
+
+    #[test]
+    fn omitted_target_hint_keeps_legacy_first_page_behavior() {
+        let pages = pages();
+        let refs = pages.iter().collect::<Vec<_>>();
+        assert_eq!(
+            pick_target(&refs, None).and_then(|target| target["url"].as_str()),
+            Some("app://fixture/#window-a")
+        );
+    }
 }
 
 fn parse_cdp_result(obj: &serde_json::Value) -> anyhow::Result<String> {

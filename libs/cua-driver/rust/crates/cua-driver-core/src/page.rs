@@ -72,6 +72,27 @@ pub trait PageBackend: Send + Sync {
         javascript: &str,
     ) -> anyhow::Result<String>;
 
+    /// Evaluate `javascript` against an explicitly selected CDP page.
+    ///
+    /// Backends that do not expose per-page CDP routing keep their legacy
+    /// behavior only when no explicit target was requested. A supplied port
+    /// or URL hint must never be silently ignored.
+    async fn execute_javascript_targeted(
+        &self,
+        pid: i32,
+        window_id: u32,
+        javascript: &str,
+        cdp_port: Option<u16>,
+        target_url_contains: Option<&str>,
+    ) -> anyhow::Result<String> {
+        if cdp_port.is_some() || target_url_contains.is_some() {
+            anyhow::bail!(
+                "targeted execute_javascript is not implemented on this platform's page backend"
+            );
+        }
+        self.execute_javascript(pid, window_id, javascript).await
+    }
+
     /// Whether this backend can execute JS at all.  False → the tool short-
     /// circuits with a "not supported here" error; true → the backend may
     /// still return an error at call time (e.g. CDP port not reachable).
@@ -251,11 +272,13 @@ fn def() -> &'static ToolDef {
                 },
                 "cdp_port": {
                     "type": "integer",
-                    "description": "Optional, for insert_text/type_keystrokes only: use this exact CDP port instead of auto-discovering one from pid. Needed when the port was opened via the browser's own remote-debugging toggle rather than a launch-time flag, since that path may not answer the auto-discovery probe."
+                    "minimum": 1,
+                    "maximum": 65535,
+                    "description": "Optional, for execute_javascript/insert_text/type_keystrokes: use this exact CDP port instead of auto-discovering one from pid. Needed when the port was opened via the browser's own remote-debugging toggle rather than a launch-time flag, since that path may not answer the auto-discovery probe."
                 },
                 "target_url_contains": {
                     "type": "string",
-                    "description": "Optional, for insert_text/type_keystrokes only: pick the browser tab whose URL contains this substring instead of whichever tab is found first. Use this on a multi-tab browser — there's no built-in link between window_id and which tab a CDP call reaches."
+                    "description": "Optional, for execute_javascript/insert_text/type_keystrokes: require exactly one browser tab whose URL contains this substring. Use this on a multi-tab browser — there's no built-in link between window_id and which tab a CDP call reaches."
                 },
                 "javascript": {
                     "type": "string",
@@ -374,7 +397,23 @@ impl Tool for PageTool {
                     Some(v) => v.to_owned(),
                     None => return ToolResult::error("Missing required parameter: javascript"),
                 };
-                match self.backend.execute_javascript(pid, window_id, &js).await {
+                let cdp_port = match optional_cdp_port(&args) {
+                    Ok(value) => value,
+                    Err(error) => return ToolResult::error(error),
+                };
+                let target_url_contains =
+                    args.get("target_url_contains").and_then(|v| v.as_str());
+                match self
+                    .backend
+                    .execute_javascript_targeted(
+                        pid,
+                        window_id,
+                        &js,
+                        cdp_port,
+                        target_url_contains,
+                    )
+                    .await
+                {
                     Ok(result) => ToolResult::text(result),
                     Err(e) => ToolResult::error(format!("{e}")),
                 }
@@ -420,7 +459,10 @@ impl Tool for PageTool {
                     Some(v) => v.to_owned(),
                     None => return ToolResult::error("Missing required parameter: text"),
                 };
-                let cdp_port = args.get("cdp_port").and_then(|v| v.as_u64()).map(|v| v as u16);
+                let cdp_port = match optional_cdp_port(&args) {
+                    Ok(value) => value,
+                    Err(error) => return ToolResult::error(error),
+                };
                 let target_url_contains = args.get("target_url_contains").and_then(|v| v.as_str());
                 match self.backend.insert_text(pid, window_id, &text, cdp_port, target_url_contains).await {
                     Ok(msg) => ToolResult::text(msg),
@@ -433,7 +475,10 @@ impl Tool for PageTool {
                     Some(v) => v.to_owned(),
                     None => return ToolResult::error("Missing required parameter: text"),
                 };
-                let cdp_port = args.get("cdp_port").and_then(|v| v.as_u64()).map(|v| v as u16);
+                let cdp_port = match optional_cdp_port(&args) {
+                    Ok(value) => value,
+                    Err(error) => return ToolResult::error(error),
+                };
                 let target_url_contains = args.get("target_url_contains").and_then(|v| v.as_str());
                 match self.backend.type_keystrokes(pid, window_id, &text, cdp_port, target_url_contains).await {
                     Ok(msg) => ToolResult::text(msg),
@@ -468,5 +513,139 @@ impl Tool for PageTool {
 
             other => ToolResult::error(format!("Unknown action: {other}")),
         }
+    }
+}
+
+fn optional_cdp_port(args: &Value) -> Result<Option<u16>, String> {
+    let Some(value) = args.get("cdp_port") else {
+        return Ok(None);
+    };
+    let raw = value
+        .as_u64()
+        .ok_or_else(|| "Invalid parameter: cdp_port must be an integer from 1 to 65535".to_owned())?;
+    let port = u16::try_from(raw)
+        .ok()
+        .filter(|port| *port > 0)
+        .ok_or_else(|| format!("Invalid parameter: cdp_port {raw} outside 1..=65535"))?;
+    Ok(Some(port))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    type TargetedCall = (i32, u32, String, Option<u16>, Option<String>);
+
+    #[derive(Default)]
+    struct RecordingBackend {
+        targeted: Mutex<Option<TargetedCall>>,
+    }
+
+    #[async_trait]
+    impl PageBackend for RecordingBackend {
+        async fn get_text(&self, _pid: i32, _window_id: u32) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+
+        async fn query_dom(
+            &self,
+            _pid: i32,
+            _window_id: u32,
+            _css_selector: &str,
+            _attributes: &[String],
+        ) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+
+        async fn execute_javascript(
+            &self,
+            _pid: i32,
+            _window_id: u32,
+            _javascript: &str,
+        ) -> anyhow::Result<String> {
+            anyhow::bail!("untargeted execute must not be used")
+        }
+
+        async fn execute_javascript_targeted(
+            &self,
+            pid: i32,
+            window_id: u32,
+            javascript: &str,
+            cdp_port: Option<u16>,
+            target_url_contains: Option<&str>,
+        ) -> anyhow::Result<String> {
+            *self.targeted.lock().unwrap() = Some((
+                pid,
+                window_id,
+                javascript.to_owned(),
+                cdp_port,
+                target_url_contains.map(str::to_owned),
+            ));
+            Ok("targeted".to_owned())
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_javascript_forwards_explicit_page_target() {
+        let backend = Arc::new(RecordingBackend::default());
+        let tool = PageTool::new(backend.clone());
+
+        let result = tool
+            .invoke(serde_json::json!({
+                "pid": 42,
+                "window_id": 7,
+                "action": "execute_javascript",
+                "javascript": "document.title",
+                "cdp_port": 9333,
+                "target_url_contains": "#window-b"
+            }))
+            .await;
+
+        assert!(result.is_error.is_none());
+        assert_eq!(
+            *backend.targeted.lock().unwrap(),
+            Some((
+                42,
+                7,
+                "document.title".to_owned(),
+                Some(9333),
+                Some("#window-b".to_owned()),
+            ))
+        );
+    }
+
+    #[test]
+    fn schema_advertises_targeted_execute_javascript() {
+        let schema = &def().input_schema["properties"];
+        assert_eq!(schema["cdp_port"]["minimum"], 1);
+        assert_eq!(schema["cdp_port"]["maximum"], 65535);
+        assert!(schema["cdp_port"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("execute_javascript"));
+        assert!(schema["target_url_contains"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("exactly one"));
+    }
+
+    #[tokio::test]
+    async fn rejects_out_of_range_cdp_port_before_dispatch() {
+        let backend = Arc::new(RecordingBackend::default());
+        let tool = PageTool::new(backend.clone());
+
+        let result = tool
+            .invoke(serde_json::json!({
+                "pid": 42,
+                "window_id": 7,
+                "action": "execute_javascript",
+                "javascript": "document.title",
+                "cdp_port": 65536
+            }))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+        assert!(backend.targeted.lock().unwrap().is_none());
     }
 }

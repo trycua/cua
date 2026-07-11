@@ -99,6 +99,21 @@ impl PageBackend for MacOsPageBackend {
         execute_js(javascript, &bundle_id, pid, window_id).await
     }
 
+    async fn execute_javascript_targeted(
+        &self,
+        pid: i32,
+        window_id: u32,
+        javascript: &str,
+        cdp_port: Option<u16>,
+        target_url_contains: Option<&str>,
+    ) -> anyhow::Result<String> {
+        if cdp_port.is_none() && target_url_contains.is_none() {
+            return self.execute_javascript(pid, window_id, javascript).await;
+        }
+        let port = resolve_cdp_port(pid, cdp_port, "execute_javascript").await?;
+        CdpClient::evaluate_targeted(javascript, port, target_url_contains).await
+    }
+
     async fn click_element(
         &self,
         pid: i32,

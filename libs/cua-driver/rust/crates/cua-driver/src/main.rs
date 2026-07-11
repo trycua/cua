@@ -19,8 +19,9 @@
 //!  1. Initialises the cursor overlay channel synchronously (so
 //!     `run_on_main_thread` always finds it ready).
 //!  2. Spawns a background tokio thread for the MCP server.
-//!  3. Calls `platform_macos::cursor::overlay::run_on_main_thread()` which
-//!     starts `NSApplication.run()` and the 60 fps render loop.
+//!  3. Runs AppKit on the main thread. With the cursor enabled this uses the
+//!     overlay loop; otherwise it uses the plain event loop so browser Apple
+//!     Events and other main-queue work remain serviceable.
 //!
 //! On all other platforms `#[tokio::main]` is used directly.
 
@@ -237,7 +238,24 @@ fn main() {
             );
             let reg = Arc::new(build_macos_registry());
             reg.init_self_weak();
-            cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
+            if platform_macos::session::has_graphic_access() {
+                // Browser automation dispatches NSAppleScript to the AppKit
+                // main queue. Run the one-shot tool on a worker while main
+                // pumps that queue, then terminate with the tool's exit code.
+                let call_handle = std::thread::Builder::new()
+                    .name("cua-call".into())
+                    .spawn(move || {
+                        cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
+                        std::process::exit(0);
+                    })
+                    .expect("spawn call thread");
+                platform_macos::pip::run_appkit_main_loop();
+                let _ = call_handle.join();
+            } else {
+                // Headless calls cannot target GUI browsers and must avoid
+                // registering NSApplication with a missing Window Server.
+                cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
+            }
             return;
         }
         cli::Command::Serve {
@@ -276,10 +294,6 @@ fn main() {
             cua_driver_core::video::set_video_backend_factory(
                 Box::new(platform_macos::video_sckit::SckitVideoBackendFactory),
             );
-            let pip_cfg = match pip_preview::default_config_path() {
-                Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
-                None => pip_preview::PipConfig::from_args(),
-            };
             maybe_init_pip();
 
             // Agent-cursor overlay. The DAEMON is the process that actually
@@ -359,14 +373,11 @@ fn main() {
 
             // Keep the main thread alive for the daemon.
             //
-            // PiP needs the AppKit main run loop to process the
-            // dispatch_async_f calls that push frames into NSImageView;
-            // park main in NSApplication.run() when --experimental-pip is
-            // on. Otherwise just join the serve thread so the process
-            // stays up as long as the daemon does.
-            if pip_cfg.enabled {
-                platform_macos::pip::run_appkit_main_loop();
-            } else if cursor_cfg.enabled {
+            // The cursor loop also services PiP and browser automation main-
+            // queue dispatch. Without a cursor, keep a plain AppKit loop alive
+            // whenever a Window Server is available. Headless daemons retain
+            // the old join behavior and never touch NSApplication.
+            if cursor_cfg.enabled {
                 // Render the agent-cursor overlay: park the main thread in the
                 // AppKit run loop so the overlay NSWindow draws. `run_on_main_thread`
                 // self-guards on `has_graphic_access()` and returns immediately
@@ -375,6 +386,8 @@ fn main() {
                 // on its background thread regardless.
                 platform_macos::cursor::overlay::run_on_main_thread();
                 let _ = serve_handle.join();
+            } else if platform_macos::session::has_graphic_access() {
+                platform_macos::pip::run_appkit_main_loop();
             } else {
                 let _ = serve_handle.join();
             }
@@ -553,12 +566,14 @@ fn main() {
         })
         .expect("spawn mcp thread");
 
-    // Main thread: AppKit overlay (blocks until the process exits).
+    // Main thread: AppKit overlay or plain event loop. Browser automation
+    // requires main-queue dispatch even when `--no-overlay` is set.
     if enabled {
         platform_macos::cursor::overlay::run_on_main_thread();
+    } else if platform_macos::session::has_graphic_access() {
+        platform_macos::pip::run_appkit_main_loop();
     }
-    // Overlay disabled: park the main thread while the MCP background thread
-    // keeps running.
+    // No Window Server: park while the MCP background thread keeps running.
     loop { std::thread::park(); }
 }
 

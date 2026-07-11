@@ -3,6 +3,7 @@
 
 use anyhow::Context;
 use std::collections::HashSet;
+use std::ffi::c_void;
 use std::time::{Duration, Instant};
 
 use crate::windows::WindowBounds;
@@ -10,7 +11,6 @@ use crate::windows::WindowBounds;
 pub struct BrowserJs;
 
 const CHROME_APP_BUNDLE_PREFIX: &str = "com.google.Chrome.app.";
-static OSA_EXECUTION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Clone, Debug)]
 struct NativeWindowTarget {
@@ -21,12 +21,12 @@ struct NativeWindowTarget {
 
 fn app_name_for_bundle(bundle_id: &str) -> Option<&'static str> {
     match bundle_id {
-        "com.google.Chrome"      => Some("Google Chrome"),
-        "com.brave.Browser"      => Some("Brave Browser"),
-        "com.microsoft.edgemac"  => Some("Microsoft Edge"),
-        "com.apple.Safari"       => Some("Safari"),
+        "com.google.Chrome" => Some("Google Chrome"),
+        "com.brave.Browser" => Some("Brave Browser"),
+        "com.microsoft.edgemac" => Some("Microsoft Edge"),
+        "com.apple.Safari" => Some("Safari"),
         _ if bundle_id.starts_with(CHROME_APP_BUNDLE_PREFIX) => Some("Google Chrome"),
-        _                        => None,
+        _ => None,
     }
 }
 
@@ -37,56 +37,23 @@ impl BrowserJs {
     }
 
     /// Execute JavaScript in the browser window identified by window_id.
-    pub async fn execute(javascript: &str, bundle_id: &str, window_id: u32) -> anyhow::Result<String> {
+    pub async fn execute(
+        javascript: &str,
+        bundle_id: &str,
+        window_id: u32,
+    ) -> anyhow::Result<String> {
         if !Self::supports(bundle_id) {
             anyhow::bail!("Unsupported browser bundle: {bundle_id}");
         }
         let javascript = javascript.to_owned();
         let bundle_id = bundle_id.to_owned();
-        tokio::task::spawn_blocking(move || {
-            Self::execute_blocking(&javascript, &bundle_id, window_id)
+        let script = tokio::task::spawn_blocking(move || {
+            build_browser_script(&javascript, &bundle_id, window_id)
         })
         .await
-        .context("Native browser Apple Event task failed")?
-    }
+        .context("Preparing native browser Apple Event failed")??;
 
-    /// Synchronous implementation shared by the async `page` tool and AX
-    /// fallbacks that already run on a blocking worker.
-    pub(crate) fn execute_blocking(
-        javascript: &str,
-        bundle_id: &str,
-        window_id: u32,
-    ) -> anyhow::Result<String> {
-        let app_name = app_name_for_bundle(bundle_id)
-            .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
-
-        // Resolve the WindowServer CGWindowID to stable properties that can be
-        // matched against the browser's scripting window model.
-        let target = native_window_target(window_id)?;
-        let escaped_js = escape_js_for_applescript(javascript);
-
-        let script = if bundle_id == "com.apple.Safari" {
-            let escaped_title = escape_for_applescript_string(&target.title);
-            format!(
-                r#"tell application "Safari"
-  set matchedDoc to missing value
-  repeat with d in documents
-    if name of d contains "{escaped_title}" then
-      set matchedDoc to d
-      exit repeat
-    end if
-  end repeat
-  if matchedDoc is missing value then
-    set matchedDoc to document 1
-  end if
-  do JavaScript {escaped_js} in matchedDoc
-end tell"#
-            )
-        } else {
-            chromium_window_script(app_name, &target, &escaped_js, window_id)
-        };
-
-        execute_script_in_process(&script)
+        execute_script_on_main_queue(script).await
     }
 
     /// Patch the browser Preferences JSON to enable Allow JavaScript from Apple Events,
@@ -108,9 +75,13 @@ end tell"#
         // Find profile directory.
         let home = std::env::var("HOME").unwrap_or_default();
         let profiles_dir = match bundle_id {
-            "com.google.Chrome"     => format!("{home}/Library/Application Support/Google/Chrome"),
-            _ if bundle_id.starts_with(CHROME_APP_BUNDLE_PREFIX) => format!("{home}/Library/Application Support/Google/Chrome"),
-            "com.brave.Browser"     => format!("{home}/Library/Application Support/BraveSoftware/Brave-Browser"),
+            "com.google.Chrome" => format!("{home}/Library/Application Support/Google/Chrome"),
+            _ if bundle_id.starts_with(CHROME_APP_BUNDLE_PREFIX) => {
+                format!("{home}/Library/Application Support/Google/Chrome")
+            }
+            "com.brave.Browser" => {
+                format!("{home}/Library/Application Support/BraveSoftware/Brave-Browser")
+            }
             "com.microsoft.edgemac" => format!("{home}/Library/Application Support/Microsoft Edge"),
             _ => anyhow::bail!("No profiles directory for {bundle_id}"),
         };
@@ -125,32 +96,130 @@ end tell"#
         }
 
         // Relaunch through NSWorkspace rather than the `open` executable.
-        crate::apps::launch_app(bundle_id)
-            .with_context(|| format!("Relaunching {app_name}"))?;
+        crate::apps::launch_app(bundle_id).with_context(|| format!("Relaunching {app_name}"))?;
 
         Ok(())
     }
 }
 
+fn build_browser_script(
+    javascript: &str,
+    bundle_id: &str,
+    window_id: u32,
+) -> anyhow::Result<String> {
+    let app_name = app_name_for_bundle(bundle_id)
+        .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
+
+    // Resolve the WindowServer CGWindowID to stable properties that can be
+    // matched against the browser's scripting window model. This work can be
+    // slow, so it stays off the AppKit main thread.
+    let target = native_window_target(window_id)?;
+    let escaped_js = escape_js_for_applescript(javascript);
+
+    if bundle_id == "com.apple.Safari" {
+        let escaped_title = escape_for_applescript_string(&target.title);
+        Ok(format!(
+            r#"tell application "Safari"
+  set matchedDoc to missing value
+  repeat with d in documents
+    if name of d contains "{escaped_title}" then
+      set matchedDoc to d
+      exit repeat
+    end if
+  end repeat
+  if matchedDoc is missing value then
+    set matchedDoc to document 1
+  end if
+  do JavaScript {escaped_js} in matchedDoc
+end tell"#
+        ))
+    } else {
+        Ok(chromium_window_script(
+            app_name,
+            &target,
+            &escaped_js,
+            window_id,
+        ))
+    }
+}
+
+struct MainThreadScript {
+    script: String,
+    reply: tokio::sync::oneshot::Sender<anyhow::Result<String>>,
+}
+
+#[link(name = "dispatch", kind = "dylib")]
+extern "C" {
+    static _dispatch_main_q: u8;
+    fn dispatch_async_f(
+        queue: *const c_void,
+        context: *mut c_void,
+        work: unsafe extern "C" fn(*mut c_void),
+    );
+}
+
+/// Execute NSAppleScript on the AppKit main thread, as required by Apple's
+/// documented threading contract. The binary entry points keep the AppKit run
+/// loop alive even when the cursor overlay is disabled, so this dispatch is
+/// serviced in MCP, daemon, and one-shot CLI modes.
+async fn execute_script_on_main_queue(script: String) -> anyhow::Result<String> {
+    if let Some(main_thread) = objc2_foundation::MainThreadMarker::new() {
+        return execute_script_on_main_thread(main_thread, &script);
+    }
+
+    let (reply, response) = tokio::sync::oneshot::channel();
+    let request = Box::new(MainThreadScript { script, reply });
+    unsafe {
+        let main_queue = &raw const _dispatch_main_q as *const c_void;
+        dispatch_async_f(
+            main_queue,
+            Box::into_raw(request) as *mut c_void,
+            execute_script_main_cb,
+        );
+    }
+
+    tokio::time::timeout(Duration::from_secs(20), response)
+        .await
+        .context("Timed out waiting for the AppKit main thread to run browser automation")?
+        .context("AppKit main-thread browser automation task was cancelled")?
+}
+
+unsafe extern "C" fn execute_script_main_cb(context: *mut c_void) {
+    let request = unsafe { Box::from_raw(context as *mut MainThreadScript) };
+    // A panic must never cross libdispatch's C callback boundary. Convert it
+    // into the same Result channel used for ordinary script failures.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        execute_script_if_main_thread(&request.script)
+    }))
+    .unwrap_or_else(|_| {
+        Err(anyhow::anyhow!(
+            "Browser automation panicked on the AppKit main thread"
+        ))
+    });
+    let _ = request.reply.send(result);
+}
+
+fn execute_script_if_main_thread(script: &str) -> anyhow::Result<String> {
+    let main_thread = objc2_foundation::MainThreadMarker::new()
+        .context("NSAppleScript must execute on the AppKit main thread")?;
+    execute_script_on_main_thread(main_thread, script)
+}
+
 /// Run a script with Foundation's in-process OSA runtime. This preserves the
 /// browser scripting suites and their Automation/TCC attribution without a
 /// shell process, a temporary file, or a command-line script interpreter.
-fn execute_script_in_process(script: &str) -> anyhow::Result<String> {
+fn execute_script_on_main_thread(
+    _main_thread: objc2_foundation::MainThreadMarker,
+    script: &str,
+) -> anyhow::Result<String> {
     use objc2::msg_send_id;
     use objc2::rc::{autoreleasepool, Allocated, Retained};
     use objc2::ClassType;
-    use objc2_foundation::{
-        NSDictionary, NSAppleEventDescriptor, NSAppleScript, NSString,
-    };
+    use objc2_foundation::{NSAppleEventDescriptor, NSAppleScript, NSDictionary, NSString};
 
     // Bound the Apple Event wait in the script itself. This tells OSA to
     // cancel the pending event transaction if the browser stops responding.
     let source = format!("with timeout of 15 seconds\n{script}\nend timeout");
-    // NSAppleScript uses process-global OSA component state. Concurrent
-    // executions can invalidate one another's compiled script identifiers.
-    let _execution_guard = OSA_EXECUTION_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     autoreleasepool(|_| {
         let source = NSString::from_str(&source);
@@ -162,9 +231,8 @@ fn execute_script_in_process(script: &str) -> anyhow::Result<String> {
         // The generated objc2-foundation 0.2 binding incorrectly marks this
         // nullable Objective-C result as non-null, so call it explicitly with
         // the correct Option return type.
-        let result: Option<Retained<NSAppleEventDescriptor>> = unsafe {
-            msg_send_id![&*compiled, executeAndReturnError: &mut error]
-        };
+        let result: Option<Retained<NSAppleEventDescriptor>> =
+            unsafe { msg_send_id![&*compiled, executeAndReturnError: &mut error] };
 
         if let Some(error) = error {
             let message = unsafe { error.descriptionInStringsFileFormat() }.to_string();
@@ -185,9 +253,8 @@ fn execute_script_in_process(script: &str) -> anyhow::Result<String> {
         // Preserve the public string result for scalar descriptors such as
         // numbers and booleans by coercing them through the Apple Event Manager.
         const TYPE_UTF8_TEXT: u32 = u32::from_be_bytes(*b"utf8");
-        let coerced: Option<Retained<NSAppleEventDescriptor>> = unsafe {
-            msg_send_id![&*result, coerceToDescriptorType: TYPE_UTF8_TEXT]
-        };
+        let coerced: Option<Retained<NSAppleEventDescriptor>> =
+            unsafe { msg_send_id![&*result, coerceToDescriptorType: TYPE_UTF8_TEXT] };
         Ok(coerced
             .and_then(|descriptor| unsafe { descriptor.stringValue() })
             .map(|value| value.to_string())
@@ -212,9 +279,8 @@ fn terminate_running_bundle(bundle_id: &str, timeout: Duration) -> anyhow::Resul
     use std::ptr::NonNull;
 
     let bundle_id = NSString::from_str(bundle_id);
-    let applications = unsafe {
-        NSRunningApplication::runningApplicationsWithBundleIdentifier(&bundle_id)
-    };
+    let applications =
+        unsafe { NSRunningApplication::runningApplicationsWithBundleIdentifier(&bundle_id) };
     let mut pending = (0..applications.len())
         .filter_map(|index| applications.get(index))
         .filter(|app| !unsafe { app.isTerminated() })
@@ -235,9 +301,8 @@ fn terminate_running_bundle(bundle_id: &str, timeout: Duration) -> anyhow::Resul
         let Some(info) = (unsafe { note.userInfo() }) else {
             return;
         };
-        let app_ptr: *mut AnyObject = unsafe {
-            msg_send![&*info, objectForKey: NSWorkspaceApplicationKey]
-        };
+        let app_ptr: *mut AnyObject =
+            unsafe { msg_send![&*info, objectForKey: NSWorkspaceApplicationKey] };
         if app_ptr.is_null() {
             return;
         }
@@ -387,7 +452,9 @@ fn rounded_i64(value: f64) -> i64 {
 }
 
 fn find_preferences_files(profiles_dir: &str) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(profiles_dir) else { return vec![] };
+    let Ok(entries) = std::fs::read_dir(profiles_dir) else {
+        return vec![];
+    };
     let mut result = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
@@ -402,33 +469,40 @@ fn find_preferences_files(profiles_dir: &str) -> Vec<String> {
 }
 
 fn patch_preferences_file(path: &str) -> anyhow::Result<()> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("Reading {path}"))?;
-    let mut json: serde_json::Value = serde_json::from_str(&content)
-        .with_context(|| format!("Parsing {path}"))?;
+    let content = std::fs::read_to_string(path).with_context(|| format!("Reading {path}"))?;
+    let mut json: serde_json::Value =
+        serde_json::from_str(&content).with_context(|| format!("Parsing {path}"))?;
 
     // Set browser.allow_javascript_apple_events = true.
     if let Some(obj) = json.as_object_mut() {
-        let browser = obj.entry("browser")
+        let browser = obj
+            .entry("browser")
             .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
         if let Some(b) = browser.as_object_mut() {
-            b.insert("allow_javascript_apple_events".to_owned(), serde_json::Value::Bool(true));
+            b.insert(
+                "allow_javascript_apple_events".to_owned(),
+                serde_json::Value::Bool(true),
+            );
         }
         // Also set account_values.browser.allow_javascript_apple_events.
-        let account_values = obj.entry("account_values")
+        let account_values = obj
+            .entry("account_values")
             .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
         if let Some(av) = account_values.as_object_mut() {
-            let av_browser = av.entry("browser")
+            let av_browser = av
+                .entry("browser")
                 .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
             if let Some(avb) = av_browser.as_object_mut() {
-                avb.insert("allow_javascript_apple_events".to_owned(), serde_json::Value::Bool(true));
+                avb.insert(
+                    "allow_javascript_apple_events".to_owned(),
+                    serde_json::Value::Bool(true),
+                );
             }
         }
     }
 
     let new_content = serde_json::to_string(&json)?;
-    std::fs::write(path, new_content)
-        .with_context(|| format!("Writing {path}"))?;
+    std::fs::write(path, new_content).with_context(|| format!("Writing {path}"))?;
     Ok(())
 }
 
@@ -440,7 +514,8 @@ fn escape_for_applescript_string(s: &str) -> String {
 /// Escape JS for embedding in an AppleScript string literal.
 /// Multi-line JS is split by newline and concatenated with `& (ASCII character 10) &`.
 fn escape_js_for_applescript(js: &str) -> String {
-    let lines: Vec<String> = js.lines()
+    let lines: Vec<String> = js
+        .lines()
         .map(|l| {
             let escaped = l.replace('\\', "\\\\").replace('"', "\\\"");
             format!("\"{escaped}\"")
@@ -534,15 +609,11 @@ mod tests {
     }
 
     #[test]
-    fn in_process_script_returns_text_and_scalars() {
-        assert_eq!(execute_script_in_process("return \"native-ok\"").unwrap(), "native-ok");
-        assert_eq!(execute_script_in_process("return 42").unwrap(), "42");
-        assert_eq!(execute_script_in_process("return true").unwrap(), "true");
-    }
-
-    #[test]
-    fn in_process_script_surfaces_compile_errors() {
-        let error = execute_script_in_process("this is not valid syntax (").unwrap_err();
-        assert!(error.to_string().contains("Browser Apple Event failed"));
+    fn native_script_entrypoint_rejects_worker_threads_before_touching_osa() {
+        let error = std::thread::spawn(|| execute_script_if_main_thread("return 42"))
+            .join()
+            .expect("worker should not panic")
+            .expect_err("NSAppleScript must reject a worker thread");
+        assert!(error.to_string().contains("AppKit main thread"));
     }
 }

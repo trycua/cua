@@ -188,18 +188,16 @@ unsafe extern "C" fn shutdown_cb(_ctx: *mut c_void) {
     }
 }
 
-// ── AppKit main loop helper for Serve mode ───────────────────────────────
+// ── AppKit main loop helper ──────────────────────────────────────────────
 
-/// Park the main thread in `NSApplication.run()`. Used by `cua-driver
-/// serve --experimental-pip` so the dispatch_async_f → main queue
-/// path PiP frames go through can be drained. Mirrors the cursor
-/// overlay's `run_appkit` startup (Accessory activation policy →
-/// finishLaunching → run) without installing the overlay's
-/// CALayer-backed window itself.
+/// Park the main thread in `NSApplication.run()`. Used by macOS Call, Serve,
+/// and MCP when the cursor overlay is absent so browser automation and PiP
+/// dispatches to the main queue are drained. Mirrors the cursor overlay's
+/// `run_appkit` startup (Accessory activation policy → finishLaunching → run)
+/// without installing the overlay's CALayer-backed window itself.
 ///
-/// Never returns — the background `serve::run_serve_cmd` thread calls
-/// `std::process::exit` when it finishes, which tears down NSApp at
-/// the same time.
+/// Never returns normally. The background command thread exits the process
+/// when its work finishes, which tears down NSApp at the same time.
 pub fn run_appkit_main_loop() {
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};

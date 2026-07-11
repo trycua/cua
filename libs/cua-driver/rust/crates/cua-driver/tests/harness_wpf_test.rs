@@ -1344,13 +1344,10 @@ fn harness_wpf_radio_select() {
 #[test]
 #[ignore]
 fn harness_wpf_combo_select() {
-    run_foreground_case(
+    run_background_case(
         "combo_select",
-        Targeting::Ax,
         DriverRoute::Composite,
-        Vec::new(),
         |pid, wid, driver| {
-            focus_harness(driver, pid, wid);
             let snap = snapshot(driver, pid, wid);
             let combo_idx =
                 ax::element_index_by_id(snap.text(), "cbo-color").expect("cbo-color missing");
@@ -1375,7 +1372,7 @@ fn harness_wpf_combo_select() {
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid, "element_index": item_idx,
-                    "delivery_mode": "foreground"
+                    "delivery_mode": "background"
                 }),
             );
             assert!(!select.is_error(), "combo select failed: {}", select.text());
@@ -1392,7 +1389,6 @@ fn harness_wpf_combo_select() {
                     .join(" / ")
             );
             println!("✅ harness_wpf_combo_select: color=orange");
-            Vec::new()
         },
     );
 }

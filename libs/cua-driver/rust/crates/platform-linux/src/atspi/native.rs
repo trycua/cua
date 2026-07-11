@@ -845,8 +845,7 @@ fn pick_editable<'v, 'a>(visited: &'v [Visited<'a>]) -> Option<&'v Visited<'a>> 
 }
 
 /// Try to write `text` into the best editable node in `visited` via AT-SPI
-/// EditableText (GrabFocus first so the toolkit exposes the field on an
-/// unfocused window's focused widget). Returns `Ok(true)` if the write landed,
+/// EditableText. Returns `Ok(true)` if the write landed,
 /// `Ok(false)` if no editable was found / the EditableText write was rejected.
 async fn write_into_editable(visited: &[Visited<'_>], text: &str) -> Result<bool> {
     let target = match pick_editable(visited) {
@@ -871,6 +870,13 @@ async fn write_into_editable_target(target: &Visited<'_>, text: &str) -> Result<
         .await
         .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
 
+    // A focus-free EditableText write is the strongest background route. Try it
+    // before GrabFocus: WebKitGTK can invalidate the original proxy when focus
+    // changes, and writing through that stale object then returns false.
+    if write_through_editable_proxies(&proxies, text).await? {
+        return Ok(true);
+    }
+
     // Try to grab focus on the widget via AT-SPI Component.GrabFocus.
     // This should give the widget internal keyboard focus without activating
     // the window, allowing GTK4 (and similar toolkits) to expose EditableText
@@ -890,6 +896,13 @@ async fn write_into_editable_target(target: &Visited<'_>, text: &str) -> Result<
         dlog!("Target has no Component interface, skipping GrabFocus");
     }
 
+    write_through_editable_proxies(&proxies, text).await
+}
+
+async fn write_through_editable_proxies(
+    proxies: &atspi::proxy::proxy_ext::Proxies<'_>,
+    text: &str,
+) -> Result<bool> {
     let et = proxies
         .editable_text()
         .await
@@ -945,9 +958,26 @@ pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
             if write_into_editable_target(target, text).await? {
                 Ok(())
             } else {
-                Err(anyhow!(
-                    "element {idx} is not writable through AT-SPI EditableText"
-                ))
+                // GrabFocus can rebuild WebKitGTK's accessibility object. Walk
+                // the same index space again and retry only that exact element;
+                // never fall through to a different focused/first editable.
+                let refreshed = collect_visited(conn, pid)
+                    .await?
+                    .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+                let refreshed_target = refreshed
+                    .iter()
+                    .filter(|node| is_indexable(node))
+                    .nth(idx)
+                    .ok_or_else(|| {
+                        anyhow!("element {idx} disappeared after AT-SPI focus refresh")
+                    })?;
+                if write_into_editable_target(refreshed_target, text).await? {
+                    Ok(())
+                } else {
+                    Err(anyhow!(
+                        "element {idx} is not writable through AT-SPI EditableText"
+                    ))
+                }
             }
         },
         || {

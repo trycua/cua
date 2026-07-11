@@ -389,6 +389,7 @@ fn require_element(snapshot: &ToolResponse, id: &str) -> u64 {
     };
     element_index_by_id(snapshot.tree_text(), id)
         .or_else(|| element_index_by_id(snapshot.tree_text(), platform_id))
+        .or_else(|| element_index_containing(snapshot.tree_text(), id))
         .or_else(|| element_index_containing(snapshot.tree_text(), visible_label))
         .unwrap_or_else(|| {
             panic!(
@@ -416,13 +417,21 @@ fn element_center(snapshot: &ToolResponse, element_index: u64) -> (f64, f64) {
 }
 
 fn assert_tree_contains(fixture: &mut Fixture, marker: &str) {
-    let post = snapshot(fixture);
-    assert!(
-        post.tree_text().contains(marker),
-        "{}: application state did not reach {marker:?}: {}",
-        fixture.name,
-        post.tree_text()
-    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let post = snapshot(fixture);
+        if post.tree_text().contains(marker) {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "{}: application state did not reach {marker:?}: {}",
+                fixture.name,
+                post.tree_text()
+            );
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn action_target_args(

@@ -864,6 +864,27 @@ async fn write_into_editable(visited: &[Visited<'_>], text: &str) -> Result<bool
     Ok(false)
 }
 
+/// Write into the best editable exposed by the current AT-SPI tree without
+/// falling through to synthetic X11 input.
+pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
+    bounded(
+        async {
+            let conn = AccessibilityConnection::new()
+                .await
+                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
+            let visited = collect_visited(&conn, pid)
+                .await?
+                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+            if write_into_editable(&visited, text).await? {
+                Ok(())
+            } else {
+                Err(anyhow!("no writable AT-SPI element found for pid {pid}"))
+            }
+        },
+        || Err(anyhow!("AT-SPI editable lookup timed out for pid {pid}")),
+    )
+}
+
 pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
     bounded(
         async {
@@ -1685,19 +1706,15 @@ pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32
             }
 
             let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
-            // Each element costs ~3 D-Bus round-trips (proxies + component +
-            // GetExtents). Big trees (geany exposes ~787 nodes) would grind for
-            // minutes and time out callers, so cap the walk; pre-order means the
-            // first nodes are the window chrome / toolbars that are actually
-            // visible, which is what bounds consumers (overlays, targeting) need.
-            const MAX_BOUNDS_NODES: usize = 150;
             // Hard wall-clock budget for the whole collection: on pathological
             // trees individual D-Bus calls each burn up to CALL_TIMEOUT (geany's
-            // unrealized nodes did exactly that), so a per-node cap alone can
-            // still add up to minutes. Return whatever was collected in time.
+            // unrealized nodes did exactly that). Return whatever was collected
+            // in time, but do not impose an index-based node cap: a cap silently
+            // stripped frames from valid controls later in renderer trees and
+            // made PX targeting depend on DOM order.
             let deadline = std::time::Instant::now() + Duration::from_secs(20);
-            let mut out = Vec::with_capacity(action_nodes.len().min(MAX_BOUNDS_NODES));
-            for (idx, node) in action_nodes.iter().enumerate().take(MAX_BOUNDS_NODES) {
+            let mut out = Vec::with_capacity(action_nodes.len());
+            for (idx, node) in action_nodes.iter().enumerate() {
                 if std::time::Instant::now() >= deadline {
                     dlog!("get_all_element_bounds: 20s budget exhausted at node {idx}; returning {} bound(s)", out.len());
                     break;

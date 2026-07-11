@@ -918,7 +918,7 @@ impl Tool for LaunchAppTool {
 /// Resolve an AT-SPI element's center in window-local X11 coordinates.
 ///
 /// Returns `(xid, window_local_x, window_local_y)`.
-/// Looks up element bounds via pyatspi subprocess, finds the owning window
+/// Looks up element bounds via native AT-SPI, finds the owning window
 /// (via `xid_hint` or the first window for `pid`), then converts screen-absolute
 /// → window-local coords via X11 translate_coordinates.
 fn resolve_element_local_coords(

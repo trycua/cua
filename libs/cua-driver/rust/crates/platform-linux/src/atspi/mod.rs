@@ -23,7 +23,7 @@ pub struct AtspiNode {
     pub value: Option<String>,
     pub description: Option<String>,
     pub actions: Vec<String>,
-    /// For pyatspi path: element_key = element_index as u64.
+    /// For AT-SPI: element_key = element_index as u64.
     /// For X11 fallback: element_key = xid.
     pub element_key: u64,
     /// Depth in the markdown tree (0 = top-level window child).
@@ -146,68 +146,7 @@ pub fn perform_action_at_screen_point(
 /// For Qt5, which doesn't expose widgets when unfocused, this will return Err.
 /// Returns Ok if an editable was found and text was set, Err otherwise.
 pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
-    let safe_text = text.replace('\\', "\\\\").replace('\'', "\\'");
-    let script = format!(
-        r#"
-import pyatspi, sys
-
-def find_editable(acc, depth=0):
-    # Try to find any EditableText interface, regardless of role
-    try:
-        et = acc.queryEditableText()
-        # If we can query it, return this node
-        return acc
-    except:
-        pass
-
-    # Recursively search children
-    try:
-        for child in acc:
-            result = find_editable(child, depth + 1)
-            if result is not None:
-                return result
-    except:
-        pass
-
-    return None
-
-desktop = pyatspi.Registry.getDesktop(0)
-editable = None
-for app in desktop:
-    try:
-        if app.get_process_id() == {pid}:
-            for win in app:
-                editable = find_editable(win)
-                if editable:
-                    break
-            break
-    except:
-        pass
-
-if editable is None:
-    print("ERROR: No editable found", file=sys.stderr)
-    sys.exit(1)
-
-try:
-    et = editable.queryEditableText()
-    et.setTextContents('{safe_text}')
-    print("ok:atspi")
-except Exception as e:
-    print(f"ERROR: {{e}}", file=sys.stderr)
-    sys.exit(1)
-"#,
-        pid = pid,
-        safe_text = safe_text
-    );
-
-    let out = std::process::Command::new("python3")
-        .arg("-c")
-        .arg(&script)
-        .output()?;
-    if !out.status.success() {
-        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr).trim().to_owned());
-    }
-    Ok(())
+    native::type_into_editable(pid, text)
 }
 
 /// Set the text value of element `idx` within pid's app tree via AT-SPI.

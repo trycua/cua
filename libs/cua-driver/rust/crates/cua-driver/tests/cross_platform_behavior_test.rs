@@ -445,8 +445,21 @@ fn action_target_args(
         let origin = window_origin(fixture, state);
         let scale = screenshot_scale(state);
         let (x, y) = element_center(state, index);
-        object.insert("x".to_owned(), serde_json::json!((x - origin.0) * scale));
-        object.insert("y".to_owned(), serde_json::json!((y - origin.1) * scale));
+        let local_x = (x - origin.0) * scale;
+        let local_y = (y - origin.1) * scale;
+        let width = state.structured()["screenshot_width"]
+            .as_f64()
+            .expect("PX action requires screenshot_width");
+        let height = state.structured()["screenshot_height"]
+            .as_f64()
+            .expect("PX action requires screenshot_height");
+        assert!(
+            local_x >= 0.0 && local_x < width && local_y >= 0.0 && local_y < height,
+            "{}: PX target {id:?} center ({local_x:.1}, {local_y:.1}) is outside the captured window ({width:.1}x{height:.1}); fix the harness layout",
+            fixture.name
+        );
+        object.insert("x".to_owned(), serde_json::json!(local_x));
+        object.insert("y".to_owned(), serde_json::json!(local_y));
     }
     args
 }

@@ -7,16 +7,38 @@
     :root { color-scheme: light dark; }
     body {
       font-family: 'Segoe UI', system-ui, sans-serif;
-      max-width: 860px;
+      max-width: 980px;
       margin: 0 auto;
-      padding: 16px;
+      padding: 10px;
     }
-    fieldset { margin-bottom: 12px; padding: 10px 14px; border-radius: 6px; border: 1px solid #ccc; }
+    h2 { margin: 0 0 2px; }
+    body > p { margin: 0 0 8px; }
+    .harness-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      align-items: start;
+    }
+    .harness-grid h3 { margin: 8px 0; font-size: 14px; overflow-wrap: anywhere; }
+    fieldset { min-width: 0; margin: 0; padding: 6px 8px; border-radius: 6px; border: 1px solid #ccc; }
     legend { font-weight: 600; padding: 0 6px; }
-    label { display: inline-block; min-width: 120px; }
-    .row { display: flex; align-items: center; gap: 10px; margin: 6px 0; flex-wrap: wrap; }
+    label { display: inline-block; min-width: 90px; }
+    .row { display: flex; align-items: center; gap: 8px; margin: 3px 0; flex-wrap: wrap; }
     .mirror, .state { font-family: Consolas, monospace; color: #555; }
-    input[type="range"] { width: 280px; }
+    input[type="range"] { width: 180px; }
+    textarea { max-width: 100%; }
+    #drag-source, #drop-target {
+      width: 110px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      user-select: none;
+      touch-action: none;
+    }
+    #drag-source { background: #1268d6; }
+    #drop-target { background: #178a38; }
     #click-target {
       display: inline-block;
       padding: 8px 18px;
@@ -33,6 +55,7 @@
   <h2 data-cua-id="page-heading">cua-driver Web Harness</h2>
   <p data-cua-id="page-marker" class="marker">WEB_HARNESS_MARKER_v1</p>
 
+  <main class="harness-grid">
   <fieldset>
     <legend>counter</legend>
     <div class="row">
@@ -81,8 +104,8 @@
   <fieldset>
     <legend>drag_task</legend>
     <div class="row">
-      <div id="drag-source" data-cua-id="drag-source" aria-label="drag-source" style="position:fixed;left:40px;top:80px;width:220px;height:100px;display:flex;align-items:center;justify-content:center;background:#1268d6;color:white;user-select:none;touch-action:none;z-index:10;">Drag source</div>
-      <div id="drop-target" data-cua-id="drop-target" aria-label="drop-target" style="position:fixed;left:520px;top:520px;width:220px;height:100px;display:flex;align-items:center;justify-content:center;background:#178a38;color:white;z-index:10;">Drop target</div>
+      <div id="drag-source" data-cua-id="drag-source" aria-label="drag-source">Drag source</div>
+      <div id="drop-target" data-cua-id="drop-target" aria-label="drop-target">Drop target</div>
       <span class="mirror" id="drag-status" data-cua-id="drag-status">drag_status=idle</span>
     </div>
   </fieldset>
@@ -147,7 +170,7 @@
       <a id="lnk-anchor" data-cua-id="lnk-anchor" href="#section-target">Jump to section</a>
       <span class="mirror" id="lbl-nav-state" data-cua-id="lbl-nav-state">hash=</span>
     </div>
-    <div style="height: 100px"></div>
+    <div style="height: 8px"></div>
     <h3 id="section-target" data-cua-id="section-target">SECTION_TARGET_MARKER_v1</h3>
   </fieldset>
 
@@ -158,6 +181,7 @@
       <span class="mirror" id="lbl-child-window-state" data-cua-id="lbl-child-window-state">child_windows=0</span>
     </div>
   </fieldset>
+  </main>
 
   <script>
   // ----- state -----

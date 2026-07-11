@@ -470,8 +470,8 @@ fn send_click_synthesized_mods_impl(
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
             mi: MOUSEINPUT {
-                dx: norm_x, dy: norm_y, mouseData: 0,
-                dwFlags: down_flag | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                dx: 0, dy: 0, mouseData: 0,
+                dwFlags: down_flag,
                 time: 0, dwExtraInfo: 0,
             },
         },
@@ -480,8 +480,8 @@ fn send_click_synthesized_mods_impl(
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
             mi: MOUSEINPUT {
-                dx: norm_x, dy: norm_y, mouseData: 0,
-                dwFlags: up_flag | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                dx: 0, dy: 0, mouseData: 0,
+                dwFlags: up_flag,
                 time: 0, dwExtraInfo: 0,
             },
         },
@@ -556,10 +556,9 @@ fn send_click_synthesized_mods_impl(
         let count = count.max(1);
         let mut sent_ok = true;
         for i in 0..count {
-            // Submit a real pointer lifecycle instead of one move/down/up
-            // batch. Retained-mode frameworks such as WPF establish hover and
-            // capture asynchronously; an immediate batched release can arrive
-            // before that state is visible to the dispatcher.
+            // Only the move record carries absolute coordinates. Button-only
+            // records act at the current pointer position; adding ABSOLUTE to
+            // them can prevent retained-mode controls from seeing the press.
             let moved = SendInput(&[move_input], std::mem::size_of::<INPUT>() as i32);
             sleep(Duration::from_millis(8));
             let pressed = SendInput(&[down_input], std::mem::size_of::<INPUT>() as i32);

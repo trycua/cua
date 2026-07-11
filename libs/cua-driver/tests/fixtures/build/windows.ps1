@@ -78,19 +78,10 @@ if ($Skip -ne "electron") {
     if (Test-Path $elecBuild) {
         Write-Host ""
         Write-Host "[BUILD] electron -> $testAppsDir\harness-electron\" -ForegroundColor Cyan
-        # Electron build sets $ErrorActionPreference=Stop internally and
-        # throws on npm install / publish failure. Wrap so a throw degrades
-        # to a warning rather than aborting the whole harness build.
-        try {
-            & $elecBuild
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "[WARN] Electron build failed (exit $LASTEXITCODE)" -ForegroundColor Yellow
-            }
-        } catch {
-            Write-Host "[WARN] Electron build errored: $($_.Exception.Message)" -ForegroundColor Yellow
-        }
+        & $elecBuild
+        if ($LASTEXITCODE -ne 0) { throw "Electron harness build failed" }
     } else {
-        Write-Host "[SKIP] Electron project not present yet - skipping." -ForegroundColor Yellow
+        throw "Electron build script not found: $elecBuild"
     }
 }
 if ($Skip -ne "tauri") {
@@ -98,16 +89,10 @@ if ($Skip -ne "tauri") {
     if (Test-Path $tauriBuild) {
         Write-Host ""
         Write-Host "[BUILD] tauri -> $testAppsDir\harness-tauri\" -ForegroundColor Cyan
-        try {
-            & $tauriBuild
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "[WARN] Tauri build failed (exit $LASTEXITCODE)" -ForegroundColor Yellow
-            }
-        } catch {
-            Write-Host "[WARN] Tauri build errored: $($_.Exception.Message)" -ForegroundColor Yellow
-        }
+        & $tauriBuild
+        if ($LASTEXITCODE -ne 0) { throw "Tauri harness build failed" }
     } else {
-        Write-Host "[SKIP] Tauri project not present yet - skipping." -ForegroundColor Yellow
+        throw "Tauri build script not found: $tauriBuild"
     }
 }
 

@@ -96,19 +96,12 @@ fn host_specs() -> Vec<HostSpec> {
             ],
             title: "CuaTestHarness Electron",
         });
-        // WebKitGTK's AT-SPI tree is exposed through a separate WebProcess;
-        // the Rust walker handles that reference shape, but headless Xvfb
-        // still does not provide a reliable input-delivery contract for the
-        // Tauri renderer. Keep this strict lane opt-in until that renderer
-        // path is fixed, while the Electron matrix remains deterministic.
-        if std::env::var_os("CUA_INCLUDE_TAURI_LINUX").is_some() {
-            hosts.push(HostSpec {
-                name: "tauri",
-                path: harness_app("harness-tauri", "CuaTestHarness.Tauri"),
-                args: Vec::new(),
-                title: "CuaTestHarness Tauri",
-            });
-        }
+        hosts.push(HostSpec {
+            name: "tauri",
+            path: harness_app("harness-tauri", "CuaTestHarness.Tauri"),
+            args: Vec::new(),
+            title: "CuaTestHarness Tauri",
+        });
     }
 
     hosts

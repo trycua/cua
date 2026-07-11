@@ -82,6 +82,32 @@ fn runtime() -> &'static tokio::runtime::Runtime {
     })
 }
 
+static SHARED_CONNECTION: tokio::sync::OnceCell<AccessibilityConnection> =
+    tokio::sync::OnceCell::const_new();
+
+/// Keep one AT-SPI connection and registry registration alive for the daemon
+/// lifetime. WebKitGTK only publishes its WebProcess accessibility subtree
+/// while the registry reports an interested listener.
+async fn shared_connection() -> Result<&'static AccessibilityConnection> {
+    SHARED_CONNECTION
+        .get_or_try_init(|| async {
+            let conn = AccessibilityConnection::new()
+                .await
+                .map_err(|error| anyhow!("AT-SPI connect failed: {error}"))?;
+            if let Err(error) = conn.add_registry_event::<atspi::ObjectEvents>().await {
+                dlog!("AT-SPI object-event registration failed: {error}");
+            }
+            Ok(conn)
+        })
+        .await
+}
+
+/// Establish the process-lifetime listener before accessibility-aware apps are
+/// launched. Idempotent; later calls reuse the same connection.
+pub fn ensure_listener_active() -> Result<()> {
+    runtime().block_on(async { shared_connection().await.map(|_| ()) })
+}
+
 /// A node discovered during the pre-order walk, with its proxy retained so the
 /// per-index operations can act on it without re-walking the tree.
 struct Visited<'a> {
@@ -641,10 +667,8 @@ pub fn walk_tree_bounded(
 ) -> Result<Option<(String, Vec<AtspiNode>)>> {
     runtime().block_on(async {
         let work = async {
-            let conn = AccessibilityConnection::new()
-                .await
-                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
-            match collect_visited_bounded(&conn, pid, max_elements, max_depth).await? {
+            let conn = shared_connection().await?;
+            match collect_visited_bounded(conn, pid, max_elements, max_depth).await? {
                 Some(visited) => Ok(Some(render(&visited))),
                 None => Ok(None),
             }
@@ -675,9 +699,7 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
     use crate::x11::WindowInfo;
     runtime().block_on(async {
         let work = async {
-            let conn = AccessibilityConnection::new()
-                .await
-                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
+            let conn = shared_connection().await?;
             let zconn = conn.connection();
             let root = match call(conn.root_accessible_on_registry()).await {
                 Some(Ok(r)) => r,
@@ -707,7 +729,7 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
                     Some(app_ref) => app_ref,
                     None => continue,
                 };
-                let app = match call(accessible_for(&conn, &app_ref)).await {
+                let app = match call(accessible_for(conn, &app_ref)).await {
                     Some(Ok(a)) => a,
                     _ => continue,
                 };
@@ -725,7 +747,7 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
                         Some(frame_ref) => frame_ref,
                         None => continue,
                     };
-                    let frame = match call(accessible_for(&conn, &frame_ref)).await {
+                    let frame = match call(accessible_for(conn, &frame_ref)).await {
                         Some(Ok(f)) => f,
                         _ => continue,
                     };
@@ -869,10 +891,8 @@ async fn write_into_editable(visited: &[Visited<'_>], text: &str) -> Result<bool
 pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
     bounded(
         async {
-            let conn = AccessibilityConnection::new()
-                .await
-                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
-            let visited = collect_visited(&conn, pid)
+            let conn = shared_connection().await?;
+            let visited = collect_visited(conn, pid)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             if write_into_editable(&visited, text).await? {
@@ -888,10 +908,8 @@ pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
 pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
     bounded(
         async {
-            let conn = AccessibilityConnection::new()
-                .await
-                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
-            let visited = match collect_visited(&conn, pid).await? {
+            let conn = shared_connection().await?;
+            let visited = match collect_visited(conn, pid).await? {
                 Some(v) => v,
                 None => return Ok(false),
             };
@@ -1002,10 +1020,8 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
 pub fn focused_is_editable(pid: u32) -> Result<Option<bool>> {
     bounded(
         async {
-            let conn = AccessibilityConnection::new()
-                .await
-                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
-            let visited = match collect_visited(&conn, pid).await? {
+            let conn = shared_connection().await?;
+            let visited = match collect_visited(conn, pid).await? {
                 Some(v) => v,
                 None => return Ok(None),
             };
@@ -1050,10 +1066,8 @@ fn screen_to_window_coords(xid: u64, screen_x: i32, screen_y: i32) -> Option<(i3
 pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
     bounded(
         async {
-            let conn = AccessibilityConnection::new()
-                .await
-                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
-            let visited = collect_visited(&conn, pid)
+            let conn = shared_connection().await?;
+            let visited = collect_visited(conn, pid)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
@@ -1105,10 +1119,8 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
 pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> Result<()> {
     bounded(
         async {
-            let conn = AccessibilityConnection::new()
-                .await
-                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
-            let visited = collect_visited(&conn, pid)
+            let conn = shared_connection().await?;
+            let visited = collect_visited(conn, pid)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             let target = visited
@@ -1171,10 +1183,8 @@ pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> R
 pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
     bounded(
         async {
-            let conn = AccessibilityConnection::new()
-                .await
-                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
-            let visited = collect_visited(&conn, pid)
+            let conn = shared_connection().await?;
+            let visited = collect_visited(conn, pid)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             let target = visited
@@ -1221,10 +1231,8 @@ pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
 pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Option<String>> {
     bounded(
         async {
-            let conn = AccessibilityConnection::new()
-                .await
-                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
-            let visited = match collect_visited(&conn, pid).await? {
+            let conn = shared_connection().await?;
+            let visited = match collect_visited(conn, pid).await? {
                 Some(v) => v,
                 None => return Ok(None),
             };
@@ -1306,10 +1314,8 @@ pub fn perform_action_at_screen_point(
 ) -> Result<Option<String>> {
     bounded(
         async {
-            let conn = AccessibilityConnection::new()
-                .await
-                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
-            let visited = match collect_visited(&conn, pid).await? {
+            let conn = shared_connection().await?;
+            let visited = match collect_visited(conn, pid).await? {
                 Some(v) => v,
                 None => return Ok(None),
             };
@@ -1424,10 +1430,8 @@ fn select_click_target(
 pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
     bounded(
         async {
-            let conn = AccessibilityConnection::new()
-                .await
-                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
-            let visited = collect_visited(&conn, pid)
+            let conn = shared_connection().await?;
+            let visited = collect_visited(conn, pid)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
@@ -1500,10 +1504,8 @@ pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
 pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> {
     bounded(
         async {
-            let conn = AccessibilityConnection::new()
-                .await
-                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
-            let visited = collect_visited(&conn, pid)
+            let conn = shared_connection().await?;
+            let visited = collect_visited(conn, pid)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
@@ -1681,10 +1683,8 @@ fn window_to_screen_offset(pid: u32, xid: u64) -> Option<(i32, i32)> {
 pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32, u32, u32)>> {
     bounded(
         async {
-            let conn = AccessibilityConnection::new()
-                .await
-                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
-            let visited = collect_visited(&conn, pid)
+            let conn = shared_connection().await?;
+            let visited = collect_visited(conn, pid)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
 

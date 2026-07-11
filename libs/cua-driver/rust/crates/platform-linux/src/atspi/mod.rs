@@ -14,6 +14,7 @@ use anyhow::Result;
 pub mod cache;
 pub mod native;
 pub use cache::ElementCache;
+pub use native::ensure_listener_active;
 
 #[derive(Clone, Debug)]
 pub struct AtspiNode {

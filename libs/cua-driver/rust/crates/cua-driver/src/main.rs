@@ -815,6 +815,9 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
         // so their AT-SPI trees are visible to get_window_state. Best-effort and
         // idempotent; only on the serve path, not for short-lived CLI calls.
         platform_linux::a11y::ensure_chromium_accessibility_enabled();
+        if let Err(error) = platform_linux::atspi::ensure_listener_active() {
+            tracing::warn!("could not activate the persistent AT-SPI listener: {error}");
+        }
         { let mut r = platform_linux::register_tools_with_cursor(cursor_cfg, compat); check_update_tool::register_into(&mut r); r }
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -869,6 +872,12 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
     }
     #[cfg(target_os = "linux")]
     {
+        platform_linux::xauth::ensure_xauthority_discovered();
+        platform_linux::session_bus::ensure_session_bus_discovered();
+        platform_linux::a11y::ensure_chromium_accessibility_enabled();
+        if let Err(error) = platform_linux::atspi::ensure_listener_active() {
+            tracing::warn!("could not activate the persistent AT-SPI listener: {error}");
+        }
         cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
             if let Some(xid) = window_id {
                 platform_linux::capture::screenshot_window_bytes(xid).ok()

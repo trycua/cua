@@ -3,7 +3,7 @@
 //! Two layers:
 //!   - [`status`] — low-level booleans for Accessibility / Screen Recording.
 //!   - [`gate`]   — startup-time interactive flow that walks the user through
-//!                  granting the missing permissions before `serve` binds.
+//!                  grants while the daemon remains reachable for status calls.
 //!
 //! The gate is a Rust port of Swift's `PermissionsGate` (SwiftUI panel).
 //! Two presentation surfaces:
@@ -22,7 +22,7 @@ pub mod status;
 #[cfg(target_os = "macos")]
 pub mod panel;
 
-pub use status::{PermissionsStatus, current_status};
+pub use status::{PermissionGrantState, PermissionsStatus, current_status};
 pub use gate::{GateOpts, MissingPermission, run_if_needed};
 
 /// Crate-wide lock serializing tests that mutate process-global env vars.

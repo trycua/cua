@@ -16,10 +16,33 @@ pub struct PermissionsStatus {
     pub screen_recording: bool,
 }
 
+/// User-facing state of the two-permission onboarding flow.
+///
+/// Keeping this as an explicit four-state model avoids treating the grant as
+/// one boolean. macOS can apply either permission first, and the onboarding UI
+/// must immediately advance to the remaining permission in both orders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionGrantState {
+    NoneGranted,
+    AccessibilityGranted,
+    ScreenRecordingGranted,
+    BothGranted,
+}
+
 impl PermissionsStatus {
     /// True when **both** required TCC grants are active.
     pub fn all_granted(self) -> bool {
         self.accessibility && self.screen_recording
+    }
+
+    /// Convert the live booleans into the onboarding state machine.
+    pub fn grant_state(self) -> PermissionGrantState {
+        match (self.accessibility, self.screen_recording) {
+            (false, false) => PermissionGrantState::NoneGranted,
+            (true, false) => PermissionGrantState::AccessibilityGranted,
+            (false, true) => PermissionGrantState::ScreenRecordingGranted,
+            (true, true) => PermissionGrantState::BothGranted,
+        }
     }
 }
 
@@ -91,4 +114,53 @@ pub fn request_screen_recording() -> bool {
         fn CGRequestScreenCaptureAccess() -> bool;
     }
     unsafe { CGRequestScreenCaptureAccess() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grant_state_preserves_every_partial_state() {
+        let state = |accessibility, screen_recording| PermissionsStatus {
+            accessibility,
+            screen_recording,
+        };
+
+        assert_eq!(
+            state(false, false).grant_state(),
+            PermissionGrantState::NoneGranted
+        );
+        assert_eq!(
+            state(true, false).grant_state(),
+            PermissionGrantState::AccessibilityGranted
+        );
+        assert_eq!(
+            state(false, true).grant_state(),
+            PermissionGrantState::ScreenRecordingGranted
+        );
+        assert_eq!(
+            state(true, true).grant_state(),
+            PermissionGrantState::BothGranted
+        );
+    }
+
+    #[test]
+    fn all_granted_only_accepts_both_grants() {
+        for (accessibility, screen_recording, expected) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (true, true, true),
+        ] {
+            assert_eq!(
+                PermissionsStatus {
+                    accessibility,
+                    screen_recording,
+                }
+                .all_granted(),
+                expected
+            );
+        }
+    }
 }

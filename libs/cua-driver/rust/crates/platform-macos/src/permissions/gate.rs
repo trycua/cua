@@ -1,13 +1,14 @@
-//! First-launch permissions gate — CLI flow.
+//! First-launch permissions gate.
 //!
-//! Rust port of Swift's `PermissionsGate` (SwiftUI panel + polling).  The
-//! Rust port intentionally drops the SwiftUI window and reimplements the
-//! flow as a terminal-only experience:
+//! Bundled app launches use the native panel in [`super::panel`]. It explains
+//! both grants before any system prompt, requests one grant per user action,
+//! and refreshes live until setup completes. Bare binaries and headless
+//! launches use this module's terminal fallback:
 //!
 //!   1. Inspect TCC state on `serve` startup.
 //!   2. If any required grant is missing, print a clear explanation
 //!      (which grant, why cua-driver needs it, what to do next).
-//!   3. Open the relevant `System Settings` pane(s) via the
+//!   3. Request the missing grants and open the relevant System Settings panes via the
 //!      `x-apple.systempreferences:` URL scheme.
 //!   4. Poll TCC state every second.  Emit a "still waiting" line every
 //!      5 seconds so the user knows the daemon is still alive and what
@@ -20,16 +21,8 @@
 //! (case-insensitive) skips the entire flow.  Intended for CI / headless
 //! automation where blocking on user input would deadlock the runner.
 //!
-//! Why no GUI window: the Swift gate uses AppKit + SwiftUI which would
-//! require a full overlay + NSApplication run loop just to display a
-//! dialog.  cua-driver-rs already has a separate AppKit thread for the
-//! cursor overlay, and grafting another window onto it is a recipe for
-//! main-thread deadlocks.  A terminal-driven flow is uglier but reliable
-//! and works headless (with the opt-out flag), which is exactly the
-//! audience for the Rust port.
-//!
-//! A future enhancement could open a native `NSAlert` via objc2 for a
-//! more polished look — left as a follow-up; CLI is the MVP.
+//! Embedded mode bypasses both surfaces because the host application owns
+//! permission attribution and onboarding.
 
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -62,11 +55,11 @@ impl MissingPermission {
     pub fn rationale(self) -> &'static str {
         match self {
             Self::Accessibility =>
-                "lets cua-driver read the accessibility tree of running apps and \
-                 send clicks / keystrokes via AX RPC.",
+                "lets the driver read interface text and operate buttons, fields, menus, \
+                 and other app controls.",
             Self::ScreenRecording =>
-                "lets cua-driver capture per-window screenshots so agents can see \
-                 the current UI state alongside the tree.",
+                "lets the driver see app windows so actions can be placed accurately \
+                 and their results verified.",
         }
     }
 
@@ -204,12 +197,11 @@ const GATE_START_ENV: &str = "CUA_DRIVER_RS_GATE_START_UNIX";
 /// grants, this returns immediately without printing anything — the
 /// `serve` happy path is unaffected.
 ///
-/// When grants are missing and `opt_out` is false:
-///   - Prints the missing-permissions banner.
-///   - Optionally raises the system TCC prompts (`also_raise_prompts`).
-///   - Opens the System Settings pane(s) for the user.
-///   - Polls TCC every `poll_interval` and re-emits a status line every
-///     `status_interval` until everything is green or `deadline` elapses.
+/// When grants are missing and `opt_out` is false, bundled launches present
+/// the native per-row flow. If the native panel is unavailable, the terminal
+/// fallback prints its explanation, optionally raises TCC prompts, opens the
+/// matching Settings panes, and polls until everything is green or the
+/// deadline elapses.
 ///
 /// Returns `Ok(())` on success (all green or opt-out).  Returns
 /// `Err` only if the deadline elapsed without all permissions granted —
@@ -226,6 +218,10 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
     if initial.all_granted() {
         // Fast path: everything already green.  No banner, no polling —
         // the user sees nothing different from before this gate existed.
+        // Clear one-shot re-exec bookkeeping so later child processes do not
+        // inherit a stale "silent refresh" state.
+        std::env::remove_var(GATE_REEXEC_ENV);
+        std::env::remove_var(GATE_START_ENV);
         return Ok(());
     }
 
@@ -242,25 +238,33 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
 
     let missing = missing_from_status(initial);
 
-    // Raise the TCC system prompts BEFORE showing our panel. The
-    // `AXIsProcessTrustedWithOptions` / `CGRequestScreenCaptureAccess`
-    // calls have a side effect critical to the user flow: they
-    // register the calling process with the TCC daemon, which is what
-    // makes the app appear in
-    //   System Settings → Privacy & Security → {Accessibility,Screen Recording}
-    // with its toggle ready to flip. Without that registration, our
-    // "Open System Settings" button takes the user to a pane where
-    // CuaDriver simply isn't listed — they see nothing to grant.
-    //
-    // The Swift gate did the same registration via the matching
-    // `Permissions.requestAccessibility()` / `requestScreenRecording()`
-    // calls before its panel appeared. Moving them earlier here closes
-    // a UX regression the original Phase 1 wiring introduced: prompts
-    // used to happen after the panel, racing with the user clicking
-    // "Open Settings".
-    //
-    // These calls are no-ops when the grant is already active so the
-    // happy-path (both green) sees no UI from this block.
+    // Bundled launches show the explanation before requesting either TCC
+    // grant. The panel owns its per-row prompts and Settings deep links, so
+    // system UI never appears without an explicit Allow click.
+    match present_panel_if_available(initial) {
+        PanelPresentation::ShownAllGranted => {
+            // Start one fresh process image after first-time setup. macOS can
+            // cache both AX trust and Screen Recording capability inside the
+            // requesting process, and some OS versions do not make capture
+            // usable until relaunch. `execvp` preserves argv and attribution;
+            // the new image sees both grants on its fast path and does not
+            // show the panel again. It also avoids asking the user to quit and
+            // manually reconstruct the daemon launch arguments.
+            #[cfg(target_os = "macos")]
+            reexec_self();
+            return Ok(());
+        }
+        PanelPresentation::ShownDismissed => {
+            return Ok(());
+        }
+        PanelPresentation::NotShown => {}
+    }
+
+    // Bare-binary and headless launches retain the terminal fallback. Print
+    // its explanation before raising prompts so the user knows why macOS is
+    // asking. Embedded mode returned at the top of this function and can
+    // never reach these calls.
+    print_banner(&missing, opts.open_settings);
     if opts.also_raise_prompts {
         if missing.contains(&MissingPermission::Accessibility) {
             let _ = request_accessibility();
@@ -269,54 +273,15 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
             let _ = request_screen_recording();
         }
     }
-
-    // Try to present a native NSPanel before falling back to the
-    // terminal banner. The panel's 1 Hz poll can also auto-resolve
-    // before the user touches a button — the trailing
-    // `wait_for_grants` loop becomes optional in that case. Outcomes:
-    //
-    //   * `NotShown` — historical CLI path: print the banner, auto-
-    //     open Settings (when `open_settings` is true), wait.
-    //   * `ShownOpenSettings` — user clicked the primary button; open
-    //     Settings on their behalf, then wait.
-    //   * `ShownDismissed` — user clicked "Continue anyway" or the red
-    //     dot; skip the auto-open since the user declined the guided
-    //     flow, but still wait so a later manual grant unblocks.
-    //   * `ShownAllGranted` — the panel's poll loop saw both grants
-    //     flip green; skip the wait loop entirely.
-    let presentation = present_panel_if_available(initial);
-    let should_auto_open_settings;
-    let skip_wait_loop;
-    match presentation {
-        PanelPresentation::NotShown => {
-            print_banner(&missing, opts.open_settings);
-            should_auto_open_settings = opts.open_settings;
-            skip_wait_loop = false;
-        }
-        PanelPresentation::ShownOpenSettings => {
-            should_auto_open_settings = opts.open_settings;
-            skip_wait_loop = false;
-        }
-        PanelPresentation::ShownDismissed => {
-            should_auto_open_settings = false;
-            skip_wait_loop = false;
-        }
-        PanelPresentation::ShownAllGranted => {
-            should_auto_open_settings = false;
-            skip_wait_loop = true;
-        }
-    }
-
-    if should_auto_open_settings {
-        for m in &missing {
-            if let Err(e) = open_system_settings_for(*m) {
-                eprintln!("  (could not auto-open Settings for {}: {e})", m.label());
+    if opts.open_settings {
+        for permission in &missing {
+            if let Err(error) = open_system_settings_for(*permission) {
+                eprintln!(
+                    "  (could not auto-open Settings for {}: {error})",
+                    permission.label()
+                );
             }
         }
-    }
-
-    if skip_wait_loop {
-        return Ok(());
     }
     wait_for_grants(&opts)
 }
@@ -328,9 +293,7 @@ enum PanelPresentation {
     /// Panel could not be shown (opt-out env var, bare-binary launch,
     /// headless, etc.). Caller should fall back to the terminal banner.
     NotShown,
-    /// Panel shown; user clicked "Open System Settings".
-    ShownOpenSettings,
-    /// Panel shown; user clicked "Continue anyway" or closed the window.
+    /// Panel shown; user closed the window.
     ShownDismissed,
     /// Panel shown; its 1 Hz poll loop saw both grants flip green and
     /// dismissed automatically. Caller can skip the trailing wait loop.
@@ -347,7 +310,7 @@ fn present_panel_if_available(initial: PermissionsStatus) -> PanelPresentation {
         match panel::show_modal(panel::PanelOpts {
             initial_status: initial,
         }) {
-            panel::PanelOutcome::OpenSettings => PanelPresentation::ShownOpenSettings,
+            panel::PanelOutcome::Unavailable => PanelPresentation::NotShown,
             panel::PanelOutcome::Dismissed => PanelPresentation::ShownDismissed,
             panel::PanelOutcome::AllGranted => PanelPresentation::ShownAllGranted,
         }

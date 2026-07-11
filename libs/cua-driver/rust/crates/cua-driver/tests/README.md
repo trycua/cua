@@ -20,7 +20,6 @@ action, addressing mode, delivery mode, or OS-specific window-system case.
 | `schema_*_test.rs` | yes | Generated schema consistency |
 | `harness_<toolkit>_test.rs` | no, `#[ignore]` | Toolkit-specific harness apps |
 | `desktop_scope_<os>_test.rs` | no, `#[ignore]` | Platform window/desktop scope contract |
-| `guard_*_test.rs` | usually ignored or self-skipping | UX guard and interactive desktop checks |
 
 ## Harness Requirements
 
@@ -72,9 +71,8 @@ cargo test -p cua-driver --test harness_appkit_test -- --ignored --nocapture
 cargo test -p cua-driver --test desktop_scope_macos_test -- --ignored --nocapture
 ```
 
-The legacy Windows run-all uses
-`../../../../tests/runners/windows/run-all.ps1`. The current canonical E2E
-entrypoint is `scripts/ci/windows/run-rust-e2e.ps1 -Suite all -RequireGui`.
+The canonical Windows E2E entrypoint is
+`scripts/ci/windows/run-rust-e2e.ps1 -Suite all -RequireGui`.
 It runs the complete Rust harness matrix; internal lane selectors are retained
 only for focused diagnosis. Optional
 external-app suites remain separate.
@@ -85,21 +83,17 @@ builds selected Windows harness apps and maps them into the sandbox. The current
 Windows GUI validation path should use a real user desktop session through RDP
 or an interactive scheduled task.
 
-Windows GUI modality tests require a user desktop where the focus sentinel can
-become the foreground window. SSH-launched commands start in Session 0 and
+Windows GUI tests require a usable interactive desktop. SSH-launched commands start in Session 0 and
 cannot drive the user's desktop directly; launch GUI tests through an
 interactive scheduled task (`/IT`) or equivalent so they run in the logged-on
 user session.
 
-The Windows probe distinguishes two no-foreground states:
-
-- `input_desktop=Default, foreground_hwnd=0`: the desktop is usable but idle.
-  Tests now launch `focus-monitor-win` and require that sentinel HWND to become
-  foreground before assertions start.
-- `input_desktop` is not `Default` or cannot be opened: the session is usually
-  locked/disconnected, for example after an RDP client drops. Reconnect, use
-  `tscon /dest:console` on a disposable GUI VM, or boot the VM into an unlocked
-  console session before running ignored GUI tests.
+The testkit's native `DesktopObserver` records foreground-window, z-order,
+cursor, and leaked-input state around rows that promise no desktop side effects.
+If the input desktop is not `Default` or cannot be opened, the session is
+usually locked or disconnected. Reconnect, use `tscon /dest:console` on a
+disposable GUI VM, or boot the VM into an unlocked console session before
+running ignored GUI tests.
 
 Set `CUA_REQUIRE_GUI=1` on dedicated GUI runners to turn these desktop
 self-skips into hard failures with the full desktop-state diagnostic.

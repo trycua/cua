@@ -9,7 +9,6 @@ Run from `libs/cua-driver` in an RDP or console session:
 .\tests\runners\windows\run-all.ps1 -RequireGui
 ```
 
-The runner builds repo-local Windows fixtures and runs the Rust default,
-guard, harness, and modality suites. It intentionally skips optional
-external-app suites such as LibreOffice because those require extra software
-on the VM image.
+The runner builds repo-local Windows fixtures and runs the Rust unit and typed
+harness matrix. It intentionally skips optional external-app suites such as
+LibreOffice because those require extra software on the VM image.

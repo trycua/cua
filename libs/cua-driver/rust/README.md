@@ -14,7 +14,6 @@ implementations, testkit, and helper crates.
 | `platform-linux` | Linux AT-SPI, X11/Wayland, capture, and input support |
 | `cua-driver-testkit` | Test-only helpers for spawning the daemon and parsing responses |
 | `cua-driver-uia` | Windows UIAccess worker |
-| `focus-monitor-win` | Windows focus sentinel used by UX guard tests |
 | `cursor-overlay` | Cursor overlay support |
 | `pip-preview` | Packaging preview helper |
 

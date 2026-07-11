@@ -244,7 +244,7 @@ graph LR
 ```
 
 PR 0 is independent. PR 6 is based on PR 3 because its Windows unit workflow
-compiles the Windows guard tests and therefore needs the Windows desktop-state
+compiles the Windows desktop-state tests and therefore needs the corresponding
 diagnostics. It can merge after PR 3; PRs 4 and 5 remain independent platform
 slices and should merge before enabling the full cross-platform e2e gate.
 

@@ -41,7 +41,6 @@ libs/cua-driver/
 |   |   |-- platform-linux/           Linux backend
 |   |   |-- platform-macos/           macOS backend
 |   |   |-- platform-windows/         Windows backend
-|   |   |-- focus-monitor-win/        Windows focus oracle implementation
 |   |   `-- cursor-overlay/            Cursor evidence helper
 |   |-- test-apps/                    Built/staged native and web harness apps
 |   `-- Cargo.toml                    Rust workspace
@@ -152,18 +151,15 @@ Runner: `scripts/ci/windows/run-rust-e2e.ps1`
 | Web integration | `harness_web_test.rs` | WebView2 and Electron |
 | Capture contract | `capture_contract_test.rs` | WPF plus driver tree/image output |
 
-Cross-cutting instrumentation used by these rows includes the Windows
-`focus-monitor-win` oracle, capture validation, cursor evidence, and desktop
-scope checks. The current `guard_ux_test.rs` target is a temporary collection of
-those invariants; it should be folded into the relevant action rows rather than
-remain a permanent family.
+Cross-cutting instrumentation used by these rows includes the testkit
+`DesktopObserver`, capture validation, cursor evidence, and desktop-scope
+checks. These invariants are attached to their owning action rows rather than
+run as a separate test family.
 
 Windows is currently the broadest native matrix. It covers UIA controls, web
 integration, background focus checks, and Windows-specific input routes. The
-focus oracle currently lives in Windows-specific guard code, but it should be
-attached to shared and native action rows wherever background delivery is being
-tested. The background side-effect probes currently run as a separate Rust
-target and should eventually be folded into those action rows as well.
+desktop observer is attached to shared and native action rows wherever
+background delivery is tested.
 
 ### macOS
 
@@ -226,39 +222,30 @@ not a reason to create another test hierarchy.
 
 ## Cross-Cutting Invariants
 
-The focus monitor is cross-cutting test instrumentation. It answers the same
+The desktop observer is cross-cutting test instrumentation. It answers the same
 question for any action, harness, or test family:
 
 > Did the driver perform or reject the operation without disturbing the user's
 > foreground application or desktop?
 
-The Windows implementation is `focus-monitor-win`, currently used by
-`guard_ux_test.rs` and the current background input probes. It launches a
-separate monitor window as the simulated user's foreground application. Before
-an action, the monitor is made foreground. During the action, the test watches
-for focus-loss events and then checks the desktop state.
-
-The long-term shape should be a shared testkit focus-oracle interface with
-platform implementations, for example a Windows monitor window, a macOS
-foreground observer, and a Linux X11/Wayland focus observer. The action test
-should opt into the oracle when it is testing background delivery; it should
-not need to move into a special guard suite.
+`cua-driver-testkit::DesktopObserver` owns the shared interface. Native Windows,
+macOS, and Linux backends snapshot foreground-window, target z-order, cursor,
+and leaked-input state before and after an action. Background rows opt into the
+observer directly; there is no special guard suite.
 
 | Invariant or scenario | What it checks |
 | --- | --- |
-| Background click/type/key | The target action does not move focus away from the monitor |
+| Background click/type/key | The target action does not move focus away from the user's foreground window |
 | Minimized app launch | `launch_app(start_minimized=true)` does not raise the new app |
 | Background hotkey | A keyboard chord does not steal focus |
 | Child-window click | A target-created window does not unexpectedly become foreground |
 | Background screenshot | Reading the target does not change focus or z-order |
 | Agent cursor visibility | The cursor appears in the captured pixels when enabled and moved |
 
-The current standalone file is transitional, not a separate behavioral family.
 A focus assertion can prove "no focus steal" while failing to prove that a
 click changed the target application state. An action row must therefore check
 both the target's external state and, when background delivery is under test,
-the cross-cutting focus oracle. The useful focus/no-z-order assertions from the
-current standalone files should be moved into those action rows over time.
+the cross-cutting desktop observer.
 
 These tests require a real interactive Windows user desktop. They reject
 Session 0, locked desktops, and disconnected RDP sessions. Without
@@ -301,28 +288,21 @@ logs; they do not need desktop video.
 
 The overall structure exists, but the plan is not completely finished:
 
-1. **Fold in standalone invariants.** Move any remaining unique focus,
-   z-order, cursor, and desktop
-   assertions from `guard_ux_test.rs` into the relevant shared/native action
-   rows, then remove the standalone guard target once coverage is preserved.
-2. **Structured result adoption.** The shared matrix emits v2 case/result
+1. **Structured result adoption.** The shared matrix emits v2 case/result
    records. Native harnesses still need to adopt the same `CaseSpec` and result
    writer instead of relying on Cargo output.
-3. **Finish Windows convergence.** The old modality-background assertions now
-   have typed WPF and capture owners and that duplicate target is gone. Finish
-   validating minimized launch, then remove `guard_ux_test.rs` and its lane.
-4. **Per-cell GitHub evidence links.** The summary should link the matching
+2. **Per-cell GitHub evidence links.** The summary should link the matching
    video, trajectory, and log in each row, rather than only linking a whole
    lane archive.
-5. **Consistent delivery declarations.** Native tests should explicitly state
+3. **Consistent delivery declarations.** Native tests should explicitly state
    foreground or background intent instead of relying on an omitted field to
    mean background.
-6. **Complete macOS web coverage.** Add a dedicated Rust WKWebView E2E target
+4. **Complete macOS web coverage.** Add a dedicated Rust WKWebView E2E target
    if WKWebView remains a supported harness.
-7. **Fresh OS validation.** Run the complete `all` matrix on Windows, Linux
+5. **Fresh OS validation.** Run the complete `all` matrix on Windows, Linux
    X11/Wayland, and macOS, then classify actual failures as driver bugs,
    fixture bugs, environment failures, or expected refusals.
-8. **Legacy cleanup.** After the canonical matrix is stable, retire old Python
+6. **Legacy cleanup.** After the canonical matrix is stable, retire old Python
    and recording-only runners that duplicate Rust coverage, while preserving
    any still-supported external-app checks as explicitly optional.
 
@@ -335,7 +315,7 @@ to give each behavior one clear owner and make cross-cutting evidence reusable.
 
 ```text
 rust/crates/cua-driver-testkit/src/
-`-- focus_oracle.rs                 Cross-OS focus/no-z-order interface
+`-- observer.rs                     Cross-OS desktop-side-effect interface
 
 rust/crates/cua-driver/tests/
 |-- cross_platform_behavior_test.rs Shared Electron/Tauri action matrix
@@ -347,37 +327,20 @@ rust/crates/cua-driver/tests/
 |-- harness_gtk3_test.rs            Linux GTK3 action rows
 |-- capture_contract_test.rs        Tree and screenshot read contract
 |-- desktop_scope_<os>_test.rs      Window/desktop scope invariants
-|-- protocol_*_test.rs              Protocol and schema tests
-`-- guard_ux_test.rs                Temporary migration file, then removed
+`-- protocol_*_test.rs              Protocol and schema tests
 ```
 
-The focus oracle is a helper, not a test family. An action row invokes it when
+The desktop observer is a helper, not a test family. An action row invokes it when
 the row is testing background delivery. The row then records both outcomes:
 
 1. Did the target application state change, or did the driver return the
    documented structured refusal?
 2. Did focus, z-order, cursor, and desktop state remain within the contract?
 
-### Migration Order
-
-1. Add a small focus-oracle API to `cua-driver-testkit` and keep the current
-   Windows monitor behind that API.
-2. Move the six useful no-focus-steal assertions from `guard_ux_test.rs` into
-   the relevant shared or native action rows. Keep launch and cursor cases in
-   the closest desktop/capture owner if they do not correspond to an action.
-3. Keep the deleted modality-input coverage owned by the shared typed catalog;
-   do not restore its hard-coded Notepad coordinates or focus-only assertions.
-4. Add equivalent focus observers for macOS and Linux, then enable the same
-   oracle fields in their background action rows.
-5. Delete `guard_ux_test.rs` only after its minimized-launch replacement passes;
-   the modality-background file already passed this ownership check and is gone.
-6. Remove the diagnostic `guard`/input lane selectors after the files are gone;
-   the canonical `all` runner remains the only user-facing command.
-
-This gives us fewer overlapping files without hiding platform-specific test
-behavior. The shared action matrix stays small and intentional, while native
-toolkit files keep the controls that cannot be represented by the shared web
-harness.
+The deleted guard and modality files remain owned by the typed shared/native
+rows and the launch, cursor, capture, and desktop-scope contracts. The
+canonical `all` runner is the only user-facing command; lane selectors are
+internal diagnostics.
 
 ## Contributor Workflow
 

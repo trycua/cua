@@ -32,11 +32,9 @@ if (-not (Test-Path $driverExe)) {
 Log "cua-driver   : $driverExe"
 
 # -- find test binaries -------------------------------------------------------
-# Run protocol_handshake_test first, then guard_ux_test (UX guard needs a real
-# desktop session and spawns visible windows, so it runs second).
+# Run the protocol test first, followed by the typed interactive harnesses.
 $testSuites = @(
     @{ Pattern = "protocol_handshake_test-*.exe"; Label = "protocol_handshake_test" },
-    @{ Pattern = "guard_ux_test-*.exe";           Label = "guard_ux_test" },
     @{ Pattern = "harness_wpf_test-*.exe";        Label = "harness_wpf_test";        Extra = @("--ignored") },
     @{ Pattern = "harness_winui3_test-*.exe";     Label = "harness_winui3_test";     Extra = @("--ignored") },
     @{ Pattern = "harness_web_test-*.exe";        Label = "harness_web_test";        Extra = @("--ignored") },

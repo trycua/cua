@@ -2,7 +2,7 @@
 # Scenario definitions and assertions stay in the Rust integration test.
 param(
     [switch]$NoBuild,
-    [ValidateSet("guard", "shared", "native", "capture", "all")]
+    [ValidateSet("shared", "native", "capture", "all")]
     [string]$Suite = "all",
     [switch]$RequireGui
 )
@@ -55,15 +55,9 @@ if (-not $NoBuild) {
         "shared" { @("electron", "tauri") }
         "native" { @("wpf", "winui3", "webview", "electron") }
         "capture" { @("wpf", "electron") }
-        "guard" { @("electron") }
         default { @("wpf", "winui3", "webview", "electron", "tauri") }
     }
     & (Join-Path $scriptDir "build-harnesses.ps1") -Targets $fixtureTargets
-}
-
-if ($Suite -in @("guard", "all")) {
-    & cargo build -p focus-monitor-win --manifest-path (Join-Path $rustRoot "Cargo.toml")
-    if ($LASTEXITCODE -ne 0) { throw "Focus monitor build failed" }
 }
 
 if (-not (Test-Path $env:CUA_TEST_DRIVER_BIN)) {
@@ -169,13 +163,6 @@ if ($Suite -in @("shared", "all")) {
     Invoke-CargoTest "shared behavior matrix" @(
         "test", "-p", "cua-driver", "--test", "cross_platform_behavior_test", "--",
         "--ignored", "--exact", "shared_web_action_matrix_is_state_verified",
-        "--nocapture", "--test-threads=1"
-    )
-}
-
-if ($Suite -in @("guard", "all")) {
-    Invoke-CargoTest "guard UX" @(
-        "test", "-p", "cua-driver", "--test", "guard_ux_test", "--",
         "--nocapture", "--test-threads=1"
     )
 }

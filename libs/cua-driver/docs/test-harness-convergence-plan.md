@@ -87,13 +87,9 @@ state rather than the older 60-cell proposal.
 
 - The three older shared tests are removed. The typed catalog is the sole
   shared behavior owner.
-- `guard_ux_test.rs` remains until minimized launch passes its strict typed
-  replacement. `modality_background_test.rs` and `modality_input_e2e_test.rs`
-  have been removed after their externally verified actions moved to typed
-  shared, WPF, and capture owners.
-- Windows `all` still exposes `guard` and `modality` as test families and does
-  not run the Windows desktop-scope target.
-- Linux `all` still reports schema-only dispatch checks as E2E behavior.
+- Legacy guard and modality targets are removed after their externally verified
+  actions moved to typed shared, WPF, launch, capture, cursor, and desktop-scope
+  owners.
 - The macOS preflight is implemented, but this host currently reports an
   ad-hoc-signed daemon without a reusable Screen Recording grant.
 - AppKit scroll remains an optional failing gap outside canonical `all`.
@@ -202,8 +198,8 @@ DesktopObservation
   optional leaked-input journal
 ```
 
-Implement Windows first with `focus-monitor-win`. Add macOS and Linux adapters
-behind the same interface after the Windows contract is stable.
+The testkit `DesktopObserver` provides this interface with native Windows,
+macOS, and Linux backends.
 
 Attach the observer to:
 
@@ -274,7 +270,7 @@ Canonical invocations set strict mode. Missing required capabilities produce
 | `harness_appkit_test.rs` | AppKit rows; scroll is an honest failing optional test outside canonical `all` |
 | `harness_swiftui_test.rs` | SwiftUI controls and popover behavior |
 | `harness_gtk3_test.rs` | Minimal GTK3/AT-SPI rows for X11 and Wayland |
-| `guard_ux_test.rs` | Migrate observations into the desktop observer, then delete |
+| Legacy Windows UX guard target | Deleted after typed launch, cursor, shared, capture, and desktop-scope owners passed the replacement audit |
 | `modality_input_e2e_test.rs` | Deleted; shared cells own web actions and the Notepad row had no delivery oracle |
 | `modality_background_test.rs` | Deleted; typed WPF background action rows and capture ownership passed the replacement audit |
 | `capture_contract_test.rs` | Sole owner for tree/image inclusion behavior; canonical prerequisites fail instead of skipping |

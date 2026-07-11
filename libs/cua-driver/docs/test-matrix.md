@@ -98,7 +98,7 @@ Windows native harnesses are repo-local applications built from source:
 | WPF | `harness_wpf_test.rs` | UIA controls, text, keys, pointer actions, scroll, drag, popups, menus, modal windows |
 | WinUI3 | `harness_winui3_test.rs` | XAML controls, text, checkbox/radio, slider, combo, popup |
 | WebView2 | `harness_web_test.rs` | Window discovery, CDP page access, JavaScript, DOM click path |
-| Focus oracle and desktop invariants | `focus-monitor-win` plus testkit integration | Cross-cutting focus, z-order, minimized-launch, screenshot, cursor, and desktop checks |
+| Desktop invariants | Testkit `DesktopObserver` plus typed launch/capture/cursor owners | Cross-cutting focus, z-order, minimized-launch, screenshot, cursor, and desktop checks |
 
 Native controls use AX/UIA state as their oracle. Pointer actions also use PX
 where the tool contract requires coordinates. `set_value` is an AX/UIA

@@ -36,7 +36,10 @@ function createWindow() {
     x: sentinelMode ? 0 : undefined,
     y: sentinelMode ? 0 : undefined,
     title: fixedTitle,
-    show: false,
+    // Map the normal harness immediately. Xvfb/Openbox can enumerate a
+    // deferred BrowserWindow while never painting it into the root desktop.
+    // The sentinel stays hidden until it has maximized and claimed focus.
+    show: !sentinelMode,
     alwaysOnTop: sentinelMode,
     autoHideMenuBar: true,
     webPreferences: {

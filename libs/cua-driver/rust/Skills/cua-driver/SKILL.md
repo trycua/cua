@@ -93,6 +93,39 @@ still work as CuaDriver calls, but they do not expose the
 `mcp__cua-computer-use__screenshot` tool name that Claude Code
 appears to use as the image-grounding cue.
 
+### Codex Computer Use compatibility mode
+
+When the tool roster is exactly `list_apps`, `get_app_state`, `click`,
+`perform_secondary_action`, `set_value`, `select_text`, `scroll`,
+`drag`, `press_key`, and `type_text`, use the app-oriented loop below.
+Do not use the pid/window-native instructions elsewhere in this skill
+for that session.
+
+1. Call `list_apps` only when the target app name or bundle identifier
+   is unknown.
+2. Call `get_app_state({"app":"..."})` before the first interaction in
+   every assistant turn. Read the text tree and JPEG together.
+3. Prefer an indexed element for controls, editable text, selectable
+   text, and scroll containers. Use screenshot coordinates for canvas
+   or custom-drawn content.
+4. Treat each successful action response as the next current state.
+   If an action reports that its refresh failed, do not repeat the
+   action. Call `get_app_state` again.
+5. If the driver reports `stale_app_state`, `screen_locked`, or
+   `target_not_allowed`, stop and follow that
+   recovery instruction. Never work around a blocked target with shell
+   automation.
+
+Register this profile with:
+
+```bash
+cua-driver mcp-config --client codex-computer-use
+```
+
+The mode is macOS-only, uses the Sky cursor by default, and blocks the
+driver, its declared host, authentication UI, System Settings, and
+known terminal apps. The host still owns per-app approval policy.
+
 ## Using cua-driver from the shell
 
 Tool names are `snake_case`, management subcommands are

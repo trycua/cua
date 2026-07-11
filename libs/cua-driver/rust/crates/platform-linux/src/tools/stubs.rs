@@ -112,7 +112,7 @@ stub_tool!(get_cursor_position_m, GetCursorPositionTool, "get_cursor_position",
     serde_json::json!({"type":"object","properties":{},"additionalProperties":false}));
 
 stub_tool!(cursor_motion_m, SetAgentCursorMotionTool, "set_agent_cursor_motion",
-    format!("Configure the visual appearance of an agent cursor instance.\n\nExtended cursor customization for multi-cursor use cases:\n- cursor_id: instance name (default='default')\n- cursor_icon: built-in ({}) or a path to a PNG/JPEG/SVG/ICO file; '' reverts to the default cursor\n- cursor_color: hex color e.g. '#00FFFF' or CSS name\n- cursor_label: short text shown near the cursor\n- cursor_size: dot radius in points (default=16)\n- cursor_opacity: 0.0–1.0 (default=0.85)", cursor_overlay::BuiltinShape::names_help()),
+    format!("Configure the visual appearance of an agent cursor instance.\n\nExtended cursor customization for multi-cursor use cases:\n- cursor_id: instance name (default='default')\n- cursor_icon: built-in ({}) or a path to a PNG/SVG/ICO file; '' reverts to the default cursor\n- cursor_color: hex color e.g. '#00FFFF' or CSS name\n- cursor_label: short text shown near the cursor\n- cursor_size: dot radius in points (default=16)\n- cursor_opacity: 0.0–1.0 (default=0.85)", cursor_overlay::BuiltinShape::names_help()),
     serde_json::json!({"type":"object","properties":{"cursor_id":{"type":"string"},"cursor_icon":{"type":"string"},"cursor_color":{"type":"string"},"cursor_label":{"type":"string"},"cursor_size":{"type":"number"},"cursor_opacity":{"type":"number"}},"additionalProperties":false}));
 
 stub_tool!(get_cursor_state_m, GetAgentCursorStateTool, "get_agent_cursor_state",

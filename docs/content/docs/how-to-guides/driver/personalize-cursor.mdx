@@ -11,7 +11,7 @@ The Cua Driver agent cursor ships with three built-in silhouettes:
 - **`arrow`**
 - **`sky`**, a gray kite whose tip lands at the requested event coordinate
 
-`teardrop` is the default. Opt into the arrow with `--cursor-shape arrow` or the Sky kite with `--cursor-shape sky`. You can also replace the silhouette entirely with your own SVG / PNG / JPEG / ICO file via `--cursor-icon <path>`, swap the body palette at runtime, or scale the bloom halo independently.
+`teardrop` is the default. Opt into the arrow with `--cursor-shape arrow` or the Sky kite with `--cursor-shape sky`. You can also replace the silhouette entirely with your own SVG / PNG / ICO file via `--cursor-icon <path>`, swap the body palette at runtime, or scale the bloom halo independently.
 
 ## Pick a built-in silhouette
 
@@ -38,13 +38,13 @@ Every per-instance cursor accepts a runtime style override via the `set_agent_cu
 
 - `gradient_colors`: array of CSS hex strings used as the cursor body's tip-to-tail gradient. An empty array reverts to the palette default (`#F0FBFF` → `#66D9FF` → `#35C6D8` on the teardrop; the palette's `cursor_start/mid/end` on the arrow).
 - `bloom_color`: hex string for the radial halo behind the cursor. Empty string reverts.
-- `image_path`: path to a PNG / JPEG / SVG / ICO file. When set, replaces the built-in silhouette with your asset. Empty string clears the override, reverting to the default silhouette.
+- `image_path`: path to a PNG / SVG / ICO file. When set, replaces the built-in silhouette with your asset. Empty string clears the override, reverting to the default silhouette.
 
 Switch between the built-in `arrow`, `teardrop`, and `sky` silhouettes at runtime with `set_agent_cursor_motion`'s `cursor_icon` field. Pass the built-in name or a file path, using the same vocabulary the CLI `--cursor-shape` / `--cursor-icon` flags accept. Both the CLI and MCP resolve names through the same `BuiltinShape` table, so they can never drift.
 
 ## Use your own cursor asset
 
-Pass `--cursor-icon <path>` to `cua-driver serve` (or set `image_path` on `set_agent_cursor_style` at runtime). Supported formats: `.svg`, `.png`, `.jpeg`, `.ico`. The asset is rasterised once at startup into a 52×52 RGBA buffer and used in place of the built-in silhouette.
+Pass `--cursor-icon <path>` to `cua-driver serve` (or set `image_path` on `set_agent_cursor_style` at runtime). Supported formats: `.svg`, `.png`, `.ico`. The asset is rasterised once at startup into a 52×52 RGBA buffer and used in place of the built-in silhouette.
 
 ```bash
 cua-driver serve --cursor-icon ~/my-cursor.svg

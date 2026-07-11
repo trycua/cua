@@ -57,7 +57,25 @@ That profile exposes the same driver tools under the compatibility server name. 
 
 ## Codex
 
-Print the Codex command:
+Print the app-oriented Codex Computer Use command:
+
+```bash
+cua-driver mcp-config --client codex-computer-use
+```
+
+It registers the exact ten-tool app contract and uses the Sky cursor:
+
+```bash
+codex mcp add cua-computer-use -- /Users/you/.local/bin/cua-driver mcp --codex-computer-use-compat
+codex mcp list
+```
+
+Restart Codex or open a fresh session after adding the server. Call
+`get_app_state` before the first action in each turn; every successful action
+returns the refreshed state and JPEG.
+
+To expose Cua Driver's broader pid/window-native catalog instead, print the
+existing native Codex command:
 
 ```bash
 cua-driver mcp-config --client codex
@@ -70,7 +88,7 @@ codex mcp add cua-driver -- /Users/you/.local/bin/cua-driver mcp
 codex mcp list
 ```
 
-Restart Codex or open a fresh session after adding the server. For richer agent guidance, install the Cua Driver skill:
+For richer agent guidance, install the Cua Driver skill:
 
 ```bash
 cua-driver skills install

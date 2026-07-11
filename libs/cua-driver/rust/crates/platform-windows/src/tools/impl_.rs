@@ -6690,7 +6690,7 @@ impl Tool for SetAgentCursorMotionTool {
             description: format!("Configure the visual appearance and motion curve of an agent cursor instance.\n\n\
                 Appearance:\n\
                 - cursor_id: instance name (default='default')\n\
-                - cursor_icon: built-in ({}) or a path to a PNG/JPEG/SVG/ICO file; '' reverts to the default cursor\n\
+                - cursor_icon: built-in ({}) or a path to a PNG/SVG/ICO file; '' reverts to the default cursor\n\
                 - cursor_color: hex color e.g. '#00FFFF' or CSS name\n\
                 - cursor_label: short text shown near the cursor\n\
                 - cursor_size: dot radius in points (default=16)\n\
@@ -6902,7 +6902,7 @@ impl Tool for SetAgentCursorStyleTool {
                    the default palette colours.\n\
                  - bloom_color: hex string for the radial halo/bloom behind the cursor \
                    (e.g. \"#00FFFF\"). Empty string reverts to the default.\n\
-                 - image_path: path to a PNG, JPEG, SVG, or ICO file to use as the cursor \
+                 - image_path: path to a PNG, SVG, or ICO file to use as the cursor \
                    icon instead of the default silhouette. Empty string reverts to the \
                    default cursor.\n\
                  All parameters are optional; omit any you do not want to change."
@@ -6925,7 +6925,7 @@ impl Tool for SetAgentCursorStyleTool {
                     },
                     "image_path": {
                         "type": "string",
-                        "description": "Path to PNG/JPEG/SVG/ICO cursor image. '' = revert to the default cursor."
+                        "description": "Path to PNG/SVG/ICO cursor image. '' = revert to the default cursor."
                     }
                 },
                 "additionalProperties": false

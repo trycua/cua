@@ -141,9 +141,6 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
 fi
 
 if [[ "${SUITE}" == modality || "${SUITE}" == all ]]; then
-  run_test linux-delivery-schema \
-    cargo test -p cua-driver --test modality_dispatch_linux_test -- \
-      --nocapture --test-threads=1
   run_test modality-capture \
     cargo test -p cua-driver --test modality_capture_mode_test -- \
       --ignored --nocapture --test-threads=1

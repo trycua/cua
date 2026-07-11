@@ -1,59 +1,11 @@
 //! Modality axis: the best-effort-background dispatch ladder (macOS).
 //!
-//! Covers the contract introduced by the modality-ladder work:
-//!   - `delivery_mode` (background | foreground) on the input tools,
-//!   - `scope` (window | desktop) as a per-call param on `click`,
-//!   - the `{path, verified}` structured outcome,
+//! Covers the `{path, verified}` structured outcome on a real Cocoa app.
 //!
-//! The schema assertions are deterministic and run in CI (they only inspect
-//! `tools/list`). The end-to-end ladder behavior is `#[ignore]` — it needs a
-//! real focus-sensitive app + a GUI session, so it runs interactively / on the
-//! VMs, asserting per-rung outcomes via the testkit `path()` / `verified()`
-//! accessors instead of scraping result text.
+//! The schema contract lives in `protocol_schema_test.rs`. This optional
+//! installed-app check needs a focus-sensitive app and GUI session.
 
 #![cfg(target_os = "macos")]
-
-use cua_driver_testkit::RawDriver;
-
-/// `delivery_mode` (type_text + click) and `scope` (click) are advertised with
-/// their enums in `tools/list`. Consumers branch on these being present.
-#[test]
-fn dispatch_and_scope_schema_advertised() {
-    let Some(mut d) = RawDriver::spawn() else { return };
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}));
-    let resp = d.recv();
-    let tools = resp["result"]["tools"].as_array().expect("tools array");
-
-    let props = |name: &str| {
-        tools.iter().find(|t| t["name"] == name)
-            .unwrap_or_else(|| panic!("{name} not in tools/list"))
-            ["inputSchema"]["properties"].clone()
-    };
-
-    let enum_values = |v: &serde_json::Value| -> Vec<String> {
-        v["enum"].as_array()
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect())
-            .unwrap_or_default()
-    };
-
-    for tool in ["type_text", "click"] {
-        let dm = props(tool)["delivery_mode"].clone();
-        let en = enum_values(&dm);
-        assert!(
-            en.iter().any(|s| s == "background") && en.iter().any(|s| s == "foreground"),
-            "{tool}.delivery_mode enum should be [background, foreground], got {dm:?}"
-        );
-    }
-
-    let scope = props("click")["scope"].clone();
-    let sen = enum_values(&scope);
-    assert!(
-        sen.iter().any(|s| s == "window") && sen.iter().any(|s| s == "desktop"),
-        "click.scope enum should be [window, desktop], got {scope:?}"
-    );
-}
 
 // ── End-to-end ladder behavior (interactive; needs a GUI session) ────────────
 

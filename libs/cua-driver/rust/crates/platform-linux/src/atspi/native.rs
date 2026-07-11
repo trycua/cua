@@ -1673,11 +1673,22 @@ fn window_to_screen_offset(pid: u32, xid: u64) -> Option<(i32, i32)> {
     Some((ox + fl, oy + ft))
 }
 
-fn screen_extent_rebase(x11_origin: (i32, i32), accessible_frame_origin: (i32, i32)) -> (i32, i32) {
-    (
-        x11_origin.0 - accessible_frame_origin.0,
-        x11_origin.1 - accessible_frame_origin.1,
-    )
+fn screen_extent_rebase(
+    x11_origin: (i32, i32),
+    accessible_frame_origin: (i32, i32),
+) -> Option<(i32, i32)> {
+    // Chromium's broken "Screen" provider is rooted at the renderer-local
+    // origin. A legitimate screen provider may differ from the X11 client
+    // origin by title-bar/CSD extents; rebasing that small decoration delta
+    // would move otherwise-correct GTK coordinates off their controls.
+    if accessible_frame_origin.0.abs() <= 2 && accessible_frame_origin.1.abs() <= 2 {
+        Some((
+            x11_origin.0 - accessible_frame_origin.0,
+            x11_origin.1 - accessible_frame_origin.1,
+        ))
+    } else {
+        None
+    }
 }
 
 /// Screen-coordinate bounds for every action node in the tree, keyed by the
@@ -1747,7 +1758,8 @@ pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32
                         },
                         _ => None,
                     };
-                    accessible_origin.map(|frame_origin| screen_extent_rebase(origin, frame_origin))
+                    accessible_origin
+                        .and_then(|frame_origin| screen_extent_rebase(origin, frame_origin))
                 } else {
                     None
                 }
@@ -1822,8 +1834,9 @@ mod coord_tests {
 
     #[test]
     fn screen_extents_are_rebased_from_accessible_frame_to_x11_origin() {
-        assert_eq!(screen_extent_rebase((604, 80), (0, 0)), (604, 80));
-        assert_eq!(screen_extent_rebase((604, 80), (604, 80)), (0, 0));
+        assert_eq!(screen_extent_rebase((604, 80), (0, 0)), Some((604, 80)));
+        assert_eq!(screen_extent_rebase((604, 100), (604, 80)), None);
+        assert_eq!(screen_extent_rebase((604, 80), (604, 80)), None);
     }
 
     #[test]

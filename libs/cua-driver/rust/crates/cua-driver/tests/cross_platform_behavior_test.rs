@@ -548,7 +548,7 @@ fn run_text_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> O
     Observation::delivered(passed, Evidence::default())
 }
 
-fn run_keyboard_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
+fn run_press_key_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
     let pre = snapshot(fixture);
     let mut press_args = action_target_args(fixture, &pre, "keyboard-input", addressing, delivery);
     press_args
@@ -569,9 +569,12 @@ fn run_keyboard_action(fixture: &mut Fixture, addressing: &str, delivery: &str) 
     passed.extend(unverified_background_protocol_oracle(&response, delivery));
     assert_tree_contains(fixture, "key_state=enter");
 
-    let post_press = snapshot(fixture);
-    let mut hotkey_args =
-        action_target_args(fixture, &post_press, "keyboard-input", addressing, delivery);
+    Observation::delivered(passed, Evidence::default())
+}
+
+fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
+    let pre = snapshot(fixture);
+    let mut hotkey_args = action_target_args(fixture, &pre, "keyboard-input", addressing, delivery);
     hotkey_args
         .as_object_mut()
         .expect("hotkey arguments object")
@@ -587,7 +590,8 @@ fn run_keyboard_action(fixture: &mut Fixture, addressing: &str, delivery: &str) 
         response.text()
     );
     assert_tree_contains(fixture, "key_state=hotkey");
-    Observation::delivered(passed, Evidence::default())
+    let passed = unverified_background_protocol_oracle(&response, delivery);
+    Observation::delivered_with_fixture_state(passed)
 }
 
 fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
@@ -747,7 +751,8 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
             OracleKind::NoLeakedInput,
         ]);
         if cfg!(target_os = "windows")
-            && (action == "keyboard" || (action == "type_text" && targeting == Targeting::Px))
+            && (matches!(action, "press_key" | "hotkey")
+                || (action == "type_text" && targeting == Targeting::Px))
         {
             oracles.push(OracleKind::Protocol);
         }
@@ -826,8 +831,12 @@ fn shared_web_action_matrix_is_state_verified() {
                 run_text_action as fn(&mut Fixture, &str, &str) -> Observation,
             ),
             (
-                "keyboard",
-                run_keyboard_action as fn(&mut Fixture, &str, &str) -> Observation,
+                "press_key",
+                run_press_key_action as fn(&mut Fixture, &str, &str) -> Observation,
+            ),
+            (
+                "hotkey",
+                run_hotkey_action as fn(&mut Fixture, &str, &str) -> Observation,
             ),
             (
                 "scroll",

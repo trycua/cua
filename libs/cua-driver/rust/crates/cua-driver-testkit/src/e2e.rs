@@ -167,7 +167,7 @@ pub fn shared_web_route(
             Platform::Windows,
             DisplayServer::Win32,
             Targeting::Ax,
-            "right_click" | "double_click" | "keyboard",
+            "right_click" | "double_click" | "press_key" | "hotkey",
         ) => pointer_or_key_route(Route::PostMessage, Route::WindowsSendInput),
         (Platform::Windows, DisplayServer::Win32, Targeting::Ax, "editor_save") => {
             Ok(Route::Composite)
@@ -188,7 +188,7 @@ pub fn shared_web_route(
             Platform::Macos,
             DisplayServer::Quartz,
             Targeting::Ax,
-            "right_click" | "double_click" | "keyboard",
+            "right_click" | "double_click" | "press_key" | "hotkey",
         ) => pointer_or_key_route(Route::MacosCgEventPid, Route::MacosCgEventHid),
         (Platform::Macos, DisplayServer::Quartz, Targeting::Ax, "editor_save") => {
             Ok(Route::Composite)
@@ -214,13 +214,13 @@ pub fn shared_web_route(
             Platform::Linux,
             DisplayServer::X11,
             Targeting::Ax,
-            "right_click" | "double_click" | "keyboard",
+            "right_click" | "double_click" | "press_key" | "hotkey",
         ) => pointer_or_key_route(Route::LinuxXSendEvent, Route::LinuxXTest),
         (
             Platform::Linux,
             DisplayServer::Wayland,
             Targeting::Ax,
-            "right_click" | "double_click" | "keyboard",
+            "right_click" | "double_click" | "press_key" | "hotkey",
         ) => Ok(Route::LinuxLibei),
         (
             Platform::Linux,
@@ -1149,7 +1149,8 @@ mod tests {
             "right_click",
             "double_click",
             "type_text",
-            "keyboard",
+            "press_key",
+            "hotkey",
             "scroll",
             "child_window",
         ] {
@@ -1163,7 +1164,7 @@ mod tests {
             cells.push(("drag", Targeting::Px, delivery));
             cells.push(("editor_save", Targeting::Ax, delivery));
         }
-        assert_eq!(cells.len(), 32);
+        assert_eq!(cells.len(), 36);
         for (platform, display_server) in [
             (Platform::Windows, DisplayServer::Win32),
             (Platform::Macos, DisplayServer::Quartz),

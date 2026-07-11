@@ -7,8 +7,10 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="$(mktemp -d)"
 SWAY_CONFIG="$(mktemp)"
 SWAY_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/sway.log"
+ATSPI_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/at-spi-bus.log"
 SWAY_PID=""
 DBUS_PID=""
+ATSPI_PID=""
 
 cleanup() {
   if [[ -n "${SWAY_PID}" ]]; then
@@ -17,6 +19,10 @@ cleanup() {
   fi
   if [[ -n "${DBUS_PID}" ]]; then
     kill "${DBUS_PID}" 2>/dev/null || true
+  fi
+  if [[ -n "${ATSPI_PID}" ]]; then
+    kill "${ATSPI_PID}" 2>/dev/null || true
+    wait "${ATSPI_PID}" 2>/dev/null || true
   fi
   rm -rf "${RUNTIME_DIR}"
   rm -f "${SWAY_CONFIG}"
@@ -65,6 +71,35 @@ if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
   dbus_info="$(dbus-daemon --config-file="${dbus_config}" --fork --print-address=1 --print-pid=1)"
   export DBUS_SESSION_BUS_ADDRESS="$(sed -n '1p' <<< "${dbus_info}")"
   DBUS_PID="$(sed -n '2p' <<< "${dbus_info}")"
+fi
+
+# A private session bus does not activate the desktop accessibility stack by
+# itself. Start the repo-pinned AT-SPI launcher, then require org.a11y.Bus to
+# answer before any fixture or driver process inherits this session.
+at-spi-bus-launcher --launch-immediately > "${ATSPI_LOG}" 2>&1 &
+ATSPI_PID=$!
+deadline=$((SECONDS + 15))
+while ((SECONDS < deadline)); do
+  if ! kill -0 "${ATSPI_PID}" 2>/dev/null; then
+    echo "AT-SPI bus launcher exited before org.a11y.Bus became ready" >&2
+    cat "${ATSPI_LOG}" >&2
+    exit 1
+  fi
+  if gdbus call --session \
+      --dest org.a11y.Bus \
+      --object-path /org/a11y/bus \
+      --method org.a11y.Bus.GetAddress >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.2
+done
+if ! gdbus call --session \
+    --dest org.a11y.Bus \
+    --object-path /org/a11y/bus \
+    --method org.a11y.Bus.GetAddress >/dev/null 2>&1; then
+  echo "org.a11y.Bus did not become ready within 15 seconds" >&2
+  cat "${ATSPI_LOG}" >&2
+  exit 1
 fi
 
 sway --unsupported-gpu --config "${SWAY_CONFIG}" > "${SWAY_LOG}" 2>&1 &

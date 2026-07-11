@@ -60,6 +60,7 @@ export CUA_TEST_DRIVER_STDERR=1
 
 command -v ffmpeg >/dev/null || { echo "ffmpeg is required for E2E trajectory videos" >&2; exit 1; }
 command -v ffprobe >/dev/null || { echo "ffprobe is required for E2E trajectory validation" >&2; exit 1; }
+command -v jq >/dev/null || { echo "jq is required for E2E ownership validation" >&2; exit 1; }
 
 if [[ "${BUILD_FIXTURES}" == 1 ]]; then
   cargo build --release -p cua-driver --manifest-path "${RUST_ROOT}/Cargo.toml"
@@ -160,6 +161,20 @@ while IFS= read -r -d '' video; do
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
   fi
 done < <(find "${RECORDING_ROOT}" -type f -name recording.mp4 -print0)
+
+OWNED_VIDEOS="$(mktemp)"
+jq -r 'select(.evidence.video != null) | .evidence.video' "${RESULTS_FILE}" > "${OWNED_VIDEOS}"
+while IFS= read -r -d '' video; do
+  relative="${video#${ARTIFACT_DIR}/}"
+  if [[ "${relative}" == recordings/environment-preflight-*/recording.mp4 ]]; then
+    continue
+  fi
+  if ! grep -Fxq -- "${relative}" "${OWNED_VIDEOS}"; then
+    echo "[VIDEO FAIL] Orphan trajectory has no typed result row: ${relative}" >&2
+    FAILURE_COUNT=$((FAILURE_COUNT + 1))
+  fi
+done < <(find "${RECORDING_ROOT}" -type f -name recording.mp4 -print0)
+rm -f "${OWNED_VIDEOS}"
 
 while IFS= read -r -d '' error_file; do
   echo "[VIDEO FAIL] ${error_file}" >&2

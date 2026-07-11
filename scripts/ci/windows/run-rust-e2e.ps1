@@ -154,6 +154,24 @@ function Test-E2eRecordings {
             Write-Host "[VIDEO PASS] $($video.FullName)" -ForegroundColor Green
         }
     }
+
+    $ownedVideos = @{}
+    Get-Content $resultsPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object {
+        $result = $_ | ConvertFrom-Json
+        if ($null -ne $result.evidence.video) {
+            $ownedVideos[$result.evidence.video.Replace("\", "/")] = $true
+        }
+    }
+    foreach ($video in $videos) {
+        $relative = [System.IO.Path]::GetRelativePath($artifactDir, $video.FullName).Replace("\", "/")
+        if ($relative -like "recordings/environment-preflight-*/recording.mp4") {
+            continue
+        }
+        if (-not $ownedVideos.ContainsKey($relative)) {
+            Write-Host "[VIDEO FAIL] Orphan trajectory has no typed result row: $relative" -ForegroundColor Red
+            $failureCount++
+        }
+    }
     return $failureCount
 }
 

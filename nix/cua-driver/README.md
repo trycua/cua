@@ -16,7 +16,7 @@ This avoids a second scenario catalog with different assertions.
 Run the native Wayland matrix from the repository root:
 
 ```bash
-nix develop .#cua-driver-wayland-e2e -c dbus-run-session -- \
+nix develop .#cua-driver-wayland-e2e -c \
   scripts/ci/linux/run-rust-e2e-wayland.sh
 ```
 

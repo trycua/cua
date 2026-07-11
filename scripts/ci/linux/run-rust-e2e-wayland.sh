@@ -8,11 +8,15 @@ RUNTIME_DIR="$(mktemp -d)"
 SWAY_CONFIG="$(mktemp)"
 SWAY_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/sway.log"
 SWAY_PID=""
+DBUS_PID=""
 
 cleanup() {
   if [[ -n "${SWAY_PID}" ]]; then
     kill "${SWAY_PID}" 2>/dev/null || true
     wait "${SWAY_PID}" 2>/dev/null || true
+  fi
+  if [[ -n "${DBUS_PID}" ]]; then
+    kill "${DBUS_PID}" 2>/dev/null || true
   fi
   rm -rf "${RUNTIME_DIR}"
   rm -f "${SWAY_CONFIG}"
@@ -49,6 +53,19 @@ export ELECTRON_OZONE_PLATFORM_HINT=wayland
 export GDK_BACKEND=wayland
 export QT_QPA_PLATFORM=wayland
 export NO_AT_BRIDGE=0
+
+if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+  dbus_daemon="$(command -v dbus-daemon)"
+  dbus_prefix="$(dirname "$(dirname "$(readlink -f "${dbus_daemon}")")")"
+  dbus_config="${dbus_prefix}/share/dbus-1/session.conf"
+  if [[ ! -f "${dbus_config}" ]]; then
+    echo "Nix DBus session config is missing: ${dbus_config}" >&2
+    exit 1
+  fi
+  dbus_info="$(dbus-daemon --config-file="${dbus_config}" --fork --print-address=1 --print-pid=1)"
+  export DBUS_SESSION_BUS_ADDRESS="$(sed -n '1p' <<< "${dbus_info}")"
+  DBUS_PID="$(sed -n '2p' <<< "${dbus_info}")"
+fi
 
 sway --unsupported-gpu --config "${SWAY_CONFIG}" > "${SWAY_LOG}" 2>&1 &
 SWAY_PID=$!

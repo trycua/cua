@@ -450,14 +450,21 @@ fn main() {
             finish_appkit_worker(serve_handle);
             return;
         }
-        cli::Command::Stop { socket } => {
-            let sp = socket.unwrap_or_else(serve::default_socket_path);
+        cli::Command::Stop {
+            socket,
+            codex_computer_use_compat,
+        } => {
+            let sp = cli::daemon_socket_path(socket, codex_computer_use_compat);
             serve::run_stop_cmd(&sp);
             return;
         }
-        cli::Command::Status { socket } => {
-            let pid_path = cli::daemon_pid_file_path(socket.as_deref(), false);
-            let sp = socket.unwrap_or_else(serve::default_socket_path);
+        cli::Command::Status {
+            socket,
+            codex_computer_use_compat,
+        } => {
+            let pid_path =
+                cli::daemon_pid_file_path(socket.as_deref(), codex_computer_use_compat);
+            let sp = cli::daemon_socket_path(socket, codex_computer_use_compat);
             serve::run_status_cmd(&sp, &pid_path);
             return;
         }
@@ -728,14 +735,21 @@ fn main() -> anyhow::Result<()> {
             }).join().ok();
             return Ok(());
         }
-        cli::Command::Stop { socket } => {
-            let sp = socket.unwrap_or_else(serve::default_socket_path);
+        cli::Command::Stop {
+            socket,
+            codex_computer_use_compat,
+        } => {
+            let sp = cli::daemon_socket_path(socket, codex_computer_use_compat);
             serve::run_stop_cmd(&sp);
             return Ok(());
         }
-        cli::Command::Status { socket } => {
-            let pid_path = cli::daemon_pid_file_path(socket.as_deref(), false);
-            let sp = socket.unwrap_or_else(serve::default_socket_path);
+        cli::Command::Status {
+            socket,
+            codex_computer_use_compat,
+        } => {
+            let pid_path =
+                cli::daemon_pid_file_path(socket.as_deref(), codex_computer_use_compat);
+            let sp = cli::daemon_socket_path(socket, codex_computer_use_compat);
             serve::run_status_cmd(&sp, &pid_path);
             return Ok(());
         }

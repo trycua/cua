@@ -73,8 +73,14 @@ pub enum Command {
         /// compatibility surface.
         codex_computer_use_compat: bool,
     },
-    Stop { socket: Option<String> },
-    Status { socket: Option<String> },
+    Stop {
+        socket: Option<String>,
+        codex_computer_use_compat: bool,
+    },
+    Status {
+        socket: Option<String>,
+        codex_computer_use_compat: bool,
+    },
     Recording { subcommand: String, args: Vec<String>, socket: Option<String> },
     DumpDocs { pretty: bool, doc_type: String },
     Update { apply: bool, json: bool },
@@ -365,8 +371,14 @@ pub fn parse_command() -> Command {
             claude_code_compat,
             codex_computer_use_compat,
         },
-        Some("stop") => Command::Stop { socket },
-        Some("status") => Command::Status { socket },
+        Some("stop") => Command::Stop {
+            socket,
+            codex_computer_use_compat,
+        },
+        Some("status") => Command::Status {
+            socket,
+            codex_computer_use_compat,
+        },
         Some("recording") => {
             let subcommand = pos.next().unwrap_or("status").to_string();
             let rest: Vec<String> = pos.map(str::to_owned).collect();
@@ -1003,10 +1015,16 @@ pub fn build_manifest() -> serde_json::Value {
               ] },
             { "name": "stop",
               "description": "Stop a running daemon by sending it a shutdown request.",
-              "args": [ { "name": "--socket", "type": "string", "description": "Override the daemon socket path." } ] },
+              "args": [
+                  { "name": "--socket", "type": "string", "description": "Override the daemon socket path." },
+                  { "name": "--codex-computer-use-compat", "type": "flag", "description": "Target the dedicated Codex Computer Use daemon." }
+              ] },
             { "name": "status",
               "description": "Report daemon status (running / not / unhealthy).",
-              "args": [ { "name": "--socket", "type": "string", "description": "Override the daemon socket path." } ] },
+              "args": [
+                  { "name": "--socket", "type": "string", "description": "Override the daemon socket path." },
+                  { "name": "--codex-computer-use-compat", "type": "flag", "description": "Target the dedicated Codex Computer Use daemon." }
+              ] },
             { "name": "list-tools",
               "description": "Print the canonical tool name + one-line summary for every registered MCP tool.",
               "args": [] },
@@ -2492,7 +2510,7 @@ fn cli_docs_json() -> serde_json::Value {
                 "discussion": "",
                 "arguments": no_args,
                 "options": [{"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true}],
-                "flags": no_flags,
+                "flags": [{"name":"codex-computer-use-compat","short_name":null,"help":"Target the dedicated Codex Computer Use daemon.","default_value":false}],
                 "subcommands": no_subcommands
             },
             {
@@ -2504,7 +2522,7 @@ fn cli_docs_json() -> serde_json::Value {
                     {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},
                     {"name":"pid-file","short_name":null,"help":"Override the pid-file path on Unix targets.","type":"String","default_value":null,"is_optional":true}
                 ],
-                "flags": no_flags,
+                "flags": [{"name":"codex-computer-use-compat","short_name":null,"help":"Target the dedicated Codex Computer Use daemon.","default_value":false}],
                 "subcommands": no_subcommands
             },
             {

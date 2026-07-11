@@ -170,6 +170,74 @@ fn run_proxy_to_explicit_socket(socket: &PathBuf, compat: bool) -> std::process:
     command.output().expect("run explicit-socket MCP proxy")
 }
 
+fn default_profile_socket(home: &std::path::Path, compat: bool) -> PathBuf {
+    home.join("Library/Caches/cua-driver").join(if compat {
+        "cua-driver-codex-computer-use.sock"
+    } else {
+        "cua-driver.sock"
+    })
+}
+
+fn spawn_default_profile_daemon(home: &std::path::Path, compat: bool) -> DaemonDriver {
+    let socket = default_profile_socket(home, compat);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cua-driver"));
+    command
+        .arg("serve")
+        .arg("--no-permissions-gate")
+        .arg("--no-overlay")
+        .env("HOME", home)
+        .env_remove("CUA_DRIVER_RS_MCP_HTTP_PORT")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    if compat {
+        command.arg("--codex-computer-use-compat");
+    }
+    let mut child = command.spawn().expect("spawn default-profile daemon");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if UnixStream::connect(&socket).is_ok() {
+            break;
+        }
+        if let Some(status) = child.try_wait().unwrap() {
+            use std::io::Read as _;
+            let mut stderr = String::new();
+            if let Some(mut pipe) = child.stderr.take() {
+                let _ = pipe.read_to_string(&mut stderr);
+            }
+            panic!(
+                "default-profile daemon exited before binding {} ({status}): {stderr}",
+                socket.display()
+            );
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "default-profile daemon did not bind {}",
+            socket.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    DaemonDriver { child, socket }
+}
+
+fn run_profile_lifecycle_command(
+    home: &std::path::Path,
+    subcommand: &str,
+    compat: bool,
+) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cua-driver"));
+    command
+        .arg(subcommand)
+        .env("HOME", home)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if compat {
+        command.arg("--codex-computer-use-compat");
+    }
+    command.output().expect("run daemon lifecycle command")
+}
+
 #[test]
 fn compat_tools_list_is_exact_v829_contract() {
     let mut driver = CompatDriver::spawn(true);
@@ -481,4 +549,42 @@ fn explicit_socket_proxy_rejects_mismatched_daemon_profile() {
     drop(compat);
     drop(native);
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn status_and_stop_manage_native_and_compat_daemons_independently() {
+    let home = tempfile::Builder::new()
+        .prefix("cua-lc-")
+        .tempdir_in("/tmp")
+        .expect("short isolated HOME");
+    let mut native = spawn_default_profile_daemon(home.path(), false);
+    let mut compat = spawn_default_profile_daemon(home.path(), true);
+
+    let native_status = run_profile_lifecycle_command(home.path(), "status", false);
+    assert!(native_status.status.success(), "native status: {native_status:?}");
+    assert!(String::from_utf8_lossy(&native_status.stdout)
+        .contains(native.socket.to_str().unwrap()));
+
+    let compat_status = run_profile_lifecycle_command(home.path(), "status", true);
+    assert!(compat_status.status.success(), "compat status: {compat_status:?}");
+    assert!(String::from_utf8_lossy(&compat_status.stdout)
+        .contains(compat.socket.to_str().unwrap()));
+
+    let stop_compat = run_profile_lifecycle_command(home.path(), "stop", true);
+    assert!(stop_compat.status.success(), "compat stop: {stop_compat:?}");
+    assert!(compat.child.wait().expect("wait for compat daemon").success());
+    assert!(
+        native.child.try_wait().unwrap().is_none(),
+        "compat stop must not terminate the native daemon"
+    );
+    assert!(run_profile_lifecycle_command(home.path(), "status", false)
+        .status
+        .success());
+    assert!(!run_profile_lifecycle_command(home.path(), "status", true)
+        .status
+        .success());
+
+    let stop_native = run_profile_lifecycle_command(home.path(), "stop", false);
+    assert!(stop_native.status.success(), "native stop: {stop_native:?}");
+    assert!(native.child.wait().expect("wait for native daemon").success());
 }

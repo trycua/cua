@@ -95,7 +95,7 @@ fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
 }
 
 fn client_list_property(property_type: Atom, windows: &[Window]) -> Option<&[Window]> {
-    (property_type != AtomEnum::NONE.into()).then_some(windows)
+    (property_type != x11rb::NONE).then_some(windows)
 }
 
 fn fallback_window_is_listable(map_state: MapState) -> bool {
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn absent_client_list_allows_query_tree_fallback() {
-        assert_eq!(client_list_property(AtomEnum::NONE.into(), &[]), None);
+        assert_eq!(client_list_property(x11rb::NONE, &[]), None);
     }
 
     #[test]

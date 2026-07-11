@@ -1092,10 +1092,7 @@ pub fn validate_catalog_with_evidence(
                     validate_turn_evidence(
                         &root.join(relative_dir),
                         cell_id,
-                        !matches!(
-                            result.case.driver_route,
-                            DriverRoute::AxRead | DriverRoute::WindowState
-                        ),
+                        case_requires_action_turn(&result.case),
                         &mut errors,
                     );
                 }
@@ -1120,6 +1117,11 @@ pub fn validate_catalog_with_evidence(
     } else {
         Err(errors)
     }
+}
+
+fn case_requires_action_turn(case: &CaseSpec) -> bool {
+    !matches!(case.driver_route, DriverRoute::AxRead | DriverRoute::WindowState)
+        && case.action != "screenshot"
 }
 
 fn recording_directory(evidence: &Evidence) -> Option<&Path> {
@@ -1660,6 +1662,22 @@ mod tests {
 
         validate_catalog(&[case], &[result], Some(root.path()), true)
             .expect("readonly cells have no action turn to capture");
+    }
+
+    #[test]
+    fn strict_background_screenshot_does_not_invent_an_action_turn() {
+        let case = CaseSpec::delivered(
+            "windows-wpf-screenshot-px-background",
+            "wpf",
+            "wpf",
+            "screenshot",
+            Targeting::Px,
+            Delivery::Background,
+            Scope::Window,
+            DriverRoute::WindowsPrintWindow,
+            vec![OracleKind::Pixels],
+        );
+        assert!(!case_requires_action_turn(&case));
     }
 
     #[test]

@@ -25,7 +25,7 @@ pub use mouse::{
 };
 pub use keyboard::{
     is_xaml_host_hwnd, post_char, post_key, post_type_text, post_type_text_with_delay,
-    send_key_synthesized, send_text_synthesized,
+    send_key_synthesized, send_text_synthesized, wait_for_focused_descendant,
 };
 
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};

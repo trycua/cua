@@ -4051,6 +4051,19 @@ impl Tool for PressKeyTool {
             }
         };
 
+        // Classify known background drops before touching UIA focus. Focusing
+        // first made an honest Chromium refusal transiently activate the target.
+        let event_kind = if mods.is_empty() {
+            EventKind::Keystroke
+        } else {
+            EventKind::KeyCombo
+        };
+        if delivery == DeliveryMode::Background
+            && crate::input::delivery::would_be_silently_dropped(hwnd, event_kind)
+        {
+            return crate::input::delivery::background_unavailable_error(hwnd, event_kind);
+        }
+
         // W1: an element-addressed key needs the control's actual focus
         // target, not merely its owning top-level HWND. Keep background
         // delivery non-activating while UIA establishes child focus.
@@ -4070,30 +4083,19 @@ impl Tool for PressKeyTool {
             })
             .await;
             match focused {
-                Ok(Ok(())) => {}
+                Ok(Ok(())) => {
+                    if delivery == DeliveryMode::Background {
+                        let _ = crate::input::wait_for_focused_descendant(
+                            hwnd,
+                            std::time::Duration::from_millis(500),
+                        );
+                    }
+                }
                 Ok(Err(e)) => return ToolResult::error(e.to_string()),
                 Err(e) => return ToolResult::error(format!("UIA focus task failed: {e}")),
             }
         }
         let key_display = key.clone();
-        // Background mode: classify plain keys and chords independently so
-        // framework-specific silent drops become structured refusals.
-        let event_kind = if mods.is_empty() {
-            EventKind::Keystroke
-        } else {
-            EventKind::KeyCombo
-        };
-        if delivery == DeliveryMode::Background
-            && crate::input::delivery::would_be_silently_dropped(hwnd, event_kind)
-        {
-            // macOS-aligned contract: a `background` actuation never fronts. This
-            // key would be silently dropped by the target's input stack
-            // (TranslateAccelerator-based VCL/classic Win32, or Chromium key-
-            // combos) and the only way to land it is a foreground/focus grab —
-            // which background must not do. Surface background_unavailable so the
-            // agent escalates to delivery_mode:"foreground" (which may front).
-            return crate::input::delivery::background_unavailable_error(hwnd, event_kind);
-        }
         // Foreground: send_key_synthesized takes the SetForegroundWindow path.
         // Skipped when px-focus already fronted/clicked the target — the key then
         // goes via the plain background post path below.

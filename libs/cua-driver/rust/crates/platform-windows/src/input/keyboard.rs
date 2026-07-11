@@ -17,7 +17,7 @@
 
 use anyhow::{bail, Result};
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
@@ -200,6 +200,24 @@ fn focused_descendant(parent: HWND) -> Option<HWND> {
         }
     }
     best.map(|(_, focused)| focused)
+}
+
+/// Wait for an element-focused embedded renderer to expose its child HWND.
+/// UIA SetFocus can complete before WebView2 updates GUITHREADINFO; polling the
+/// observable focus target avoids posting the key to the native frame in that
+/// short interval.
+pub fn wait_for_focused_descendant(hwnd: u64, timeout: Duration) -> Option<u64> {
+    let parent = HWND(hwnd as *mut _);
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(target) = focused_descendant(parent) {
+            return Some(target.0 as usize as u64);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        sleep(Duration::from_millis(10));
+    }
 }
 
 /// Post a Unicode character as WM_CHAR.

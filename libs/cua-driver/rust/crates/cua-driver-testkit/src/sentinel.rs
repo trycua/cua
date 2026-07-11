@@ -96,6 +96,7 @@ impl ForegroundSentinel {
             );
             std::thread::sleep(Duration::from_millis(100));
         }
+        wait_for_native_focus_stable(target);
         fs::write(&journal_path, "").expect("reset focused sentinel journal");
 
         Self {
@@ -172,6 +173,37 @@ impl ForegroundSentinel {
         }
     }
 }
+
+#[cfg(target_os = "windows")]
+fn wait_for_native_focus_stable(target: TargetWindow) {
+    use crate::observer::{ObserverBackend, TargetZ};
+
+    let backend = NativeObserver::new();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut stable_since = None;
+    loop {
+        let foreground = backend
+            .snapshot(target)
+            .map(|snapshot| snapshot.target_z == TargetZ::Foreground)
+            .unwrap_or(false);
+        if foreground {
+            let since = stable_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= Duration::from_millis(300) {
+                return;
+            }
+        } else {
+            stable_since = None;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "foreground sentinel did not remain natively focused"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn wait_for_native_focus_stable(_target: TargetWindow) {}
 
 pub fn run_with_background_oracles<D: Driver, R>(
     driver: &mut D,

@@ -35,13 +35,10 @@ fn harness_exe() -> std::path::PathBuf {
 }
 
 /// Launch the GTK3 harness, tying its lifetime to the driver's reaper, and
-/// return (pid, main window_id). Returns None (skip) if the app isn't built.
-fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
+/// return (pid, main window_id).
+fn launch(driver: &mut McpDriver) -> (u32, u64) {
     let exe = harness_exe();
-    if !exe.exists() {
-        eprintln!("GTK3 harness not built at {exe:?} — run tests/fixtures/build/linux.sh");
-        return None;
-    }
+    assert!(exe.exists(), "required GTK3 harness is missing: {exe:?}");
     driver
         .reaper()
         .spawn(
@@ -49,7 +46,7 @@ fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null()),
         )
-        .ok()?;
+        .unwrap_or_else(|error| panic!("launch GTK3 harness {exe:?}: {error}"));
     // GTK app cold-start + window map + AT-SPI registration.
     std::thread::sleep(Duration::from_millis(1500));
 
@@ -71,15 +68,14 @@ fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
                     let wid = w["window_id"].as_u64().unwrap_or(0);
                     if pid != 0 && wid != 0 {
                         driver.reaper().track_pid(pid);
-                        return Some((pid, wid));
+                        return (pid, wid);
                     }
                 }
             }
         }
         std::thread::sleep(Duration::from_millis(400));
     }
-    eprintln!("GTK3 harness window never appeared — is a graphical session + AT-SPI available?");
-    None
+    panic!("required GTK3 harness window never appeared");
 }
 
 fn snapshot(driver: &mut McpDriver, pid: u32, wid: u64) -> String {
@@ -93,25 +89,18 @@ fn snapshot(driver: &mut McpDriver, pid: u32, wid: u64) -> String {
 }
 
 fn ax_empty(text: &str) -> bool {
-    ax::looks_empty(text) || text.contains("D-Bus") || text.contains("AT-SPI")
+    ax::looks_empty(text)
 }
 
 #[test]
 #[ignore]
 fn harness_gtk3_smoke() {
-    let Some(mut driver) = McpDriver::spawn() else {
-        return;
-    };
-    let Some((pid, wid)) = launch(&mut driver) else {
-        return;
-    };
+    let mut driver = McpDriver::spawn().expect("start source-built Linux driver");
+    let (pid, wid) = launch(&mut driver);
     println!("gtk3 harness pid={pid} wid={wid}");
 
     let text = snapshot(&mut driver, pid, wid);
-    if ax_empty(&text) {
-        eprintln!("AT-SPI tree empty — accessibility bus unavailable; skipping element assertions");
-        return;
-    }
+    assert!(!ax_empty(&text), "required GTK3 AT-SPI tree is empty");
     println!("snapshot:\n{text}");
 
     // Actionable controls expose their aid as the AT-SPI accessible name.
@@ -147,25 +136,13 @@ fn harness_gtk3_smoke() {
 #[test]
 #[ignore]
 fn harness_gtk3_counter_click() {
-    let Some(mut driver) = McpDriver::spawn() else {
-        return;
-    };
-    let Some((pid, wid)) = launch(&mut driver) else {
-        return;
-    };
+    let mut driver = McpDriver::spawn().expect("start source-built Linux driver");
+    let (pid, wid) = launch(&mut driver);
 
     let pre = snapshot(&mut driver, pid, wid);
-    if ax_empty(&pre) {
-        eprintln!("AT-SPI empty — skipping");
-        return;
-    }
-    let idx = match ax::element_index_containing(&pre, "btn-increment") {
-        Some(i) => i,
-        None => {
-            eprintln!("btn-increment not found in tree — skipping");
-            return;
-        }
-    };
+    assert!(!ax_empty(&pre), "required GTK3 AT-SPI tree is empty");
+    let idx = ax::element_index_containing(&pre, "btn-increment")
+        .expect("btn-increment not found in GTK3 tree");
     let click = driver.call(
         "click",
         serde_json::json!({ "pid": pid as i64, "window_id": wid, "element_index": idx }),
@@ -188,30 +165,18 @@ fn harness_gtk3_counter_click() {
 #[test]
 #[ignore]
 fn harness_gtk3_popover() {
-    let Some(mut driver) = McpDriver::spawn() else {
-        return;
-    };
-    let Some((pid, wid)) = launch(&mut driver) else {
-        return;
-    };
+    let mut driver = McpDriver::spawn().expect("start source-built Linux driver");
+    let (pid, wid) = launch(&mut driver);
 
     let pre = snapshot(&mut driver, pid, wid);
-    if ax_empty(&pre) {
-        eprintln!("AT-SPI empty — skipping");
-        return;
-    }
+    assert!(!ax_empty(&pre), "required GTK3 AT-SPI tree is empty");
     assert!(
         pre.contains("popover_open=False"),
         "popover state not initially closed"
     );
 
-    let idx = match ax::element_index_containing(&pre, "btn-open-popover") {
-        Some(i) => i,
-        None => {
-            eprintln!("btn-open-popover not found — skipping");
-            return;
-        }
-    };
+    let idx = ax::element_index_containing(&pre, "btn-open-popover")
+        .expect("btn-open-popover not found in GTK3 tree");
     let _ = driver.call(
         "click",
         serde_json::json!({ "pid": pid as i64, "window_id": wid, "element_index": idx }),

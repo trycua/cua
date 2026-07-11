@@ -117,7 +117,10 @@ where
             .stderr(Stdio::piped());
         let mut app = spawn_in_job(&mut cmd).expect("spawn web harness");
         let pid = app.id() as i64;
-        let deadline = std::time::Instant::now() + Duration::from_secs(12);
+        // WebView2's first CoreWebView2Environment creation can exceed 12s on a
+        // cold hosted runner. Keep polling the externally visible ready title;
+        // process exit and the final deadline still fail closed.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
         let mut observed_titles = Vec::new();
         let (wid, _) = 'ready: loop {
             if let Some(status) = app.try_wait().expect("poll web harness process") {

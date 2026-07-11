@@ -927,34 +927,34 @@ mod tests {
 
     #[test]
     fn shared_routes_are_explicit_for_the_current_matrix() {
-        let cells = [
-            ("left_click", Targeting::Ax, Delivery::Background),
-            ("left_click", Targeting::Ax, Delivery::Foreground),
-            ("left_click", Targeting::Px, Delivery::Background),
-            ("left_click", Targeting::Px, Delivery::Foreground),
-            ("right_click", Targeting::Ax, Delivery::Background),
-            ("right_click", Targeting::Px, Delivery::Foreground),
-            ("double_click", Targeting::Ax, Delivery::Background),
-            ("double_click", Targeting::Px, Delivery::Foreground),
-            ("type_text", Targeting::Ax, Delivery::Background),
-            ("type_text", Targeting::Px, Delivery::Foreground),
-            ("keyboard", Targeting::Ax, Delivery::Background),
-            ("keyboard", Targeting::Px, Delivery::Foreground),
-            ("scroll", Targeting::Ax, Delivery::Background),
-            ("scroll", Targeting::Px, Delivery::Foreground),
-            ("child_window", Targeting::Ax, Delivery::Background),
-            ("child_window", Targeting::Px, Delivery::Foreground),
-            ("drag", Targeting::Px, Delivery::Background),
-            ("drag", Targeting::Px, Delivery::Foreground),
-            ("editor_save", Targeting::Ax, Delivery::Background),
-        ];
+        let mut cells = Vec::new();
+        for action in [
+            "left_click",
+            "right_click",
+            "double_click",
+            "type_text",
+            "keyboard",
+            "scroll",
+            "child_window",
+        ] {
+            for targeting in [Targeting::Ax, Targeting::Px] {
+                for delivery in [Delivery::Background, Delivery::Foreground] {
+                    cells.push((action, targeting, delivery));
+                }
+            }
+        }
+        for delivery in [Delivery::Background, Delivery::Foreground] {
+            cells.push(("drag", Targeting::Px, delivery));
+            cells.push(("editor_save", Targeting::Ax, delivery));
+        }
+        assert_eq!(cells.len(), 32);
         for (platform, display_server) in [
             (Platform::Windows, DisplayServer::Win32),
             (Platform::Macos, DisplayServer::Quartz),
             (Platform::Linux, DisplayServer::X11),
             (Platform::Linux, DisplayServer::Wayland),
         ] {
-            for (action, targeting, delivery) in cells {
+            for (action, targeting, delivery) in cells.iter().copied() {
                 shared_web_route(platform, display_server, action, targeting, delivery)
                     .unwrap_or_else(|error| panic!("{error}"));
             }

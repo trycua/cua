@@ -947,136 +947,59 @@ fn shared_web_action_matrix_is_state_verified() {
     let mut failure = None;
     let mut selected = 0usize;
     for spec in host_specs() {
-        for (action, tool, marker, addressing, delivery) in [
-            (
-                "left_click",
-                "click",
-                "last_action=left_click",
-                "ax",
-                "background",
-            ),
-            (
-                "left_click",
-                "click",
-                "last_action=left_click",
-                "ax",
-                "foreground",
-            ),
-            (
-                "left_click",
-                "click",
-                "last_action=left_click",
-                "px",
-                "background",
-            ),
-            (
-                "left_click",
-                "click",
-                "last_action=left_click",
-                "px",
-                "foreground",
-            ),
-            (
-                "right_click",
-                "right_click",
-                "last_action=right_click",
-                "ax",
-                "background",
-            ),
-            (
-                "right_click",
-                "right_click",
-                "last_action=right_click",
-                "px",
-                "foreground",
-            ),
-            (
-                "double_click",
-                "double_click",
-                "last_action=double_click",
-                "ax",
-                "background",
-            ),
-            (
-                "double_click",
-                "double_click",
-                "last_action=double_click",
-                "px",
-                "foreground",
-            ),
+        for (action, tool, marker) in [
+            ("left_click", "click", "last_action=left_click"),
+            ("right_click", "right_click", "last_action=right_click"),
+            ("double_click", "double_click", "last_action=double_click"),
         ] {
-            let case = shared_case(&spec, action, addressing, delivery);
-            if !cell_selected(&case) {
-                continue;
-            }
-            selected += 1;
-            let result = run_host_case_with_outcome(case, &spec, |fixture| {
-                run_pointer_action(fixture, tool, addressing, delivery, marker)
-            });
-            if failure.is_none() {
-                failure = result;
+            for addressing in ["ax", "px"] {
+                for delivery in ["background", "foreground"] {
+                    let case = shared_case(&spec, action, addressing, delivery);
+                    if !cell_selected(&case) {
+                        continue;
+                    }
+                    selected += 1;
+                    let result = run_host_case_with_outcome(case, &spec, |fixture| {
+                        run_pointer_action(fixture, tool, addressing, delivery, marker)
+                    });
+                    if failure.is_none() {
+                        failure = result;
+                    }
+                }
             }
         }
-        for (action, addressing, delivery, run) in [
+        for (action, run) in [
             (
                 "type_text",
-                "ax",
-                "background",
-                run_text_action as fn(&mut Fixture, &str, &str) -> Observation,
-            ),
-            (
-                "type_text",
-                "px",
-                "foreground",
                 run_text_action as fn(&mut Fixture, &str, &str) -> Observation,
             ),
             (
                 "keyboard",
-                "ax",
-                "background",
-                run_keyboard_action as fn(&mut Fixture, &str, &str) -> Observation,
-            ),
-            (
-                "keyboard",
-                "px",
-                "foreground",
                 run_keyboard_action as fn(&mut Fixture, &str, &str) -> Observation,
             ),
             (
                 "scroll",
-                "ax",
-                "background",
-                run_scroll_action as fn(&mut Fixture, &str, &str) -> Observation,
-            ),
-            (
-                "scroll",
-                "px",
-                "foreground",
                 run_scroll_action as fn(&mut Fixture, &str, &str) -> Observation,
             ),
             (
                 "child_window",
-                "ax",
-                "background",
-                run_child_window_action as fn(&mut Fixture, &str, &str) -> Observation,
-            ),
-            (
-                "child_window",
-                "px",
-                "foreground",
                 run_child_window_action as fn(&mut Fixture, &str, &str) -> Observation,
             ),
         ] {
-            let case = shared_case(&spec, action, addressing, delivery);
-            if !cell_selected(&case) {
-                continue;
-            }
-            selected += 1;
-            let result = run_host_case_with_outcome(case, &spec, |fixture| {
-                run(fixture, addressing, delivery)
-            });
-            if failure.is_none() {
-                failure = result;
+            for addressing in ["ax", "px"] {
+                for delivery in ["background", "foreground"] {
+                    let case = shared_case(&spec, action, addressing, delivery);
+                    if !cell_selected(&case) {
+                        continue;
+                    }
+                    selected += 1;
+                    let result = run_host_case_with_outcome(case, &spec, |fixture| {
+                        run(fixture, addressing, delivery)
+                    });
+                    if failure.is_none() {
+                        failure = result;
+                    }
+                }
             }
         }
         for delivery in ["background", "foreground"] {
@@ -1092,14 +1015,16 @@ fn shared_web_action_matrix_is_state_verified() {
                 failure = result;
             }
         }
-        let case = shared_case(&spec, "editor_save", "ax", "background");
-        if cell_selected(&case) {
-            selected += 1;
-            let result = run_host_case_with_outcome(case, &spec, |fixture| {
-                run_editor_save_action(fixture, "background")
-            });
-            if failure.is_none() {
-                failure = result;
+        for delivery in ["background", "foreground"] {
+            let case = shared_case(&spec, "editor_save", "ax", delivery);
+            if cell_selected(&case) {
+                selected += 1;
+                let result = run_host_case_with_outcome(case, &spec, |fixture| {
+                    run_editor_save_action(fixture, delivery)
+                });
+                if failure.is_none() {
+                    failure = result;
+                }
             }
         }
     }

@@ -127,17 +127,18 @@ pub fn revive_session(session_id: &str) -> bool {
     if !is_trackable(session_id) {
         return false;
     }
-    // Keep the ended guard in place until every revive hook has enqueued its
-    // lifecycle event. A concurrent action blocks in `is_session_ended` and is
-    // admitted only after the overlay's ordered `Revive` is already queued.
-    let mut ended = ended_sessions().lock().unwrap();
-    if !ended.contains(session_id) {
+    // Serialize revivals through the hook lock, but do not hold the ended-set
+    // lock while invoking callbacks. The tombstone remains present while hooks
+    // enqueue their ordered lifecycle events, so concurrent actions still see
+    // the session as ended. Reentrant hooks may safely query that state.
+    let hooks = revive_hooks().lock().unwrap();
+    if !ended_sessions().lock().unwrap().contains(session_id) {
         return false;
     }
-    for hook in revive_hooks().lock().unwrap().iter() {
+    for hook in hooks.iter() {
         hook(session_id);
     }
-    ended.remove(session_id)
+    ended_sessions().lock().unwrap().remove(session_id)
 }
 
 /// Record activity for an explicit session id, resetting its idle-TTL clock.
@@ -298,32 +299,52 @@ mod tests {
     }
 
     #[test]
-    fn revive_hook_finishes_before_concurrent_actions_observe_the_session_live() {
-        let sid = "test-revive-order-session-D4E5F6";
+    fn revive_hook_can_reenter_session_state_while_tombstone_is_still_present() {
+        let sid = "test-revive-reentrant-session-D4E5F6";
+        let saw_ended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let expected = sid.to_owned();
+        let saw_ended_for_hook = saw_ended.clone();
+        register_session_revive_hook(move |got| {
+            if got == expected {
+                saw_ended_for_hook.store(is_session_ended(got), Ordering::Relaxed);
+            }
+        });
+        end_session(sid);
+        assert!(revive_session(sid));
+        assert!(saw_ended.load(Ordering::Relaxed));
+        assert!(!is_session_ended(sid));
+    }
+
+    #[test]
+    fn concurrent_double_revive_enqueues_hooks_once() {
+        let sid = "test-double-revive-session-E5F6A7";
+        let calls = Arc::new(AtomicUsize::new(0));
         let entered_hook = Arc::new(std::sync::Barrier::new(2));
         let release_hook = Arc::new(std::sync::Barrier::new(2));
         let expected = sid.to_owned();
+        let calls_for_hook = calls.clone();
         let entered_for_hook = entered_hook.clone();
         let release_for_hook = release_hook.clone();
         register_session_revive_hook(move |got| {
             if got == expected {
+                calls_for_hook.fetch_add(1, Ordering::Relaxed);
                 entered_for_hook.wait();
                 release_for_hook.wait();
             }
         });
         end_session(sid);
 
-        let sid_for_revive = sid.to_owned();
-        let revive_thread = std::thread::spawn(move || revive_session(&sid_for_revive));
+        let first_sid = sid.to_owned();
+        let first = std::thread::spawn(move || revive_session(&first_sid));
         entered_hook.wait();
-        assert!(
-            ended_sessions().try_lock().is_err(),
-            "ended guard must stay locked until the revive hook is finished"
-        );
+
+        let second_sid = sid.to_owned();
+        let second = std::thread::spawn(move || revive_session(&second_sid));
 
         release_hook.wait();
-        assert!(revive_thread.join().unwrap());
-        assert!(!is_session_ended(sid));
+        assert!(first.join().unwrap());
+        assert!(!second.join().unwrap());
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
     }
 
     #[test]

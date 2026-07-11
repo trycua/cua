@@ -1815,6 +1815,13 @@ impl Tool for LaunchAppTool {
             let target_for_shell = target_file_opt.clone();
             let extra_for_shell = extra_joined.clone();
             let n_show_for_shell = n_show;
+            let direct_minimized_exe = start_minimized
+                && target_for_shell.as_deref().is_some_and(|target| {
+                    std::path::Path::new(target).is_file()
+                        && std::path::Path::new(target)
+                            .extension()
+                            .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+                });
             // Bound the shell launch with a timeout. An unregistered protocol
             // or file association makes `ShellExecuteExW` block on a modal shell
             // dialog ("you'll need a new app to open this …") on the *session*
@@ -1825,9 +1832,12 @@ impl Tool for LaunchAppTool {
             // backstop for any *other* blocking broker dialog (SmartScreen, an
             // elevation/consent surface) so a bad target can't hang the daemon.
             let launch = tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
-                use windows::core::PCWSTR;
+                use windows::core::{PCWSTR, PWSTR};
                 use windows::Win32::Foundation::CloseHandle;
-                use windows::Win32::System::Threading::GetProcessId;
+                use windows::Win32::System::Threading::{
+                    CreateProcessW, GetProcessId, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION,
+                    STARTF_USESHOWWINDOW, STARTUPINFOW,
+                };
                 use windows::Win32::UI::Shell::{
                     ShellExecuteExW, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOCLOSEPROCESS,
                     SHELLEXECUTEINFOW,
@@ -1844,30 +1854,63 @@ impl Tool for LaunchAppTool {
                 });
                 let args_w = to_wide(&extra_for_shell);
 
-                let mut info = SHELLEXECUTEINFOW {
-                    cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-                    fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI,
-                    lpVerb: PCWSTR(op_w.as_ptr()),
-                    lpFile: PCWSTR(file_w.as_ptr()),
-                    lpParameters: if extra_for_shell.is_empty() {
-                        PCWSTR::null()
+                let pid = if direct_minimized_exe {
+                    let target = target_for_shell.as_deref().expect("checked executable path");
+                    let mut command_line = to_wide(&if extra_for_shell.is_empty() {
+                        format!(r#""{target}""#)
                     } else {
-                        PCWSTR(args_w.as_ptr())
-                    },
-                    nShow: n_show_for_shell,
-                    ..Default::default()
-                };
-                unsafe {
-                    ShellExecuteExW(&mut info)?;
-                }
-                let pid = if !info.hProcess.is_invalid() {
-                    let p = unsafe { GetProcessId(info.hProcess) };
+                        format!(r#""{target}" {extra_for_shell}"#)
+                    });
+                    let startup = STARTUPINFOW {
+                        cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+                        dwFlags: STARTF_USESHOWWINDOW,
+                        wShowWindow: n_show_for_shell as u16,
+                        ..Default::default()
+                    };
+                    let mut process = PROCESS_INFORMATION::default();
                     unsafe {
-                        let _ = CloseHandle(info.hProcess);
+                        CreateProcessW(
+                            PCWSTR(file_w.as_ptr()),
+                            PWSTR(command_line.as_mut_ptr()),
+                            None,
+                            None,
+                            false,
+                            PROCESS_CREATION_FLAGS(0),
+                            None,
+                            PCWSTR::null(),
+                            &startup,
+                            &mut process,
+                        )?;
+                        let _ = CloseHandle(process.hThread);
+                        let _ = CloseHandle(process.hProcess);
                     }
-                    p
+                    process.dwProcessId
                 } else {
-                    0
+                    let mut info = SHELLEXECUTEINFOW {
+                        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+                        fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI,
+                        lpVerb: PCWSTR(op_w.as_ptr()),
+                        lpFile: PCWSTR(file_w.as_ptr()),
+                        lpParameters: if extra_for_shell.is_empty() {
+                            PCWSTR::null()
+                        } else {
+                            PCWSTR(args_w.as_ptr())
+                        },
+                        nShow: n_show_for_shell,
+                        ..Default::default()
+                    };
+                    unsafe {
+                        ShellExecuteExW(&mut info)?;
+                    }
+                    if !info.hProcess.is_invalid() {
+                        let p = unsafe { GetProcessId(info.hProcess) };
+                        unsafe {
+                            let _ = CloseHandle(info.hProcess);
+                        }
+                        p
+                    } else {
+                        0
+                    }
                 };
 
                 // Open any additional URLs in the default browser (no focus

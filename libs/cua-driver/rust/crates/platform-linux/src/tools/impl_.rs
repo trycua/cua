@@ -6238,7 +6238,9 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(ZoomTool {
         state: state.clone(),
     }));
-    r.register(Box::new(TypeTextCharsTool));
+    // `type_text_chars` is a deprecated invoke-time alias for `type_text`.
+    // Keep it out of tools/list, matching the macOS and Windows registries.
+    let _: &TypeTextCharsTool = &TypeTextCharsTool;
     // Cross-platform `page` tool definition lives in mcp-server; Linux plugs
     // in its AT-SPI + CDP backend here.
     r.register(Box::new(cua_driver_core::page::PageTool::new(Arc::new(

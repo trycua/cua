@@ -143,7 +143,7 @@ fn run_preflight() {
     command
         .args(fixture_args)
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::inherit());
     let child = spawn_in_job(&mut command).expect("preflight fixture failed to launch");
     let launched_pid = child.id() as i64;
     driver.reaper().push(child);

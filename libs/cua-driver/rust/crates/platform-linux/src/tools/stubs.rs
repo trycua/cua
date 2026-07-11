@@ -235,7 +235,9 @@ pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     r.register(Box::new(SetConfigTool));
     r.register(Box::new(GetAccessibilityTreeTool));
     r.register(Box::new(ZoomTool));
-    r.register(Box::new(TypeTextCharsTool));
+    // `type_text_chars` remains accepted as an invoke-time alias, but is not
+    // advertised as a separate tool on any platform.
+    let _: &TypeTextCharsTool = &TypeTextCharsTool;
     r.register_recording_tools();
     r.register_session_tools();
     r

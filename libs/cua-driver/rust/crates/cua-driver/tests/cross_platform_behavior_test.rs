@@ -275,7 +275,8 @@ fn launch_host_with_evidence(
                 .collect::<std::collections::HashSet<_>>()
         })
         .unwrap_or_default();
-    let child = spawn_in_job(&mut command).ok()?;
+    let child = spawn_in_job(&mut command)
+        .unwrap_or_else(|error| panic!("failed to launch {} fixture: {error}", spec.name));
     let pid = child.id();
     driver.reaper().push(child);
 

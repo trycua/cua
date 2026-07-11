@@ -972,6 +972,9 @@ pub fn validate_catalog(
     require_video: bool,
 ) -> Result<ValidationSummary, Vec<String>> {
     let mut errors = Vec::new();
+    if declarations.is_empty() {
+        errors.push("E2E catalog has no declarations".to_owned());
+    }
     let mut declared = BTreeMap::new();
     for case in declarations {
         if let Err(error) = case.validate() {
@@ -1177,6 +1180,15 @@ mod tests {
         let errors =
             validate_catalog(&[case], &[], None, false).expect_err("missing result should fail");
         assert!(errors.iter().any(|error| error.contains("missing result")));
+    }
+
+    #[test]
+    fn validator_rejects_empty_catalog() {
+        let errors = validate_catalog(&[], &[], None, false)
+            .expect_err("an empty E2E catalog must not pass");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("no declarations")));
     }
 
     #[test]

@@ -72,10 +72,6 @@ fn run_case(
     case: cua_driver_testkit::e2e::CaseSpec,
     test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
 ) {
-    if !harness_winui3_exe().exists() && std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_none() {
-        eprintln!("WinUI3 harness is not staged; skipping {}", case.cell_id);
-        return;
-    }
     let cell_id = case.cell_id.clone();
     execute_case(case, |evidence| {
         let mut driver = McpDriver::spawn_named(&cell_id)

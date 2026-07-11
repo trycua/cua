@@ -190,10 +190,6 @@ where
 }
 
 fn run_case(case: CaseSpec, test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation) {
-    if !harness_exe().exists() && std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_none() {
-        eprintln!("WPF harness is not staged; skipping {}", case.cell_id);
-        return;
-    }
     let cell_id = case.cell_id.clone();
     execute_case(case, |evidence| {
         with_named_session(&cell_id, |pid, wid, driver| {

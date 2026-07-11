@@ -90,16 +90,13 @@ fn run_web_case<F>(toolkit: &str, action: &str, host_exe: PathBuf, title_substr:
 where
     F: FnOnce(i64, u64, &mut McpDriver),
 {
-    if !host_exe.exists() {
-        if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
-            panic!("required {toolkit} host is missing at {host_exe:?}");
-        }
-        eprintln!("{toolkit} host exe not found at {host_exe:?}; skipping");
-        return;
-    }
     let case = native_background_case(toolkit, action, Targeting::Page, DriverRoute::Cdp);
     let cell_id = case.cell_id.clone();
     execute_case(case, |evidence| {
+        assert!(
+            host_exe.exists(),
+            "required {toolkit} host is missing at {host_exe:?}"
+        );
         let cdp_port = allocate_loopback_port();
         let cdp_port_string = cdp_port.to_string();
         let mut driver = McpDriver::spawn_named_with_env(

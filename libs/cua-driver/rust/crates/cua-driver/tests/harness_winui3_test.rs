@@ -22,7 +22,7 @@
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cua_driver_testkit::ax::element_index_by_id;
 use cua_driver_testkit::e2e::{
@@ -61,11 +61,29 @@ fn launch_winui3(driver: &mut McpDriver) -> Option<u32> {
     .ok()?;
     let pid = child.id();
     driver.reaper().push(child);
-    // Short fixed cold-start settle (window creation + foreground
-    // establishment after spawn). `find_window`'s polling handles the
-    // variable tail (WinUI3 first-run cold-start under sandbox load).
-    std::thread::sleep(Duration::from_millis(1500));
     Some(pid)
+}
+
+fn wait_for_winui3_ready(driver: &mut McpDriver, pid: u32, window_id: u64) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let state = driver.call(
+            "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": window_id}),
+        );
+        let last_state = state.text();
+        if !state.is_error()
+            && last_state.contains("HARNESS_TEXT_MARKER_v1")
+            && last_state.contains("id=chk-agreed")
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "WinUI3 UIA tree did not become ready: {last_state}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn run_case(
@@ -81,6 +99,7 @@ fn run_case(
         let (wid, _) = driver
             .find_window(pid as i64, "CuaTestHarness WinUI3")
             .expect("WinUI3 main window not found");
+        wait_for_winui3_ready(&mut driver, pid, wid);
         test(pid, wid, &mut driver)
     });
 }

@@ -23,9 +23,7 @@ use cua_driver_testkit::e2e::{
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::run_with_background_oracles;
-use cua_driver_testkit::{
-    ax, harness_app, spawn_in_job, Driver, FixtureJournal, McpDriver, ToolResponse,
-};
+use cua_driver_testkit::{harness_app, spawn_in_job, Driver, FixtureJournal, McpDriver, ToolResponse};
 
 // ── workspace paths ──────────────────────────────────────────────────────────
 
@@ -250,23 +248,16 @@ fn window_bounds(driver: &mut McpDriver, pid: i64, wid: u64) -> (f64, f64, f64, 
     )
 }
 
-fn pixel_center(state: &ToolResponse, target_id: &str, window: (f64, f64, f64, f64)) -> (f64, f64) {
-    let target_index = ax::element_index_by_id(state.text(), target_id)
-        .unwrap_or_else(|| panic!("missing WebView2 PX target {target_id:?}: {}", state.text()));
-    let elements = state.structured()["elements"]
-        .as_array()
-        .expect("PX targeting requires structured elements");
-    let target = elements
-        .iter()
-        .find(|element| element["element_index"].as_u64() == Some(target_index))
-        .and_then(|element| element["frame"].as_object())
-        .unwrap_or_else(|| panic!("element [{target_index}] has no structured frame"));
-    let target_w = target["w"].as_f64().unwrap_or(0.0);
-    let target_h = target["h"].as_f64().unwrap_or(0.0);
+fn pixel_from_screen(
+    state: &ToolResponse,
+    screen_x: f64,
+    screen_y: f64,
+    window: (f64, f64, f64, f64),
+) -> (f64, f64) {
     let (window_x, window_y, window_w, window_h) = window;
     assert!(
-        target_w > 0.0 && target_h > 0.0 && window_w > 0.0 && window_h > 0.0,
-        "WebView2 PX target and window need positive geometry: target={target:?}, window={window:?}"
+        window_w > 0.0 && window_h > 0.0,
+        "WebView2 window needs positive geometry: {window:?}"
     );
     let screenshot_w = state.structured()["screenshot_width"]
         .as_f64()
@@ -276,8 +267,8 @@ fn pixel_center(state: &ToolResponse, target_id: &str, window: (f64, f64, f64, f
         .expect("PX targeting requires screenshot_height");
     let scale_x = screenshot_w / window_w;
     let scale_y = screenshot_h / window_h;
-    let x = (target["x"].as_f64().unwrap_or(0.0) + target_w / 2.0 - window_x) * scale_x;
-    let y = (target["y"].as_f64().unwrap_or(0.0) + target_h / 2.0 - window_y) * scale_y;
+    let x = (screen_x - window_x) * scale_x;
+    let y = (screen_y - window_y) * scale_y;
     assert!(
         x >= 0.0 && x < screenshot_w && y >= 0.0 && y < screenshot_h,
         "WebView2 PX target center ({x:.1}, {y:.1}) is outside the capture ({screenshot_w:.1}x{screenshot_h:.1})"
@@ -321,7 +312,28 @@ fn harness_webview_left_click_px_background() {
             wait_for_journal_text(journal, "lbl-counter", "counter=0");
             let bounds = window_bounds(driver, pid, wid);
             let ready_state = snapshot(driver, pid, wid);
-            let (x, y) = pixel_center(&ready_state, "btn-increment", bounds);
+            let dom_probe = driver.call(
+                "page",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "action": "click_element",
+                    "selector": "#btn-increment"
+                }),
+            );
+            assert!(
+                !dom_probe.is_error(),
+                "WebView2 DOM geometry probe failed: {}",
+                dom_probe.text()
+            );
+            let screen_x = dom_probe.structured()["screen_x"]
+                .as_f64()
+                .expect("WebView2 DOM probe needs screen_x");
+            let screen_y = dom_probe.structured()["screen_y"]
+                .as_f64()
+                .expect("WebView2 DOM probe needs screen_y");
+            wait_for_journal_text(journal, "lbl-counter", "counter=1");
+            let (x, y) = pixel_from_screen(&ready_state, screen_x, screen_y, bounds);
             let geometry_probe = driver.call(
                 "click",
                 serde_json::json!({
@@ -337,7 +349,7 @@ fn harness_webview_left_click_px_background() {
                 "WebView2 foreground PX geometry probe failed: {}",
                 geometry_probe.text()
             );
-            wait_for_journal_text(journal, "lbl-counter", "counter=1");
+            wait_for_journal_text(journal, "lbl-counter", "counter=2");
             point.set(Some((x, y)));
         },
         |pid, wid, driver, journal| {
@@ -365,7 +377,7 @@ fn harness_webview_left_click_px_background() {
                 "WebView2 PX background click used an unexpected driver route: {}",
                 click.text()
             );
-            wait_for_journal_text(journal, "lbl-counter", "counter=2");
+            wait_for_journal_text(journal, "lbl-counter", "counter=3");
         },
     );
 }

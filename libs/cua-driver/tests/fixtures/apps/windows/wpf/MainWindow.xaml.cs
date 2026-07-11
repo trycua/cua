@@ -1,10 +1,8 @@
 using System;
 using System.Collections.Generic;
-using System.Net.Http;
+using System.IO;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -23,15 +21,12 @@ public partial class MainWindow : Window
     private int _clickCount;
     private bool _targetPointerSeen;
     private readonly ScenariosManifest _manifest;
-    private readonly string? _fixtureJournalUrl;
-    private readonly HttpClient _fixtureJournalClient = new();
-    private readonly object _fixtureJournalLock = new();
-    private Task _fixtureJournalTail = Task.CompletedTask;
+    private readonly string? _fixtureStatePath;
 
     public MainWindow()
     {
         _manifest = ScenariosManifest.Load();
-        _fixtureJournalUrl = Environment.GetEnvironmentVariable("CUA_E2E_FIXTURE_JOURNAL_URL");
+        _fixtureStatePath = Environment.GetEnvironmentVariable("CUA_E2E_FIXTURE_STATE_PATH");
         InitializeComponent();
 
         Title = _manifest.Wpf.MainWindow.Title;
@@ -211,7 +206,7 @@ public partial class MainWindow : Window
 
     private void PublishFixtureState()
     {
-        if (string.IsNullOrWhiteSpace(_fixtureJournalUrl)) return;
+        if (string.IsNullOrWhiteSpace(_fixtureStatePath)) return;
 
         var state = new Dictionary<string, object>
         {
@@ -220,25 +215,15 @@ public partial class MainWindow : Window
             ["lbl-last-action"] = new { text = LblLastAction?.Text ?? "last_action=none" },
             ["lbl-click-count"] = new { text = LblClickCount?.Text ?? "clicks=0" },
         };
-        var body = JsonSerializer.Serialize(state);
-        lock (_fixtureJournalLock)
-        {
-            _fixtureJournalTail = PublishFixtureStateAfterAsync(
-                _fixtureJournalTail, _fixtureJournalUrl, body);
-        }
-    }
-
-    private async Task PublishFixtureStateAfterAsync(Task previous, string url, string body)
-    {
-        await previous;
         try
         {
-            using var content = new StringContent(body, Encoding.UTF8, "text/plain");
-            using var response = await _fixtureJournalClient.PostAsync(url, content);
+            var temporaryPath = $"{_fixtureStatePath}.{Environment.ProcessId}.tmp";
+            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(state));
+            File.Move(temporaryPath, _fixtureStatePath, true);
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"WPF fixture journal publish failed: {ex.Message}");
+            Console.Error.WriteLine($"WPF fixture state publish failed: {ex.Message}");
         }
     }
 

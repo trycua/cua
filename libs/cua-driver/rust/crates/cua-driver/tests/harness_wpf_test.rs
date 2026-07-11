@@ -48,9 +48,7 @@ use cua_driver_testkit::e2e::{
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::{run_with_background_oracles, ForegroundSentinel};
-use cua_driver_testkit::{
-    ax, harness_app, spawn_in_job, Driver, FixtureJournal, McpDriver, ToolResponse,
-};
+use cua_driver_testkit::{ax, harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
 
 // ── harness launcher ─────────────────────────────────────────────────────────
 
@@ -73,10 +71,10 @@ fn harness_exe() -> PathBuf {
 /// hasn't been fully reaped and there are briefly two CuaTestHarness.Wpf
 /// windows on the desktop.
 fn launch_harness(driver: &mut McpDriver) -> Option<u32> {
-    launch_harness_with_journal(driver, None)
+    launch_harness_with_state_file(driver, None)
 }
 
-fn launch_harness_with_journal(driver: &mut McpDriver, journal_url: Option<&str>) -> Option<u32> {
+fn launch_harness_with_state_file(driver: &mut McpDriver, state_path: Option<&std::path::Path>) -> Option<u32> {
     let exe = harness_exe();
     if !exe.exists() {
         eprintln!("harness exe not found at {exe:?} — run tests/fixtures/build/windows.ps1 first");
@@ -84,8 +82,8 @@ fn launch_harness_with_journal(driver: &mut McpDriver, journal_url: Option<&str>
     }
     let mut command = Command::new(&exe);
     command.stdout(Stdio::null()).stderr(Stdio::null());
-    if let Some(url) = journal_url {
-        command.env("CUA_E2E_FIXTURE_JOURNAL_URL", url);
+    if let Some(path) = state_path {
+        command.env("CUA_E2E_FIXTURE_STATE_PATH", path);
     }
     let app = spawn_in_job(&mut command).ok()?;
     let pid = app.id();
@@ -196,16 +194,20 @@ fn pixel_center(state: &ToolResponse, target_id: &str, window: (f64, f64, f64, f
     (x, y)
 }
 
-fn wait_for_journal_text(journal: &FixtureJournal, id: &str, expected: &str) {
+fn wait_for_fixture_file_text(path: &std::path::Path, id: &str, expected: &str) {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
-        if journal.text(id).as_deref() == Some(expected) {
-            return;
+        if let Ok(body) = std::fs::read(path) {
+            if let Ok(state) = serde_json::from_slice::<serde_json::Value>(&body) {
+                if state[id]["text"].as_str() == Some(expected) {
+                    return;
+                }
+            }
         }
         assert!(
             Instant::now() < deadline,
-            "WPF fixture journal {id:?} did not reach {expected:?}: {}",
-            journal.snapshot()
+            "WPF fixture state {id:?} did not reach {expected:?}: {}",
+            std::fs::read_to_string(path).unwrap_or_else(|_| "<missing>".to_owned())
         );
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -438,13 +440,14 @@ fn harness_wpf_left_click_px_background() {
         let mut driver = McpDriver::spawn_named("windows-wpf-left-click-px-background")
             .expect("required source-built driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
-        let journal = FixtureJournal::start();
-        let pid = launch_harness_with_journal(&mut driver, Some(journal.url()))
+        let state_dir = tempfile::tempdir().expect("create WPF fixture state directory");
+        let state_path = state_dir.path().join("state.json");
+        let pid = launch_harness_with_state_file(&mut driver, Some(&state_path))
             .expect("required WPF harness did not launch");
         let (wid, _) = driver
             .find_window(pid as i64, "CuaTestHarness WPF")
             .expect("main window");
-        wait_for_journal_text(&journal, "lbl-click-count", "clicks=0");
+        wait_for_fixture_file_text(&state_path, "lbl-click-count", "clicks=0");
 
         let bounds = window_bounds(&mut driver, pid, wid);
         let ready_state = snapshot(&mut driver, pid, wid);
@@ -464,7 +467,7 @@ fn harness_wpf_left_click_px_background() {
             "WPF foreground PX geometry probe failed: {}",
             geometry_probe.text()
         );
-        wait_for_journal_text(&journal, "lbl-click-count", "clicks=1");
+        wait_for_fixture_file_text(&state_path, "lbl-click-count", "clicks=1");
 
         let (click, passed) = observe_background(&mut driver, pid, wid, |driver| {
             driver.call(
@@ -489,8 +492,8 @@ fn harness_wpf_left_click_px_background() {
             "WPF PX background click used an unexpected driver route: {}",
             click.text()
         );
-        wait_for_journal_text(&journal, "lbl-click-count", "clicks=2");
-        wait_for_journal_text(&journal, "lbl-last-action", "last_action=left_click");
+        wait_for_fixture_file_text(&state_path, "lbl-click-count", "clicks=2");
+        wait_for_fixture_file_text(&state_path, "lbl-last-action", "last_action=left_click");
         delivered_with_fixture_state(passed)
     });
 }

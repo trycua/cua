@@ -555,12 +555,11 @@ impl CompatState {
 
     fn revive_cursor_after_fresh_state(&self, session: &str) -> bool {
         let should_revive = self.lock_removed_cursors.lock().unwrap().contains(session);
-        if should_revive
-            && !cua_driver_core::session::is_session_ended(session)
-        {
-            crate::cursor::overlay::revive_cursor(session.to_owned());
-        }
         should_revive
+            && cua_driver_core::session::with_live_session(session, || {
+                crate::cursor::overlay::revive_cursor(session.to_owned());
+            })
+            .is_some()
     }
 
     fn require_current_lock_epoch(&self, epoch: SessionLockEpoch) -> Result<(), ToolResult> {

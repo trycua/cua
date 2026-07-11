@@ -113,6 +113,23 @@ pub fn is_session_ended(session_id: &str) -> bool {
     ended_sessions().lock().unwrap().contains(session_id)
 }
 
+/// Run an ordered lifecycle operation only while `session_id` is live.
+///
+/// The ended-session lock stays held through `operation`, so a concurrent
+/// [`fire_session_end`] cannot mark the session and enqueue its cleanup between
+/// the live check and the operation. This is intended for short, non-blocking
+/// lifecycle queue writes such as cursor revival.
+pub fn with_live_session<R>(session_id: &str, operation: impl FnOnce() -> R) -> Option<R> {
+    if !is_trackable(session_id) {
+        return Some(operation());
+    }
+    let ended = ended_sessions().lock().unwrap();
+    if ended.contains(session_id) {
+        return None;
+    }
+    Some(operation())
+}
+
 /// Revive a previously-ended session id by clearing its tombstone, so a fresh
 /// `start_session` with a recycled id works as a caller would expect: the id
 /// becomes live again and its actions stop being rejected by the resurrection
@@ -352,5 +369,39 @@ mod tests {
         // The anonymous fallback is never tracked, so there is nothing to revive.
         assert!(!revive_session("default"));
         assert!(!revive_session(""));
+    }
+
+    #[test]
+    fn live_session_operation_orders_before_concurrent_end_cleanup() {
+        use std::sync::{Arc, Barrier};
+
+        let sid = "test-live-operation-order-1A2B3C";
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let hook_events = events.clone();
+        register_session_end_hook(move |ended| {
+            if ended == sid {
+                hook_events.lock().unwrap().push("remove");
+            }
+        });
+
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let worker_events = events.clone();
+        let worker_entered = entered.clone();
+        let worker_release = release.clone();
+        let worker = std::thread::spawn(move || {
+            with_live_session(sid, || {
+                worker_events.lock().unwrap().push("revive");
+                worker_entered.wait();
+                worker_release.wait();
+            })
+        });
+
+        entered.wait();
+        let ender = std::thread::spawn(move || fire_session_end(sid));
+        release.wait();
+        assert!(worker.join().unwrap().is_some());
+        ender.join().unwrap();
+        assert_eq!(&*events.lock().unwrap(), &["revive", "remove"]);
     }
 }

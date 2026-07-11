@@ -1,4 +1,9 @@
+const { contextBridge } = require('electron');
 const fs = require('fs');
+
+contextBridge.exposeInMainWorld('cuaE2E', {
+  journalUrl: process.env.CUA_E2E_FIXTURE_JOURNAL_URL || '',
+});
 
 const journalPath = process.env.CUA_E2E_SENTINEL_JOURNAL;
 const sentinelMode = process.env.CUA_E2E_SENTINEL === '1' && journalPath;

@@ -3,8 +3,9 @@
 //! These are source-owned Rust tests, not a copy of a partner test runner. The
 //! shared web fixture is loaded by Electron and Tauri on every supported OS;
 //! Windows also has WebView2 coverage in `harness_web_test.rs`. Assertions read
-//! the fixture's mutated application state from a fresh accessibility snapshot.
-//! A successful driver response alone is never sufficient.
+//! mutated application state from a fixture-owned loopback journal, independently
+//! of the driver's accessibility snapshot. A successful response alone is never
+//! sufficient.
 //!
 //! Run after building the shared fixtures:
 //!
@@ -30,7 +31,9 @@ use cua_driver_testkit::e2e::{
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::ForegroundSentinel;
-use cua_driver_testkit::{harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
+use cua_driver_testkit::{
+    harness_app, spawn_in_job, Driver, FixtureJournal, McpDriver, ToolResponse,
+};
 
 struct HostSpec {
     name: &'static str,
@@ -205,6 +208,7 @@ struct Fixture {
     window_x: f64,
     window_y: f64,
     name: &'static str,
+    journal: FixtureJournal,
 }
 
 fn evidence_for_driver(driver: &McpDriver) -> Evidence {
@@ -247,9 +251,11 @@ fn launch_host_with_evidence(
         return None;
     };
     *evidence = evidence_for_driver(&driver);
+    let journal = FixtureJournal::start();
     let mut command = Command::new(&spec.path);
     command
         .args(&spec.args)
+        .env("CUA_E2E_FIXTURE_JOURNAL_URL", journal.url())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     if spec.name == "electron" {
@@ -295,6 +301,7 @@ fn launch_host_with_evidence(
                         window_x: bounds["x"].as_f64().unwrap_or(0.0),
                         window_y: bounds["y"].as_f64().unwrap_or(0.0),
                         name: spec.name,
+                        journal,
                     };
                     let ax_deadline = Instant::now() + Duration::from_secs(10);
                     let mut last_tree = String::new();
@@ -302,7 +309,9 @@ fn launch_host_with_evidence(
                         let state = snapshot(&mut fixture);
                         last_tree.clear();
                         last_tree.push_str(state.tree_text());
-                        if last_tree.contains("WEB_HARNESS_MARKER_v1") {
+                        if last_tree.contains("WEB_HARNESS_MARKER_v1")
+                            && fixture.journal.contains("WEB_HARNESS_MARKER_v1")
+                        {
                             return Some(fixture);
                         }
                         thread::sleep(Duration::from_millis(250));
@@ -422,18 +431,17 @@ fn element_center(snapshot: &ToolResponse, element_index: u64) -> (f64, f64) {
     )
 }
 
-fn assert_tree_contains(fixture: &mut Fixture, marker: &str) {
+fn assert_fixture_contains(fixture: &Fixture, marker: &str) {
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
-        let post = snapshot(fixture);
-        if post.tree_text().contains(marker) {
+        if fixture.journal.contains(marker) {
             return;
         }
         if Instant::now() >= deadline {
             panic!(
-                "{}: application state did not reach {marker:?}: {}",
+                "{}: fixture journal did not reach {marker:?}: {}",
                 fixture.name,
-                post.tree_text()
+                fixture.journal.snapshot()
             );
         }
         thread::sleep(Duration::from_millis(100));
@@ -498,7 +506,7 @@ fn run_pointer_action(
         fixture.name,
         response.text()
     );
-    assert_tree_contains(fixture, expected_marker);
+    assert_fixture_contains(fixture, expected_marker);
     delivered_observation()
 }
 
@@ -559,7 +567,7 @@ fn run_text_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> O
         passed.extend(unverified_background_protocol_oracle(&response, delivery));
     }
     thread::sleep(Duration::from_millis(250));
-    assert_tree_contains(fixture, &format!("mirror={text}"));
+    assert_fixture_contains(fixture, &format!("mirror={text}"));
     Observation::delivered(passed, Evidence::default())
 }
 
@@ -582,7 +590,7 @@ fn run_press_key_action(fixture: &mut Fixture, addressing: &str, delivery: &str)
     );
     let mut passed = vec![OracleKind::FixtureState];
     passed.extend(unverified_background_protocol_oracle(&response, delivery));
-    assert_tree_contains(fixture, "key_state=enter");
+    assert_fixture_contains(fixture, "key_state=enter");
 
     Observation::delivered(passed, Evidence::default())
 }
@@ -604,7 +612,7 @@ fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
         fixture.name,
         response.text()
     );
-    assert_tree_contains(fixture, "key_state=hotkey");
+    assert_fixture_contains(fixture, "key_state=hotkey");
     let passed = unverified_background_protocol_oracle(&response, delivery);
     Observation::delivered_with_fixture_state(passed)
 }
@@ -627,19 +635,22 @@ fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
         response.text()
     );
     thread::sleep(Duration::from_millis(250));
-    let post = snapshot(fixture);
-    let offset = post
-        .tree_text()
-        .lines()
-        .find_map(|line| line.split("scroll_offset=").nth(1))
-        .and_then(|tail| tail.split(|ch: char| !ch.is_ascii_digit()).next())
+    let offset = fixture
+        .journal
+        .text("lbl-scroll-offset")
+        .and_then(|text| text.split("scroll_offset=").nth(1).map(str::to_owned))
+        .and_then(|tail| {
+            tail.split(|ch: char| !ch.is_ascii_digit())
+                .next()
+                .map(str::to_owned)
+        })
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(0);
     assert!(
         offset > 0,
         "{}: scroll did not advance the external oracle: {}",
         fixture.name,
-        post.tree_text()
+        fixture.journal.snapshot()
     );
     delivered_observation()
 }
@@ -679,7 +690,7 @@ fn run_drag_action(fixture: &mut Fixture, delivery: &str) -> Observation {
         fixture.name,
         response.text()
     );
-    assert_tree_contains(fixture, "drag_status=dropped");
+    assert_fixture_contains(fixture, "drag_status=dropped");
     delivered_observation()
 }
 
@@ -696,7 +707,7 @@ fn run_child_window_action(fixture: &mut Fixture, addressing: &str, delivery: &s
         fixture.name,
         response.text()
     );
-    assert_tree_contains(fixture, "child_windows=1");
+    assert_fixture_contains(fixture, "child_windows=1");
     delivered_observation()
 }
 
@@ -731,7 +742,7 @@ fn run_editor_save_action(fixture: &mut Fixture, delivery: &str) -> Observation 
         fixture.name,
         response.text()
     );
-    assert_tree_contains(fixture, "editor_status=saved:");
+    assert_fixture_contains(fixture, "editor_status=saved:");
     delivered_observation()
 }
 

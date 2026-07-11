@@ -304,6 +304,50 @@
       child.document.close();
     }
   });
+
+  // Publish fixture-owned state to the Rust harness over loopback. AX remains
+  // the targeting surface, but it is not a delivery oracle: embedded WebKit
+  // can retain stale accessible text after the DOM has already changed.
+  (function startFixtureJournal() {
+    const journalUrl = window.cuaE2E?.journalUrl ||
+      window.__CUA_E2E_FIXTURE_JOURNAL_URL || '';
+    if (!journalUrl) return;
+
+    let queued = false;
+    const publish = () => {
+      queued = false;
+      const state = {};
+      document.querySelectorAll('[data-cua-id]').forEach(element => {
+        const entry = { text: (element.textContent || '').trim() };
+        if ('value' in element) entry.value = element.value;
+        if ('checked' in element) entry.checked = element.checked;
+        state[element.dataset.cuaId] = entry;
+      });
+      fetch(journalUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(state),
+        keepalive: true,
+      }).catch(() => {});
+    };
+    const queuePublish = () => {
+      if (queued) return;
+      queued = true;
+      setTimeout(publish, 0);
+    };
+
+    new MutationObserver(queuePublish).observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+    });
+    for (const event of ['input', 'change', 'keydown', 'pointerup', 'scroll']) {
+      document.addEventListener(event, queuePublish, true);
+    }
+    queuePublish();
+  })();
   </script>
 </body>
 </html>

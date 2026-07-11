@@ -36,6 +36,7 @@
 pub mod ax;
 mod driver;
 pub mod e2e;
+mod journal;
 mod mcp;
 mod cli;
 pub mod observer;
@@ -46,6 +47,7 @@ mod response;
 pub mod sentinel;
 
 pub use driver::Driver;
+pub use journal::FixtureJournal;
 pub use mcp::McpDriver;
 pub use raw::RawDriver;
 pub use cli::CliDriver;

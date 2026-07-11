@@ -104,7 +104,13 @@ pub struct TreeWalkResult {
 /// # Safety
 /// Calls macOS AX API. Must be called on a thread that has a CF run loop.
 pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeWalkResult {
-    walk_tree_bounded(pid, window_id, query, DEFAULT_MAX_ELEMENTS, DEFAULT_MAX_DEPTH)
+    walk_tree_bounded(
+        pid,
+        window_id,
+        query,
+        DEFAULT_MAX_ELEMENTS,
+        DEFAULT_MAX_DEPTH,
+    )
 }
 
 /// Walk the AX tree with caller-supplied caps. See [`walk_tree`] for the
@@ -180,7 +186,11 @@ fn walk_tree_bounded_with_mode(
     unsafe {
         let app_elem = AXUIElementCreateApplication(pid);
         if app_elem.is_null() {
-            return TreeWalkResult { tree_markdown: String::new(), nodes, truncated: false };
+            return TreeWalkResult {
+                tree_markdown: String::new(),
+                nodes,
+                truncated: false,
+            };
         }
 
         // Chromium/Electron apps (Arc, VS Code, Electron shells) ship their
@@ -192,7 +202,10 @@ fn walk_tree_bounded_with_mode(
         // read it. Native Cocoa apps reject the attribute, so they pay no
         // settle cost. This relies on the MAX_ELEMENTS node cap to keep the
         // now-materialized (potentially large) tree bounded.
-        let already_enabled = enabled_pids().lock().map(|s| s.contains(&pid)).unwrap_or(false);
+        let already_enabled = enabled_pids()
+            .lock()
+            .map(|s| s.contains(&pid))
+            .unwrap_or(false);
         if !already_enabled && enable_chromium_accessibility(app_elem) {
             crate::permissions::panel::pump_run_loop_briefly(CHROMIUM_SETTLE_SECONDS);
             if let Ok(mut set) = enabled_pids().lock() {
@@ -219,14 +232,18 @@ fn walk_tree_bounded_with_mode(
 
         // Filter: keep non-window children (menu bar) + the target window.
         let walk_these: Vec<AXUIElementRef> = if let Some(wid) = window_id {
-            top_level.iter().copied().filter(|&child| {
-                let role = copy_string_attr(child, "AXRole").unwrap_or_default();
-                if role != "AXWindow" {
-                    return true; // always keep menu bar and other non-window items
-                }
-                // Match AX window element → CGWindowID via private SPI.
-                ax_get_window_id(child) == Some(wid)
-            }).collect()
+            top_level
+                .iter()
+                .copied()
+                .filter(|&child| {
+                    let role = copy_string_attr(child, "AXRole").unwrap_or_default();
+                    if role != "AXWindow" {
+                        return true; // always keep menu bar and other non-window items
+                    }
+                    // Match AX window element → CGWindowID via private SPI.
+                    ax_get_window_id(child) == Some(wid)
+                })
+                .collect()
         } else {
             top_level.iter().copied().collect()
         };
@@ -265,33 +282,53 @@ fn walk_tree_bounded_with_mode(
     };
 
     if truncated_flag {
+        let detail = if mode == WalkMode::CodexFull {
+            format!(
+                "{max_elements} returned nodes or {} scanned nodes",
+                max_elements.saturating_mul(8)
+            )
+        } else {
+            format!("{max_elements} nodes")
+        };
         tree_markdown.push_str(&format!(
-            "\n⚠️  AX tree truncated at {max_elements} nodes \
+            "\n⚠️  AX tree truncated at {detail} \
              (app has a very large accessibility tree — Arc, Electron, or similar). \
              Element indices above are still valid. Use pixel clicks for elements \
              not visible in this partial tree."
         ));
     }
 
-    TreeWalkResult { tree_markdown, nodes, truncated: truncated_flag }
+    TreeWalkResult {
+        tree_markdown,
+        nodes,
+        truncated: truncated_flag,
+    }
 }
 
 fn should_collapse_layout_container(role: &str, mode: WalkMode) -> bool {
-    mode == WalkMode::Native && matches!(role, "AXScrollArea" | "AXGroup")
+    role == "AXGroup" || (mode == WalkMode::Native && role == "AXScrollArea")
 }
 
-fn should_index_node(
-    role: &str,
-    is_actionable: bool,
-    has_content: bool,
-    mode: WalkMode,
-) -> bool {
+fn should_index_node(role: &str, is_actionable: bool, has_content: bool, mode: WalkMode) -> bool {
     if is_actionable {
         return true;
     }
-    mode == WalkMode::CodexFull
-        && role != "AXUnknown"
-        && (has_content || role.starts_with("AX"))
+    if mode != WalkMode::CodexFull {
+        return false;
+    }
+
+    match role {
+        // Text can be consumed by select_text, including static labels whose
+        // selectable ancestor owns AXSelectedTextRange.
+        "AXStaticText" | "AXHeading" | "AXTextField" | "AXTextArea" | "AXSearchField" => {
+            has_content
+        }
+        // These containers are meaningful wheel targets even when they expose
+        // no AX action of their own. Empty layout-only groups stay in the
+        // markdown hierarchy without consuming an addressable index.
+        "AXScrollArea" | "AXWebArea" | "AXList" | "AXOutline" | "AXTable" | "AXCollection" => true,
+        _ => false,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -308,17 +345,25 @@ unsafe fn walk_element(
     max_depth: usize,
     mode: WalkMode,
 ) {
-    if depth > max_depth { return; }
-    // Enforce total-node cap — mirrors Swift's maxElements guard.
-    // Set the truncated flag only when we actually stop early.
-    if *visited_count >= max_elements {
+    if depth > max_depth {
+        return;
+    }
+    // Codex compatibility separates the 800-node response budget from a
+    // larger bounded scan budget. This lets empty Electron layout wrappers be
+    // traversed without crowding useful controls out of the addressable map,
+    // while retaining a hard stop for pathological trees.
+    let scan_limit = if mode == WalkMode::CodexFull {
+        max_elements.saturating_mul(8)
+    } else {
+        max_elements
+    };
+    if *visited_count >= scan_limit {
         *truncated = true;
         return;
     }
     *visited_count += 1;
 
-    let role = copy_string_attr(element, "AXRole")
-        .unwrap_or_else(|| "AXUnknown".into());
+    let role = copy_string_attr(element, "AXRole").unwrap_or_else(|| "AXUnknown".into());
 
     // Skip pure layout containers that have no interesting content.
     if should_collapse_layout_container(&role, mode) {
@@ -353,7 +398,8 @@ unsafe fn walk_element(
     let title = copy_string_attr(element, "AXTitle");
     let value = copy_string_attr(element, "AXValue");
     // AXPlaceholderValue as fallback for empty text fields.
-    let value = value.filter(|v| !v.trim().is_empty())
+    let value = value
+        .filter(|v| !v.trim().is_empty())
         .or_else(|| copy_string_attr(element, "AXPlaceholderValue"));
     let description = copy_string_attr(element, "AXDescription");
     let identifier = copy_string_attr(element, "AXIdentifier");
@@ -364,9 +410,8 @@ unsafe fn walk_element(
     let visible_description = description.as_deref().unwrap_or("").trim().to_owned();
     let visible_value = value.as_deref().unwrap_or("").trim().to_owned();
 
-    let has_content = !visible_title.is_empty()
-        || !visible_description.is_empty()
-        || !visible_value.is_empty();
+    let has_content =
+        !visible_title.is_empty() || !visible_description.is_empty() || !visible_value.is_empty();
     let is_actionable = !actions.is_empty();
     let is_indexed = should_index_node(&role, is_actionable, has_content, mode);
 
@@ -391,6 +436,11 @@ unsafe fn walk_element(
         return;
     }
 
+    if nodes.len() >= max_elements {
+        *truncated = true;
+        return;
+    }
+
     let element_ptr = element as usize;
     let frame = element_screen_rect(element);
     let node = if is_indexed {
@@ -402,9 +452,21 @@ unsafe fn walk_element(
         AXNode {
             element_index: Some(idx),
             role: role.clone(),
-            title: if visible_title.is_empty() { None } else { Some(visible_title.clone()) },
-            value: if visible_value.is_empty() { None } else { Some(visible_value.clone()) },
-            description: if visible_description.is_empty() { None } else { Some(visible_description.clone()) },
+            title: if visible_title.is_empty() {
+                None
+            } else {
+                Some(visible_title.clone())
+            },
+            value: if visible_value.is_empty() {
+                None
+            } else {
+                Some(visible_value.clone())
+            },
+            description: if visible_description.is_empty() {
+                None
+            } else {
+                Some(visible_description.clone())
+            },
             identifier: identifier.clone(),
             help: help.clone(),
             actions: actions.clone(),
@@ -417,9 +479,21 @@ unsafe fn walk_element(
         AXNode {
             element_index: None,
             role: role.clone(),
-            title: if visible_title.is_empty() { None } else { Some(visible_title.clone()) },
-            value: if visible_value.is_empty() { None } else { Some(visible_value.clone()) },
-            description: if visible_description.is_empty() { None } else { Some(visible_description.clone()) },
+            title: if visible_title.is_empty() {
+                None
+            } else {
+                Some(visible_title.clone())
+            },
+            value: if visible_value.is_empty() {
+                None
+            } else {
+                Some(visible_value.clone())
+            },
+            description: if visible_description.is_empty() {
+                None
+            } else {
+                Some(visible_description.clone())
+            },
             identifier: identifier.clone(),
             help: help.clone(),
             actions: vec![],
@@ -492,7 +566,9 @@ fn format_node_line(node: &AXNode) -> String {
             attrs.push(format!("help=\"{}\"", h));
         }
         if !node.actions.is_empty() {
-            let action_str = node.actions.iter()
+            let action_str = node
+                .actions
+                .iter()
                 .map(|a| a.strip_prefix("AX").unwrap_or(a).to_lowercase())
                 .collect::<Vec<_>>()
                 .join(",");
@@ -544,8 +620,12 @@ fn filter_tree(markdown: &str, query: &str) -> String {
         if line.to_lowercase().contains(&needle) {
             for ancestor_depth in 0..depth {
                 let ancestor = current_ancestor[ancestor_depth];
-                if ancestor.is_empty() { continue; }
-                if last_emitted_at[ancestor_depth] == Some(ancestor) { continue; }
+                if ancestor.is_empty() {
+                    continue;
+                }
+                if last_emitted_at[ancestor_depth] == Some(ancestor) {
+                    continue;
+                }
                 last_emitted_at[ancestor_depth] = Some(ancestor);
                 output.push(ancestor);
             }
@@ -565,7 +645,11 @@ fn filter_tree(markdown: &str, query: &str) -> String {
 fn leading_indent_depth(line: &str) -> usize {
     let mut count = 0;
     for ch in line.chars() {
-        if ch == ' ' { count += 1; } else { break; }
+        if ch == ' ' {
+            count += 1;
+        } else {
+            break;
+        }
     }
     count / 2
 }
@@ -577,20 +661,73 @@ mod tests {
     #[test]
     fn native_mode_remains_action_only_and_collapses_layout() {
         assert!(should_index_node("AXButton", true, true, WalkMode::Native));
-        assert!(!should_index_node("AXStaticText", false, true, WalkMode::Native));
-        assert!(!should_index_node("AXWindow", false, false, WalkMode::Native));
-        assert!(should_collapse_layout_container("AXGroup", WalkMode::Native));
-        assert!(should_collapse_layout_container("AXScrollArea", WalkMode::Native));
+        assert!(!should_index_node(
+            "AXStaticText",
+            false,
+            true,
+            WalkMode::Native
+        ));
+        assert!(!should_index_node(
+            "AXWindow",
+            false,
+            false,
+            WalkMode::Native
+        ));
+        assert!(should_collapse_layout_container(
+            "AXGroup",
+            WalkMode::Native
+        ));
+        assert!(should_collapse_layout_container(
+            "AXScrollArea",
+            WalkMode::Native
+        ));
     }
 
     #[test]
-    fn codex_full_mode_indexes_text_and_preserves_containers() {
-        assert!(should_index_node("AXStaticText", false, true, WalkMode::CodexFull));
-        assert!(should_index_node("AXWindow", false, false, WalkMode::CodexFull));
-        assert!(should_index_node("AXGroup", false, false, WalkMode::CodexFull));
-        assert!(should_index_node("AXScrollArea", false, false, WalkMode::CodexFull));
-        assert!(!should_index_node("AXUnknown", false, false, WalkMode::CodexFull));
-        assert!(!should_collapse_layout_container("AXGroup", WalkMode::CodexFull));
-        assert!(!should_collapse_layout_container("AXScrollArea", WalkMode::CodexFull));
+    fn codex_full_mode_indexes_only_nodes_consumable_by_compat_actions() {
+        assert!(should_index_node(
+            "AXStaticText",
+            false,
+            true,
+            WalkMode::CodexFull
+        ));
+        assert!(should_index_node(
+            "AXScrollArea",
+            false,
+            false,
+            WalkMode::CodexFull
+        ));
+        assert!(should_index_node(
+            "AXTextField",
+            false,
+            true,
+            WalkMode::CodexFull
+        ));
+        assert!(!should_index_node(
+            "AXWindow",
+            false,
+            false,
+            WalkMode::CodexFull
+        ));
+        assert!(!should_index_node(
+            "AXGroup",
+            false,
+            false,
+            WalkMode::CodexFull
+        ));
+        assert!(!should_index_node(
+            "AXUnknown",
+            false,
+            false,
+            WalkMode::CodexFull
+        ));
+        assert!(should_collapse_layout_container(
+            "AXGroup",
+            WalkMode::CodexFull
+        ));
+        assert!(!should_collapse_layout_container(
+            "AXScrollArea",
+            WalkMode::CodexFull
+        ));
     }
 }

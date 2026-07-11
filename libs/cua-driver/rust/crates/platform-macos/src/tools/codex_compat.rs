@@ -31,9 +31,10 @@ use std::time::{Duration, Instant};
 
 use super::ToolState;
 use crate::ax::bindings::{
-    copy_action_names, copy_string_attr, perform_action, AXUIElementCopyAttributeValue,
-    AXUIElementCreateApplication, AXUIElementRef, AXUIElementSetAttributeValue, AXValueRef,
-    _AXUIElementGetWindow, kAXErrorSuccess, kAXValueCFRangeType,
+    copy_action_names, copy_string_attr, element_screen_center, perform_action,
+    AXUIElementCopyAttributeValue, AXUIElementCreateApplication, AXUIElementRef,
+    AXUIElementSetAttributeValue, AXValueRef, _AXUIElementGetWindow, kAXErrorSuccess,
+    kAXValueCFRangeType,
 };
 
 const ANONYMOUS_SESSION: &str = "__codex_compat_connection__";
@@ -139,15 +140,7 @@ impl Tool for CompatTool {
 
 pub(super) fn register_all(registry: &mut ToolRegistry) {
     let state = Arc::new(CompatState::new());
-
-    {
-        let snapshots = state.snapshots.clone();
-        let native_sessions = state.native_sessions.clone();
-        cua_driver_core::session::register_session_end_hook(move |session_id| {
-            snapshots.clear_session(session_id);
-            native_sessions.lock().unwrap().remove(session_id);
-        });
-    }
+    register_session_cleanup(&state);
 
     for kind in CompatKind::ALL {
         registry.register(Box::new(CompatTool {
@@ -155,6 +148,22 @@ pub(super) fn register_all(registry: &mut ToolRegistry) {
             state: state.clone(),
         }));
     }
+}
+
+fn register_session_cleanup(state: &Arc<CompatState>) {
+    let snapshots = state.snapshots.clone();
+    let native_sessions = state.native_sessions.clone();
+    let operation_locks = state.operation_locks.clone();
+    cua_driver_core::session::register_session_end_hook(move |session_id| {
+        snapshots.clear_session(session_id);
+        let native = native_sessions.lock().unwrap().remove(session_id);
+        if let Some(native) = native {
+            native.session_config.clear(session_id);
+            native.cursor_registry.remove(session_id);
+        }
+        crate::cursor::overlay::remove_cursor(session_id.to_owned());
+        operation_locks.lock().unwrap().remove(session_id);
+    });
 }
 
 fn defs() -> &'static [ToolDef] {
@@ -334,6 +343,12 @@ struct AppIdentity {
     pid: i32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AppResolveMode {
+    LaunchIfNeeded,
+    RunningOnly,
+}
+
 impl AppIdentity {
     fn aliases(&self) -> Vec<String> {
         let mut aliases = vec![self.requested.clone(), self.name.clone()];
@@ -427,6 +442,14 @@ impl SnapshotStore {
         }
     }
 
+    fn is_current(&self, session: &str, snapshot: &AppSnapshot) -> bool {
+        self.inner.lock().unwrap().latest_by_window.get(&(
+            session.to_owned(),
+            snapshot.app.pid,
+            snapshot.window_id,
+        )) == Some(&snapshot.generation)
+    }
+
     fn clear_session(&self, session: &str) {
         let mut inner = self.inner.lock().unwrap();
         inner.by_session.remove(session);
@@ -439,6 +462,7 @@ impl SnapshotStore {
 struct CompatState {
     snapshots: Arc<SnapshotStore>,
     native_sessions: Arc<Mutex<HashMap<String, Arc<ToolState>>>>,
+    operation_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 impl CompatState {
@@ -446,6 +470,7 @@ impl CompatState {
         Self {
             snapshots: Arc::new(SnapshotStore::default()),
             native_sessions: Arc::new(Mutex::new(HashMap::new())),
+            operation_locks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -454,6 +479,14 @@ impl CompatState {
         sessions
             .entry(session.to_owned())
             .or_insert_with(|| Arc::new(ToolState::default()))
+            .clone()
+    }
+
+    fn operation_lock(&self, session: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut sessions = self.operation_locks.lock().unwrap();
+        sessions
+            .entry(session.to_owned())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
             .clone()
     }
 
@@ -524,11 +557,23 @@ impl CompatState {
             Err(result) => return result,
         };
         let session = session_key(args);
+        let operation_lock = self.operation_lock(&session);
+        let _operation = operation_lock.lock().await;
+        self.capture_app_state(&app_ref, &session, AppResolveMode::LaunchIfNeeded)
+            .await
+    }
+
+    async fn capture_app_state(
+        &self,
+        app_ref: &str,
+        session: &str,
+        resolve_mode: AppResolveMode,
+    ) -> ToolResult {
         if let Err(error) = ensure_interactive_session_unlocked() {
             return error.into_result();
         }
-        let native = self.native_for_session(&session);
-        let app = match resolve_or_launch_app(&app_ref).await {
+        let native = self.native_for_session(session);
+        let app = match resolve_or_launch_app(app_ref, resolve_mode).await {
             Ok(app) => app,
             Err(error) => return error.into_result(),
         };
@@ -591,7 +636,7 @@ impl CompatState {
             .map(|bounds| bounds.height.round().max(1.0) as u32)
             .unwrap_or(native_height.max(1.0) as u32);
         let snapshot = self.snapshots.insert(
-            &session,
+            session,
             AppSnapshot {
                 app,
                 window_id,
@@ -617,6 +662,10 @@ impl CompatState {
             Err(result) => return result,
         };
         let session = session_key(&args);
+        // Capture the generation before waiting for this session's operation
+        // lane. If another state read or action wins the lane first, the
+        // generation check below rejects these now-stale coordinates instead
+        // of silently applying them to the newer native element cache.
         let snapshot = match self.snapshots.lookup(&session, &app_ref) {
             Ok(snapshot) => snapshot,
             Err(SnapshotLookupError::Missing) => {
@@ -638,6 +687,17 @@ impl CompatState {
                 .into_result()
             }
         };
+        let operation_lock = self.operation_lock(&session);
+        let _operation = operation_lock.lock().await;
+        if !self.snapshots.is_current(&session, &snapshot) {
+            return CompatError::new(
+                "stale_app_state",
+                format!(
+                    "The app snapshot for '{app_ref}' changed while this action was waiting. Call get_app_state again before acting."
+                ),
+            )
+            .into_result();
+        }
 
         if let Err(error) = ensure_interactive_session_unlocked() {
             return error.into_result();
@@ -672,7 +732,9 @@ impl CompatState {
         self.snapshots.invalidate(&session, &snapshot);
         let action_summary = first_text(&action_result);
         let action_structured = action_result.structured_content.clone();
-        let mut refreshed = self.get_app_state(&args).await;
+        let mut refreshed = self
+            .capture_app_state(&app_ref, &session, AppResolveMode::RunningOnly)
+            .await;
         if refreshed.is_error == Some(true) {
             return refresh_warning_after_success(
                 &action_name,
@@ -721,12 +783,23 @@ impl CompatState {
             "count": click_count,
             "_session_id": session,
         });
+        let mut uses_ax_element = false;
         if let Some(index) = element_index {
             let native_index = match snapshot_element_index(snapshot, index) {
                 Ok(index) => index,
                 Err(result) => return result,
             };
-            native_args["element_index"] = json!(native_index);
+            match element_click_pixel_fallback(snapshot, native_index, button).await {
+                Ok(Some((native_x, native_y))) => {
+                    native_args["x"] = json!(native_x);
+                    native_args["y"] = json!(native_y);
+                }
+                Ok(None) => {
+                    native_args["element_index"] = json!(native_index);
+                    uses_ax_element = true;
+                }
+                Err(result) => return result,
+            }
         } else {
             let compat_x = x.unwrap();
             let compat_y = y.unwrap();
@@ -741,7 +814,7 @@ impl CompatState {
         // Native AX clicks are single-press operations. Repeat explicitly when
         // Codex asks for a multi-click so the compatibility field is honored on
         // both AX and pixel paths (the native pixel path handles count itself).
-        if element_index.is_some() && click_count > 1 {
+        if uses_ax_element && click_count > 1 {
             let mut last = ToolResult::default();
             for _ in 0..click_count {
                 last = super::click::ClickTool::new(snapshot.native.clone())
@@ -1050,6 +1123,85 @@ impl CompatState {
     }
 }
 
+fn element_supports_native_click(actions: &[String], button: &str) -> bool {
+    match button {
+        "left" => actions.iter().any(|action| action == "AXPress"),
+        "right" => actions.iter().any(|action| action == "AXShowMenu"),
+        "middle" => false,
+        _ => false,
+    }
+}
+
+async fn element_click_pixel_fallback(
+    snapshot: &AppSnapshot,
+    element_index: usize,
+    button: &str,
+) -> Result<Option<(f64, f64)>, ToolResult> {
+    let guard = snapshot
+        .native
+        .element_cache
+        .get_element_retained(snapshot.app.pid, snapshot.window_id, element_index)
+        .ok_or_else(|| {
+            CompatError::new(
+                "stale_app_state",
+                "The cached accessibility element is stale. Call get_app_state again.",
+            )
+            .into_result()
+        })?;
+    let button = button.to_owned();
+    let inspection = tokio::task::spawn_blocking(move || {
+        let element = guard.as_ptr() as AXUIElementRef;
+        let actions = unsafe { copy_action_names(element) };
+        if element_supports_native_click(&actions, &button) {
+            return Ok(None);
+        }
+        if actions.iter().any(|action| action == "AXScrollToVisible") {
+            let _ = unsafe { perform_action(element, "AXScrollToVisible") };
+        }
+        unsafe { element_screen_center(element) }
+            .map(Some)
+            .ok_or_else(|| anyhow::anyhow!("the element has no usable on-screen frame"))
+    })
+    .await
+    .map_err(|error| ToolResult::error(format!("Element click inspection failed: {error}")))?
+    .map_err(|error| ToolResult::error(format!("Element click fallback failed: {error}")))?;
+
+    let Some(screen_point) = inspection else {
+        return Ok(None);
+    };
+    let bounds = crate::windows::window_bounds_by_id(snapshot.window_id).ok_or_else(|| {
+        ToolResult::error(format!(
+            "Window {} disappeared before the element click.",
+            snapshot.window_id
+        ))
+    })?;
+    screen_point_to_native_click(snapshot, &bounds, screen_point).map(Some)
+}
+
+fn screen_point_to_native_click(
+    snapshot: &AppSnapshot,
+    bounds: &crate::windows::WindowBounds,
+    (screen_x, screen_y): (f64, f64),
+) -> Result<(f64, f64), ToolResult> {
+    let local_x = screen_x - bounds.x;
+    let local_y = screen_y - bounds.y;
+    if !local_x.is_finite()
+        || !local_y.is_finite()
+        || local_x < 0.0
+        || local_y < 0.0
+        || local_x >= bounds.width
+        || local_y >= bounds.height
+    {
+        return Err(ToolResult::error(
+            "The addressed element is outside the latest app window. Call get_app_state again.",
+        ));
+    }
+    Ok((
+        local_x * snapshot.native_pixels_per_compat_x,
+        local_y * snapshot.native_pixels_per_compat_y,
+    ))
+}
+
 #[derive(Debug)]
 struct CompatError {
     code: &'static str,
@@ -1196,13 +1348,8 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = R>,
 {
-    crate::focus_guard::with_focus_suppressed(
-        Some(target_pid),
-        prior_frontmost,
-        origin,
-        action,
-    )
-    .await
+    crate::focus_guard::with_focus_suppressed(Some(target_pid), prior_frontmost, origin, action)
+        .await
 }
 
 fn refresh_warning_after_success(
@@ -1312,12 +1459,13 @@ fn state_result(
                 "The native app state did not contain a screenshot.",
             )
         })?;
-    let jpeg = logical_jpeg(png, snapshot.logical_width, snapshot.logical_height).ok_or_else(|| {
-        CompatError::new(
-            "jpeg_conversion_failed",
-            "The key-window screenshot could not be converted to the Computer Use JPEG format.",
-        )
-    })?;
+    let jpeg =
+        logical_jpeg(png, snapshot.logical_width, snapshot.logical_height).ok_or_else(|| {
+            CompatError::new(
+                "jpeg_conversion_failed",
+                "The key-window screenshot could not be converted to the Computer Use JPEG format.",
+            )
+        })?;
     let content = vec![Content::text(text), Content::image_jpeg(jpeg)];
     let mut structured = native_result
         .structured_content
@@ -1533,7 +1681,10 @@ fn xml_value_after_key<'a>(xml: &'a str, key: &str, tag: &str) -> Option<&'a str
     Some(value.trim())
 }
 
-async fn resolve_or_launch_app(app_ref: &str) -> Result<AppIdentity, CompatError> {
+async fn resolve_or_launch_app(
+    app_ref: &str,
+    mode: AppResolveMode,
+) -> Result<AppIdentity, CompatError> {
     let query = app_ref.to_owned();
     let apps = tokio::task::spawn_blocking(crate::apps::list_all_apps)
         .await
@@ -1550,16 +1701,8 @@ async fn resolve_or_launch_app(app_ref: &str) -> Result<AppIdentity, CompatError
         }
         Err(error) => return Err(error),
     };
-    let mut identity = AppIdentity {
-        requested: query.clone(),
-        name: info.name.clone(),
-        bundle_id: info.bundle_id.clone(),
-        launch_path: info.launch_path.clone(),
-        pid: info.pid,
-    };
-    enforce_target_policy(&identity)?;
-
-    if info.running && info.pid > 0 {
+    let (mut identity, needs_launch) = identity_and_launch_requirement(&query, &info, mode)?;
+    if !needs_launch {
         return Ok(identity);
     }
 
@@ -1598,6 +1741,34 @@ async fn resolve_or_launch_app(app_ref: &str) -> Result<AppIdentity, CompatError
     })?;
     identity.pid = pid;
     Ok(identity)
+}
+
+fn identity_and_launch_requirement(
+    query: &str,
+    info: &crate::apps::AppInfo,
+    mode: AppResolveMode,
+) -> Result<(AppIdentity, bool), CompatError> {
+    let identity = AppIdentity {
+        requested: query.to_owned(),
+        name: info.name.clone(),
+        bundle_id: info.bundle_id.clone(),
+        launch_path: info.launch_path.clone(),
+        pid: info.pid,
+    };
+    enforce_target_policy(&identity)?;
+
+    if info.running && info.pid > 0 {
+        return Ok((identity, false));
+    }
+    if mode == AppResolveMode::RunningOnly {
+        return Err(CompatError::new(
+            "app_no_longer_running",
+            format!(
+                "'{query}' is no longer running after the action. The action was not repeated and the app was not relaunched."
+            ),
+        ));
+    }
+    Ok((identity, true))
 }
 
 fn resolve_app_from_list(
@@ -1769,11 +1940,7 @@ fn is_protected_host_app(bundle: &str, name: &str) -> bool {
         || bundle.starts_with("com.openai.sky.")
         || matches!(
             name,
-            "codex"
-                | "codex computer use"
-                | "skycomputeruseclient"
-                | "chatgpt"
-                | "chat gpt"
+            "codex" | "codex computer use" | "skycomputeruseclient" | "chatgpt" | "chat gpt"
         )
 }
 
@@ -1976,7 +2143,11 @@ impl WindowNotificationObserver {
             });
             let context_ptr = context.as_mut() as *mut WindowObserverContext as *mut c_void;
             let mut notifications = Vec::new();
-            for name in ["AXWindowCreated", "AXFocusedWindowChanged", "AXMainWindowChanged"] {
+            for name in [
+                "AXWindowCreated",
+                "AXFocusedWindowChanged",
+                "AXMainWindowChanged",
+            ] {
                 let notification = CFString::new(name);
                 let error = AXObserverAddNotification(
                     observer,
@@ -2324,10 +2495,8 @@ mod tests {
             ]
         );
         for tool in tools {
-            let expected_read_only = matches!(
-                tool["name"].as_str(),
-                Some("list_apps" | "get_app_state")
-            );
+            let expected_read_only =
+                matches!(tool["name"].as_str(), Some("list_apps" | "get_app_state"));
             assert_eq!(tool["inputSchema"]["additionalProperties"], false);
             assert_eq!(tool["annotations"]["readOnlyHint"], expected_read_only);
             assert_eq!(tool["annotations"]["idempotentHint"], expected_read_only);
@@ -2433,6 +2602,36 @@ mod tests {
     }
 
     #[test]
+    fn post_action_resolution_never_relaunches_an_app_that_exited() {
+        let stopped = app_info(
+            "Calculator",
+            "com.apple.calculator",
+            "/System/Applications/Calculator.app",
+            0,
+        );
+        let error =
+            identity_and_launch_requirement("Calculator", &stopped, AppResolveMode::RunningOnly)
+                .unwrap_err();
+        assert_eq!(error.code, "app_no_longer_running");
+
+        let (_, needs_launch) =
+            identity_and_launch_requirement("Calculator", &stopped, AppResolveMode::LaunchIfNeeded)
+                .unwrap();
+        assert!(needs_launch);
+
+        let running = app_info(
+            "Calculator",
+            "com.apple.calculator",
+            "/System/Applications/Calculator.app",
+            123,
+        );
+        let (_, needs_launch) =
+            identity_and_launch_requirement("Calculator", &running, AppResolveMode::RunningOnly)
+                .unwrap();
+        assert!(!needs_launch);
+    }
+
+    #[test]
     fn batched_spotlight_parser_preserves_path_order() {
         let xml = r#"<plist><array>
           <dict><key>kMDItemLastUsedDate</key><date>2026-07-10T01:02:03Z</date><key>kMDItemUseCount</key><integer>42</integer></dict>
@@ -2483,6 +2682,59 @@ mod tests {
             .latest_by_window
             .keys()
             .all(|(session, _, _)| session != "session-a"));
+    }
+
+    #[test]
+    fn action_generation_is_rechecked_after_waiting_for_the_session_lane() {
+        let store = SnapshotStore::default();
+        let original = store.insert(
+            "session-a",
+            snapshot("AppA", Arc::new(ToolState::default())),
+        );
+        assert!(store.is_current("session-a", &original));
+
+        let replacement = store.insert(
+            "session-a",
+            snapshot("AppA", Arc::new(ToolState::default())),
+        );
+        assert!(!store.is_current("session-a", &original));
+        assert!(store.is_current("session-a", &replacement));
+    }
+
+    #[test]
+    fn compat_session_end_clears_state_and_cursor_before_explicit_revival() {
+        let session = "compat-cleanup-session-71D2A9";
+        let state = Arc::new(CompatState::new());
+        register_session_cleanup(&state);
+
+        let native = state.native_for_session(session);
+        native.cursor_registry.update_position(session, 40.0, 50.0);
+        assert!(native.cursor_registry.get(session).is_some());
+        state.operation_lock(session);
+        state
+            .snapshots
+            .insert(session, snapshot("AppA", native.clone()));
+
+        cua_driver_core::session::fire_session_end(session);
+        assert!(cua_driver_core::session::is_session_ended(session));
+        assert!(native.cursor_registry.get(session).is_none());
+        assert!(!state.native_sessions.lock().unwrap().contains_key(session));
+        assert!(!state.operation_locks.lock().unwrap().contains_key(session));
+        assert!(matches!(
+            state.snapshots.lookup(session, "AppA"),
+            Err(SnapshotLookupError::Missing)
+        ));
+
+        native.cursor_registry.update_position(session, 60.0, 70.0);
+        assert!(
+            native.cursor_registry.get(session).is_none(),
+            "a late action must not recreate cursor metadata after cleanup"
+        );
+
+        assert!(cua_driver_core::session::revive_session(session));
+        let revived = state.native_for_session(session);
+        revived.cursor_registry.update_position(session, 80.0, 90.0);
+        assert!(revived.cursor_registry.get(session).is_some());
     }
 
     #[test]
@@ -2565,7 +2817,9 @@ mod tests {
             assert_eq!(error.code, "target_not_allowed", "{name} should be blocked");
         }
         assert!(enforce_target_policy(&identity("cmux", "com.cmuxterm.app")).is_ok());
-        assert!(enforce_target_policy(&identity("cmux NIGHTLY", "com.cmuxterm.app.nightly")).is_ok());
+        assert!(
+            enforce_target_policy(&identity("cmux NIGHTLY", "com.cmuxterm.app.nightly")).is_ok()
+        );
 
         for name in [
             "Terminal",
@@ -2639,6 +2893,37 @@ mod tests {
     }
 
     #[test]
+    fn non_actionable_text_clicks_fall_back_to_the_element_center() {
+        assert!(element_supports_native_click(
+            &["AXPress".to_owned()],
+            "left"
+        ));
+        assert!(element_supports_native_click(
+            &["AXShowMenu".to_owned()],
+            "right"
+        ));
+        assert!(!element_supports_native_click(&[], "left"));
+        assert!(!element_supports_native_click(&[], "right"));
+        assert!(!element_supports_native_click(
+            &["AXPress".to_owned()],
+            "middle"
+        ));
+
+        let app_snapshot = snapshot("Retina", Arc::new(ToolState::default()));
+        let bounds = crate::windows::WindowBounds {
+            x: 100.0,
+            y: 200.0,
+            width: 232.0,
+            height: 408.0,
+        };
+        assert_eq!(
+            screen_point_to_native_click(&app_snapshot, &bounds, (116.0, 232.0)).unwrap(),
+            (32.0, 64.0)
+        );
+        assert!(screen_point_to_native_click(&app_snapshot, &bounds, (99.0, 232.0)).is_err());
+    }
+
+    #[test]
     fn logical_jpeg_rejects_invalid_png_data() {
         assert!(logical_jpeg("not-base64", 10, 10).is_none());
         assert!(logical_jpeg(&BASE64.encode(b"not a png"), 10, 10).is_none());
@@ -2678,7 +2963,9 @@ mod tests {
         assert!(wire.get("isError").is_none());
         assert!(matches!(result.content.first(), Some(Content::Text { .. })));
         let jpeg = match result.content.get(1) {
-            Some(Content::Image { data, mime_type, .. }) => {
+            Some(Content::Image {
+                data, mime_type, ..
+            }) => {
                 assert_eq!(mime_type, "image/jpeg");
                 data
             }
@@ -2696,16 +2983,30 @@ mod tests {
     #[test]
     fn click_count_is_runtime_capped_without_schema_constraints() {
         assert_eq!(validated_click_count(&json!({})).unwrap(), 1);
-        assert_eq!(validated_click_count(&json!({"click_count": 10})).unwrap(), 10);
-        for invalid in [json!({"click_count": 0}), json!({"click_count": 11}), json!({"click_count": -1})] {
-            assert_eq!(validated_click_count(&invalid).unwrap_err().is_error, Some(true));
+        assert_eq!(
+            validated_click_count(&json!({"click_count": 10})).unwrap(),
+            10
+        );
+        for invalid in [
+            json!({"click_count": 0}),
+            json!({"click_count": 11}),
+            json!({"click_count": -1}),
+        ] {
+            assert_eq!(
+                validated_click_count(&invalid).unwrap_err().is_error,
+                Some(true)
+            );
         }
-        assert!(defs()[CompatKind::Click.index()].input_schema["properties"]["click_count"]
-            .get("minimum")
-            .is_none());
-        assert!(defs()[CompatKind::Click.index()].input_schema["properties"]["click_count"]
-            .get("maximum")
-            .is_none());
+        assert!(
+            defs()[CompatKind::Click.index()].input_schema["properties"]["click_count"]
+                .get("minimum")
+                .is_none()
+        );
+        assert!(
+            defs()[CompatKind::Click.index()].input_schema["properties"]["click_count"]
+                .get("maximum")
+                .is_none()
+        );
     }
 
     #[test]
@@ -2731,7 +3032,10 @@ mod tests {
     #[test]
     fn scroll_pages_are_runtime_capped_without_schema_constraints() {
         assert_eq!(validated_scroll_pages(&json!({})).unwrap(), 1.0);
-        assert_eq!(validated_scroll_pages(&json!({"pages": 0.25})).unwrap(), 0.25);
+        assert_eq!(
+            validated_scroll_pages(&json!({"pages": 0.25})).unwrap(),
+            0.25
+        );
         assert_eq!(validated_scroll_pages(&json!({"pages": 10})).unwrap(), 10.0);
         for invalid in [
             json!({"pages": 0}),
@@ -2739,7 +3043,10 @@ mod tests {
             json!({"pages": 10.01}),
             json!({"pages": "many"}),
         ] {
-            assert_eq!(validated_scroll_pages(&invalid).unwrap_err().is_error, Some(true));
+            assert_eq!(
+                validated_scroll_pages(&invalid).unwrap_err().is_error,
+                Some(true)
+            );
         }
         let schema = &defs()[CompatKind::Scroll.index()].input_schema["properties"]["pages"];
         assert!(schema.get("maximum").is_none());
@@ -2812,7 +3119,10 @@ mod tests {
             |_| false,
         );
         assert!(timed_out.is_none());
-        assert_eq!(final_resolve_count, 2, "timeout performs one final race-closing resolve");
+        assert_eq!(
+            final_resolve_count, 2,
+            "timeout performs one final race-closing resolve"
+        );
     }
 
     #[tokio::test]

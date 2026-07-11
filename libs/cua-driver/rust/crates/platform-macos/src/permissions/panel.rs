@@ -25,7 +25,7 @@
 //! │  ○ Screen Recording                 [Allow] │
 //! │      See app windows to place actions.       │
 //! │                                             │
-//! │  macOS grants access to cmux cua.            │
+//! │  Connected clients can use these grants.     │
 //! └─────────────────────────────────────────────┘
 //! ```
 //!
@@ -870,7 +870,7 @@ fn subheading_for(status: PermissionsStatus, product_name: &str) -> String {
         }
         PermissionGrantState::NoneGranted => format!(
             "{product_name} needs these permissions to use apps on your Mac.\n\
-             They are only used when you ask {product_name} to perform a task."
+             Continue only if you trust the app or client that started {product_name}."
         ),
     }
 }
@@ -880,7 +880,7 @@ fn footer_for(status: PermissionsStatus, product_name: &str) -> String {
         return format!("All set. {product_name} can now use apps on your Mac.");
     }
     format!(
-        "macOS grants access to {product_name}, not your terminal. Revoke it anytime in Privacy & Security."
+        "macOS grants access to {product_name}, not your terminal. Connected clients can use these grants; revoke them anytime in Privacy & Security."
     )
 }
 
@@ -1454,9 +1454,10 @@ mod tests {
         assert_eq!(
             subheading_for(st(false, false), "cmux cua"),
             "cmux cua needs these permissions to use apps on your Mac.\n\
-             They are only used when you ask cmux cua to perform a task."
+             Continue only if you trust the app or client that started cmux cua."
         );
         assert!(footer_for(st(false, false), "cmux cua").contains("not your terminal"));
+        assert!(footer_for(st(false, false), "cmux cua").contains("Connected clients"));
     }
 
     #[test]

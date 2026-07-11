@@ -59,5 +59,6 @@ default, while explicit `--cursor-shape` or `--cursor-icon` values still win.
 The native tool catalog is unchanged when the flag is absent.
 
 The driver blocks terminal-class apps, System Settings, authentication UI,
-and its embedding host. Per-app approval policy remains the host's
-responsibility.
+and its embedding host. This mode does not decide which other apps a client
+may control. The embedding host must broker per-app approval, and must not
+expose the raw MCP or daemon connection to untrusted clients.

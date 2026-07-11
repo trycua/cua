@@ -27,7 +27,7 @@ use cua_driver_testkit::e2e::{
     shared_web_route, write_declaration_from_env, write_result_from_env, CaseResult, CaseSpec,
     Delivery, Evidence, Observation, OracleKind, RefusalCode, Scope, Targeting,
 };
-use cua_driver_testkit::observer::{DesktopObserver, NativeObserver, TargetWindow};
+use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::ForegroundSentinel;
 use cua_driver_testkit::{harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
 
@@ -145,33 +145,22 @@ where
             None
         };
         let mut observation = if delivery == Delivery::Background {
-            let mut observer = DesktopObserver::new(
-                NativeObserver::new(),
-                TargetWindow {
-                    pid: fixture.pid,
-                    native_id: fixture.wid,
-                },
-            );
-            let (observation, delta) = observer
-                .observe(&[OracleKind::ZOrder, OracleKind::Cursor], || {
-                    test(&mut fixture)
-                })
+            let sentinel = sentinel.as_ref().expect("background sentinel");
+            let (mut observation, passed) = sentinel
+                .observe_background(
+                    TargetWindow {
+                        pid: fixture.pid,
+                        native_id: fixture.wid,
+                    },
+                    || test(&mut fixture),
+                )
                 .expect("observe background desktop side effects");
-            delta
-                .ensure_supported()
-                .expect("required background desktop oracles are unsupported");
-            let mut observation = observation;
-            observation.passed_oracles.extend(delta.passed());
-            append_violations(&mut observation, delta.violations());
+            observation.passed_oracles.extend(passed);
             observation
         } else {
             test(&mut fixture)
         };
-        if let Some(sentinel) = sentinel {
-            let (passed, violations) = sentinel.observe();
-            observation.passed_oracles.extend(passed);
-            append_violations(&mut observation, &violations);
-        }
+        drop(sentinel);
         observation.evidence = evidence.clone();
         Some(observation)
     }));
@@ -196,18 +185,6 @@ where
             Some(payload)
         }
     }
-}
-
-fn append_violations(observation: &mut Observation, violations: &[String]) {
-    if violations.is_empty() {
-        return;
-    }
-    let message = violations.join("; ");
-    observation.message = if observation.message.is_empty() {
-        message
-    } else {
-        format!("{}; {message}", observation.message)
-    };
 }
 
 fn resume_first_failure(failure: Option<Box<dyn Any + Send>>) {

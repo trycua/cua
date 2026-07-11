@@ -41,6 +41,8 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use cua_driver_testkit::observer::TargetWindow;
+use cua_driver_testkit::sentinel::ForegroundSentinel;
 use cua_driver_testkit::{ax, harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
 
 // ── harness launcher ─────────────────────────────────────────────────────────
@@ -200,6 +202,36 @@ where
     Some(f(pid, wid, &mut driver))
 }
 
+fn observe_background<R>(
+    driver: &mut McpDriver,
+    pid: u32,
+    wid: u64,
+    action: impl FnOnce(&mut McpDriver) -> R,
+) -> R {
+    let sentinel = ForegroundSentinel::launch(driver);
+    let (result, passed) = sentinel
+        .observe_background(
+            TargetWindow {
+                pid,
+                native_id: wid,
+            },
+            || action(driver),
+        )
+        .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+    for required in [
+        cua_driver_testkit::e2e::OracleKind::Focus,
+        cua_driver_testkit::e2e::OracleKind::ZOrder,
+        cua_driver_testkit::e2e::OracleKind::Cursor,
+        cua_driver_testkit::e2e::OracleKind::NoLeakedInput,
+    ] {
+        assert!(
+            passed.contains(&required),
+            "background observer omitted required {required:?} oracle"
+        );
+    }
+    result
+}
+
 #[test]
 #[ignore]
 fn harness_wpf_counter_invoke() {
@@ -218,14 +250,18 @@ fn harness_wpf_counter_invoke() {
     let idx = ax::element_index_by_id(pre.text(), "btn-increment")
         .expect("btn-increment not in pre-snapshot");
 
-    let click = driver.call(
-        "click",
-        serde_json::json!({
-            "pid": pid as i64,
-            "window_id": wid,
-            "element_index": idx
-        }),
-    );
+    let click = observe_background(&mut driver, pid, wid, |driver| {
+        driver.call(
+            "click",
+            serde_json::json!({
+                "pid": pid as i64,
+                "window_id": wid,
+                "element_index": idx,
+                "delivery_mode": "background"
+            }),
+        )
+    });
+    assert!(!click.is_error(), "counter click failed: {}", click.text());
     println!("click [{idx}] btn-increment: {}", click.text());
 
     std::thread::sleep(Duration::from_millis(300));
@@ -318,12 +354,19 @@ fn harness_wpf_set_value() {
         let snap = snapshot(driver, pid, wid);
         let idx =
             ax::element_index_by_id(snap.text(), "txt-input").expect("txt-input not in snapshot");
-        let _ = driver.call(
-            "set_value",
-            serde_json::json!({
-                "pid": pid as i64, "window_id": wid, "element_index": idx,
-                "value": "via-uia-setvalue"
-            }),
+        let response = observe_background(driver, pid, wid, |driver| {
+            driver.call(
+                "set_value",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "value": "via-uia-setvalue"
+                }),
+            )
+        });
+        assert!(
+            !response.is_error(),
+            "set_value failed: {}",
+            response.text()
         );
         std::thread::sleep(Duration::from_millis(400));
 
@@ -439,12 +482,16 @@ fn harness_wpf_press_key_accelerator() {
     // helper that isn't in our test config. F5 has no modifier and works
     // on the PostMessage path.
     with_session(|pid, wid, driver| {
-        let resp = driver.call(
-            "press_key",
-            serde_json::json!({
-                "pid": pid as i64, "window_id": wid, "key": "f5"
-            }),
-        );
+        let resp = observe_background(driver, pid, wid, |driver| {
+            driver.call(
+                "press_key",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid, "key": "f5",
+                    "delivery_mode": "background"
+                }),
+            )
+        });
+        assert!(!resp.is_error(), "press_key failed: {}", resp.text());
         println!("press_key f5: {}", resp.text());
         std::thread::sleep(Duration::from_millis(400));
 
@@ -494,13 +541,17 @@ fn harness_wpf_scroll() {
         // Scroll down 5 lines. Keep this on the default background rung: the
         // WPF harness translates the driver's WM_VSCROLL messages into the
         // ScrollViewer movement we assert below.
-        let resp = driver.call(
-            "scroll",
-            serde_json::json!({
-                "pid": pid as i64, "window_id": wid,
-                "direction": "down", "by": "line", "amount": 5,
-            }),
-        );
+        let resp = observe_background(driver, pid, wid, |driver| {
+            driver.call(
+                "scroll",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid,
+                    "direction": "down", "by": "line", "amount": 5,
+                    "delivery_mode": "background"
+                }),
+            )
+        });
+        assert!(!resp.is_error(), "scroll failed: {}", resp.text());
         println!("scroll down: {}", resp.text());
         std::thread::sleep(Duration::from_millis(400));
 

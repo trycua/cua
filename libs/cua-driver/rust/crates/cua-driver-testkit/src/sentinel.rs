@@ -7,6 +7,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::e2e::OracleKind;
+use crate::observer::{DesktopObserver, NativeObserver, TargetWindow};
 use crate::{harness_app, ChildReaper, Driver};
 
 /// A foreground Electron window that journals focus and leaked input while it
@@ -119,6 +120,39 @@ impl ForegroundSentinel {
             ));
         }
         (passed, violations)
+    }
+
+    /// Run one background action while checking the native desktop and the
+    /// sentinel journal. The returned oracle list is suitable for a typed E2E
+    /// result; any unsupported observation or side effect is an error.
+    pub fn observe_background<R>(
+        &self,
+        target: TargetWindow,
+        action: impl FnOnce() -> R,
+    ) -> Result<(R, Vec<OracleKind>), String> {
+        let mut observer = DesktopObserver::new(NativeObserver::new(), target);
+        let (result, delta) = observer
+            .observe(
+                &[OracleKind::Focus, OracleKind::ZOrder, OracleKind::Cursor],
+                action,
+            )
+            .map_err(|error| error.to_string())?;
+        delta
+            .ensure_supported()
+            .map_err(|error| error.to_string())?;
+
+        let mut passed = delta.passed().to_vec();
+        let mut violations = delta.violations().to_vec();
+        let (sentinel_passed, sentinel_violations) = self.observe();
+        passed.extend(sentinel_passed);
+        violations.extend(sentinel_violations);
+        passed.sort();
+        passed.dedup();
+        if violations.is_empty() {
+            Ok((result, passed))
+        } else {
+            Err(violations.join("; "))
+        }
     }
 }
 

@@ -355,6 +355,12 @@ struct AppIdentity {
     pid: i32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CanonicalAppIdentity {
+    bundle_id: Option<String>,
+    bundle_path: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AppResolveMode {
     LaunchIfNeeded,
@@ -377,12 +383,13 @@ impl AppIdentity {
 fn check_app_approval(
     gate: &crate::app_approval::ApprovalGate,
     app: &AppIdentity,
+    expected_identity: &CanonicalAppIdentity,
     session_id: &str,
 ) -> Result<crate::app_approval::ApprovalCheck, CompatError> {
     let target = crate::app_approval::AppApprovalTarget::from_app(
         &app.name,
-        app.bundle_id.as_deref(),
-        app.launch_path.as_deref(),
+        expected_identity.bundle_id.as_deref(),
+        Some(&expected_identity.bundle_path),
     )
     .map_err(|error| CompatError::new("app_approval_unavailable", error.to_string()))?;
     gate.check(session_id, &target)
@@ -706,10 +713,15 @@ impl CompatState {
         if let Err(error) = enforce_target_policy(&app) {
             return error.into_result();
         }
+        let expected_identity = match canonical_resolved_app_identity(&app) {
+            Ok(identity) => identity,
+            Err(error) => return error.into_result(),
+        };
         if resolve_mode == AppResolveMode::LaunchIfNeeded {
             match check_app_approval(
                 crate::app_approval::global(),
                 &app,
+                &expected_identity,
                 session,
             ) {
                 Ok(crate::app_approval::ApprovalCheck::Approved) => {}
@@ -736,7 +748,9 @@ impl CompatState {
             }
         }
 
-        let app = match launch_resolved_app(app, needs_launch, &dispatch_gate).await {
+        let app = match launch_resolved_app(app, needs_launch, &expected_identity, &dispatch_gate)
+            .await
+        {
             Ok(app) => app,
             Err(error) => {
                 if let Err(lock_error) = self.validate_lock_epoch(lock_epoch) {
@@ -767,6 +781,9 @@ impl CompatState {
             "max_depth": 20,
             "_codex_compat_full_ax_map": true,
         });
+        if let Err(error) = validate_live_pid_identity(&app, &expected_identity) {
+            return error.into_result();
+        }
         let native_result = match run_guarded_capture(&self.guardian, lock_epoch, || async {
             super::get_window_state::GetWindowStateTool::new(native.clone())
                 .invoke(native_args)
@@ -2081,9 +2098,11 @@ async fn resolve_app(
 async fn launch_resolved_app(
     mut identity: AppIdentity,
     needs_launch: bool,
+    expected_identity: &CanonicalAppIdentity,
     dispatch_gate: &NativeDispatchGate,
 ) -> Result<AppIdentity, CompatError> {
     if !needs_launch {
+        validate_live_pid_identity(&identity, expected_identity)?;
         return Ok(identity);
     }
 
@@ -2100,7 +2119,7 @@ async fn launch_resolved_app(
     };
     let apple_event_bundle_id = identity.bundle_id.clone();
     let dispatch_gate = dispatch_gate.clone();
-    let pid = tokio::task::spawn_blocking(move || {
+    let (pid, live_identity) = tokio::task::spawn_blocking(move || {
         let config = crate::apps::nsworkspace::OpenConfig {
             apple_event_bundle_id,
             ..Default::default()
@@ -2110,7 +2129,11 @@ async fn launch_resolved_app(
                 .map_err(|error| anyhow::anyhow!(error.to_string()))
         })
         .map_err(|error| anyhow::anyhow!(error.message))?;
-        Ok::<i32, anyhow::Error>(unsafe { app.processIdentifier() })
+        let pid = unsafe { app.processIdentifier() };
+        let live_identity = (pid > 0)
+            .then(|| canonical_running_app_identity(&app))
+            .flatten();
+        Ok::<_, anyhow::Error>((pid, live_identity))
     })
     .await
     .map_err(|error| {
@@ -2125,8 +2148,105 @@ async fn launch_resolved_app(
             format!("Could not launch '{query}': {error}"),
         )
     })?;
+    validate_canonical_app_identity(
+        expected_identity,
+        live_identity.as_ref(),
+        &identity.requested,
+    )?;
     identity.pid = pid;
     Ok(identity)
+}
+
+fn canonical_resolved_app_identity(app: &AppIdentity) -> Result<CanonicalAppIdentity, CompatError> {
+    let launch_path = app
+        .launch_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| app_identity_error(&app.requested))?;
+    let bundle_path =
+        canonical_bundle_path(launch_path).ok_or_else(|| app_identity_error(&app.requested))?;
+    Ok(CanonicalAppIdentity {
+        bundle_id: normalized_bundle_id(app.bundle_id.as_deref()),
+        bundle_path,
+    })
+}
+
+fn canonical_bundle_path(path: &str) -> Option<String> {
+    std::fs::canonicalize(path)
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+fn normalized_bundle_id(bundle_id: Option<&str>) -> Option<String> {
+    bundle_id
+        .map(str::trim)
+        .filter(|bundle_id| !bundle_id.is_empty())
+        .map(str::to_owned)
+}
+
+fn canonical_running_app_identity(
+    app: &objc2_app_kit::NSRunningApplication,
+) -> Option<CanonicalAppIdentity> {
+    if unsafe { app.isTerminated() } {
+        return None;
+    }
+    let bundle_id = unsafe { app.bundleIdentifier() }.map(|bundle_id| bundle_id.to_string());
+    let bundle_url = unsafe { app.bundleURL() }?;
+    let bundle_path = unsafe { bundle_url.path() }?.to_string();
+    Some(CanonicalAppIdentity {
+        bundle_id: normalized_bundle_id(bundle_id.as_deref()),
+        bundle_path: canonical_bundle_path(&bundle_path)?,
+    })
+}
+
+fn canonical_running_identity_for_pid(pid: i32) -> Option<CanonicalAppIdentity> {
+    if pid <= 0 {
+        return None;
+    }
+    let app = unsafe {
+        objc2_app_kit::NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+    }?;
+    if unsafe { app.processIdentifier() } != pid {
+        return None;
+    }
+    canonical_running_app_identity(&app)
+}
+
+fn validate_live_pid_identity(
+    app: &AppIdentity,
+    expected_identity: &CanonicalAppIdentity,
+) -> Result<(), CompatError> {
+    let live_identity = canonical_running_identity_for_pid(app.pid);
+    validate_canonical_app_identity(expected_identity, live_identity.as_ref(), &app.requested)
+}
+
+fn validate_canonical_app_identity(
+    expected: &CanonicalAppIdentity,
+    live: Option<&CanonicalAppIdentity>,
+    app_ref: &str,
+) -> Result<(), CompatError> {
+    let Some(live) = live else {
+        return Err(app_identity_error(app_ref));
+    };
+    let bundle_matches = match (&expected.bundle_id, &live.bundle_id) {
+        (Some(expected), Some(live)) => expected.eq_ignore_ascii_case(live),
+        (None, None) => true,
+        _ => false,
+    };
+    if !bundle_matches || expected.bundle_path != live.bundle_path {
+        return Err(app_identity_error(app_ref));
+    }
+    Ok(())
+}
+
+fn app_identity_error(app_ref: &str) -> CompatError {
+    CompatError::new(
+        "app_identity_changed",
+        format!(
+            "The live bundle identity for '{app_ref}' did not match the resolved and approved app. Refusing to inspect or capture it."
+        ),
+    )
 }
 
 fn guarded_app_launch<T>(
@@ -3134,15 +3254,61 @@ mod tests {
             true,
         );
         gate.register_broker("session-a", "daemon-broker-token");
-        let approval = check_app_approval(&gate, &identity, "session-a").unwrap();
+        let expected_identity = canonical_resolved_app_identity(&identity).unwrap();
+        let approval =
+            check_app_approval(&gate, &identity, &expected_identity, "session-a").unwrap();
         assert!(matches!(
             approval,
             crate::app_approval::ApprovalCheck::Required(_)
         ));
 
-        let raw = check_app_approval(&gate, &identity, "raw-session").unwrap_err();
+        let raw =
+            check_app_approval(&gate, &identity, &expected_identity, "raw-session").unwrap_err();
         assert_eq!(raw.code, "app_approval_unavailable");
-        assert!(raw.message.contains("authenticated MCP elicitation session"));
+        assert!(raw
+            .message
+            .contains("authenticated MCP elicitation session"));
+    }
+
+    fn canonical_identity(bundle_id: Option<&str>, bundle_path: &str) -> CanonicalAppIdentity {
+        CanonicalAppIdentity {
+            bundle_id: bundle_id.map(str::to_owned),
+            bundle_path: bundle_path.to_owned(),
+        }
+    }
+
+    #[test]
+    fn live_app_identity_accepts_matching_bundle_and_path() {
+        let expected = canonical_identity(Some("com.example.App"), "/Applications/App.app");
+        let live = canonical_identity(Some("com.example.app"), "/Applications/App.app");
+
+        assert!(validate_canonical_app_identity(&expected, Some(&live), "App").is_ok());
+    }
+
+    #[test]
+    fn live_app_identity_rejects_bundle_mismatch() {
+        let expected = canonical_identity(Some("com.example.app"), "/Applications/App.app");
+        let live = canonical_identity(Some("com.example.other"), "/Applications/App.app");
+
+        let error = validate_canonical_app_identity(&expected, Some(&live), "App").unwrap_err();
+        assert_eq!(error.code, "app_identity_changed");
+    }
+
+    #[test]
+    fn live_app_identity_rejects_path_mismatch() {
+        let expected = canonical_identity(Some("com.example.app"), "/Applications/App.app");
+        let live = canonical_identity(Some("com.example.app"), "/tmp/App.app");
+
+        let error = validate_canonical_app_identity(&expected, Some(&live), "App").unwrap_err();
+        assert_eq!(error.code, "app_identity_changed");
+    }
+
+    #[test]
+    fn live_app_identity_rejects_missing_identity() {
+        let expected = canonical_identity(Some("com.example.app"), "/Applications/App.app");
+
+        let error = validate_canonical_app_identity(&expected, None, "App").unwrap_err();
+        assert_eq!(error.code, "app_identity_changed");
     }
 
     #[test]

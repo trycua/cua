@@ -46,36 +46,17 @@ fn electron_exe() -> PathBuf {
 
 // ── shared session helper ────────────────────────────────────────────────────
 
-/// Wait (up to ~5s) for `port` to become free. These web tests use FIXED CDP
-/// ports (9222/9223) and a process-global `CUA_DRIVER_CDP_PORT`, so they must
-/// run serially (`--test-threads=1`). A previous test's host can still be
-/// releasing its port when the next launches; reusing it before then makes the
-/// daemon discover the OLD host's page (`pages[0]`), so the click lands on a
-/// stale window and the counter check fails. This guard closes that teardown
-/// overlap — belt-and-braces on top of serial execution.
-fn wait_port_free(port: u16) {
-    for _ in 0..50 {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    eprintln!(
-        "warning: CDP port {port} still bound after 5s — prior host may not have released it"
-    );
+fn allocate_loopback_port() -> u16 {
+    let listener =
+        std::net::TcpListener::bind(("127.0.0.1", 0)).expect("allocate an ephemeral CDP port");
+    listener.local_addr().expect("read CDP port").port()
 }
 
 /// Launch the harness exe + a cua-driver child with `CUA_DRIVER_CDP_PORT`
 /// pointing at the harness's CDP endpoint. Polls list_windows until the
 /// host's window appears.
-fn run_web_case<F>(
-    toolkit: &str,
-    action: &str,
-    host_exe: PathBuf,
-    title_substr: &str,
-    cdp_port: u16,
-    f: F,
-) where
+fn run_web_case<F>(toolkit: &str, action: &str, host_exe: PathBuf, title_substr: &str, f: F)
+where
     F: FnOnce(i64, u64, &mut McpDriver),
 {
     if !host_exe.exists() {
@@ -88,7 +69,7 @@ fn run_web_case<F>(
     let case = native_background_case(toolkit, action, Targeting::Page, DriverRoute::Cdp);
     let cell_id = case.cell_id.clone();
     execute_case(case, |evidence| {
-        wait_port_free(cdp_port);
+        let cdp_port = allocate_loopback_port();
         std::env::set_var("CUA_DRIVER_CDP_PORT", cdp_port.to_string());
         let mut driver = McpDriver::spawn_named(&cell_id)
             .expect("required source-built Windows driver did not start");
@@ -106,10 +87,17 @@ fn run_web_case<F>(
         let app = spawn_in_job(&mut cmd).expect("spawn web harness");
         let pid = app.id() as i64;
         driver.reaper().push(app);
-        std::thread::sleep(Duration::from_secs(2));
-        let (wid, _) = driver.find_window(pid, title_substr).unwrap_or_else(|| {
-            panic!("{toolkit} window with title containing {title_substr:?} not found")
-        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let (wid, _) = loop {
+            if let Some(window) = driver.find_window(pid, title_substr) {
+                break window;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{toolkit} window with title containing {title_substr:?} did not become ready"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        };
         let (_, passed) = run_with_background_oracles(
             &mut driver,
             TargetWindow {
@@ -137,7 +125,6 @@ fn harness_webview_page_tool() {
         "page_roundtrip",
         webview_exe(),
         "CuaTestHarness WebView [ready",
-        9222,
         |pid, wid, driver| {
             let marker = driver.call("page", serde_json::json!({
             "pid": pid, "window_id": wid, "action": "execute_javascript",
@@ -190,7 +177,6 @@ fn harness_electron_page_tool() {
         "page_execute",
         electron_exe(),
         "CuaTestHarness Electron",
-        9223,
         |pid, wid, driver| {
             // 1. execute_javascript via CDP.
             let marker = driver.call("page", serde_json::json!({
@@ -255,7 +241,6 @@ fn harness_electron_click_element() {
         "click_element_probe",
         electron_exe(),
         "CuaTestHarness Electron",
-        9223,
         |pid, wid, driver| {
             let resp = driver.call(
                 "page",

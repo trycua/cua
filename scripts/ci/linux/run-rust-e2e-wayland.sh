@@ -59,6 +59,7 @@ export ELECTRON_OZONE_PLATFORM_HINT=wayland
 export GDK_BACKEND=wayland
 export QT_QPA_PLATFORM=wayland
 export NO_AT_BRIDGE=0
+export ACCESSIBILITY_ENABLED=1
 
 if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
   dbus_daemon="$(command -v dbus-daemon)"
@@ -117,6 +118,7 @@ a11y_address="$(
     --method org.a11y.Bus.GetAddress \
     | sed -e "s/^('//" -e "s/',)$//"
 )"
+export AT_SPI_BUS_ADDRESS="${a11y_address}"
 if [[ -z "${a11y_address}" ]] || ! gdbus call \
     --address "${a11y_address}" \
     --dest org.a11y.atspi.Registry \

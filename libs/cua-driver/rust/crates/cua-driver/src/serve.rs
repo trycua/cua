@@ -437,6 +437,15 @@ impl DaemonResponse {
     pub fn err(msg: impl Into<String>, code: i32) -> Self {
         Self { ok: false, result: None, error: Some(msg.into()), exit_code: Some(code) }
     }
+
+    pub fn tool_error(result: serde_json::Value, msg: impl Into<String>, code: i32) -> Self {
+        Self {
+            ok: false,
+            result: Some(result),
+            error: Some(msg.into()),
+            exit_code: Some(code),
+        }
+    }
 }
 
 // ── Client ────────────────────────────────────────────────────────────────────

@@ -494,6 +494,12 @@ async fn forward_tool_call(
         // it as `Response::ok` with `isError: true`. Mirror that
         // shape here so MCP clients see identical envelopes either
         // way — CodeRabbit #2.
+        if let Some(result) = resp
+            .result
+            .filter(|result| result.get("isError").and_then(|value| value.as_bool()) == Some(true))
+        {
+            return Response::ok(id, result);
+        }
         let msg = resp.error.unwrap_or_else(|| "daemon reported failure".into());
         let exit_code = resp.exit_code.unwrap_or(1);
         let result = serde_json::json!({
@@ -584,5 +590,25 @@ mod tests {
         assert_eq!(value["result"]["isError"], serde_json::json!(true));
         assert_eq!(value["result"]["content"][0]["text"], "daemon reported failure");
         assert_eq!(value["result"]["structuredContent"]["exit_code"], 1);
+    }
+
+    #[test]
+    fn daemon_tool_failure_preserves_original_structured_error() {
+        let original = serde_json::json!({
+            "content": [{"type":"text","text":"Call get_app_state first"}],
+            "isError": true,
+            "structuredContent": {
+                "code": "no_active_app_session",
+                "message": "Call get_app_state first"
+            }
+        });
+        let daemon_resp = DaemonResponse::tool_error(original.clone(), "fallback", 1);
+        let result = daemon_resp
+            .result
+            .filter(|result| {
+                result.get("isError").and_then(|value| value.as_bool()) == Some(true)
+            })
+            .expect("structured tool error");
+        assert_eq!(result, original);
     }
 }

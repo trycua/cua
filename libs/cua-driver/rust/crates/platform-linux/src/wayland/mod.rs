@@ -1467,17 +1467,24 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
         // D-Bus enumeration of every registered app): it can only add duplicates.
         let already_covered = filter_pid.map_or(false, |p| seen.contains(&p));
         if !already_covered {
-            for w in crate::atspi::list_windows(filter_pid) {
-                // XWayland apps appear in both lists; keep the X11 entry (real
-                // XID + geometry) and add only AT-SPI windows for pids X11 didn't
-                // report.
-                if w.pid.map_or(true, |p| !seen.contains(&p)) {
-                    ws.push(w);
-                }
-            }
+            merge_atspi_windows(&mut ws, &seen, crate::atspi::list_windows(filter_pid));
         }
     }
     ws
+}
+
+fn merge_atspi_windows(
+    windows: &mut Vec<WindowInfo>,
+    x11_pids: &std::collections::HashSet<u32>,
+    atspi_windows: Vec<WindowInfo>,
+) {
+    for window in atspi_windows {
+        // XWayland apps appear in both lists; keep the X11 entry (real XID +
+        // geometry) and retain every native frame whose pid X11 did not expose.
+        if window.pid.is_none_or(|pid| !x11_pids.contains(&pid)) {
+            windows.push(window);
+        }
+    }
 }
 
 /// Snapshot of which wlroots manager globals the running compositor advertises.
@@ -1573,3 +1580,39 @@ impl Dispatch<wl_registry::WlRegistry, ()> for ExtProbeState {
 // compatibility with earlier slice constants.
 #[allow(dead_code)]
 const _BTN_LEFT_ALIAS: u32 = BTN_LEFT;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn window(xid: u64, pid: Option<u32>, title: &str) -> WindowInfo {
+        WindowInfo {
+            xid,
+            pid,
+            title: title.to_owned(),
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        }
+    }
+
+    #[test]
+    fn atspi_merge_keeps_x11_geometry_owner_and_native_only_frames() {
+        let mut windows = vec![window(10, Some(100), "XWayland")];
+        let x11_pids = std::collections::HashSet::from([100]);
+        merge_atspi_windows(
+            &mut windows,
+            &x11_pids,
+            vec![
+                window(100 << 16, Some(100), "XWayland duplicate"),
+                window(200 << 16, Some(200), "Native Wayland"),
+                window(1, None, "Unknown native frame"),
+            ],
+        );
+        assert_eq!(windows.len(), 3);
+        assert_eq!(windows[0].xid, 10);
+        assert_eq!(windows[1].pid, Some(200));
+        assert_eq!(windows[2].pid, None);
+    }
+}

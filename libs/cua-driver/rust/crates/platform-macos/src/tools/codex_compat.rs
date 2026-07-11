@@ -1766,7 +1766,15 @@ fn is_protected_host_app(bundle: &str, name: &str) -> bool {
             | "com.openai.chatgpt.mac"
             | "com.openai.chatgpt.desktop"
     ) || bundle.starts_with("com.openai.chatgpt.")
-        || matches!(name, "codex" | "chatgpt" | "chat gpt")
+        || bundle.starts_with("com.openai.sky.")
+        || matches!(
+            name,
+            "codex"
+                | "codex computer use"
+                | "skycomputeruseclient"
+                | "chatgpt"
+                | "chat gpt"
+        )
 }
 
 fn is_protected_terminal_target(bundle: &str, name: &str) -> bool {
@@ -2541,6 +2549,8 @@ mod tests {
             ("SecurityAgent", "com.apple.SecurityAgent"),
             ("System Settings", "com.apple.systempreferences"),
             ("Codex", "com.openai.codex"),
+            ("Codex Computer Use", "com.openai.sky.computer-use"),
+            ("SkyComputerUseClient", "com.example.unknown-helper"),
             ("ChatGPT", "com.openai.chat"),
             ("Terminal", "com.apple.Terminal"),
             ("Ghostty", "com.mitchellh.ghostty"),

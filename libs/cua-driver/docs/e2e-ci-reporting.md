@@ -14,9 +14,9 @@ Linux:   scripts/ci/linux/run-rust-e2e.sh --suite all
 macOS:   scripts/ci/macos/run-rust-e2e.sh --suite all
 ```
 
-Workflows may fan `all` into internal jobs so one failure does not hide another
-lane. `shared`, `native`, `guard`, and `modality` selectors are transitional
-diagnostic partitions. They are not separate behavioral sources of truth.
+Workflows fan `all` into internal shared, native, and capture jobs so one
+failure does not hide another lane. These are execution partitions, not public
+suite choices or separate behavioral sources of truth.
 
 ## Execution Order
 
@@ -148,6 +148,6 @@ not as invented behavioral cells.
 
 Every canonical behavioral cell records an MP4, trajectory, screenshots, and
 log paths. GitHub cannot deep-link to a file inside a multi-cell artifact
-archive. The final workflow therefore uploads stable per-cell artifact bundles
-and links each summary row to its corresponding artifact. A lane archive may
-also be retained for bulk download.
+archive. Each summary row therefore displays the exact MP4 path as a link to
+the owning lane archive, while the trajectory rollup provides bulk-download
+links and video counts.

@@ -12,7 +12,7 @@ SUITE="all"
 
 usage() {
   cat <<'EOF'
-Usage: run-rust-e2e.sh [--no-build] [--suite shared|native|scope|all]
+Usage: run-rust-e2e.sh [--no-build] [--suite shared|native|capture|all]
 
 The caller must provide a real or virtual Linux desktop session. For a
 headless session, wrap this command in xvfb-run and dbus-run-session.
@@ -30,7 +30,7 @@ while (($#)); do
 done
 
 case "$SUITE" in
-  shared|native|scope|all) ;;
+  shared|native|capture|all) ;;
   *) echo "unsupported suite: $SUITE" >&2; exit 2 ;;
 esac
 
@@ -65,7 +65,7 @@ if [[ "${BUILD_FIXTURES}" == 1 ]]; then
   cargo build --release -p cua-driver --manifest-path "${RUST_ROOT}/Cargo.toml"
   case "${SUITE}" in
     shared) FIXTURE_TARGETS="electron,tauri" ;;
-    native|scope) FIXTURE_TARGETS="electron,gtk3" ;;
+    native|capture) FIXTURE_TARGETS="electron,gtk3" ;;
     *) FIXTURE_TARGETS="electron,tauri,gtk3" ;;
   esac
   bash "${DRIVER_ROOT}/tests/fixtures/build/linux.sh" --only "${FIXTURE_TARGETS}"
@@ -145,7 +145,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
       --ignored --nocapture --test-threads=1
 fi
 
-if [[ "${SUITE}" == scope || "${SUITE}" == all ]]; then
+if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
   run_test capture-contract \
     cargo test -p cua-driver --test capture_contract_test -- \
       --ignored --nocapture --test-threads=1

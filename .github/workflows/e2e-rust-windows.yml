@@ -7,20 +7,10 @@ on:
         description: "Optional commit, branch, or tag override"
         required: false
         default: ""
-      suite:
-        description: "Rust desktop suite"
-        required: true
-        type: choice
-        options: [guard, shared, native, capture, all]
-        default: all
       runner:
         description: "Runner label; use the Azure RDP runner label for VM e2e"
         required: true
         default: "windows-latest"
-      cell_filter:
-        description: "Optional shared cell id or substring for focused debugging"
-        required: false
-        default: ""
 
 permissions:
   contents: read
@@ -28,7 +18,6 @@ permissions:
 
 jobs:
   guard:
-    if: inputs.suite == 'guard' || inputs.suite == 'all'
     name: "Windows / UX guards"
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
@@ -62,7 +51,6 @@ jobs:
           retention-days: 14
 
   shared:
-    if: inputs.suite == 'shared' || inputs.suite == 'all'
     name: "Windows / shared Electron + Tauri"
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
@@ -80,8 +68,6 @@ jobs:
           ffprobe -version
       - name: Run shared Rust behavior matrix
         shell: pwsh
-        env:
-          CUA_E2E_CELL_FILTER: ${{ inputs.cell_filter }}
         run: .\scripts\ci\windows\run-rust-e2e.ps1 -Suite shared -RequireGui
       - name: Collect logs
         if: always()
@@ -98,8 +84,7 @@ jobs:
           retention-days: 14
 
   native:
-    if: inputs.suite == 'native' || inputs.suite == 'all'
-    name: "Windows / native WPF + WebView2"
+    name: "Windows / native WPF + WinUI3 + WebView2"
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
     steps:
@@ -132,7 +117,6 @@ jobs:
           retention-days: 14
 
   capture:
-    if: inputs.suite == 'capture' || inputs.suite == 'all'
     name: "Windows / capture and desktop scope"
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
@@ -172,6 +156,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - name: Download lane results
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4
         with:
@@ -188,19 +175,27 @@ jobs:
             echo "The lane jobs above are independent; a failure in one lane does not hide the others."
             echo
           } > "$summary_path"
+          artifacts_json=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100")
           found=0
           while IFS= read -r summary; do
             found=1
-            echo "## $(basename "$(dirname "$summary")")" >> "$summary_path"
-            cat "$summary" >> "$summary_path"
+            artifact=$(basename "$(dirname "$summary")")
+            echo "## $artifact" >> "$summary_path"
+            artifact_id=$(jq -r --arg name "$artifact" \
+              '.artifacts[] | select(.name == $name) | .id' <<< "$artifacts_json" | head -n 1)
+            if [[ -n "$artifact_id" && "$artifact_id" != "null" ]]; then
+              artifact_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts/$artifact_id"
+              scripts/ci/link-e2e-evidence.sh "$summary" "$artifact_url" >> "$summary_path"
+            else
+              cat "$summary" >> "$summary_path"
+            fi
             echo >> "$summary_path"
           done < <(find artifacts -type f -name summary.md -print | sort)
           if [[ "$found" == 0 ]]; then
             echo "No lane summary artifact was produced." >> "$summary_path"
           fi
 
-          artifacts_json=$(gh api \
-            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100")
           {
             echo
             echo "## Trajectory videos"
@@ -234,7 +229,7 @@ jobs:
           EOF
           {
             echo
-            echo "Each artifact stores videos under \`recordings/<test-name>/recording.mp4\` with a matching \`trajectory.json\`."
+            echo "Each evidence link opens its owning lane artifact; the row text is the exact \`recordings/<cell-id>/recording.mp4\` path, with a matching \`trajectory.json\`."
           } >> "$summary_path"
           cat "$summary_path" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload matrix summary

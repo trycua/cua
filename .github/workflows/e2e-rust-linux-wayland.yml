@@ -7,6 +7,20 @@ on:
         description: "Optional full 40-character commit SHA; defaults to dispatch SHA"
         required: false
         default: ""
+      lane:
+        description: "Diagnostic lane; canonical dispatches use all"
+        required: false
+        type: choice
+        default: all
+        options:
+          - all
+          - shared
+          - native
+          - capture
+      cell_filter:
+        description: "Optional shared-cell substring for targeted diagnostics"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -40,6 +54,8 @@ jobs:
     timeout-minutes: 90
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+      CUA_E2E_INTERNAL_LANE: ${{ inputs.lane }}
+      CUA_E2E_CELL_FILTER: ${{ inputs.cell_filter }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

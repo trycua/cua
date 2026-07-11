@@ -12,17 +12,20 @@
 
 #![cfg(target_os = "windows")]
 
+use std::cell::Cell;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cua_driver_testkit::e2e::{
     execute_case, native_background_case, recording_evidence, DriverRoute, Observation, Targeting,
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::run_with_background_oracles;
-use cua_driver_testkit::{harness_app, spawn_in_job, Driver, McpDriver};
+use cua_driver_testkit::{
+    ax, harness_app, spawn_in_job, Driver, FixtureJournal, McpDriver, ToolResponse,
+};
 
 // ── workspace paths ──────────────────────────────────────────────────────────
 
@@ -91,6 +94,27 @@ where
     F: FnOnce(i64, u64, &mut McpDriver),
 {
     let case = native_background_case(toolkit, action, Targeting::Page, DriverRoute::Cdp);
+    run_web_case_with_preparation(
+        case,
+        toolkit,
+        host_exe,
+        title_substr,
+        |_, _, _, _| {},
+        |pid, wid, driver, _| f(pid, wid, driver),
+    );
+}
+
+fn run_web_case_with_preparation<P, F>(
+    case: cua_driver_testkit::e2e::CaseSpec,
+    toolkit: &str,
+    host_exe: PathBuf,
+    title_substr: &str,
+    prepare: P,
+    f: F,
+) where
+    P: FnOnce(i64, u64, &mut McpDriver, &FixtureJournal),
+    F: FnOnce(i64, u64, &mut McpDriver, &FixtureJournal),
+{
     let cell_id = case.cell_id.clone();
     execute_case(case, |evidence| {
         assert!(
@@ -99,6 +123,7 @@ where
         );
         let cdp_port = allocate_loopback_port();
         let cdp_port_string = cdp_port.to_string();
+        let journal = FixtureJournal::start();
         let mut driver = McpDriver::spawn_named_with_env(
             &cell_id,
             &[("CUA_DRIVER_CDP_PORT", cdp_port_string.as_str())],
@@ -113,6 +138,7 @@ where
         };
         let mut cmd = Command::new(&host_exe);
         cmd.env(env_var, &cdp_port_string)
+            .env("CUA_E2E_FIXTURE_JOURNAL_URL", journal.url())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
         let mut app = spawn_in_job(&mut cmd).expect("spawn web harness");
@@ -162,20 +188,187 @@ where
             std::thread::sleep(Duration::from_millis(100));
         };
         driver.reaper().push(app);
+        let journal_deadline = Instant::now() + Duration::from_secs(5);
+        while !journal.contains("WEB_HARNESS_MARKER_v1") {
+            assert!(
+                Instant::now() < journal_deadline,
+                "{toolkit} fixture journal did not become ready: {}",
+                journal.snapshot()
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        prepare(pid, wid, &mut driver, &journal);
         let (_, passed) = run_with_background_oracles(
             &mut driver,
             TargetWindow {
                 pid: pid as u32,
                 native_id: wid,
             },
-            |driver| f(pid, wid, driver),
+            |driver| f(pid, wid, driver, &journal),
         )
         .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
         Observation::delivered_with_fixture_state(passed)
     });
 }
 
+fn snapshot(driver: &mut McpDriver, pid: i64, wid: u64) -> ToolResponse {
+    driver.call(
+        "get_window_state",
+        serde_json::json!({
+            "pid": pid,
+            "window_id": wid,
+            "capture_mode": "ax"
+        }),
+    )
+}
+
+fn window_bounds(driver: &mut McpDriver, pid: i64, wid: u64) -> (f64, f64, f64, f64) {
+    let response = driver.call("list_windows", serde_json::json!({ "pid": pid }));
+    let window = response.structured()["windows"]
+        .as_array()
+        .and_then(|windows| {
+            windows
+                .iter()
+                .find(|window| window["window_id"].as_u64() == Some(wid))
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "WebView2 window {wid} is missing from list_windows: {}",
+                response.text()
+            )
+        });
+    let bounds = &window["bounds"];
+    (
+        bounds["x"].as_f64().expect("WebView2 bounds need x"),
+        bounds["y"].as_f64().expect("WebView2 bounds need y"),
+        bounds["width"]
+            .as_f64()
+            .expect("WebView2 bounds need width"),
+        bounds["height"]
+            .as_f64()
+            .expect("WebView2 bounds need height"),
+    )
+}
+
+fn pixel_center(state: &ToolResponse, target_id: &str, window: (f64, f64, f64, f64)) -> (f64, f64) {
+    let target_index = ax::element_index_by_id(state.text(), target_id)
+        .unwrap_or_else(|| panic!("missing WebView2 PX target {target_id:?}: {}", state.text()));
+    let elements = state.structured()["elements"]
+        .as_array()
+        .expect("PX targeting requires structured elements");
+    let target = elements
+        .iter()
+        .find(|element| element["element_index"].as_u64() == Some(target_index))
+        .and_then(|element| element["frame"].as_object())
+        .unwrap_or_else(|| panic!("element [{target_index}] has no structured frame"));
+    let target_w = target["w"].as_f64().unwrap_or(0.0);
+    let target_h = target["h"].as_f64().unwrap_or(0.0);
+    let (window_x, window_y, window_w, window_h) = window;
+    assert!(
+        target_w > 0.0 && target_h > 0.0 && window_w > 0.0 && window_h > 0.0,
+        "WebView2 PX target and window need positive geometry: target={target:?}, window={window:?}"
+    );
+    let screenshot_w = state.structured()["screenshot_width"]
+        .as_f64()
+        .expect("PX targeting requires screenshot_width");
+    let screenshot_h = state.structured()["screenshot_height"]
+        .as_f64()
+        .expect("PX targeting requires screenshot_height");
+    let scale_x = screenshot_w / window_w;
+    let scale_y = screenshot_h / window_h;
+    let x = (target["x"].as_f64().unwrap_or(0.0) + target_w / 2.0 - window_x) * scale_x;
+    let y = (target["y"].as_f64().unwrap_or(0.0) + target_h / 2.0 - window_y) * scale_y;
+    assert!(
+        x >= 0.0 && x < screenshot_w && y >= 0.0 && y < screenshot_h,
+        "WebView2 PX target center ({x:.1}, {y:.1}) is outside the capture ({screenshot_w:.1}x{screenshot_h:.1})"
+    );
+    (x, y)
+}
+
+fn wait_for_journal_text(journal: &FixtureJournal, id: &str, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if journal.text(id).as_deref() == Some(expected) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "WebView2 fixture journal {id:?} did not reach {expected:?}: {}",
+            journal.snapshot()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 // ── WebView2 page tool ──────────────────────────────────────────────────────
+
+#[test]
+#[ignore]
+fn harness_webview_left_click_px_background() {
+    let case = native_background_case(
+        "webview2",
+        "left_click",
+        Targeting::Px,
+        DriverRoute::UiaInvoke,
+    );
+    let point = Cell::new(None);
+    run_web_case_with_preparation(
+        case,
+        "webview2",
+        webview_exe(),
+        "CuaTestHarness WebView [ready",
+        |pid, wid, driver, journal| {
+            wait_for_journal_text(journal, "lbl-counter", "counter=0");
+            let bounds = window_bounds(driver, pid, wid);
+            let ready_state = snapshot(driver, pid, wid);
+            let (x, y) = pixel_center(&ready_state, "btn-increment", bounds);
+            let geometry_probe = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "x": x,
+                    "y": y,
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !geometry_probe.is_error(),
+                "WebView2 foreground PX geometry probe failed: {}",
+                geometry_probe.text()
+            );
+            wait_for_journal_text(journal, "lbl-counter", "counter=1");
+            point.set(Some((x, y)));
+        },
+        |pid, wid, driver, journal| {
+            let (x, y) = point
+                .get()
+                .expect("foreground geometry probe did not set a PX target");
+            let click = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "x": x,
+                    "y": y,
+                    "delivery_mode": "background"
+                }),
+            );
+            assert!(
+                !click.is_error(),
+                "WebView2 PX background click failed: {}",
+                click.text()
+            );
+            assert_eq!(
+                click.structured()["path"].as_str(),
+                Some("ax"),
+                "WebView2 PX background click used an unexpected driver route: {}",
+                click.text()
+            );
+            wait_for_journal_text(journal, "lbl-counter", "counter=2");
+        },
+    );
+}
 
 #[test]
 #[ignore]

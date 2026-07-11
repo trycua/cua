@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
@@ -49,6 +50,17 @@ public partial class MainWindow : Window
             };
             var env = await CoreWebView2Environment.CreateAsync(userDataFolder: userData, options: opts);
             await Wv.EnsureCoreWebView2Async(env);
+
+            // The Rust E2E harness owns the loopback receiver. Publish DOM state
+            // through the shared fixture script so click delivery is judged
+            // independently of cua-driver's UIA or CDP read-back channels.
+            var journalUrl = Environment.GetEnvironmentVariable("CUA_E2E_FIXTURE_JOURNAL_URL");
+            if (!string.IsNullOrWhiteSpace(journalUrl))
+            {
+                var encodedJournalUrl = JsonSerializer.Serialize(journalUrl);
+                await Wv.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(
+                    $"window.__CUA_E2E_FIXTURE_JOURNAL_URL = {encodedJournalUrl};");
+            }
 
             var htmlPath = Path.Combine(AppContext.BaseDirectory, "web", "index.html");
             if (!File.Exists(htmlPath))

@@ -67,6 +67,7 @@
                                 Content="Click target (left / right / double)"
                                 Width="260" Height="40" HorizontalAlignment="Left"
                                 PreviewMouseLeftButtonDown="OnTargetLeftDown"
+                                Click="OnTargetClick"
                                 MouseRightButtonDown="OnTargetRightDown"
                                 MouseDoubleClick="OnTargetDoubleClick"/>
                         <TextBlock x:Name="LblLastAction"

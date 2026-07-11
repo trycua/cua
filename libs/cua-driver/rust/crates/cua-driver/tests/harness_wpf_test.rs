@@ -39,7 +39,7 @@
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cua_driver_testkit::e2e::{
     execute_case, native_background_case, native_foreground_case, native_readonly_case,
@@ -48,7 +48,9 @@ use cua_driver_testkit::e2e::{
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::{run_with_background_oracles, ForegroundSentinel};
-use cua_driver_testkit::{ax, harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
+use cua_driver_testkit::{
+    ax, harness_app, spawn_in_job, Driver, FixtureJournal, McpDriver, ToolResponse,
+};
 
 // ── harness launcher ─────────────────────────────────────────────────────────
 
@@ -71,17 +73,21 @@ fn harness_exe() -> PathBuf {
 /// hasn't been fully reaped and there are briefly two CuaTestHarness.Wpf
 /// windows on the desktop.
 fn launch_harness(driver: &mut McpDriver) -> Option<u32> {
+    launch_harness_with_journal(driver, None)
+}
+
+fn launch_harness_with_journal(driver: &mut McpDriver, journal_url: Option<&str>) -> Option<u32> {
     let exe = harness_exe();
     if !exe.exists() {
         eprintln!("harness exe not found at {exe:?} — run tests/fixtures/build/windows.ps1 first");
         return None;
     }
-    let app = spawn_in_job(
-        Command::new(&exe)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null()),
-    )
-    .ok()?;
+    let mut command = Command::new(&exe);
+    command.stdout(Stdio::null()).stderr(Stdio::null());
+    if let Some(url) = journal_url {
+        command.env("CUA_E2E_FIXTURE_JOURNAL_URL", url);
+    }
+    let app = spawn_in_job(&mut command).ok()?;
     let pid = app.id();
     driver.reaper().push(app);
     // Short fixed settle for cold-start (window-creation + initial
@@ -124,6 +130,84 @@ fn snapshot_lines_containing(text: &str, needles: &[&str]) -> String {
         text.lines().take(80).collect::<Vec<_>>().join(" / ")
     } else {
         lines.join(" / ")
+    }
+}
+
+fn window_bounds(driver: &mut McpDriver, pid: u32, wid: u64) -> (f64, f64, f64, f64) {
+    let response = driver.call("list_windows", serde_json::json!({ "pid": pid as i64 }));
+    let window = response.structured()["windows"]
+        .as_array()
+        .and_then(|windows| {
+            windows
+                .iter()
+                .find(|window| window["window_id"].as_u64() == Some(wid))
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "WPF window {wid} is missing from list_windows: {}",
+                response.text()
+            )
+        });
+    let bounds = &window["bounds"];
+    (
+        bounds["x"].as_f64().expect("WPF window bounds need x"),
+        bounds["y"].as_f64().expect("WPF window bounds need y"),
+        bounds["width"]
+            .as_f64()
+            .expect("WPF window bounds need width"),
+        bounds["height"]
+            .as_f64()
+            .expect("WPF window bounds need height"),
+    )
+}
+
+fn pixel_center(state: &ToolResponse, target_id: &str, window: (f64, f64, f64, f64)) -> (f64, f64) {
+    let target_index = ax::element_index_by_id(state.text(), target_id)
+        .unwrap_or_else(|| panic!("missing PX target {target_id:?}: {}", state.text()));
+    let elements = state.structured()["elements"]
+        .as_array()
+        .expect("PX targeting requires structured elements");
+    let target = elements
+        .iter()
+        .find(|element| element["element_index"].as_u64() == Some(target_index))
+        .and_then(|element| element["frame"].as_object())
+        .unwrap_or_else(|| panic!("element [{target_index}] has no structured frame"));
+    let target_w = target["w"].as_f64().unwrap_or(0.0);
+    let target_h = target["h"].as_f64().unwrap_or(0.0);
+    let (window_x, window_y, window_w, window_h) = window;
+    assert!(
+        target_w > 0.0 && target_h > 0.0 && window_w > 0.0 && window_h > 0.0,
+        "WPF PX target and window need positive geometry: target={target:?}, window={window:?}"
+    );
+    let screenshot_w = state.structured()["screenshot_width"]
+        .as_f64()
+        .expect("PX targeting requires screenshot_width");
+    let screenshot_h = state.structured()["screenshot_height"]
+        .as_f64()
+        .expect("PX targeting requires screenshot_height");
+    let scale_x = screenshot_w / window_w;
+    let scale_y = screenshot_h / window_h;
+    let x = (target["x"].as_f64().unwrap_or(0.0) + target_w / 2.0 - window_x) * scale_x;
+    let y = (target["y"].as_f64().unwrap_or(0.0) + target_h / 2.0 - window_y) * scale_y;
+    assert!(
+        x >= 0.0 && x < screenshot_w && y >= 0.0 && y < screenshot_h,
+        "WPF PX target center ({x:.1}, {y:.1}) is outside the capture ({screenshot_w:.1}x{screenshot_h:.1})"
+    );
+    (x, y)
+}
+
+fn wait_for_journal_text(journal: &FixtureJournal, id: &str, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if journal.text(id).as_deref() == Some(expected) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "WPF fixture journal {id:?} did not reach {expected:?}: {}",
+            journal.snapshot()
+        );
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -344,6 +428,71 @@ fn harness_wpf_counter_invoke() {
             delivered_with_fixture_state(passed)
         },
     );
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_left_click_px_background() {
+    let case = native_background_case("wpf", "left_click", Targeting::Px, DriverRoute::UiaInvoke);
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named("windows-wpf-left-click-px-background")
+            .expect("required source-built driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+        let journal = FixtureJournal::start();
+        let pid = launch_harness_with_journal(&mut driver, Some(journal.url()))
+            .expect("required WPF harness did not launch");
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness WPF")
+            .expect("main window");
+        wait_for_journal_text(&journal, "lbl-click-count", "clicks=0");
+
+        let bounds = window_bounds(&mut driver, pid, wid);
+        let ready_state = snapshot(&mut driver, pid, wid);
+        let (x, y) = pixel_center(&ready_state, "border-click-target", bounds);
+        let geometry_probe = driver.call(
+            "click",
+            serde_json::json!({
+                "pid": pid as i64,
+                "window_id": wid,
+                "x": x,
+                "y": y,
+                "delivery_mode": "foreground"
+            }),
+        );
+        assert!(
+            !geometry_probe.is_error(),
+            "WPF foreground PX geometry probe failed: {}",
+            geometry_probe.text()
+        );
+        wait_for_journal_text(&journal, "lbl-click-count", "clicks=1");
+
+        let (click, passed) = observe_background(&mut driver, pid, wid, |driver| {
+            driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "x": x,
+                    "y": y,
+                    "delivery_mode": "background"
+                }),
+            )
+        });
+        assert!(
+            !click.is_error(),
+            "WPF PX background click failed: {}",
+            click.text()
+        );
+        assert_eq!(
+            click.structured()["path"].as_str(),
+            Some("ax"),
+            "WPF PX background click used an unexpected driver route: {}",
+            click.text()
+        );
+        wait_for_journal_text(&journal, "lbl-click-count", "clicks=2");
+        wait_for_journal_text(&journal, "lbl-last-action", "last_action=left_click");
+        delivered_with_fixture_state(passed)
+    });
 }
 
 #[test]

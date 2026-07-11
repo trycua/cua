@@ -1,5 +1,10 @@
 using System;
+using System.Collections.Generic;
+using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -16,11 +21,17 @@ public partial class MainWindow : Window
     private int _counter;
     private int _accelCount;
     private int _clickCount;
+    private bool _targetPointerSeen;
     private readonly ScenariosManifest _manifest;
+    private readonly string? _fixtureJournalUrl;
+    private readonly HttpClient _fixtureJournalClient = new();
+    private readonly object _fixtureJournalLock = new();
+    private Task _fixtureJournalTail = Task.CompletedTask;
 
     public MainWindow()
     {
         _manifest = ScenariosManifest.Load();
+        _fixtureJournalUrl = Environment.GetEnvironmentVariable("CUA_E2E_FIXTURE_JOURNAL_URL");
         InitializeComponent();
 
         Title = _manifest.Wpf.MainWindow.Title;
@@ -48,6 +59,7 @@ public partial class MainWindow : Window
         // PostMessage actually arrived and was actionable.
         var source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
         source?.AddHook(OnWindowMessage);
+        PublishFixtureState();
     }
 
     private const int WM_VSCROLL    = 0x0115;
@@ -82,12 +94,14 @@ public partial class MainWindow : Window
     {
         _counter++;
         LblCounter.Text = $"counter={_counter}";
+        PublishFixtureState();
     }
 
     private void OnResetClick(object sender, RoutedEventArgs e)
     {
         _counter = 0;
         LblCounter.Text = "counter=0";
+        PublishFixtureState();
     }
 
     private void OnOpenMessageBoxClick(object sender, RoutedEventArgs e)
@@ -145,6 +159,7 @@ public partial class MainWindow : Window
 
     private void OnTargetLeftDown(object sender, MouseButtonEventArgs e)
     {
+        _targetPointerSeen = true;
         _clickCount++;
         if (e.ClickCount >= 2)
         {
@@ -155,7 +170,27 @@ public partial class MainWindow : Window
             LblLastAction.Text = "last_action=left_click";
         }
         LblClickCount.Text = $"clicks={_clickCount}";
+        PublishFixtureState();
         // Don't mark handled — let the Button's own logic still run.
+    }
+
+    private void OnTargetClick(object sender, RoutedEventArgs e)
+    {
+        // A real pointer click already passed through PreviewMouseLeftButtonDown.
+        // UIA Invoke raises Click directly, so count that path here. This gives
+        // the PX-background row observable fixture state for both its foreground
+        // geometry probe and its occluded delivery action.
+        if (_targetPointerSeen)
+        {
+            _targetPointerSeen = false;
+        }
+        else
+        {
+            _clickCount++;
+            LblLastAction.Text = "last_action=left_click";
+            LblClickCount.Text = $"clicks={_clickCount}";
+        }
+        PublishFixtureState();
     }
 
     private void OnTargetDoubleClick(object sender, MouseButtonEventArgs e)
@@ -165,11 +200,46 @@ public partial class MainWindow : Window
         // back-end implementations that fire only one path still register.
         LblLastAction.Text = "last_action=double_click";
         LblClickCount.Text = $"clicks={_clickCount}";
+        PublishFixtureState();
     }
 
     private void OnTargetRightDown(object sender, MouseButtonEventArgs e)
     {
         LblLastAction.Text = "last_action=right_click";
+        PublishFixtureState();
+    }
+
+    private void PublishFixtureState()
+    {
+        if (string.IsNullOrWhiteSpace(_fixtureJournalUrl)) return;
+
+        var state = new Dictionary<string, object>
+        {
+            ["page-marker"] = new { text = "WPF_HARNESS_MARKER_v1" },
+            ["lbl-counter"] = new { text = LblCounter?.Text ?? "counter=0" },
+            ["lbl-last-action"] = new { text = LblLastAction?.Text ?? "last_action=none" },
+            ["lbl-click-count"] = new { text = LblClickCount?.Text ?? "clicks=0" },
+        };
+        var body = JsonSerializer.Serialize(state);
+        lock (_fixtureJournalLock)
+        {
+            _fixtureJournalTail = PublishFixtureStateAfterAsync(
+                _fixtureJournalTail, _fixtureJournalUrl, body);
+        }
+    }
+
+    private async Task PublishFixtureStateAfterAsync(Task previous, string url, string body)
+    {
+        await previous;
+        try
+        {
+            using var content = new StringContent(body, Encoding.UTF8, "text/plain");
+            using var response = await _fixtureJournalClient.PostAsync(url, content);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"WPF fixture journal publish failed: {ex.Message}");
+        }
     }
 
     private void OnScrollChanged(object sender, ScrollChangedEventArgs e)

@@ -70,15 +70,36 @@ fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
                 let windows: Vec<Window> = reply.value32()
                     .map(|iter| iter.collect())
                     .unwrap_or_default();
-                if !windows.is_empty() {
+                if client_list_property(reply.type_, windows.as_slice()).is_some() {
                     return Ok(windows);
                 }
             }
         }
     }
-    // Fallback: query tree from root.
+
+    // No EWMH client-list property means there may be no window manager. In
+    // that case only expose mapped root children; unmapped Electron children
+    // can otherwise be reported before a late-starting WM reparents them.
     let tree = conn.query_tree(root)?.reply()?;
-    Ok(tree.children)
+    Ok(tree
+        .children
+        .into_iter()
+        .filter(|window| {
+            conn.get_window_attributes(*window)
+                .ok()
+                .and_then(|cookie| cookie.reply().ok())
+                .map(|attributes| fallback_window_is_listable(attributes.map_state))
+                .unwrap_or(false)
+        })
+        .collect())
+}
+
+fn client_list_property(property_type: Atom, windows: &[Window]) -> Option<&[Window]> {
+    (property_type != AtomEnum::NONE.into()).then_some(windows)
+}
+
+fn fallback_window_is_listable(map_state: MapState) -> bool {
+    map_state == MapState::VIEWABLE
 }
 
 fn get_atom(conn: &RustConnection, name: &str) -> Result<Atom> {
@@ -132,4 +153,26 @@ pub fn wm_class_for_window(xid: u64) -> Option<(String, String)> {
         return None;
     }
     Some((instance, class))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_present_client_list_does_not_fall_back_to_query_tree() {
+        assert_eq!(client_list_property(1, &[]), Some([].as_slice()));
+    }
+
+    #[test]
+    fn absent_client_list_allows_query_tree_fallback() {
+        assert_eq!(client_list_property(AtomEnum::NONE.into(), &[]), None);
+    }
+
+    #[test]
+    fn query_tree_fallback_only_lists_viewable_windows() {
+        assert!(fallback_window_is_listable(MapState::VIEWABLE));
+        assert!(!fallback_window_is_listable(MapState::UNMAPPED));
+        assert!(!fallback_window_is_listable(MapState::UNVIEWABLE));
+    }
 }

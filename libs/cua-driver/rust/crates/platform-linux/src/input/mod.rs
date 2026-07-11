@@ -31,6 +31,7 @@ use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
 
 const CLICK_DELAY_MS: u64 = 35;
+const DOUBLE_CLICK_DELAY_MS: u64 = 50;
 const KEY_DELAY_MS: u64 = 10;
 
 #[derive(Clone, Debug)]
@@ -2018,9 +2019,17 @@ pub fn send_click_xtest_desktop(x: i32, y: i32, button: u8, count: usize) -> Res
     // Absolute pointer warp (MotionNotify, detail=0 => absolute) so the button
     // events that follow are delivered at (x, y).
     conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
-    for _ in 0..count.max(1) {
+    let count = count.max(1);
+    for click_index in 0..count {
         conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
         conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+        if click_index + 1 < count {
+            // Chromium needs the first pair to reach the server before the
+            // second pair. A zero-gap batch produces two click events but no
+            // DOM dblclick event under Xvfb/Openbox.
+            conn.flush()?;
+            sleep(Duration::from_millis(DOUBLE_CLICK_DELAY_MS));
+        }
     }
     conn.flush()?;
     // Round-trip so the server processes the warp+button events before this

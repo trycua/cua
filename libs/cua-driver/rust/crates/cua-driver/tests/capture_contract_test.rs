@@ -21,6 +21,11 @@ use std::time::{Duration, Instant};
 
 use cua_driver_testkit::{harness_app, Driver, McpDriver, ToolResponse};
 
+#[cfg(target_os = "windows")]
+use cua_driver_testkit::observer::TargetWindow;
+#[cfg(target_os = "windows")]
+use cua_driver_testkit::sentinel::ForegroundSentinel;
+
 /// The aid every harness exposes on its increment button — the tree marker
 /// (WPF AutomationId / AppKit AX identifier / GTK3 AT-SPI accessible name).
 const TREE_MARKER: &str = "btn-increment";
@@ -183,13 +188,11 @@ fn launch_new_instance(
         return None;
     }
     let before = harness_pids(driver, title);
-    let spawned = driver
-        .reaper()
-        .spawn(
-            Command::new(exe)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null()),
-        );
+    let spawned = driver.reaper().spawn(
+        Command::new(exe)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    );
     if let Err(error) = spawned {
         if strict() {
             panic!("failed to launch required capture harness {exe:?}: {error}");
@@ -273,7 +276,10 @@ fn default_returns_tree_and_screenshot() {
         "default response is missing the required tree marker: {}",
         resp.text().chars().take(160).collect::<String>()
     );
-    assert!(has_image(&resp), "default response is missing its screenshot");
+    assert!(
+        has_image(&resp),
+        "default response is missing its screenshot"
+    );
     println!("capture default: tree and image present");
 }
 
@@ -336,4 +342,48 @@ fn deprecated_capture_mode_is_ignored() {
         "deprecated capture_mode=vision suppressed the screenshot"
     );
     println!("capture_mode=vision ignored: tree and image returned");
+}
+
+/// Capturing an occluded background window is a read-only operation: it must
+/// return pixels without disturbing the user's foreground desktop.
+#[cfg(target_os = "windows")]
+#[test]
+#[ignore]
+fn background_screenshot_preserves_desktop() {
+    let Some(mut driver) = test_driver() else {
+        return;
+    };
+    let Some((pid, wid)) = launch(&mut driver) else {
+        return;
+    };
+    let sentinel = ForegroundSentinel::launch(&mut driver);
+    let (response, passed) = sentinel
+        .observe_background(
+            TargetWindow {
+                pid,
+                native_id: wid,
+            },
+            || driver.call("screenshot", serde_json::json!({ "window_id": wid })),
+        )
+        .unwrap_or_else(|error| panic!("background screenshot disturbed the desktop: {error}"));
+    assert!(
+        !response.is_error(),
+        "background screenshot failed: {}",
+        response.text()
+    );
+    assert!(
+        has_image(&response),
+        "background screenshot returned no image"
+    );
+    for required in [
+        cua_driver_testkit::e2e::OracleKind::Focus,
+        cua_driver_testkit::e2e::OracleKind::ZOrder,
+        cua_driver_testkit::e2e::OracleKind::Cursor,
+        cua_driver_testkit::e2e::OracleKind::NoLeakedInput,
+    ] {
+        assert!(
+            passed.contains(&required),
+            "background screenshot omitted required {required:?} oracle"
+        );
+    }
 }

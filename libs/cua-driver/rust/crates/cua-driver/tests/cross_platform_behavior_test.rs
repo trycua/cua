@@ -16,8 +16,6 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 
 use std::any::Any;
-use std::fs;
-use std::net::TcpListener;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -30,6 +28,7 @@ use cua_driver_testkit::e2e::{
     Delivery, Evidence, Observation, OracleKind, RefusalCode, Scope, Targeting,
 };
 use cua_driver_testkit::observer::{DesktopObserver, NativeObserver, TargetWindow};
+use cua_driver_testkit::sentinel::ForegroundSentinel;
 use cua_driver_testkit::{harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
 
 struct HostSpec {
@@ -141,7 +140,7 @@ where
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
         let mut fixture = launch_host_with_evidence(spec, &case.cell_id, &mut evidence)?;
         let sentinel = if delivery == Delivery::Background {
-            Some(fixture.launch_background_sentinel())
+            Some(ForegroundSentinel::launch(&mut fixture.driver))
         } else {
             None
         };
@@ -235,133 +234,6 @@ struct Fixture {
     window_x: f64,
     window_y: f64,
     name: &'static str,
-    sentinel_user_data: Vec<tempfile::TempDir>,
-}
-
-struct ForegroundSentinel {
-    journal_path: PathBuf,
-}
-
-impl ForegroundSentinel {
-    fn observe(&self) -> (Vec<OracleKind>, Vec<String>) {
-        thread::sleep(Duration::from_millis(200));
-        let journal = fs::read_to_string(&self.journal_path).unwrap_or_default();
-        let mut passed = Vec::new();
-        let mut violations = Vec::new();
-        if journal.contains(r#""kind":"blur""#) {
-            violations.push("foreground sentinel lost focus".to_owned());
-        } else {
-            passed.push(OracleKind::Focus);
-        }
-        let leaked = ["keydown", "pointerdown", "wheel", "contextmenu"]
-            .into_iter()
-            .filter(|kind| journal.contains(&format!(r#""kind":"{kind}""#)))
-            .collect::<Vec<_>>();
-        if leaked.is_empty() {
-            passed.push(OracleKind::NoLeakedInput);
-        } else {
-            violations.push(format!(
-                "foreground sentinel received input events: {}",
-                leaked.join(", ")
-            ));
-        }
-        (passed, violations)
-    }
-}
-
-impl Fixture {
-    fn launch_background_sentinel(&mut self) -> ForegroundSentinel {
-        let electron = host_specs()
-            .into_iter()
-            .find(|host| host.name == "electron")
-            .expect("Electron sentinel fixture is defined");
-        assert!(
-            electron.path.exists(),
-            "Electron sentinel fixture is missing at {}",
-            electron.path.display()
-        );
-        let recording_dir = self
-            .driver
-            .recording_dir()
-            .expect("background cells require recording evidence");
-        let journal_path = recording_dir.join("sentinel-events.jsonl");
-        fs::write(&journal_path, "").expect("initialize sentinel event journal");
-        let user_data_dir = tempfile::Builder::new()
-            .prefix("cua-e2e-sentinel-")
-            .tempdir()
-            .expect("create sentinel user-data directory");
-        let cdp_port = TcpListener::bind(("127.0.0.1", 0))
-            .and_then(|listener| listener.local_addr())
-            .expect("allocate sentinel CDP port")
-            .port();
-        let before_windows = self
-            .driver
-            .call("list_windows", serde_json::json!({}))
-            .structured()["windows"]
-            .as_array()
-            .map(|windows| {
-                windows
-                    .iter()
-                    .filter_map(|window| window["window_id"].as_u64())
-                    .collect::<std::collections::HashSet<_>>()
-            })
-            .unwrap_or_default();
-        let mut command = Command::new(&electron.path);
-        command
-            .args(&electron.args)
-            .env("CUA_E2E_SENTINEL", "1")
-            .env("CUA_E2E_SENTINEL_JOURNAL", &journal_path)
-            .env("CUA_E2E_USER_DATA_DIR", user_data_dir.path())
-            .env("CUA_ELECTRON_CDP_PORT", cdp_port.to_string())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        let child = spawn_in_job(&mut command).expect("launch foreground sentinel");
-        self.driver.reaper().push(child);
-        self.sentinel_user_data.push(user_data_dir);
-
-        let window_deadline = Instant::now() + Duration::from_secs(15);
-        loop {
-            let windows = self.driver.call("list_windows", serde_json::json!({}));
-            let appeared = windows.structured()["windows"]
-                .as_array()
-                .and_then(|windows| {
-                    windows.iter().find(|window| {
-                        window["window_id"]
-                            .as_u64()
-                            .map(|id| !before_windows.contains(&id))
-                            .unwrap_or(false)
-                            && window["title"]
-                                .as_str()
-                                .unwrap_or("")
-                                .contains("CuaTestHarness Sentinel")
-                    })
-                })
-                .is_some();
-            if appeared {
-                break;
-            }
-            assert!(
-                Instant::now() < window_deadline,
-                "foreground sentinel window did not appear"
-            );
-            thread::sleep(Duration::from_millis(100));
-        }
-
-        let focus_deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            let journal = fs::read_to_string(&journal_path).unwrap_or_default();
-            if journal.contains(r#""kind":"ready""#) && journal.contains(r#""kind":"focus""#) {
-                break;
-            }
-            assert!(
-                Instant::now() < focus_deadline,
-                "foreground sentinel did not become ready and focused: {journal}"
-            );
-            thread::sleep(Duration::from_millis(100));
-        }
-        fs::write(&journal_path, "").expect("reset focused sentinel journal");
-        ForegroundSentinel { journal_path }
-    }
 }
 
 fn evidence_for_driver(driver: &McpDriver) -> Evidence {
@@ -459,7 +331,6 @@ fn launch_host_with_evidence(
                         window_x: bounds["x"].as_f64().unwrap_or(0.0),
                         window_y: bounds["y"].as_f64().unwrap_or(0.0),
                         name: spec.name,
-                        sentinel_user_data: Vec::new(),
                     };
                     let ax_deadline = Instant::now() + Duration::from_secs(10);
                     while Instant::now() < ax_deadline {

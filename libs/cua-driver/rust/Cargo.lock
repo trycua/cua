@@ -655,6 +655,7 @@ dependencies = [
  "objc2-app-kit",
  "serde",
  "serde_json",
+ "tempfile",
  "windows 0.61.3",
  "x11rb",
 ]

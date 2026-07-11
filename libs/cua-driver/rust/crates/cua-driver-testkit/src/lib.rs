@@ -43,6 +43,7 @@ mod paths;
 mod raw;
 mod reaper;
 mod response;
+pub mod sentinel;
 
 pub use driver::Driver;
 pub use mcp::McpDriver;

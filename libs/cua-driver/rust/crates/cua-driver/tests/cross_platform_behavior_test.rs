@@ -135,7 +135,7 @@ where
     let mut evidence = Evidence::default();
     let delivery = case.delivery;
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
-        let mut fixture = launch_host_with_evidence(spec, &case.cell_id, &mut evidence)?;
+        let mut fixture = launch_host_with_evidence(spec, &case.cell_id, &mut evidence);
         let sentinel = if delivery == Delivery::Background {
             Some(ForegroundSentinel::launch(&mut fixture.driver))
         } else {
@@ -159,10 +159,10 @@ where
         };
         drop(sentinel);
         observation.evidence = evidence.clone();
-        Some(observation)
+        observation
     }));
     match outcome {
-        Ok(Some(observation)) => {
+        Ok(observation) => {
             let result = CaseResult::evaluate(case, observation, started.elapsed());
             write_result_from_env(&result).expect("write E2E case result");
             if result.test_status == cua_driver_testkit::e2e::TestStatus::Fail {
@@ -170,7 +170,6 @@ where
             }
             None
         }
-        Ok(None) => None,
         Err(payload) => {
             let message = panic_message(&payload);
             let result = CaseResult::evaluate(
@@ -225,31 +224,21 @@ fn launch_host_with_evidence(
     spec: &HostSpec,
     scenario: &str,
     evidence: &mut Evidence,
-) -> Option<Fixture> {
+) -> Fixture {
     if !spec.path.exists() {
-        if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
-            panic!(
-                "{} fixture is required but was not staged at {:?}",
-                spec.name, spec.path
-            );
-        }
-        eprintln!(
-            "[{}] fixture not staged at {:?}; skipping",
+        panic!(
+            "{} fixture is required but was not staged at {:?}",
             spec.name, spec.path
         );
-        return None;
     }
 
     let recording_label = scenario.to_owned();
-    let Some(mut driver) = spawn_driver(&recording_label) else {
-        if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
-            panic!(
-                "cua-driver could not be started for the required {} fixture",
-                spec.name
-            );
-        }
-        return None;
-    };
+    let mut driver = spawn_driver(&recording_label).unwrap_or_else(|| {
+        panic!(
+            "cua-driver could not be started for the required {} fixture",
+            spec.name
+        )
+    });
     *evidence = evidence_for_driver(&driver);
     let journal = FixtureJournal::start();
     let mut command = Command::new(&spec.path);
@@ -313,7 +302,7 @@ fn launch_host_with_evidence(
                         if last_tree.contains("WEB_HARNESS_MARKER_v1")
                             && fixture.journal.contains("WEB_HARNESS_MARKER_v1")
                         {
-                            return Some(fixture);
+                            return fixture;
                         }
                         thread::sleep(Duration::from_millis(250));
                     }

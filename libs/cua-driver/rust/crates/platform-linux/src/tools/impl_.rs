@@ -1232,13 +1232,25 @@ fn unavailable_chromium_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    if !delivery.is_foreground() && !crate::wayland::is_wayland() && is_chromium_embedder(pid) {
+    if chromium_background_must_refuse(
+        delivery.is_foreground(),
+        crate::wayland::is_inject_mode(),
+        is_chromium_embedder(pid),
+    ) {
         Some(crate::input::delivery::background_unavailable_error(
             crate::input::delivery::BackgroundUnavailable::ChromiumInput,
         ))
     } else {
         None
     }
+}
+
+fn chromium_background_must_refuse(
+    foreground: bool,
+    focus_free_inject_mode: bool,
+    chromium: bool,
+) -> bool {
+    chromium && !foreground && !focus_free_inject_mode
 }
 
 /// Screen-absolute center of a window (top-left from translate_coordinates plus
@@ -6321,7 +6333,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
 
 #[cfg(test)]
 mod click_button_schema_tests {
-    use super::ClickTool;
+    use super::{chromium_background_must_refuse, ClickTool};
     use cua_driver_core::tool::Tool;
 
     /// Surface 5: schema must advertise the three canonical button values and
@@ -6356,6 +6368,14 @@ mod click_button_schema_tests {
             lc.contains("wayland"),
             "description should call out wayland fallback"
         );
+    }
+
+    #[test]
+    fn chromium_background_requires_focus_free_inject_mode() {
+        assert!(chromium_background_must_refuse(false, false, true));
+        assert!(!chromium_background_must_refuse(false, true, true));
+        assert!(!chromium_background_must_refuse(true, false, true));
+        assert!(!chromium_background_must_refuse(false, false, false));
     }
 }
 

@@ -176,6 +176,20 @@ fn run_preflight() {
         std::thread::sleep(Duration::from_millis(200));
     };
 
+    #[cfg(target_os = "linux")]
+    {
+        let activated = driver.call(
+            "bring_to_front",
+            serde_json::json!({ "pid": pid, "window_id": window_id }),
+        );
+        assert!(
+            !activated.is_error(),
+            "preflight fixture could not be placed on the X11 desktop: {}",
+            activated.text()
+        );
+        std::thread::sleep(Duration::from_millis(300));
+    }
+
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         let state = driver.call(

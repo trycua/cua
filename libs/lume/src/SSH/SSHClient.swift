@@ -46,6 +46,7 @@ public actor SSHClient {
 
         // Create a promise for the result
         let resultPromise = channel.eventLoop.makePromise(of: SSHResult.self)
+        let resultState = CommandResultState(promise: resultPromise)
 
         // Create the SSH child channel for command execution.
         // We keep handler access + createChannel on the event loop to avoid
@@ -58,7 +59,10 @@ public actor SSHClient {
                 }
 
                 return childChannel.eventLoop.makeCompletedFuture {
-                    let execHandler = CommandExecHandler(command: command, resultPromise: resultPromise)
+                    let execHandler = CommandExecHandler(
+                        command: command,
+                        resultState: resultState
+                    )
                     try childChannel.pipeline.syncOperations.addHandler(execHandler)
                 }
             }
@@ -70,24 +74,26 @@ public actor SSHClient {
         // Set up timeout if specified
         if timeout > 0 {
             let timeoutTask = channel.eventLoop.scheduleTask(in: .seconds(Int64(timeout))) {
-                resultPromise.fail(SSHError.timeout)
+                resultState.fail(SSHError.timeout)
                 childChannel.close(promise: nil)
             }
 
             // Cancel timeout when result is received
-            resultPromise.futureResult.whenComplete { _ in
+            resultState.futureResult.whenComplete { _ in
                 timeoutTask.cancel()
             }
         }
 
-        // Wait for command completion
-        let result = try await resultPromise.futureResult.get()
-
-        // Clean up
-        try? await childChannel.closeFuture.get()
-        try? await channel.close().get()
-
-        return result
+        do {
+            let result = try await resultState.futureResult.get()
+            try? await childChannel.closeFuture.get()
+            try? await channel.close().get()
+            return result
+        } catch {
+            try? await childChannel.close().get()
+            try? await channel.close().get()
+            throw error
+        }
     }
 
     /// Start an interactive SSH session
@@ -222,6 +228,35 @@ private final class PasswordAuthDelegate: NIOSSHClientUserAuthenticationDelegate
 
 // MARK: - Command Execution Handler
 
+private final class CommandResultState: @unchecked Sendable {
+    private let promise: EventLoopPromise<SSHResult>
+    private let completed = NIOLockedValueBox(false)
+
+    init(promise: EventLoopPromise<SSHResult>) {
+        self.promise = promise
+    }
+
+    var futureResult: EventLoopFuture<SSHResult> { promise.futureResult }
+
+    func succeed(_ result: SSHResult) {
+        guard claimCompletion() else { return }
+        promise.succeed(result)
+    }
+
+    func fail(_ error: Error) {
+        guard claimCompletion() else { return }
+        promise.fail(error)
+    }
+
+    private func claimCompletion() -> Bool {
+        completed.withLockedValue { completed in
+            guard !completed else { return false }
+            completed = true
+            return true
+        }
+    }
+}
+
 /// Handles command execution on an SSH channel
 /// Note: @unchecked Sendable is safe because this handler is only used on a single event loop
 private final class CommandExecHandler: ChannelDuplexHandler, @unchecked Sendable {
@@ -231,14 +266,14 @@ private final class CommandExecHandler: ChannelDuplexHandler, @unchecked Sendabl
     typealias OutboundOut = SSHChannelData
 
     private let command: String
-    private var resultPromise: EventLoopPromise<SSHResult>?
+    private let resultState: CommandResultState
     private var outputBuffer: ByteBuffer
     private var exitStatus: Int32?
     private var channelClosed = false
 
-    init(command: String, resultPromise: EventLoopPromise<SSHResult>) {
+    init(command: String, resultState: CommandResultState) {
         self.command = command
-        self.resultPromise = resultPromise
+        self.resultState = resultState
         self.outputBuffer = ByteBuffer()
     }
 
@@ -291,7 +326,11 @@ private final class CommandExecHandler: ChannelDuplexHandler, @unchecked Sendabl
 
     func channelInactive(context: ChannelHandlerContext) {
         channelClosed = true
-        checkCompletion(context: context)
+        if exitStatus == nil {
+            failForMissingExitStatus()
+        } else {
+            checkCompletion(context: context)
+        }
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
@@ -299,35 +338,34 @@ private final class CommandExecHandler: ChannelDuplexHandler, @unchecked Sendabl
     }
 
     func handlerRemoved(context: ChannelHandlerContext) {
-        // If we haven't completed yet, complete with what we have
-        checkCompletion(context: context)
-    }
-
-    private func checkCompletion(context: ChannelHandlerContext) {
-        // Only complete if we have both exit status and channel is closed (or we have exit status)
-        guard let promise = resultPromise else { return }
-
-        // Complete when we have exit status (some servers close channel before sending exit status)
-        if let status = exitStatus {
-            resultPromise = nil
-            let output = outputBuffer.readString(length: outputBuffer.readableBytes) ?? ""
-            promise.succeed(SSHResult(exitCode: status, output: output))
-        } else if channelClosed {
-            // Channel closed without exit status - assume success with exit code 0
-            resultPromise = nil
-            let output = outputBuffer.readString(length: outputBuffer.readableBytes) ?? ""
-            promise.succeed(SSHResult(exitCode: 0, output: output))
+        if exitStatus == nil {
+            failForMissingExitStatus()
+        } else {
+            checkCompletion(context: context)
         }
     }
 
+    private func checkCompletion(context: ChannelHandlerContext) {
+        if let status = exitStatus, channelClosed {
+            let output = outputBuffer.readString(length: outputBuffer.readableBytes) ?? ""
+            resultState.succeed(SSHResult(exitCode: status, output: output))
+        }
+    }
+
+    private func failForMissingExitStatus() {
+        resultState.fail(
+            SSHError.commandFailed(
+                exitCode: -1,
+                message: "SSH channel closed without an exit status"
+            )
+        )
+    }
+
     private func failWithError(_ error: Error, context: ChannelHandlerContext) {
-        if let promise = resultPromise {
-            resultPromise = nil
-            if let sshError = error as? SSHError {
-                promise.fail(sshError)
-            } else {
-                promise.fail(SSHError.commandFailed(exitCode: -1, message: error.localizedDescription))
-            }
+        if let sshError = error as? SSHError {
+            resultState.fail(sshError)
+        } else {
+            resultState.fail(SSHError.commandFailed(exitCode: -1, message: String(describing: error)))
         }
         context.close(promise: nil)
     }

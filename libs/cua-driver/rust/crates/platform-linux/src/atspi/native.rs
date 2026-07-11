@@ -650,18 +650,20 @@ fn format_value(v: f64) -> String {
 /// Historically this was "the node advertises AT-SPI Actions" (buttons, menu
 /// items, links). That silently dropped every **Value**-only widget — GTK
 /// `GtkScale` sliders, scroll bars, spin buttons, progress bars expose the
-/// `Value` interface but NO `Action`, so they never got an `element_index` and
-/// were invisible to `get_window_state`/`set_value` even though the driver can
-/// drive them (`set_value` already handles `has_value`). We now also index any
-/// node carrying the Value interface so sliders and scroll regions surface as
-/// usable elements.
+/// `Value` interface but NO `Action`, while some text fields expose
+/// `EditableText` without either. Omitting those interfaces makes controls the
+/// driver can operate impossible to address by `element_index`.
 ///
 /// This predicate is the single source of truth for the element-index space and
 /// MUST be applied identically in `render` and in every `action_nodes` filter
 /// (`perform_action`, `set_value`, `get_element_bounds`, `get_all_element_bounds`);
 /// any divergence would desync indices between the snapshot and the operations.
 fn is_indexable(v: &Visited) -> bool {
-    !v.actions.is_empty() || v.has_value
+    is_indexable_capabilities(!v.actions.is_empty(), v.has_editable, v.has_value)
+}
+
+fn is_indexable_capabilities(has_action: bool, has_editable: bool, has_value: bool) -> bool {
+    has_action || has_editable || has_value
 }
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
@@ -1865,7 +1867,17 @@ pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32
 #[cfg(test)]
 mod coord_tests {
     use super::parse_gtk_frame_extents;
-    use super::{is_passive_role, screen_extent_rebase, select_click_target};
+    use super::{
+        is_indexable_capabilities, is_passive_role, screen_extent_rebase, select_click_target,
+    };
+
+    #[test]
+    fn editable_only_nodes_are_addressable() {
+        assert!(is_indexable_capabilities(false, true, false));
+        assert!(is_indexable_capabilities(true, false, false));
+        assert!(is_indexable_capabilities(false, false, true));
+        assert!(!is_indexable_capabilities(false, false, false));
+    }
 
     #[test]
     fn screen_extents_are_rebased_from_accessible_frame_to_x11_origin() {

@@ -51,7 +51,7 @@ fn launch_app_minimized_preserves_foreground() {
         let sentinel = ForegroundSentinel::launch(&mut driver);
 
         let ((pid, window_id), passed) = sentinel
-            .observe_background(sentinel.target(), || {
+            .observe_desktop(|| {
                 let response = driver.call(
                     "launch_app",
                     serde_json::json!({

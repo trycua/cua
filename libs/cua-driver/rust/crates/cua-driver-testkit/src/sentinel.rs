@@ -150,9 +150,30 @@ impl ForegroundSentinel {
         target: TargetWindow,
         action: impl FnOnce() -> R,
     ) -> Result<(R, Vec<OracleKind>), String> {
+        self.observe_target(target, true, action)
+    }
+
+    /// Observe a desktop-wide action against the foreground sentinel itself.
+    /// Launch and cursor-overlay cells have no pre-existing background target,
+    /// so they verify desktop stability without the target-occlusion precondition.
+    pub fn observe_desktop<R>(
+        &self,
+        action: impl FnOnce() -> R,
+    ) -> Result<(R, Vec<OracleKind>), String> {
+        self.observe_target(self.target, false, action)
+    }
+
+    fn observe_target<R>(
+        &self,
+        target: TargetWindow,
+        require_occluded_target: bool,
+        action: impl FnOnce() -> R,
+    ) -> Result<(R, Vec<OracleKind>), String> {
         let mut observer = DesktopObserver::new(NativeObserver::new(), target);
         let before = observer.snapshot().map_err(|error| error.to_string())?;
-        if before.target_z != crate::observer::TargetZ::BackgroundOccluded {
+        if require_occluded_target
+            && before.target_z != crate::observer::TargetZ::BackgroundOccluded
+        {
             return Err(format!(
                 "background target was not fully occluded before dispatch: {:?}",
                 before.target_z
@@ -168,7 +189,9 @@ impl ForegroundSentinel {
         let (result, delta) = observer
             .observe(&native_oracles, action)
             .map_err(|error| error.to_string())?;
-        if delta.before.target_z != crate::observer::TargetZ::BackgroundOccluded {
+        if require_occluded_target
+            && delta.before.target_z != crate::observer::TargetZ::BackgroundOccluded
+        {
             return Err(format!(
                 "background target was not fully occluded at dispatch: {:?}",
                 delta.before.target_z

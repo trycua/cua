@@ -52,7 +52,7 @@ fn agent_cursor_overlay_is_visible_without_moving_real_cursor() {
         let cursor_id = "windows-agent-cursor-e2e";
 
         let (_, mut passed) = sentinel
-            .observe_background(sentinel.target(), || {
+            .observe_desktop(|| {
                 for (tool, arguments) in [
                     (
                         "set_agent_cursor_enabled",

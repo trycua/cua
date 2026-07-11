@@ -94,7 +94,7 @@ state rather than the older 60-cell proposal.
 - Linux `all` still reports schema-only dispatch checks as E2E behavior.
 - The macOS preflight is implemented, but this host currently reports an
   ad-hoc-signed daemon without a reusable Screen Recording grant.
-- `harness_appkit_scroll_expected_fail` still uses `#[should_panic]`.
+- AppKit scroll remains an optional failing gap outside canonical `all`.
 - Native harness tests do not emit the same typed result records as the shared
   matrix.
 - Fixed coordinates, fixed CDP ports, sleeps, and early-return skips remain in
@@ -269,7 +269,7 @@ Canonical invocations set strict mode. Missing required capabilities produce
 | `harness_wpf_test.rs` | WPF-specific rows using the common case/result runner |
 | `harness_winui3_test.rs` | WinUI3-specific rows; keep only toolkit-distinct behavior |
 | `harness_web_test.rs` | WebView2 and Page/CDP behavior; do not mix Page targeting with AX/PX labels |
-| `harness_appkit_test.rs` | AppKit rows; move the scroll gap to an optional issue-linked lane and remove `#[should_panic]` |
+| `harness_appkit_test.rs` | AppKit rows; scroll is an honest failing optional test outside canonical `all` |
 | `harness_swiftui_test.rs` | SwiftUI controls and popover behavior |
 | `harness_gtk3_test.rs` | Minimal GTK3/AT-SPI rows for X11 and Wayland |
 | `guard_ux_test.rs` | Migrate observations into the desktop observer, then delete |

@@ -308,8 +308,7 @@ fn harness_appkit_type_text_keystroke() {
 /// "Open items" section.
 #[test]
 #[ignore]
-#[should_panic(expected = "scroll offset label did not advance from 0")]
-fn harness_appkit_scroll_expected_fail() {
+fn harness_appkit_scroll_optional_known_gap() {
     let Some(mut driver) = McpDriver::spawn_macos_daemon_proxy() else {
         return;
     };

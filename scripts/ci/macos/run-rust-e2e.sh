@@ -133,8 +133,14 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
     --nocapture --test-threads=1
 fi
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
-  run_test appkit-native-harness cargo test -p cua-driver --test harness_appkit_test -- \
-    --ignored --nocapture --test-threads=1
+  for appkit_test in \
+    harness_appkit_smoke \
+    harness_appkit_text_input \
+    harness_appkit_type_text_keystroke \
+    harness_appkit_counter; do
+    run_test "appkit-${appkit_test}" cargo test -p cua-driver --test harness_appkit_test -- \
+      --ignored --exact "${appkit_test}" --nocapture --test-threads=1
+  done
   run_test swiftui-native-harness cargo test -p cua-driver --test harness_swiftui_test -- \
     --ignored --nocapture --test-threads=1
 fi

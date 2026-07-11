@@ -66,7 +66,7 @@
                                 AutomationProperties.AutomationId="border-click-target"
                                 Content="Click target (left / right / double)"
                                 Width="260" Height="40" HorizontalAlignment="Left"
-                                MouseLeftButtonDown="OnTargetLeftDown"
+                                PreviewMouseLeftButtonDown="OnTargetLeftDown"
                                 MouseRightButtonDown="OnTargetRightDown"
                                 MouseDoubleClick="OnTargetDoubleClick"/>
                         <TextBlock x:Name="LblLastAction"

@@ -7,6 +7,7 @@ convergence work. It omits machine names, credentials, and partner names.
 
 | Commit | Change | Verification or finding |
 | --- | --- | --- |
+| `2c8bd8aa` | Added canonical native WebView2 and WPF PX background single-left-click rows with fixture-owned state journals and foreground geometry probes | Both rows require FixtureState, Focus, ZOrder, NoLeakedInput, and Cursor, assert the observed UIA Invoke route, and retain the standard per-turn evidence. All 31 testkit tests and strict testkit Clippy passed locally; the interactive Windows replay is still required. |
 | `6aaa914b` | Restored direct Chromium/Electron single-left background clicks through `PostMessage` for both AX-resolved and PX-resolved targets | In an active Azure RDP session, raw UIA delivered the click but raised Electron and displaced the occlusion sentinel. A VM-only `PostMessage` diagnostic then delivered both AX and PX cells in 3/3 seeded runs while FixtureState, Focus, ZOrder, NoLeakedInput, and Cursor all passed. The production build passed all 12 Electron left/right/double-click rows; only the two single-left background rows changed from refusal to delivery. |
 
 ## 2026-07-10

@@ -81,8 +81,10 @@ The shared harness exposes deterministic external markers for these actions:
 | State controls | Checkbox, radio, combo, slider | AX or PX by control | Mode declared per action |
 | Editor | Type, save, saved-state readback | AX and PX where supported | Mode declared per action |
 
-The current Rust shared matrix creates fresh evidence-bearing cases for the
-action, targeting, and delivery combinations supported by the driver. A
+The Rust shared catalog declares 32 evidence-bearing cells per host: the full
+AX/PX and foreground/background cross-product for click, text, keyboard,
+scroll, and child-window actions, plus both delivery modes for PX drag and AX
+editor-save. A
 background capability refusal is a valid result only when the test verifies the
 declared structured refusal and the no-focus/no-z-order/no-input-leak side
 effect. A refusal fails a cell whose contract requires delivery.

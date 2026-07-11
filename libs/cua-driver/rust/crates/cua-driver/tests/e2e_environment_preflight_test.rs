@@ -77,6 +77,24 @@ fn has_image(response: &cua_driver_testkit::ToolResponse) -> bool {
 }
 
 fn run_preflight() {
+    if let Ok(expected_sha) = std::env::var("CUA_E2E_SOURCE_SHA") {
+        assert!(
+            expected_sha.len() == 40 && expected_sha.chars().all(|ch| ch.is_ascii_hexdigit()),
+            "CUA_E2E_SOURCE_SHA must be a full commit SHA"
+        );
+        let source = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("git rev-parse HEAD failed");
+        assert!(source.status.success(), "git rev-parse HEAD failed");
+        let actual_sha = String::from_utf8_lossy(&source.stdout);
+        assert_eq!(
+            actual_sha.trim().to_ascii_lowercase(),
+            expected_sha.to_ascii_lowercase(),
+            "checked-out source does not match the workflow's resolved SHA"
+        );
+    }
+
     let driver_path = driver_binary();
     assert!(
         driver_path.is_file(),

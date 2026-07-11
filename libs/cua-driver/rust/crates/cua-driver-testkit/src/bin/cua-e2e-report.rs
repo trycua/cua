@@ -47,6 +47,7 @@ fn main() {
         .collect::<Vec<_>>();
     let results: Vec<CaseResult> = read_json_lines(&results)
         .unwrap_or_else(|errors| panic!("invalid results:\n{}", errors.join("\n")));
+    let mut source_sha = None;
     if let Some(path) = environment {
         let records: Vec<EnvironmentRecord> = read_json_lines(&path)
             .unwrap_or_else(|errors| panic!("invalid environment:\n{}", errors.join("\n")));
@@ -55,6 +56,7 @@ fn main() {
             records[0].schema, ENVIRONMENT_SCHEMA,
             "unsupported environment schema"
         );
+        source_sha = records[0].source_sha.clone();
         if records[0].status == EnvironmentStatus::Error {
             emit(
                 format!(
@@ -74,6 +76,10 @@ fn main() {
         require_video,
     )
     .unwrap_or_else(|errors| panic!("invalid E2E report:\n{}", errors.join("\n")));
-    let markdown = summary.markdown_with_declarations(&declarations, &results);
+    let markdown = summary.markdown_with_declarations_and_source(
+        &declarations,
+        &results,
+        source_sha.as_deref(),
+    );
     emit(markdown, output.as_ref());
 }

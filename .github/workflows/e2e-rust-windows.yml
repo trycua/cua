@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Optional full commit SHA, branch, or tag override"
+        description: "Optional full 40-character commit SHA; defaults to dispatch SHA"
         required: false
         default: ""
       runner:
@@ -17,14 +17,37 @@ permissions:
   actions: read
 
 jobs:
+  source:
+    name: "Resolve exact source"
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - id: resolve
+        name: Validate source SHA
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+        run: |
+          sha="${REQUESTED_SHA:-$DISPATCH_SHA}"
+          if [[ ! "$sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "ref must be a full 40-character commit SHA" >&2
+            exit 2
+          fi
+          echo "sha=${sha,,}" >> "$GITHUB_OUTPUT"
+
   shared:
     name: "Windows / shared Electron + Tauri"
+    needs: source
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ needs.source.outputs.sha }}
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
         run: |
@@ -54,12 +77,15 @@ jobs:
 
   native:
     name: "Windows / native WPF + WinUI3 + WebView2"
+    needs: source
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ needs.source.outputs.sha }}
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
         run: |
@@ -89,12 +115,15 @@ jobs:
 
   capture:
     name: "Windows / capture and desktop scope"
+    needs: source
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ needs.source.outputs.sha }}
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
         run: |
@@ -124,14 +153,14 @@ jobs:
 
   summary:
     if: always()
-    needs: [shared, native, capture]
+    needs: [source, shared, native, capture]
     name: "Windows / matrix summary"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ needs.source.outputs.sha }}
       - name: Download lane results
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4
         with:

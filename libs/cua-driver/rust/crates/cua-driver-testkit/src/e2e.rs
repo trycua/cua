@@ -297,6 +297,8 @@ pub struct EnvironmentRecord {
     pub schema: String,
     pub platform: Platform,
     pub display_server: DisplayServer,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_sha: Option<String>,
     pub status: EnvironmentStatus,
     pub duration_ms: u128,
     pub message: String,
@@ -308,6 +310,7 @@ impl EnvironmentRecord {
             schema: ENVIRONMENT_SCHEMA.to_owned(),
             platform: Platform::current(),
             display_server: DisplayServer::current(),
+            source_sha: source_sha_from_env(),
             status: EnvironmentStatus::Ready,
             duration_ms: duration.as_millis(),
             message: String::new(),
@@ -319,11 +322,18 @@ impl EnvironmentRecord {
             schema: ENVIRONMENT_SCHEMA.to_owned(),
             platform: Platform::current(),
             display_server: DisplayServer::current(),
+            source_sha: source_sha_from_env(),
             status: EnvironmentStatus::Error,
             duration_ms: duration.as_millis(),
             message: message.into(),
         }
     }
+}
+
+fn source_sha_from_env() -> Option<String> {
+    std::env::var("CUA_E2E_SOURCE_SHA")
+        .ok()
+        .filter(|sha| !sha.is_empty())
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -683,10 +693,22 @@ impl ValidationSummary {
         declarations: &[CaseSpec],
         results: &[CaseResult],
     ) -> String {
+        self.markdown_with_declarations_and_source(declarations, results, None)
+    }
+
+    pub fn markdown_with_declarations_and_source(
+        &self,
+        declarations: &[CaseSpec],
+        results: &[CaseResult],
+        source_sha: Option<&str>,
+    ) -> String {
         let mut output = format!(
             "# CUA Driver E2E\n\n**Result:** {} delivered, {} refused, {} failed, {} skipped\n\n",
             self.delivered, self.refused, self.failed, self.skipped
         );
+        if let Some(source_sha) = source_sha {
+            output.push_str(&format!("**Source SHA:** `{source_sha}`\n\n"));
+        }
         output.push_str("## Declared Coverage\n\n");
         output.push_str(&declared_coverage_markdown(declarations, results));
         output.push_str("\n## Detailed Results\n\n");
@@ -1335,6 +1357,31 @@ mod tests {
 
         assert!(markdown.contains("| electron | click | PASS | - | REFUSED | FAIL | - | - |"));
         assert!(markdown.contains("| tauri | type_text | PASS | - | - | - | - | - |"));
+    }
+
+    #[test]
+    fn summary_records_the_exact_source_sha() {
+        let case = delivered_case("source-sha");
+        let result = CaseResult::evaluate(
+            case.clone(),
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default()),
+            Duration::from_millis(1),
+        );
+        let summary = validate_catalog(
+            std::slice::from_ref(&case),
+            std::slice::from_ref(&result),
+            None,
+            false,
+        )
+        .expect("valid catalog");
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let markdown = summary.markdown_with_declarations_and_source(
+            std::slice::from_ref(&case),
+            std::slice::from_ref(&result),
+            Some(sha),
+        );
+
+        assert!(markdown.contains(&format!("**Source SHA:** `{sha}`")));
     }
 
     #[test]

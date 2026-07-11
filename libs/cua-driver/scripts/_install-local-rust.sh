@@ -323,6 +323,17 @@ codesign_bounded() {
     fi
 }
 
+clean_partial_bundle_signature() {
+    local app="$1"
+    # A certificate-backed codesign killed by the timeout can leave both a
+    # partial resource seal and `<executable>.cstemp`. Signing over that state
+    # seals the transient file; when the interrupted signer removes it later,
+    # the fallback bundle becomes invalid. Always restart fallback signing from
+    # the unsigned staged bundle.
+    rm -rf "$app/Contents/_CodeSignature"
+    find "$app" -type f -name '*.cstemp' -delete
+}
+
 # --- macOS: wrap the binary in CuaDriver.app for a stable TCC identity ---
 #
 # TCC keys Accessibility / Screen-Recording grants on the bundle
@@ -370,13 +381,17 @@ if [ "$OS" = "Darwin" ]; then
             echo "${RED}Error: stable signing failed; preserving the existing certificate-signed $APP_DEST and its TCC grants.${NORMAL}" >&2
             echo "Unlock/authorize the login-keychain signing key, then rerun install-local." >&2
             exit 1
-        elif codesign_bounded 20 --force --deep --sign - "$APP_STAGE" 2>/dev/null; then
-            if [ "$SIGN_ID" != "-" ]; then
-                echo "${YELLOW}note: stable-identity signing failed; signed ad-hoc instead (Accessibility/Screen Recording will reset on the next rebuild)${NORMAL}" >&2
-            fi
         else
-            echo "${RED}Error: codesign of staged CuaDriver.app failed; live installation was not changed.${NORMAL}" >&2
-            exit 1
+            clean_partial_bundle_signature "$APP_STAGE"
+            if codesign_bounded 20 --force --deep --sign - "$APP_STAGE" 2>/dev/null; then
+                if [ "$SIGN_ID" != "-" ]; then
+                    echo "${YELLOW}note: stable-identity signing failed; signed ad-hoc instead (Accessibility/Screen Recording will reset on the next rebuild)${NORMAL}" >&2
+                fi
+            else
+                clean_partial_bundle_signature "$APP_STAGE"
+                echo "${RED}Error: codesign of staged CuaDriver.app failed; live installation was not changed.${NORMAL}" >&2
+                exit 1
+            fi
         fi
         if ! codesign --verify --deep --strict "$APP_STAGE" 2>/dev/null; then
             echo "${RED}Error: staged CuaDriver.app failed signature verification; live installation was not changed.${NORMAL}" >&2

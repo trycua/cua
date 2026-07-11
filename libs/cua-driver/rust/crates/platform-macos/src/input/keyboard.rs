@@ -196,6 +196,7 @@ fn key_name_to_code(key: &str) -> anyhow::Result<u16> {
         "right" | "right_arrow" => 124,
         "down" | "down_arrow" => 125,
         "up" | "up_arrow" => 126,
+        "kp_0" => 82,
         "f1" => 122, "f2" => 120, "f3" => 99, "f4" => 118, "f5" => 96,
         "f6" => 97, "f7" => 98, "f8" => 100, "f9" => 101, "f10" => 109,
         "f11" => 103, "f12" => 111,
@@ -208,4 +209,15 @@ fn key_name_to_code(key: &str) -> anyhow::Result<u16> {
         _ => anyhow::bail!("Unknown key name: {key}"),
     };
     Ok(code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::key_name_to_code;
+
+    #[test]
+    fn keypad_zero_keeps_its_distinct_hardware_keycode() {
+        assert_eq!(key_name_to_code("0").unwrap(), 29);
+        assert_eq!(key_name_to_code("KP_0").unwrap(), 82);
+    }
 }

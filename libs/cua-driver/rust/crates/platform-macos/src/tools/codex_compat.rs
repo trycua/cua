@@ -838,6 +838,11 @@ impl CompatState {
             return error.into_result();
         }
 
+        // Any mutating dispatch can become ambiguous once native code starts.
+        // Retire the input snapshot before entering that boundary so a partial
+        // multi-click, drag, or key sequence can never be retried against the
+        // same element handles after an error.
+        self.snapshots.invalidate(&session, &snapshot);
         let action_name = defs()[kind.index()].name.clone();
         let action_result = match run_guarded_dispatch(&self.guardian, lock_epoch, || async {
             match kind {
@@ -884,10 +889,6 @@ impl CompatState {
             return action_error(&action_name, action_result);
         }
 
-        // The action may have changed layout, focus, or window identity. Retire
-        // its input snapshot before attempting perception refresh so a failed
-        // screenshot cannot leave stale element handles reusable.
-        self.snapshots.invalidate(&session, &snapshot);
         let action_summary = first_text(&action_result);
         let action_structured = action_result.structured_content.clone();
         if let Err(error) = action_lock_status {
@@ -2597,7 +2598,7 @@ fn parse_xdotool_key(raw: &str) -> Result<(String, Vec<String>), String> {
             key.to_ascii_lowercase()
         }
         value if value.starts_with("kp_") && value[3..].chars().all(|c| c.is_ascii_digit()) => {
-            value[3..].to_owned()
+            value.to_owned()
         }
         _ => key.to_owned(),
     };
@@ -3226,7 +3227,7 @@ mod tests {
         );
         assert_eq!(
             parse_xdotool_key("KP_0").unwrap(),
-            ("0".to_owned(), Vec::<String>::new())
+            ("kp_0".to_owned(), Vec::<String>::new())
         );
         assert_eq!(
             parse_xdotool_key("Return").unwrap(),

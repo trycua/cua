@@ -29,6 +29,19 @@ particular macOS release exposes. Disk setup writes the desired guest state
 directly and keeps the verification step small: Lume checks that the guest
 boots and accepts SSH.
 
+## Security policy changes are different
+
+Apple silicon stores SIP configuration in a LocalPolicy signed by the virtual
+Secure Enclave. The policy is paired with personalized boot files in the VM
+disk and anti-replay state in auxiliary storage. Mounting the Data volume is
+therefore sufficient for account and service setup, but it cannot create a
+valid SIP-disabled policy.
+
+A policy downgrade must be signed once from the VM's paired Recovery
+environment. After that transition, `lume clone` can reproduce the complete
+signed VM state without further Recovery interaction. The disk and auxiliary
+storage are an atomic pair and must not be mixed between VMs.
+
 ## Presets and images
 
 The `tahoe` and `sequoia` presets use the same offline patcher. Tahoe is the

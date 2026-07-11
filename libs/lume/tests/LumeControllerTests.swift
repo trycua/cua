@@ -35,6 +35,20 @@ private final class FailingVMFactory: VMFactory {
 }
 
 @MainActor
+private final class TestVMFactory: VMFactory {
+    func createVM(
+        vmDirContext: VMDirContext,
+        imageLoader: ImageLoader?
+    ) throws -> VM {
+        MockVM(
+            vmDirContext: vmDirContext,
+            virtualizationServiceFactory: { _ in MockVMVirtualizationService() },
+            vncServiceFactory: { MockVNCService(vmDirectory: $0) }
+        )
+    }
+}
+
+@MainActor
 @Test("create cleans up pre-created VM directory when setup fails")
 func testCreateCleansUpPrecreatedDirectoryOnFailure() async throws {
     let tempConfigDir = try createTempDirectory()
@@ -85,6 +99,68 @@ func testCreateCleansUpPrecreatedDirectoryOnFailure() async throws {
     }
 
     #expect(!orphanVMDir.exists())
+}
+
+@MainActor
+@Test("clone preserves paired disk and auxiliary storage")
+func testClonePreservesPairedBootPolicyState() throws {
+    let tempConfigDir = try createTempDirectory()
+    let tempHomeDir = try createTempDirectory()
+
+    defer {
+        try? FileManager.default.removeItem(at: tempConfigDir)
+        try? FileManager.default.removeItem(at: tempHomeDir)
+    }
+
+    let previousXDGConfigHome = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
+    setenv("XDG_CONFIG_HOME", tempConfigDir.path, 1)
+    defer {
+        if let previousXDGConfigHome {
+            setenv("XDG_CONFIG_HOME", previousXDGConfigHome, 1)
+        } else {
+            unsetenv("XDG_CONFIG_HOME")
+        }
+    }
+
+    let settingsManager = SettingsManager(fileManager: .default)
+    try settingsManager.setHomeDirectory(path: tempHomeDir.path)
+    let home = Home(settingsManager: settingsManager, fileManager: .default)
+    let controller = LumeController(home: home, vmFactory: TestVMFactory())
+
+    let sourceDir = try home.getVMDirectory("sip-off-seed")
+    try FileManager.default.createDirectory(
+        at: sourceDir.dir.url,
+        withIntermediateDirectories: true
+    )
+
+    let diskData = Data(repeating: 0xA5, count: 1024 * 1024)
+    let nvramData = Data((0..<4096).map { UInt8($0 % 251) })
+    try diskData.write(to: sourceDir.diskPath.url)
+    try nvramData.write(to: sourceDir.nvramPath.url)
+
+    let sourceMachineIdentifier = Data(repeating: 0x11, count: 32)
+    let sourceMacAddress = "02:00:00:00:00:01"
+    let sourceConfig = try VMConfig(
+        os: "macOS",
+        cpuCount: 4,
+        memorySize: 8 * 1024 * 1024 * 1024,
+        diskSize: UInt64(diskData.count),
+        macAddress: sourceMacAddress,
+        display: "1024x768",
+        hardwareModel: Data(repeating: 0x22, count: 32),
+        machineIdentifier: sourceMachineIdentifier
+    )
+    try sourceDir.saveConfig(sourceConfig)
+
+    try controller.clone(name: "sip-off-seed", newName: "worker-001")
+
+    let cloneDir = try home.getVMDirectory("worker-001")
+    let cloneConfig = try cloneDir.loadConfig()
+
+    #expect(try Data(contentsOf: cloneDir.diskPath.url) == diskData)
+    #expect(try Data(contentsOf: cloneDir.nvramPath.url) == nvramData)
+    #expect(cloneConfig.machineIdentifier != sourceMachineIdentifier)
+    #expect(cloneConfig.macAddress != sourceMacAddress)
 }
 
 private func createTempDirectory() throws -> URL {

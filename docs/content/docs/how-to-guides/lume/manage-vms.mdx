@@ -102,3 +102,44 @@ lume delete macos-tahoe-backup
 
 macOS VM disks can be sparse. The configured capacity and the host space used
 by the disk can therefore differ.
+
+## Scale a SIP-disabled seed VM
+
+On Apple silicon, System Integrity Protection is stored in a Secure
+Enclave-signed LocalPolicy. It cannot be disabled by mounting and editing a
+fresh VM disk offline. Prepare one seed VM in Recovery, then clone that signed
+state for unattended workers.
+
+Boot the stopped seed into its paired Recovery environment:
+
+```bash
+lume run --recovery-mode true macos-tahoe-seed
+```
+
+Open Terminal from the Recovery **Utilities** menu and run:
+
+```bash
+csrutil disable
+shutdown -h now
+```
+
+Boot normally and verify the seed before cloning it:
+
+```bash
+lume run --no-display macos-tahoe-seed
+lume ssh macos-tahoe-seed 'csrutil status'
+lume stop macos-tahoe-seed
+```
+
+Create workers without entering Recovery again:
+
+```bash
+lume clone macos-tahoe-seed macos-tahoe-worker-001
+lume run --no-display macos-tahoe-worker-001
+lume ssh macos-tahoe-worker-001 'csrutil status'
+```
+
+`lume clone` preserves the paired `disk.img` and `nvram.bin` while generating
+new VM and network identifiers. Do not replace either file independently: the
+signed LocalPolicy, personalized boot files, and anti-replay state must travel
+together.

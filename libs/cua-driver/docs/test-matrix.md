@@ -81,7 +81,8 @@ The shared harness exposes deterministic external markers for these actions:
 | State controls | Checkbox, radio, combo, slider | AX or PX by control | Mode declared per action |
 | Editor | Type, save, saved-state readback | AX and PX where supported | Mode declared per action |
 
-The Rust shared catalog declares 36 evidence-bearing cells per host: the full
+The Rust shared catalog declares 36 evidence-bearing cells per harness
+application, or 72 shared cells across Electron and Tauri per platform: the full
 AX/PX and foreground/background cross-product for click, text, keyboard,
 scroll, and child-window actions, plus both delivery modes for PX drag and AX
 editor-save. A

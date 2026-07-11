@@ -61,7 +61,8 @@ state rather than the older 60-cell proposal.
 ### Already present
 
 - `cross_platform_behavior_test.rs` has one typed 36-cell catalog per shared
-  host. It covers AX and PX with foreground and background delivery for click,
+  harness application: 72 shared cells across Electron and Tauri per platform.
+  It covers AX and PX with foreground and background delivery for click,
   text, keyboard, scroll, and child-window actions; PX drag and AX editor-save
   each cover both delivery modes.
 - Declaration and result schema v2 record action, `targeting`, delivery, scope,
@@ -189,9 +190,10 @@ driver route:
 5. Every omitted combination names an `equivalent_to` cell or an unsupported
    contract reason.
 
-The shared catalog currently declares 36 cells per host. Add a missing
-combination when it reaches a different driver route. Remove a combination
-only when another cell proves the same route with an equal or stronger oracle.
+The shared catalog currently declares 36 cells per harness application, or 72
+cells across Electron and Tauri per platform. Add a missing combination when it
+reaches a different driver route. Remove a combination only when another cell
+proves the same route with an equal or stronger oracle.
 
 ## Cross-cutting Desktop Observer
 
@@ -308,8 +310,9 @@ CI plumbing and diagnostic state.
 - Windows GitHub-hosted runners are canonical when the preflight proves an
   interactive desktop. An Azure RDP runner is an optional environment-parity
   replay, not a second source of behavioral truth.
-- Linux GitHub-hosted runners run the Nix-defined X11 lane. Wayland is a
-  separate Nix-defined maintainer lane. Linux produces no GIF requirement.
+- Linux GitHub-hosted runners run X11 under Xvfb with hosted packages. The Nix
+  source gate is separate; the pure-Wayland maintainer lane uses the Nix dev
+  shell. Linux produces no GIF requirement.
 - macOS runs on a logged-in, TCC-authorized host through the canonical macOS
   runner. A future self-hosted runner must use the same preflight.
 
@@ -331,9 +334,10 @@ may still provide failure annotations for unit tests.
 
 Upload one artifact archive per internal lane, with one stable evidence
 subdirectory per behavioral cell. Each GitHub summary row links its exact
-video path text to the owning lane archive and lists the trajectory path.
-GitHub cannot deep-link to a file inside an archive; the exact path keeps the
-row unambiguous without multiplying artifact uploads by the cell count.
+video path text to the owning lane archive. The adjacent `trajectory.json`
+path remains in `results.jsonl` and the archive. GitHub cannot deep-link to a
+file inside an archive; the exact path keeps the row unambiguous without
+multiplying artifact uploads by the cell count.
 
 ## Implementation Slices
 

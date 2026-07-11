@@ -123,13 +123,15 @@ Most are marked `#[ignore]` because they require a desktop, built fixtures, and
 platform permissions. They are selected by the OS runner rather than the
 ordinary unit command.
 
-The major families are:
+The canonical E2E suite has two behavior owners:
 
-| Family | Purpose |
+| Owner | Purpose |
 | --- | --- |
 | Shared app | Same web behavior tested through Electron and Tauri |
 | Native harness | Toolkit-specific controls and native window behavior |
-| Web integration | WebView/CDP/page-tool plumbing |
+
+WebView, CDP, and page-tool integration stays inside the shared or native
+owner that exercises it. It is not a third public test family or command.
 
 Delivery is not a test family. It is a dimension on each action row: an action
 is tested in foreground and background modes whenever the driver and OS support
@@ -229,7 +231,7 @@ delivery concept use `not_applicable` explicitly.
 ## Cross-Cutting Invariants
 
 The desktop observer is cross-cutting test instrumentation. It answers the same
-question for any action, harness, or test family:
+question for any action, harness, or catalog area:
 
 > Did the driver perform or reject the operation without disturbing the user's
 > foreground application or desktop?

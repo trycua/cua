@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Optional commit, branch, or tag override"
+        description: "Optional full commit SHA, branch, or tag override"
         required: false
         default: ""
       runner:
@@ -201,7 +201,7 @@ jobs:
           EOF
           {
             echo
-            echo "Each evidence link opens its owning lane artifact; the row text is the exact \`recordings/<cell-id>/recording.mp4\` path, with a matching \`trajectory.json\`."
+            echo "Each evidence link opens its owning lane artifact; the row text is the exact \`recordings/<cell-label>-pid<pid>-<sequence>/recording.mp4\` path, with an adjacent \`trajectory.json\`."
           } >> "$summary_path"
           cat "$summary_path" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload matrix summary

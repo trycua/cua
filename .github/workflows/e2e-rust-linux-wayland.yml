@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Optional commit, branch, or tag override"
+        description: "Optional full commit SHA, branch, or tag override"
         required: false
         default: ""
 
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   wayland:
-    name: "Linux / native Wayland Rust matrix"
+    name: "Linux / pure Wayland Rust matrix"
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -26,7 +26,7 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-      - name: Run complete native Wayland matrix
+      - name: Run complete pure Wayland matrix
         run: >-
           nix develop .#cua-driver-wayland-e2e
           -c scripts/ci/linux/run-rust-e2e-wayland.sh
@@ -43,7 +43,7 @@ jobs:
   summary:
     if: always()
     needs: [wayland]
-    name: "Linux / native Wayland summary"
+    name: "Linux / pure Wayland summary"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

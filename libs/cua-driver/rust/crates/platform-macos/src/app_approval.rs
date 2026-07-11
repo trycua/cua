@@ -470,7 +470,9 @@ fn normalize_management_identity(value: &str) -> Result<String, ApprovalError> {
             "app approval identity cannot be empty".to_owned(),
         ));
     }
-    if value.starts_with("bundle:") || value.starts_with("path:") {
+    if let Some(bundle_id) = value.strip_prefix("bundle:") {
+        Ok(format!("bundle:{}", bundle_id.to_lowercase()))
+    } else if value.starts_with("path:") {
         Ok(value.to_owned())
     } else {
         Ok(format!("bundle:{}", value.to_lowercase()))
@@ -784,7 +786,9 @@ mod tests {
             gate.list_persistent().unwrap(),
             vec!["bundle:com.apple.calculator"]
         );
-        assert!(gate.revoke_persistent("com.apple.Calculator").unwrap());
+        assert!(gate
+            .revoke_persistent("bundle:com.apple.Calculator")
+            .unwrap());
         assert!(gate.list_persistent().unwrap().is_empty());
         assert_eq!(gate.clear_persistent().unwrap(), 0);
     }

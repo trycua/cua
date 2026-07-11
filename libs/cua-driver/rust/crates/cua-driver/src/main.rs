@@ -506,6 +506,10 @@ fn main() {
             cli::run_permissions_cmd(reg, &subcommand, json);
             return;
         }
+        cli::Command::Approvals { subcommand, json } => {
+            cli::run_approvals_cmd(&subcommand, json);
+            return;
+        }
         cli::Command::Autostart { subcommand } => {
             autostart::run_autostart_cmd(&subcommand);
             return;
@@ -788,6 +792,10 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Permissions { subcommand, json } => {
             let reg = Arc::new(build_registry_no_cursor());
             cli::run_permissions_cmd(reg, &subcommand, json);
+            return Ok(());
+        }
+        cli::Command::Approvals { subcommand, json } => {
+            cli::run_approvals_cmd(&subcommand, json);
             return Ok(());
         }
         cli::Command::Autostart { subcommand } => {

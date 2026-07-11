@@ -44,12 +44,26 @@ so a concurrently running native daemon cannot supply the wrong tool catalog or
 cursor configuration.
 
 The compatibility layer blocks the driver/host, Codex and ChatGPT, macOS
-authentication services, System Settings, and common terminal apps. It does not
-implement an approval UI or MCP elicitation; the embedding host remains
-responsible for confirmation policy before risky UI actions. Its tree uses
-cua-driver-generated indices, which are not numerically identical to Codex's
-proprietary indices. Compatibility mode preserves and indexes meaningful
-containers and static text. The native tree remains action-only.
+authentication services, System Settings, and common terminal apps. Before an
+app can launch or expose accessibility and screenshot state, the daemon issues
+an authenticated MCP `elicitation/create` request. Plain accept is scoped to the
+MCP session. A response with `_meta.persist: "always"` writes a permanent
+approval keyed by the stable bundle identity. Raw and in-process calls fail
+closed because they do not own an authenticated daemon broker session.
+
+Permanent approvals have a local management surface that does not expand the
+ten-tool MCP catalog:
+
+```bash
+cua-driver approvals list
+cua-driver approvals revoke com.example.Editor
+cua-driver approvals clear
+```
+
+Each command accepts `--json`. The accessibility tree uses cua-driver-generated
+indices, which are not numerically identical to Codex's proprietary indices.
+Compatibility mode preserves and indexes meaningful containers and static text.
+The native tree remains action-only.
 
 ## Tests
 

@@ -15,6 +15,13 @@
 use std::process;
 use cua_driver_core::{protocol::Content, tool::ToolRegistry};
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ApprovalsSubcommand {
+    List,
+    Revoke { app_identity: String },
+    Clear,
+}
+
 /// Which CLI command was requested.
 pub enum Command {
     Mcp {
@@ -95,6 +102,8 @@ pub enum Command {
     /// `cua-driver permissions status|grant [--json]`: report profile-bound
     /// daemon TCC status or open correctly-attributed CuaDriver onboarding.
     Permissions { subcommand: String, json: bool },
+    /// Manage permanent Codex Computer Use per-app approvals on macOS.
+    Approvals { subcommand: ApprovalsSubcommand, json: bool },
     Config {
         /// `show` | `get` | `set` | `reset` (None → show)
         subcommand: Option<String>,
@@ -180,6 +189,25 @@ fn cursor_config_from_args(
     config
 }
 
+fn parse_approvals_args(args: &[&str]) -> Result<ApprovalsSubcommand, String> {
+    match args {
+        [] | ["list"] => Ok(ApprovalsSubcommand::List),
+        ["revoke", app_identity] if !app_identity.trim().is_empty() => {
+            Ok(ApprovalsSubcommand::Revoke {
+                app_identity: (*app_identity).to_owned(),
+            })
+        }
+        ["clear"] => Ok(ApprovalsSubcommand::Clear),
+        ["revoke"] => Err(
+            "approvals revoke requires a bundle id or stable app identity.".to_owned(),
+        ),
+        [unknown, ..] if !matches!(*unknown, "list" | "revoke" | "clear") => Err(
+            format!("unknown approvals subcommand '{unknown}'. Valid: list, revoke, clear."),
+        ),
+        _ => Err("invalid approvals arguments.".to_owned()),
+    }
+}
+
 /// Parse the first non-flag positional argument from argv to determine which
 /// subcommand to run.  Cursor-overlay flags are consumed by `CursorConfig`
 /// independently; we only care about the first non-`--` arg here.
@@ -195,7 +223,7 @@ pub fn parse_command() -> Command {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("cua-driver {} — cross-platform computer-use automation driver", env!("CARGO_PKG_VERSION"));
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, permissions, approvals, autostart, skills, manifest");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -205,6 +233,12 @@ pub fn parse_command() -> Command {
         println!("  cua-driver permissions grant    Open or reopen CuaDriver permission onboarding in a running daemon.");
         println!("                                  Launches the app if needed, then refreshes every live profile so");
         println!("                                  status reflects com.trycua.driver instead of your terminal.");
+        println!();
+        println!("approvals options (macOS):");
+        println!("  cua-driver approvals list       List permanent Computer Use app approvals.");
+        println!("  cua-driver approvals revoke ID  Revoke one bundle id or stable identity.");
+        println!("  cua-driver approvals clear      Revoke every permanent Computer Use app approval.");
+        println!("    --json                        Emit a machine-readable result.");
         println!();
         println!("Updating cua-driver:");
         println!("  cua-driver check-update         Ask GitHub whether a newer release is available. Read-only.");
@@ -417,6 +451,19 @@ pub fn parse_command() -> Command {
             let subcommand = pos.next().unwrap_or("status").to_string();
             let json = args.iter().any(|a| a == "--json");
             Command::Permissions { subcommand, json }
+        }
+        Some("approvals") => {
+            let approval_args: Vec<&str> = pos.collect();
+            let subcommand = match parse_approvals_args(&approval_args) {
+                Ok(subcommand) => subcommand,
+                Err(error) => {
+                    eprintln!("{error}");
+                    eprintln!("Usage: cua-driver approvals {{list|revoke <bundle-id-or-stable-id>|clear}} [--json]");
+                    process::exit(64);
+                }
+            };
+            let json = args.iter().any(|a| a == "--json");
+            Command::Approvals { subcommand, json }
         }
         Some("config") => {
             let subcommand = pos.next().map(str::to_owned);
@@ -1080,6 +1127,13 @@ pub fn build_manifest() -> serde_json::Value {
               "args": [
                   { "name": "subcommand", "type": "positional-string", "description": "status | grant" },
                   { "name": "--json", "type": "flag", "description": "Machine-readable payload." }
+              ] },
+            { "name": "approvals",
+              "description": "List or revoke permanent Codex Computer Use app approvals on macOS.",
+              "args": [
+                  { "name": "subcommand", "type": "positional-string", "description": "list | revoke | clear. Default: list." },
+                  { "name": "bundle-id-or-stable-id", "type": "positional-string", "description": "Required by revoke." },
+                  { "name": "--json", "type": "flag", "description": "Machine-readable result." }
               ] },
             { "name": "config",
               "description": "Read / write the persistent driver config.",
@@ -1927,6 +1981,115 @@ pub fn run_permissions_cmd(
     }
 }
 
+#[derive(Debug, PartialEq)]
+struct ApprovalsCommandOutput {
+    human: String,
+    json: serde_json::Value,
+}
+
+#[cfg(target_os = "macos")]
+fn execute_approvals(
+    gate: &platform_macos::app_approval::ApprovalGate,
+    subcommand: &ApprovalsSubcommand,
+) -> Result<ApprovalsCommandOutput, platform_macos::app_approval::ApprovalError> {
+    match subcommand {
+        ApprovalsSubcommand::List => {
+            let approvals = gate.list_persistent()?;
+            let human = if approvals.is_empty() {
+                "No permanent Computer Use app approvals.".to_owned()
+            } else {
+                format!(
+                    "Permanent Computer Use app approvals:\n  {}",
+                    approvals.join("\n  ")
+                )
+            };
+            Ok(ApprovalsCommandOutput {
+                human,
+                json: serde_json::json!({
+                    "ok": true,
+                    "action": "list",
+                    "count": approvals.len(),
+                    "approvals": approvals,
+                }),
+            })
+        }
+        ApprovalsSubcommand::Revoke { app_identity } => {
+            let removed = gate.revoke_persistent(app_identity)?;
+            let human = if removed {
+                format!("Revoked permanent Computer Use approval: {app_identity}")
+            } else {
+                format!("No permanent Computer Use approval matched: {app_identity}")
+            };
+            Ok(ApprovalsCommandOutput {
+                human,
+                json: serde_json::json!({
+                    "ok": true,
+                    "action": "revoke",
+                    "identity": app_identity,
+                    "removed": removed,
+                }),
+            })
+        }
+        ApprovalsSubcommand::Clear => {
+            let removed = gate.clear_persistent()?;
+            Ok(ApprovalsCommandOutput {
+                human: format!(
+                    "Cleared {removed} permanent Computer Use app approval{}.",
+                    if removed == 1 { "" } else { "s" }
+                ),
+                json: serde_json::json!({
+                    "ok": true,
+                    "action": "clear",
+                    "removed": removed,
+                }),
+            })
+        }
+    }
+}
+
+pub fn run_approvals_cmd(subcommand: &ApprovalsSubcommand, json: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        match execute_approvals(platform_macos::app_approval::global(), subcommand) {
+            Ok(output) => {
+                if json {
+                    println!("{}", output.json);
+                } else {
+                    println!("{}", output.human);
+                }
+            }
+            Err(error) => {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"ok": false, "error": error.to_string()})
+                    );
+                } else {
+                    eprintln!("cua-driver approvals failed: {error}");
+                }
+                process::exit(1);
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = subcommand;
+        let error = approvals_platform_error(false).unwrap();
+        if json {
+            println!("{}", serde_json::json!({"ok": false, "error": error}));
+        } else {
+            eprintln!("{error}");
+        }
+        process::exit(64);
+    }
+}
+
+#[cfg(any(not(target_os = "macos"), test))]
+fn approvals_platform_error(is_macos: bool) -> Option<&'static str> {
+    (!is_macos).then_some("cua-driver approvals is supported only on macOS.")
+}
+
 #[derive(Clone)]
 struct PermissionDaemonEndpoint {
     profile: crate::serve::DaemonProfile,
@@ -2595,6 +2758,19 @@ fn cli_docs_json() -> serde_json::Value {
                     {"name":"get","abstract":"Print one config key.","discussion":"","arguments":[{"name":"key","help":"Config key to read.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
                     {"name":"set","abstract":"Set one config key.","discussion":"","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
                     {"name":"reset","abstract":"Reset config to defaults.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
+                ]
+            },
+            {
+                "name": "approvals",
+                "abstract": "Manage permanent Codex Computer Use app approvals.",
+                "discussion": "macOS only. The commands operate on the private local approval store and do not add MCP tools.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": [{"name":"json","short_name":null,"help":"Emit a machine-readable result.","default_value":false}],
+                "subcommands": [
+                    {"name":"list","abstract":"List permanent app approvals.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"revoke","abstract":"Revoke one permanent app approval.","discussion":"","arguments":[{"name":"bundle-id-or-stable-id","help":"Bundle id or stable approval identity to revoke.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"clear","abstract":"Revoke every permanent app approval.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
                 ]
             },
             {
@@ -3297,6 +3473,11 @@ pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
         Command::CheckUpdate { .. } => "cua_driver_check_update".to_owned(),
         Command::Doctor { .. } => "cua_driver_doctor".to_owned(),
         Command::Permissions { .. } => "cua_driver_permissions".to_owned(),
+        Command::Approvals { subcommand, .. } => match subcommand {
+            ApprovalsSubcommand::List => "cua_driver_approvals_list".to_owned(),
+            ApprovalsSubcommand::Revoke { .. } => "cua_driver_approvals_revoke".to_owned(),
+            ApprovalsSubcommand::Clear => "cua_driver_approvals_clear".to_owned(),
+        },
         Command::Diagnose => "cua_driver_diagnose".to_owned(),
         // Per-subcommand event so dashboards can split enable / disable /
         // status / kick separately — they have very different meanings
@@ -3352,6 +3533,112 @@ fn sanitize_tool_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn approvals_parser_accepts_list_revoke_clear_and_rejects_bad_shapes() {
+        assert_eq!(parse_approvals_args(&[]).unwrap(), ApprovalsSubcommand::List);
+        assert_eq!(
+            parse_approvals_args(&["list"]).unwrap(),
+            ApprovalsSubcommand::List
+        );
+        assert_eq!(
+            parse_approvals_args(&["revoke", "com.example.Editor"]).unwrap(),
+            ApprovalsSubcommand::Revoke {
+                app_identity: "com.example.Editor".to_owned(),
+            }
+        );
+        assert_eq!(
+            parse_approvals_args(&["clear"]).unwrap(),
+            ApprovalsSubcommand::Clear
+        );
+        assert!(parse_approvals_args(&["revoke"]).is_err());
+        assert!(parse_approvals_args(&["list", "extra"]).is_err());
+        assert!(parse_approvals_args(&["unknown"]).is_err());
+        assert!(approvals_platform_error(true).is_none());
+        assert_eq!(
+            approvals_platform_error(false),
+            Some("cua-driver approvals is supported only on macOS.")
+        );
+    }
+
+    #[test]
+    fn generated_cli_docs_include_approval_management_commands() {
+        let docs = cli_docs_json();
+        let approvals = docs["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|command| command["name"] == "approvals")
+            .expect("approvals command in generated CLI docs");
+        let names = approvals["subcommands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|command| command["name"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["list", "revoke", "clear"]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn approvals_outputs_follow_real_store_behavior_without_ambient_home() {
+        use platform_macos::app_approval::{
+            AppApprovalTarget, ApprovalAction, ApprovalCheck, ApprovalGate,
+            ApprovalPersistence,
+        };
+
+        fn persist(gate: &ApprovalGate, session: &str, bundle_id: &str, name: &str) {
+            gate.register_broker(session, &format!("broker-{session}"));
+            let target = AppApprovalTarget::from_app(name, Some(bundle_id), None).unwrap();
+            let challenge = match gate.check(session, &target).unwrap() {
+                ApprovalCheck::Required(challenge) => challenge,
+                ApprovalCheck::Approved => panic!("approval unexpectedly existed"),
+            };
+            gate.resolve(
+                session,
+                &format!("broker-{session}"),
+                &challenge.id,
+                ApprovalAction::Accept,
+                ApprovalPersistence::Always,
+            )
+            .unwrap();
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let gate = ApprovalGate::new(
+            directory.path().join("private/app-approvals.json"),
+            true,
+        );
+        let empty = execute_approvals(&gate, &ApprovalsSubcommand::List).unwrap();
+        assert_eq!(empty.json["count"], 0);
+        assert!(empty.human.contains("No permanent"));
+
+        persist(&gate, "one", "com.example.Alpha", "Alpha");
+        persist(&gate, "two", "com.example.Beta", "Beta");
+        let listed = execute_approvals(&gate, &ApprovalsSubcommand::List).unwrap();
+        assert_eq!(listed.json["count"], 2);
+        assert_eq!(
+            listed.json["approvals"],
+            serde_json::json!([
+                "bundle:com.example.alpha",
+                "bundle:com.example.beta"
+            ])
+        );
+
+        let revoked = execute_approvals(
+            &gate,
+            &ApprovalsSubcommand::Revoke {
+                app_identity: "com.example.Alpha".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(revoked.json["removed"], true);
+        assert_eq!(gate.list_persistent().unwrap(), vec!["bundle:com.example.beta"]);
+
+        let cleared = execute_approvals(&gate, &ApprovalsSubcommand::Clear).unwrap();
+        assert_eq!(cleared.json["removed"], 1);
+        assert!(gate.list_persistent().unwrap().is_empty());
+    }
 
     #[test]
     fn sanitize_tool_name_passes_through_canonical_names() {
@@ -3547,7 +3834,7 @@ mod tests {
             .filter_map(|s| s.get("name").and_then(|v| v.as_str()))
             .collect();
         for need in ["mcp", "list-tools", "describe", "call", "serve",
-                     "stop", "status", "mcp-config", "manifest"] {
+                     "stop", "status", "mcp-config", "manifest", "approvals"] {
             assert!(names.contains(&need), "missing subcommand '{need}'");
         }
     }

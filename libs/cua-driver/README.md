@@ -59,6 +59,18 @@ default, while explicit `--cursor-shape` or `--cursor-icon` values still win.
 The native tool catalog is unchanged when the flag is absent.
 
 The driver blocks terminal-class apps, System Settings, authentication UI,
-and its embedding host. This mode does not decide which other apps a client
-may control. The embedding host must broker per-app approval, and must not
-expose the raw MCP or daemon connection to untrusted clients.
+and its embedding host. Before `get_app_state` can launch, inspect, or capture
+another app, the daemon requires an authenticated MCP session and asks the
+client for approval with `elicitation/create`. A plain accept lasts for the MCP
+session. Choosing permanent approval stores the app's stable bundle identity in
+a private local file. Raw and in-process calls cannot bypass this check.
+
+Manage permanent approvals without adding MCP tools:
+
+```bash
+cua-driver approvals list
+cua-driver approvals revoke com.example.Editor
+cua-driver approvals clear
+```
+
+Add `--json` to any approvals command for machine-readable output.

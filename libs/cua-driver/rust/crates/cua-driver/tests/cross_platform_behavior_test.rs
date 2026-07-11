@@ -821,8 +821,12 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         && spec.name == "tauri"
         && delivery_kind == Delivery::Background
     {
+        // WebKitGTK accepts AT-SPI text writes without emitting the renderer's
+        // user-input event, and its keyboard channel is focus-bound. The driver
+        // must refuse those background keyboard composites instead of reporting
+        // a successful write that the page never observes.
         match (action, targeting) {
-            ("type_text", Targeting::Px) | ("press_key" | "hotkey", _) => {
+            ("type_text", _) | ("editor_save", Targeting::Ax) | ("press_key" | "hotkey", _) => {
                 vec![RefusalCode::BackgroundUnavailable]
             }
             ("right_click" | "double_click" | "scroll", _) | ("drag", Targeting::Px)

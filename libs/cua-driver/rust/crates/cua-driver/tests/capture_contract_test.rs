@@ -384,7 +384,16 @@ fn background_screenshot_preserves_desktop() {
                     pid,
                     native_id: wid,
                 },
-                || driver.call("screenshot", serde_json::json!({ "window_id": wid })),
+                || {
+                    driver.call(
+                        "get_window_state",
+                        serde_json::json!({
+                            "pid": pid as i64,
+                            "window_id": wid,
+                            "capture_mode": "vision"
+                        }),
+                    )
+                },
             )
             .unwrap_or_else(|error| panic!("background screenshot disturbed the desktop: {error}"));
         assert!(

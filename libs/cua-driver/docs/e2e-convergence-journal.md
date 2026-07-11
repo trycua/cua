@@ -20,13 +20,23 @@ convergence work. It omits machine names, credentials, and partner names.
 | `bcc53fe7` | Expanded the shared catalog from a 19-cell diagonal to 32 cells per host | Route tests cover every declared Win32, Quartz, X11, and Wayland combination. |
 | `21f3f6e0` | Fixed workflow dispatch checkout semantics | Earlier branch dispatches had selected the branch workflow but checked out the default `inputs.ref=main`. Their behavioral results were discarded. |
 | `69c7c2c1` | Made each OS runner select only the typed shared catalog | Legacy tests remain in source until their assertions pass the deletion ledger, but they no longer define the canonical shared run. |
+| `6733efe9` to `b52d239f` | Removed duplicate Windows modality-input probes, normalized desktop-scope ownership, and corrected Electron's X11 show path | Local testkit checks stayed green. Linux run `29133849724` still rejected a blank root-desktop recording, so it produced no behavioral verdict. |
+| `c3454d1b` to `e54088f3` | Shared the Electron foreground sentinel and attached its Focus, ZOrder, Cursor, and NoLeakedInput contract to WPF background actions | Windows run `29134124533` passed all 18 WPF tests. Its lane failed later on an independent WebView2 CDP-readiness race. |
+| `48afc293` to `842f3c86` | Moved background capture, minimized launch, and agent-cursor behavior into their action-owned tests | The replacements assert application or pixel state plus the desktop observer instead of a focus-only guard. |
+| `c49dd59d` | Rejected Chromium UIA Invoke's false-positive and tested coordinate injection as a replacement route | Focused run `29134320325` proved the route still refused a fully occluded target. That route was not accepted as a fix. |
+| `521508aa` to `99897fed` | Added the reusable typed executor and typed WPF, launch, capture, and cursor records | Sixteen testkit tests and host compile checks passed. Fresh native and capture runs are validating the Windows-only bodies. |
+| `ad891b48` | Made CDP page discovery wait for the first usable target | The earlier native run's only failure was WebView2 exposing a listener before `/json` contained a page. The DOM-state assertion remains unchanged. |
+| `10a1a749` | Preserved the old guard's anti-overclaim check in canonical background text/key rows and aligned action-owned video labels | Fable's deletion audit identified protocol honesty as the only unique old-guard assertion. Chromium AX background click now probes a target-bound LegacyIAccessible action rather than a coordinate route. |
+| `5bca25be` | Mapped the normal Electron harness at construction | Linux's deferred BrowserWindow was enumerable and capturable but absent from the X11 root recording. A focused preflight run is validating this lifecycle correction. |
 
 ## Active Validation
 
 | Platform | Run | Purpose | State |
 | --- | --- | --- | --- |
-| Windows | `29132563928` | First branch-source Electron AX background click probe | Running |
-| Linux X11 | `29132563205` | First branch-source Electron AX background click probe | Running |
+| Windows | `29134898319` | Target-bound Chromium AX background click probe | Running |
+| Windows | `29134649191` | Typed WPF, launch, cursor, WinUI3, and WebView2 replacements | Running |
+| Windows | `29134649821` | Typed capture and desktop-scope replacements | Running |
+| Linux X11 | `29134942303` | Mapped Electron preflight and focused foreground cell | Running |
 | macOS | Local preflight | Verify installed source identity, TCC, fixture visibility, capture, and video | Blocked before cells: the installed app fell back to ad-hoc signing, so the existing Screen Recording grant no longer applies. |
 
 The macOS preflight failure is separate from driver behavior. It must be fixed

@@ -19,16 +19,15 @@ use anyhow::{bail, Result};
 use std::thread::sleep;
 use std::time::Duration;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE, WPARAM};
-use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
-use windows::Win32::UI::Input::KeyboardAndMouse::GetFocus;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC,
     VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, GetClassNameW, GetWindowThreadProcessId, IsChild, PostMessageW, WM_CHAR,
-    WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    EnumChildWindows, GetClassNameW, GetGUIThreadInfo, GetParent, GetWindowThreadProcessId,
+    IsChild, PostMessageW, GUITHREADINFO, WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
+    WM_SYSKEYUP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
@@ -138,9 +137,9 @@ const KEY_DELAY_MS: u64 = 4;
 /// Embedded renderers such as WebView2 may put their focused child on a
 /// different UI thread from the native top-level frame. Enumerating descendant
 /// thread ids is therefore required; checking only the frame thread queues the
-/// message successfully but leaves the renderer untouched. `AttachThreadInput`
-/// lets us inspect each thread's `GetFocus()` state, and is detached immediately
-/// before dispatch.
+/// message successfully but leaves the renderer untouched. More than one of
+/// those threads can retain a focused HWND, so choose the deepest focused
+/// descendant rather than whichever thread happens to enumerate first.
 fn focused_descendant(parent: HWND) -> Option<HWND> {
     if parent.0.is_null() {
         return None;
@@ -167,28 +166,40 @@ fn focused_descendant(parent: HWND) -> Option<HWND> {
             LPARAM(&mut target_threads as *mut Vec<u32> as isize),
         );
     }
-    let our_thread = unsafe { GetCurrentThreadId() };
-
+    let mut best: Option<(usize, HWND)> = None;
     for target_thread in target_threads {
-        let focused = if our_thread == target_thread {
-            unsafe { GetFocus() }
-        } else {
-            let attached = unsafe { AttachThreadInput(our_thread, target_thread, true) }.as_bool();
-            if !attached {
-                continue;
-            }
-            let focused = unsafe { GetFocus() };
-            let _ = unsafe { AttachThreadInput(our_thread, target_thread, false) };
-            focused
+        let mut info = GUITHREADINFO {
+            cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
         };
-        if !focused.0.is_null()
-            && focused != parent
-            && unsafe { IsChild(parent, focused) }.as_bool()
+        if unsafe { GetGUIThreadInfo(target_thread, &mut info) }.is_err() {
+            continue;
+        }
+        let focused = info.hwndFocus;
+        if focused.0.is_null()
+            || focused == parent
+            || !unsafe { IsChild(parent, focused) }.as_bool()
         {
-            return Some(focused);
+            continue;
+        }
+
+        let mut depth = 0usize;
+        let mut current = focused;
+        while current != parent && depth < 64 {
+            let Ok(next) = (unsafe { GetParent(current) }) else {
+                break;
+            };
+            if next.0.is_null() {
+                break;
+            }
+            depth += 1;
+            current = next;
+        }
+        if current == parent && best.as_ref().map_or(true, |(d, _)| depth > *d) {
+            best = Some((depth, focused));
         }
     }
-    None
+    best.map(|(_, focused)| focused)
 }
 
 /// Post a Unicode character as WM_CHAR.

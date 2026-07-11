@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Commit, branch, or tag to test"
-        required: true
-        default: "main"
+        description: "Optional commit, branch, or tag override"
+        required: false
+        default: ""
       suite:
         description: "Rust desktop suite"
         required: true
@@ -35,7 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.ref || github.ref }}
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
         run: |
@@ -69,7 +69,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.ref || github.ref }}
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
         run: |
@@ -105,7 +105,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.ref || github.ref }}
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
         run: |
@@ -139,7 +139,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.ref || github.ref }}
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
         run: |

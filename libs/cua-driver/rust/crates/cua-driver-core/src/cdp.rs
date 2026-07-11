@@ -36,19 +36,14 @@ async fn cdp_evaluate(
     expression: &str,
     await_promise: bool,
 ) -> anyhow::Result<Value> {
-    // Wrap the /json discovery in its own timeout — `cdp_list_pages` does an
-    // unbounded `read_to_end`, and a half-open localhost socket (browser
-    // mid-shutdown, firewall mismatch, port stolen by another process) would
-    // otherwise hang us forever. 10 s is generous for a localhost HTTP roundtrip.
+    // A listener can be reachable before Chromium publishes its first page
+    // target. Bound both that readiness interval and the HTTP roundtrip.
     let pages = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        cdp_list_pages(port),
+        cdp_wait_for_page(port),
     )
     .await
     .map_err(|_| anyhow::anyhow!("CDP /json discovery on port {port} timed out after 10 s"))??;
-    if pages.is_empty() {
-        anyhow::bail!("No CDP page tabs found on port {port}");
-    }
 
     let ws_url = pages[0]
         .get("webSocketDebuggerUrl")
@@ -101,6 +96,16 @@ fn format_cdp_result(response: &Value) -> String {
 }
 
 // ── HTTP page discovery ───────────────────────────────────────────────────
+
+async fn cdp_wait_for_page(port: u16) -> anyhow::Result<Vec<Value>> {
+    loop {
+        let pages = cdp_list_pages(port).await?;
+        if !pages.is_empty() {
+            return Ok(pages);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
 
 async fn cdp_list_pages(port: u16) -> anyhow::Result<Vec<Value>> {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};

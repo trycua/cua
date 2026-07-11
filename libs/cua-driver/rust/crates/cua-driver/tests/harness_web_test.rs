@@ -6,24 +6,9 @@
 //! Run via:
 //!   cargo test --test harness_web_test -- --ignored --nocapture
 //!
-//! ## Known cua-driver gaps these tests document
-//!
-//! - **CDP `/json` HTTP read uses `read_to_end`** — `mcp-server/src/cdp.rs`
-//!   sends `Connection: close` and then calls `stream.read_to_end()`, but
-//!   Chromium's CDP HTTP server ignores `Connection: close` and keeps the
-//!   socket alive, so `read_to_end` hangs until the 10 s discovery timeout.
-//!   Confirmed against Electron 31 on port 9223 (verified manually via
-//!   curl: instant 200, JSON body present). Fix: parse `Content-Length`
-//!   and `read_exact` that many bytes, or honour `Transfer-Encoding:
-//!   chunked`. The page-tool tests cover discovery and the DOM round-trip
-//!   together.
-//!
-//! - **WebView2 `--remote-debugging-port` ignored** — passing
-//!   `AdditionalBrowserArguments = "--remote-debugging-port=9222"` via
-//!   `CoreWebView2EnvironmentOptions` does not open a CDP listener on the
-//!   WebView2 helper processes. WebView2 may be filtering the flag.
-//!   Tracked here as a TODO for the harness rather than a cua-driver
-//!   issue (since this is a WebView2 configuration concern).
+//! The page-tool tests cover CDP discovery and a DOM round-trip together.
+//! WebView2 can expose its listener before its first page target is ready, so
+//! the driver must tolerate a briefly empty `/json` response.
 
 #![cfg(target_os = "windows")]
 

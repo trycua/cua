@@ -495,10 +495,11 @@ fn run_pointer_action(
     expected_marker: &str,
 ) -> Observation {
     let pre = snapshot(fixture);
+    let journal_before = fixture.journal.snapshot();
     let args = action_target_args(fixture, &pre, "border-click-target", addressing, delivery);
     let response = fixture.driver.call(tool, args);
     if let Some(code) = background_refusal_code(&response, delivery) {
-        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+        return refused_without_fixture_mutation(fixture, &journal_before, code, &response);
     }
     assert!(
         !response.is_error(),
@@ -512,6 +513,27 @@ fn run_pointer_action(
 
 fn delivered_observation() -> Observation {
     Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+}
+
+fn refused_without_fixture_mutation(
+    fixture: &Fixture,
+    before: &serde_json::Value,
+    code: RefusalCode,
+    response: &ToolResponse,
+) -> Observation {
+    thread::sleep(Duration::from_millis(150));
+    let after = fixture.journal.snapshot();
+    assert_eq!(
+        &after, before,
+        "{}: refused action mutated fixture state: before={before}, after={after}",
+        fixture.name
+    );
+    Observation::refused(
+        code,
+        vec![OracleKind::FixtureState],
+        response.text(),
+        Evidence::default(),
+    )
 }
 
 fn unverified_background_protocol_oracle(
@@ -547,6 +569,7 @@ fn background_refusal_code(response: &ToolResponse, delivery: &str) -> Option<Re
 
 fn run_text_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
     let pre = snapshot(fixture);
+    let journal_before = fixture.journal.snapshot();
     let text = format!("cua-{addressing}-{delivery}");
     let mut args = action_target_args(fixture, &pre, "txt-input", addressing, delivery);
     args.as_object_mut()
@@ -554,7 +577,7 @@ fn run_text_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> O
         .insert("text".to_owned(), serde_json::json!(text));
     let response = fixture.driver.call("type_text", args);
     if let Some(code) = background_refusal_code(&response, delivery) {
-        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+        return refused_without_fixture_mutation(fixture, &journal_before, code, &response);
     }
     assert!(
         !response.is_error(),
@@ -573,6 +596,7 @@ fn run_text_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> O
 
 fn run_press_key_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
     let pre = snapshot(fixture);
+    let journal_before = fixture.journal.snapshot();
     let mut press_args = action_target_args(fixture, &pre, "keyboard-input", addressing, delivery);
     press_args
         .as_object_mut()
@@ -580,7 +604,7 @@ fn run_press_key_action(fixture: &mut Fixture, addressing: &str, delivery: &str)
         .insert("key".to_owned(), serde_json::json!("return"));
     let response = fixture.driver.call("press_key", press_args);
     if let Some(code) = background_refusal_code(&response, delivery) {
-        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+        return refused_without_fixture_mutation(fixture, &journal_before, code, &response);
     }
     assert!(
         !response.is_error(),
@@ -597,6 +621,7 @@ fn run_press_key_action(fixture: &mut Fixture, addressing: &str, delivery: &str)
 
 fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
     let pre = snapshot(fixture);
+    let journal_before = fixture.journal.snapshot();
     let mut hotkey_args = action_target_args(fixture, &pre, "keyboard-input", addressing, delivery);
     hotkey_args
         .as_object_mut()
@@ -604,7 +629,7 @@ fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
         .insert("keys".to_owned(), serde_json::json!(["ctrl", "shift", "7"]));
     let response = fixture.driver.call("hotkey", hotkey_args);
     if let Some(code) = background_refusal_code(&response, delivery) {
-        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+        return refused_without_fixture_mutation(fixture, &journal_before, code, &response);
     }
     assert!(
         !response.is_error(),
@@ -619,6 +644,7 @@ fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
 
 fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
     let pre = snapshot(fixture);
+    let journal_before = fixture.journal.snapshot();
     let mut args = action_target_args(fixture, &pre, "scroll-tall", addressing, delivery);
     let object = args.as_object_mut().expect("scroll arguments object");
     object.insert("direction".to_owned(), serde_json::json!("down"));
@@ -626,7 +652,7 @@ fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
     object.insert("amount".to_owned(), serde_json::json!(2));
     let response = fixture.driver.call("scroll", args);
     if let Some(code) = background_refusal_code(&response, delivery) {
-        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+        return refused_without_fixture_mutation(fixture, &journal_before, code, &response);
     }
     assert!(
         !response.is_error(),
@@ -657,6 +683,7 @@ fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
 
 fn run_drag_action(fixture: &mut Fixture, delivery: &str) -> Observation {
     let pre = snapshot(fixture);
+    let journal_before = fixture.journal.snapshot();
     let source = require_element(&pre, "drag-source");
     let target = require_element(&pre, "drop-target");
     let origin = window_origin(fixture, &pre);
@@ -682,7 +709,7 @@ fn run_drag_action(fixture: &mut Fixture, delivery: &str) -> Observation {
         }),
     );
     if let Some(code) = background_refusal_code(&response, delivery) {
-        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+        return refused_without_fixture_mutation(fixture, &journal_before, code, &response);
     }
     assert!(
         !response.is_error(),
@@ -696,10 +723,11 @@ fn run_drag_action(fixture: &mut Fixture, delivery: &str) -> Observation {
 
 fn run_child_window_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
     let pre = snapshot(fixture);
+    let journal_before = fixture.journal.snapshot();
     let args = action_target_args(fixture, &pre, "btn-open-child-window", addressing, delivery);
     let response = fixture.driver.call("click", args);
     if let Some(code) = background_refusal_code(&response, delivery) {
-        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+        return refused_without_fixture_mutation(fixture, &journal_before, code, &response);
     }
     assert!(
         !response.is_error(),
@@ -713,6 +741,7 @@ fn run_child_window_action(fixture: &mut Fixture, addressing: &str, delivery: &s
 
 fn run_editor_save_action(fixture: &mut Fixture, delivery: &str) -> Observation {
     let pre = snapshot(fixture);
+    let journal_before = fixture.journal.snapshot();
     let text = format!("cua-editor-{delivery}");
     let mut text_args = action_target_args(fixture, &pre, "editor-document", "ax", delivery);
     text_args
@@ -721,7 +750,7 @@ fn run_editor_save_action(fixture: &mut Fixture, delivery: &str) -> Observation 
         .insert("text".to_owned(), serde_json::json!(text));
     let response = fixture.driver.call("type_text", text_args);
     if let Some(code) = background_refusal_code(&response, delivery) {
-        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+        return refused_without_fixture_mutation(fixture, &journal_before, code, &response);
     }
     assert!(
         !response.is_error(),
@@ -731,10 +760,11 @@ fn run_editor_save_action(fixture: &mut Fixture, delivery: &str) -> Observation 
     );
 
     let post_text = snapshot(fixture);
+    let journal_before_save = fixture.journal.snapshot();
     let save_args = action_target_args(fixture, &post_text, "editor-save", "ax", delivery);
     let response = fixture.driver.call("click", save_args);
     if let Some(code) = background_refusal_code(&response, delivery) {
-        return Observation::refused(code, Vec::new(), response.text(), Evidence::default());
+        return refused_without_fixture_mutation(fixture, &journal_before_save, code, &response);
     }
     assert!(
         !response.is_error(),
@@ -744,6 +774,16 @@ fn run_editor_save_action(fixture: &mut Fixture, delivery: &str) -> Observation 
     );
     assert_fixture_contains(fixture, "editor_status=saved:");
     delivered_observation()
+}
+
+#[cfg(target_os = "linux")]
+fn linux_real_pointer_input_available() -> bool {
+    platform_linux::input::real_pointer_input_available()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn linux_real_pointer_input_available() -> bool {
+    false
 }
 
 fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) -> CaseSpec {
@@ -787,12 +827,27 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         // occluded, unfocused toplevel. The product contract is an exact typed
         // refusal instead of a successful response followed by silent loss.
         vec![RefusalCode::BackgroundUnavailable]
+    } else if cfg!(target_os = "linux")
+        && spec.name == "tauri"
+        && delivery_kind == Delivery::Background
+    {
+        match (action, targeting) {
+            ("type_text", Targeting::Px) | ("press_key" | "hotkey", _) => {
+                vec![RefusalCode::BackgroundUnavailable]
+            }
+            ("right_click" | "double_click" | "scroll", _) | ("drag", Targeting::Px)
+                if !linux_real_pointer_input_available() =>
+            {
+                vec![RefusalCode::BackgroundUnavailable]
+            }
+            _ => Vec::new(),
+        }
     } else {
         Vec::new()
     };
     let expected_background_refusal = !expected_refusals.is_empty();
     let mut oracles = if expected_background_refusal {
-        Vec::new()
+        vec![OracleKind::FixtureState]
     } else {
         vec![OracleKind::FixtureState]
     };

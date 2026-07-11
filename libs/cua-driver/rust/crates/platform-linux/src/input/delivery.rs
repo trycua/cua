@@ -101,6 +101,9 @@ pub enum BackgroundUnavailable {
     ChromiumInput,
     /// The remaining backend can only inject into the globally focused widget.
     FocusedInputOnly,
+    /// WebKitGTK rejects synthetic XSendEvent input and no real target-addressed
+    /// pointer backend is available in this session.
+    WebKitSyntheticInput,
 }
 
 impl BackgroundUnavailable {
@@ -109,6 +112,7 @@ impl BackgroundUnavailable {
             Self::NoLibeiBackend => "background_unavailable",
             Self::ChromiumInput => "background_unavailable",
             Self::FocusedInputOnly => "background_unavailable",
+            Self::WebKitSyntheticInput => "background_unavailable",
         }
     }
     fn detail(self) -> &'static str {
@@ -125,6 +129,9 @@ impl BackgroundUnavailable {
             }
             Self::FocusedInputOnly => {
                 "the requested target has no focus-free input backend; the remaining XTest/X11 route can only deliver to the globally focused widget"
+            }
+            Self::WebKitSyntheticInput => {
+                "WebKitGTK rejects synthetic XSendEvent input and this session has no real target-addressed pointer backend"
             }
         }
     }

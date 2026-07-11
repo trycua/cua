@@ -1150,6 +1150,76 @@ fn is_chromium_embedder(pid: u32) -> bool {
     false
 }
 
+fn is_webkitgtk_embedder(pid: u32) -> bool {
+    fn argv_is_webkit_helper(pid: u32) -> bool {
+        fs::read(format!("/proc/{pid}/cmdline"))
+            .map(|raw| {
+                let cmdline = String::from_utf8_lossy(&raw);
+                cmdline.contains("WebKitWebProcess") || cmdline.contains("WebKitNetworkProcess")
+            })
+            .unwrap_or(false)
+    }
+
+    let mut children: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let Ok(child) = entry.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let Ok(status) = fs::read_to_string(format!("/proc/{child}/status")) else {
+            continue;
+        };
+        if let Some(ppid) = status
+            .lines()
+            .find(|line| line.starts_with("PPid:"))
+            .and_then(|line| line[5..].trim().parse::<u32>().ok())
+        {
+            children.entry(ppid).or_default().push(child);
+        }
+    }
+    let mut queue = std::collections::VecDeque::from([pid]);
+    let mut seen = std::collections::HashSet::new();
+    while let Some(current) = queue.pop_front() {
+        if !seen.insert(current) {
+            continue;
+        }
+        if argv_is_webkit_helper(current) {
+            return true;
+        }
+        if let Some(descendants) = children.get(&current) {
+            queue.extend(descendants.iter().copied());
+        }
+    }
+    false
+}
+
+fn unavailable_webkit_background(
+    pid: u32,
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<ToolResult> {
+    (!delivery.is_foreground()
+        && is_webkitgtk_embedder(pid)
+        && !crate::input::real_pointer_input_available())
+    .then(|| {
+        crate::input::delivery::background_unavailable_error(
+            crate::input::delivery::BackgroundUnavailable::WebKitSyntheticInput,
+        )
+    })
+}
+
+fn unavailable_webkit_keyboard_background(
+    pid: u32,
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<ToolResult> {
+    (!delivery.is_foreground() && is_webkitgtk_embedder(pid)).then(|| {
+        crate::input::delivery::background_unavailable_error(
+            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+        )
+    })
+}
+
 /// Chromium's X11 renderer drops synthetic input sent to an occluded,
 /// unfocused toplevel. Returning success here would be a silent loss, so all
 /// input tools expose the same typed refusal and leave foreground activation
@@ -2004,6 +2074,9 @@ impl Tool for TypeTextTool {
                     "Pass either element_index (ax) or x,y (px) to type_text, not both.",
                 );
             }
+            if let Some(refusal) = unavailable_webkit_keyboard_background(pid, delivery) {
+                return refusal;
+            }
             let from_zoom = args.bool_or("from_zoom", false);
             if let Err(e) = focus_by_pixel(
                 &self.state,
@@ -2110,11 +2183,7 @@ impl Tool for TypeTextTool {
                 Ok(Ok(path)) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (terminal emulator: pty/XTest key events)."
                 ))
-                .with_structured(type_text_structured(
-                    path,
-                    text_len,
-                    false,
-                )),
+                .with_structured(type_text_structured(path, text_len, false)),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -2456,6 +2525,10 @@ impl Tool for PressKeyTool {
             return refusal;
         }
 
+        if let Some(refusal) = unavailable_webkit_keyboard_background(pid, delivery) {
+            return refusal;
+        }
+
         // An element-addressed keypress needs to establish the target's
         // focus before the window-level X11 key event is sent. AT-SPI's
         // primary action is the focus-free route for editable web controls;
@@ -2538,9 +2611,10 @@ impl Tool for PressKeyTool {
         }
 
         let key_for_task = key.clone();
-        // px-focus already clicked (and fronted, when fg) the target → deliver via
-        // the plain background path. Otherwise honor the requested delivery_mode.
-        let deliver_fg = delivery.is_foreground() && px_target.is_none();
+        // Foreground delivery is one atomic activate-and-XTest transaction.
+        // A preceding PX click establishes internal widget focus, but that
+        // click restores the prior top-level before returning.
+        let deliver_fg = delivery.is_foreground();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if mods.is_empty() && key_for_task.eq_ignore_ascii_case("enter") {
                 if inject_terminal_input(pid, xid, "\n")? {
@@ -2618,6 +2692,8 @@ impl Tool for HotkeyTool {
                     "window_id":{"type":"integer"},
                     "keys":{"type":"array","items":{"type":"string"},"minItems":2,
                         "description":"Modifier(s) + one non-modifier key, e.g. [\"ctrl\",\"c\"]."},
+                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                    "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "x":{"type":"number","description":"Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the combo (so e.g. Ctrl+V pastes into that field). Pass with y. Use for Chromium/Electron surfaces the background combo can't reach."},
                     "y":{"type":"number","description":"Screenshot-pixel Y (see x)."},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
@@ -2630,7 +2706,24 @@ impl Tool for HotkeyTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let pid = args.u64_or("pid", 0) as u32;
-        let xid_opt = args.opt_u64("window_id");
+        let window_id_arg = args.opt_u64("window_id");
+        let element_index_arg = args.opt_u64("element_index").map(|value| value as usize);
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            element_index_arg,
+            args.opt_str("element_token").as_deref(),
+            window_id_arg.map(|value| value as u32),
+            "hotkey",
+        ) {
+            Ok(resolved) => resolved,
+            Err(error) => return error,
+        };
+        let xid_opt = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
+                window_id.map(|value| value as u64).or(window_id_arg)
+            }
+            cua_driver_core::element_token::ResolvedElement::None => window_id_arg,
+        };
 
         // Resolve XID: use window_id if given, else first window for pid.
         let xid = match xid_opt {
@@ -2680,6 +2773,26 @@ impl Tool for HotkeyTool {
         if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
             return refusal;
         }
+        if let Some(refusal) = unavailable_webkit_keyboard_background(pid, delivery) {
+            return refusal;
+        }
+
+        if let Some(element_index) = element_index_arg {
+            let focused = tokio::task::spawn_blocking(move || {
+                crate::atspi::focus_element(pid, element_index)
+            })
+            .await;
+            match focused {
+                Ok(Ok(true)) => {}
+                Ok(Ok(false)) => {
+                    return ToolResult::error(format!(
+                        "AT-SPI Component.GrabFocus returned false for element {element_index}"
+                    ))
+                }
+                Ok(Err(error)) => return ToolResult::error(error.to_string()),
+                Err(error) => return ToolResult::error(format!("Task error: {error}")),
+            }
+        }
 
         // ── px form: pixel-click to focus, then the combo acts on the focused field ──
         // (e.g. Ctrl+V into a Chromium input). Reuses click's translation +
@@ -2689,6 +2802,11 @@ impl Tool for HotkeyTool {
             let px = args.get("x").and_then(|v| v.as_f64());
             let py = args.get("y").and_then(|v| v.as_f64());
             if let (Some(cx), Some(cy)) = (px, py) {
+                if element_index_arg.is_some() {
+                    return ToolResult::error(
+                        "Pass either element_index (ax) or x,y (px) to hotkey, not both.",
+                    );
+                }
                 let from_zoom = args.bool_or("from_zoom", false);
                 if let Err(e) = focus_by_pixel(
                     &self.state,
@@ -2709,7 +2827,7 @@ impl Tool for HotkeyTool {
                 None
             }
         };
-        let deliver_fg = delivery.is_foreground() && px_target.is_none();
+        let deliver_fg = delivery.is_foreground();
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::is_wayland() {
@@ -2862,6 +2980,8 @@ impl Tool for ScrollTool {
                     "window_id":{"type":"integer"},
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "x":{"type":"number","description":"Window-local screenshot-pixel X of the scroll target. Pass with y and without element_index."},
+                    "y":{"type":"number","description":"Window-local screenshot-pixel Y of the scroll target. Pass with x and without element_index."},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -2925,34 +3045,79 @@ impl Tool for ScrollTool {
         if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
             return refusal;
         }
-        if !delivery.is_foreground() {
-            if let cua_driver_core::element_token::ResolvedElement::Element {
-                element_index, ..
-            } = &resolved
-            {
-                let idx = *element_index;
-                let direction_for_ax = direction.clone();
-                let ax_result = tokio::task::spawn_blocking(move || {
-                    crate::atspi::scroll_element(pid, idx, &direction_for_ax, amount)
-                })
-                .await;
-                if matches!(ax_result, Ok(Ok(()))) {
-                    return ToolResult::text(format!(
-                        "Scrolled {direction} {amount} ticks via AT-SPI (delivery_mode:background)."
-                    ))
-                    .with_structured(json!({
-                        "path": "atspi",
-                        "verified": false,
-                        "delivery_mode": "background"
-                    }));
-                }
+        if let cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } =
+            &resolved
+        {
+            let idx = *element_index;
+            let direction_for_ax = direction.clone();
+            let ax_result = tokio::task::spawn_blocking(move || {
+                crate::atspi::scroll_element(pid, idx, &direction_for_ax, amount)
+            })
+            .await;
+            if matches!(ax_result, Ok(Ok(()))) {
+                let mode = if delivery.is_foreground() {
+                    "foreground"
+                } else {
+                    "background"
+                };
+                return ToolResult::text(format!(
+                    "Scrolled {direction} {amount} ticks via AT-SPI (delivery_mode:{mode})."
+                ))
+                .with_structured(json!({
+                    "path": "atspi",
+                    "verified": false,
+                    "delivery_mode": mode
+                }));
             }
+        }
+
+        if crate::wayland::is_wayland() {
+            if !delivery.is_foreground() {
+                return crate::input::delivery::background_unavailable_error(
+                    crate::input::delivery::BackgroundUnavailable::NoLibeiBackend,
+                );
+            }
+            let direction_for_wayland = direction.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                crate::wayland::scroll(xid, &direction_for_wayland, amount as u32)
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Scrolled {direction} {amount} ticks (delivery_mode=foreground)."
+                ))
+                .with_structured(json!({ "verified": false, "delivery_mode": "foreground" })),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
+        }
+
+        if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
+            return refusal;
         }
 
         // An element-addressed scroll must land over the element. The old
         // fallback used (0, 0) in the window, which can report success while
         // Chromium/GTK routes the wheel to the toplevel instead of the
         // requested scroll region.
+        let pixel_target = match (
+            args.get("x").and_then(|value| value.as_f64()),
+            args.get("y").and_then(|value| value.as_f64()),
+        ) {
+            (Some(x), Some(y)) => Some((x, y)),
+            (None, None) => None,
+            _ => return ToolResult::error("Pass both x and y to pixel-target scroll."),
+        };
+        if pixel_target.is_some()
+            && matches!(
+                &resolved,
+                cua_driver_core::element_token::ResolvedElement::Element { .. }
+            )
+        {
+            return ToolResult::error(
+                "Pass either element_index (ax) or x,y (px) to scroll, not both.",
+            );
+        }
         let element_point = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 let idx = *element_index;
@@ -2977,7 +3142,10 @@ impl Tool for ScrollTool {
                     }
                 }
             }
-            cua_driver_core::element_token::ResolvedElement::None => None,
+            cua_driver_core::element_token::ResolvedElement::None => pixel_target.map(|local| {
+                let screen = window_local_to_screen(xid, local.0, local.1).ok();
+                (local, screen)
+            }),
         };
 
         // X11 scroll buttons: 4=up, 5=down, 6=left, 7=right
@@ -2988,13 +3156,8 @@ impl Tool for ScrollTool {
             "right" => 7,
             _ => 5,
         };
-        let direction_for_wayland = direction.clone();
-        let amount_u32 = amount as u32;
         let cursor_id_for_task = cursor_id.clone();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            if crate::wayland::is_wayland() {
-                return crate::wayland::scroll(xid, &direction_for_wayland, amount_u32);
-            }
             // foreground: activate the window, then scroll, then restore — for
             // surfaces that only route wheel events to the active window.
             let x11_scroll = || -> anyhow::Result<()> {
@@ -3036,7 +3199,18 @@ impl Tool for ScrollTool {
                 crate::input::send_click(xid, local_x as i32, local_y as i32, amount, button)
             };
             if delivery.is_foreground() {
-                crate::input::with_x11_foreground(xid, 80, x11_scroll)
+                let point = element_point
+                    .and_then(|(_, screen)| screen)
+                    .or_else(|| window_screen_center(xid).ok())
+                    .ok_or_else(|| anyhow::anyhow!("could not resolve foreground scroll point"))?;
+                crate::input::with_x11_foreground(xid, 80, || {
+                    crate::input::send_click_xtest_desktop(
+                        point.0 as i32,
+                        point.1 as i32,
+                        button,
+                        amount,
+                    )
+                })
             } else {
                 x11_scroll()
             }
@@ -3102,6 +3276,9 @@ impl Tool for DoubleClickTool {
         };
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+            return refusal;
+        }
+        if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
             return refusal;
         }
         // Surface 6: element_token / element_index precedence.
@@ -3311,6 +3488,9 @@ impl Tool for RightClickTool {
         };
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+            return refusal;
+        }
+        if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
             return refusal;
         }
         // Surface 6: element_token / element_index precedence.
@@ -3526,6 +3706,9 @@ impl Tool for DragTool {
         };
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+            return refusal;
+        }
+        if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
             return refusal;
         }
 

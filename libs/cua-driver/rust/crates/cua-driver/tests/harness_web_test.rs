@@ -15,8 +15,8 @@
 //!   Confirmed against Electron 31 on port 9223 (verified manually via
 //!   curl: instant 200, JSON body present). Fix: parse `Content-Length`
 //!   and `read_exact` that many bytes, or honour `Transfer-Encoding:
-//!   chunked`. Tracked in this test as a structural assertion (window
-//!   discoverable) rather than a behavioural one (page tool round-trip).
+//!   chunked`. The page-tool tests cover discovery and the DOM round-trip
+//!   together.
 //!
 //! - **WebView2 `--remote-debugging-port` ignored** — passing
 //!   `AdditionalBrowserArguments = "--remote-debugging-port=9222"` via
@@ -107,16 +107,7 @@ where
     f(pid, wid, &mut driver);
 }
 
-// ── WebView2 structural + page tool ─────────────────────────────────────────
-
-#[test]
-#[ignore]
-fn harness_webview_window_discoverable() {
-    run_with_session("webview", webview_exe(), "CuaTestHarness WebView", 9222,
-        |pid, wid, _driver| {
-        println!("✅ harness_webview_window_discoverable: pid={pid} wid={wid}");
-    });
-}
+// ── WebView2 page tool ──────────────────────────────────────────────────────
 
 #[test]
 #[ignore]
@@ -152,16 +143,7 @@ fn harness_webview_page_tool() {
     });
 }
 
-// ── Electron structural + page tool ──────────────────────────────────────────
-
-#[test]
-#[ignore]
-fn harness_electron_window_discoverable() {
-    run_with_session("electron", electron_exe(), "CuaTestHarness Electron", 9223,
-        |pid, wid, _driver| {
-        println!("✅ harness_electron_window_discoverable: pid={pid} wid={wid}");
-    });
-}
+// ── Electron page tool ───────────────────────────────────────────────────────
 
 #[test]
 #[ignore]

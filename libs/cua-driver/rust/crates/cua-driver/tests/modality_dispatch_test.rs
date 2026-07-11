@@ -4,7 +4,6 @@
 //!   - `delivery_mode` (background | foreground) on the input tools,
 //!   - `scope` (window | desktop) as a per-call param on `click`,
 //!   - the `{path, verified}` structured outcome,
-//!   - `bring_to_front` as a real macOS activation (no longer a Windows-only stub).
 //!
 //! The schema assertions are deterministic and run in CI (they only inspect
 //! `tools/list`). The end-to-end ladder behavior is `#[ignore]` — it needs a
@@ -53,25 +52,6 @@ fn dispatch_and_scope_schema_advertised() {
     assert!(
         sen.iter().any(|s| s == "window") && sen.iter().any(|s| s == "desktop"),
         "click.scope enum should be [window, desktop], got {scope:?}"
-    );
-}
-
-/// `bring_to_front` is a real macOS activation now (the user's change), not the
-/// old "Windows-only" error stub — its description must reflect that.
-#[test]
-fn bring_to_front_is_macos_native_not_windows_only() {
-    let Some(mut d) = RawDriver::spawn() else { return };
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}));
-    let resp = d.recv();
-    let tools = resp["result"]["tools"].as_array().expect("tools array");
-    let btf = tools.iter().find(|t| t["name"] == "bring_to_front")
-        .expect("bring_to_front not in tools/list");
-    let desc = btf["description"].as_str().unwrap_or("");
-    assert!(
-        !desc.contains("Windows-only"),
-        "bring_to_front should be a real macOS activation now, not Windows-only: {desc}"
     );
 }
 

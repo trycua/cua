@@ -34,6 +34,19 @@ case "$SUITE" in
   *) echo "unsupported internal lane: $SUITE" >&2; exit 2 ;;
 esac
 
+if ! git -C "${REPO_ROOT}" diff --quiet || ! git -C "${REPO_ROOT}" diff --cached --quiet; then
+  echo "macOS canonical E2E requires a clean tracked working tree" >&2
+  exit 2
+fi
+if [[ -z "${CUA_E2E_SOURCE_SHA:-}" ]]; then
+  CUA_E2E_SOURCE_SHA="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+fi
+if [[ ! "${CUA_E2E_SOURCE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  echo "CUA_E2E_SOURCE_SHA must be a full 40-character commit SHA" >&2
+  exit 2
+fi
+export CUA_E2E_SOURCE_SHA
+
 ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos"
 RECORDING_ROOT="${ARTIFACT_DIR}/recordings"
 if [[ -e "${RECORDING_ROOT}" ]]; then

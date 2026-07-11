@@ -1380,7 +1380,7 @@ mod tests {
     #[test]
     fn seed_moves_sentinel_cursor_on_screen_for_first_action() {
         let mut map = empty_map(); // 100x100 frame at origin
-                                   // No "sessA" cursor exists yet — the seed must get-or-create it.
+        // No "sessA" cursor exists yet. The seed must get or create it.
         let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
         assert!(seeded, "sentinel cursor must be seeded");
         let pos = map.cursors["sessA"].core.pos;

@@ -58,6 +58,12 @@ extern "C" {
         element: AXUIElementRef,
         names: *mut CFArrayRef,
     ) -> AXError;
+    pub fn AXUIElementCopyElementAtPosition(
+        application: AXUIElementRef,
+        x: f32,
+        y: f32,
+        element: *mut AXUIElementRef,
+    ) -> AXError;
     pub fn AXUIElementPerformAction(
         element: AXUIElementRef,
         action: CFStringRef,
@@ -78,6 +84,19 @@ extern "C" {
     /// Private SPI: maps an AX window element to its CGWindowID.
     /// Stable since macOS 10.9; used by yabai, Hammerspoon, Accessibility Inspector.
     pub fn _AXUIElementGetWindow(element: AXUIElementRef, window_id: *mut u32) -> AXError;
+}
+
+/// Hit-test one process's accessibility tree at a screen point. The returned
+/// element is retained and must be released by the caller.
+pub unsafe fn element_at_screen_position(pid: i32, x: f64, y: f64) -> Option<AXUIElementRef> {
+    let application = AXUIElementCreateApplication(pid);
+    if application.is_null() {
+        return None;
+    }
+    let mut element = std::ptr::null_mut();
+    let error = AXUIElementCopyElementAtPosition(application, x as f32, y as f32, &mut element);
+    CFRelease(application as CFTypeRef);
+    (error == kAXErrorSuccess && !element.is_null()).then_some(element)
 }
 
 // ── AXValue functions ────────────────────────────────────────────────────────

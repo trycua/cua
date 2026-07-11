@@ -95,11 +95,9 @@ environment or backend gaps separately.
 
 ### Validation and known gaps
 
-- The macOS preflight is implemented, but this host currently reports an
-  ad-hoc-signed daemon without reusable Accessibility or Screen Recording
-  grants. The installer preserves the live app on signing failure and cleans
-  interrupted signing state, but the stable private key still needs one
-  Keychain authorization.
+- The stable installed macOS app identity retains Accessibility and Screen
+  Recording grants across `install-local`. The complete local matrix passes
+  strict daemon identity, fixture, AX, capture, and video preflight.
 - AppKit scroll remains an optional failing gap outside the canonical run.
 - Linux X11 is complete: exact run `29148643166` passed all 80 typed rows, with
   48 delivered actions and 32 exact refusals. The Nix source gate passed in
@@ -285,7 +283,7 @@ Canonical invocations set strict mode. Missing required capabilities produce
 | `harness_winui3_test.rs` | WinUI3-specific rows; keep only toolkit-distinct behavior |
 | `harness_web_test.rs` | WebView2 and Page/CDP behavior; do not mix Page targeting with AX/PX labels |
 | `harness_appkit_test.rs` | AppKit rows; scroll is an honest failing optional test outside the canonical run |
-| `harness_swiftui_test.rs` | SwiftUI controls and popover behavior |
+| `harness_swiftui_test.rs` | SwiftUI AX tree/capture; keep the unverified popover action in an explicit optional test |
 | `harness_gtk3_test.rs` | Minimal GTK3/AT-SPI rows for X11 and Wayland |
 | Legacy Windows UX guard target | Deleted after typed launch, cursor, shared, capture, and desktop-scope owners passed the replacement audit |
 | `modality_input_e2e_test.rs` | Deleted; shared cells own web actions and the Notepad row had no delivery oracle |
@@ -407,7 +405,7 @@ or an unexplained sleep.
 
 ### Slice 6: CI validation and deletion
 
-- Run the complete macOS matrix locally after install-local and TCC preflight.
+- Keep the complete macOS matrix green after `install-local` and TCC preflight.
 - Keep the accepted GitHub-hosted Windows matrix as the canonical result; use
   an optional RDP runner only for environment-parity investigations.
 - Keep the accepted Linux X11 and Nix source runs as the supported Linux gates.
@@ -445,6 +443,6 @@ A test or fixture path may be deleted only when:
 - No orphaned target is counted as coverage.
 - Shared and native harnesses emit the same result/evidence shape.
 - Unit/protocol tests stay desktop-independent and video-free.
-- Windows and supported Linux X11 complete runs produce classified outcomes and
-  per-cell evidence links. Experimental Wayland and macOS permission failures
-  stop or fail explicitly without producing a false behavioral pass.
+- Windows, macOS, and supported Linux X11 complete runs produce classified
+  outcomes and per-cell evidence links. Experimental Wayland and environment
+  failures stop or fail explicitly without producing a false behavioral pass.

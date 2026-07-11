@@ -52,7 +52,7 @@ let kMenuItemTitle = "Harness Test Item"
 
 final class HarnessWindowController: NSObject, NSTextFieldDelegate {
     let window: NSWindow
-    let counterLabel = NSTextField(labelWithString: "0")
+    let counterLabel = NSTextField(labelWithString: "counter=0")
     var counterValue = 0
     let textInput = NSTextField(string: "")
     let textInputMirror = NSTextField(labelWithString: "")
@@ -296,12 +296,12 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
 
     @objc private func onIncrement() {
         counterValue += 1
-        counterLabel.stringValue = String(counterValue)
+        counterLabel.stringValue = "counter=\(counterValue)"
     }
 
     @objc private func onReset() {
         counterValue = 0
-        counterLabel.stringValue = "0"
+        counterLabel.stringValue = "counter=0"
     }
 
     @objc private func onExit() {

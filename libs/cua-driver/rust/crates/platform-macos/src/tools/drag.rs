@@ -118,6 +118,15 @@ impl Tool for DragTool {
         // that drop background CGEvents), via the same skylight assist click
         // uses. Requires a window_id to have a window to front.
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
+        if !delivery_mode.is_foreground()
+            && (crate::browser::ElectronJs::is_electron(pid)
+                || crate::browser::is_wk_web_view_app(pid))
+        {
+            return ToolResult::error(
+                "Background drag is unavailable for web-content windows on macOS.".to_owned(),
+            )
+            .with_structured(serde_json::json!({ "code": "background_unavailable" }));
+        }
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
 
         // Coerce integer or float from JSON for coordinate fields.

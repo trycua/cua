@@ -204,6 +204,9 @@ trees, trajectories, and logs are the useful evidence.
 
 ## AX, PX, and Delivery
 
+See [`action-support.md`](action-support.md) for the current Windows and macOS
+delivery, refusal, and unproven-action ledger.
+
 These terms describe different dimensions:
 
 | Term | Meaning |
@@ -320,11 +323,12 @@ hierarchy:
 
 1. **Complete macOS web coverage.** Add a dedicated Rust WKWebView E2E target
    if WKWebView remains a supported harness.
-2. **Preserve Windows validation.** Exact run `29149710089` passed all 110
-   hosted rows. Future acceptance runs must keep one full source SHA across
-   every lane and retain the typed evidence contract.
-3. **Finish macOS validation.** Re-authorize Accessibility and Screen Recording
-   for the stable signed app identity, then run the complete local matrix.
+2. **Broaden native action rows.** The shared web matrix covers every declared
+   AX/PX and foreground/background cell. AppKit, SwiftUI, WPF, WinUI3, and
+   WebView2 still have unproven native combinations listed in
+   [`action-support.md`](action-support.md).
+3. **Preserve exact-source validation.** Accepted Windows and macOS runs must
+   record one immutable source SHA and retain the typed evidence contract.
 4. **Close pure-Wayland gaps.** Supported X11 and the Nix source gate pass.
    Exact run `29150698432` executed all 80 Sway rows with no skips: 6 delivered
    and 74 remained visible failures. Issue `#1922` tracks the grouped backend

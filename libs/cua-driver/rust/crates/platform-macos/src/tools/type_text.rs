@@ -476,6 +476,13 @@ fn cgevent_type_verified(
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
     if clear_first {
+        if settle_ms > 0 {
+            // Some renderer focus proxies discard the first printable event
+            // after activation even after their AX focus is visible. Prime
+            // that channel with disposable text, then clear it before the
+            // requested payload. Never do this for a nonempty field.
+            let _ = crate::input::keyboard::type_text_with_delay(pid, " ", delay_ms);
+        }
         let _ = crate::input::keyboard::press_key(pid, "a", &["cmd"]);
         let _ = crate::input::keyboard::press_key(pid, "delete", &[]);
     }

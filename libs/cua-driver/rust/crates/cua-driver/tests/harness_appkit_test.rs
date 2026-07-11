@@ -129,8 +129,17 @@ fn run_background_case(
     route: DriverRoute,
     test: impl FnOnce(u32, u64, &mut McpDriver),
 ) {
+    run_background_case_targeting(action, Targeting::Ax, route, test);
+}
+
+fn run_background_case_targeting(
+    action: &str,
+    targeting: Targeting,
+    route: DriverRoute,
+    test: impl FnOnce(u32, u64, &mut McpDriver),
+) {
     run_case(
-        native_background_case("appkit", action, Targeting::Ax, route),
+        native_background_case("appkit", action, targeting, route),
         |pid, wid, driver| {
             let (_, passed) = run_with_background_oracles(
                 driver,
@@ -198,6 +207,7 @@ fn harness_appkit_smoke() {
             );
             // The two label-mode NSTextFields under click_target render as
             // AXStaticText nodes — assert on their starting text instead of ids.
+            assert!(text.contains("counter=0"), "counter label missing");
             assert!(text.contains("clicks=0"), "click_count label missing");
             assert!(
                 text.contains("last_action=none"),
@@ -256,52 +266,41 @@ fn harness_appkit_text_input() {
 /// dispatch chain reaches a backgrounded Cocoa text input.
 #[test]
 #[ignore]
-fn harness_appkit_type_text_keystroke() {
-    run_background_case("type_text", DriverRoute::Composite, |pid, wid, driver| {
-        let snap_pre = snapshot_elements(driver, pid, wid);
-        assert!(
-            !looks_empty(snap_pre.tree_text()),
-            "required AppKit AX tree is empty"
-        );
-        let idx = element_index_by_id(snap_pre.tree_text(), "txt-input")
-            .expect("txt-input element_index not found");
+fn harness_appkit_type_text_background() {
+    run_background_case(
+        "type_text",
+        DriverRoute::MacosAxValue,
+        |pid, wid, driver| {
+            let snap_pre = snapshot_elements(driver, pid, wid);
+            assert!(
+                !looks_empty(snap_pre.tree_text()),
+                "required AppKit AX tree is empty"
+            );
+            let idx = element_index_by_id(snap_pre.tree_text(), "txt-input")
+                .expect("txt-input element_index not found");
 
-        // Focus the field first so the keystrokes land in it. AX press on
-        // a text field has the side effect of giving it keyboard focus.
-        let focus = driver.call(
-            "click",
-            serde_json::json!({
-                "pid": pid as i64, "window_id": wid, "element_index": idx,
-                "action": "press", "delivery_mode": "background"
-            }),
-        );
-        assert!(
-            !focus.is_error(),
-            "AppKit AX field press failed: {}",
-            focus.text()
-        );
-        std::thread::sleep(Duration::from_millis(150));
+            // Address the field through type_text itself. AXTextField does not
+            // advertise AXPress, so a preparatory click would test an invalid
+            // action and fail before the keyboard/value delivery path runs.
+            let resp = driver.call(
+                "type_text",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "text": "kbd-cua", "delivery_mode": "background"
+                }),
+            );
+            assert!(!resp.is_error(), "AppKit type_text failed: {}", resp.text());
+            println!("type_text resp: {}", resp.text());
+            std::thread::sleep(Duration::from_millis(250));
 
-        // CGEvent-based type_text against the focused field (does NOT use
-        // set_value — exercises the keystroke synthesis chain).
-        let resp = driver.call(
-            "type_text",
-            serde_json::json!({
-                "pid": pid as i64, "window_id": wid,
-                "text": "kbd-cua", "delivery_mode": "background"
-            }),
-        );
-        assert!(!resp.is_error(), "AppKit type_text failed: {}", resp.text());
-        println!("type_text resp: {}", resp.text());
-        std::thread::sleep(Duration::from_millis(250));
-
-        let snap_post = snapshot_elements(driver, pid, wid);
-        let post = snap_post.tree_text().to_owned();
-        assert!(
-            post.contains("kbd-cua"),
-            "type_text keystroke did not land in the text field; snapshot:\n{post}"
-        );
-    });
+            let snap_post = snapshot_elements(driver, pid, wid);
+            let post = snap_post.tree_text().to_owned();
+            assert!(
+                post.contains("kbd-cua"),
+                "type_text keystroke did not land in the text field; snapshot:\n{post}"
+            );
+        },
+    );
 }
 
 /// scroll: scroll the NSScrollView downward, verify the offset label
@@ -399,7 +398,7 @@ fn harness_appkit_counter() {
             );
             let pre_text = snap_pre.tree_text().to_owned();
             assert!(
-                pre_text.contains("\"0\""),
+                pre_text.contains("counter=0"),
                 "counter not 0 pre-click; snapshot:\n{pre_text}"
             );
 
@@ -429,8 +428,69 @@ fn harness_appkit_counter() {
             let snap_post = snapshot_elements(driver, pid, wid);
             let post_text = snap_post.tree_text().to_owned();
             assert!(
-                post_text.contains("\"1\""),
+                post_text.contains("counter=1"),
                 "counter did not advance to 1 after press; post snapshot:\n{post_text}"
+            );
+        },
+    );
+}
+
+/// Resolve the native AppKit button from a screenshot-space PX target, then
+/// deliver through the background-safe AX hit-test bridge while another app
+/// remains fully foreground.
+#[test]
+#[ignore]
+fn harness_appkit_counter_px_background() {
+    run_background_case_targeting(
+        "left_click",
+        Targeting::Px,
+        DriverRoute::MacosAxAction,
+        |pid, wid, driver| {
+            let pre = snapshot_elements(driver, pid, wid);
+            let index = element_index_by_id(pre.tree_text(), "btn-increment")
+                .expect("btn-increment element_index not found");
+            let elements = pre.structured()["elements"]
+                .as_array()
+                .expect("AppKit structured elements");
+            let button = elements
+                .iter()
+                .find(|element| element["element_index"].as_u64() == Some(index))
+                .expect("AppKit increment element frame");
+            let window = elements
+                .iter()
+                .find(|element| element["role"].as_str() == Some("AXWindow"))
+                .expect("AppKit window frame");
+            let scale = pre.structured()["screenshot_width"].as_f64().unwrap_or(1.0)
+                / window["frame"]["w"].as_f64().unwrap_or(1.0).max(1.0);
+            let x = (button["frame"]["x"].as_f64().unwrap_or(0.0)
+                - window["frame"]["x"].as_f64().unwrap_or(0.0)
+                + button["frame"]["w"].as_f64().unwrap_or(0.0) / 2.0)
+                * scale;
+            let y = (button["frame"]["y"].as_f64().unwrap_or(0.0)
+                - window["frame"]["y"].as_f64().unwrap_or(0.0)
+                + button["frame"]["h"].as_f64().unwrap_or(0.0) / 2.0)
+                * scale;
+            let response = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "x": x,
+                    "y": y,
+                    "delivery_mode": "background"
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "AppKit PX background click failed: {}",
+                response.text()
+            );
+            std::thread::sleep(Duration::from_millis(200));
+            assert!(
+                snapshot_elements(driver, pid, wid)
+                    .tree_text()
+                    .contains("counter=1"),
+                "AppKit PX background click did not advance counter"
             );
         },
     );

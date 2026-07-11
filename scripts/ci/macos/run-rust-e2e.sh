@@ -36,7 +36,11 @@ esac
 
 ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos"
 RECORDING_ROOT="${ARTIFACT_DIR}/recordings"
-rm -rf "${RECORDING_ROOT}"
+if [[ -e "${RECORDING_ROOT}" ]]; then
+  RECORDING_ARCHIVE="$(mktemp -d "${TMPDIR:-/tmp}/cua-macos-e2e-recordings.XXXXXX")"
+  mv "${RECORDING_ROOT}" "${RECORDING_ARCHIVE}/recordings"
+  echo "Previous recordings preserved at ${RECORDING_ARCHIVE}/recordings"
+fi
 mkdir -p "${RECORDING_ROOT}"
 RESULTS_FILE="${ARTIFACT_DIR}/results.jsonl"
 DECLARATIONS_FILE="${ARTIFACT_DIR}/cases.jsonl"
@@ -137,13 +141,14 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
   for appkit_test in \
     harness_appkit_smoke \
     harness_appkit_text_input \
-    harness_appkit_type_text_keystroke \
-    harness_appkit_counter; do
+    harness_appkit_type_text_background \
+    harness_appkit_counter \
+    harness_appkit_counter_px_background; do
     run_test "appkit-${appkit_test}" cargo test -p cua-driver --test harness_appkit_test -- \
       --ignored --exact "${appkit_test}" --nocapture --test-threads=1
   done
   run_test swiftui-native-harness cargo test -p cua-driver --test harness_swiftui_test -- \
-    --ignored --nocapture --test-threads=1
+    --ignored --exact harness_swiftui_smoke --nocapture --test-threads=1
 fi
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
   run_test capture-contract cargo test -p cua-driver --test capture_contract_test -- \

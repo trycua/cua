@@ -109,8 +109,8 @@ background delivery and attach desktop-side-effect oracles.
 
 | Harness | Source test | Coverage |
 | --- | --- | --- |
-| AppKit | `harness_appkit_test.rs` | Native AX controls, text, pointer actions, menus, popups, scroll, drag |
-| SwiftUI | `harness_swiftui_test.rs` | SwiftUI controls, popovers, toggles, sliders, context menus, scroll |
+| AppKit | `harness_appkit_test.rs` | AX tree/capture, background AX value and text input, background AX/PX left click, desktop PX foreground click |
+| SwiftUI | `harness_swiftui_test.rs` | AX tree/capture; popover activation remains an optional known gap |
 | WKWebView | `tests/fixtures/apps/macos/wkwebview/` | Fixture is built from the shared web page; a dedicated Rust E2E target is still a coverage gap |
 | Installed-app launch/focus | `installed_app_launch_macos_test.rs` | Real Calculator/TextEdit launch and focus behavior, when explicitly enabled |
 | Installed-app text | `installed_app_textedit_macos_test.rs` | Real TextEdit AX background write and verification, when explicitly enabled |
@@ -135,6 +135,10 @@ and trajectory alongside screenshots, AX trees, structured results, and driver
 logs for E2E evidence.
 
 ## Action Delivery Matrix
+
+The current per-OS delivery/refusal ledger is maintained in
+[`action-support.md`](action-support.md). This section defines the coverage
+policy; the ledger records empirical status.
 
 For each OS and harness where the action is supported, the canonical E2E suite
 should cover both delivery modes:

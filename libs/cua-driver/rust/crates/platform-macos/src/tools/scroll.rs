@@ -106,6 +106,13 @@ impl Tool for ScrollTool {
         // background CGEvents). Only the pixel-wheel path honors it; the
         // keystroke path is background-by-design and untouched.
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
+        if !delivery_mode.is_foreground() && crate::browser::ElectronJs::is_electron(pid) {
+            return ToolResult::error(
+                "Background scroll is unavailable for Electron/Chromium windows on macOS."
+                    .to_owned(),
+            )
+            .with_structured(serde_json::json!({ "code": "background_unavailable" }));
+        }
         let direction = match args.require_str("direction") { Ok(v) => v, Err(e) => return e };
         let by = args.str_or("by", "line");
         let amount = args.u64_or("amount", 3) as usize;

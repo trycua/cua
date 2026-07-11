@@ -100,7 +100,12 @@ gestures retain their existing refusal behavior.
 | Nix Linux source | `29150690892` | Package build, Linux unit/protocol gate, and source identity at `3b67ee30` | Passed. The package and source-owned Rust tests completed in the pinned Nix environment at the final code SHA. |
 | Linux X11 | `29148643166` | Exact supported Linux matrix at `69d3538c` with strengthened occlusion and scope gates | Passed all 80 rows: 48 delivered and 32 exact refusals, with 0 failures or skips. All three summaries and environment records identify the full source SHA; 80 cell videos plus 3 preflight videos were uploaded. |
 | Linux Wayland | `29150698432` | Exact experimental pure Sway/AT-SPI matrix at `3b67ee30` | Executed all 80 rows: 6 delivered and 74 failed, with 0 refusals or skips. Sentinel startup failures fell from 18 to 0. The remaining groups are 18 target-posture metadata failures, 36 missing Tauri renderer AX trees, 11 Electron input no-effects, 2 AT-SPI geometry fallbacks, and 7 missing GTK windows. All 81 videos parsed successfully; issue `#1922` owns the backlog. |
-| macOS | Local strict preflight at `34559d56` | Build canonical fixtures, then verify daemon identity, AX, capture, and video | Fixtures built, but the preflight stopped before cells because Accessibility and Screen Recording TCC grants are absent for the current ad-hoc identity. No macOS behavior result is claimed. |
+| macOS | Local complete matrix after `106d1287` | Validate the converged shared, native, capture, and desktop-scope catalog with stable TCC identity | Passed all 83 declared rows from the final working tree: 79 delivered and 4 exact refusals, with 0 failures or skips. Every row produced a typed result and video. An exact-commit replay follows the implementation commit. |
 
-The macOS preflight failure is separate from driver behavior. It must be fixed
-or re-authorized before any local macOS cell result is accepted.
+The macOS replay fixed PX background click focus steals, foreground PX typing's
+first-character loss, silent web-content background scroll/drag no-effects,
+desktop-scope HID delivery, AppKit native PX background click coverage, and
+daemon transport loss of structured refusal codes. Electron background scroll
+and Electron/Tauri background drag now return exact `background_unavailable`
+refusals. SwiftUI popover activation stays optional because AX reports success
+without an externally observable transient view.

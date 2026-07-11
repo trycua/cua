@@ -202,9 +202,8 @@ fn click_at_xy_inner(
 
 /// Full Chromium-compatible left-click recipe matching Swift's `clickViaAuthSignedPost`.
 ///
-/// The focus-without-raise prologue makes the target window key without changing
-/// its z-order, which Chromium requires before it accepts a background pixel
-/// mouseDown. The cursor overlay is re-pinned by the click tool after dispatch.
+/// The sequence stays PID/window-routed throughout. It must not make the target
+/// key: changing key-window ownership violates background delivery.
 ///  1. Stamped `mouseMoved` at target coords (f0=2, cursor-state primer).
 ///  2. Off-screen primer down/up at (-1, -1) (f0=1/2) — satisfies Chromium's
 ///     user-activation gate without hitting any DOM element.
@@ -233,13 +232,6 @@ pub fn click_at_xy_chromium(
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    // Chromium's first-mouse handling rejects a background click delivered to
-    // a non-key window. This SkyLight focus record keys the requested window
-    // without raising it or moving the user's cursor.
-    if crate::input::skylight::activate_without_raise(pid as libc::pid_t, wid) {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;

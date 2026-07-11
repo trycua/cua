@@ -73,7 +73,10 @@ function createWindow() {
     // deferred BrowserWindow while never painting it into the root desktop.
     // The sentinel stays hidden until it has maximized and claimed focus.
     show: !sentinelMode,
-    alwaysOnTop: sentinelMode,
+    // A floating-level macOS window is omitted by cua-driver's deliberate
+    // layer-0 top-level window contract. Foreground + maximized is sufficient
+    // for occlusion there and lets an unexpected target raise remain visible.
+    alwaysOnTop: sentinelMode && process.platform !== 'darwin',
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
@@ -114,7 +117,9 @@ function createWindow() {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setTitle(fixedTitle);
         if (sentinelMode) {
-          mainWindow.setAlwaysOnTop(true);
+          if (process.platform !== 'darwin') {
+            mainWindow.setAlwaysOnTop(true);
+          }
           mainWindow.maximize();
           mainWindow.show();
           mainWindow.focus();

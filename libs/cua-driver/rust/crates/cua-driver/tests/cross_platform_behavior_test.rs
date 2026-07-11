@@ -229,11 +229,7 @@ fn allocate_loopback_port() -> u16 {
     listener.local_addr().expect("read fixture port").port()
 }
 
-fn launch_host_with_evidence(
-    spec: &HostSpec,
-    scenario: &str,
-    evidence: &mut Evidence,
-) -> Fixture {
+fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evidence) -> Fixture {
     if !spec.path.exists() {
         panic!(
             "{} fixture is required but was not staged at {:?}",
@@ -801,11 +797,9 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
     let expected_refusals = if cfg!(target_os = "windows") && delivery_kind == Delivery::Background
     {
         match (spec.name, action, targeting) {
-            (
-                "electron",
-                "right_click" | "double_click" | "child_window" | "drag",
-                _,
-            ) => vec![RefusalCode::BackgroundOccluded],
+            ("electron", "right_click" | "double_click" | "child_window" | "drag", _) => {
+                vec![RefusalCode::BackgroundOccluded]
+            }
             ("electron", "type_text" | "press_key" | "hotkey", Targeting::Px) => {
                 vec![RefusalCode::BackgroundOccluded]
             }
@@ -816,6 +810,13 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
                 vec![RefusalCode::BackgroundUnavailable]
             }
             ("tauri", "drag", Targeting::Px) => vec![RefusalCode::BackgroundOccluded],
+            _ => Vec::new(),
+        }
+    } else if cfg!(target_os = "macos") && delivery_kind == Delivery::Background {
+        match (spec.name, action, targeting) {
+            ("electron", "scroll", _) | (_, "drag", Targeting::Px) => {
+                vec![RefusalCode::BackgroundUnavailable]
+            }
             _ => Vec::new(),
         }
     } else if cfg!(target_os = "linux")
@@ -887,6 +888,12 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         && delivery_kind == Delivery::Background
     {
         route = cua_driver_testkit::e2e::DriverRoute::PostMessage;
+    } else if cfg!(target_os = "macos")
+        && targeting == Targeting::Px
+        && delivery_kind == Delivery::Background
+        && matches!(action, "left_click" | "child_window")
+    {
+        route = cua_driver_testkit::e2e::DriverRoute::MacosAxAction;
     }
     let case = CaseSpec::delivered(
         cell_id,

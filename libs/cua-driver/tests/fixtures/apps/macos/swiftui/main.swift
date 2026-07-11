@@ -107,7 +107,7 @@ struct HarnessRootView: View {
                         .accessibilityIdentifier(kIncrementButtonAID)
                     Button("Reset") { counter = 0 }
                         .accessibilityIdentifier(kResetButtonAID)
-                    Text("\(counter)")
+                    Text("counter=\(counter)")
                         .font(.system(size: 18, weight: .semibold, design: .monospaced))
                         .accessibilityIdentifier(kCounterLabelAID)
                 }

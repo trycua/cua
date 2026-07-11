@@ -56,23 +56,30 @@ fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
         eprintln!("[desktop-mac] AppKit harness not built ({exe:?}) — run tests/fixtures/build/macos.sh; skipping");
         return None;
     }
-    let launched = driver.reaper().spawn(
+    let child = match cua_driver_testkit::spawn_in_job(
         Command::new(&exe)
             .stdout(Stdio::null())
             .stderr(Stdio::null()),
-    );
-    if let Err(error) = launched {
-        if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
-            panic!("failed to launch required AppKit harness {exe:?}: {error}");
+    ) {
+        Ok(child) => child,
+        Err(error) => {
+            if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
+                panic!("failed to launch required AppKit harness {exe:?}: {error}");
+            }
+            eprintln!("[desktop-mac] AppKit harness launch failed: {error}; skipping");
+            return None;
         }
-        eprintln!("[desktop-mac] AppKit harness launch failed: {error}; skipping");
-        return None;
-    }
+    };
+    let launched_pid = child.id();
+    driver.reaper().push(child);
     let deadline = Instant::now() + Duration::from_secs(14);
     while Instant::now() < deadline {
         let r = driver.call("list_windows", serde_json::json!({}));
         if let Some(wins) = r.structured()["windows"].as_array() {
             for w in wins {
+                if w["pid"].as_u64() != Some(launched_pid as u64) {
+                    continue;
+                }
                 if w["title"]
                     .as_str()
                     .unwrap_or("")
@@ -81,7 +88,6 @@ fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
                     let pid = w["pid"].as_u64().unwrap_or(0) as u32;
                     let wid = w["window_id"].as_u64().unwrap_or(0);
                     if pid != 0 && wid != 0 {
-                        driver.reaper().track_pid(pid);
                         return Some((pid, wid));
                     }
                 }
@@ -263,8 +269,7 @@ fn window_scope_rejects_windowless_click() {
             serde_json::json!({ "x": 100, "y": 100, "scope": "window", "session": SESSION }),
         );
         assert!(
-            r.is_error()
-                && r.structured()["code"].as_str() == Some("desktop_scope_disabled"),
+            r.is_error() && r.structured()["code"].as_str() == Some("desktop_scope_disabled"),
             "window-scope window-less click was NOT rejected: {}",
             r.text()
         );

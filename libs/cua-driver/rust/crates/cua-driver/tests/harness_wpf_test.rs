@@ -1153,6 +1153,57 @@ fn harness_wpf_slider_drag() {
 
 #[test]
 #[ignore]
+fn harness_wpf_slider_drag_background_refusal() {
+    let case = native_background_case(
+        "wpf",
+        "slider_drag",
+        Targeting::Px,
+        DriverRoute::WindowsTargetedInjection,
+    )
+    .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
+    run_case(case, |pid, wid, driver| {
+        let before = snapshot(driver, pid, wid).text().to_owned();
+        let (response, mut passed) = observe_background(driver, pid, wid, |driver| {
+            driver.call(
+                "drag",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid,
+                    "from_x": 44.0, "from_y": 304.0,
+                    "to_x": 330.0, "to_y": 304.0,
+                    "duration_ms": 700, "steps": 40,
+                    "delivery_mode": "background"
+                }),
+            )
+        });
+        assert!(
+            response.is_error(),
+            "WPF background drag unexpectedly reported delivery: {}",
+            response.text()
+        );
+        assert_eq!(
+            response.structured()["code"].as_str(),
+            Some("background_unavailable"),
+            "WPF background drag returned the wrong refusal: {}",
+            response.text()
+        );
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(
+            snapshot(driver, pid, wid).text(),
+            before,
+            "refused WPF background drag mutated fixture state"
+        );
+        passed.push(OracleKind::FixtureState);
+        Observation::refused(
+            RefusalCode::BackgroundUnavailable,
+            passed,
+            response.text(),
+            Evidence::default(),
+        )
+    });
+}
+
+#[test]
+#[ignore]
 fn harness_wpf_slider_increase_large() {
     // Companion to slider_drag — exercises UIA Invoke on the Slider's
     // internal IncreaseLarge "page-up" button. Doesn't depend on screen

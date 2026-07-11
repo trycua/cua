@@ -320,7 +320,11 @@ impl RecordingSession {
         }
         inner.owner = None;
         let dir = inner.output_dir.clone();
-        let video_meta = inner.video.take().and_then(|rec| rec.stop().ok());
+        let (video_meta, stop_error) = match inner.video.take().map(|rec| rec.stop()) {
+            Some(Ok(meta)) => (Some(meta), None),
+            Some(Err(error)) => (None, Some(error.to_string())),
+            None => (None, None),
+        };
         let cursor_samples = inner.cursor.take().map(|c| c.stop()).unwrap_or(0);
 
         inner.enabled = false;
@@ -328,11 +332,14 @@ impl RecordingSession {
         inner.next_turn = 1;
         inner.session_start_ms = 0;
         inner.session_monotonic_start = None;
-        if video_meta.is_some() {
+        if let Some(error) = &stop_error {
+            inner.last_error = Some(error.clone());
+        } else if video_meta.is_some() {
             inner.last_error = None;
         }
         inner.last_video = video_meta.clone();
         inner.last_cursor_samples = cursor_samples;
+        let final_video_error = inner.last_error.clone();
 
         // Rewrite session.json with final video metadata + cursor count
         // so the renderer (and any external analysis) sees what actually
@@ -341,7 +348,7 @@ impl RecordingSession {
             let video_block = if let Some(ref m) = video_meta {
                 video_session_payload(true, None, Some(m))
             } else {
-                video_session_payload(false, None, None)
+                video_session_payload(false, final_video_error.as_deref(), None)
             };
             let session_payload = serde_json::json!({
                 "schema_version": 1,
@@ -353,6 +360,9 @@ impl RecordingSession {
                 &dir.join("session.json"),
                 &session_payload,
             );
+        }
+        if let Some(error) = stop_error {
+            anyhow::bail!("video finalization failed: {error}");
         }
         Ok(())
     }
@@ -592,4 +602,54 @@ fn expand_tilde(path: &str) -> PathBuf {
         }
     }
     PathBuf::from(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FailingVideo;
+
+    impl VideoBackend for FailingVideo {
+        fn stop(self: Box<Self>) -> anyhow::Result<VideoMetadata> {
+            anyhow::bail!("recorder did not finalize")
+        }
+    }
+
+    #[test]
+    fn stop_owner_surfaces_video_finalization_failure() {
+        let output_dir = std::env::temp_dir().join(format!(
+            "cua-recording-stop-failure-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        std::fs::create_dir_all(&output_dir).expect("create recording test directory");
+        let session = RecordingSession::new();
+        {
+            let mut inner = session.inner.lock().expect("recording lock");
+            inner.enabled = true;
+            inner.output_dir = Some(output_dir.clone());
+            inner.video = Some(Box::new(FailingVideo));
+        }
+
+        let error = session
+            .stop_owner(None)
+            .expect_err("video finalization failure must reach the caller");
+        assert!(error.to_string().contains("recorder did not finalize"));
+        let state = session.current_state();
+        assert!(!state.enabled);
+        assert!(state.last_video_path.is_none());
+        assert_eq!(
+            state.last_error.as_deref(),
+            Some("recorder did not finalize")
+        );
+
+        let manifest: Value = serde_json::from_slice(
+            &std::fs::read(output_dir.join("session.json")).expect("read session manifest"),
+        )
+        .expect("parse session manifest");
+        assert_eq!(manifest["video"]["present"], false);
+        assert_eq!(manifest["video"]["error"], "recorder did not finalize");
+        let _ = std::fs::remove_dir_all(output_dir);
+    }
 }

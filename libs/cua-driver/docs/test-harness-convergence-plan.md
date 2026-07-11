@@ -87,8 +87,9 @@ state rather than the older 60-cell proposal.
 
 - The three older shared tests are removed. The typed catalog is the sole
   shared behavior owner.
-- `guard_ux_test.rs`, `modality_input_e2e_test.rs`, and
-  `modality_background_test.rs` overlap and still allow many runtime skips.
+- `guard_ux_test.rs` and `modality_background_test.rs` overlap and still allow
+  many runtime skips. `modality_input_e2e_test.rs` has been removed after its
+  externally verified web actions moved to the typed shared catalog.
 - Windows `all` still exposes `guard` and `modality` as test families and does
   not run the Windows desktop-scope target.
 - Linux `all` still reports schema-only dispatch checks as E2E behavior.
@@ -273,7 +274,7 @@ Canonical invocations set strict mode. Missing required capabilities produce
 | `harness_swiftui_test.rs` | SwiftUI controls and popover behavior |
 | `harness_gtk3_test.rs` | Minimal GTK3/AT-SPI rows for X11 and Wayland |
 | `guard_ux_test.rs` | Migrate observations into the desktop observer, then delete |
-| `modality_input_e2e_test.rs` | Map each action and current failure into shared/native cells, then delete |
+| `modality_input_e2e_test.rs` | Deleted; shared cells own web actions and the Notepad row had no delivery oracle |
 | `modality_background_test.rs` | Move WPF actions into WPF cells and capture checks into capture ownership, then delete |
 | `capture_contract_test.rs` | Sole owner for tree/image inclusion behavior; canonical prerequisites fail instead of skipping |
 | `modality_desktop_scope_*.rs` | Rename to `desktop_scope_*_test.rs`; keep platform-specific scope contracts |

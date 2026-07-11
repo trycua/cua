@@ -39,8 +39,7 @@ $testSuites = @(
     @{ Pattern = "guard_ux_test-*.exe";           Label = "guard_ux_test" },
     @{ Pattern = "harness_wpf_test-*.exe";        Label = "harness_wpf_test";        Extra = @("--ignored") },
     @{ Pattern = "harness_winui3_test-*.exe";     Label = "harness_winui3_test";     Extra = @("--ignored") },
-    @{ Pattern = "harness_web_test-*.exe";        Label = "harness_web_test";        Extra = @("--ignored") },
-    @{ Pattern = "modality_input_e2e_test-*.exe"; Label = "modality_input_e2e_test"; Extra = @("--ignored") }
+    @{ Pattern = "harness_web_test-*.exe";        Label = "harness_web_test";        Extra = @("--ignored") }
 )
 
 # -- stage harness binaries to %TEMP% (same Zone-3 ShellExecute workaround) --

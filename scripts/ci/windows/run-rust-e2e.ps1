@@ -2,7 +2,7 @@
 # Scenario definitions and assertions stay in the Rust integration test.
 param(
     [switch]$NoBuild,
-    [ValidateSet("guard", "shared", "native", "modality", "all")]
+    [ValidateSet("guard", "shared", "native", "capture", "all")]
     [string]$Suite = "all",
     [switch]$RequireGui
 )
@@ -54,7 +54,7 @@ if (-not $NoBuild) {
     & (Join-Path $scriptDir "build-harnesses.ps1")
 }
 
-if ($Suite -in @("guard", "modality", "all")) {
+if ($Suite -in @("guard", "all")) {
     & cargo build -p focus-monitor-win --manifest-path (Join-Path $rustRoot "Cargo.toml")
     if ($LASTEXITCODE -ne 0) { throw "Focus monitor build failed" }
 }
@@ -64,12 +64,14 @@ if (-not (Test-Path $env:CUA_TEST_DRIVER_BIN)) {
 }
 $requiredFixtures = @()
 $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-electron\CuaTestHarness.Electron.exe"
-if ($Suite -in @("shared", "modality", "all")) {
+if ($Suite -in @("shared", "all")) {
     $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-tauri\CuaTestHarness.Tauri.exe"
+}
+if ($Suite -in @("native", "capture", "all")) {
+    $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-wpf\CuaTestHarness.Wpf.exe"
 }
 if ($Suite -in @("native", "all")) {
     $requiredFixtures += @(
-        (Join-Path $env:CUA_TEST_APPS_ROOT "harness-wpf\CuaTestHarness.Wpf.exe"),
         (Join-Path $env:CUA_TEST_APPS_ROOT "harness-winui3\CuaTestHarness.WinUI3.exe"),
         (Join-Path $env:CUA_TEST_APPS_ROOT "harness-webview\CuaTestHarness.WebView.exe")
     )
@@ -186,13 +188,9 @@ if ($Suite -in @("native", "all")) {
     )
 }
 
-if ($Suite -in @("modality", "all")) {
+if ($Suite -in @("capture", "all")) {
     Invoke-CargoTest "capture contract" @(
         "test", "-p", "cua-driver", "--test", "capture_contract_test", "--",
-        "--ignored", "--nocapture", "--test-threads=1"
-    )
-    Invoke-CargoTest "Windows modality input e2e" @(
-        "test", "-p", "cua-driver", "--test", "modality_input_e2e_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
 }

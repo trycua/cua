@@ -150,7 +150,7 @@ Runner: `scripts/ci/windows/run-rust-e2e.ps1`
 | Native controls | `harness_wpf_test.rs` | Repo-local WPF app |
 | Native controls | `harness_winui3_test.rs` | Repo-local WinUI3 app |
 | Web integration | `harness_web_test.rs` | WebView2 and Electron |
-| Background side-effect probes (transitional) | `modality_input_e2e_test.rs` | Electron, Tauri, and Win32 Notepad |
+| Capture contract | `capture_contract_test.rs` | WPF plus driver tree/image output |
 
 Cross-cutting instrumentation used by these rows includes the Windows
 `focus-monitor-win` oracle, capture validation, cursor evidence, and desktop
@@ -308,9 +308,9 @@ The overall structure exists, but the plan is not completely finished:
 2. **Structured result adoption.** The shared matrix emits v2 case/result
    records. Native harnesses still need to adopt the same `CaseSpec` and result
    writer instead of relying on Cargo output.
-3. **Fold in transitional input probes.** Move the useful assertions from
-   `modality_input_e2e_test.rs` into the shared/native action rows, preserving
-   the focus and no-z-order oracle, then remove the duplicate target.
+3. **Finish Windows convergence.** Move the remaining useful assertions from
+   `guard_ux_test.rs` and `modality_background_test.rs` into typed native,
+   capture, launch, or desktop-scope owners, then remove both duplicate targets.
 4. **Per-cell GitHub evidence links.** The summary should link the matching
    video, trajectory, and log in each row, rather than only linking a whole
    lane archive.
@@ -348,8 +348,7 @@ rust/crates/cua-driver/tests/
 |-- capture_contract_test.rs        Tree and screenshot read contract
 |-- modality_desktop_scope_*.rs     Window/desktop scope invariants
 |-- protocol_*_test.rs              Protocol and schema tests
-|-- guard_ux_test.rs                Temporary migration file, then removed
-`-- modality_input_e2e_test.rs      Temporary migration file, then removed
+`-- guard_ux_test.rs                Temporary migration file, then removed
 ```
 
 The focus oracle is a helper, not a test family. An action row invokes it when
@@ -366,9 +365,8 @@ the row is testing background delivery. The row then records both outcomes:
 2. Move the six useful no-focus-steal assertions from `guard_ux_test.rs` into
    the relevant shared or native action rows. Keep launch and cursor cases in
    the closest desktop/capture owner if they do not correspond to an action.
-3. Move the target-state and no-z-order assertions from
-   `modality_input_e2e_test.rs` into the shared Electron/Tauri rows and the
-   relevant native Windows rows.
+3. Keep the deleted modality-input coverage owned by the shared typed catalog;
+   do not restore its hard-coded Notepad coordinates or focus-only assertions.
 4. Add equivalent focus observers for macOS and Linux, then enable the same
    oracle fields in their background action rows.
 5. Delete the two temporary standalone files only after a coverage checklist

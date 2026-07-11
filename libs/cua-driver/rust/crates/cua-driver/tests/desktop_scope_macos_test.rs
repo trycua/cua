@@ -26,6 +26,10 @@
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use cua_driver_testkit::e2e::{
+    execute_case, recording_evidence, CaseSpec, Delivery, DriverRoute, Evidence, Observation,
+    OracleKind, Scope, Targeting,
+};
 use cua_driver_testkit::{harness_app, Driver, McpDriver};
 
 /// Session id so `set_config capture_scope=desktop` is session-scoped (no disk
@@ -46,8 +50,14 @@ fn harness_exe() -> std::path::PathBuf {
 fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
     let exe = harness_exe();
     if !exe.exists() {
+        if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
+            panic!("required AppKit harness is missing at {exe:?}");
+        }
         eprintln!("[desktop-mac] AppKit harness not built ({exe:?}) — run tests/fixtures/build/macos.sh; skipping");
         return None;
+    }
+    if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
+        panic!("required AppKit desktop-scope harness window never appeared");
     }
     driver
         .reaper()
@@ -156,67 +166,67 @@ fn activate_pid(pid: u32) {
 #[test]
 #[ignore]
 fn desktop_scope_windowless_click_lands_on_control() {
-    let Some(mut driver) = McpDriver::spawn_macos_daemon_proxy() else {
-        return;
-    };
-    let Some((pid, wid)) = launch(&mut driver) else {
-        return;
-    };
-
-    // Settle for the AppKit AX tree to register the button + its frame.
-    let mut snap = ax_snapshot(&mut driver, pid, wid);
-    let mut center = increment_center(&snap);
-    let deadline = Instant::now() + Duration::from_secs(8);
-    while center.is_none() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(400));
-        snap = ax_snapshot(&mut driver, pid, wid);
-        center = increment_center(&snap);
-    }
-    let Some((cx, cy)) = center else {
-        eprintln!("[desktop-mac] increment button frame not found (TCC Accessibility missing?) — skipping");
-        return;
-    };
-    let pre = counter(&snap).unwrap_or(0);
-    println!("[desktop-mac] increment button screen-center=({cx},{cy}) pre-counter={pre}");
-
-    // Desktop scope clicks the frontmost window at the point — put the harness there.
-    activate_pid(pid);
-
-    // Window-less screen-absolute click — no pid, no window_id; scope per-call.
-    let clicked = driver.call(
-        "click",
-        serde_json::json!({ "x": cx, "y": cy, "scope": "desktop", "session": SESSION }),
+    let cell_id = "macos-appkit-desktop-left-click-px-foreground";
+    let case = CaseSpec::delivered(
+        cell_id,
+        "appkit",
+        "appkit",
+        "left_click",
+        Targeting::Px,
+        Delivery::Foreground,
+        Scope::Desktop,
+        DriverRoute::MacosCgEventHid,
+        vec![OracleKind::FixtureState],
     );
-    assert!(
-        !clicked.is_error(),
-        "desktop-scope click errored: {}",
-        clicked.text()
-    );
-    assert!(
-        clicked.text().to_lowercase().contains("desktop scope"),
-        "click not reported as desktop-scope: {}",
-        clicked.text()
-    );
-    println!("[desktop-mac] {}", clicked.text());
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, wid) = launch(&mut driver).expect("required AppKit harness did not launch");
 
-    std::thread::sleep(Duration::from_millis(600));
-    let post = counter(&ax_snapshot(&mut driver, pid, wid)).unwrap_or(pre);
-    if post > pre {
-        println!("✅ desktop_scope_windowless_click_lands_on_control: counter {pre} → {post}");
-        return;
-    }
-    // The desktop click lands on whatever window is *visually frontmost* at the
-    // point — that is the contract. On a busy desktop another window can cover
-    // the harness (and `activate` may not beat a floating panel), so a
-    // non-advance here means the harness was not frontmost at the point, NOT a
-    // driver fault. The click is confirmed to have resolved a real window (see
-    // its result text above). Skip rather than false-fail; a clean session
-    // asserts the landing, as the Linux peer does end-to-end.
-    eprintln!(
-        "[desktop-mac] counter did not advance ({pre}→{post}) — the harness was not the \
-         frontmost window at ({cx},{cy}) on this desktop (another window covering it). \
-         Skipping the landing assertion; run on a clean GUI session to assert it."
-    );
+        // Settle for the AppKit AX tree to register the button + its frame.
+        let mut snap = ax_snapshot(&mut driver, pid, wid);
+        let mut center = increment_center(&snap);
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while center.is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(400));
+            snap = ax_snapshot(&mut driver, pid, wid);
+            center = increment_center(&snap);
+        }
+        let Some((cx, cy)) = center else {
+            panic!("increment button frame not found in required AppKit AX tree");
+        };
+        let pre = counter(&snap).unwrap_or(0);
+        println!("[desktop-mac] increment button screen-center=({cx},{cy}) pre-counter={pre}");
+
+        // Desktop scope clicks the frontmost window at the point — put the harness there.
+        activate_pid(pid);
+
+        // Window-less screen-absolute click — no pid, no window_id; scope per-call.
+        let clicked = driver.call(
+            "click",
+            serde_json::json!({ "x": cx, "y": cy, "scope": "desktop", "session": SESSION }),
+        );
+        assert!(
+            !clicked.is_error(),
+            "desktop-scope click errored: {}",
+            clicked.text()
+        );
+        assert!(
+            clicked.text().to_lowercase().contains("desktop scope"),
+            "click not reported as desktop-scope: {}",
+            clicked.text()
+        );
+        println!("[desktop-mac] {}", clicked.text());
+
+        std::thread::sleep(Duration::from_millis(600));
+        let post = counter(&ax_snapshot(&mut driver, pid, wid)).unwrap_or(pre);
+        assert!(
+            post > pre,
+            "desktop click did not advance AppKit counter at ({cx},{cy}): {pre} -> {post}"
+        );
+        Observation::delivered_with_fixture_state(Vec::new())
+    });
 }
 
 /// Negative gate: a window-less screen-absolute click while `capture_scope=window`
@@ -225,19 +235,33 @@ fn desktop_scope_windowless_click_lands_on_control() {
 #[test]
 #[ignore]
 fn window_scope_rejects_windowless_click() {
-    let Some(mut driver) = McpDriver::spawn_macos_daemon_proxy() else {
-        return;
-    };
-    // Default scope is "window" — a window-less click must be rejected.
-    let r = driver.call(
-        "click",
-        serde_json::json!({ "x": 100, "y": 100, "scope": "window", "session": SESSION }),
+    let cell_id = "macos-window-scope-gate-px-not-applicable";
+    let case = CaseSpec::delivered(
+        cell_id,
+        "desktop",
+        "quartz",
+        "window_scope_gate",
+        Targeting::Px,
+        Delivery::NotApplicable,
+        Scope::Window,
+        DriverRoute::Composite,
+        vec![OracleKind::Protocol],
     );
-    let txt = r.text().to_lowercase();
-    assert!(
-        r.is_error() || txt.contains("desktop scope") || txt.contains("desktop_scope_disabled"),
-        "window-scope window-less click was NOT rejected: {}",
-        r.text()
-    );
-    println!("✅ window_scope_rejects_windowless_click: window-less click correctly gated");
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        // Default scope is "window" — a window-less click must be rejected.
+        let r = driver.call(
+            "click",
+            serde_json::json!({ "x": 100, "y": 100, "scope": "window", "session": SESSION }),
+        );
+        let txt = r.text().to_lowercase();
+        assert!(
+            r.is_error() || txt.contains("desktop scope") || txt.contains("desktop_scope_disabled"),
+            "window-scope window-less click was NOT rejected: {}",
+            r.text()
+        );
+        Observation::delivered(vec![OracleKind::Protocol], Evidence::default())
+    });
 }

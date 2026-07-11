@@ -25,6 +25,11 @@
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use cua_driver_testkit::ax;
+use cua_driver_testkit::e2e::{
+    execute_case, recording_evidence, CaseSpec, Delivery, DriverRoute, Evidence, Observation,
+    OracleKind, Scope, Targeting,
+};
 use cua_driver_testkit::{harness_app, Driver, McpDriver};
 
 /// WPF harness app (built by `tests/fixtures/build/windows.ps1`). Path mirrors
@@ -33,17 +38,24 @@ fn harness_wpf_exe() -> std::path::PathBuf {
     harness_app("harness-wpf", "CuaTestHarness.Wpf.exe")
 }
 
-/// Launch the WPF harness app and return (pid, window center in screen px).
+/// Launch the WPF harness app and return its pid and native window id.
 /// Skips (returns None) if the harness app isn't built.
-fn launch_wpf_and_center(driver: &mut McpDriver) -> Option<(u32, i32, i32)> {
+fn launch_wpf(driver: &mut McpDriver) -> Option<(u32, u64)> {
     let exe = harness_wpf_exe();
     if !exe.exists() {
+        if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
+            panic!("required WPF harness is missing at {exe:?}");
+        }
         eprintln!("[desktop-scope] WPF harness not built ({exe:?}) — skipping window-target tests");
         return None;
     }
     driver
         .reaper()
-        .spawn(Command::new(&exe).stdout(Stdio::null()).stderr(Stdio::null()))
+        .spawn(
+            Command::new(&exe)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        )
         .ok()?;
 
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -56,24 +68,61 @@ fn launch_wpf_and_center(driver: &mut McpDriver) -> Option<(u32, i32, i32)> {
                     continue;
                 }
                 let pid = w["pid"].as_u64().unwrap_or(0) as u32;
-                // #2018: bounds is nested {x,y,width,height} on Windows.
-                let b = &w["bounds"];
-                let (x, y, ww, h) = (
-                    b["x"].as_i64().unwrap_or(0) as i32,
-                    b["y"].as_i64().unwrap_or(0) as i32,
-                    b["width"].as_i64().unwrap_or(0) as i32,
-                    b["height"].as_i64().unwrap_or(0) as i32,
-                );
-                if pid != 0 && ww > 0 && h > 0 {
+                let wid = w["window_id"].as_u64().unwrap_or(0);
+                if pid != 0 && wid != 0 {
                     driver.reaper().track_pid(pid);
-                    return Some((pid, x + ww / 2, y + h / 2));
+                    return Some((pid, wid));
                 }
             }
         }
         std::thread::sleep(Duration::from_millis(500));
     }
+    if std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some() {
+        panic!("required WPF harness window never appeared");
+    }
     eprintln!("[desktop-scope] WPF harness window never appeared — skipping");
     None
+}
+
+fn snapshot(driver: &mut McpDriver, pid: u32, wid: u64) -> cua_driver_testkit::ToolResponse {
+    driver.call(
+        "get_window_state",
+        serde_json::json!({ "pid": pid as i64, "window_id": wid, "capture_mode": "ax" }),
+    )
+}
+
+fn element_center(state: &cua_driver_testkit::ToolResponse, id: &str) -> (i64, i64) {
+    let index = ax::element_index_by_id(state.tree_text(), id)
+        .unwrap_or_else(|| panic!("missing WPF element {id:?}: {}", state.tree_text()));
+    let element = state.structured()["elements"]
+        .as_array()
+        .and_then(|elements| {
+            elements
+                .iter()
+                .find(|element| element["element_index"].as_u64() == Some(index))
+        })
+        .unwrap_or_else(|| panic!("WPF element {id:?} has no structured frame"));
+    let frame = &element["frame"];
+    (
+        (frame["x"].as_f64().expect("frame x") + frame["w"].as_f64().expect("frame w") / 2.0)
+            as i64,
+        (frame["y"].as_f64().expect("frame y") + frame["h"].as_f64().expect("frame h") / 2.0)
+            as i64,
+    )
+}
+
+fn marker_value(state: &cua_driver_testkit::ToolResponse, marker: &str) -> u64 {
+    let start = state
+        .tree_text()
+        .find(marker)
+        .unwrap_or_else(|| panic!("missing marker {marker:?}: {}", state.tree_text()))
+        + marker.len();
+    state.tree_text()[start..]
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .expect("numeric fixture marker")
 }
 
 fn set_scope(driver: &mut McpDriver, scope: &str) {
@@ -81,13 +130,45 @@ fn set_scope(driver: &mut McpDriver, scope: &str) {
         "set_config",
         serde_json::json!({ "key": "capture_scope", "value": scope }),
     );
-    assert!(!r.is_error(), "set_config capture_scope={scope} failed: {}", r.text());
+    assert!(
+        !r.is_error(),
+        "set_config capture_scope={scope} failed: {}",
+        r.text()
+    );
     assert_eq!(
         r.structured()["capture_scope"].as_str(),
         Some(scope),
         "set_config did not report capture_scope={scope}: {}",
         r.text()
     );
+}
+
+fn run_desktop_fixture_case(
+    action: &str,
+    route: DriverRoute,
+    test: impl FnOnce(u32, u64, &mut McpDriver),
+) {
+    let cell_id = format!("windows-wpf-desktop-{action}-px-foreground").replace('_', "-");
+    let case = CaseSpec::delivered(
+        cell_id.clone(),
+        "wpf",
+        "wpf",
+        action,
+        Targeting::Px,
+        Delivery::Foreground,
+        Scope::Desktop,
+        route,
+        vec![OracleKind::FixtureState],
+    );
+    execute_case(case, |evidence| {
+        let mut driver =
+            McpDriver::spawn_named(&cell_id).expect("required source-built driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, wid) = launch_wpf(&mut driver).expect("required WPF harness did not launch");
+        set_scope(&mut driver, "desktop");
+        test(pid, wid, &mut driver);
+        Observation::delivered_with_fixture_state(Vec::new())
+    });
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -98,40 +179,92 @@ fn set_scope(driver: &mut McpDriver, scope: &str) {
 #[test]
 #[ignore]
 fn desktop_scope_capture_returns_screen_dims() {
-    let Some(mut driver) = McpDriver::spawn() else { return };
-    set_scope(&mut driver, "desktop");
-    let r = driver.call("get_desktop_state", serde_json::json!({}));
-    assert!(!r.is_error(), "get_desktop_state errored: {}", r.text());
-    let sw = r.structured()["screen_width"].as_u64().unwrap_or(0);
-    let sh = r.structured()["screen_height"].as_u64().unwrap_or(0);
-    assert!(sw > 0 && sh > 0, "get_desktop_state returned no/zero screen size: {}", r.text());
-    eprintln!("[desktop-scope] get_desktop_state OK — screen {sw}x{sh}");
+    let case = CaseSpec::delivered(
+        "windows-desktop-state-px-not-applicable",
+        "desktop",
+        "win32",
+        "get_desktop_state",
+        Targeting::Px,
+        Delivery::NotApplicable,
+        Scope::Desktop,
+        DriverRoute::WindowState,
+        vec![OracleKind::Pixels],
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named("windows-desktop-state-px-not-applicable")
+            .expect("required source-built driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+        set_scope(&mut driver, "desktop");
+        let response = driver.call("get_desktop_state", serde_json::json!({}));
+        assert!(
+            !response.is_error(),
+            "get_desktop_state errored: {}",
+            response.text()
+        );
+        let width = response.structured()["screen_width"].as_u64().unwrap_or(0);
+        let height = response.structured()["screen_height"].as_u64().unwrap_or(0);
+        assert!(
+            width > 0 && height > 0,
+            "get_desktop_state returned no screen size"
+        );
+        Observation::delivered(vec![OracleKind::Pixels], Evidence::default())
+    });
 }
 
 /// In desktop scope, a window-less screen-absolute click + scroll succeed and
 /// resolve a real window via WindowFromPoint (no pid/window_id supplied).
 #[test]
 #[ignore]
-fn desktop_scope_windowless_click_and_scroll_land() {
-    let Some(mut driver) = McpDriver::spawn() else { return };
-    set_scope(&mut driver, "desktop");
-    let Some((_pid, cx, cy)) = launch_wpf_and_center(&mut driver) else { return };
-
-    let clicked = driver.call("click", serde_json::json!({ "x": cx, "y": cy }));
-    assert!(!clicked.is_error(), "desktop-scope click errored: {}", clicked.text());
-    let ct = clicked.text().to_lowercase();
-    assert!(ct.contains("desktop scope"), "click not reported as desktop-scope: {}", clicked.text());
-    assert!(ct.contains("hwnd"), "click did not resolve a window via WindowFromPoint: {}", clicked.text());
-
-    let scrolled = driver.call(
-        "scroll",
-        serde_json::json!({ "x": cx, "y": cy, "direction": "down" }),
+fn desktop_scope_windowless_click_lands_on_control() {
+    run_desktop_fixture_case(
+        "left_click",
+        DriverRoute::WindowsSendInput,
+        |pid, wid, driver| {
+            let pre = snapshot(driver, pid, wid);
+            let (x, y) = element_center(&pre, "btn-increment");
+            let before = marker_value(&pre, "counter=");
+            let response = driver.call("click", serde_json::json!({ "x": x, "y": y }));
+            assert!(
+                !response.is_error(),
+                "desktop click failed: {}",
+                response.text()
+            );
+            std::thread::sleep(Duration::from_millis(400));
+            let after = marker_value(&snapshot(driver, pid, wid), "counter=");
+            assert!(
+                after > before,
+                "desktop click did not advance the WPF counter"
+            );
+        },
     );
-    assert!(!scrolled.is_error(), "desktop-scope scroll errored: {}", scrolled.text());
-    assert!(
-        scrolled.text().to_lowercase().contains("desktop scope"),
-        "scroll not reported as desktop-scope: {}",
-        scrolled.text()
+}
+
+#[test]
+#[ignore]
+fn desktop_scope_windowless_scroll_lands_on_control() {
+    run_desktop_fixture_case(
+        "scroll",
+        DriverRoute::WindowsSendInput,
+        |pid, wid, driver| {
+            let pre = snapshot(driver, pid, wid);
+            let (x, y) = element_center(&pre, "scroll-tall");
+            let before = marker_value(&pre, "scroll_offset=");
+            let response = driver.call(
+                "scroll",
+                serde_json::json!({ "x": x, "y": y, "direction": "down", "amount": 5 }),
+            );
+            assert!(
+                !response.is_error(),
+                "desktop scroll failed: {}",
+                response.text()
+            );
+            std::thread::sleep(Duration::from_millis(500));
+            let after = marker_value(&snapshot(driver, pid, wid), "scroll_offset=");
+            assert!(
+                after > before,
+                "desktop scroll did not advance the WPF scroll offset"
+            );
+        },
     );
 }
 
@@ -140,13 +273,31 @@ fn desktop_scope_windowless_click_and_scroll_land() {
 #[test]
 #[ignore]
 fn window_scope_rejects_windowless_click() {
-    let Some(mut driver) = McpDriver::spawn() else { return };
-    set_scope(&mut driver, "window");
-    let r = driver.call("click", serde_json::json!({ "x": 100, "y": 100 }));
-    let txt = r.text().to_lowercase();
-    assert!(
-        r.is_error() || txt.contains("desktop scope") || txt.contains("desktop_scope_disabled"),
-        "window-scope window-less click was NOT rejected: {}",
-        r.text()
+    let case = CaseSpec::delivered(
+        "windows-window-scope-gate-px-not-applicable",
+        "desktop",
+        "win32",
+        "window_scope_gate",
+        Targeting::Px,
+        Delivery::NotApplicable,
+        Scope::Window,
+        DriverRoute::Composite,
+        vec![OracleKind::Protocol],
     );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named("windows-window-scope-gate-px-not-applicable")
+            .expect("required source-built driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+        set_scope(&mut driver, "window");
+        let response = driver.call("click", serde_json::json!({ "x": 100, "y": 100 }));
+        let text = response.text().to_lowercase();
+        assert!(
+            response.is_error()
+                || text.contains("desktop scope")
+                || text.contains("desktop_scope_disabled"),
+            "window-scope window-less click was not rejected: {}",
+            response.text()
+        );
+        Observation::delivered(vec![OracleKind::Protocol], Evidence::default())
+    });
 }

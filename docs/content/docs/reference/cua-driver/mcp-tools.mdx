@@ -617,7 +617,7 @@ Configure the visual appearance and motion curve of an agent cursor instance.
 
 Appearance (multi-cursor customization):
 - cursor_id: instance name (default='default')
-- cursor_icon: built-in ('arrow' | 'teardrop' | 'sky') or a path to a PNG/JPEG/SVG/ICO file; '' reverts to the default cursor
+- cursor_icon: built-in ('arrow' | 'teardrop' | 'sky') or a path to a PNG/SVG/ICO file; '' reverts to the default cursor
 - cursor_color: hex color e.g. '#00FFFF' or CSS name
 - cursor_label: short text shown near the cursor
 - cursor_size: dot radius in points (default=16)
@@ -638,7 +638,7 @@ Motion curve (Bezier path shape):
 - `arc_flow` (number, optional): Asymmetry bias in [-1, 1]. Default 0.0.
 - `arc_size` (number, optional): Arc deflection as fraction of path length [0, 1]. Default 0.25.
 - `cursor_color` (string, optional): Hex color (e.g. '#00FFFF') or CSS color name.
-- `cursor_icon` (string, optional): Built-in shape ('arrow' | 'teardrop' | 'sky') or a path to a PNG/JPEG/SVG/ICO file. '' reverts to the default cursor.
+- `cursor_icon` (string, optional): Built-in shape ('arrow' | 'teardrop' | 'sky') or a path to a PNG/SVG/ICO file. '' reverts to the default cursor.
 - `cursor_id` (string, optional): Cursor instance name. Default: 'default'.
 - `cursor_label` (string, optional): Short label near the cursor dot.
 - `cursor_opacity` (number, optional): Opacity 0.0–1.0. Default: 0.85.
@@ -657,7 +657,7 @@ Update the visual style of the agent cursor overlay.
 
 - gradient_colors: array of CSS hex strings (e.g. ["#FF0000","#0000FF"]) used as the arrow fill gradient from tip to tail. Empty array reverts to the default palette colours.
 - bloom_color: hex string for the radial halo/bloom behind the cursor (e.g. "#00FFFF"). Empty string reverts to the default.
-- image_path: path to a PNG, JPEG, SVG, or ICO file to use as the cursor icon instead of the default silhouette. Empty string reverts to the default cursor.
+- image_path: path to a PNG, SVG, or ICO file to use as the cursor icon instead of the default silhouette. Empty string reverts to the default cursor.
 All parameters are optional; omit any you do not want to change.
 
 **Arguments:**
@@ -665,7 +665,7 @@ All parameters are optional; omit any you do not want to change.
 - `bloom_color` (string, optional): Hex bloom/halo colour (e.g. '#00FFFF'). '' = revert to default.
 - `cursor_id` (string, optional): Cursor instance. Default: 'default'.
 - `gradient_colors` (array of string, optional): CSS hex gradient stops tip→tail. [] = revert to default.
-- `image_path` (string, optional): Path to PNG/JPEG/SVG/ICO cursor image. '' = revert to the default cursor.
+- `image_path` (string, optional): Path to PNG/SVG/ICO cursor image. '' = revert to the default cursor.
 
 ## Maintenance tools
 

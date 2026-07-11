@@ -15,6 +15,7 @@ enum CommandRegistry {
             Run.self,
             Stop.self,
             SSH.self,
+            Sip.self,
             IPSW.self,
             Serve.self,
             Delete.self,

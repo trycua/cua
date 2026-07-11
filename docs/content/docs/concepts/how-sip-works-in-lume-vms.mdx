@@ -1,0 +1,80 @@
+---
+title: How SIP works in Lume VMs
+description: Understand signed LocalPolicy state, paired Recovery, and why Lume verifies SIP after reboot.
+---
+
+System Integrity Protection (SIP) on an Apple silicon VM is part of a signed
+boot policy. Changing files on the macOS Data volume cannot change that policy.
+
+## SIP state is a signed LocalPolicy
+
+Apple silicon stores SIP configuration in a LocalPolicy signed by the Secure
+Enclave. Virtualization.framework provides the corresponding security service
+for a macOS VM.
+
+The policy belongs to a larger paired state:
+
+- `disk.img` contains macOS, personalized boot files, and Recovery;
+- `nvram.bin` contains auxiliary security and anti-replay state; and
+- the VM configuration identifies the virtual hardware that boots them.
+
+Copying or editing one part does not mint a valid policy for another VM.
+
+## Offline setup and SIP use different paths
+
+Lume's unattended setup mounts the Data volume and writes account, SSH,
+autologin, and power settings. Those settings are ordinary guest files, so an
+offline patcher can prepare them without driving Setup Assistant.
+
+SIP is different because the policy must be signed from the VM's paired
+Recovery environment. Editing `disk.img` or patching bytes in `nvram.bin`
+cannot produce a valid signature.
+
+## Why `lume sip` uses Recovery
+
+`lume sip` coordinates three VM sessions:
+
+1. A normal boot checks that the requested administrator account works over
+   SSH.
+2. A Recovery boot opens Terminal over a temporary VNC session and runs
+   `csrutil enable` or `csrutil disable`.
+3. A final normal boot runs `csrutil status` over SSH.
+
+During Recovery, Lume checks the named account prompt and reads the terminal
+result with OCR before it stops the VM. Tahoe Recovery does not always halt
+after its shutdown command, so Lume can stop that exact `lume run` process
+after a grace period. It waits for the VM to report `stopped` before the final
+boot.
+
+## Verification happens after reboot
+
+The Recovery message confirms that `csrutil` accepted the policy change. The
+normal boot proves that the VM can use the new policy.
+
+Lume accepts only the canonical top-level status:
+
+```text
+System Integrity Protection status: enabled.
+```
+
+or:
+
+```text
+System Integrity Protection status: disabled.
+```
+
+A customized policy can list enabled and disabled components at the same time.
+Lume rejects that output instead of inferring a state from one component line.
+
+## Clones keep paired files together
+
+`lume clone` copies the VM disk and auxiliary storage as a pair. This is the
+supported way to reproduce a prepared seed. Copying only `disk.img` loses the
+matching security state; copying only `nvram.bin` loses the matching boot
+files.
+
+## Related pages
+
+- [Change SIP on a macOS VM](/how-to-guides/lume/change-sip)
+- [How Lume prepares vanilla macOS VMs](/concepts/how-lume-unattended-setup-works)
+- [Lume limits](/reference/lume/limits#sip-automation)

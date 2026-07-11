@@ -321,7 +321,10 @@ impl RecordingSession {
         inner.owner = None;
         let dir = inner.output_dir.clone();
         let (video_meta, stop_error) = match inner.video.take().map(|rec| rec.stop()) {
-            Some(Ok(meta)) => (Some(meta), None),
+            Some(Ok(meta)) => match validate_video_metadata(meta) {
+                Ok(meta) => (Some(meta), None),
+                Err(error) => (None, Some(error.to_string())),
+            },
             Some(Err(error)) => (None, Some(error.to_string())),
             None => (None, None),
         };
@@ -604,6 +607,22 @@ fn expand_tilde(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
+fn validate_video_metadata(meta: VideoMetadata) -> anyhow::Result<VideoMetadata> {
+    if !meta.finalized {
+        anyhow::bail!("video backend did not finalize {}", meta.path.display());
+    }
+    let output = std::fs::metadata(&meta.path).map_err(|error| {
+        anyhow::anyhow!(
+            "finalized video is missing at {}: {error}",
+            meta.path.display()
+        )
+    })?;
+    if output.len() == 0 {
+        anyhow::bail!("finalized video is empty at {}", meta.path.display());
+    }
+    Ok(meta)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -650,6 +669,44 @@ mod tests {
         .expect("parse session manifest");
         assert_eq!(manifest["video"]["present"], false);
         assert_eq!(manifest["video"]["error"], "recorder did not finalize");
+        let _ = std::fs::remove_dir_all(output_dir);
+    }
+
+    #[test]
+    fn video_metadata_requires_finalized_nonempty_output() {
+        let output_dir = std::env::temp_dir().join(format!(
+            "cua-recording-metadata-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        std::fs::create_dir_all(&output_dir).expect("create video metadata test directory");
+        let path = output_dir.join("recording.mp4");
+        std::fs::write(&path, b"video").expect("write video fixture");
+
+        let error = validate_video_metadata(VideoMetadata {
+            path: path.clone(),
+            duration_ms: 1,
+            finalized: false,
+        })
+        .expect_err("unfinalized output must fail");
+        assert!(error.to_string().contains("did not finalize"));
+
+        std::fs::write(&path, []).expect("empty video fixture");
+        let error = validate_video_metadata(VideoMetadata {
+            path: path.clone(),
+            duration_ms: 1,
+            finalized: true,
+        })
+        .expect_err("empty finalized output must fail");
+        assert!(error.to_string().contains("is empty"));
+
+        std::fs::write(&path, b"video").expect("restore video fixture");
+        validate_video_metadata(VideoMetadata {
+            path,
+            duration_ms: 1,
+            finalized: true,
+        })
+        .expect("finalized nonempty output must pass");
         let _ = std::fs::remove_dir_all(output_dir);
     }
 }

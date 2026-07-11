@@ -462,6 +462,15 @@ pub fn native_background_case(
     targeting: Targeting,
     route: DriverRoute,
 ) -> CaseSpec {
+    let mut oracles = vec![
+        OracleKind::FixtureState,
+        OracleKind::Focus,
+        OracleKind::ZOrder,
+        OracleKind::NoLeakedInput,
+    ];
+    if DisplayServer::current() != DisplayServer::Wayland {
+        oracles.push(OracleKind::Cursor);
+    }
     CaseSpec::delivered(
         native_cell_id(toolkit, action, targeting, Delivery::Background),
         toolkit,
@@ -471,13 +480,7 @@ pub fn native_background_case(
         Delivery::Background,
         Scope::Window,
         route,
-        vec![
-            OracleKind::FixtureState,
-            OracleKind::Focus,
-            OracleKind::ZOrder,
-            OracleKind::Cursor,
-            OracleKind::NoLeakedInput,
-        ],
+        oracles,
     )
 }
 

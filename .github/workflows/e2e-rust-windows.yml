@@ -35,7 +35,9 @@ jobs:
           ffprobe -version
       - name: Run shared Rust behavior matrix
         shell: pwsh
-        run: .\scripts\ci\windows\run-rust-e2e.ps1 -Suite shared -RequireGui
+        env:
+          CUA_E2E_INTERNAL_LANE: shared
+        run: .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
       - name: Collect logs
         if: always()
         shell: pwsh
@@ -68,7 +70,9 @@ jobs:
           ffprobe -version
       - name: Run native Rust harnesses
         shell: pwsh
-        run: .\scripts\ci\windows\run-rust-e2e.ps1 -Suite native -RequireGui
+        env:
+          CUA_E2E_INTERNAL_LANE: native
+        run: .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
       - name: Collect logs
         if: always()
         shell: pwsh
@@ -101,7 +105,9 @@ jobs:
           ffprobe -version
       - name: Run capture and desktop-scope contracts
         shell: pwsh
-        run: .\scripts\ci\windows\run-rust-e2e.ps1 -Suite capture -RequireGui
+        env:
+          CUA_E2E_INTERNAL_LANE: capture
+        run: .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
       - name: Collect logs
         if: always()
         shell: pwsh

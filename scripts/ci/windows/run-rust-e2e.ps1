@@ -2,8 +2,6 @@
 # Scenario definitions and assertions stay in the Rust integration test.
 param(
     [switch]$NoBuild,
-    [ValidateSet("shared", "native", "capture", "all")]
-    [string]$Suite = "all",
     [switch]$RequireGui
 )
 
@@ -14,6 +12,10 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $repoRoot = (Resolve-Path (Join-Path $scriptDir "..\..\..")).Path
 $driverRoot = Join-Path $repoRoot "libs\cua-driver"
 $rustRoot = Join-Path $driverRoot "rust"
+$suite = if ([string]::IsNullOrWhiteSpace($env:CUA_E2E_INTERNAL_LANE)) { "all" } else { $env:CUA_E2E_INTERNAL_LANE }
+if ($suite -notin @("shared", "native", "capture", "all")) {
+    throw "Unsupported internal lane: $suite"
+}
 $artifactDir = Join-Path $repoRoot "artifacts\cua-driver\windows"
 New-Item -ItemType Directory -Force $artifactDir | Out-Null
 $recordingRoot = Join-Path $artifactDir "recordings"
@@ -51,7 +53,7 @@ $env:CUA_TEST_DRIVER_STDERR = "1"
 if (-not $NoBuild) {
     & cargo build --release -p cua-driver --manifest-path (Join-Path $rustRoot "Cargo.toml")
     if ($LASTEXITCODE -ne 0) { throw "Rust driver build failed" }
-    $fixtureTargets = switch ($Suite) {
+    $fixtureTargets = switch ($suite) {
         "shared" { @("electron", "tauri") }
         "native" { @("wpf", "winui3", "webview", "electron") }
         "capture" { @("wpf", "electron") }
@@ -65,13 +67,13 @@ if (-not (Test-Path $env:CUA_TEST_DRIVER_BIN)) {
 }
 $requiredFixtures = @()
 $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-electron\CuaTestHarness.Electron.exe"
-if ($Suite -in @("shared", "all")) {
+if ($suite -in @("shared", "all")) {
     $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-tauri\CuaTestHarness.Tauri.exe"
 }
-if ($Suite -in @("native", "capture", "all")) {
+if ($suite -in @("native", "capture", "all")) {
     $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-wpf\CuaTestHarness.Wpf.exe"
 }
-if ($Suite -in @("native", "all")) {
+if ($suite -in @("native", "all")) {
     $requiredFixtures += @(
         (Join-Path $env:CUA_TEST_APPS_ROOT "harness-winui3\CuaTestHarness.WinUI3.exe"),
         (Join-Path $env:CUA_TEST_APPS_ROOT "harness-webview\CuaTestHarness.WebView.exe")
@@ -177,7 +179,7 @@ function Test-E2eRecordings {
 
 $script:FailureCount = 0
 
-if ($Suite -in @("shared", "all")) {
+if ($suite -in @("shared", "all")) {
     Invoke-CargoTest "shared behavior matrix" @(
         "test", "-p", "cua-driver", "--test", "cross_platform_behavior_test", "--",
         "--ignored", "--exact", "shared_web_action_matrix_is_state_verified",
@@ -185,7 +187,7 @@ if ($Suite -in @("shared", "all")) {
     )
 }
 
-if ($Suite -in @("native", "all")) {
+if ($suite -in @("native", "all")) {
     Invoke-CargoTest "Windows native harnesses" @(
         "test", "-p", "cua-driver", "--test", "harness_wpf_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
@@ -208,7 +210,7 @@ if ($Suite -in @("native", "all")) {
     )
 }
 
-if ($Suite -in @("capture", "all")) {
+if ($suite -in @("capture", "all")) {
     Invoke-CargoTest "capture contract" @(
         "test", "-p", "cua-driver", "--test", "capture_contract_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
@@ -231,4 +233,4 @@ if ($script:FailureCount -ne 0) {
     throw "Windows Rust e2e suite had $($script:FailureCount) failing lane(s)"
 }
 
-Write-Host "Windows Rust e2e suite completed: $Suite" -ForegroundColor Green
+Write-Host "Windows Rust e2e matrix completed: $suite" -ForegroundColor Green

@@ -72,7 +72,7 @@ cargo test -p cua-driver --test desktop_scope_macos_test -- --ignored --nocaptur
 ```
 
 The canonical Windows E2E entrypoint is
-`scripts/ci/windows/run-rust-e2e.ps1 -Suite all -RequireGui`.
+`scripts/ci/windows/run-rust-e2e.ps1 -RequireGui`.
 It runs the complete Rust harness matrix; internal lane selectors are retained
 only for focused diagnosis. Optional
 external-app suites remain separate.
@@ -102,11 +102,11 @@ The repository-level runners are the preferred entrypoints for the canonical
 matrix:
 
 ```bash
-scripts/ci/linux/run-rust-e2e.sh --suite all
+scripts/ci/linux/run-rust-e2e.sh
 ```
 
 ```powershell
-.\scripts\ci\windows\run-rust-e2e.ps1 -Suite all -RequireGui
+.\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
 ```
 
 ## Optional External Apps

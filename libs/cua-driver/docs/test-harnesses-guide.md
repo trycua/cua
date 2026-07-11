@@ -20,9 +20,9 @@ historical recording scripts are not part of the canonical E2E path.
 The canonical E2E command on every OS is `all`:
 
 ```text
-Linux:  scripts/ci/linux/run-rust-e2e.sh --suite all
-Windows: .\scripts\ci\windows\run-rust-e2e.ps1 -Suite all -RequireGui
-macOS:  scripts/ci/macos/run-rust-e2e.sh --suite all
+Linux:  scripts/ci/linux/run-rust-e2e.sh
+Windows: .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
+macOS:  scripts/ci/macos/run-rust-e2e.sh
 ```
 
 The OS workflow may fan `all` out into independent jobs for reporting and

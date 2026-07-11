@@ -7,22 +7,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 DRIVER_ROOT="${REPO_ROOT}/libs/cua-driver"
 RUST_ROOT="${DRIVER_ROOT}/rust"
-SUITE="all"
+SUITE="${CUA_E2E_INTERNAL_LANE:-all}"
 BUILD_FIXTURES=1
 
 usage() {
   cat <<'EOF'
-Usage: run-rust-e2e.sh [--no-build] [--suite shared|native|capture|all]
+Usage: run-rust-e2e.sh [--no-build]
 
 Run from a logged-in macOS desktop after install-local and TCC authorization.
 The testkit proxies MCP calls through the installed CuaDriver daemon.
+The contributor-facing command always runs the complete matrix.
 EOF
 }
 
 while (($#)); do
   case "$1" in
     --no-build) BUILD_FIXTURES=0 ;;
-    --suite) SUITE="${2:?missing suite}"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -31,7 +31,7 @@ done
 
 case "$SUITE" in
   shared|native|capture|all) ;;
-  *) echo "unsupported suite: $SUITE" >&2; exit 2 ;;
+  *) echo "unsupported internal lane: $SUITE" >&2; exit 2 ;;
 esac
 
 ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos"

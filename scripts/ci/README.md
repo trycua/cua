@@ -12,9 +12,9 @@ native harnesses, and modality tests, see
 
 | Runner | Session | Canonical command |
 | --- | --- | --- |
-| `linux/run-rust-e2e.sh` | Linux X11/Wayland desktop | `--suite all` |
-| `windows/run-rust-e2e.ps1` | Windows console/RDP user session | `-Suite all -RequireGui` |
-| `macos/run-rust-e2e.sh` | Logged-in macOS session with TCC | `--suite all` |
+| `linux/run-rust-e2e.sh` | Linux X11/Wayland desktop | no selector |
+| `windows/run-rust-e2e.ps1` | Windows console/RDP user session | `-RequireGui` |
+| `macos/run-rust-e2e.sh` | Logged-in macOS session with TCC | no selector |
 
 Use the `all` command for the canonical run. The `shared`, `native`, `guard`,
 and `modality` selectors are retained only when diagnosing one lane locally or

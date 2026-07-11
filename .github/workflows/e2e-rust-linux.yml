@@ -33,12 +33,11 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev ffmpeg
       - name: Run shared Rust behavior matrix
         env:
-          NO_AT_BRIDGE: "0"
-          GTK_A11Y: "1"
+          CUA_E2E_INTERNAL_LANE: shared
         run: |
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
-            "openbox >/tmp/cua-openbox.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh --suite shared"
+            "openbox >/tmp/cua-openbox.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh"
       - name: Upload shared results
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
@@ -69,12 +68,11 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev ffmpeg
       - name: Run GTK3 native Rust harness
         env:
-          NO_AT_BRIDGE: "0"
-          GTK_A11Y: "1"
+          CUA_E2E_INTERNAL_LANE: native
         run: |
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
-            "openbox >/tmp/cua-openbox.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh --suite native"
+            "openbox >/tmp/cua-openbox.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh"
       - name: Upload native results
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
@@ -105,12 +103,11 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev ffmpeg
       - name: Run capture and desktop-scope contracts
         env:
-          NO_AT_BRIDGE: "0"
-          GTK_A11Y: "1"
+          CUA_E2E_INTERNAL_LANE: capture
         run: |
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
-            "openbox >/tmp/cua-openbox.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh --suite capture"
+            "openbox >/tmp/cua-openbox.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh"
       - name: Upload capture results
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4

@@ -160,9 +160,9 @@ allowed, and the desktop-side-effect oracles pass.
 | Gate | Environment | Entry point |
 | --- | --- | --- |
 | Unit | OS-scoped Linux/Windows CI | `cargo test --workspace --all-targets --locked` with GUI targets excluded |
-| Windows Harness E2E | Active Windows user session | `scripts/ci/windows/run-rust-e2e.ps1 -Suite all -RequireGui` |
-| Linux Harness E2E | Nix X11 or Wayland session | `scripts/ci/linux/run-rust-e2e.sh --suite all` |
-| macOS Harness E2E | Logged-in macOS session with permissions | `scripts/ci/macos/run-rust-e2e.sh --suite all` |
+| Windows Harness E2E | Active Windows user session | `scripts/ci/windows/run-rust-e2e.ps1 -RequireGui` |
+| Linux Harness E2E | Nix X11 or Wayland session | `scripts/ci/linux/run-rust-e2e.sh` |
+| macOS Harness E2E | Logged-in macOS session with permissions | `scripts/ci/macos/run-rust-e2e.sh` |
 
 The workflow selects suites. Rust source owns scenario definitions, fixture
 oracles, and result records. OS runners only build the driver, stage the local

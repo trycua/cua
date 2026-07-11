@@ -9,9 +9,9 @@ and upload the validated artifacts.
 The contributor-facing command is `all` on every OS:
 
 ```text
-Windows: scripts/ci/windows/run-rust-e2e.ps1 -Suite all -RequireGui
-Linux:   scripts/ci/linux/run-rust-e2e.sh --suite all
-macOS:   scripts/ci/macos/run-rust-e2e.sh --suite all
+Windows: scripts/ci/windows/run-rust-e2e.ps1 -RequireGui
+Linux:   scripts/ci/linux/run-rust-e2e.sh
+macOS:   scripts/ci/macos/run-rust-e2e.sh
 ```
 
 Workflows fan `all` into internal shared, native, and capture jobs so one

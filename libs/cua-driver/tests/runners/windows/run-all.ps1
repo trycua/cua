@@ -19,5 +19,5 @@ if (-not (Test-Path $canonicalRunner)) {
     throw "Canonical Windows E2E runner not found: $canonicalRunner"
 }
 
-& $canonicalRunner -Suite all -NoBuild:$NoBuild -RequireGui:$RequireGui
+& $canonicalRunner -NoBuild:$NoBuild -RequireGui:$RequireGui
 exit $LASTEXITCODE

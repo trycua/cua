@@ -49,7 +49,6 @@
             libxcb
             libxcomposite
             libxdamage
-            libxdo
             libxext
             libxfixes
             libxi

@@ -551,7 +551,14 @@ fn require_element(snapshot: &ToolResponse, id: &str) -> u64 {
         "btn-open-child-window" => "Open child window",
         _ => id,
     };
+    let platform_id = match id {
+        // Chromium exposes the DOM id through AX, while data-cua-id is the
+        // canonical identifier shared with the native harnesses.
+        "border-click-target" => "click-target",
+        _ => id,
+    };
     element_index_by_id(snapshot.tree_text(), id)
+        .or_else(|| element_index_by_id(snapshot.tree_text(), platform_id))
         .or_else(|| element_index_containing(snapshot.tree_text(), visible_label))
         .unwrap_or_else(|| {
             panic!(

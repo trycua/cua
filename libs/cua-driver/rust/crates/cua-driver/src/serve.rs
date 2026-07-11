@@ -332,6 +332,22 @@ pub fn default_socket_path() -> String {
     }
 }
 
+/// Program-owned endpoint for the narrow Codex Computer Use compatibility
+/// daemon. Keeping it separate prevents a running native daemon from serving
+/// the wrong catalog or cursor configuration to a compat MCP client.
+pub fn codex_compat_default_socket_path() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        r"\\.\pipe\cua-driver-codex-computer-use".to_owned()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut path = std::path::PathBuf::from(default_socket_path());
+        path.set_file_name("cua-driver-codex-computer-use.sock");
+        path.to_string_lossy().into_owned()
+    }
+}
+
 /// On Windows, returns the named-pipe path of the uiAccess-elevated worker
 /// (`cua-driver-uia.exe`). The main CLI/MCP binary can prefer this pipe over the
 /// regular daemon pipe for the one path that genuinely needs UIAccess integrity:
@@ -366,6 +382,20 @@ pub fn default_pid_file_path() -> String {
     {
         "/tmp/cua-driver.pid".to_owned()
     }
+}
+
+pub fn codex_compat_default_pid_file_path() -> String {
+    let mut path = std::path::PathBuf::from(default_pid_file_path());
+    path.set_file_name("cua-driver-codex-computer-use.pid");
+    path.to_string_lossy().into_owned()
+}
+
+fn is_managed_socket_path(path: &str) -> bool {
+    path == default_socket_path() || path == codex_compat_default_socket_path()
+}
+
+fn is_managed_pid_file_path(path: &str) -> bool {
+    path == default_pid_file_path() || path == codex_compat_default_pid_file_path()
 }
 
 // ── Protocol types ────────────────────────────────────────────────────────────
@@ -606,7 +636,7 @@ pub async fn run_serve(
     // repair permissions left by older releases; custom paths fail closed so a
     // typo cannot silently chmod a caller-managed directory.
     if let Some(dir) = socket.parent() {
-        secure_runtime_directory(dir, socket_path == default_socket_path())?;
+        secure_runtime_directory(dir, is_managed_socket_path(socket_path))?;
     }
 
     // Remove stale socket file (from a crashed previous daemon).
@@ -622,7 +652,7 @@ pub async fn run_serve(
     if let Some(pid_path) = pid_file_path {
         let pid = std::path::Path::new(pid_path);
         if let Some(dir) = pid.parent() {
-            secure_runtime_directory(dir, pid_path == default_pid_file_path())?;
+            secure_runtime_directory(dir, is_managed_pid_file_path(pid_path))?;
         }
         write_private_pid_file(pid)?;
     }
@@ -1596,7 +1626,11 @@ mod gate_tests {
     //! a `start_session` re-declare REVIVES the id so its subsequent actions run
     //! again. Live and anonymous calls always pass through.
 
-    use super::{run_serve, secure_runtime_directory, send_request, DaemonRequest};
+    use super::{
+        codex_compat_default_pid_file_path, codex_compat_default_socket_path,
+        is_managed_pid_file_path, is_managed_socket_path, run_serve,
+        secure_runtime_directory, send_request, DaemonRequest,
+    };
     use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -1650,6 +1684,28 @@ mod gate_tests {
             secure_runtime_directory(&link, true).is_err(),
             "runtime directory must not follow a symlink"
         );
+    }
+
+    #[test]
+    fn codex_compat_defaults_repair_legacy_runtime_directory_permissions() {
+        let socket = codex_compat_default_socket_path();
+        let pid = codex_compat_default_pid_file_path();
+        assert!(is_managed_socket_path(&socket));
+        assert!(is_managed_pid_file_path(&pid));
+
+        let root = tempfile::tempdir().expect("temp root");
+        let runtime = root.path().join("legacy-compat-runtime");
+        std::fs::create_dir(&runtime).expect("create runtime");
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o755))
+            .expect("make legacy mode");
+        secure_runtime_directory(&runtime, is_managed_socket_path(&socket))
+            .expect("repair program-owned compat runtime");
+        let mode = std::fs::metadata(&runtime)
+            .expect("runtime metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700);
     }
 
     #[tokio::test]

@@ -48,6 +48,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// they take `compat: bool` directly, but the binary crate decides what
 /// to pass without making every Command variant carry the flag.
 static CLAUDE_CODE_COMPAT: AtomicBool = AtomicBool::new(false);
+static CODEX_COMPUTER_USE_COMPAT: AtomicBool = AtomicBool::new(false);
 
 fn init_logging() {
     use tracing_subscriber::EnvFilter;
@@ -156,10 +157,17 @@ fn build_macos_registry() -> cua_driver_core::tool::ToolRegistry {
 }
 
 #[cfg(target_os = "macos")]
-fn build_macos_registry_with_compat(compat: bool) -> cua_driver_core::tool::ToolRegistry {
-    let mut r = platform_macos::register_tools_with_compat(compat);
-    check_update_tool::register_into(&mut r);
-    r
+fn build_macos_registry_with_compat(
+    claude_compat: bool,
+    codex_compat: bool,
+) -> cua_driver_core::tool::ToolRegistry {
+    if codex_compat {
+        platform_macos::register_codex_computer_use_compat_tools()
+    } else {
+        let mut r = platform_macos::register_tools_with_compat(claude_compat);
+        check_update_tool::register_into(&mut r);
+        r
+    }
 }
 
 // ── macOS entry-point ─────────────────────────────────────────────────────
@@ -232,7 +240,12 @@ fn main() {
             cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
             return;
         }
-        cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
+        cli::Command::Serve {
+            socket,
+            no_permissions_gate,
+            claude_code_compat,
+            codex_computer_use_compat,
+        } => {
             responsibility::reexec_disclaimed_if_needed();
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr
@@ -278,7 +291,7 @@ fn main() {
             // the agent cursor never appeared. Init the channel before spawning
             // the serve thread so `run_on_main_thread()` always finds it ready
             // (mirrors the Mcp arm).
-            let cursor_cfg = cursor_overlay::CursorConfig::from_args();
+            let cursor_cfg = cli::cursor_config(codex_computer_use_compat);
             if cursor_cfg.enabled {
                 platform_macos::cursor::overlay::init(cursor_cfg.clone());
             }
@@ -288,10 +301,14 @@ fn main() {
             // --claude-code-computer-use-compat`). The Serve arm is the daemon
             // the proxy talks to, so without this the proxy path always served
             // the full screenshot tool regardless of the client's request.
-            let reg = Arc::new(build_macos_registry_with_compat(claude_code_compat));
+            let reg = Arc::new(build_macos_registry_with_compat(
+                claude_code_compat,
+                codex_computer_use_compat,
+            ));
             reg.init_self_weak();
-            let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = serve::default_pid_file_path();
+            let pid_path =
+                cli::daemon_pid_file_path(socket.as_deref(), codex_computer_use_compat);
+            let sp = cli::daemon_socket_path(socket, codex_computer_use_compat);
 
             // Bind the Unix socket FIRST, on a background thread, BEFORE
             // running the (blocking) permissions gate (#1761).
@@ -369,8 +386,8 @@ fn main() {
             return;
         }
         cli::Command::Status { socket } => {
+            let pid_path = cli::daemon_pid_file_path(socket.as_deref(), false);
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = serve::default_pid_file_path();
             serve::run_status_cmd(&sp, &pid_path);
             return;
         }
@@ -426,8 +443,14 @@ fn main() {
             cli::run_config_cmd(reg, subcommand.as_deref(), key.as_deref(), value.as_deref(), socket.as_deref());
             return;
         }
-        cli::Command::Mcp { no_daemon_relaunch, socket, claude_code_compat } => {
+        cli::Command::Mcp {
+            no_daemon_relaunch,
+            socket,
+            claude_code_compat,
+            codex_computer_use_compat,
+        } => {
             CLAUDE_CODE_COMPAT.store(claude_code_compat, Ordering::SeqCst);
+            CODEX_COMPUTER_USE_COMPAT.store(codex_computer_use_compat, Ordering::SeqCst);
             // Long-running MCP server — kick off the background update
             // check before any TCC / daemon-proxy decisions so the
             // banner can land on stderr in either dispatch path.
@@ -439,7 +462,11 @@ fn main() {
             // attribution and forwards stdio MCP through its socket.
             // Issue #1525 / mirror of Swift PR #1479.
             if cli::should_use_daemon_proxy(no_daemon_relaunch) {
-                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket, claude_code_compat) {
+                if let Err(e) = cli::run_mcp_via_daemon_proxy(
+                    socket,
+                    claude_code_compat,
+                    codex_computer_use_compat,
+                ) {
                     eprintln!("cua-driver-rs: {e}");
                     std::process::exit(1);
                 }
@@ -452,7 +479,8 @@ fn main() {
         }
     }
 
-    let cursor_cfg = cursor_overlay::CursorConfig::from_args();
+    let codex_compat = CODEX_COMPUTER_USE_COMPAT.load(Ordering::SeqCst);
+    let cursor_cfg = cli::cursor_config(codex_compat);
 
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
@@ -508,9 +536,10 @@ fn main() {
                 .build()
                 .expect("tokio runtime");
             let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
+            let codex_compat = CODEX_COMPUTER_USE_COMPAT.load(Ordering::SeqCst);
             rt.block_on(async move {
                 // Register tools; overlay init has already happened above.
-                let registry = Arc::new(build_macos_registry_with_compat(compat));
+                let registry = Arc::new(build_macos_registry_with_compat(compat, codex_compat));
                 // Wire up replay tool's back-reference to the registry.
                 registry.init_self_weak();
                 if let Err(e) = cua_driver_core::server::run(registry).await {
@@ -584,7 +613,12 @@ fn main() -> anyhow::Result<()> {
             }).join().ok();
             return Ok(());
         }
-        cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
+        cli::Command::Serve {
+            socket,
+            no_permissions_gate,
+            claude_code_compat,
+            codex_computer_use_compat,
+        } => {
             responsibility::reexec_disclaimed_if_needed();
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr.
@@ -601,8 +635,9 @@ fn main() -> anyhow::Result<()> {
             let reg = Arc::new(build_registry(cursor_cfg));
             reg.init_self_weak();
             maybe_init_pip();
-            let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = serve::default_pid_file_path();
+            let pid_path =
+                cli::daemon_pid_file_path(socket.as_deref(), codex_computer_use_compat);
+            let sp = cli::daemon_socket_path(socket, codex_computer_use_compat);
             // run_serve_cmd builds its own runtime; must run on a fresh thread.
             std::thread::spawn(move || {
                 serve::run_serve_cmd(reg, &sp, Some(&pid_path));
@@ -615,8 +650,8 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         cli::Command::Status { socket } => {
+            let pid_path = cli::daemon_pid_file_path(socket.as_deref(), false);
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = serve::default_pid_file_path();
             serve::run_status_cmd(&sp, &pid_path);
             return Ok(());
         }
@@ -673,8 +708,14 @@ fn main() -> anyhow::Result<()> {
             }).join().ok();
             return Ok(());
         }
-        cli::Command::Mcp { no_daemon_relaunch, socket, claude_code_compat } => {
+        cli::Command::Mcp {
+            no_daemon_relaunch,
+            socket,
+            claude_code_compat,
+            codex_computer_use_compat,
+        } => {
             CLAUDE_CODE_COMPAT.store(claude_code_compat, Ordering::SeqCst);
+            CODEX_COMPUTER_USE_COMPAT.store(codex_computer_use_compat, Ordering::SeqCst);
             // Long-running MCP server — kick off the background update
             // check before any daemon-proxy decisions.
             version_check::maybe_announce_update();
@@ -689,7 +730,11 @@ fn main() -> anyhow::Result<()> {
             // Code over SSH lands in Session 0 and every desktop
             // tool returns empty. See `cli::should_use_daemon_proxy`.
             if cli::should_use_daemon_proxy(no_daemon_relaunch) {
-                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket, claude_code_compat) {
+                if let Err(e) = cli::run_mcp_via_daemon_proxy(
+                    socket,
+                    claude_code_compat,
+                    codex_computer_use_compat,
+                ) {
                     eprintln!("cua-driver-rs: {e}");
                     std::process::exit(1);
                 }

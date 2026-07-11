@@ -67,6 +67,21 @@ pub fn register_tools_with_compat(compat: bool) -> ToolRegistry {
     }
 }
 
+/// Register the opt-in Codex Computer Use compatibility surface on macOS.
+/// Native callers keep [`register_tools`] and its full tool catalog.
+pub fn register_codex_computer_use_compat_tools() -> ToolRegistry {
+    #[cfg(target_os = "macos")]
+    {
+        let mut r = ToolRegistry::new();
+        tools::register_codex_compat(&mut r);
+        r
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        ToolRegistry::new()
+    }
+}
+
 /// Register all macOS tools and initialise the cursor overlay channel.
 ///
 /// After calling this, `main()` must call

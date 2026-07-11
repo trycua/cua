@@ -140,6 +140,13 @@ impl Tool for GetWindowStateTool {
             .and_then(|v| v.as_u64())
             .map(|v| v.max(1) as usize)
             .unwrap_or(crate::ax::tree::DEFAULT_MAX_DEPTH);
+        // Internal-only compatibility mode. It is deliberately absent from
+        // this native tool's public schema so the default action-only map and
+        // collapsed layout shape remain unchanged for existing consumers.
+        let codex_full_ax_map = args
+            .get("_codex_compat_full_ax_map")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
 
         // Always walk the AX tree (perception returns both tree + screenshot).
         let tree_result = {
@@ -149,13 +156,23 @@ impl Tool for GetWindowStateTool {
             // AXUIElementCopyAttributeValue indefinitely via XPC — without a
             // deadline the MCP server hangs forever (issue #1537).
             let walk_future = tokio::task::spawn_blocking(move || {
-                crate::ax::tree::walk_tree_bounded(
-                    pid,
-                    Some(window_id),
-                    q.as_deref(),
-                    max_elements,
-                    max_depth,
-                )
+                if codex_full_ax_map {
+                    crate::ax::tree::walk_tree_bounded_full_map(
+                        pid,
+                        Some(window_id),
+                        q.as_deref(),
+                        max_elements,
+                        max_depth,
+                    )
+                } else {
+                    crate::ax::tree::walk_tree_bounded(
+                        pid,
+                        Some(window_id),
+                        q.as_deref(),
+                        max_elements,
+                        max_depth,
+                    )
+                }
             });
             match tokio::time::timeout(std::time::Duration::from_secs(30), walk_future).await {
                 Ok(Ok(r)) => Some(r),

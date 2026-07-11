@@ -26,6 +26,7 @@ mod get_cursor_position;
 mod move_cursor;
 mod cursor_tools;
 mod check_permissions;
+mod codex_compat;
 mod get_config;
 mod set_config;
 mod get_accessibility_tree;
@@ -452,6 +453,16 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     // Recording / replay + session-lifecycle tools are platform-independent.
     registry.register_recording_tools();
     registry.register_session_tools();
+}
+
+/// Register the deliberately narrow Codex Computer Use compatibility surface.
+///
+/// This is opt-in and replaces, rather than extends, the native registry so an
+/// agent sees the same ten app-oriented tools as Codex's Computer Use provider.
+/// The wrappers translate app names/paths/bundle identifiers into the native
+/// pid/window primitives and retain a fail-closed snapshot per MCP session.
+pub fn register_codex_compat(registry: &mut ToolRegistry) {
+    codex_compat::register_all(registry);
 }
 
 #[cfg(test)]

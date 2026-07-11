@@ -31,6 +31,26 @@ The Python wrapper and install scripts expect the built binary at
 `target/<profile>/cua-driver` (or `cua-driver.exe` on Windows), unless
 `CUA_DRIVER_BINARY` is set.
 
+## Codex Computer Use compatibility (macOS)
+
+`cua-driver mcp --codex-computer-use-compat` replaces the native MCP catalog
+with the ten app-oriented tools exposed by Codex Computer Use v829. Each action
+requires a current `get_app_state(app)` snapshot and returns a refreshed concise
+AX tree plus an 85%-quality JPEG normalized to logical window points. The mode
+uses the built-in `sky` cursor unless `--cursor-shape` or `--cursor-icon` is
+explicit. Without the flag, the full native tool catalog and teardrop default
+are unchanged. Compat MCP sessions use a dedicated daemon socket and PID file,
+so a concurrently running native daemon cannot supply the wrong tool catalog or
+cursor configuration.
+
+The compatibility layer blocks the driver/host, macOS authentication services,
+System Settings, Terminal, and Ghostty. It does not implement an approval UI or
+MCP elicitation; the embedding host remains responsible for confirmation policy
+before risky UI actions. Its tree uses cua-driver-generated indices, which are
+not numerically identical to Codex's proprietary indices. Compatibility mode
+preserves and indexes meaningful containers and static text. The native tree
+remains action-only.
+
 ## Tests
 
 Default tests should be headless and safe for CI:

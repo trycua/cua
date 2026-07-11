@@ -35,6 +35,9 @@ pub enum Command {
         /// the MCP server is wired up as `cua-computer-use` in Claude
         /// Code, where this is the documented best-practice install.
         claude_code_compat: bool,
+        /// `--codex-computer-use-compat`: expose the ten-tool Codex
+        /// Computer Use app-oriented surface instead of the native catalog.
+        codex_computer_use_compat: bool,
     },
     ListTools,
     Describe(String),
@@ -66,6 +69,9 @@ pub enum Command {
         /// flag was a no-op for `cua-driver mcp --claude-code-computer-use-compat`,
         /// which always routes through the proxy on an installed bundle.
         claude_code_compat: bool,
+        /// True when the daemon should expose the Codex Computer Use
+        /// compatibility surface.
+        codex_computer_use_compat: bool,
     },
     Stop { socket: Option<String> },
     Status { socket: Option<String> },
@@ -147,6 +153,28 @@ const VALUE_FLAGS: &[&str] = &[
     "--experimental-pip-geometry",
 ];
 
+/// Parse cursor flags and apply the Codex compatibility default. Native mode
+/// remains teardrop; Codex compatibility uses Sky unless the caller explicitly
+/// supplied a cursor shape or icon.
+pub fn cursor_config(codex_computer_use_compat: bool) -> cursor_overlay::CursorConfig {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    cursor_config_from_args(&args, codex_computer_use_compat)
+}
+
+fn cursor_config_from_args(
+    args: &[String],
+    codex_computer_use_compat: bool,
+) -> cursor_overlay::CursorConfig {
+    let mut config = cursor_overlay::CursorConfig::parse(args);
+    let explicit_shape = args
+        .iter()
+        .any(|arg| arg == "--cursor-shape" || arg == "--cursor-icon");
+    if codex_computer_use_compat && !explicit_shape {
+        config.builtin_shape = cursor_overlay::BuiltinShape::Sky;
+    }
+    config
+}
+
 /// Parse the first non-flag positional argument from argv to determine which
 /// subcommand to run.  Cursor-overlay flags are consumed by `CursorConfig`
 /// independently; we only care about the first non-`--` arg here.
@@ -215,6 +243,9 @@ pub fn parse_command() -> Command {
         println!("                          screenshot tool itself was removed in #1692, so the flag");
         println!("                          has no tool-surface effect today; the wiring is in place");
         println!("                          for any future compat-gated tool.");
+        println!("  --codex-computer-use-compat");
+        println!("                          Expose the ten-tool Codex Computer Use compatibility surface.");
+        println!("                          Uses Sky unless --cursor-shape/--cursor-icon is explicit.");
         println!();
         println!("agent cursor overlay (serve / mcp only — needs the daemon UI runloop):");
         println!("  The overlay is ON by default: every MCP session automatically gets its own");
@@ -287,6 +318,7 @@ pub fn parse_command() -> Command {
 
     let no_daemon_relaunch = args.iter().any(|a| a == "--no-daemon-relaunch");
     let claude_code_compat = args.iter().any(|a| a == "--claude-code-computer-use-compat");
+    let codex_computer_use_compat = args.iter().any(|a| a == "--codex-computer-use-compat");
 
     let mut pos = positionals.into_iter();
     match pos.next() {
@@ -316,12 +348,14 @@ pub fn parse_command() -> Command {
                 no_daemon_relaunch,
                 socket: socket.clone(),
                 claude_code_compat,
+                codex_computer_use_compat,
             }
         }
         Some("mcp") => Command::Mcp {
             no_daemon_relaunch,
             socket: socket.clone(),
             claude_code_compat,
+            codex_computer_use_compat,
         },
         Some("list-tools") => Command::ListTools,
         Some("mcp-config") => Command::McpConfig { client: mcp_client },
@@ -330,6 +364,7 @@ pub fn parse_command() -> Command {
             // Bare flag — present anywhere on argv counts as "skip the gate".
             no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
             claude_code_compat,
+            codex_computer_use_compat,
         },
         Some("stop") => Command::Stop { socket },
         Some("status") => Command::Status { socket },
@@ -590,6 +625,41 @@ pub fn should_use_daemon_proxy(no_daemon_relaunch: bool) -> bool {
     true
 }
 
+/// Resolve the daemon endpoint for an MCP/serve invocation. Codex Computer
+/// Use compatibility owns a separate default daemon so a native daemon that
+/// is already running can never leak its broader catalog into the ten-tool
+/// surface (or inherit the wrong cursor configuration).
+pub fn daemon_socket_path(
+    explicit_socket: Option<String>,
+    codex_computer_use_compat: bool,
+) -> String {
+    explicit_socket.unwrap_or_else(|| {
+        if codex_computer_use_compat {
+            crate::serve::codex_compat_default_socket_path()
+        } else {
+            crate::serve::default_socket_path()
+        }
+    })
+}
+
+pub fn daemon_pid_file_path(
+    explicit_socket: Option<&str>,
+    codex_computer_use_compat: bool,
+) -> String {
+    #[cfg(not(target_os = "windows"))]
+    if let Some(socket) = explicit_socket {
+        let mut path = std::path::PathBuf::from(socket);
+        path.set_extension("pid");
+        return path.to_string_lossy().into_owned();
+    }
+    #[cfg(target_os = "windows")]
+    let _ = explicit_socket;
+    if !codex_computer_use_compat {
+        return crate::serve::default_pid_file_path();
+    }
+    crate::serve::codex_compat_default_pid_file_path()
+}
+
 /// Non-macOS targets don't have TCC, but they DO have the equivalent
 /// problem of session attribution on Windows (Session 0 vs the user's
 /// interactive Session 1+). When the CLI is spawned via SSH or a
@@ -653,6 +723,7 @@ pub fn launch_daemon_and_wait(
     socket_path: &str,
     timeout_secs: u64,
     claude_code_compat: bool,
+    codex_computer_use_compat: bool,
 ) -> anyhow::Result<()> {
     use std::process::{Command as Cmd, Stdio};
     use std::time::{Duration, Instant};
@@ -683,6 +754,9 @@ pub fn launch_daemon_and_wait(
     // pre-existing daemon keeps whatever surface it launched with.
     if claude_code_compat {
         open_args.push("--claude-code-computer-use-compat");
+    }
+    if codex_computer_use_compat {
+        open_args.push("--codex-computer-use-compat");
     }
 
     let status = Cmd::new("/usr/bin/open")
@@ -738,6 +812,7 @@ pub fn launch_daemon_and_wait(
 pub fn run_mcp_via_daemon_proxy(
     socket: Option<String>,
     claude_code_compat: bool,
+    codex_computer_use_compat: bool,
 ) -> anyhow::Result<()> {
     // Windows: prefer the uiAccess'd worker pipe over the regular daemon pipe
     // when both are running, so MCP tool calls land in a process that can
@@ -745,6 +820,8 @@ pub fn run_mcp_via_daemon_proxy(
     // the proxy doesn't need to know which one it's talking to. See #1602.
     let socket_path = if let Some(s) = socket {
         s
+    } else if codex_computer_use_compat {
+        crate::serve::codex_compat_default_socket_path()
     } else {
         #[cfg(target_os = "windows")]
         {
@@ -786,10 +863,17 @@ pub fn run_mcp_via_daemon_proxy(
                  auto-launching the daemon via `open -n -g -a CuaDriver --args serve{socket_suffix}` \
                  and proxying MCP requests through it. Pass --no-daemon-relaunch to stay in-process."
             );
-            launch_daemon_and_wait(&socket_path, 10, claude_code_compat)?;
+            launch_daemon_and_wait(
+                &socket_path,
+                10,
+                claude_code_compat,
+                codex_computer_use_compat,
+            )?;
         }
         #[cfg(not(target_os = "macos"))]
         let _ = claude_code_compat;
+        #[cfg(not(target_os = "macos"))]
+        let _ = codex_computer_use_compat;
         // On Linux / Windows there's no equivalent `open -a CuaDriver`
         // mechanism to spawn a daemon attributed to the user's
         // interactive session. The caller is expected to have one
@@ -873,6 +957,7 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--no-daemon-relaunch", "type": "flag", "description": "Skip the bundle-based TCC auto-relaunch and stay in-process." },
                   { "name": "--socket", "type": "string", "description": "Override the daemon proxy UDS path." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Select the Claude Code computer-use compat tool surface." },
+                  { "name": "--codex-computer-use-compat", "type": "flag", "description": "Select the ten-tool Codex Computer Use compatibility surface." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
               ] },
@@ -882,6 +967,7 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--socket", "type": "string", "description": "Override the listen socket path." },
                   { "name": "--no-permissions-gate", "type": "flag", "description": "Skip the macOS TCC first-launch gate." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Forwarded by the MCP proxy when the client asked for the compat surface." },
+                  { "name": "--codex-computer-use-compat", "type": "flag", "description": "Forwarded by the MCP proxy when the client asked for the Codex compatibility surface." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
               ] },
@@ -1905,7 +1991,7 @@ fn run_permissions_grant() {
                  and Screen Recording in System Settings, then this command continues."
             );
             // Permissions-grant launch never needs the compat screenshot surface.
-            if let Err(e) = launch_daemon_and_wait(&socket, 180, false) {
+            if let Err(e) = launch_daemon_and_wait(&socket, 180, false, false) {
                 eprintln!("\nDidn't detect the CuaDriver daemon: {e}");
                 eprintln!(
                     "If you haven't yet, grant Accessibility + Screen Recording to CuaDriver \
@@ -2962,6 +3048,60 @@ mod tests {
         assert_eq!(sanitize_tool_name("click"), "click");
         assert_eq!(sanitize_tool_name("move_mouse"), "move_mouse");
         assert_eq!(sanitize_tool_name("ScrollUp"), "scrollup");
+    }
+
+    #[test]
+    fn codex_compat_defaults_to_sky_cursor_only_in_compat_mode() {
+        let args = vec!["mcp".to_owned(), "--codex-computer-use-compat".to_owned()];
+        assert_eq!(
+            cursor_config_from_args(&args, true).builtin_shape,
+            cursor_overlay::BuiltinShape::Sky
+        );
+        assert_eq!(
+            cursor_config_from_args(&["mcp".to_owned()], false).builtin_shape,
+            cursor_overlay::BuiltinShape::Teardrop
+        );
+    }
+
+    #[test]
+    fn explicit_cursor_shape_overrides_codex_sky_default() {
+        let args = vec![
+            "mcp".to_owned(),
+            "--codex-computer-use-compat".to_owned(),
+            "--cursor-shape".to_owned(),
+            "arrow".to_owned(),
+        ];
+        assert_eq!(
+            cursor_config_from_args(&args, true).builtin_shape,
+            cursor_overlay::BuiltinShape::Arrow
+        );
+    }
+
+    #[test]
+    fn codex_compat_uses_dedicated_default_daemon_paths() {
+        let native_socket = daemon_socket_path(None, false);
+        let compat_socket = daemon_socket_path(None, true);
+        assert_ne!(compat_socket, native_socket);
+        assert!(compat_socket.ends_with("cua-driver-codex-computer-use.sock")
+            || compat_socket.ends_with("cua-driver-codex-computer-use"));
+
+        let native_pid = daemon_pid_file_path(None, false);
+        let compat_pid = daemon_pid_file_path(None, true);
+        assert_ne!(compat_pid, native_pid);
+        assert!(compat_pid.ends_with("cua-driver-codex-computer-use.pid"));
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(
+            daemon_pid_file_path(Some("/tmp/cua-explicit.sock"), true),
+            "/tmp/cua-explicit.pid"
+        );
+    }
+
+    #[test]
+    fn explicit_socket_overrides_codex_compat_default() {
+        assert_eq!(
+            daemon_socket_path(Some("/tmp/cua-explicit.sock".to_owned()), true),
+            "/tmp/cua-explicit.sock"
+        );
     }
 
     #[test]

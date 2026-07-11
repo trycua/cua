@@ -91,6 +91,7 @@ fn run_case(
     test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
 ) {
     let cell_id = case.cell_id.clone();
+    let delivery = case.delivery;
     execute_case(case, |evidence| {
         let mut driver = McpDriver::spawn_named(&cell_id)
             .expect("required source-built Windows driver did not start");
@@ -100,6 +101,9 @@ fn run_case(
             .find_window(pid as i64, "CuaTestHarness WinUI3")
             .expect("WinUI3 main window not found");
         wait_for_winui3_ready(&mut driver, pid, wid);
+        if delivery != cua_driver_testkit::e2e::Delivery::Background {
+            driver.start_behavior_recording();
+        }
         test(pid, wid, &mut driver)
     });
 }

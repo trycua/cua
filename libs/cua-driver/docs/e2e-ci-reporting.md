@@ -55,12 +55,39 @@ artifacts/cua-driver/<platform>/
     |-- cursor.jsonl
     `-- turn-*/
         |-- action.json
-        `-- screenshot.png
+        |-- evidence.json
+        |-- before_state.json
+        |-- before.png
+        |-- after_state.json
+        |-- after.png
+        |-- app_state.json
+        |-- screenshot.png
+        `-- click.png (click-family turns)
 ```
 
 `cases.jsonl` is the executed catalog. `results.jsonl` contains one result for
-every declared cell. The reporter rejects duplicates, missing results,
-undeclared results, contradictory statuses, and missing required videos.
+every declared cell. In canonical mode, the reporter rejects duplicates,
+missing results, undeclared results, contradictory statuses, missing required
+videos, and missing or invalid expected turn evidence. An `evidence.json`
+classification makes capture failure auditable but does not turn it into a
+passing artifact.
+
+The testkit prepares each cell's artifact directory before fixture setup but
+does not start `recording.mp4` yet. On Windows GitHub-hosted runners it obtains
+the test process's inherited top-level console with `GetConsoleWindow`, verifies
+the HostedComputeAgent/runner title and console class, then minimizes it with
+`ShowWindow(SW_MINIMIZE)`. Fixture readiness
+and the required foreground or sentinel-occluded posture are established after
+that cleanup. The cell then calls `start_behavior_recording`, waits 300 ms for
+a visible baseline frame, dispatches the action, and keeps recording through
+oracle collection.
+
+`trajectory.json` records the behavioral video phase as `pending`, `started`,
+or `finalized`, its start/baseline/finalization timestamps, and the hosted-runner
+console cleanup status. Strict reporting
+requires `finalized`. A setup or posture failure before the boundary remains in
+the test result and logs, and the testkit writes `recording-error.txt`; it does
+not create a misleading behavioral clip.
 
 ## Environment Record
 

@@ -189,6 +189,13 @@ fn desktop_scope_windowless_click_lands_on_control() {
         };
         let pre = counter(&snap).unwrap_or(0);
         println!("[desktop-linux] increment button screen-center=({cx},{cy}) pre-counter={pre}");
+        let posture = driver.call(
+            "bring_to_front",
+            serde_json::json!({"pid": pid as i64, "window_id": wid}),
+        );
+        assert!(!posture.is_error(), "could not foreground GTK3 fixture: {}", posture.text());
+        std::thread::sleep(Duration::from_millis(300));
+        driver.start_behavior_recording();
 
         // Retry the window-less desktop click until the counter advances. A
         // freshly-mapped harness window may not yet be raised under the pointer on
@@ -253,6 +260,7 @@ fn window_scope_rejects_windowless_click() {
         let mut driver = McpDriver::spawn_named(cell_id).expect("start source-built Linux driver");
         *evidence = recording_evidence(driver.recording_dir());
         set_scope(&mut driver, "window");
+        driver.start_behavior_recording();
         let r = driver.call("click", serde_json::json!({ "x": 100, "y": 100 }));
         assert!(
             r.is_error()

@@ -141,6 +141,15 @@ where
         } else {
             None
         };
+        if let Some(sentinel) = &sentinel {
+            sentinel
+                .assert_background_posture(TargetWindow {
+                    pid: fixture.pid,
+                    native_id: fixture.wid,
+                })
+                .expect("establish background posture before recording");
+        }
+        fixture.driver.start_behavior_recording();
         let mut observation = if delivery == Delivery::Background {
             let sentinel = sentinel.as_ref().expect("background sentinel");
             let (mut observation, passed) = sentinel

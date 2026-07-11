@@ -45,8 +45,9 @@ mod raw;
 mod reaper;
 mod response;
 pub mod sentinel;
+mod windows_setup;
 
-pub use driver::Driver;
+pub use driver::{BehaviorRecording, Driver};
 pub use journal::FixtureJournal;
 pub use mcp::McpDriver;
 pub use raw::RawDriver;

@@ -81,6 +81,8 @@ The reporter fails before publishing a green summary when it finds:
 - an unknown refusal code;
 - a passing cell missing a required oracle;
 - unfinalized, missing, or empty required video evidence;
+- a behavioral video phase that never reached `finalized` after setup/posture;
+- an invalid hosted-runner console cleanup status;
 - more or fewer than one environment record.
 
 The reporter validates the exact video it renders. It records the trajectory

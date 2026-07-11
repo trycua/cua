@@ -268,6 +268,10 @@ Canonical GUI runs are expected to produce evidence per test cell:
 artifacts/cua-driver/<os>/
 |-- recordings/<cell-label>-pid<pid>-<sequence>/recording.mp4
 |-- recordings/<cell-label>-pid<pid>-<sequence>/trajectory.json
+|-- recordings/<cell-label>-pid<pid>-<sequence>/turn-*/before_state.json
+|-- recordings/<cell-label>-pid<pid>-<sequence>/turn-*/before.png
+|-- recordings/<cell-label>-pid<pid>-<sequence>/turn-*/after_state.json
+|-- recordings/<cell-label>-pid<pid>-<sequence>/turn-*/after.png
 |-- cases.jsonl
 |-- environment.jsonl
 |-- results.jsonl
@@ -290,6 +294,18 @@ need normal test output and logs; they do not need desktop video.
 - The three OS runners use a selector-free command for the complete matrix.
 - Shared and native harness owners emit the same typed v2 result records.
 - Canonical GUI rows collect a trajectory and MP4, validated before reporting.
+- Canonical GUI rows require parseable pre/post state and non-empty pre/post
+  target-window images for each targeted turn. Missing expected evidence fails
+  the report even when the turn records an unavailable-capture classification.
+- Per-cell video starts after fixture readiness and foreground/background
+  posture. A 300 ms baseline precedes dispatch, and capture continues through
+  external oracle collection. `trajectory.json` must finish with
+  `behavior_video.status = "finalized"`.
+- Windows hosted runs use `GetConsoleWindow` to select the inherited
+  HostedComputeAgent/runner console, verify its identity, and minimize it
+  through `ShowWindow(SW_MINIMIZE)` before fixture or sentinel posture is
+  established. The sentinel remains a separate test fixture and is reasserted
+  after console cleanup.
 - Strict lane preflights fail on missing fixtures, desktop access, permissions,
   accessibility, capture, or recording support instead of silently skipping.
 - GitHub summaries link every evidence-bearing row to its lane archive and

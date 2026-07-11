@@ -59,13 +59,18 @@ impl Tool for StartRecordingTool {
             description: "Start trajectory recording. Every subsequent action-tool \
                 invocation (click, right_click, scroll, type_text, press_key, hotkey, \
                 set_value) writes a turn folder under `output_dir`:\n\n\
+                - `before_state.json` / `after_state.json` — application AX/UIA/AT-SPI \
+                  state immediately before and after the action.\n\
+                - `before.png` / `after.png` — target-window screenshots immediately \
+                  before and after the action.\n\
+                - `evidence.json` — capture status and a stable classification when an \
+                  expected artifact could not be captured.\n\
                 - `app_state.json` — post-action AX/UIA snapshot for the target pid.\n\
-                - `screenshot.png` — post-action per-window screenshot of the target's \
-                  frontmost on-screen window.\n\
+                - `screenshot.png` — compatibility alias of `after.png`.\n\
                 - `action.json` — tool name, full input arguments, result summary, pid, \
                   click point (when applicable), ISO-8601 timestamp.\n\
-                - `click.png` — for click-family actions only, `screenshot.png` with a \
-                  red dot drawn at the click point.\n\n\
+                - `click.png` — for click-family actions only, `before.png` with a red \
+                  marker at the click point.\n\n\
                 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn \
                 numbering restarts at 1 each time recording is (re-)started.\n\n\
                 **Video is off by default.** Pass `record_video: true` to also \

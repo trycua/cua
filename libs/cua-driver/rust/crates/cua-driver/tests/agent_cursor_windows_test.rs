@@ -36,6 +36,7 @@ fn agent_cursor_overlay_is_visible_without_moving_real_cursor() {
             .expect("required source-built driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
         let sentinel = ForegroundSentinel::launch(&mut driver);
+        driver.start_behavior_recording();
         let screen = driver.call("get_screen_size", serde_json::json!({}));
         assert!(
             !screen.is_error(),

@@ -16,6 +16,7 @@ pub mod tools;
 pub mod overlay;
 pub mod pip;
 pub mod health_report;
+pub mod recording_hooks;
 
 #[cfg(target_os = "linux")]
 pub mod x11;

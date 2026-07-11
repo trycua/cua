@@ -287,6 +287,7 @@ fn run_capture_case(
         let mut driver = test_driver(&cell_id).expect("required capture driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
         let (pid, wid) = launch(&mut driver).expect("required capture harness did not launch");
+        driver.start_behavior_recording();
         test(pid, wid, &mut driver);
         Observation::delivered(oracles, Evidence::default())
     });
@@ -409,6 +410,13 @@ fn background_screenshot_preserves_desktop() {
         *evidence = recording_evidence(driver.recording_dir());
         let (pid, wid) = launch(&mut driver).expect("required WPF capture harness did not start");
         let sentinel = ForegroundSentinel::launch(&mut driver);
+        sentinel
+            .assert_background_posture(TargetWindow {
+                pid,
+                native_id: wid,
+            })
+            .expect("establish capture background posture before recording");
+        driver.start_behavior_recording();
         let (response, mut passed) = sentinel
             .observe_background(
                 TargetWindow {

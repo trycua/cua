@@ -86,6 +86,7 @@ fn run_case(
     test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
 ) {
     let cell_id = case.cell_id.clone();
+    let delivery = case.delivery;
     execute_case(case, |evidence| {
         let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
             .expect("start installed macOS daemon proxy");
@@ -94,6 +95,9 @@ fn run_case(
         let (wid, _) = driver
             .find_window(harness.pid as i64, "CuaTestHarness SwiftUI")
             .expect("SwiftUI main window not found");
+        if delivery != cua_driver_testkit::e2e::Delivery::Background {
+            driver.start_behavior_recording();
+        }
         test(harness.pid, wid, &mut driver)
     });
 }

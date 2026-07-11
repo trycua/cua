@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::Value;
 
 pub const DECLARATION_SCHEMA: &str = "cua-e2e-case/v2";
 pub const ENVIRONMENT_SCHEMA: &str = "cua-e2e-environment/v2";
@@ -993,6 +994,22 @@ pub fn validate_catalog(
     artifact_root: Option<&Path>,
     require_video: bool,
 ) -> Result<ValidationSummary, Vec<String>> {
+    validate_catalog_with_evidence(
+        declarations,
+        results,
+        artifact_root,
+        require_video,
+        require_video,
+    )
+}
+
+pub fn validate_catalog_with_evidence(
+    declarations: &[CaseSpec],
+    results: &[CaseResult],
+    artifact_root: Option<&Path>,
+    require_video: bool,
+    require_turn_evidence: bool,
+) -> Result<ValidationSummary, Vec<String>> {
     let mut errors = Vec::new();
     if declarations.is_empty() {
         errors.push("E2E catalog has no declarations".to_owned());
@@ -1069,6 +1086,27 @@ pub fn validate_catalog(
                 }
             }
         }
+        if require_turn_evidence {
+            match (artifact_root, recording_directory(&result.evidence)) {
+                (Some(root), Some(relative_dir)) => {
+                    validate_turn_evidence(
+                        &root.join(relative_dir),
+                        cell_id,
+                        !matches!(
+                            result.case.driver_route,
+                            DriverRoute::AxRead | DriverRoute::WindowState
+                        ),
+                        &mut errors,
+                    );
+                }
+                (None, _) => errors.push(format!(
+                    "cannot validate turn evidence without an artifact root: {cell_id}"
+                )),
+                (_, None) => errors.push(format!(
+                    "missing recording path for turn evidence: {cell_id}"
+                )),
+            }
+        }
     }
 
     for cell_id in declared.keys() {
@@ -1084,9 +1122,270 @@ pub fn validate_catalog(
     }
 }
 
+fn recording_directory(evidence: &Evidence) -> Option<&Path> {
+    evidence
+        .video
+        .as_deref()
+        .or(evidence.trajectory.as_deref())
+        .and_then(|path| Path::new(path).parent())
+}
+
+fn validate_turn_evidence(
+    recording_dir: &Path,
+    cell_id: &str,
+    require_turn: bool,
+    errors: &mut Vec<String>,
+) {
+    let trajectory = recording_dir.join("trajectory.json");
+    match read_json_value(&trajectory) {
+        Ok(manifest) => {
+            if manifest["behavior_video"]["status"] != "finalized" {
+                errors.push(format!(
+                    "behavioral video phase is not finalized for {cell_id}: {}",
+                    manifest["behavior_video"]["status"]
+                ));
+            }
+            let started = manifest["behavior_video"]["started_at_unix_ms"].as_u64();
+            let baseline = manifest["behavior_video"]["baseline_ready_at_unix_ms"].as_u64();
+            let finalized = manifest["behavior_video"]["finalized_at_unix_ms"].as_u64();
+            if !matches!(
+                (started, baseline, finalized),
+                (Some(started), Some(baseline), Some(finalized))
+                    if baseline.saturating_sub(started) >= 250 && finalized >= baseline
+            ) {
+                errors.push(format!(
+                    "behavioral video boundary timestamps are invalid for {cell_id}"
+                ));
+            }
+            if !matches!(
+                manifest["hosted_runner_console"]["status"].as_str(),
+                Some("minimized" | "already_minimized" | "not_applicable")
+            ) {
+                errors.push(format!(
+                    "hosted-runner console cleanup status is invalid for {cell_id}: {}",
+                    manifest["hosted_runner_console"]["status"]
+                ));
+            }
+        }
+        Err(error) => errors.push(format!("invalid trajectory evidence for {cell_id}: {error}")),
+    }
+
+    let mut turns = match std::fs::read_dir(recording_dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry.file_type().is_ok_and(|kind| kind.is_dir())
+                    && entry.file_name().to_string_lossy().starts_with("turn-")
+            })
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>(),
+        Err(error) => {
+            errors.push(format!(
+                "turn evidence directory is unavailable for {cell_id}: {}: {error}",
+                recording_dir.display()
+            ));
+            return;
+        }
+    };
+    turns.sort();
+    if turns.is_empty() {
+        if require_turn {
+            errors.push(format!("missing turn evidence: {cell_id}"));
+        }
+        return;
+    }
+
+    for turn in turns {
+        validate_one_turn(&turn, cell_id, errors);
+    }
+}
+
+fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
+    let turn_name = turn
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("turn-unknown");
+    let action_path = turn.join("action.json");
+    let action = match read_json_value(&action_path) {
+        Ok(action) => Some(action),
+        Err(error) => {
+            errors.push(format!(
+                "invalid action evidence for {cell_id}/{turn_name}: {error}"
+            ));
+            None
+        }
+    };
+    let manifest_path = turn.join("evidence.json");
+    let manifest = match read_json_value(&manifest_path) {
+        Ok(manifest) if manifest["schema"] == "cua-turn-evidence/v1" => Some(manifest),
+        Ok(_) => {
+            errors.push(format!(
+                "unsupported turn evidence manifest for {cell_id}/{turn_name}: {}",
+                manifest_path.display()
+            ));
+            None
+        }
+        Err(error) => {
+            errors.push(format!(
+                "invalid turn evidence manifest for {cell_id}/{turn_name}: {error}"
+            ));
+            None
+        }
+    };
+    let classification = |phase: &str, kind: &str| {
+        manifest
+            .as_ref()
+            .and_then(|value| value[phase][kind]["classification"].as_str())
+    };
+
+    for (phase, kind) in [("before", "screenshot"), ("after", "screenshot")] {
+        validate_capture_status(
+            manifest.as_ref(),
+            &[phase, kind],
+            cell_id,
+            &format!("{turn_name}/{phase} {kind}"),
+            errors,
+        );
+    }
+
+    for (file, phase, kind) in [
+        ("before.png", "before", "screenshot"),
+        ("after.png", "after", "screenshot"),
+        ("screenshot.png", "after", "screenshot"),
+    ] {
+        validate_nonempty_file(
+            &turn.join(file),
+            cell_id,
+            &format!("{turn_name}/{file}"),
+            classification(phase, kind),
+            errors,
+        );
+    }
+
+    let state_expected = action
+        .as_ref()
+        .and_then(|value| value["arguments"]["pid"].as_i64())
+        .is_some();
+    if state_expected {
+        for phase in ["before", "after"] {
+            validate_capture_status(
+                manifest.as_ref(),
+                &[phase, "state"],
+                cell_id,
+                &format!("{turn_name}/{phase} state"),
+                errors,
+            );
+        }
+        for (file, phase) in [
+            ("before_state.json", "before"),
+            ("after_state.json", "after"),
+            ("app_state.json", "after"),
+        ] {
+            validate_json_file(
+                &turn.join(file),
+                cell_id,
+                &format!("{turn_name}/{file}"),
+                classification(phase, "state"),
+                errors,
+            );
+        }
+    }
+
+    if action.as_ref().is_some_and(|value| {
+        matches!(
+            value["tool"].as_str(),
+            Some("click" | "double_click" | "right_click")
+        )
+    }) {
+        validate_capture_status(
+            manifest.as_ref(),
+            &["click"],
+            cell_id,
+            &format!("{turn_name}/click"),
+            errors,
+        );
+        validate_nonempty_file(
+            &turn.join("click.png"),
+            cell_id,
+            &format!("{turn_name}/click.png"),
+            manifest
+                .as_ref()
+                .and_then(|value| value["click"]["classification"].as_str()),
+            errors,
+        );
+    }
+}
+
+fn validate_capture_status(
+    manifest: Option<&Value>,
+    path: &[&str],
+    cell_id: &str,
+    label: &str,
+    errors: &mut Vec<String>,
+) {
+    let Some(manifest) = manifest else {
+        return;
+    };
+    let value = path.iter().fold(manifest, |value, key| &value[*key]);
+    if value["status"] == "captured" {
+        return;
+    }
+    let classification = value["classification"]
+        .as_str()
+        .unwrap_or("missing_classification");
+    errors.push(format!(
+        "required evidence capture failed for {cell_id}: {label} (classified {classification})"
+    ));
+}
+
+fn validate_nonempty_file(
+    path: &Path,
+    cell_id: &str,
+    label: &str,
+    classification: Option<&str>,
+    errors: &mut Vec<String>,
+) {
+    if std::fs::metadata(path).is_ok_and(|metadata| metadata.len() > 0) {
+        return;
+    }
+    let classified = classification
+        .map(|value| format!(" (classified {value})"))
+        .unwrap_or_default();
+    errors.push(format!(
+        "required evidence is missing or empty for {cell_id}: {label}{classified}"
+    ));
+}
+
+fn validate_json_file(
+    path: &Path,
+    cell_id: &str,
+    label: &str,
+    classification: Option<&str>,
+    errors: &mut Vec<String>,
+) {
+    if read_json_value(path).is_ok() {
+        return;
+    }
+    let classified = classification
+        .map(|value| format!(" (classified {value})"))
+        .unwrap_or_default();
+    errors.push(format!(
+        "required JSON evidence is missing or invalid for {cell_id}: {label}{classified}"
+    ));
+}
+
+fn read_json_value(path: &Path) -> Result<Value, String> {
+    let bytes = std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    if bytes.is_empty() {
+        return Err(format!("{} is empty", path.display()));
+    }
+    serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     fn delivered_case(id: &str) -> CaseSpec {
         CaseSpec::delivered(
@@ -1120,6 +1419,65 @@ mod tests {
             DriverRoute::Composite,
             vec![OracleKind::FixtureState],
         )
+    }
+
+    fn complete_turn_fixture() -> (TempDir, CaseSpec, CaseResult, PathBuf) {
+        let root = tempfile::tempdir().expect("create artifact root");
+        let recording = root.path().join("recordings/cell-pid1-001");
+        let turn = recording.join("turn-00001");
+        std::fs::create_dir_all(&turn).expect("create turn fixture");
+        std::fs::write(recording.join("recording.mp4"), b"video").expect("write video");
+        std::fs::write(
+            recording.join("trajectory.json"),
+            br#"{
+                "behavior_video":{
+                    "status":"finalized",
+                    "started_at_unix_ms":100,
+                    "baseline_ready_at_unix_ms":400,
+                    "finalized_at_unix_ms":800
+                },
+                "hosted_runner_console":{"status":"not_applicable"}
+            }"#,
+        )
+        .expect("write trajectory");
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"click",
+                "arguments":{"pid":1,"window_id":2},
+                "click_point":{"x":10,"y":20}
+            }"#,
+        )
+        .expect("write action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "click":{"status":"captured"}
+            }"#,
+        )
+        .expect("write manifest");
+        for file in ["before_state.json", "after_state.json", "app_state.json"] {
+            std::fs::write(turn.join(file), b"{}").expect("write state evidence");
+        }
+        for file in ["before.png", "after.png", "screenshot.png", "click.png"] {
+            std::fs::write(turn.join(file), b"png").expect("write image evidence");
+        }
+
+        let case = delivered_case("cell");
+        let evidence = Evidence {
+            video: Some("recordings/cell-pid1-001/recording.mp4".to_owned()),
+            trajectory: Some("recordings/cell-pid1-001/trajectory.json".to_owned()),
+            ..Evidence::default()
+        };
+        let result = CaseResult::evaluate(
+            case.clone(),
+            Observation::delivered(vec![OracleKind::FixtureState], evidence),
+            Duration::from_millis(1),
+        );
+        (root, case, result, turn)
     }
 
     #[test]
@@ -1208,9 +1566,7 @@ mod tests {
     fn validator_rejects_empty_catalog() {
         let errors = validate_catalog(&[], &[], None, false)
             .expect_err("an empty E2E catalog must not pass");
-        assert!(errors
-            .iter()
-            .any(|error| error.contains("no declarations")));
+        assert!(errors.iter().any(|error| error.contains("no declarations")));
     }
 
     #[test]
@@ -1236,6 +1592,170 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.contains("missing video evidence")));
+    }
+
+    #[test]
+    fn validator_accepts_complete_pre_and_post_turn_evidence() {
+        let (root, case, result, _) = complete_turn_fixture();
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("complete turn evidence should pass strict validation");
+    }
+
+    #[test]
+    fn validator_rejects_unreached_behavior_video_boundary() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        let recording = turn.parent().expect("turn has recording parent");
+        std::fs::write(
+            recording.join("trajectory.json"),
+            br#"{
+                "behavior_video":{"status":"pending"},
+                "hosted_runner_console":{"status":"minimized"}
+            }"#,
+        )
+        .expect("write pending trajectory");
+
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("pending behavior phase must fail strict validation");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("behavioral video phase is not finalized")));
+    }
+
+    #[test]
+    fn strict_readonly_cell_does_not_invent_an_action_turn() {
+        let root = tempfile::tempdir().expect("create artifact root");
+        let recording = root.path().join("recordings/readonly-pid1-001");
+        std::fs::create_dir_all(&recording).expect("create recording fixture");
+        std::fs::write(recording.join("recording.mp4"), b"video").expect("write video");
+        std::fs::write(
+            recording.join("trajectory.json"),
+            br#"{
+                "behavior_video":{
+                    "status":"finalized",
+                    "started_at_unix_ms":100,
+                    "baseline_ready_at_unix_ms":400,
+                    "finalized_at_unix_ms":800
+                },
+                "hosted_runner_console":{"status":"not_applicable"}
+            }"#,
+        )
+        .expect("write trajectory");
+        let case = native_readonly_case(
+            "wpf",
+            "ax_tree",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::FixtureState],
+        );
+        let evidence = Evidence {
+            video: Some("recordings/readonly-pid1-001/recording.mp4".to_owned()),
+            trajectory: Some("recordings/readonly-pid1-001/trajectory.json".to_owned()),
+            ..Evidence::default()
+        };
+        let result = CaseResult::evaluate(
+            case.clone(),
+            Observation::delivered(vec![OracleKind::FixtureState], evidence),
+            Duration::from_millis(1),
+        );
+
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("readonly cells have no action turn to capture");
+    }
+
+    #[test]
+    fn strict_not_applicable_mutation_still_requires_an_action_turn() {
+        let root = tempfile::tempdir().expect("create artifact root");
+        let recording = root.path().join("recordings/cursor-pid1-001");
+        std::fs::create_dir_all(&recording).expect("create recording fixture");
+        std::fs::write(recording.join("recording.mp4"), b"video").expect("write video");
+        std::fs::write(
+            recording.join("trajectory.json"),
+            br#"{
+                "behavior_video":{
+                    "status":"finalized",
+                    "started_at_unix_ms":100,
+                    "baseline_ready_at_unix_ms":400,
+                    "finalized_at_unix_ms":800
+                },
+                "hosted_runner_console":{"status":"not_applicable"}
+            }"#,
+        )
+        .expect("write trajectory");
+        let case = CaseSpec::delivered(
+            "cursor",
+            "desktop",
+            "win32",
+            "agent_cursor",
+            Targeting::Px,
+            Delivery::NotApplicable,
+            Scope::Desktop,
+            DriverRoute::WindowsOverlay,
+            vec![OracleKind::FixtureState],
+        );
+        let evidence = Evidence {
+            video: Some("recordings/cursor-pid1-001/recording.mp4".to_owned()),
+            trajectory: Some("recordings/cursor-pid1-001/trajectory.json".to_owned()),
+            ..Evidence::default()
+        };
+        let result = CaseResult::evaluate(
+            case.clone(),
+            Observation::delivered(vec![OracleKind::FixtureState], evidence),
+            Duration::from_millis(1),
+        );
+
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("mutable not-applicable cells still need a recorded turn");
+        assert!(errors.iter().any(|error| error.contains("missing turn evidence")));
+    }
+
+    #[test]
+    fn validator_exposes_missing_legacy_modal_images() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::remove_file(turn.join("screenshot.png")).expect("remove screenshot fixture");
+        std::fs::remove_file(turn.join("click.png")).expect("remove click fixture");
+
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("missing expected images must fail closed");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("turn-00001/screenshot.png")));
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("turn-00001/click.png")));
+    }
+
+    #[test]
+    fn validator_reports_capture_classification_for_missing_phase() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::remove_file(turn.join("after.png")).expect("remove after image fixture");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"capture_failed"}},
+                "click":{"status":"captured"}
+            }"#,
+        )
+        .expect("write classified manifest");
+
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("classified unavailability must remain a strict failure");
+        assert!(errors.iter().any(|error| {
+            error.contains("turn-00001/after.png") && error.contains("classified capture_failed")
+        }));
+    }
+
+    #[test]
+    fn non_strict_validation_keeps_legacy_results_compatible() {
+        let case = delivered_case("legacy");
+        let result = CaseResult::evaluate(
+            case.clone(),
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default()),
+            Duration::from_millis(1),
+        );
+        validate_catalog(&[case], &[result], None, false)
+            .expect("non-canonical legacy results remain valid");
     }
 
     #[test]

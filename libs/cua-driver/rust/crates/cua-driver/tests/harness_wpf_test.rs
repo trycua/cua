@@ -191,9 +191,13 @@ where
 
 fn run_case(case: CaseSpec, test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation) {
     let cell_id = case.cell_id.clone();
+    let delivery = case.delivery;
     execute_case(case, |evidence| {
         with_named_session(&cell_id, |pid, wid, driver| {
             *evidence = recording_evidence(driver.recording_dir());
+            if delivery == Delivery::NotApplicable {
+                driver.start_behavior_recording();
+            }
             test(pid, wid, driver)
         })
         .expect("required WPF session did not start")
@@ -247,6 +251,13 @@ fn observe_background<R>(
     action: impl FnOnce(&mut McpDriver) -> R,
 ) -> (R, Vec<OracleKind>) {
     let sentinel = ForegroundSentinel::launch(driver);
+    sentinel
+        .assert_background_posture(TargetWindow {
+            pid,
+            native_id: wid,
+        })
+        .expect("establish WPF background posture before recording");
+    driver.start_behavior_recording();
     let (result, passed) = sentinel
         .observe_background(
             TargetWindow {
@@ -361,6 +372,7 @@ fn harness_wpf_type_text() {
                 }),
             );
             std::thread::sleep(Duration::from_millis(300));
+            driver.start_behavior_recording();
 
             let _ = driver.call(
                 "click",
@@ -465,6 +477,7 @@ fn focus_harness(driver: &mut McpDriver, pid: u32, wid: u64) {
         }),
     );
     std::thread::sleep(Duration::from_millis(300));
+    driver.start_behavior_recording();
 }
 
 #[test]

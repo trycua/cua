@@ -205,6 +205,7 @@ fn desktop_scope_windowless_click_lands_on_control() {
 
         // Desktop scope clicks the frontmost window at the point — put the harness there.
         activate_pid(pid);
+        driver.start_behavior_recording();
 
         // Window-less screen-absolute click — no pid, no window_id; scope per-call.
         let clicked = driver.call(
@@ -256,6 +257,7 @@ fn window_scope_rejects_windowless_click() {
             .expect("start installed macOS daemon proxy");
         *evidence = recording_evidence(driver.recording_dir());
         // Default scope is "window" — a window-less click must be rejected.
+        driver.start_behavior_recording();
         let r = driver.call(
             "click",
             serde_json::json!({ "x": 100, "y": 100, "scope": "window", "session": SESSION }),

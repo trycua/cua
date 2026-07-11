@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use crate::e2e::OracleKind;
 use crate::observer::{DesktopObserver, NativeObserver, TargetWindow};
-use crate::{harness_app, spawn_in_job, ChildReaper, Driver};
+use crate::{harness_app, spawn_in_job, BehaviorRecording, ChildReaper, Driver};
 
 /// A foreground Electron window that journals focus and leaked input while it
 /// fully occludes the background target.
@@ -150,6 +150,21 @@ impl ForegroundSentinel {
 
     pub fn target(&self) -> TargetWindow {
         self.target
+    }
+
+    /// Confirm the target is fully behind the ready foreground sentinel before
+    /// the behavioral video boundary is crossed.
+    pub fn assert_background_posture(&self, target: TargetWindow) -> Result<(), String> {
+        let observer = DesktopObserver::new(NativeObserver::new(), target);
+        let before = observer.snapshot().map_err(|error| error.to_string())?;
+        if before.target_z == crate::observer::TargetZ::BackgroundOccluded {
+            Ok(())
+        } else {
+            Err(format!(
+                "background target was not fully occluded before recording: {:?}",
+                before.target_z
+            ))
+        }
     }
 
     /// Run one background action while checking the native desktop and the
@@ -309,12 +324,14 @@ fn wait_for_native_focus_stable(target: TargetWindow) {
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 fn wait_for_native_focus_stable(_target: TargetWindow) {}
 
-pub fn run_with_background_oracles<D: Driver, R>(
+pub fn run_with_background_oracles<D: Driver + BehaviorRecording, R>(
     driver: &mut D,
     target: TargetWindow,
     action: impl FnOnce(&mut D) -> R,
 ) -> Result<(R, Vec<OracleKind>), String> {
     let sentinel = ForegroundSentinel::launch(driver);
+    sentinel.assert_background_posture(target)?;
+    driver.start_behavior_recording();
     sentinel.observe_background(target, || action(driver))
 }
 

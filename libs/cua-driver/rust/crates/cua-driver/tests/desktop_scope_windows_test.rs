@@ -156,6 +156,13 @@ fn run_desktop_fixture_case(
         *evidence = recording_evidence(driver.recording_dir());
         let (pid, wid) = launch_wpf(&mut driver).expect("required WPF harness did not launch");
         set_scope(&mut driver, "desktop");
+        let posture = driver.call(
+            "bring_to_front",
+            serde_json::json!({"pid": pid as i64, "window_id": wid}),
+        );
+        assert!(!posture.is_error(), "could not foreground WPF fixture: {}", posture.text());
+        std::thread::sleep(Duration::from_millis(300));
+        driver.start_behavior_recording();
         test(pid, wid, &mut driver);
         Observation::delivered_with_fixture_state(Vec::new())
     });
@@ -185,6 +192,7 @@ fn desktop_scope_capture_returns_screen_dims() {
             .expect("required source-built driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
         set_scope(&mut driver, "desktop");
+        driver.start_behavior_recording();
         let response = driver.call("get_desktop_state", serde_json::json!({}));
         assert!(
             !response.is_error(),
@@ -284,6 +292,7 @@ fn window_scope_rejects_windowless_click() {
             .expect("required source-built driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
         set_scope(&mut driver, "window");
+        driver.start_behavior_recording();
         let response = driver.call("click", serde_json::json!({ "x": 100, "y": 100 }));
         assert!(
             response.is_error()

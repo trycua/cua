@@ -49,6 +49,7 @@ fn launch_app_minimized_preserves_foreground() {
         *evidence = recording_evidence(driver.recording_dir());
         let before = window_ids();
         let sentinel = ForegroundSentinel::launch(&mut driver);
+        driver.start_behavior_recording();
 
         let ((pid, window_id), passed) = sentinel
             .observe_desktop(|| {

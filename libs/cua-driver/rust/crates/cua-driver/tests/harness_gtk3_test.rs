@@ -103,10 +103,14 @@ fn run_case(
     test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
 ) {
     let cell_id = case.cell_id.clone();
+    let delivery = case.delivery;
     execute_case(case, |evidence| {
         let mut driver = McpDriver::spawn_named(&cell_id).expect("start source-built Linux driver");
         *evidence = recording_evidence(driver.recording_dir());
         let (pid, wid) = launch(&mut driver);
+        if delivery != cua_driver_testkit::e2e::Delivery::Background {
+            driver.start_behavior_recording();
+        }
         test(pid, wid, &mut driver)
     });
 }

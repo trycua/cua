@@ -138,7 +138,7 @@ fn run_preflight() {
     );
     let recording_dir = driver
         .recording_dir()
-        .expect("preflight video recording did not start")
+        .expect("preflight evidence directory was not prepared")
         .to_path_buf();
     assert!(
         recording_dir.starts_with(&recordings_root),
@@ -241,6 +241,8 @@ fn run_preflight() {
         );
         std::thread::sleep(Duration::from_millis(200));
     }
+
+    driver.start_behavior_recording();
 
     drop(driver);
     let video = recording_dir.join("recording.mp4");

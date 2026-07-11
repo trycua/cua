@@ -169,6 +169,15 @@ impl ForegroundSentinel {
     }
 }
 
+pub fn run_with_background_oracles<D: Driver, R>(
+    driver: &mut D,
+    target: TargetWindow,
+    action: impl FnOnce(&mut D) -> R,
+) -> Result<(R, Vec<OracleKind>), String> {
+    let sentinel = ForegroundSentinel::launch(driver);
+    sentinel.observe_background(target, || action(driver))
+}
+
 fn window_ids(driver: &mut impl Driver) -> HashSet<u64> {
     driver
         .call("list_windows", serde_json::json!({}))

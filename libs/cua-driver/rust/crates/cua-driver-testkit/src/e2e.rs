@@ -107,6 +107,7 @@ pub enum Scope {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DriverRoute {
+    AxRead,
     UiaInvoke,
     UiaValue,
     UiaScroll,
@@ -428,6 +429,89 @@ impl CaseSpec {
     }
 }
 
+fn native_cell_id(toolkit: &str, action: &str, targeting: Targeting, delivery: Delivery) -> String {
+    let targeting = match targeting {
+        Targeting::Ax => "ax",
+        Targeting::Px => "px",
+        Targeting::Page => "page",
+        Targeting::NotApplicable => "not-applicable",
+    };
+    let delivery = match delivery {
+        Delivery::Background => "background",
+        Delivery::Foreground => "foreground",
+        Delivery::NotApplicable => "not-applicable",
+    };
+    format!(
+        "{}-{toolkit}-{action}-{targeting}-{delivery}",
+        std::env::consts::OS
+    )
+    .replace('_', "-")
+}
+
+pub fn native_background_case(
+    toolkit: &str,
+    action: &str,
+    targeting: Targeting,
+    route: DriverRoute,
+) -> CaseSpec {
+    CaseSpec::delivered(
+        native_cell_id(toolkit, action, targeting, Delivery::Background),
+        toolkit,
+        toolkit,
+        action,
+        targeting,
+        Delivery::Background,
+        Scope::Window,
+        route,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::Cursor,
+            OracleKind::NoLeakedInput,
+        ],
+    )
+}
+
+pub fn native_foreground_case(
+    toolkit: &str,
+    action: &str,
+    targeting: Targeting,
+    route: DriverRoute,
+) -> CaseSpec {
+    CaseSpec::delivered(
+        native_cell_id(toolkit, action, targeting, Delivery::Foreground),
+        toolkit,
+        toolkit,
+        action,
+        targeting,
+        Delivery::Foreground,
+        Scope::Window,
+        route,
+        vec![OracleKind::FixtureState],
+    )
+}
+
+pub fn native_readonly_case(
+    toolkit: &str,
+    action: &str,
+    targeting: Targeting,
+    route: DriverRoute,
+    oracles: Vec<OracleKind>,
+) -> CaseSpec {
+    CaseSpec::delivered(
+        native_cell_id(toolkit, action, targeting, Delivery::NotApplicable),
+        toolkit,
+        toolkit,
+        action,
+        targeting,
+        Delivery::NotApplicable,
+        Scope::Window,
+        route,
+        oracles,
+    )
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CaseDeclaration {
     pub schema: String,
@@ -463,6 +547,13 @@ impl Observation {
             message: String::new(),
             evidence,
         }
+    }
+
+    pub fn delivered_with_fixture_state(mut passed_oracles: Vec<OracleKind>) -> Self {
+        passed_oracles.push(OracleKind::FixtureState);
+        passed_oracles.sort();
+        passed_oracles.dedup();
+        Self::delivered(passed_oracles, Evidence::default())
     }
 
     pub fn refused(
@@ -990,6 +1081,59 @@ mod tests {
         assert_eq!(value["schema"], RESULT_SCHEMA);
         assert_eq!(value["cell_id"], "rendered");
         assert!(value.get("case").is_none());
+    }
+
+    #[test]
+    fn native_case_builders_encode_delivery_and_oracle_contracts() {
+        let background =
+            native_background_case("wpf", "left_click", Targeting::Ax, DriverRoute::UiaInvoke);
+        assert_eq!(background.delivery, Delivery::Background);
+        assert_eq!(
+            background.cell_id,
+            format!("{}-wpf-left-click-ax-background", std::env::consts::OS)
+        );
+        for oracle in [
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::Cursor,
+            OracleKind::NoLeakedInput,
+        ] {
+            assert!(background.oracles.contains(&oracle));
+        }
+        background.validate().expect("background case is valid");
+
+        let foreground = native_foreground_case(
+            "wpf",
+            "right_click",
+            Targeting::Ax,
+            DriverRoute::WindowsSendInput,
+        );
+        assert_eq!(foreground.delivery, Delivery::Foreground);
+        assert_eq!(foreground.oracles, vec![OracleKind::FixtureState]);
+
+        let readonly = native_readonly_case(
+            "wpf",
+            "ax_tree",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        );
+        assert_eq!(readonly.delivery, Delivery::NotApplicable);
+        assert_eq!(readonly.oracles, vec![OracleKind::AxState]);
+        readonly.validate().expect("read-only case is valid");
+    }
+
+    #[test]
+    fn delivered_with_fixture_state_deduplicates_the_oracle() {
+        let observation = Observation::delivered_with_fixture_state(vec![
+            OracleKind::Focus,
+            OracleKind::FixtureState,
+        ]);
+        assert_eq!(
+            observation.passed_oracles,
+            vec![OracleKind::FixtureState, OracleKind::Focus]
+        );
     }
 
     #[test]

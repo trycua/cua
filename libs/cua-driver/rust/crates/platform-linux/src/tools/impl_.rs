@@ -1226,9 +1226,10 @@ fn unavailable_webkit_keyboard_background(
 
 fn unavailable_wayland_focused_input_background(
     delivery: crate::input::delivery::DeliveryMode,
+    focus_free_inject_supported: bool,
 ) -> Option<ToolResult> {
     (crate::wayland::wayland_input_enabled()
-        && !crate::wayland::is_inject_mode()
+        && !(focus_free_inject_supported && crate::wayland::is_inject_mode())
         && !delivery.is_foreground())
     .then(|| {
         crate::input::delivery::background_unavailable_error(
@@ -2106,7 +2107,7 @@ impl Tool for TypeTextTool {
             return refusal;
         }
         if resolved_elem_idx.is_none() {
-            if let Some(refusal) = unavailable_wayland_focused_input_background(delivery) {
+            if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
                 return refusal;
             }
         }
@@ -2593,7 +2594,7 @@ impl Tool for PressKeyTool {
         if let Some(refusal) = unavailable_webkit_keyboard_background(pid, delivery) {
             return refusal;
         }
-        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery) {
+        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
             return refusal;
         }
 
@@ -2844,7 +2845,7 @@ impl Tool for HotkeyTool {
         if let Some(refusal) = unavailable_webkit_keyboard_background(pid, delivery) {
             return refusal;
         }
-        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery) {
+        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
             return refusal;
         }
 
@@ -3142,11 +3143,9 @@ impl Tool for ScrollTool {
             }
         }
 
-        if crate::wayland::is_wayland() {
-            if !delivery.is_foreground() {
-                return crate::input::delivery::background_unavailable_error(
-                    crate::input::delivery::BackgroundUnavailable::NoLibeiBackend,
-                );
+        if crate::wayland::wayland_input_enabled() {
+            if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, false) {
+                return refusal;
             }
             let direction_for_wayland = direction.clone();
             let result = tokio::task::spawn_blocking(move || {
@@ -3361,6 +3360,9 @@ impl Tool for DoubleClickTool {
         if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
             return refusal;
         }
+        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, false) {
+            return refusal;
+        }
         // Surface 6: element_token / element_index precedence.
         let resolved = match cua_driver_core::element_token::resolve_element_args(
             pid as i32,
@@ -3571,6 +3573,9 @@ impl Tool for RightClickTool {
             return refusal;
         }
         if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
+            return refusal;
+        }
+        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, false) {
             return refusal;
         }
         // Surface 6: element_token / element_index precedence.
@@ -3789,6 +3794,9 @@ impl Tool for DragTool {
             return refusal;
         }
         if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
+            return refusal;
+        }
+        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, false) {
             return refusal;
         }
 

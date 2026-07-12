@@ -483,12 +483,12 @@ Actions:
 - `action` (string, required): Action to perform.
 - `attributes` (array of string, optional): Element attributes to include in query_dom results.
 - `bundle_id` (string, optional): Bundle ID of the browser. Required for enable_javascript_apple_events (macOS only).
-- `cdp_port` (integer, optional): Optional, for insert_text/type_keystrokes only: use this exact CDP port instead of auto-discovering one from pid. Needed when the port was opened via the browser's own remote-debugging toggle rather than a launch-time flag, since that path may not answer the auto-discovery probe.
+- `cdp_port` (integer, optional): Optional, for execute_javascript/insert_text/type_keystrokes: use this exact CDP port instead of auto-discovering one from pid. Needed when the port was opened via the browser's own remote-debugging toggle rather than a launch-time flag, since that path may not answer the auto-discovery probe.
 - `css_selector` (string, optional): CSS selector for query_dom (e.g. 'a', 'button', 'input', 'h1'-'h6', 'p', 'img', 'select', '*').
 - `javascript` (string, optional): JavaScript to execute. Required for execute_javascript.
 - `pid` (integer, optional): Target process ID.
 - `selector` (string, optional): CSS selector for click_element (e.g. 'button.submit', '#login a').
-- `target_url_contains` (string, optional): Optional, for insert_text/type_keystrokes only: pick the browser tab whose URL contains this substring instead of whichever tab is found first. Use this on a multi-tab browser — there's no built-in link between window_id and which tab a CDP call reaches.
+- `target_url_contains` (string, optional): Optional, for execute_javascript/insert_text/type_keystrokes: require exactly one browser tab whose URL contains this substring. Use this on a multi-tab browser — there's no built-in link between window_id and which tab a CDP call reaches.
 - `text` (string, optional): Text to insert or type. Required for insert_text and type_keystrokes. The target field must already have DOM focus (click/focus it first).
 - `user_has_confirmed_enabling` (boolean, optional): Must be true to proceed with enable_javascript_apple_events. This will quit and relaunch the browser.
 - `window_id` (integer, optional): Target window ID from list_windows.
@@ -503,10 +503,13 @@ Actions:
 
 Start trajectory recording. Every subsequent action-tool invocation (click, right_click, scroll, type_text, press_key, hotkey, set_value) writes a turn folder under `output_dir`:
 
+- `before_state.json` / `after_state.json` — application AX/UIA/AT-SPI state immediately before and after the action.
+- `before.png` / `after.png` — target-window screenshots immediately before and after the action.
+- `evidence.json` — capture status and a stable classification when an expected artifact could not be captured.
 - `app_state.json` — post-action AX/UIA snapshot for the target pid.
-- `screenshot.png` — post-action per-window screenshot of the target's frontmost on-screen window.
+- `screenshot.png` — compatibility alias of `after.png`.
 - `action.json` — tool name, full input arguments, result summary, pid, click point (when applicable), ISO-8601 timestamp.
-- `click.png` — for click-family actions only, `screenshot.png` with a red dot drawn at the click point.
+- `click.png` — for click-family actions only, `before.png` with a red marker at the click point.
 
 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restarts at 1 each time recording is (re-)started.
 

@@ -67,26 +67,26 @@ daemon restart resets to disabled.
 
 Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
 
-- `app_state.json` — post-action AX/UIA snapshot for the target
-  `(pid, window_id)` carrying the same `tree_markdown` +
-  `element_count` shape `get_window_state` returns (minus the
-  screenshot fields — those live in `screenshot.png`). On macOS the
-  recorder resolves a frontmost window internally when the action's
-  args don't carry one; on Windows it uses the first window of the
-  target pid. **Omitted on Linux** — ATSPI doesn't expose a cheap
-  whole-tree snapshot, and the file is left out rather than faked.
-- `screenshot.png` — post-action capture of the target window.
-  Omitted when the pid has no visible window.
+- `before_state.json` and `after_state.json` — application accessibility
+  state immediately before and after the action. They carry the same
+  `tree_markdown` and `element_count` shape as `get_window_state`.
+- `before.png` and `after.png` — target-window images immediately before
+  and after the action. Window capture remains scoped to the target when
+  another window covers it.
+- `evidence.json` — capture status for each phase. Missing expected capture
+  has an explicit classification instead of disappearing from the turn.
+- `app_state.json` and `screenshot.png` — compatibility aliases for
+  `after_state.json` and `after.png`.
 - `action.json` — the tool name, full input arguments, result
   summary, pid, click point (when applicable), ISO-8601 timestamp.
 - `click.png` — for click-family actions (`click`, `double_click`,
-  `right_click`): a copy of `screenshot.png` with a red dot drawn at
+  `right_click`): a copy of `before.png` with a red marker drawn at
   the click point. **Both addressing modes are covered:** explicit
   `x, y` clicks use the supplied coordinates directly, and
   `element_index`-addressed clicks resolve to the element's center
   via the live AX/UIA cache, then convert to window-local screenshot
-  pixels. Absent for non-click tools and for clicks whose resolved
-  point falls outside the captured window.
+  pixels. Absent for non-click tools and classified as unavailable when
+  a click point was expected but could not be resolved or rendered.
 
 ## When to use it
 

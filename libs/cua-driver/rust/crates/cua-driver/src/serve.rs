@@ -730,17 +730,9 @@ pub async fn run_serve(
                                 if let Some(sc) = result.structured_content {
                                     result_obj["structuredContent"] = sc;
                                 }
-                                let resp = if is_err {
-                                    DaemonResponse::err(
-                                        result.content.iter()
-                                            .filter_map(|c| if let cua_driver_core::protocol::Content::Text { text, .. } = c { Some(text.as_str()) } else { None })
-                                            .collect::<Vec<_>>()
-                                            .join("\n"),
-                                        1
-                                    )
-                                } else {
-                                    DaemonResponse::ok(result_obj)
-                                };
+                                // Preserve tool-level `isError` and structured
+                                // content inside a successful daemon transport.
+                                let resp = DaemonResponse::ok(result_obj);
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -1256,16 +1248,9 @@ pub async fn run_serve(
                                 if let Some(sc) = result.structured_content {
                                     result_obj["structuredContent"] = sc;
                                 }
-                                let resp = if is_err {
-                                    DaemonResponse::err(
-                                        result.content.iter()
-                                            .filter_map(|c| if let cua_driver_core::protocol::Content::Text { text, .. } = c { Some(text.as_str()) } else { None })
-                                            .collect::<Vec<_>>().join("\n"),
-                                        1
-                                    )
-                                } else {
-                                    DaemonResponse::ok(result_obj)
-                                };
+                                // Preserve tool-level `isError` and structured
+                                // content inside a successful daemon transport.
+                                let resp = DaemonResponse::ok(result_obj);
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;

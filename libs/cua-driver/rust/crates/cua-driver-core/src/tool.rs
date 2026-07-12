@@ -392,6 +392,19 @@ impl ToolRegistry {
             other => other,
         };
 
+        // Reserve and capture the turn before dispatch so recorded evidence
+        // shows the application immediately before the action changed it.
+        let should_record = self.tools.get(resolved_name)
+            .map(|tool| !tool.def().read_only)
+            .unwrap_or(false)
+            && !matches!(
+                resolved_name,
+                "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
+            );
+        let pending_turn = should_record
+            .then(|| self.recording.begin_turn(resolved_name, &args, start_ms))
+            .flatten();
+
         let result = match self.tools.get(resolved_name) {
             Some(tool) => tool.invoke(args.clone()).await,
             None => return ToolResult::error(format!("Unknown tool: {name}")),
@@ -405,22 +418,14 @@ impl ToolRegistry {
         // control tools themselves are excluded so the recorded turn
         // stream stays the actual user-action sequence (not the meta
         // start/stop frames).
-        let should_record = self.tools.get(name)
-            .map(|t| !t.def().read_only)
-            .unwrap_or(false)
-            && !matches!(
-                name,
-                "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
-            );
-
-        if should_record {
+        if let Some(pending_turn) = pending_turn {
             let result_text = result.content.iter()
                 .find_map(|c| {
                     if let Content::Text { text, .. } = c { Some(text.as_str()) }
                     else { None }
                 })
                 .unwrap_or("");
-            self.recording.record(name, &args, result_text, start_ms);
+            self.recording.finish_turn(pending_turn, result_text);
         }
 
         // Experimental PiP push — only when --experimental-pip is on argv

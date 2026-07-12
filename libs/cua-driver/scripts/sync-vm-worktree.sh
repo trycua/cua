@@ -50,20 +50,25 @@ remote_os="${REMOTE_OS:-posix}"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../../.." && pwd)"
+source_sha="$(git -C "$repo_root" rev-parse HEAD)"
 artifact_root="$repo_root/libs/cua-driver/docs/vm-artifacts"
 target_slug="$(printf '%s' "$target" | tr -c 'A-Za-z0-9_.-' '_')"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 
 exclude_args=(
-  --exclude=.git/
+  # A linked worktree stores `.git` as a file, while a normal checkout stores
+  # it as a directory. Neither host-specific form belongs on a verification VM.
+  --exclude=.git
   --exclude=.DS_Store
   --exclude='._*'
   --exclude=target/
+  --exclude=libs/cua-driver/rust/test-apps/
   --exclude=node_modules/
   --exclude=.venv/
   --exclude=__pycache__/
   --exclude='*.pyc'
   --exclude=dist/
+  --exclude=vm-out/
 )
 
 tar_exclude_args=(
@@ -71,11 +76,13 @@ tar_exclude_args=(
   --exclude ./.DS_Store
   --exclude '._*'
   --exclude ./target
+  --exclude ./libs/cua-driver/rust/test-apps
   --exclude ./node_modules
   --exclude ./.venv
   --exclude '*/__pycache__'
   --exclude '*.pyc'
   --exclude ./dist
+  --exclude ./vm-out
 )
 
 remote_mkdir() {
@@ -102,8 +109,37 @@ push_rsync() {
 
 push_tar() {
   remote_mkdir
-  COPYFILE_DISABLE=1 tar "${tar_exclude_args[@]}" -czf - -C "$repo_root" . \
-    | "$rsync_ssh" "$target" "tar -xzf - -C \"$remote_dir\""
+  remote_path=${remote_dir/#\~/'$HOME'}
+  COPYFILE_DISABLE=1 tar --no-xattrs "${tar_exclude_args[@]}" -czf - -C "$repo_root" . \
+    | "$rsync_ssh" "$target" "tar -xzf - -C \"$remote_path\""
+}
+
+write_source_marker() {
+  case "$remote_os" in
+    windows)
+      "$rsync_ssh" "$target" \
+        "powershell -NoProfile -Command \"Set-Content -NoNewline -Path '$remote_dir/.cua-e2e-source-sha' -Value '$source_sha'\""
+      ;;
+    posix)
+      marker_dir=${remote_dir/#\~/"\$HOME"}
+      printf '%s\n' "$source_sha" \
+        | "$rsync_ssh" "$target" "mkdir -p $marker_dir && tee $marker_dir/.cua-e2e-source-sha >/dev/null"
+      ;;
+  esac
+}
+
+ensure_remote_runtime_dirs() {
+  case "$remote_os" in
+    windows)
+      "$rsync_ssh" "$target" \
+        "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force '$remote_dir/libs/cua-driver/rust/test-apps' | Out-Null\""
+      ;;
+    posix)
+      remote_path=${remote_dir/#\~/'$HOME'}
+      "$rsync_ssh" "$target" \
+        "mkdir -p \"$remote_path/libs/cua-driver/rust/test-apps\""
+      ;;
+  esac
 }
 
 pull_artifacts_rsync() {
@@ -111,7 +147,8 @@ pull_artifacts_rsync() {
 }
 
 pull_artifacts_tar() {
-  "$rsync_ssh" "$target" "tar -czf - -C \"$remote_dir/$remote_artifact_dir\" ." \
+  remote_path=${remote_dir/#\~/'$HOME'}
+  "$rsync_ssh" "$target" "tar -czf - -C \"$remote_path/$remote_artifact_dir\" ." \
     | tar -xzf - -C "$dest"
 }
 
@@ -121,8 +158,9 @@ pull_code_rsync() {
 }
 
 pull_code_tar() {
-  "$rsync_ssh" "$target" "tar -czf - -C \"$remote_dir\" ." \
-    | COPYFILE_DISABLE=1 tar "${tar_exclude_args[@]}" -xzf - -C "$repo_root"
+  remote_path=${remote_dir/#\~/'$HOME'}
+  "$rsync_ssh" "$target" "tar -czf - -C \"$remote_path\" ." \
+    | COPYFILE_DISABLE=1 tar --no-xattrs "${tar_exclude_args[@]}" -xzf - -C "$repo_root"
 }
 
 case "$mode" in
@@ -132,6 +170,8 @@ case "$mode" in
       tar) push_tar ;;
       *) echo "SYNC_TRANSPORT must be rsync or tar, got: $transport" >&2; exit 2 ;;
     esac
+    ensure_remote_runtime_dirs
+    write_source_marker
     ;;
 
   pull-artifacts)

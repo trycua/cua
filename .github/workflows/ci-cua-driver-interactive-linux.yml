@@ -101,7 +101,7 @@ jobs:
               python3 /tmp/atspi_probe.py || echo "[interactive-ci] AT-SPI probe inconclusive — AX assertions will skip if the bus is unavailable"
 
               # capture_mode matrix (ax/vision/som): real assertions, headless-safe.
-              cargo test -p cua-driver --test modality_capture_mode_test \
+    cargo test -p cua-driver --test capture_contract_test \
                 -- --ignored --nocapture --test-threads=1
 
               # desktop-scope: run the GATE here (the desktop_scope_disabled

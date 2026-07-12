@@ -1,4 +1,4 @@
-//! modality_capture_mode_test — the get_window_state **perception** contract,
+//! `get_window_state` perception contract,
 //! asserted on each platform's native controlled-harness app.
 //!
 //! get_window_state is perception-mode-agnostic now: it ALWAYS returns BOTH the
@@ -11,36 +11,66 @@
 //!   * `include_screenshot:false` → tree present, NO `image` (the cheap path).
 //!   * `capture_mode:"vision"` (deprecated) → IGNORED; still returns both.
 //!
-//! Caveats handled as graceful skips (these are `#[ignore]` interactive tests,
-//! consistent with the rest of the harness suite):
-//!   * The screenshot needs a screen-capture grant (Screen Recording on macOS).
-//!     Without it the driver returns a tree but no PNG, so the image assertions
-//!     skip-with-note rather than false-fail.
-//!   * The tree needs the platform accessibility grant (TCC on macOS, AT-SPI bus
-//!     on Linux). An empty tree skips the tree assertion.
-//!
 //! Run explicitly:
-//!   cargo test -p cua-driver --test modality_capture_mode_test -- --ignored --nocapture --test-threads=1
+//!   cargo test -p cua-driver --test capture_contract_test -- --ignored --nocapture --test-threads=1
 
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use cua_driver_testkit::e2e::{
+    execute_case, native_readonly_case, recording_evidence, DriverRoute, Evidence, Observation,
+    OracleKind, Targeting,
+};
+#[cfg(target_os = "windows")]
+use cua_driver_testkit::e2e::{CaseSpec, Delivery, Scope};
+#[cfg(target_os = "windows")]
+use cua_driver_testkit::observer::TargetWindow;
+#[cfg(target_os = "windows")]
+use cua_driver_testkit::sentinel::ForegroundSentinel;
 use cua_driver_testkit::{harness_app, Driver, McpDriver, ToolResponse};
 
 /// The aid every harness exposes on its increment button — the tree marker
 /// (WPF AutomationId / AppKit AX identifier / GTK3 AT-SPI accessible name).
 const TREE_MARKER: &str = "btn-increment";
 
+fn strict() -> bool {
+    std::env::var_os("CUA_TEST_REQUIRE_FIXTURES").is_some()
+}
+
 #[cfg(target_os = "macos")]
-fn spawn_driver() -> Option<McpDriver> {
-    McpDriver::spawn_macos_daemon_proxy()
+fn spawn_driver(label: &str) -> Option<McpDriver> {
+    McpDriver::spawn_macos_daemon_proxy_named(label)
 }
 
 #[cfg(not(target_os = "macos"))]
-fn spawn_driver() -> Option<McpDriver> {
-    McpDriver::spawn()
+fn spawn_driver(label: &str) -> Option<McpDriver> {
+    McpDriver::spawn_named(label)
+}
+
+fn test_driver(label: &str) -> Option<McpDriver> {
+    let driver = spawn_driver(label);
+    assert!(
+        driver.is_some() || !strict(),
+        "required source-built driver did not start"
+    );
+    driver
+}
+
+fn capture_toolkit() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "wpf"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "appkit"
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "gtk3"
+    }
 }
 
 /// Does the response carry a screenshot? Checks both the MCP `image` content
@@ -171,18 +201,24 @@ fn launch_new_instance(
     title: &str,
 ) -> Option<(u32, u64)> {
     if !exe.exists() {
-        eprintln!("[capture_mode] harness not built ({exe:?}) — skipping");
+        if strict() {
+            panic!("required capture harness is missing: {exe:?}");
+        }
+        eprintln!("[capture] optional harness not built: {exe:?}");
         return None;
     }
     let before = harness_pids(driver, title);
-    driver
-        .reaper()
-        .spawn(
-            Command::new(exe)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null()),
-        )
-        .ok()?;
+    let spawned = driver.reaper().spawn(
+        Command::new(exe)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    );
+    if let Err(error) = spawned {
+        if strict() {
+            panic!("failed to launch required capture harness {exe:?}: {error}");
+        }
+        return None;
+    }
     resolve_new_window(driver, title, &before)
 }
 
@@ -227,47 +263,65 @@ fn resolve_new_window(
         }
         std::thread::sleep(Duration::from_millis(400));
     }
-    eprintln!("[capture_mode] new harness window {title:?} never appeared — is a graphical session available? skipping");
+    if strict() {
+        panic!("required capture harness window {title:?} never appeared");
+    }
+    eprintln!("[capture] optional harness window {title:?} never appeared");
     None
+}
+
+fn run_capture_case(
+    action: &str,
+    oracles: Vec<OracleKind>,
+    test: impl FnOnce(u32, u64, &mut McpDriver),
+) {
+    let case = native_readonly_case(
+        capture_toolkit(),
+        action,
+        Targeting::NotApplicable,
+        DriverRoute::WindowState,
+        oracles.clone(),
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = test_driver(&cell_id).expect("required capture driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, wid) = launch(&mut driver).expect("required capture harness did not launch");
+        driver.start_behavior_recording();
+        test(pid, wid, &mut driver);
+        Observation::delivered(oracles, Evidence::default())
+    });
 }
 
 // ── tests ───────────────────────────────────────────────────────────────────────
 
 /// DEFAULT: get_window_state returns BOTH the tree AND a screenshot — grounding
-/// on both is the whole point. Each half is asserted only when its OS grant is
-/// available (accessibility for the tree, screen-recording for the image), so a
-/// missing grant skips-with-note rather than false-failing.
+/// on both is the whole point.
 #[test]
 #[ignore]
 fn default_returns_tree_and_screenshot() {
-    let Some(mut driver) = spawn_driver() else {
-        return;
-    };
-    let Some((pid, wid)) = launch(&mut driver) else {
-        return;
-    };
+    run_capture_case(
+        "tree_and_screenshot",
+        vec![OracleKind::AxState, OracleKind::Pixels],
+        |pid, wid, driver| {
+            let resp = snapshot_settled_default(driver, pid, wid);
+            assert!(
+                !resp.is_error(),
+                "get_window_state(default) errored: {}",
+                resp.text()
+            );
 
-    let resp = snapshot_settled_default(&mut driver, pid, wid);
-    assert!(
-        !resp.is_error(),
-        "get_window_state(default) errored: {}",
-        resp.text()
+            assert!(
+                tree_has_marker(&resp),
+                "default response is missing the required tree marker: {}",
+                resp.text().chars().take(160).collect::<String>()
+            );
+            assert!(
+                has_image(&resp),
+                "default response is missing its screenshot"
+            );
+        },
     );
-
-    let tree = tree_has_marker(&resp);
-    let img = has_image(&resp);
-    assert!(
-        tree || img,
-        "default returned neither tree nor image — both grants missing? {}",
-        resp.text().chars().take(160).collect::<String>()
-    );
-    // When BOTH grants are present, BOTH must be returned (the contract).
-    if tree && !img {
-        eprintln!("[capture_mode] default: tree present, no image (screen-capture grant likely missing) — partial check");
-    } else if img && !tree {
-        eprintln!("[capture_mode] default: image present, no tree (accessibility grant likely missing) — partial check");
-    }
-    println!("✅ default: tree={tree} image={img} (both expected when grants present)");
 }
 
 /// `include_screenshot:false` is the perf opt-out: tree present, NO image. This
@@ -275,30 +329,28 @@ fn default_returns_tree_and_screenshot() {
 #[test]
 #[ignore]
 fn include_screenshot_false_returns_tree_only() {
-    let Some(mut driver) = spawn_driver() else {
-        return;
-    };
-    let Some((pid, wid)) = launch(&mut driver) else {
-        return;
-    };
+    run_capture_case(
+        "tree_only",
+        vec![OracleKind::AxState],
+        |pid, wid, driver| {
+            let resp = snapshot_settled_tree_only(driver, pid, wid);
+            assert!(
+                !resp.is_error(),
+                "get_window_state(include_screenshot:false) errored: {}",
+                resp.text()
+            );
 
-    let resp = snapshot_settled_tree_only(&mut driver, pid, wid);
-    assert!(
-        !resp.is_error(),
-        "get_window_state(include_screenshot:false) errored: {}",
-        resp.text()
+            assert!(
+                tree_has_marker(&resp),
+                "tree-only response is missing {TREE_MARKER:?}"
+            );
+            assert!(
+                !has_image(&resp),
+                "include_screenshot:false must NOT return an image content entry: {}",
+                resp.text().chars().take(160).collect::<String>()
+            );
+        },
     );
-
-    if !tree_has_marker(&resp) {
-        eprintln!("[capture_mode] tree-only: no {TREE_MARKER:?} — accessibility grant likely missing; skipping");
-        return;
-    }
-    assert!(
-        !has_image(&resp),
-        "include_screenshot:false must NOT return an image content entry: {}",
-        resp.text().chars().take(160).collect::<String>()
-    );
-    println!("✅ include_screenshot:false: tree present ({TREE_MARKER}), no image");
 }
 
 /// `capture_mode` is DEPRECATED and ignored: passing `vision` (which used to
@@ -306,33 +358,104 @@ fn include_screenshot_false_returns_tree_only() {
 #[test]
 #[ignore]
 fn deprecated_capture_mode_is_ignored() {
-    let Some(mut driver) = spawn_driver() else {
-        return;
-    };
-    let Some((pid, wid)) = launch(&mut driver) else {
-        return;
-    };
+    run_capture_case(
+        "deprecated_mode_ignored",
+        vec![OracleKind::AxState, OracleKind::Pixels],
+        |pid, wid, driver| {
+            let resp = snapshot_settled(driver, pid, wid, "vision");
+            assert!(
+                !resp.is_error(),
+                "get_window_state(capture_mode=vision) errored: {}",
+                resp.text()
+            );
 
-    let resp = snapshot_settled(&mut driver, pid, wid, "vision");
-    assert!(
-        !resp.is_error(),
-        "get_window_state(capture_mode=vision) errored: {}",
-        resp.text()
+            assert!(
+                tree_has_marker(&resp),
+                "deprecated capture_mode=vision suppressed the tree"
+            );
+            assert!(
+                has_image(&resp),
+                "deprecated capture_mode=vision suppressed the screenshot"
+            );
+        },
     );
+}
 
-    // The legacy "vision" value must NOT suppress the tree anymore.
-    if has_image(&resp) && tree_has_marker(&resp) {
-        println!("✅ capture_mode=vision ignored: BOTH tree and image returned");
-        return;
-    }
-    // Tolerate a missing grant, but the deprecated arg must never make the
-    // present half disappear: if the tree marker shows, that already proves
-    // "vision" didn't suppress it.
-    if tree_has_marker(&resp) {
-        println!("✅ capture_mode=vision ignored: tree still present (image grant may be missing)");
-    } else {
-        eprintln!(
-            "[capture_mode] vision: no tree marker — accessibility grant likely missing; skipping"
+/// Capturing an occluded background window is a read-only operation: it must
+/// return pixels without disturbing the user's foreground desktop.
+#[cfg(target_os = "windows")]
+#[test]
+#[ignore]
+fn background_screenshot_preserves_desktop() {
+    let case = CaseSpec::delivered(
+        "windows-wpf-screenshot-px-background",
+        "wpf",
+        "wpf",
+        "screenshot",
+        Targeting::Px,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::WindowsPrintWindow,
+        vec![
+            OracleKind::Pixels,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::Cursor,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named("windows-wpf-screenshot-px-background")
+            .expect("required source-built driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, wid) = launch(&mut driver).expect("required WPF capture harness did not start");
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        sentinel
+            .assert_background_posture(TargetWindow {
+                pid,
+                native_id: wid,
+            })
+            .expect("establish capture background posture before recording");
+        driver.start_behavior_recording();
+        let (response, mut passed) = sentinel
+            .observe_background(
+                TargetWindow {
+                    pid,
+                    native_id: wid,
+                },
+                || {
+                    driver.call(
+                        "get_window_state",
+                        serde_json::json!({
+                            "pid": pid as i64,
+                            "window_id": wid,
+                            "capture_mode": "vision"
+                        }),
+                    )
+                },
+            )
+            .unwrap_or_else(|error| panic!("background screenshot disturbed the desktop: {error}"));
+        assert!(
+            !response.is_error(),
+            "background screenshot failed: {}",
+            response.text()
         );
-    }
+        assert!(
+            has_image(&response),
+            "background screenshot returned no image"
+        );
+        for required in [
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::Cursor,
+            OracleKind::NoLeakedInput,
+        ] {
+            assert!(
+                passed.contains(&required),
+                "background screenshot omitted required {required:?} oracle"
+            );
+        }
+        passed.push(OracleKind::Pixels);
+        Observation::delivered(passed, Evidence::default())
+    });
 }

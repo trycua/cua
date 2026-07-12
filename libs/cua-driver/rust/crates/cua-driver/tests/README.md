@@ -1,8 +1,16 @@
 # cua-driver Rust integration tests
 
 Tests in this directory exercise the public driver interface. Headless protocol
-tests run by default; GUI and modality tests are marked `#[ignore]` because they
+tests run by default; harness E2E tests are marked `#[ignore]` because they
 need staged harness apps and an interactive desktop.
+
+Start with the contributor overview in
+`../../../../docs/test-harnesses-guide.md`, then use the matrix below as the
+coverage map.
+
+The cross-OS ownership map is maintained in
+`../../../../docs/test-matrix.md`. Update that matrix when adding a harness,
+action, addressing mode, delivery mode, or OS-specific window-system case.
 
 ## Naming
 
@@ -11,8 +19,7 @@ need staged harness apps and an interactive desktop.
 | `protocol_*_test.rs` | yes | MCP/CLI protocol and schema behavior |
 | `schema_*_test.rs` | yes | Generated schema consistency |
 | `harness_<toolkit>_test.rs` | no, `#[ignore]` | Toolkit-specific harness apps |
-| `modality_<area>[_<os>]_test.rs` | no, `#[ignore]` | Background input, capture, desktop scope |
-| `guard_*_test.rs` | usually ignored or self-skipping | UX guard and interactive desktop checks |
+| `desktop_scope_<os>_test.rs` | no, `#[ignore]` | Platform window/desktop scope contract |
 
 ## Harness Requirements
 
@@ -35,32 +42,45 @@ Staged outputs are read from `../../test-apps/harness-<name>/`.
 
 The canonical cross-platform matrix is
 `cross_platform_behavior_test.rs`. It runs the same external-state scenarios
-against Electron and Tauri on each supported host. CI and VM runners set
+against Electron and Tauri on each supported host, plus the native WKWebView
+host on macOS. CI and VM runners set
 `CUA_TEST_DRIVER_BIN`, `CUA_TEST_APPS_ROOT`, and
 `CUA_TEST_WORKSPACE_ROOT` when artifacts are built outside Cargo's default
 workspace paths. They also set `CUA_TEST_REQUIRE_FIXTURES=1`, turning a missing
 fixture into a failure instead of a silent skip.
 
-The canonical Windows and Linux runners also set
+Each matrix row declares its action, AX/PX targeting, foreground or background
+delivery, scope, driver route, external oracles, and required behavior in
+`cases.jsonl`. `results.jsonl` records the observed behavior and derived test
+status. The Rust reporter validates both files and renders `summary.md`.
+
+The canonical OS runners also set
 `CUA_E2E_RECORDINGS_ROOT`. Every testkit `McpDriver` then records its full
 desktop trajectory to a unique directory containing `recording.mp4`, cursor
 samples, action JSON, per-turn screenshots, and a `trajectory.json` test-label
 manifest. Windows and Linux require
 FFmpeg; macOS uses the installed driver's ScreenCaptureKit backend. The runner
-validates each MP4 with `ffprobe` before reporting success.
+validates each MP4 with `ffprobe` before reporting success. A separate Rust
+preflight verifies the desktop, fixture, AX tree, screenshot, and video
+lifecycle once before behavioral cells run.
 
 ## Running
 
 ```bash
 cargo test -p cua-driver --test protocol_handshake_test
 cargo test -p cua-driver --test harness_appkit_test -- --ignored --nocapture
-cargo test -p cua-driver --test modality_desktop_scope_macos_test -- --ignored --nocapture
+cargo test -p cua-driver --test desktop_scope_macos_test -- --ignored --nocapture
 ```
 
-Windows Rust run-all uses
-`../../../../tests/runners/windows/run-all.ps1`. It builds repo-local fixtures
-and runs the default, guard, harness, and modality suites. It intentionally
-excludes optional external-app suites.
+The canonical Windows E2E entrypoint is
+`scripts/ci/windows/run-rust-e2e.ps1 -RequireGui`.
+It runs the complete Rust harness matrix; internal lane selectors are retained
+only for focused diagnosis. Optional
+external-app suites remain separate.
+
+The canonical macOS E2E entrypoint is
+`scripts/ci/macos/run-rust-e2e.sh`. It requires a logged-in user session and an
+installed driver with Accessibility and Screen Recording grants.
 
 Legacy Windows Sandbox runs use
 `../../../../tests/runners/windows-sandbox/run-tests-in-sandbox.ps1`, which
@@ -68,21 +88,17 @@ builds selected Windows harness apps and maps them into the sandbox. The current
 Windows GUI validation path should use a real user desktop session through RDP
 or an interactive scheduled task.
 
-Windows GUI modality tests require a user desktop where the focus sentinel can
-become the foreground window. SSH-launched commands start in Session 0 and
+Windows GUI tests require a usable interactive desktop. SSH-launched commands start in Session 0 and
 cannot drive the user's desktop directly; launch GUI tests through an
 interactive scheduled task (`/IT`) or equivalent so they run in the logged-on
 user session.
 
-The Windows probe distinguishes two no-foreground states:
-
-- `input_desktop=Default, foreground_hwnd=0`: the desktop is usable but idle.
-  Tests now launch `focus-monitor-win` and require that sentinel HWND to become
-  foreground before assertions start.
-- `input_desktop` is not `Default` or cannot be opened: the session is usually
-  locked/disconnected, for example after an RDP client drops. Reconnect, use
-  `tscon /dest:console` on a disposable GUI VM, or boot the VM into an unlocked
-  console session before running ignored GUI tests.
+The testkit's native `DesktopObserver` records foreground-window, z-order,
+cursor, and leaked-input state around rows that promise no desktop side effects.
+If the input desktop is not `Default` or cannot be opened, the session is
+usually locked or disconnected. Reconnect, use `tscon /dest:console` on a
+disposable GUI VM, or boot the VM into an unlocked console session before
+running ignored GUI tests.
 
 Set `CUA_REQUIRE_GUI=1` on dedicated GUI runners to turn these desktop
 self-skips into hard failures with the full desktop-state diagnostic.
@@ -91,11 +107,11 @@ The repository-level runners are the preferred entrypoints for the canonical
 matrix:
 
 ```bash
-scripts/ci/linux/run-rust-e2e.sh --suite shared
+scripts/ci/linux/run-rust-e2e.sh
 ```
 
 ```powershell
-.\scripts\ci\windows\run-rust-e2e.ps1 -Suite shared -RequireGui
+.\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
 ```
 
 ## Optional External Apps
@@ -107,5 +123,7 @@ desktop state outside the repo-local fixtures:
 - `harness_libreoffice_test.rs`: Windows LibreOffice Writer/Calc. Requires
   LibreOffice installed, or `LO_SWRITER_EXE` / `LO_SCALC_EXE` pointing at the
   executables.
-- `modality_launch_focus_macos_test.rs`: macOS Calculator/TextEdit launch focus
+- `installed_app_launch_macos_test.rs`: macOS Calculator/TextEdit launch focus
   checks. Requires a logged-in GUI session and usable System Events scripting.
+- `installed_app_textedit_macos_test.rs`: real TextEdit background AX write and
+  verification. Requires a logged-in GUI session and Accessibility permission.

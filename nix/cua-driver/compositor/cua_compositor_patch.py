@@ -162,16 +162,6 @@ static const char *cua_activate_pid(struct tinywl_server *server, pid_t target_p
 	}
 	return NULL;
 }
-static struct tinywl_toplevel *cua_focused_toplevel(struct tinywl_server *server) {
-	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
-	struct wlr_surface *root = focused ? wlr_surface_get_root_surface(focused) : NULL;
-	struct tinywl_toplevel *t;
-	wl_list_for_each(t, &server->toplevels, link) {
-		struct wlr_surface *surface = t->xdg_toplevel ? t->xdg_toplevel->base->surface : NULL;
-		if (surface == root) return t;
-	}
-	return NULL;
-}
 /* Independent observer query used only by the Rust E2E testkit. The target is
  * selected by the Wayland client's process credentials, not by driver-owned
  * object ids. In this minimal compositor every mapped toplevel shares origin;
@@ -221,6 +211,32 @@ static bool cua_motion(struct tinywl_server *server, struct tinywl_toplevel *t, 
 	uint32_t tm = cua_now_ms();
 	wl_resource_for_each(res, &sc->pointers) { wl_pointer_send_motion(res, tm, sx, sy); cua_pframe(res); }
 	return true;
+}
+/* Resolve an output-layout point through the compositor scene, preserving
+ * subsurface offsets and output scaling. This is the desktop-scope path. */
+static struct tinywl_toplevel *cua_desktop_motion(struct tinywl_server *server, double x, double y) {
+	double sx = 0, sy = 0;
+	struct wlr_surface *surface = NULL;
+	struct tinywl_toplevel *t = desktop_toplevel_at(server, x, y, &surface, &sx, &sy);
+	if (!t || !surface) return NULL;
+	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
+	if (!sc || wl_list_empty(&sc->pointers)) return NULL;
+	struct wl_resource *res;
+	if (cua_ptr[0].entered != surface) {
+		if (cua_ptr[0].entered) cua_ptr_leave(server->seat, cua_ptr[0].entered);
+		uint32_t serial = wlr_seat_client_next_serial(sc);
+		wl_resource_for_each(res, &sc->pointers) {
+			wl_pointer_send_enter(res, serial, surface->resource, wl_fixed_from_double(sx), wl_fixed_from_double(sy));
+			cua_pframe(res);
+		}
+		cua_ptr[0].entered = surface;
+	}
+	uint32_t tm = cua_now_ms();
+	wl_resource_for_each(res, &sc->pointers) {
+		wl_pointer_send_motion(res, tm, wl_fixed_from_double(sx), wl_fixed_from_double(sy));
+		cua_pframe(res);
+	}
+	return t;
 }
 static bool cua_button(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, uint32_t button, bool pressed) {
 	if (!t || idx < 0 || idx >= CUA_MAXDEV) return false;
@@ -412,8 +428,7 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 	if (!strcmp(cmd, "d")) {
 		double x, y; unsigned count, btn;
 		if (sscanf(line, "d %lf %lf %u %u", &x, &y, &count, &btn) != 4) return "bad-args";
-		if (!(t = cua_focused_toplevel(server))) return "no-focused-target";
-		if (!cua_motion(server, t, 0, x, y)) return "no-pointer-resource";
+		if (!(t = cua_desktop_motion(server, x, y))) return "no-surface-at-point";
 		for (unsigned i = 0; i < (count ? count : 1); i++) {
 			if (!cua_button(server, t, 0, btn, true)) return "no-pointer-resource";
 			if (!cua_button(server, t, 0, btn, false)) return "no-pointer-resource";
@@ -587,8 +602,8 @@ src = repl(src,
     "\twl_list_remove(&toplevel->link);\n}",
     "\tstruct wlr_surface *cua_surface = toplevel->xdg_toplevel->base->surface;\n"
     "\tfor (int i = 0; i < CUA_MAXDEV; i++) {\n"
-    "\t\tif (cua_ptr[i].entered == cua_surface) cua_ptr[i].entered = NULL;\n"
-    "\t\tif (cua_kbd_state[i].entered == cua_surface) cua_kbd_state[i].entered = NULL;\n"
+    "\t\tif (cua_ptr[i].entered && wlr_surface_get_root_surface(cua_ptr[i].entered) == cua_surface) cua_ptr[i].entered = NULL;\n"
+    "\t\tif (cua_kbd_state[i].entered && wlr_surface_get_root_surface(cua_kbd_state[i].entered) == cua_surface) cua_kbd_state[i].entered = NULL;\n"
     "\t}\n"
     "\tif (toplevel->ftl) { wl_list_remove(&toplevel->ftl_request_activate.link); wlr_foreign_toplevel_handle_v1_destroy(toplevel->ftl); toplevel->ftl = NULL; }\n"
     "\twl_list_remove(&toplevel->link);\n}",

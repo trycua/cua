@@ -491,6 +491,10 @@ fn action_target_args(
         let height = state.structured()["screenshot_height"]
             .as_f64()
             .expect("PX action requires screenshot_height");
+        eprintln!(
+            "[shared-px] {} target={id} screen=({x:.1},{y:.1}) origin=({:.1},{:.1}) scale={scale:.3} local=({local_x:.1},{local_y:.1}) capture=({width:.1}x{height:.1})",
+            fixture.name, origin.0, origin.1
+        );
         assert!(
             local_x >= 0.0 && local_x < width && local_y >= 0.0 && local_y < height,
             "{}: PX target {id:?} center ({local_x:.1}, {local_y:.1}) is outside the captured window ({width:.1}x{height:.1}); fix the harness layout",

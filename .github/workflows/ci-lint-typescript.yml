@@ -22,14 +22,14 @@ jobs:
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.3
 
       - name: Install Node dependencies
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm -C libs/typescript install --frozen-lockfile
+        run: pnpm -C libs/typescript install --frozen-lockfile
 
       - name: TypeScript typecheck
-        run: node ./scripts/typescript-typecheck.js
+        run: pnpm -C libs/typescript typecheck
 
       - name: Prettier check
-        run: pnpm prettier --check "libs/typescript/**/*.{ts,tsx,js,jsx,json,md,yaml,yml}"
+        run: pnpm -C libs/typescript format:check

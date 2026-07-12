@@ -1,346 +1,141 @@
-# Development Guide
+# Development
 
-This guide covers setting up and developing the Cua monorepo.
+This file is the contributor map for the Cua monorepo. Each component owns its
+detailed setup, build, and test instructions. Start here, then follow the guide
+next to the code you plan to change.
 
-## Project Structure
+## Choose a Component
 
-The project is organized as a monorepo with these main packages:
+| Area                         | Main paths                                                  | Toolchain                           | Start here                                                                                                                   |
+| ---------------------------- | ----------------------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| cua-driver                   | `libs/cua-driver/rust`, `libs/cua-driver/python`            | Rust, platform SDKs, Nix on Linux   | [`libs/cua-driver/README.md`](libs/cua-driver/README.md), [`libs/cua-driver/rust/README.md`](libs/cua-driver/rust/README.md) |
+| Python SDKs and services     | `libs/python`, `libs/cua-bench`                             | Python 3.12, uv                     | Package `pyproject.toml` and README                                                                                          |
+| TypeScript SDKs              | `libs/typescript`                                           | Node.js, pnpm                       | [`libs/typescript/README.md`](libs/typescript/README.md) and its `package.json` scripts                                      |
+| CuaBot                       | `libs/cuabot`                                               | Node.js, pnpm                       | [`libs/cuabot/README.md`](libs/cuabot/README.md)                                                                             |
+| Lume                         | `libs/lume`                                                 | Swift, Xcode command-line tools     | [`libs/lume/Development.md`](libs/lume/Development.md)                                                                       |
+| Sandbox and container images | `libs/kasm`, `libs/lumier`, `libs/qemu-docker`, `libs/xfce` | Docker plus the component toolchain | README or Development file in the component                                                                                  |
+| Public documentation         | `docs/content/docs`                                         | Node.js, pnpm, Fumadocs             | [`docs/README.md`](docs/README.md)                                                                                           |
+| Samples                      | `samples`                                                   | Depends on the sample               | README next to the sample                                                                                                    |
 
-**Python Packages** (located in `libs/python/`):
+The repository changes quickly. Directory listings in this root guide are an
+orientation aid, not a package registry. Release targets come from
+[`.github/workflows/release-bump-version.yml`](.github/workflows/release-bump-version.yml),
+and test ownership comes from CI plus the component guides.
 
-- `core/` - Base package with telemetry support
-- `computer/` - Computer-use interface (CUI) library
-- `agent/` - AI agent library with multi-provider support
-- `som/` - Set-of-Mark parser
-- `computer-server/` - Server component for VM
-- `mcp-server/` - MCP server implementation
-- `bench-ui/` - Benchmark UI utilities
+## Common Setup
 
-**Other Packages**:
-
-- `libs/lume/` - Lume CLI (Swift)
-- `libs/typescript/` - TypeScript packages including `cua-cli`
-- `libs/cuabot/` - CuaBot multi-agent computer-use sandbox CLI
-
-All Python packages are part of a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) which manages a shared virtual environment and dependencies.
-
-## Quick Start
-
-1. **Install Lume CLI** (required for local VM management):
-
-   ```bash
-   /bin/bash -c "$(curl -fsSL https://cua.ai/lume/install.sh)"
-   ```
-
-2. **Clone the repository**:
-
-   ```bash
-   git clone https://github.com/trycua/cua.git
-   cd cua
-   ```
-
-3. **Create `.env.local`** in the root directory with your API keys:
-
-   ```bash
-   ANTHROPIC_API_KEY=your_anthropic_key_here
-   OPENAI_API_KEY=your_openai_key_here
-   ```
-
-4. **Install Node.js dependencies**:
-
-   ```bash
-   npm install -g pnpm  # if not already installed
-   pnpm install
-   ```
-
-5. **Install Python dependencies**:
-
-   ```bash
-   pip install uv  # if not already installed
-   uv sync
-   ```
-
-6. **Open workspace in VS Code/Cursor**:
-
-   ```bash
-   # For Python development
-   code .vscode/py.code-workspace
-
-   # For Lume (Swift) development
-   code .vscode/lume.code-workspace
-   ```
-
-7. **Install pre-commit hooks**:
-   ```bash
-   uv run pre-commit install
-   ```
-
-<details>
-<summary>Why use workspace files?</summary>
-
-Using the workspace file is strongly recommended as it:
-
-- Sets up correct Python environments for each package
-- Configures proper import paths
-- Enables debugging configurations
-- Maintains consistent settings across packages
-
-</details>
-
-## Python Development
-
-### Requirements
-
-- **Python 3.12+** (see [`pyproject.toml`](./pyproject.toml) for exact requirements)
-- **uv** - Python package manager
-- **pnpm** - Node.js package manager
-
-### Setup
-
-Install all workspace dependencies with a single command:
+Clone the repository and enter it:
 
 ```bash
-uv sync
+git clone https://github.com/trycua/cua.git
+cd cua
 ```
 
-This installs all dependencies in the virtual environment `.venv`. Each Cua package is installed in editable mode, so changes to source code are immediately reflected.
+Install only the toolchains required by your component:
 
-The `.venv` environment is configured as the default VS Code Python interpreter in [`.vscode/settings.json`](.vscode/settings.json).
+| Work                        | Required tools                                                              |
+| --------------------------- | --------------------------------------------------------------------------- |
+| Python packages             | Python 3.12 and [uv](https://docs.astral.sh/uv/)                            |
+| TypeScript, CuaBot, or docs | The Node.js version required by the component and its declared pnpm version |
+| cua-driver                  | Rust plus the target OS SDK; Nix for the reproducible Linux lanes           |
+| Lume                        | macOS, Swift, and Xcode command-line tools                                  |
+| Images                      | Docker or the image-specific builder documented by the component            |
 
-## Code Formatting
+The root uv workspace contains only the members declared in
+[`pyproject.toml`](pyproject.toml). Other directories under `libs/python` are
+independent packages; use their own `pyproject.toml` and CI workflow.
 
-The Cua project follows strict code formatting standards to ensure consistency across all packages.
+The root Node package installs repository-wide Prettier only. Run `pnpm
+install` inside `libs/typescript`, `libs/cuabot`, or `docs` for those
+components' dependencies.
 
-### Python Formatting
+API keys are not required for ordinary builds and deterministic tests. Add
+credentials only for a test or example that explicitly calls an external
+provider, and never commit them.
 
-#### Tools
+## Root Formatting Hooks
 
-- **[Black](https://black.readthedocs.io/)** - Code formatter
-- **[isort](https://pycqa.github.io/isort/)** - Import sorter
-- **[Ruff](https://beta.ruff.rs/docs/)** - Fast linter and formatter
-- **[MyPy](https://mypy.readthedocs.io/)** - Static type checker (configured but not enforced in pre-commit)
-
-All tools are automatically installed when you run `uv sync`.
-
-#### Configuration
-
-Formatting configuration is defined in [`pyproject.toml`](./pyproject.toml). See the `[tool.black]`, `[tool.ruff]`, `[tool.mypy]`, and `[tool.isort]` sections for all settings.
-
-#### Key Rules
-
-- **Line Length**: Maximum of 100 characters
-- **Python Version**: Code must be compatible with Python 3.12+
-- **Imports**: Automatically sorted (using Ruff's "I" rule)
-- **Type Hints**: Required for all function definitions (strict mypy mode)
-
-<details>
-<summary>IDE configuration details</summary>
-
-##### Python-specific settings
-
-Python-specific IDE settings are configured in [`.vscode/settings.json`](.vscode/settings.json), including:
-
-- Python interpreter path
-- Format on save
-- Code actions on save
-- Black formatter configuration
-- Ruff and MyPy integration
-
-##### JS/TS-specific settings
-
-JavaScript/TypeScript formatting settings are also in [`.vscode/settings.json`](.vscode/settings.json), ensuring Prettier is used for all JS/TS files.
-
-##### Recommended VS Code Extensions
-
-- **Black Formatter** – `ms-python.black-formatter`
-- **Ruff** – `charliermarsh.ruff`
-- **Pylance** – `ms-python.vscode-pylance`
-- **isort** – `ms-python.isort`
-- **Prettier** – `esbenp.prettier-vscode`
-- **Mypy Type Checker** – `ms-python.mypy-type-checker`
-
-> VS Code will automatically suggest installing the recommended extensions when you open the workspace.
-
-</details>
-
-<details>
-<summary>Manual formatting commands</summary>
-
-To manually format code:
+Install the root Python development tools and optional Git hooks with:
 
 ```bash
-# Format all Python files using Black
-uv run black .
-
-# Sort imports using isort
-uv run isort .
-
-# Run Ruff linter with auto-fix
-uv run ruff check .
-
-# Run type checking with MyPy
-uv run mypy .
+uv sync --group dev
+uv run pre-commit install
 ```
 
-</details>
-
-#### Pre-commit Validation
-
-Before submitting a pull request, ensure your code passes all formatting checks.
-
-**Recommended: Run all hooks via pre-commit**
+Run all configured hooks against the repository with:
 
 ```bash
-uv run pre-commit run
+uv run pre-commit run --all-files
 ```
 
-This automatically runs Black, Ruff, isort, Prettier, TypeScript type checking, and other configured hooks. See [`.pre-commit-config.yaml`](.pre-commit-config.yaml) for the complete list.
+The hooks currently run Prettier, the TypeScript workspace typecheck, Black,
+isort, and Ruff. Install the TypeScript workspace dependencies before running
+the typecheck hook. Mypy is configured in `pyproject.toml` but is not a
+pre-commit gate.
 
-> **Note:** MyPy is currently disabled in pre-commit hooks due to untyped codebase, but it's still configured and can be run manually.
-
-<details>
-<summary>Run individual tools manually</summary>
+For a read-only repository-wide formatting check:
 
 ```bash
-# Python checks
-uv run black --check .
-uv run isort --check .
-uv run ruff check .
-uv run mypy .
-
-# JavaScript/TypeScript checks
+pnpm install --frozen-lockfile
 pnpm prettier:check
 ```
 
-</details>
+Component-specific Rust, TypeScript, Swift, and documentation checks remain in
+their component guides. See [`TESTING.md`](TESTING.md) for the test map.
 
-### JavaScript / TypeScript Formatting
+## cua-driver Development
 
-The project uses **Prettier** to ensure consistent formatting across all JS/TS/JSON/Markdown/YAML files.
+cua-driver has three distinct validation layers:
 
-#### Installation
+1. Rust unit and protocol tests that do not require a target GUI application.
+2. Source-built harness E2E tests that drive Electron, Tauri, and native toolkit
+   fixtures in a real user desktop session.
+3. Optional real-application checks for software that is not part of the
+   canonical harness catalog.
 
-All Node.js dependencies are managed via `pnpm`:
+The Rust harnesses are the source of truth for desktop behavior. Python tests
+do not duplicate that matrix. Start with:
 
-```bash
-npm install -g pnpm  # if not already installed
-pnpm install
-```
+- [`libs/cua-driver/rust/README.md`](libs/cua-driver/rust/README.md) for the Cargo workspace.
+- [`libs/cua-driver/rust/crates/cua-driver/tests/README.md`](libs/cua-driver/rust/crates/cua-driver/tests/README.md) for test ownership.
+- [`scripts/ci/README.md`](scripts/ci/README.md) for canonical OS runners.
+- [Platform support and validation](https://cua.ai/docs/reference/cua-driver/platform-support) for the public capability and evidence contract.
 
-#### Usage
+Interactive desktop tests need a real user session. Windows requires an active
+console or RDP session. macOS requires a logged-in session with Accessibility
+and Screen Recording permissions. Linux X11 and Wayland are separate lanes.
 
-- **Check formatting** (without making changes):
+## Documentation
 
-  ```bash
-  pnpm prettier:check
-  ```
+Public docs use Fumadocs and follow Diataxis:
 
-- **Automatically format files**:
+- tutorials teach a first success;
+- how-to guides solve a specific task;
+- concepts explain constraints and design;
+- reference pages state commands, contracts, support, and limits.
 
-  ```bash
-  pnpm prettier:format
-  ```
+Run documentation commands from `docs`; see [`docs/README.md`](docs/README.md).
+Contributor-only implementation notes should remain next to their component
+instead of entering the public docs navigation.
 
-#### VS Code Integration
+## Releases
 
-The workspace config ensures Prettier is used automatically for JS/TS/JSON/Markdown/YAML files. Ensure `editor.formatOnSave` is enabled in VS Code.
+Maintainers release packages through the
+[CD: Bump Version](https://github.com/trycua/cua/actions/workflows/release-bump-version.yml)
+workflow. Its `service` input is the current release-target registry. Each
+package's `.bumpversion.cfg`, Cargo manifest, or package manifest owns its
+version and tag format.
 
-### Swift Code (Lume)
+Do not duplicate the complete release-target list or example versions in this
+guide. They become stale as components are added. The workflow bumps one target
+at a time and tag-triggered CD workflows perform publication.
 
-For Swift code in the `libs/lume` directory:
+The root `Makefile` provides local version inspection and dry-run helpers. It
+does not publish production releases.
 
-- Follow the [Swift API Design Guidelines](https://www.swift.org/documentation/api-design-guidelines/)
-- Use SwiftFormat for consistent formatting
-- Code will be automatically formatted on save when using the lume workspace
+## Generated and Local Files
 
-Refer to [`libs/lume/Development.md`](./libs/lume/Development.md) for detailed Lume development instructions.
-
-## Releasing Packages
-
-Cua uses an automated GitHub Actions workflow to bump package versions and publish to PyPI/NPM.
-
-> **Note:** The main branch is currently not protected. If branch protection is enabled in the future, the github-actions bot must be added to the bypass list for these workflows to commit directly.
-
-### Version Bump & Publish Workflow
-
-All packages are managed through a single consolidated workflow: [Bump Version & Publish](https://github.com/trycua/cua/actions/workflows/release-bump-version.yml)
-
-**Supported packages:**
-
-**Python (PyPI):**
-
-- `pypi/agent` - AI agent library
-- `pypi/auto` - Cross-platform automation library (mouse, keyboard, screen, window, clipboard, shell)
-- `pypi/bench` - Benchmark toolkit for computer-use RL environments
-- `pypi/computer` - Computer-use interface library
-- `pypi/computer-server` - Server component for VM
-- `pypi/core` - Base package with telemetry
-- `pypi/mcp-server` - MCP server implementation
-- `pypi/som` - Set-of-Mark parser
-
-**JavaScript/TypeScript (NPM):**
-
-- `npm/cli` - Cua command-line interface
-- `npm/computer` - Computer client for TypeScript
-- `npm/core` - Core TypeScript utilities
-- `npm/cuabot` - Multi-agent computer-use sandbox
-
-**Docker:**
-
-- `docker/cuabot` - CuaBot container image
-
-**How to use:**
-
-1. Navigate to the [Bump Version & Publish workflow](https://github.com/trycua/cua/actions/workflows/release-bump-version.yml)
-2. Click the "Run workflow" button in the GitHub UI
-3. Select the **service/package** from the dropdown (e.g., `pypi/computer` or `npm/cli`)
-4. Select the **bump type** (patch/minor/major) from the second dropdown
-5. Click "Run workflow" to start the process
-
-**What happens automatically:**
-
-1. Version is bumped in the package configuration file
-2. Changes are committed and pushed to main
-3. Package is automatically published to PyPI or NPM
-4. For `npm/cli`: Binaries are built and a GitHub release is created
-
-> **Note:** For `pypi/computer`, the workflow also automatically bumps `pypi/agent` to maintain version compatibility.
-
-<details>
-<summary>Local Testing (Advanced)</summary>
-
-The Makefile provides utility targets for local testing only:
-
-```bash
-# Test version bump locally (dry run)
-make dry-run-patch-core
-
-# View current versions
-make show-versions
-```
-
-**Note:** For production releases, always use the GitHub Actions workflows above instead of running Makefile commands directly.
-
-</details>
-
----
-
-<details>
-<summary>Per-package tag patterns</summary>
-
-Each package uses its own tag format defined in `.bumpversion.cfg`:
-
-- **cua-agent**: `agent-v{version}` (e.g., `agent-v0.4.35`)
-- **cua-auto**: `auto-v{version}` (e.g., `auto-v0.1.0`)
-- **cua-bench**: `bench-v{version}` (e.g., `bench-v0.1.0`)
-- **cua-computer**: `computer-v{version}` (e.g., `computer-v0.4.7`)
-- **cua-computer-server**: `computer-server-v{version}` (e.g., `computer-server-v0.1.27`)
-- **cua-core**: `core-v{version}` (e.g., `core-v0.1.9`)
-- **cua-mcp-server**: `mcp-server-v{version}` (e.g., `mcp-server-v0.1.14`)
-- **cua-som**: `som-v{version}` (e.g., `som-v0.1.3`)
-- **cuabot**: `cuabot-v{version}` (e.g., `cuabot-v1.0.0`)
-- **cuabot (docker)**: `docker-cuabot-v{version}` (e.g., `docker-cuabot-v1.0.0`)
-
-</details>
-
-</details>
+Do not commit build products, staged harness binaries, local VM artifacts,
+credentials, permission databases, or editor-specific state. Promote an
+artifact into source control only when it becomes a stable fixture, sample, or
+maintained document.

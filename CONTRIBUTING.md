@@ -1,59 +1,67 @@
 # Contributing to Cua
 
-We deeply appreciate your interest in contributing to Cua! Whether you're reporting bugs, suggesting enhancements, improving docs, or submitting pull requests, your contributions help improve the project for everyone.
+Thanks for contributing to Cua. The repository includes Python and TypeScript
+SDKs, a Rust desktop driver, Swift virtualization tools, container images, and
+public documentation. Start with the component that owns the behavior you want
+to change.
 
-## Reporting Bugs
+## Report a Bug
 
-If you've encountered a bug in the project, we encourage you to report it. Please follow these steps:
+Before opening an issue, search the existing issue tracker. Include:
 
-1. **Check the Issue Tracker**: Before submitting a new bug report, please check our issue tracker to see if the bug has already been reported.
-2. **Create a New Issue**: If the bug hasn't been reported, create a new issue with:
-   - A clear title and detailed description
-   - Steps to reproduce the issue
-   - Expected vs actual behavior
-   - Your environment (macOS version, cua version)
-   - Any relevant logs or error messages
-3. **Label Your Issue**: Label your issue as a `bug` to help maintainers identify it quickly.
+- a concise description and reproducible steps;
+- expected and actual behavior;
+- Cua package or driver version;
+- operating system, window system, and application when relevant;
+- logs, structured errors, screenshots, or recordings that help reproduce it.
 
-## Suggesting Enhancements
+Do not include credentials or private application data.
 
-We're always looking for suggestions to make Cua better. If you have an idea:
+## Propose a Change
 
-1. **Check Existing Issues**: See if someone else has already suggested something similar.
-2. **Create a New Issue**: If your enhancement is new, create an issue describing:
-   - The problem your enhancement solves
-   - How your enhancement would work
-   - Any potential implementation details
-   - Why this enhancement would benefit Cua users
+For feature requests, describe the user problem and the expected behavior
+before prescribing an implementation. Mention affected platforms and existing
+workarounds when known.
 
-## Code Formatting
+## Submit Code
 
-We follow strict code formatting guidelines to ensure consistency across the codebase. Before submitting any code:
+1. Read [`Development.md`](Development.md) and the guide next to the component.
+2. Keep changes scoped to the component that owns the behavior.
+3. Add or update tests that observe the public effect of the change.
+4. Run the applicable commands in [`TESTING.md`](TESTING.md).
+5. Run the formatters and linters owned by the changed component.
+6. Open a focused pull request that explains behavior, validation, and known gaps.
 
-1. **Review Our Format Guide**: Please review our [Code Formatting Standards](Development.md#code-formatting-standards) section in the Getting Started guide.
-2. **Configure Your IDE**: We recommend using the workspace settings provided in `.vscode/` for automatic formatting.
-3. **Run Formatting Tools**: Always run the formatting tools before submitting a PR:
-   ```bash
-   # For Python code
-   uv run black .
-   uv run isort .
-   uv run ruff check --fix .
-   ```
-4. **Validate Your Code**: Ensure your code passes all checks:
-   ```bash
-   uv run mypy .
-   ```
-5. Every time you try to commit code, a pre-commit hook will automatically run the formatting and validation tools. If any issues are found, the commit will be blocked until they are resolved. Please make sure to address any issues reported by the pre-commit hook before attempting to commit again. Once all issues are resolved, you can proceed with your commit.
+Root pre-commit hooks are optional local helpers. Install them with:
+
+```bash
+uv sync --group dev
+uv run pre-commit install
+```
+
+Mypy is configured but is not currently a pre-commit gate. Rust, TypeScript,
+Swift, and documentation checks remain component-owned.
+
+## Desktop Behavior Changes
+
+cua-driver behavior must be verified through the canonical Rust harnesses. A
+successful tool response alone is not evidence that an action reached the
+application. Delivery tests should observe fixture state and attach focus,
+z-order, cursor, leaked-input, capture, or refusal oracles as required.
+
+Do not weaken a test to match the current driver. Add a capability, return an
+exact structured refusal, or record the behavior as an explicit gap.
 
 ## Documentation
 
-Documentation improvements are always welcome. You can:
+Public documentation lives under `docs/content/docs` and follows Diataxis. See
+[`docs/README.md`](docs/README.md) before adding a page. Contributor-only plans,
+journals, and implementation notes belong next to their component.
 
-- Fix typos or unclear explanations
-- Add examples and use cases
-- Improve API documentation
-- Add tutorials or guides
+Documentation changes should pass generator drift, hygiene, internal links,
+and the production Fumadocs build.
 
-For detailed instructions on setting up your development environment and submitting code contributions, please see our [Developer-Guide](Development.md).
+## Community
 
-Feel free to join our [Discord community](https://discord.com/invite/mVnXXpdE85) to discuss ideas or get help with your contributions.
+For design discussion and contributor help, join the
+[Cua Discord community](https://discord.com/invite/mVnXXpdE85).

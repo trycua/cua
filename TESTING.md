@@ -1,106 +1,130 @@
-# Testing Guide for Cua
+# Testing
 
-Quick guide to running tests and understanding the test architecture.
+Cua is a multi-language monorepo. There is no single root command that proves
+every package, desktop, VM, and image. Run the tests owned by the components you
+changed and use the corresponding CI workflow as the executable source of
+truth.
 
-## 🚀 Quick Start
+## Test Map
+
+| Area                 | Deterministic tests                                   | Integration or E2E owner                                                         |
+| -------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Python SDKs          | Package `tests/` directories with pytest              | Package-specific integration tests and `tests/integration`                       |
+| TypeScript SDKs      | Package Vitest/typecheck scripts                      | Package-owned integration tests                                                  |
+| cua-driver           | Rust unit, schema, protocol, and compile tests        | Canonical Rust desktop harnesses on Windows, macOS, Linux X11, and Linux Wayland |
+| Lume                 | Swift package tests                                   | VM and unattended-setup checks documented by Lume                                |
+| Public docs          | Generator drift, hygiene, links, and production build | Rendered Fumadocs site                                                           |
+| Images and sandboxes | Component build and schema tests                      | Image-specific smoke or VM tests                                                 |
+
+Path-filtered CI avoids running unrelated operating systems, so a green job for
+one component does not validate another component.
+
+## Python
+
+For a member of the root uv workspace:
 
 ```bash
-# Install dependencies
-pip install pytest pytest-asyncio pytest-mock pytest-cov
-
-# Install package
-cd libs/python/core
-pip install -e .
-
-# Run tests
-export CUA_TELEMETRY_ENABLED=false  # or $env:CUA_TELEMETRY_ENABLED="false" on Windows
-pytest tests/ -v
+uv sync --group test
+CUA_TELEMETRY_ENABLED=false uv run pytest libs/python/<package>/tests -v
 ```
 
-## 🧪 Running Tests
+Packages outside the root uv workspace should be installed from their own
+`pyproject.toml`. The current package matrix and installation sequence live in
+[`.github/workflows/ci-test-python.yml`](.github/workflows/ci-test-python.yml).
+
+## TypeScript
+
+Run from `libs/typescript`:
 
 ```bash
-# All packages
-pytest libs/python/*/tests/ -v
-
-# Specific package
-cd libs/python/core && pytest tests/ -v
-
-# With coverage
-pytest tests/ --cov --cov-report=html
-
-# Specific test
-pytest tests/test_telemetry.py::TestTelemetryEnabled::test_telemetry_enabled_by_default -v
+pnpm install --frozen-lockfile
+pnpm test
+pnpm typecheck
+pnpm format:check
 ```
 
-## 🏗️ Test Architecture
+Use a package's own `package.json` scripts when working outside that workspace,
+including CuaBot and the documentation site.
 
-**Principles**: SRP (Single Responsibility) + Vertical Slices + Testability
+## cua-driver Unit and Protocol Tests
 
-```
-libs/python/
-├── core/tests/           # Tests ONLY core
-├── agent/tests/          # Tests ONLY agent
-└── computer/tests/       # Tests ONLY computer
-```
+Run from `libs/cua-driver/rust`. Focused examples:
 
-Each test file = ONE feature. Each test class = ONE concern.
-
-## ➕ Adding New Tests
-
-1. Create `test_*.py` in the appropriate package's `tests/` directory
-2. Follow the pattern:
-
-```python
-"""Unit tests for my_feature."""
-import pytest
-from unittest.mock import patch
-
-class TestMyFeature:
-    """Test MyFeature class."""
-
-    def test_initialization(self):
-        """Test that feature initializes."""
-        from my_package import MyFeature
-        feature = MyFeature()
-        assert feature is not None
+```bash
+cargo test -p cua-driver-core --locked
+cargo test -p cua-driver --test protocol_mcp_test --locked
 ```
 
-3. Mock external dependencies:
+Linux source and package checks run through Nix. Windows and Linux compile gates
+are split into OS-specific workflows. See
+[`libs/cua-driver/rust/README.md`](libs/cua-driver/rust/README.md) for workspace
+commands.
 
-```python
-@pytest.fixture
-def mock_api():
-    with patch("my_package.api_client") as mock:
-        yield mock
+Unit and protocol tests do not prove that desktop input reached a real
+application.
+
+## cua-driver Harness E2E
+
+The canonical desktop suites build repository-owned applications, drive them
+through the Rust driver, and verify application or desktop state independently
+from the tool response. Foreground/background delivery and AX/PX addressing are
+dimensions of each action row.
+
+Canonical entry points:
+
+```text
+Linux X11/session: scripts/ci/linux/run-rust-e2e.sh
+Linux Sway:        scripts/ci/linux/run-rust-e2e-wayland.sh
+Windows:           .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
+macOS:             scripts/ci/macos/run-rust-e2e.sh
 ```
 
-## 🔄 CI/CD
+These suites require an interactive desktop and are often maintainer-triggered.
+They retain typed case/results, screenshots, accessibility state, trajectories,
+logs, and video where the lane supports it. The reporter rejects missing rows,
+false-success responses, undeclared outcomes, and incomplete required evidence.
 
-Tests run automatically on every PR via GitHub Actions (`.github/workflows/ci-python-tests.yml`):
+See:
 
-- Matrix strategy: each package tested separately
-- Python 3.12
-- ~2 minute runtime
+- [`libs/cua-driver/docs/test-harnesses-guide.md`](libs/cua-driver/docs/test-harnesses-guide.md)
+- [`libs/cua-driver/docs/test-matrix.md`](libs/cua-driver/docs/test-matrix.md)
+- [Platform support and validation](https://cua.ai/docs/reference/cua-driver/platform-support)
 
-## 🐛 Troubleshooting
+## Lume
 
-**ModuleNotFoundError**: Run `pip install -e .` in package directory
+Run from `libs/lume`:
 
-**Tests fail in CI but pass locally**: Set `CUA_TELEMETRY_ENABLED=false`
-
-**Async tests error**: Install `pytest-asyncio` and use `@pytest.mark.asyncio`
-
-**Mock not working**: Patch at usage location, not definition:
-
-```python
-# ✅ Right
-@patch("my_package.module.external_function")
-
-# ❌ Wrong
-@patch("external_library.function")
+```bash
+swift test
 ```
 
----
+VM-dependent and unattended-setup checks have additional prerequisites in
+[`libs/lume/Development.md`](libs/lume/Development.md).
 
-**Questions?** Check existing tests for examples or open an issue.
+## Public Documentation
+
+Run from `docs`:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm docs:check
+pnpm docs:check-hygiene
+pnpm docs:check-links
+pnpm build
+```
+
+The production build validates MDX compilation and static route generation.
+The generator check prevents generated CLI and API references from drifting
+from source.
+
+## Before Opening a Pull Request
+
+1. Run focused tests while developing.
+2. Run the complete deterministic test owner for every component changed.
+3. Run the affected interactive E2E lane when desktop behavior or its contract changes.
+4. Run formatting and documentation checks for modified files.
+5. Record any test that could not run and why.
+
+Do not turn missing dependencies, desktop sessions, fixtures, or permissions
+into a reduced green run. Environment failures and unsupported capabilities
+must remain visible.

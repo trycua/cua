@@ -540,8 +540,9 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
 }
 
 /// Enumerate native Wayland toplevels via wlr-foreign-toplevel-management.
-/// `xid` is the foreign-toplevel handle's protocol id (a stable per-session
-/// window id); pid is unknown (not exposed by the protocol); geometry is 0
+/// `xid` begins as the foreign-toplevel handle's connection-scoped protocol id.
+/// The dispatcher replaces it with a stable compositor or AT-SPI identity when
+/// available. pid is unknown (not exposed by the protocol); geometry is 0
 /// (the protocol does not surface position/size). app_id is folded into the
 /// title (`"<title> [<app_id>]"`) so callers matching on either still match.
 pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
@@ -2063,8 +2064,9 @@ fn key_to_evdev(key: &str) -> Option<u32> {
 // When cua-driver's nested compositor is `cua-compositor` (our patched wlroots,
 // see nix/cua-driver/compositor/), it exposes a line-protocol control socket at
 // $CUA_INJECT_SOCKET for what stock Wayland forbids: focus-FREE per-surface
-// keyboard injection and MULTI-cursor pointer injection, both routed to a target
-// window by its xdg app_id. These helpers speak that protocol.
+// keyboard injection and MULTI-cursor pointer injection, routed by stable PID
+// when available and xdg app_id only as a fallback. These helpers speak that
+// protocol.
 //
 // The protocol is a simple line-based v1 exchange with per-command
 // acknowledgement: the client sends `INJECT_PROTO_HELLO` and the compositor
@@ -2262,10 +2264,13 @@ fn inject_send(lines: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn parse_inject_geometry(line: &str) -> anyhow::Result<(i32, i32)> {
+fn parse_inject_geometry(line: &str) -> anyhow::Result<((i32, i32), (i32, i32))> {
     let fields = line.split_whitespace().collect::<Vec<_>>();
-    if fields.len() == 3 && fields[0] == "geometry" {
-        return Ok((fields[1].parse()?, fields[2].parse()?));
+    if fields.len() == 5 && fields[0] == "geometry" {
+        return Ok((
+            (fields[1].parse()?, fields[2].parse()?),
+            (fields[3].parse()?, fields[4].parse()?),
+        ));
     }
     if let Some(reason) = line.trim().strip_prefix("err") {
         anyhow::bail!("cua-compositor geometry query failed: {}", reason.trim());
@@ -2280,7 +2285,21 @@ pub fn inject_accessibility_offset(pid: u32) -> Option<(i32, i32)> {
         return None;
     }
     let replies = inject_exchange(&[format!("g {pid}")]).ok()?;
-    replies.first().and_then(|line| parse_inject_geometry(line).ok())
+    replies
+        .first()
+        .and_then(|line| parse_inject_geometry(line).ok())
+        .map(|geometry| geometry.0)
+}
+
+fn inject_window_origin(pid: u32) -> Option<(i32, i32)> {
+    if !is_inject_mode() || pid == 0 {
+        return None;
+    }
+    let replies = inject_exchange(&[format!("g {pid}")]).ok()?;
+    replies
+        .first()
+        .and_then(|line| parse_inject_geometry(line).ok())
+        .map(|geometry| geometry.1)
 }
 
 /// Resolve a window_id to its xdg app_id via the stable identity registry that
@@ -2669,9 +2688,9 @@ fn enrich_native_windows(
         }
         if adopt_atspi_ids {
             if let Some(pid) = candidate.pid {
-                if let Some((offset_x, offset_y)) = inject_accessibility_offset(pid) {
-                    window.x = candidate.x.saturating_add(offset_x);
-                    window.y = candidate.y.saturating_add(offset_y);
+                if let Some((window_x, window_y)) = inject_window_origin(pid) {
+                    window.x = window_x;
+                    window.y = window_y;
                 }
             }
         }
@@ -2966,7 +2985,10 @@ mod tests {
 
     #[test]
     fn geometry_reply_is_strict_and_signed() {
-        assert_eq!(parse_inject_geometry("geometry -4 23\n").unwrap(), (-4, 23));
+        assert_eq!(
+            parse_inject_geometry("geometry -4 23 10 20\n").unwrap(),
+            ((-4, 23), (10, 20))
+        );
         assert!(parse_inject_geometry("geometry 1").is_err());
         assert!(parse_inject_geometry("err target-not-found").is_err());
         assert!(parse_inject_geometry("ok").is_err());

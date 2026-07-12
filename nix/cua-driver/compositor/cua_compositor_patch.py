@@ -195,9 +195,10 @@ static const char *cua_query_geometry(struct tinywl_server *server, pid_t target
 	 * geometry, while scene coordinates and screencopy include the complete root
 	 * surface (including client-side decorations). Rebase into that coordinate
 	 * system so `origin + accessible_window_xy` lands on the captured pixel. */
+	int scene_x = x, scene_y = y;
 	struct wlr_box geo = target->xdg_toplevel->base->geometry;
 	x -= geo.x; y -= geo.y;
-	snprintf(out, out_len, "geometry %d %d", x, y);
+	snprintf(out, out_len, "geometry %d %d %d %d", x, y, scene_x, scene_y);
 	return NULL;
 }
 static void cua_ptr_leave(struct wlr_seat *seat, struct wlr_surface *surf) {

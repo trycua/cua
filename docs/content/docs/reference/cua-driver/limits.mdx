@@ -77,23 +77,41 @@ Cua Driver uses best-effort background delivery for every app it can reach via a
 
 ---
 
-## Native Wayland apps can't receive synthetic keystrokes
+## Native Wayland background keyboard input is focus-bound
 
-**Affected:** GTK/Qt apps running as native Wayland clients on GNOME Mutter or KDE KWin (no X11 surface).
+**Affected:** Unfocused GTK/Qt apps running as native clients on standard
+Wayland compositors, including Sway/wlroots, GNOME/Mutter, and KDE/KWin (no X11
+surface).
 
-**Symptom:** `press_key` / `hotkey`, and `type_text` into a field that is not AT-SPI-editable, return success but the keystroke never reaches the app. Clicks and element actions on the same app work fine.
+**Symptom:** A background `press_key`, `hotkey`, or `type_text` request for a
+field that is not AT-SPI-editable returns structured
+`background_unavailable`. Foreground delivery may also refuse when the desktop
+has no target-addressable activation or raw-input backend.
 
-**Cause:** Wayland blocks one client from synthesizing input into another by design. The compositor-cooperative paths that would re-enable it are not free here: `libei` requires a one-time RemoteDesktop-portal grant, and `wtype` (virtual-keyboard) is wlroots-only, so it fails on Mutter/KWin.
+**Cause:** Wayland blocks one ordinary client from targeting another client's
+surface with synthetic input. Portal/libei input on GNOME and KDE follows the
+compositor's active seat and requires a RemoteDesktop grant. The virtual
+keyboard used on wlroots compositors is also focus-bound, even though it does
+not require the same portal route.
 
 **Workarounds:**
 
 1. Type into accessible text fields with `type_text`. AT-SPI `insertText` writes the field directly, with no synthetic key event involved.
 2. Drive controls by `element_index` (`click`, `set_value`) instead of keyboard shortcuts where an equivalent control exists.
-3. Run the app under XWayland (`GDK_BACKEND=x11` / `QT_QPA_PLATFORM=xcb`). It then exposes an X11 surface and the X11 `XTEST` keyboard path applies.
+3. Retry with `delivery_mode:"foreground"` when the desktop exposes a verified
+   activation and input adapter.
+4. Run the app under XWayland (`GDK_BACKEND=x11` / `QT_QPA_PLATFORM=xcb`). It
+   then exposes an X11 surface and the X11 keyboard paths apply.
 
 <Callout type="info">
-  This is keyboard-only. Background **clicks and element actions** land on native Wayland via AT-SPI; coordinate (vision) clicks land too, resolved to the element under the pixel.
+  Background element actions can land through AT-SPI. A coordinate left click
+  can also land when its point resolves to an actionable AT-SPI element. This
+  does not establish arbitrary raw background PX delivery.
 </Callout>
+
+The opt-in nested `cua-compositor` is a separate, compositor-owned environment.
+Its private per-surface injection protocol is not constrained like an ordinary
+client on Sway, GNOME, or KDE, and its capabilities are documented separately.
 
 ---
 

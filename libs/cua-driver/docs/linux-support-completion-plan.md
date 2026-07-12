@@ -1,6 +1,6 @@
 # Linux support completion plan
 
-**Status:** Proposed
+**Status:** Implemented; representative desktop gaps remain
 
 **Scope:** Linux driver behavior, canonical Rust E2E evidence, and release validation
 
@@ -21,15 +21,27 @@ The work is complete when each supported action either:
 
 A successful driver response is never delivery evidence.
 
+## Execution status
+
+| Phase | Result |
+| --- | --- |
+| Truth and route metadata | Complete. Current docs distinguish X11, stock compositor routes, portal/libei, and the nested private protocol. Typed results record compositor and input backend. |
+| Nested protocol hardening | Complete. The protocol has a version handshake, acknowledgements, stable PID targeting, focus/z-order queries, geometry queries, strict key/text validation, and explicit errors for missing resources. |
+| Nested typed environment | Complete as an experimental lane. Nix packages the compositor, the canonical Rust catalogs run inside it, and every lane retains typed evidence and video. Promotion still depends on a complete accepted run. |
+| Protocol action coverage | Implemented for left/right/double click, printable ASCII text, named keys, hotkeys, scroll, and single/parallel drag. Unicode text and a canonical parallel-drag behavior row remain unproven. |
+| Stock Sway repairs | Validated. Shared run `29199656600` improved Electron from 23/36 to 29/36. Focused replacement run `29200827296` passed all 9 PX-background rows. Four foreground Electron delivery shapes and representative WebKitGTK remain open. |
+| Representative desktops | Partial. GNOME native GTK behavior is accepted; Plasma 6 reached session, AT-SPI, and portal preflight only. Shared GNOME renderers, portal video, real Xorg MPX, and DRM/EGL WebKitGTK remain named gaps. |
+| Release policy | Complete. Linux unit/source/distribution gates run automatically; X11, Sway, and nested GUI matrices are exact-SHA maintainer dispatches with row-level artifacts. |
+
 ## Current baseline
 
 | Environment | Current evidence | Main gaps |
 | --- | --- | --- |
 | X11/Openbox on Xvfb | 108/108 declared outcomes: 71 deliveries and 37 exact refusals | Real-Xorg MPX/uinput and parallel pointer behavior are not proven by Xvfb |
-| Sway/wlroots, native Wayland | GTK3 31/31 plus capture/scope; Electron AX background/foreground click and foreground typing | Electron hotkey, renderer PX geometry, and WebKitGTK without DRM/EGL |
+| Sway/wlroots, native Wayland | GTK3 31/31 plus capture/scope; Electron shared 29/36 plus focused PX-background 9/9 | Foreground Electron AX right/double click and AX/PX hotkey; WebKitGTK without DRM/EGL |
 | GNOME 46/Mutter | GTK3 31/31 using WinRects, AT-SPI, and portal/libei | Shared Electron/Tauri matrix and portal MP4 evidence |
-| KDE/KWin | AT-SPI discovery and generic toplevel support | Target-addressable activation adapter and a representative Plasma 6 lane |
-| Nested `cua-compositor` | Driver and compositor code remain, but canonical evidence was deleted | Packaging, startup, route metadata, truthful refusals, independent observer, and typed matrix |
+| KDE/KWin | Plasma 6 session startup, GTK AT-SPI discovery, and portal interfaces | Target-addressable activation adapter and an accepted behavioral lane |
+| Nested `cua-compositor` | Packaged experimental environment, route metadata, observer, native GTK3 31/31, capture/scope 5/5, and Electron shared 26/36 before focused repairs | Stable renderer click/scroll coverage, a complete accepted shared matrix, Unicode text, and a canonical parallel-drag row |
 
 Standard Wayland cannot generally route raw pointer or keyboard events to an
 arbitrary occluded, unfocused surface. The nested `cua-compositor` is different:
@@ -57,6 +69,10 @@ unproven unless a user report demonstrates a meaningful divergence. XWayland is
 not a separate lane.
 
 ## Phase 0: Reconcile the truth
+
+The phase sections below preserve the implementation and acceptance criteria
+used for this work. Current outcomes are summarized above; unchecked evidence
+gaps remain follow-up work rather than implied support.
 
 Update stale internal references before changing behavior.
 

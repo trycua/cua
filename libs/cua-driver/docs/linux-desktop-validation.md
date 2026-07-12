@@ -6,12 +6,12 @@ explicitly provisions the corresponding environment.
 
 ## Environments
 
-| Environment | Unique evidence | Preflight |
-| --- | --- | --- |
-| GNOME/Mutter | WinRects geometry and activation, portal/libei input, portal recording, and shared renderer apps | Wayland user session, enabled WinRects helper, and portal grant |
-| KDE/KWin | KWin-specific activation and portal behavior | Plasma/KWin 6 Wayland session; Plasma 5.27 is rejected |
-| Real Xorg | MPX/uinput behavior that Xvfb cannot provide | Non-Wayland Xorg session with `/dev/uinput` access |
-| DRM/EGL renderer | Representative WebKitGTK/Tauri accessibility tree | A real `/dev/dri/renderD128`; software-only headless rendering is rejected |
+| Environment | Required evidence | Current status | Preflight |
+| --- | --- | --- | --- |
+| GNOME/Mutter | WinRects geometry and activation, portal/libei input, portal recording, and shared renderer apps | Native GTK behavior, capture, and desktop scope are accepted; shared renderers and portal video remain open | Wayland user session, enabled WinRects helper, and portal grant |
+| KDE/KWin | KWin-specific activation and portal behavior | Plasma 6 session startup, GTK AT-SPI discovery, and portal interfaces were observed; no behavioral matrix is accepted | Plasma/KWin 6 Wayland session; Plasma 5.27 is rejected |
+| Real Xorg | MPX/uinput behavior that Xvfb cannot provide | Not yet validated | Non-Wayland Xorg session with `/dev/uinput` access |
+| DRM/EGL renderer | Representative WebKitGTK/Tauri accessibility tree | Not available on the hosted Sway or representative desktop hosts used so far | A real `/dev/dri/renderD128`; software-only headless rendering is rejected |
 
 ## Source ownership
 
@@ -43,8 +43,12 @@ define a second catalog.
 
 ## Evidence acceptance
 
-A representative run is accepted only when it produces the same typed JSONL,
-Markdown summary, screenshots, trajectories, and per-cell videos as hosted CI.
-Record the source SHA, environment metadata, and result artifact in
-`action-support.md`. A setup failure is an environment error, never a smaller
-green matrix.
+Behavioral acceptance requires typed rows, the exact source SHA, independent
+fixture-state or refusal evidence, and every action-specific desktop oracle. A
+representative result without reporter-owned per-cell video may establish that
+behavior, but it is recorded as lacking full evidence parity.
+
+Full hosted parity also requires the Markdown summary, screenshots,
+trajectories, and per-cell videos enforced by the reporter. Record accepted
+behavior and any evidence-parity gap in `action-support.md`. A setup failure is
+an environment error, never a smaller green matrix.

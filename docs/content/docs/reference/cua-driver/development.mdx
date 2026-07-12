@@ -23,7 +23,6 @@ they stay close to implementation changes.
 - `libs/cua-driver/rust/README.md` maps the Cargo workspace and test classes.
 - `libs/cua-driver/rust/crates/cua-driver/tests/README.md` explains Rust test naming and ignored GUI lanes.
 - `libs/cua-driver/tests/fixtures/README.md` explains source-built harness apps and staged outputs.
-- `libs/cua-driver/rust/crates/cua-driver/tests/README.md` explains Rust test naming and ignored GUI lanes.
 - `libs/cua-driver/scripts/README.md` explains install and VM sync helpers.
 
 ## Desktop Validation Entry Points
@@ -35,13 +34,17 @@ but contributors do not select those partitions directly.
 ```text
 Linux X11/session: scripts/ci/linux/run-rust-e2e.sh
 Linux Sway:        scripts/ci/linux/run-rust-e2e-wayland.sh
+Linux nested:      scripts/ci/linux/run-rust-e2e-inject.sh
+Linux GNOME/KDE:   scripts/ci/linux/run-rust-e2e-desktop.sh <gnome|kde>
+Linux real Xorg:   scripts/ci/linux/run-rust-e2e-desktop.sh xorg
 Windows:           .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
 macOS:             scripts/ci/macos/run-rust-e2e.sh
 ```
 
-These commands require a real user desktop. Windows needs an interactive
-console or RDP session, and macOS needs a logged-in session with the required
-Accessibility and Screen Recording permissions. See
+The Sway and nested-compositor runners create controlled sessions. GNOME, KDE,
+real Xorg, Windows, and macOS use an existing graphical login. Windows needs an
+interactive console or RDP session, and macOS needs a logged-in session with
+the required Accessibility and Screen Recording permissions. See
 [Platform support and validation](/reference/cua-driver/platform-support) for
 the evidence contract and current capability boundaries.
 

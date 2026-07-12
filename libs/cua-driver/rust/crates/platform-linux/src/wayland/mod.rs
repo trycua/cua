@@ -847,18 +847,13 @@ pub(crate) unsafe fn borrowed_fd(fd: i32) -> std::os::fd::OwnedFd {
 pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     if is_wayland() {
         let bytes = screenshot_display_dispatch()?;
-        if sway_ipc::window_for_id(xid).is_some() {
-            crop_sway_window_png(&bytes, xid)
-        } else if let Some(window) = list_windows_dispatch(None)
-            .into_iter()
-            .find(|window| window.xid == xid && window.width > 0 && window.height > 0)
-        {
+        if let Some((x, y, width, height)) = window_geometry(xid) {
             crop_png_to_rect(
                 &bytes,
-                window.x,
-                window.y,
-                window.width,
-                window.height,
+                x,
+                y,
+                width,
+                height,
                 &format!("Wayland window {xid}"),
             )
         } else {
@@ -867,19 +862,6 @@ pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     } else {
         crate::capture::screenshot_window_bytes(xid)
     }
-}
-
-fn crop_sway_window_png(output_png: &[u8], window_id: u64) -> anyhow::Result<Vec<u8>> {
-    let window = sway_ipc::window_for_id(window_id)
-        .ok_or_else(|| anyhow::anyhow!("Sway window {window_id} is no longer available"))?;
-    crop_png_to_rect(
-        output_png,
-        window.x,
-        window.y,
-        window.width,
-        window.height,
-        &format!("Sway window {window_id}"),
-    )
 }
 
 fn crop_png_to_rect(
@@ -967,19 +949,13 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
 /// crop with.
 pub fn screenshot_window_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     if is_wayland() {
-        if sway_ipc::window_for_id(xid).is_some() {
-            return crop_sway_window_png(&screenshot_bytes()?, xid);
-        }
-        if let Some(window) = list_windows_dispatch(None)
-            .into_iter()
-            .find(|window| window.xid == xid && window.width > 0 && window.height > 0)
-        {
+        if let Some((x, y, width, height)) = window_geometry(xid) {
             return crop_png_to_rect(
                 &screenshot_display_dispatch()?,
-                window.x,
-                window.y,
-                window.width,
-                window.height,
+                x,
+                y,
+                width,
+                height,
                 &format!("Wayland window {xid}"),
             );
         }

@@ -3022,6 +3022,13 @@ impl Tool for HotkeyTool {
             Ok(resolved) => resolved,
             Err(error) => return error,
         };
+        let resolved_element_index = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element {
+                element_index,
+                ..
+            } => Some(*element_index),
+            cua_driver_core::element_token::ResolvedElement::None => None,
+        };
         let xid_opt = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
                 window_id_arg.or_else(|| window_id.map(|value| value as u64))
@@ -3092,7 +3099,7 @@ impl Tool for HotkeyTool {
         if px.is_some() != py.is_some() {
             return ToolResult::error("Pass both x and y to hotkey, or neither.");
         }
-        if px.is_some() && element_index_arg.is_some() {
+        if px.is_some() && resolved_element_index.is_some() {
             return ToolResult::error(
                 "Pass either element_index (ax) or x,y (px) to hotkey, not both.",
             );
@@ -3100,7 +3107,7 @@ impl Tool for HotkeyTool {
 
         if crate::wayland::is_inject_mode() {
             if let Err(error) =
-                focus_nested_inject_target(pid, xid, element_index_arg, px.zip(py)).await
+                focus_nested_inject_target(pid, xid, resolved_element_index, px.zip(py)).await
             {
                 return error;
             }
@@ -3119,7 +3126,41 @@ impl Tool for HotkeyTool {
             };
         }
 
-        if let Some(element_index) = element_index_arg {
+        // Chromium renderer shortcuts need DOM focus established by a real
+        // pointer event. Component.GrabFocus alone can report success while
+        // the renderer still drops the virtual-keyboard chord.
+        if delivery.is_foreground()
+            && crate::wayland::wayland_input_enabled()
+            && is_chromium_embedder(pid)
+        {
+            if let Some(element_index) = resolved_element_index {
+                let coordinates = tokio::task::spawn_blocking(move || {
+                    resolve_element_local_coords(pid, element_index, Some(xid))
+                })
+                .await;
+                let (_, x, y) = match coordinates {
+                    Ok(Ok(value)) => value,
+                    Ok(Err(error)) => return ToolResult::error(error.to_string()),
+                    Err(error) => return ToolResult::error(format!("Task error: {error}")),
+                };
+                if let Err(error) = focus_by_pixel(
+                    &self.state,
+                    pid,
+                    Some(xid),
+                    x,
+                    y,
+                    true,
+                    args.opt_str("session"),
+                    false,
+                )
+                .await
+                {
+                    return error;
+                }
+            }
+        }
+
+        if let Some(element_index) = resolved_element_index {
             let focused = tokio::task::spawn_blocking(move || {
                 crate::atspi::focus_element(pid, element_index)
             })

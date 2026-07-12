@@ -26,5 +26,24 @@ they stay close to implementation changes.
 - `libs/cua-driver/rust/crates/cua-driver/tests/README.md` explains Rust test naming and ignored GUI lanes.
 - `libs/cua-driver/scripts/README.md` explains install and VM sync helpers.
 
+## Desktop Validation Entry Points
+
+The canonical GUI runners execute the complete Rust harness catalog. Their
+internal CI lanes may split shared, native, and capture owners for reporting,
+but contributors do not select those partitions directly.
+
+```text
+Linux X11/session: scripts/ci/linux/run-rust-e2e.sh
+Linux Sway:        scripts/ci/linux/run-rust-e2e-wayland.sh
+Windows:           .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
+macOS:             scripts/ci/macos/run-rust-e2e.sh
+```
+
+These commands require a real user desktop. Windows needs an interactive
+console or RDP session, and macOS needs a logged-in session with the required
+Accessibility and Screen Recording permissions. See
+[Platform support and validation](/reference/cua-driver/platform-support) for
+the evidence contract and current capability boundaries.
+
 Build artifacts, VM logs, and local verification journals should stay out of
 git unless they have been promoted into a stable fixture or contributor doc.

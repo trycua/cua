@@ -26,7 +26,7 @@
 //! CUA-542; the screen-region fallback covers the same common
 //! ground at a fraction of the implementation cost.
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::{
@@ -204,7 +204,28 @@ pub fn screenshot_window_bytes(hwnd: u64) -> Result<Vec<u8>> {
 /// user / LLM should attach an explicit warning. See `target_is_obscured`
 /// for the sampling heuristic.
 pub fn screenshot_window_bytes_with_occlusion(hwnd: u64) -> Result<(Vec<u8>, bool)> {
-    unsafe { screenshot_window_bytes_with_occlusion_unsafe(hwnd) }
+    match unsafe { screenshot_window_bytes_with_occlusion_unsafe(hwnd) } {
+        Ok(capture) => Ok(capture),
+        Err(primary_error) => {
+            // A freshly restored DirectComposition window can temporarily have
+            // no usable GDI surface even though DWM is already rendering it.
+            // WGC reads the compositor-owned frame and is therefore the right
+            // fallback for this class of capture failure. Preserve the primary
+            // error when WGC also fails so minimized-window classification and
+            // existing remediation text remain intact.
+            match crate::wgc::screenshot_window_via_wgc(hwnd) {
+                Ok((pixels, width, height)) => Ok((
+                    cua_driver_core::image_utils::encode_bgra_to_png(
+                        &pixels, width, height,
+                    )?,
+                    false,
+                )),
+                Err(wgc_error) => Err(primary_error.context(format!(
+                    "Windows.Graphics.Capture fallback also failed: {wgc_error}"
+                ))),
+            }
+        }
+    }
 }
 
 /// Capture a window by HWND, returning (base64_png, width, height).

@@ -7932,29 +7932,11 @@ impl Tool for BringToFrontTool {
             let now_fg = unsafe { GetForegroundWindow() };
 
             // A restored HWND can stop reporting iconic before its compositor
-            // surface is painted. Wait for DWM and two consecutive unobscured
-            // captures so callers and the trajectory hook share the same
-            // readiness guarantee instead of racing the first Electron frame.
+            // surface is painted. Flush DWM before returning, but do not make
+            // the restore operation depend on any particular capture backend.
+            // Capture has its own WGC fallback for freshly restored surfaces.
             if was_minimized {
                 let _ = unsafe { DwmFlush() };
-                let mut stable_frames = 0;
-                for _ in 0..80 {
-                    match crate::capture::screenshot_window_bytes_with_occlusion(hwnd) {
-                        Ok((png, false)) if !png.is_empty() => {
-                            stable_frames += 1;
-                            if stable_frames == 2 {
-                                break;
-                            }
-                        }
-                        _ => stable_frames = 0,
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(25));
-                }
-                if stable_frames < 2 {
-                    return Err(format!(
-                        "restored hwnd 0x{hwnd:x} did not produce two stable capture frames"
-                    ));
-                }
             }
             Ok((prev_fg_addr, now_fg.0 as u64, raised, was_minimized))
         })

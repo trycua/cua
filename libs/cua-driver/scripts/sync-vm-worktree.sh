@@ -110,7 +110,7 @@ push_rsync() {
 push_tar() {
   remote_mkdir
   remote_path=${remote_dir/#\~/'$HOME'}
-  COPYFILE_DISABLE=1 tar "${tar_exclude_args[@]}" -czf - -C "$repo_root" . \
+  COPYFILE_DISABLE=1 tar --no-xattrs "${tar_exclude_args[@]}" -czf - -C "$repo_root" . \
     | "$rsync_ssh" "$target" "tar -xzf - -C \"$remote_path\""
 }
 
@@ -124,6 +124,20 @@ write_source_marker() {
       marker_dir=${remote_dir/#\~/"\$HOME"}
       printf '%s\n' "$source_sha" \
         | "$rsync_ssh" "$target" "mkdir -p $marker_dir && tee $marker_dir/.cua-e2e-source-sha >/dev/null"
+      ;;
+  esac
+}
+
+ensure_remote_runtime_dirs() {
+  case "$remote_os" in
+    windows)
+      "$rsync_ssh" "$target" \
+        "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force '$remote_dir/libs/cua-driver/rust/test-apps' | Out-Null\""
+      ;;
+    posix)
+      remote_path=${remote_dir/#\~/'$HOME'}
+      "$rsync_ssh" "$target" \
+        "mkdir -p \"$remote_path/libs/cua-driver/rust/test-apps\""
       ;;
   esac
 }
@@ -146,7 +160,7 @@ pull_code_rsync() {
 pull_code_tar() {
   remote_path=${remote_dir/#\~/'$HOME'}
   "$rsync_ssh" "$target" "tar -czf - -C \"$remote_path\" ." \
-    | COPYFILE_DISABLE=1 tar "${tar_exclude_args[@]}" -xzf - -C "$repo_root"
+    | COPYFILE_DISABLE=1 tar --no-xattrs "${tar_exclude_args[@]}" -xzf - -C "$repo_root"
 }
 
 case "$mode" in
@@ -156,6 +170,7 @@ case "$mode" in
       tar) push_tar ;;
       *) echo "SYNC_TRANSPORT must be rsync or tar, got: $transport" >&2; exit 2 ;;
     esac
+    ensure_remote_runtime_dirs
     write_source_marker
     ;;
 

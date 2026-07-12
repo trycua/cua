@@ -229,7 +229,13 @@ pub fn remember_observed_window_origins(windows: &[WindowInfo]) {
     if let Ok(mut registry) = observed_origin_registry().lock() {
         for window in windows {
             if let Some(pid) = window.pid {
-                registry.insert(pid, (window.x, window.y));
+                // Generic foreign-toplevel and AT-SPI fallbacks use (0,0) when
+                // they do not know compositor geometry. Do not let that
+                // placeholder erase a previously observed real origin or
+                // prevent the caller from falling through to Sway/GNOME data.
+                if (window.x, window.y) != (0, 0) {
+                    registry.insert(pid, (window.x, window.y));
+                }
             }
         }
     }
@@ -2885,6 +2891,19 @@ mod tests {
         assert_eq!(windows[0].xid, 10);
         assert_eq!(windows[1].pid, Some(200));
         assert_eq!(windows[2].pid, None);
+    }
+
+    #[test]
+    fn zero_geometry_does_not_replace_a_real_observed_origin() {
+        let pid = u32::MAX - 17;
+        let mut observed = window(1, Some(pid), "Observed");
+        observed.x = 120;
+        observed.y = 80;
+        remember_observed_window_origins(&[observed]);
+        assert_eq!(observed_window_origin(pid), Some((120, 80)));
+
+        remember_observed_window_origins(&[window(2, Some(pid), "Unknown")]);
+        assert_eq!(observed_window_origin(pid), Some((120, 80)));
     }
 
     #[test]

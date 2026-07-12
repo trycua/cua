@@ -36,17 +36,22 @@ def section(box, title):
 class HarnessWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="CuaTestHarness GTK3")
-        self.set_default_size(480, 760)
+        # Keep the nested scroll viewport visible on the canonical 1024x768
+        # desktop; the outer scroller still exposes controls below it.
+        self.set_default_size(560, 720)
         self.counter = 0
         self.clicks = 0
         self._last_action = "none"
+        self._double_click_pending = False
         self._menu_action = "none"
+        self.key_presses = 0
+        self.hotkeys = 0
 
         # Top-level scroller so every control is reachable even on a short window.
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.add(scroller)
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         root.set_border_width(12)
         scroller.add(root)
 
@@ -81,6 +86,12 @@ class HarnessWindow(Gtk.Window):
         root.pack_start(self.click_target, False, False, 0)
         self.click_status = Gtk.Label(label="last_action=none  clicks=0", xalign=0)
         root.pack_start(self.click_status, False, False, 0)
+
+        # ── keyboard delivery ─────────────────────────────────────────────
+        self.key_status = Gtk.Label(label="last_key=none  key_presses=0", xalign=0)
+        root.pack_start(self.key_status, False, False, 0)
+        self.hotkey_status = Gtk.Label(label="last_hotkey=none  hotkeys=0", xalign=0)
+        root.pack_start(self.hotkey_status, False, False, 0)
 
         # ── slider ────────────────────────────────────────────────────────
         section(root, "slider")
@@ -120,11 +131,15 @@ class HarnessWindow(Gtk.Window):
         inner.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         inner.set_size_request(-1, 140)
         tall = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        scroll_target = aid(Gtk.Button(label="Scroll viewport target"), "scroll-tall-viewport")
+        scroll_target.set_can_focus(False)
+        tall.pack_start(scroll_target, False, False, 0)
         tall.pack_start(Gtk.Label(label="SCROLL_TOP_MARKER_v1", xalign=0), False, False, 0)
         for i in range(2, 41):
             tall.pack_start(Gtk.Label(label=f"line {i:02d}", xalign=0), False, False, 0)
         tall.pack_start(Gtk.Label(label="SCROLL_BOTTOM_MARKER_v1", xalign=0), False, False, 0)
         inner.add(tall)
+        aid(inner.get_vscrollbar(), "scroll-tall-vertical")
         root.pack_start(inner, False, False, 0)
         self.scroll_inner = inner
         self.scroll_status = Gtk.Label(label="scroll_offset=0", xalign=0)
@@ -136,6 +151,8 @@ class HarnessWindow(Gtk.Window):
         open_pop = aid(Gtk.Button(label="Open Popover"), "btn-open-popover")
         open_pop.connect("clicked", self.on_open_popover)
         root.pack_start(open_pop, False, False, 0)
+        self.popover_status = Gtk.Label(label="popover_open=False", xalign=0)
+        root.pack_start(self.popover_status, False, False, 0)
         self.popover = Gtk.Popover.new(open_pop)
         self.popover.set_border_width(10)
         self.popover.add(Gtk.Label(label="POPOVER_MARKER_v1"))
@@ -146,6 +163,7 @@ class HarnessWindow(Gtk.Window):
         root.pack_start(ext, False, False, 0)
 
         self.connect("destroy", Gtk.main_quit)
+        self.connect("key-press-event", self.on_key_press)
 
     # ── handlers ──────────────────────────────────────────────────────────
     def on_increment(self, *_):
@@ -161,16 +179,22 @@ class HarnessWindow(Gtk.Window):
 
     def on_click_target(self, *_):
         self.clicks += 1
-        self._last_action = "click"
-        self.click_status.set_text(f"last_action=click  clicks={self.clicks}")
+        if self._double_click_pending:
+            self._double_click_pending = False
+        else:
+            self._last_action = "click"
+        self.click_status.set_text(f"last_action={self._last_action}  clicks={self.clicks}")
 
     def on_click_target_press(self, _w, ev):
         if ev.type == Gdk.EventType.DOUBLE_BUTTON_PRESS:
+            self._double_click_pending = True
             self._last_action = "double_click"
             self.click_status.set_text(f"last_action=double_click  clicks={self.clicks}")
         elif ev.button == 3:
             self._last_action = "right_click"
             self.click_status.set_text(f"last_action=right_click  clicks={self.clicks}")
+        elif ev.button == 1:
+            self._double_click_pending = False
 
     def on_scale(self, s):
         self.scale_status.set_text(f"slider_value={int(s.get_value())}")
@@ -186,11 +210,28 @@ class HarnessWindow(Gtk.Window):
         self._menu_action = lbl
         self.ctx_status.set_text(f"menu_action={lbl}")
 
+    def on_key_press(self, _w, ev):
+        key = (Gdk.keyval_name(ev.keyval) or "unknown").lower()
+        ctrl = bool(ev.state & Gdk.ModifierType.CONTROL_MASK)
+        shift = bool(ev.state & Gdk.ModifierType.SHIFT_MASK)
+        if ctrl and shift and key == "k":
+            self.hotkeys += 1
+            self.hotkey_status.set_text(
+                f"last_hotkey=ctrl+shift+k  hotkeys={self.hotkeys}"
+            )
+            return True
+        if key == "f5":
+            self.key_presses += 1
+            self.key_status.set_text(f"last_key=f5  key_presses={self.key_presses}")
+            return True
+        return False
+
     def on_scroll(self, adj):
         self.scroll_status.set_text(f"scroll_offset={int(adj.get_value())}")
 
     def on_open_popover(self, *_):
         self.popover.show_all()
+        self.popover_status.set_text("popover_open=True")
 
 
 def main():

@@ -774,11 +774,11 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
     {
         cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
             if let Some(xid) = window_id {
-                platform_linux::capture::screenshot_window_bytes(xid).ok()
+                platform_linux::wayland::screenshot_dispatch(xid).ok()
             } else if let Some(p) = pid {
-                let wins = platform_linux::x11::list_windows(Some(p as u32));
+                let wins = platform_linux::wayland::list_windows_dispatch(Some(p as u32));
                 wins.first().and_then(|w| {
-                    platform_linux::capture::screenshot_window_bytes(w.xid).ok()
+                    platform_linux::wayland::screenshot_dispatch(w.xid).ok()
                 })
             } else {
                 platform_linux::capture::screenshot_display_bytes().ok()
@@ -787,9 +787,21 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
         cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_linux::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
-        cua_driver_core::video::set_video_backend_factory(
-            Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
-        );
+        cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+            platform_linux::recording_hooks::app_state_json_for(window_id, pid)
+        });
+        cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+            platform_linux::recording_hooks::element_window_local_xy(wid, pid, idx)
+        });
+        if platform_linux::wayland::is_wayland() {
+            cua_driver_core::video::set_video_backend_factory(Box::new(
+                platform_linux::video_wayland::WfRecorderVideoBackendFactory,
+            ));
+        } else {
+            cua_driver_core::video::set_video_backend_factory(Box::new(
+                cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory,
+            ));
+        }
         // SSH-driven Wayland+Xwayland sessions inherit DISPLAY but not
         // XAUTHORITY; adopt the running X server's auth cookie so X11 tools
         // don't all fail "Authorization required" (#1926). No-op when
@@ -806,6 +818,9 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
         // so their AT-SPI trees are visible to get_window_state. Best-effort and
         // idempotent; only on the serve path, not for short-lived CLI calls.
         platform_linux::a11y::ensure_chromium_accessibility_enabled();
+        if let Err(error) = platform_linux::atspi::ensure_listener_active() {
+            tracing::warn!("could not activate the persistent AT-SPI listener: {error}");
+        }
         { let mut r = platform_linux::register_tools_with_cursor(cursor_cfg, compat); check_update_tool::register_into(&mut r); r }
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -851,13 +866,19 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
     }
     #[cfg(target_os = "linux")]
     {
+        platform_linux::xauth::ensure_xauthority_discovered();
+        platform_linux::session_bus::ensure_session_bus_discovered();
+        platform_linux::a11y::ensure_chromium_accessibility_enabled();
+        if let Err(error) = platform_linux::atspi::ensure_listener_active() {
+            tracing::warn!("could not activate the persistent AT-SPI listener: {error}");
+        }
         cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
             if let Some(xid) = window_id {
-                platform_linux::capture::screenshot_window_bytes(xid).ok()
+                platform_linux::wayland::screenshot_dispatch(xid).ok()
             } else if let Some(p) = pid {
-                let wins = platform_linux::x11::list_windows(Some(p as u32));
+                let wins = platform_linux::wayland::list_windows_dispatch(Some(p as u32));
                 wins.first().and_then(|w| {
-                    platform_linux::capture::screenshot_window_bytes(w.xid).ok()
+                    platform_linux::wayland::screenshot_dispatch(w.xid).ok()
                 })
             } else {
                 platform_linux::capture::screenshot_display_bytes().ok()
@@ -866,9 +887,21 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
         cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_linux::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
-        cua_driver_core::video::set_video_backend_factory(
-            Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
-        );
+        cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+            platform_linux::recording_hooks::app_state_json_for(window_id, pid)
+        });
+        cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+            platform_linux::recording_hooks::element_window_local_xy(wid, pid, idx)
+        });
+        if platform_linux::wayland::is_wayland() {
+            cua_driver_core::video::set_video_backend_factory(Box::new(
+                platform_linux::video_wayland::WfRecorderVideoBackendFactory,
+            ));
+        } else {
+            cua_driver_core::video::set_video_backend_factory(Box::new(
+                cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory,
+            ));
+        }
         {
             let mut r = platform_linux::register_tools_with_cursor(
                 cursor_overlay::CursorConfig { enabled: false, ..Default::default() },

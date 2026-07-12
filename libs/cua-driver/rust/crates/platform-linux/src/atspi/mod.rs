@@ -14,6 +14,7 @@ use anyhow::Result;
 pub mod cache;
 pub mod native;
 pub use cache::ElementCache;
+pub use native::ensure_listener_active;
 
 #[derive(Clone, Debug)]
 pub struct AtspiNode {
@@ -23,7 +24,7 @@ pub struct AtspiNode {
     pub value: Option<String>,
     pub description: Option<String>,
     pub actions: Vec<String>,
-    /// For pyatspi path: element_key = element_index as u64.
+    /// For AT-SPI: element_key = element_index as u64.
     /// For X11 fallback: element_key = xid.
     pub element_key: u64,
     /// Depth in the markdown tree (0 = top-level window child).
@@ -37,6 +38,7 @@ pub struct AtspiNode {
 pub struct AtspiTreeResult {
     pub tree_markdown: String,
     pub nodes: Vec<AtspiNode>,
+    pub bounds: Vec<(usize, i32, i32, u32, u32)>,
 }
 
 /// Walk the AT-SPI tree for a window identified by (pid, xid).
@@ -65,7 +67,9 @@ pub fn walk_tree_bounded(
     // after launch returns the real tree instead of an empty one. See #1927.
     const MAX_ATTEMPTS: usize = 4;
     for attempt in 0..MAX_ATTEMPTS {
-        if let Ok(Some((raw_md, nodes))) = native::walk_tree_bounded(pid, max_elements, max_depth) {
+        if let Ok(Some((raw_md, nodes, bounds))) =
+            native::walk_tree_bounded(pid, xid, max_elements, max_depth)
+        {
             // `nodes.len() <= 1` == only the root window resolved: the
             // cold-registry symptom. Accept any real tree immediately; only
             // keep waiting on the degenerate case, and accept it anyway on the
@@ -79,6 +83,7 @@ pub fn walk_tree_bounded(
                 return AtspiTreeResult {
                     tree_markdown: md,
                     nodes,
+                    bounds,
                 };
             }
         }
@@ -146,68 +151,12 @@ pub fn perform_action_at_screen_point(
 /// For Qt5, which doesn't expose widgets when unfocused, this will return Err.
 /// Returns Ok if an editable was found and text was set, Err otherwise.
 pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
-    let safe_text = text.replace('\\', "\\\\").replace('\'', "\\'");
-    let script = format!(
-        r#"
-import pyatspi, sys
+    native::type_into_editable(pid, text)
+}
 
-def find_editable(acc, depth=0):
-    # Try to find any EditableText interface, regardless of role
-    try:
-        et = acc.queryEditableText()
-        # If we can query it, return this node
-        return acc
-    except:
-        pass
-
-    # Recursively search children
-    try:
-        for child in acc:
-            result = find_editable(child, depth + 1)
-            if result is not None:
-                return result
-    except:
-        pass
-
-    return None
-
-desktop = pyatspi.Registry.getDesktop(0)
-editable = None
-for app in desktop:
-    try:
-        if app.get_process_id() == {pid}:
-            for win in app:
-                editable = find_editable(win)
-                if editable:
-                    break
-            break
-    except:
-        pass
-
-if editable is None:
-    print("ERROR: No editable found", file=sys.stderr)
-    sys.exit(1)
-
-try:
-    et = editable.queryEditableText()
-    et.setTextContents('{safe_text}')
-    print("ok:atspi")
-except Exception as e:
-    print(f"ERROR: {{e}}", file=sys.stderr)
-    sys.exit(1)
-"#,
-        pid = pid,
-        safe_text = safe_text
-    );
-
-    let out = std::process::Command::new("python3")
-        .arg("-c")
-        .arg(&script)
-        .output()?;
-    if !out.status.success() {
-        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr).trim().to_owned());
-    }
-    Ok(())
+/// Type into the exact indexed editable from the caller's accessibility snapshot.
+pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
+    native::type_into_editable_at(pid, idx, text)
 }
 
 /// Set the text value of element `idx` within pid's app tree via AT-SPI.
@@ -235,15 +184,6 @@ pub fn focused_is_editable(pid: u32) -> Result<Option<bool>> {
     native::focused_is_editable(pid)
 }
 
-/// Get the screen-coordinate bounding box (x, y, width, height) of element `idx`.
-/// Screen-coordinate bounds for every action node in pid's AT-SPI tree, keyed
-/// by `element_index`. Best-effort: nodes whose bounds can't be read are
-/// omitted rather than erroring the whole call. Returns `(element_index, x, y,
-/// width, height)` tuples in screen coordinates.
-pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32, u32, u32)>> {
-    native::get_all_element_bounds(pid, xid)
-}
-
 pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> {
     native::get_element_bounds(pid, idx)
 }
@@ -260,6 +200,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
             return AtspiTreeResult {
                 tree_markdown: String::new(),
                 nodes: vec![],
+                bounds: vec![],
             }
         }
     };
@@ -310,6 +251,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
     AtspiTreeResult {
         tree_markdown,
         nodes,
+        bounds: vec![],
     }
 }
 

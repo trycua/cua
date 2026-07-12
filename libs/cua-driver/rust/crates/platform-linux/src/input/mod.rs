@@ -31,6 +31,7 @@ use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
 
 const CLICK_DELAY_MS: u64 = 35;
+const DOUBLE_CLICK_DELAY_MS: u64 = 50;
 const KEY_DELAY_MS: u64 = 10;
 
 #[derive(Clone, Debug)]
@@ -2018,15 +2019,92 @@ pub fn send_click_xtest_desktop(x: i32, y: i32, button: u8, count: usize) -> Res
     // Absolute pointer warp (MotionNotify, detail=0 => absolute) so the button
     // events that follow are delivered at (x, y).
     conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
-    for _ in 0..count.max(1) {
+    let count = count.max(1);
+    for click_index in 0..count {
         conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
         conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+        if click_index + 1 < count {
+            // Chromium needs the first pair to reach the server before the
+            // second pair. A zero-gap batch produces two click events but no
+            // DOM dblclick event under Xvfb/Openbox.
+            conn.flush()?;
+            sleep(Duration::from_millis(DOUBLE_CLICK_DELAY_MS));
+        }
     }
     conn.flush()?;
     // Round-trip so the server processes the warp+button events before this
     // short-lived connection drops. Pointer events happened to survive the close
     // under Xtigervnc where keyboard events did not (see send_key_xtest), but make
     // it explicit so the desktop click is reliable across X servers too.
+    let _ = conn.get_input_focus()?.reply();
+    Ok(())
+}
+
+/// Screen-absolute drag via XTest. The caller activates the target first; XTest
+/// then supplies one real press, interpolated pointer motion, and one release.
+/// This is the foreground counterpart to the window-addressed XSendEvent drag.
+pub fn send_drag_xtest_desktop(
+    from_x: i32,
+    from_y: i32,
+    to_x: i32,
+    to_y: i32,
+    button: u8,
+    duration_ms: u64,
+    steps: usize,
+) -> Result<()> {
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    let (conn, screen_num) = connect_x11_for_input()?;
+    let root = conn.setup().roots[screen_num].root;
+    let steps = steps.max(1);
+    let delay = duration_ms / steps as u64;
+
+    conn.xtest_fake_input(
+        MOTION_NOTIFY_EVENT,
+        0,
+        0,
+        root,
+        from_x as i16,
+        from_y as i16,
+        0,
+    )?;
+    conn.xtest_fake_input(
+        BUTTON_PRESS_EVENT,
+        button,
+        0,
+        root,
+        from_x as i16,
+        from_y as i16,
+        0,
+    )?;
+    conn.flush()?;
+    for step in 1..=steps {
+        let t = step as f64 / steps as f64;
+        let x = from_x as f64 + (to_x - from_x) as f64 * t;
+        let y = from_y as f64 + (to_y - from_y) as f64 * t;
+        conn.xtest_fake_input(
+            MOTION_NOTIFY_EVENT,
+            0,
+            0,
+            root,
+            x.round() as i16,
+            y.round() as i16,
+            0,
+        )?;
+        conn.flush()?;
+        if delay > 0 {
+            sleep(Duration::from_millis(delay));
+        }
+    }
+    conn.xtest_fake_input(
+        BUTTON_RELEASE_EVENT,
+        button,
+        0,
+        root,
+        to_x as i16,
+        to_y as i16,
+        0,
+    )?;
+    conn.flush()?;
     let _ = conn.get_input_focus()?.reply();
     Ok(())
 }

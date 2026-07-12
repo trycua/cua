@@ -74,16 +74,14 @@ jobs:
       - name: Install base tooling (container is bare)
         run: |
           apt-get update
-          # The PipeWire / libei deps the native-Wayland portal path uses
-          # are intentionally NOT installed here: bullseye ships PipeWire
-          # 0.3.19 (too old for libspa-sys 0.8, which needs >= 0.3.40) and
-          # has no libei-dev at all. They sit behind the `portal-libei`
-          # Cargo feature (disabled by default) and are wired in via the
-          # Nix build. The wlroots screencopy + virtual-pointer paths and
-          # the X11 fallback work without them.
+          # PipeWire ScreenCast capture remains Nix/modern-build only because
+          # bullseye's 0.3.19 headers are too old for libspa-sys 0.8. Portal
+          # RemoteDesktop/libei input is pure Rust plus libxkbcommon and ships
+          # in these portable release binaries.
           apt-get install -y --no-install-recommends \
             git ca-certificates curl build-essential pkg-config \
-            libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev
+            libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev \
+            libxkbcommon-dev
       - uses: actions/checkout@v4
       - name: Determine version
         id: version
@@ -109,7 +107,7 @@ jobs:
             rust-cua-driver-rs-linux-${{ matrix.arch }}-
       - name: Build (release)
         working-directory: libs/cua-driver/rust
-        run: cargo build -p cua-driver --release --target ${{ matrix.target }}
+        run: cargo build -p cua-driver --release --features portal-input --target ${{ matrix.target }}
       - name: Package
         working-directory: libs/cua-driver/rust
         run: |

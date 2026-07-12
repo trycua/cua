@@ -48,7 +48,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
-            libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Run Linux Rust tests
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver -p cua-driver-core -p cua-driver-testkit -p platform-linux --all-targets --locked
+      - name: Compile portable GNOME/KDE portal input
+        working-directory: libs/cua-driver/rust
+        run: cargo check -p cua-driver --features portal-input --locked

@@ -1,12 +1,19 @@
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+import Shell from 'gi://Shell';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import Cairo from 'cairo';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
+Gio._promisify(Shell.Screenshot.prototype, 'screenshot_stage_to_content');
+Gio._promisify(Shell.Screenshot, 'composite_to_stream');
+
 const IFACE = `<node><interface name="org.cua.WinRects">
 <method name="GetRects"><arg type="s" direction="out" name="json"/></method>
+<method name="Capture"><arg type="s" direction="out" name="png_base64"/></method>
+<method name="Activate"><arg type="u" direction="in" name="id"/><arg type="b" direction="out" name="activated"/></method>
 <method name="MoveCursor"><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/></method>
 <method name="ClickPulse"><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/></method>
 <method name="HideCursor"></method>
@@ -62,14 +69,79 @@ export default class WinRectsExtension extends Extension {
         if (this._nameId) { Gio.bus_unown_name(this._nameId); this._nameId = 0; }
     }
     GetRects() {
+        const actors = global.get_window_actors();
+        const actorByWindow = new Map();
+        for (const actor of actors) {
+            if (actor.meta_window)
+                actorByWindow.set(actor.meta_window, actor);
+        }
+        const windows = global.display.sort_windows_by_stacking([...actorByWindow.keys()]);
+        const focusedWindow = global.display.focus_window;
         const out = [];
-        for (const a of global.get_window_actors()) {
-            const w = a.meta_window;
-            if (!w) continue;
+        for (let stacking = 0; stacking < windows.length; stacking++) {
+            const w = windows[stacking];
+            const actor = actorByWindow.get(w);
             const r = w.get_frame_rect();
-            out.push({pid: w.get_pid(), title: w.get_title(), x: r.x, y: r.y, w: r.width, h: r.height});
+            let buffer = r;
+            try {
+                buffer = w.get_buffer_rect();
+            } catch (_error) {
+                // Older Shell releases may not expose the buffer rectangle.
+            }
+            const minimized = Boolean(w.minimized);
+            out.push({
+                id: w.get_stable_sequence(),
+                pid: w.get_pid(),
+                title: w.get_title() ?? '',
+                x: r.x,
+                y: r.y,
+                w: r.width,
+                h: r.height,
+                buffer_x: buffer.x,
+                buffer_y: buffer.y,
+                focused: focusedWindow === w,
+                minimized,
+                visible: Boolean(actor?.visible) && !minimized,
+                stacking,
+            });
         }
         return JSON.stringify(out);
+    }
+    async CaptureAsync(_params, invocation) {
+        try {
+            const shooter = new Shell.Screenshot();
+            const [content, scale] = await shooter.screenshot_stage_to_content();
+            const stream = Gio.MemoryOutputStream.new_resizable();
+            await Shell.Screenshot.composite_to_stream(
+                content.get_texture(),
+                0, 0, -1, -1,
+                scale,
+                null, 0, 0, 1,
+                stream
+            );
+            stream.close(null);
+            const encoded = GLib.base64_encode(stream.steal_as_bytes().get_data());
+            invocation.return_value(new GLib.Variant('(s)', [encoded]));
+        } catch (error) {
+            invocation.return_dbus_error('org.cua.WinRects.CaptureFailed', String(error));
+        }
+    }
+    ActivateAsync([id], invocation) {
+        const target = global.get_window_actors()
+            .map(actor => actor.meta_window)
+            .find(window => window?.get_stable_sequence() === id);
+        if (!target) {
+            invocation.return_value(new GLib.Variant('(b)', [false]));
+            return;
+        }
+        target.activate(global.get_current_time());
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            invocation.return_value(new GLib.Variant(
+                '(b)',
+                [global.display.focus_window === target]
+            ));
+            return GLib.SOURCE_REMOVE;
+        });
     }
     MoveCursor(x, y) {
         if (!this._cursor) return;

@@ -42,6 +42,12 @@ pub mod atspi;
 pub mod a11y;
 
 #[cfg(target_os = "linux")]
+pub mod recording_hooks;
+
+#[cfg(target_os = "linux")]
+pub mod video_wayland;
+
+#[cfg(target_os = "linux")]
 pub mod wayland;
 
 // `terminal` is OS-independent (pure string matching + a thin x11 hook).

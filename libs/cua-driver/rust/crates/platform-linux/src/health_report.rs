@@ -304,10 +304,36 @@ async fn check_wayland_backend() -> CheckEntry {
             );
         }
     };
+    let remote_desktop_portal_reachable = if portal_input_enabled() {
+        tokio::task::spawn_blocking(probe_portal_remote_desktop)
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or(false)
+    } else {
+        false
+    };
+    classify_wayland_backend(
+        &snap,
+        portal_input_enabled(),
+        remote_desktop_portal_reachable,
+        target_activation_available(),
+    )
+}
+
+fn classify_wayland_backend(
+    snap: &WaylandManagers,
+    portal_libei_enabled: bool,
+    remote_desktop_portal_reachable: bool,
+    target_activation_available: bool,
+) -> CheckEntry {
     let msg = format!(
-        "foreign-toplevel={ftl}, screencopy={cap}, virtual-pointer={vp}, wl_shm={shm}",
+        "foreign-toplevel={ftl}, screencopy={cap}, ext-image-copy={ext_cap}, \
+         ext-output-source={ext_src}, virtual-pointer={vp}, wl_shm={shm}",
         ftl = snap.foreign_toplevel,
         cap = snap.screencopy,
+        ext_cap = snap.ext_image_copy_capture,
+        ext_src = snap.ext_output_image_capture_source,
         vp = snap.virtual_pointer,
         shm = snap.wl_shm,
     );
@@ -317,15 +343,52 @@ async fn check_wayland_backend() -> CheckEntry {
             format!("All wlroots manager globals advertised ({msg})."),
         );
     }
-    // Input-injection backend check (#1982). A non-wlroots compositor
-    // (KWin/Plasma, Mutter/GNOME) advertises no zwlr_virtual_pointer; on those
-    // the ONLY working input path is libei via xdg-desktop-portal. If this
-    // binary was built without `portal-libei` (the published tarball is — see
-    // #1967), input injection has no backend and silently no-ops: the agent
-    // cursor renders but clicks/keys are never delivered, while list_windows
-    // and capture still work. Report that explicitly instead of the misleading
-    // "input may fall back" partial-pass below.
-    if !snap.virtual_pointer && !crate::wayland::PORTAL_LIBEI_ENABLED {
+    if !snap.virtual_pointer {
+        if remote_desktop_portal_reachable && target_activation_available {
+            return CheckEntry::pass(
+                NAME_WAYLAND_BACKEND,
+                format!(
+                    "No wlroots virtual-pointer advertised ({msg}), but this \
+                     portal/libei build can reach the RemoteDesktop portal \
+                     (proxy reachability only — the full create_session → \
+                     select_devices → start → connect_to_eis handshake is NOT \
+                     exercised here, to avoid a consent prompt on every doctor \
+                     run, so this is not a guarantee that injection succeeds). \
+                     The compositor helper also provides verified target \
+                     activation before focus-bound portal input."
+                ),
+            );
+        }
+        if remote_desktop_portal_reachable {
+            return CheckEntry::fail(
+                NAME_WAYLAND_BACKEND,
+                format!(
+                    "The RemoteDesktop portal is reachable, but this compositor \
+                     has no verified target-activation adapter ({msg}). Portal/libei \
+                     input is global and would otherwise affect whichever window is \
+                     focused, potentially the wrong application, so cua-driver \
+                     refuses foreground dispatch."
+                ),
+                "On GNOME, install and enable the bundled WinRects Shell helper, then \
+                 log out and back in. KDE foreground input remains unavailable until \
+                 a target-addressable KWin activation adapter is installed; AX actions \
+                 and exact background refusals remain usable.",
+            );
+        }
+        if portal_libei_enabled {
+            return CheckEntry::fail(
+                NAME_WAYLAND_BACKEND,
+                format!(
+                    "No wlroots virtual-pointer advertised ({msg}) and the \
+                     portal/libei RemoteDesktop backend is compiled in but not \
+                     reachable on this session; clicks and key presses have no \
+                     native Wayland input backend."
+                ),
+                "Ensure xdg-desktop-portal and a desktop backend such as \
+                 xdg-desktop-portal-gnome or xdg-desktop-portal-kde are running \
+                 on the session bus, or run under XWayland.",
+            );
+        }
         return CheckEntry::fail(
             NAME_WAYLAND_BACKEND,
             format!(
@@ -336,31 +399,31 @@ async fn check_wayland_backend() -> CheckEntry {
                  screen capture are unaffected."
             ),
             "Use the portal-enabled Linux build (compiled with --features \
-             portal-libei) for input on KDE Plasma / GNOME, or a wlroots \
+             portal-input) for input on KDE Plasma / GNOME, or a wlroots \
              compositor (sway, labwc, hyprland) where zwlr_virtual_pointer exists.",
         );
     }
-    // Partial-pass: list_windows + capture both work, but virtual-pointer
-    // input is missing. Require `wl_shm` here too — `check_screen_capture_capability`
-    // gates on both `screencopy && wl_shm`, so excluding `wl_shm` from the
-    // partial-pass verdict would let the matrices disagree on degenerate
-    // compositors that omit it.
+    // Partial-pass: list_windows + capture both work, but some optional
+    // wlroots globals are absent. Require `wl_shm` here too —
+    // `check_screen_capture_capability` gates on both `screencopy && wl_shm`,
+    // so excluding `wl_shm` from the partial-pass verdict would let the
+    // matrices disagree on degenerate compositors that omit it.
     if snap.foreign_toplevel && snap.screencopy && snap.wl_shm {
         return CheckEntry::pass(
             NAME_WAYLAND_BACKEND,
             format!(
-                "Core wlroots manager globals available; some optional globals missing ({msg}). \
-                 Input may fall back where virtual-pointer is absent."
+                "Core wlroots manager globals available; some optional globals missing ({msg})."
             ),
         );
     }
     CheckEntry::fail(
         NAME_WAYLAND_BACKEND,
         format!(
-            "Compositor does not advertise the wlroots manager globals cua-driver \
-             needs ({msg})."
+            "Compositor does not advertise a complete native Wayland backend \
+             set ({msg})."
         ),
-        "Use a wlroots-based compositor (sway, labwc, hyprland) or run under XWayland.",
+        "Use a wlroots-based compositor (sway, labwc, hyprland), a portal/libei \
+         build on GNOME/KDE, or run under XWayland.",
     )
 }
 
@@ -448,11 +511,34 @@ fn wayland_env_name() -> &'static str {
     "CUA_DRIVER_RS_ENABLE_WAYLAND"
 }
 
+#[cfg(target_os = "linux")]
+fn portal_input_enabled() -> bool {
+    crate::wayland::PORTAL_INPUT_ENABLED
+}
+
+#[cfg(not(target_os = "linux"))]
+fn portal_input_enabled() -> bool {
+    false
+}
+
+#[cfg(target_os = "linux")]
+fn target_activation_available() -> bool {
+    crate::wayland::shell_helper::list_windows(None).is_some()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn target_activation_available() -> bool {
+    false
+}
+
+#[cfg(target_os = "linux")]
+type WaylandManagers = crate::wayland::WaylandManagers;
+
 /// Snapshot of wlroots manager globals. The non-Linux stub returns an empty
 /// snapshot so off-platform builds stay green; doctor short-circuits before
 /// reaching it via [`is_wayland_session`].
 #[cfg(target_os = "linux")]
-fn probe_wayland_managers() -> anyhow::Result<crate::wayland::WaylandManagers> {
+fn probe_wayland_managers() -> anyhow::Result<WaylandManagers> {
     crate::wayland::probe_managers()
 }
 
@@ -468,6 +554,45 @@ fn probe_portal_screenshot() -> anyhow::Result<bool> {
 
 #[cfg(not(target_os = "linux"))]
 fn probe_portal_screenshot() -> anyhow::Result<bool> {
+    Ok(false)
+}
+
+#[cfg(target_os = "linux")]
+fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
+    #[cfg(feature = "portal-input")]
+    {
+        use ashpd::desktop::remote_desktop::RemoteDesktop;
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| anyhow::anyhow!("failed to build tokio runtime for RemoteDesktop probe: {e}"))?;
+
+        rt.block_on(async {
+            match RemoteDesktop::new().await {
+                Ok(_) => Ok(true),
+                Err(e) => {
+                    let msg = format!("{e}");
+                    if msg.contains("ServiceUnknown")
+                        || msg.contains("NameHasNoOwner")
+                        || msg.contains("NotFound")
+                    {
+                        Ok(false)
+                    } else {
+                        Err(anyhow::anyhow!("portal RemoteDesktop probe failed: {e}"))
+                    }
+                }
+            }
+        })
+    }
+    #[cfg(not(feature = "portal-input"))]
+    {
+        Ok(false)
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
     Ok(false)
 }
 
@@ -539,6 +664,60 @@ mod tests {
             assert_eq!(entry.status, CheckStatus::Skip, "{name} must be skipped");
             assert_eq!(entry.message, "not applicable on Linux");
         }
+    }
+
+    #[test]
+    fn wayland_backend_passes_on_non_wlroots_when_portal_libei_backend_is_reachable() {
+        let snap = WaylandManagers {
+            foreign_toplevel: false,
+            screencopy: false,
+            ext_image_copy_capture: false,
+            ext_output_image_capture_source: false,
+            virtual_pointer: false,
+            wl_shm: true,
+        };
+
+        let entry = classify_wayland_backend(&snap, true, true, true);
+
+        assert_eq!(entry.status, CheckStatus::Pass);
+        assert!(entry.message.contains("portal/libei"), "{}", entry.message);
+        assert!(entry.message.contains("RemoteDesktop"), "{}", entry.message);
+    }
+
+    #[test]
+    fn wayland_backend_fails_on_non_wlroots_when_portal_libei_backend_is_unreachable() {
+        let snap = WaylandManagers {
+            foreign_toplevel: false,
+            screencopy: false,
+            ext_image_copy_capture: false,
+            ext_output_image_capture_source: false,
+            virtual_pointer: false,
+            wl_shm: true,
+        };
+
+        let entry = classify_wayland_backend(&snap, true, false, false);
+
+        assert_eq!(entry.status, CheckStatus::Fail);
+        assert!(entry.message.contains("portal/libei"), "{}", entry.message);
+        assert!(entry.hint.as_deref().unwrap_or("").contains("xdg-desktop-portal"));
+    }
+
+    #[test]
+    fn wayland_backend_fails_closed_when_portal_input_cannot_target_a_window() {
+        let snap = WaylandManagers {
+            foreign_toplevel: false,
+            screencopy: false,
+            ext_image_copy_capture: false,
+            ext_output_image_capture_source: false,
+            virtual_pointer: false,
+            wl_shm: true,
+        };
+
+        let entry = classify_wayland_backend(&snap, true, true, false);
+
+        assert_eq!(entry.status, CheckStatus::Fail);
+        assert!(entry.message.contains("target-activation"), "{}", entry.message);
+        assert!(entry.message.contains("wrong application"), "{}", entry.message);
     }
 
     #[tokio::test]

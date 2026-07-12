@@ -37,6 +37,8 @@ meval = "0.2"
 # capture/input protocols added as those slices land). Pure-Rust client; used
 # when running under a Wayland compositor with no X11 (no DISPLAY).
 wayland-client = "0.31"
+wayland-backend = "0.3"
+wayland-scanner = "0.31"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # Wayland staging protocols: ext-foreign-toplevel-list-v1,
 # ext-image-capture-source-v1, ext-image-copy-capture-v1 (per-window
@@ -51,10 +53,8 @@ wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 # (org.freedesktop.portal.RemoteDesktop.ConnectToEIS). `tokio` shares the
 # driver's async runtime.
 #
-# `screencast` + `remote_desktop` ashpd features pull pipewire-rs (libspa-sys),
-# which needs `libpipewire-0.3 >= 0.3.40` headers at build time — newer than
-# Debian bullseye ships. They're moved behind the `portal-libei` feature so
-# the cross-platform CD (Debian 11, GLIBC_2.31 floor) can keep building.
+# ashpd's RemoteDesktop feature is pure Rust. Only our ScreenCast frame reader
+# pulls pipewire-rs/libspa, whose headers are newer than Debian bullseye.
 ashpd = { version = "0.13", default-features = false, features = ["tokio", "screenshot"] }
 # zbus is pulled transitively via ashpd + atspi but declared directly so
 # the portal-probe path in wayland::portal_screenshot can talk to the
@@ -68,11 +68,11 @@ url = "2"
 # frames from the node id returned by `open_pipe_wire_remote`. Pinned to
 # 0.8 (last well-documented release; 0.10 had docs.rs build failures in
 # mid-2026). Needs libpipewire-0.3 headers at build time — gated behind
-# the `portal-libei` feature.
+# the `portal-capture` feature.
 pipewire = { version = "0.8", optional = true }
 # Companion to pipewire 0.8 — needed to construct the SPA_PARAM_EnumFormat
 # pod (SPA_VIDEO_FORMAT_BGRx at announced width/height) we hand to
-# `Stream::connect`. Same `portal-libei` gating as `pipewire`.
+# `Stream::connect`. Same `portal-capture` gating as `pipewire`.
 libspa = { version = "0.8", optional = true }
 # Pure-Rust libei/libeis bindings for the GNOME/KDE input path (handshake
 # → seat → device → pointer_absolute/button/scroll/keyboard/text). API is
@@ -107,26 +107,27 @@ dirs = "5"
 [features]
 default = []
 linux-example = []
-# Opt-in stack that wires the portal ScreenCast per-window capture path
-# (`wayland::portal_screencast`) and the libei input path
-# (`wayland::libei`). Pulls in `pipewire`, `libspa` (need
-# `libpipewire-0.3 >= 0.3.40` headers — newer than Debian bullseye) and
-# `reis` (pure-Rust libei) plus the ashpd RemoteDesktop+ScreenCast
-# features. Disabled in the cross-platform release CD (debian:11
-# container, GLIBC_2.31 floor) and enabled in the Nix build that
-# already has the modern PipeWire + libei from nixpkgs. The wlroots
-# screencopy + virtual-pointer paths and the X11 fallback work either
-# way — only GNOME/KDE-portal-specific tiers go dark when this is off.
-portal-libei = [
-    "ashpd/screencast",
+# GNOME/KDE input is pure Rust plus libxkbcommon, which is available in the
+# Debian 11 release container. Ashpd's RemoteDesktop API exposes ScreenCast
+# stream metadata, so its lightweight screencast module is required here too.
+# The PipeWire frame reader remains isolated in portal-capture below.
+portal-input = [
     "ashpd/remote_desktop",
-    "dep:pipewire",
-    "dep:libspa",
+    "ashpd/screencast",
     "dep:reis",
     "dep:calloop",
     "dep:enumflags2",
     "dep:xkbcommon",
 ]
+# PipeWire-backed per-window ScreenCast capture keeps its newer system-header
+# requirement and remains enabled by Nix/modern desktop builds.
+portal-capture = [
+    "ashpd/screencast",
+    "dep:pipewire",
+    "dep:libspa",
+]
+# Backward-compatible full desktop feature used by the Nix package.
+portal-libei = ["portal-input", "portal-capture"]
 
 [dev-dependencies]
 # Used by the `screenshot_cascade` example to surface the
@@ -135,11 +136,11 @@ portal-libei = [
 tracing-subscriber = { workspace = true }
 
 # Cargo example that exercises the libei input path directly. Lives under
-# the `portal-libei` feature gate so a stock `cargo build --examples`
+# the `portal-input` feature gate so a stock `cargo build --examples`
 # doesn't try to compile against the (now-optional) reis/xkbcommon deps.
 [[example]]
 name = "libei_input"
-required-features = ["portal-libei"]
+required-features = ["portal-input"]
 
 [[example]]
 name = "screenshot_cascade"

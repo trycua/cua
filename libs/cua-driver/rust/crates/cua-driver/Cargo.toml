@@ -61,10 +61,11 @@ platform-linux = { path = "../platform-linux" }
 
 [features]
 default = []
-# Forwards `platform-linux/portal-libei` so the Nix build can flip the
-# GNOME/KDE portal stack (PipeWire ScreenCast + libei RemoteDesktop) on
-# from a single workspace-level flag while the cross-platform release CD
-# leaves it off. No-op on macOS/Windows builds.
+# GNOME/KDE portal input ships in ordinary Linux releases; PipeWire capture
+# remains a separate modern-desktop feature. The combined name stays as a
+# compatibility alias for Nix and downstream builds.
+portal-input = ["platform-linux/portal-input"]
+portal-capture = ["platform-linux/portal-capture"]
 portal-libei = ["platform-linux/portal-libei"]
 
 [target.'cfg(target_os = "windows")'.build-dependencies]

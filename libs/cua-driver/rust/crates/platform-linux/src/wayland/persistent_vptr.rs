@@ -147,7 +147,7 @@ fn handle_press(
     // Keep the (out_w, out_h) but drop the queue + state at end of scope; the
     // vptr itself remains alive (Wayland objects survive their original queue
     // as long as the Connection is alive).
-    let mut sess = open_vptr_session(Some(window_id as u32))?;
+    let mut sess = open_vptr_session(Some(window_id))?;
     let (w, h) = (sess.output_w, sess.output_h);
     let px = x.clamp(0, w as i32 - 1) as u32;
     let py = y.clamp(0, h as i32 - 1) as u32;

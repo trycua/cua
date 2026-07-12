@@ -1,8 +1,8 @@
 //! Native-Wayland backend.
 //!
-//! Used when running under a Wayland compositor with no X11 (WAYLAND_DISPLAY
-//! set, DISPLAY unset). Enumerates toplevels via
-//! `zwlr_foreign_toplevel_manager_v1`, captures per-output screenshots via
+//! Used when the experimental backend is enabled under a Wayland compositor.
+//! Enumerates toplevels via `zwlr_foreign_toplevel_manager_v1` or the generic
+//! staging `ext_foreign_toplevel_list_v1`, captures per-output screenshots via
 //! `zwlr_screencopy_manager_v1` + `wl_shm` (native — `grim` remains a
 //! fallback), and synthesises pointer / scroll / drag input via
 //! `zwlr_virtual_pointer_v1`. Per-window image capture is deferred until
@@ -11,33 +11,25 @@
 //! typed error on pure Wayland.
 
 pub mod ext_screencopy;
+pub mod ext_toplevel;
 pub mod overlay;
 pub mod persistent_vptr;
 pub mod portal_screenshot;
 pub mod shell_helper;
-// `portal_screencast` (PipeWire per-window capture) and `libei` (GNOME/KDE
-// input via xdg-desktop-portal RemoteDesktop) need libpipewire-0.3 and reis
-// at build time, which the cross-platform release container (debian:11,
-// GLIBC_2.31 floor) can't satisfy without bumping the floor. They're behind
-// the `portal-libei` feature so the published binaries stay portable; the
-// Nix build (which already has modern PipeWire + libei from nixpkgs)
-// enables it. Wlroots screencopy + virtual-pointer remain unconditional.
-#[cfg(feature = "portal-libei")]
+pub mod sway_ipc;
+mod virtual_keyboard;
+// RemoteDesktop/libei input is portable and ships in release binaries.
+// PipeWire ScreenCast capture remains separately gated for modern/Nix builds.
+#[cfg(feature = "portal-input")]
 pub mod libei;
-#[cfg(feature = "portal-libei")]
+#[cfg(feature = "portal-capture")]
 pub mod portal_screencast;
 
-/// Whether this binary was compiled with the `portal-libei` feature — the
-/// xdg-desktop-portal RemoteDesktop + libei input path. It is the ONLY input
-/// backend that works on non-wlroots compositors (KWin/Plasma, Mutter/GNOME),
-/// which do not implement `zwlr_virtual_pointer_v1`. The published
-/// curl-pipe-bash tarball is built WITHOUT it (#1967 — debian:11 CD container
-/// lacks a new-enough PipeWire/libei), so on those compositors input injection
-/// has no backend and silently no-ops. Consulted by the doctor and the input
-/// dispatch so that failure is reported instead of hidden. See #1982.
-pub const PORTAL_LIBEI_ENABLED: bool = cfg!(feature = "portal-libei");
+/// Whether the GNOME/KDE RemoteDesktop + libei input backend is compiled in.
+pub const PORTAL_INPUT_ENABLED: bool = cfg!(feature = "portal-input");
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 
 use wayland_client::{
     event_created_child,
@@ -96,15 +88,25 @@ pub fn wayland_enabled() -> bool {
     }
 }
 
-/// True when we should drive Wayland rather than X11: the experimental backend
-/// is opted in ([`wayland_enabled`]), a Wayland display is present, and there is
-/// no X11 DISPLAY to fall back to. Without the opt-in this returns false even on
-/// a pure-Wayland session, so the backend treats it as unsupported rather than
-/// silently engaging an incomplete code path.
+/// True when this is an opted-in Wayland desktop session.
+///
+/// GNOME and KDE export `DISPLAY` for XWayland even when the target and the
+/// desktop are native Wayland. Treating that compatibility variable as proof
+/// of an X11 session routed native windows, capture, video, geometry, and focus
+/// through invalid XIDs. Backend selection below is capability based; the mere
+/// presence of `DISPLAY` must not disable Wayland.
 pub fn is_wayland() -> bool {
-    wayland_enabled()
-        && std::env::var_os("WAYLAND_DISPLAY").is_some()
-        && std::env::var_os("DISPLAY").is_none()
+    wayland_enabled() && std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+/// True when input tools should attempt the Wayland input path (wlroots
+/// virtual-pointer, falling back to libei/portal via [`with_libei_fallback`]).
+///
+/// Input-specific alias retained to make dispatch intent explicit. The
+/// wlroots-vs-portal decision is made from live compositor capabilities inside
+/// the `wayland::*` input functions, not from XWayland's `DISPLAY` variable.
+pub fn wayland_input_enabled() -> bool {
+    wayland_enabled() && std::env::var_os("WAYLAND_DISPLAY").is_some()
 }
 
 /// Reason string when X11 input injection cannot possibly work, so callers
@@ -206,6 +208,99 @@ struct Toplevel {
     title: String,
     app_id: String,
     closed: bool,
+}
+
+#[derive(Clone, Debug)]
+struct ToplevelIdentity {
+    title: String,
+    app_id: String,
+}
+
+fn identity_registry() -> &'static Mutex<HashMap<u64, ToplevelIdentity>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<u64, ToplevelIdentity>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn observed_origin_registry() -> &'static Mutex<HashMap<u32, (i32, i32)>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<u32, (i32, i32)>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn remember_observed_window_origins(windows: &[WindowInfo]) {
+    if let Ok(mut registry) = observed_origin_registry().lock() {
+        for window in windows {
+            if let Some(pid) = window.pid {
+                // Generic foreign-toplevel and AT-SPI fallbacks use (0,0) when
+                // they do not know compositor geometry. Do not let that
+                // placeholder erase a previously observed real origin or
+                // prevent the caller from falling through to Sway/GNOME data.
+                if (window.x, window.y) != (0, 0) {
+                    registry.insert(pid, (window.x, window.y));
+                }
+            }
+        }
+    }
+}
+
+pub fn observed_window_origin(pid: u32) -> Option<(i32, i32)> {
+    observed_origin_registry()
+        .lock()
+        .ok()
+        .and_then(|registry| registry.get(&pid).copied())
+}
+
+fn remember_identity(id: u64, toplevel: &Toplevel) {
+    if let Ok(mut registry) = identity_registry().lock() {
+        registry.insert(
+            id,
+            ToplevelIdentity {
+                title: toplevel.title.clone(),
+                app_id: toplevel.app_id.clone(),
+            },
+        );
+    }
+}
+
+fn identity_for(id: u64) -> Option<ToplevelIdentity> {
+    identity_registry()
+        .lock()
+        .ok()
+        .and_then(|registry| registry.get(&id).cloned())
+        .or_else(|| {
+            sway_ipc::window_for_id(id).map(|window| ToplevelIdentity {
+                title: window.title,
+                app_id: window.app_id,
+            })
+        })
+        .or_else(|| {
+            crate::atspi::list_windows(None)
+                .into_iter()
+                .find(|window| window.xid == id || u64::from(window.xid as u32) == id)
+                .map(|window| ToplevelIdentity {
+                    title: window.title,
+                    app_id: window.app_name,
+                })
+        })
+}
+
+fn matching_handle(state: &State, id: u64) -> Option<ZwlrForeignToplevelHandleV1> {
+    if let Some(identity) = identity_for(id) {
+        let by_title = state.toplevels.iter().find_map(|(protocol_id, toplevel)| {
+            (!identity.title.is_empty() && toplevel.title == identity.title)
+                .then(|| state.handles.get(protocol_id).cloned())
+                .flatten()
+        });
+        return by_title.or_else(|| {
+            state.toplevels.iter().find_map(|(protocol_id, toplevel)| {
+                (!identity.app_id.is_empty() && toplevel.app_id == identity.app_id)
+                    .then(|| state.handles.get(protocol_id).cloned())
+                    .flatten()
+            })
+        });
+    }
+
+    let protocol_id = u32::try_from(id).ok()?;
+    state.handles.get(&protocol_id).cloned()
 }
 
 /// Per-capture in-flight state populated by the screencopy frame Dispatch.
@@ -474,8 +569,9 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
 }
 
 /// Enumerate native Wayland toplevels via wlr-foreign-toplevel-management.
-/// `xid` is the foreign-toplevel handle's protocol id (a stable per-session
-/// window id); pid is unknown (not exposed by the protocol); geometry is 0
+/// `xid` begins as the foreign-toplevel handle's connection-scoped protocol id.
+/// The dispatcher replaces it with a stable compositor or AT-SPI identity when
+/// available. pid is unknown (not exposed by the protocol); geometry is 0
 /// (the protocol does not surface position/size). app_id is folded into the
 /// title (`"<title> [<app_id>]"`) so callers matching on either still match.
 pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
@@ -495,6 +591,8 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
         queue.roundtrip(&mut state)?;
     }
 
+    let sway_windows = sway_ipc::list_windows().unwrap_or_default();
+    let mut used_sway_ids = HashSet::new();
     let mut out = Vec::new();
     for (id, tl) in &state.toplevels {
         if tl.closed {
@@ -505,14 +603,36 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
         } else {
             format!("{} [{}]", tl.title, tl.app_id)
         };
+        let sway = sway_windows
+            .iter()
+            .find(|window| {
+                !used_sway_ids.contains(&window.id)
+                    && !tl.title.is_empty()
+                    && window.title == tl.title
+            })
+            .or_else(|| {
+                sway_windows.iter().find(|window| {
+                    !used_sway_ids.contains(&window.id)
+                        && !tl.app_id.is_empty()
+                        && window.app_id == tl.app_id
+                })
+            });
+        let stable_id = sway.map(|window| window.id).unwrap_or(*id as u64);
+        if let Some(window) = sway {
+            used_sway_ids.insert(window.id);
+        }
+        remember_identity(stable_id, tl);
         out.push(WindowInfo {
-            xid: *id as u64,
-            pid: None,
+            xid: stable_id,
+            pid: sway.map(|window| window.pid),
+            app_name: tl.app_id.clone(),
             title,
-            x: 0,
-            y: 0,
-            width: 0,
-            height: 0,
+            is_on_screen: sway.map(|window| window.visible).unwrap_or(true),
+            z_index: None,
+            x: sway.map(|window| window.x).unwrap_or(0),
+            y: sway.map(|window| window.y).unwrap_or(0),
+            width: sway.map(|window| window.width).unwrap_or(0),
+            height: sway.map(|window| window.height).unwrap_or(0),
         });
     }
     Ok(out)
@@ -756,10 +876,51 @@ pub(crate) unsafe fn borrowed_fd(fd: i32) -> std::os::fd::OwnedFd {
 /// output-level path used by `get_window_state`'s vision payload.
 pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     if is_wayland() {
-        screenshot_bytes()
+        let bytes = screenshot_display_dispatch()?;
+        if let Some((x, y, width, height)) = window_geometry(xid) {
+            crop_png_to_rect(
+                &bytes,
+                x,
+                y,
+                width,
+                height,
+                &format!("Wayland window {xid}"),
+            )
+        } else {
+            Ok(bytes)
+        }
     } else {
         crate::capture::screenshot_window_bytes(xid)
     }
+}
+
+fn crop_png_to_rect(
+    output_png: &[u8],
+    rect_x: i32,
+    rect_y: i32,
+    rect_width: u32,
+    rect_height: u32,
+    label: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let image = image::load_from_memory(output_png)?;
+    let image_width = image.width();
+    let image_height = image.height();
+    let x = rect_x.max(0) as u32;
+    let y = rect_y.max(0) as u32;
+    if x >= image_width || y >= image_height {
+        anyhow::bail!(
+            "{label} origin ({x},{y}) is outside captured output {image_width}x{image_height}"
+        );
+    }
+    let width = rect_width.min(image_width - x);
+    let height = rect_height.min(image_height - y);
+    if width == 0 || height == 0 {
+        anyhow::bail!("{label} has empty capture geometry");
+    }
+    let cropped = image.crop_imm(x, y, width, height);
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    cropped.write_to(&mut cursor, image::ImageFormat::Png)?;
+    Ok(cursor.into_inner())
 }
 
 /// Display-level capture dispatcher. Cascade:
@@ -771,7 +932,12 @@ pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
 /// 3. X11: existing root-window path.
 pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
     if is_wayland() {
-        // Tier 1: native wlroots screencopy (fast, zero consent).
+        // Tier 1: the opt-in GNOME compositor helper. It avoids probing
+        // wlroots-only protocols and captures the Shell stage without consent.
+        if let Some(bytes) = shell_helper::screenshot_display() {
+            return Ok(bytes);
+        }
+        // Tier 2: native wlroots screencopy (fast, zero consent).
         match screenshot_bytes() {
             Ok(bytes) => return Ok(bytes),
             Err(e) => {
@@ -780,7 +946,7 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
                 );
             }
         }
-        // Tier 2: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+, niri,
+        // Tier 3: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+, niri,
         // hyprland, KDE 6.2+, GNOME 47+).
         match ext_screencopy::screenshot_via_ext_copy() {
             Ok(bytes) => return Ok(bytes),
@@ -790,7 +956,7 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
                 );
             }
         }
-        // Tier 3: xdg-desktop-portal (GNOME, KDE, COSMIC fallback).
+        // Tier 4: xdg-desktop-portal (GNOME, KDE, COSMIC fallback).
         match portal_screenshot::screenshot_via_portal() {
             Ok(bytes) => return Ok(bytes),
             Err(e) => {
@@ -813,6 +979,16 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
 /// crop with.
 pub fn screenshot_window_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     if is_wayland() {
+        if let Some((x, y, width, height)) = window_geometry(xid) {
+            return crop_png_to_rect(
+                &screenshot_display_dispatch()?,
+                x,
+                y,
+                width,
+                height,
+                &format!("Wayland window {xid}"),
+            );
+        }
         anyhow::bail!(
             "per-window screenshot is not yet supported on native Wayland — \
              zwlr_screencopy_manager_v1 is output-only and ext-image-copy-capture-v1 \
@@ -824,6 +1000,50 @@ pub fn screenshot_window_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
 }
 
 // ── Input session helper ─────────────────────────────────────────────────────
+
+/// Sentinel substring carried by the `open_vptr_session` error when the
+/// compositor exposes no `zwlr_virtual_pointer_manager_v1` (KWin/Plasma,
+/// Mutter/GNOME). The input dispatch matches on this to decide whether the
+/// libei/portal fallback ([`libei`]) can recover the call. Kept as a string
+/// marker (rather than a typed error) so the existing `anyhow::Result`
+/// signatures of every input fn are unchanged. See #1982.
+pub const NO_VPTR_MARKER: &str = "no-zwlr-virtual-pointer";
+
+/// True when `err` is the "compositor has no wlroots virtual-pointer" failure
+/// from [`open_vptr_session`] — i.e. the point where a non-wlroots compositor
+/// needs the libei fallback rather than a hard error.
+fn is_no_vptr(err: &anyhow::Error) -> bool {
+    err.to_string().contains(NO_VPTR_MARKER)
+}
+
+/// Run the wlroots virtual-pointer closure `f`; if it fails specifically
+/// because the compositor exposes no `zwlr_virtual_pointer_manager_v1` and this
+/// binary carries the `portal-input` feature, run the libei `fallback` instead.
+/// Any other wlroots error (and the no-vptr error in a build without the
+/// feature) propagates unchanged. This is the single seam through which #1982's
+/// KDE/GNOME input recovery flows.
+fn with_libei_fallback<T>(
+    f: impl FnOnce() -> anyhow::Result<T>,
+    #[allow(unused_variables)] fallback: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    match f() {
+        Ok(v) => Ok(v),
+        Err(e) if is_no_vptr(&e) => {
+            #[cfg(feature = "portal-input")]
+            {
+                tracing::info!(
+                    "wlroots virtual-pointer unavailable ({e}); falling back to libei/portal"
+                );
+                return fallback();
+            }
+            #[cfg(not(feature = "portal-input"))]
+            {
+                Err(e)
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
 
 /// Live virtual-pointer session: connection + queue + the bound objects every
 /// pointer op (click, scroll, drag) needs. Returned by [`open_vptr_session`].
@@ -843,7 +1063,7 @@ pub struct VptrSession {
 /// client from knowing another window's on-screen geometry, so we drive every
 /// pointer event in *output* coordinates and rely on the activated toplevel
 /// covering the centre.
-pub fn open_vptr_session(activate_window_id: Option<u32>) -> anyhow::Result<VptrSession> {
+pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<VptrSession> {
     let conn = Connection::connect_to_env()?;
     let mut queue = conn.new_event_queue::<State>();
     let qh = queue.handle();
@@ -851,38 +1071,53 @@ pub fn open_vptr_session(activate_window_id: Option<u32>) -> anyhow::Result<Vptr
 
     let mut state = State::default();
     queue.roundtrip(&mut state)?;
-    if state.manager.is_none() {
-        anyhow::bail!("compositor does not expose zwlr_foreign_toplevel_manager_v1");
-    }
     for _ in 0..4 {
         queue.roundtrip(&mut state)?;
     }
 
-    let seat = state.seat.clone().ok_or_else(|| {
-        anyhow::anyhow!("compositor exposed no wl_seat for virtual-pointer input")
-    })?;
+    // Evaluate the virtual-pointer / NO_VPTR_MARKER path FIRST: on compositors
+    // that expose neither zwlr_virtual_pointer nor zwlr_foreign_toplevel
+    // (KWin/Plasma, Mutter/GNOME) we must surface the marker so
+    // `with_libei_fallback` re-routes through libei/portal. Requiring
+    // foreign-toplevel up front would mask the marker and leave the libei
+    // fallback dead. See #1982.
     let mgr = state.vptr_manager.clone().ok_or_else(|| {
-        if PORTAL_LIBEI_ENABLED {
-            anyhow::anyhow!("compositor does not expose zwlr_virtual_pointer_manager_v1")
+        if PORTAL_INPUT_ENABLED {
+            // The caller (via `with_libei_fallback`) recognises NO_VPTR_MARKER
+            // and re-routes the op through the libei/portal backend, which DOES
+            // reach KWin/Plasma and Mutter/GNOME. Keep the marker in the text.
+            anyhow::anyhow!(
+                "compositor does not expose zwlr_virtual_pointer_manager_v1 \
+                 ({NO_VPTR_MARKER})"
+            )
         } else {
             // KWin/Plasma and Mutter/GNOME don't implement zwlr_virtual_pointer,
             // and this build has no libei/portal fallback — so input has no
-            // backend at all rather than silently no-op'ing. See #1982.
+            // backend at all rather than silently no-op'ing. The marker still
+            // lets the dispatch layer classify the failure uniformly. See #1982.
             anyhow::anyhow!(
-                "no input backend for this compositor: it exposes no \
-                 zwlr_virtual_pointer_manager_v1 and this build was compiled \
-                 without libei/portal support (#1982). Use the portal-enabled \
-                 Linux build for input on KDE Plasma / GNOME, or a wlroots \
-                 compositor (sway, labwc, hyprland)."
+                "no input backend for this compositor ({NO_VPTR_MARKER}): it \
+                 exposes no zwlr_virtual_pointer_manager_v1 and this build was \
+                 compiled without libei/portal support (#1982). Use the \
+                 portal-enabled Linux build for input on KDE Plasma / GNOME, or \
+                 a wlroots compositor (sway, labwc, hyprland)."
             )
         }
     })?;
 
+    // foreign-toplevel is only needed to activate a specific window before
+    // synthesising input; require it only when a caller actually asks for that.
+    if activate_window_id.is_some() && state.manager.is_none() {
+        anyhow::bail!("compositor does not expose zwlr_foreign_toplevel_manager_v1");
+    }
+
+    let seat = state
+        .seat
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("compositor exposed no wl_seat for virtual-pointer input"))?;
+
     if let Some(id) = activate_window_id {
-        let handle = state
-            .handles
-            .get(&id)
-            .cloned()
+        let handle = matching_handle(&state, id)
             .ok_or_else(|| anyhow::anyhow!("no native Wayland toplevel for window_id {id}"))?;
         handle.activate(&seat);
         queue.roundtrip(&mut state)?;
@@ -901,6 +1136,106 @@ pub fn open_vptr_session(activate_window_id: Option<u32>) -> anyhow::Result<Vptr
     })
 }
 
+/// Focus and raise a specific native Wayland toplevel before focus-bound
+/// keyboard or portal/libei input. wlroots exposes an activation request on its
+/// foreign-toplevel protocol; GNOME uses the bundled compositor helper. Other
+/// compositors must refuse until they provide an equally target-addressable
+/// adapter, because global injection without this gate can affect the wrong app.
+pub fn activate_window_for_input(window_id: u64) -> anyhow::Result<()> {
+    let pid = crate::atspi::list_windows(None)
+        .into_iter()
+        .find(|window| window.xid == window_id)
+        .and_then(|window| window.pid);
+    activate_window_for_input_target(window_id, pid)
+}
+
+/// Activate a Wayland target with an explicit process identity when available.
+/// The bundled compositor does not depend on connection-local Wayland object
+/// ids: its control protocol resolves the one mapped toplevel owned by `pid`.
+pub fn activate_window_for_input_target(
+    window_id: u64,
+    target_pid: Option<u32>,
+) -> anyhow::Result<()> {
+    if is_inject_mode() {
+        let pid = target_pid.ok_or_else(|| {
+            anyhow::anyhow!(
+                "foreground_unavailable: cua-compositor activation requires a verified target pid"
+            )
+        })?;
+        inject_send(&[format!("f {pid}")])?;
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        return Ok(());
+    }
+
+    let conn = Connection::connect_to_env()?;
+    let mut queue = conn.new_event_queue::<State>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+    let mut state = State::default();
+    queue.roundtrip(&mut state)?;
+    for _ in 0..4 {
+        queue.roundtrip(&mut state)?;
+    }
+
+    if let (Some(_), Some(seat), Some(handle)) = (
+        state.manager.as_ref(),
+        state.seat.clone(),
+        matching_handle(&state, window_id),
+    ) {
+        handle.activate(&seat);
+        queue.roundtrip(&mut state)?;
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        return Ok(());
+    }
+
+    if shell_helper::activate_window(window_id) {
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        return Ok(());
+    }
+
+    anyhow::bail!(
+        "foreground_unavailable: this Wayland compositor does not expose a verified, \
+         target-addressable activation adapter for window {window_id}; refusing global \
+         input because it could affect the wrong application"
+    )
+}
+
+/// Query the first `wl_output`'s pixel dimensions via a short Wayland
+/// roundtrip, independent of the virtual-pointer protocol. Used by the libei
+/// fallback (which never opens a `VptrSession`) to reproduce the vptr path's
+/// default-to-centre and clamp behaviour so both backends treat coordinates
+/// identically. Falls back to `(1, 1)` when no output reports a mode.
+#[cfg(feature = "portal-input")]
+fn output_dimensions() -> anyhow::Result<(u32, u32)> {
+    let conn = Connection::connect_to_env()?;
+    let mut queue = conn.new_event_queue::<State>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+    let mut state = State::default();
+    queue.roundtrip(&mut state)?;
+    for _ in 0..4 {
+        queue.roundtrip(&mut state)?;
+    }
+    Ok((state.output_w.max(1), state.output_h.max(1)))
+}
+
+/// Reproduce the wlroots vptr path's coordinate handling for the libei
+/// fallback: `(0, 0)` defaults to the output centre, and any value is clamped
+/// to `[0, dim-1]`. Keeps `click(.., 0, 0, ..)` landing on centre rather than
+/// the top-left corner across both backends.
+#[cfg(feature = "portal-input")]
+fn normalize_click_xy(x: i32, y: i32, w: u32, h: u32) -> (i32, i32) {
+    let (px, py) = if x == 0 && y == 0 {
+        ((w / 2) as i32, (h / 2) as i32)
+    } else {
+        (x, y)
+    };
+    (
+        px.clamp(0, (w as i32).saturating_sub(1)),
+        py.clamp(0, (h as i32).saturating_sub(1)),
+    )
+}
+
 /// Map a cua/X11 pointer button (1=left / 2=middle / 3=right) to its evdev
 /// code, which is what `zwlr_virtual_pointer_v1::button` expects.
 pub fn evdev_pointer_button(button: u8) -> u32 {
@@ -911,6 +1246,15 @@ pub fn evdev_pointer_button(button: u8) -> u32 {
     }
 }
 
+fn event_time_ms() -> u32 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis()
+        .clamp(1, u32::MAX as u128) as u32
+}
+
 /// Click a native Wayland toplevel identified by its `window_id` (the
 /// foreign-toplevel protocol id from `list_windows`) at output-relative
 /// `(x, y)`, with `button` (1/2/3 = left/middle/right) emitted `count` times.
@@ -919,7 +1263,41 @@ pub fn evdev_pointer_button(button: u8) -> u32 {
 /// real coords. A short delay between iterations gives the compositor time
 /// to discriminate single vs. double clicks.
 pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(Some(window_id as u32))?;
+    with_libei_fallback(
+        || click_vptr(Some(window_id), x, y, count, button),
+        || {
+            libei_wait_pointer_ready()?;
+            activate_window_for_input(window_id)?;
+            libei_click(x, y, count, button)
+        },
+    )
+}
+
+/// Click a desktop-absolute point without selecting or activating a toplevel.
+/// This is the Wayland peer of an XTest root-window click and is used only by
+/// the explicit desktop capture scope.
+pub fn click_desktop(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+    if is_inject_mode() {
+        let btn = evdev_button(button as u32);
+        return inject_send(&[format!("d {x} {y} {} {btn}", count.max(1))]);
+    }
+    with_libei_fallback(
+        || click_vptr(None, x, y, count, button),
+        || libei_click(x, y, count, button),
+    )
+}
+
+/// wlroots virtual-pointer implementation of [`click`]. Falls back to libei via
+/// [`with_libei_fallback`] when the compositor exposes no virtual-pointer.
+fn click_vptr(
+    window_id: Option<u64>,
+    x: i32,
+    y: i32,
+    count: u32,
+    button: u8,
+) -> anyhow::Result<()> {
+    let mut sess = open_vptr_session(window_id)?;
+    std::thread::sleep(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
     let (px, py) = if x == 0 && y == 0 {
         ((w / 2) as i32, (h / 2) as i32)
@@ -933,11 +1311,17 @@ pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::
         if i > 0 {
             std::thread::sleep(std::time::Duration::from_millis(80));
         }
-        sess.vptr.motion_absolute(0, px, py, w, h);
+        sess.vptr.motion_absolute(event_time_ms(), px, py, w, h);
         sess.vptr.frame();
-        sess.vptr.button(0, btn, ButtonState::Pressed);
+        sess.queue.roundtrip(&mut sess.state)?;
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        sess.vptr
+            .button(event_time_ms(), btn, ButtonState::Pressed);
         sess.vptr.frame();
-        sess.vptr.button(0, btn, ButtonState::Released);
+        sess.queue.roundtrip(&mut sess.state)?;
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        sess.vptr
+            .button(event_time_ms(), btn, ButtonState::Released);
         sess.vptr.frame();
         sess.queue.roundtrip(&mut sess.state)?;
     }
@@ -954,7 +1338,126 @@ pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::
 /// virtual-pointer protocol, mirroring how a real wheel notch decomposes. The
 /// magnitude follows wl_pointer convention: ±10 (in wl_fixed = ×256) per tick.
 pub fn scroll(window_id: u64, direction: &str, amount: u32) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(Some(window_id as u32))?;
+    scroll_at(window_id, None, direction, amount)
+}
+
+/// Translate window-local screenshot coordinates into compositor output
+/// coordinates when the active compositor exposes the target geometry.
+pub fn window_local_to_output(window_id: u64, x: i32, y: i32) -> (i32, i32) {
+    window_geometry(window_id)
+        .map(|(window_x, window_y, _, _)| {
+            (window_x.saturating_add(x), window_y.saturating_add(y))
+        })
+        .unwrap_or((x, y))
+}
+
+/// Resolve geometry through stable title/app identity when a foreign-toplevel
+/// object ID came from an earlier Wayland connection. Protocol object IDs are
+/// connection-local, so direct equality is only a fast path.
+pub fn window_geometry(window_id: u64) -> Option<(i32, i32, u32, u32)> {
+    if let Some(window) = sway_ipc::window_for_id(window_id) {
+        return Some((window.x, window.y, window.width, window.height));
+    }
+
+    let identity = identity_for(window_id);
+    if let Some(identity) = identity.as_ref() {
+        if let Some(windows) = sway_ipc::list_windows() {
+            let title_matches = windows
+                .iter()
+                .filter(|window| !identity.title.is_empty() && window.title == identity.title)
+                .collect::<Vec<_>>();
+            if title_matches.len() == 1 {
+                let window = title_matches[0];
+                return Some((window.x, window.y, window.width, window.height));
+            }
+            let app_matches = windows
+                .iter()
+                .filter(|window| !identity.app_id.is_empty() && window.app_id == identity.app_id)
+                .collect::<Vec<_>>();
+            if app_matches.len() == 1 {
+                let window = app_matches[0];
+                return Some((window.x, window.y, window.width, window.height));
+            }
+        }
+    }
+
+    let windows = list_windows_dispatch(None);
+    if let Some(window) = windows
+        .iter()
+        .find(|window| window.xid == window_id && window.width > 0 && window.height > 0)
+    {
+        return Some((window.x, window.y, window.width, window.height));
+    }
+    let identity = identity?;
+    let title_matches = windows
+        .iter()
+        .filter(|window| {
+            window.width > 0
+                && window.height > 0
+                && !identity.title.is_empty()
+                && undecorated_native_title(window) == identity.title
+        })
+        .collect::<Vec<_>>();
+    if title_matches.len() == 1 {
+        let window = title_matches[0];
+        return Some((window.x, window.y, window.width, window.height));
+    }
+    let app_matches = windows
+        .iter()
+        .filter(|window| {
+            window.width > 0
+                && window.height > 0
+                && !identity.app_id.is_empty()
+                && window.app_name == identity.app_id
+        })
+        .collect::<Vec<_>>();
+    (app_matches.len() == 1).then(|| {
+        let window = app_matches[0];
+        (window.x, window.y, window.width, window.height)
+    })
+}
+
+/// Scroll after positioning the synthetic pointer over an output-relative
+/// target. Wayland routes wheel events to the surface beneath the pointer, so
+/// pixel-addressed scrolls must not inherit an unrelated cursor position.
+pub fn scroll_at(
+    window_id: u64,
+    point: Option<(i32, i32)>,
+    direction: &str,
+    amount: u32,
+) -> anyhow::Result<()> {
+    let direction = direction.to_string();
+    with_libei_fallback(
+        || scroll_vptr(window_id, point, &direction, amount),
+        || {
+            libei_wait_scroll_ready()?;
+            activate_window_for_input(window_id)?;
+            if let Some((x, y)) = point {
+                libei_move_absolute(x, y)?;
+            }
+            libei_scroll(&direction, amount)
+        },
+    )
+}
+
+/// wlroots virtual-pointer implementation of [`scroll`].
+fn scroll_vptr(
+    window_id: u64,
+    point: Option<(i32, i32)>,
+    direction: &str,
+    amount: u32,
+) -> anyhow::Result<()> {
+    let mut sess = open_vptr_session(Some(window_id))?;
+    if let Some((x, y)) = point {
+        let px = x.clamp(0, (sess.output_w as i32).saturating_sub(1)) as u32;
+        let py = y.clamp(0, (sess.output_h as i32).saturating_sub(1)) as u32;
+        sess.vptr
+            .motion_absolute(event_time_ms(), px, py, sess.output_w, sess.output_h);
+        sess.vptr.frame();
+        sess.queue.roundtrip(&mut sess.state)?;
+        record_synth_cursor(px as i32, py as i32);
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
     let (axis, sign): (Axis, i32) = match direction.to_ascii_lowercase().as_str() {
         "up" => (Axis::VerticalScroll, -1),
         "down" => (Axis::VerticalScroll, 1),
@@ -970,7 +1473,8 @@ pub fn scroll(window_id: u64, direction: &str, amount: u32) -> anyhow::Result<()
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
         sess.vptr.axis_source(AxisSource::Wheel);
-        sess.vptr.axis_discrete(0, axis, value, sign);
+        sess.vptr
+            .axis_discrete(event_time_ms(), axis, value, sign);
         sess.vptr.frame();
         sess.queue.roundtrip(&mut sess.state)?;
     }
@@ -1014,11 +1518,19 @@ pub fn last_synth_cursor_pos() -> Option<(i32, i32)> {
 /// the compositor commits the warp before returning. Records the position in
 /// the synthetic-cursor registry so `last_synth_cursor_pos` can report it.
 pub fn move_cursor_absolute(window_id: Option<u64>, x: i32, y: i32) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(window_id.map(|w| w as u32))?;
+    with_libei_fallback(
+        || move_cursor_absolute_vptr(window_id, x, y),
+        || libei_move_absolute(x, y),
+    )
+}
+
+/// wlroots virtual-pointer implementation of [`move_cursor_absolute`].
+fn move_cursor_absolute_vptr(window_id: Option<u64>, x: i32, y: i32) -> anyhow::Result<()> {
+    let mut sess = open_vptr_session(window_id)?;
     let (w, h) = (sess.output_w, sess.output_h);
     let px = x.clamp(0, (w as i32).saturating_sub(1)) as u32;
     let py = y.clamp(0, (h as i32).saturating_sub(1)) as u32;
-    sess.vptr.motion_absolute(0, px, py, w, h);
+    sess.vptr.motion_absolute(event_time_ms(), px, py, w, h);
     sess.vptr.frame();
     sess.queue.roundtrip(&mut sess.state)?;
     record_synth_cursor(px as i32, py as i32);
@@ -1030,8 +1542,8 @@ pub fn move_cursor_absolute(window_id: Option<u64>, x: i32, y: i32) -> anyhow::R
 /// Press-drag-release on a native Wayland toplevel. Emits one button press at
 /// `(from_x, from_y)`, then `steps` interpolated motion events along the
 /// straight segment to `(to_x, to_y)`, then a release. Coordinates are
-/// output-relative; window-local coords need the EIS inject socket
-/// (`CUA_INJECT_SOCKET`).
+/// output-relative; window-local coords need the nested cua-compositor
+/// injection socket (`CUA_INJECT_SOCKET`).
 pub fn drag(
     window_id: u64,
     from_x: i32,
@@ -1041,7 +1553,29 @@ pub fn drag(
     steps: u32,
     button: u8,
 ) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(Some(window_id as u32))?;
+    with_libei_fallback(
+        || drag_vptr(window_id, from_x, from_y, to_x, to_y, steps, button),
+        || {
+            libei_wait_pointer_ready()?;
+            activate_window_for_input(window_id)?;
+            libei_drag(from_x, from_y, to_x, to_y, steps, button)
+        },
+    )
+}
+
+/// wlroots virtual-pointer implementation of [`drag`].
+#[allow(clippy::too_many_arguments)]
+fn drag_vptr(
+    window_id: u64,
+    from_x: i32,
+    from_y: i32,
+    to_x: i32,
+    to_y: i32,
+    steps: u32,
+    button: u8,
+) -> anyhow::Result<()> {
+    let mut sess = open_vptr_session(Some(window_id))?;
+    std::thread::sleep(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
     let btn = evdev_pointer_button(button);
     let clamp_xy = |x: i32, y: i32| -> (u32, u32) {
@@ -1051,9 +1585,12 @@ pub fn drag(
         )
     };
     let (fx, fy) = clamp_xy(from_x, from_y);
-    sess.vptr.motion_absolute(0, fx, fy, w, h);
+    sess.vptr.motion_absolute(event_time_ms(), fx, fy, w, h);
     sess.vptr.frame();
-    sess.vptr.button(0, btn, ButtonState::Pressed);
+    sess.queue.roundtrip(&mut sess.state)?;
+    std::thread::sleep(std::time::Duration::from_millis(15));
+    sess.vptr
+        .button(event_time_ms(), btn, ButtonState::Pressed);
     sess.vptr.frame();
     sess.queue.roundtrip(&mut sess.state)?;
     let n = steps.max(1);
@@ -1062,15 +1599,18 @@ pub fn drag(
         let ix = (from_x as f64 + (to_x - from_x) as f64 * t).round() as i32;
         let iy = (from_y as f64 + (to_y - from_y) as f64 * t).round() as i32;
         let (cx, cy) = clamp_xy(ix, iy);
-        sess.vptr.motion_absolute(0, cx, cy, w, h);
+        sess.vptr
+            .motion_absolute(event_time_ms(), cx, cy, w, h);
         sess.vptr.frame();
         sess.queue.roundtrip(&mut sess.state)?;
         std::thread::sleep(std::time::Duration::from_millis(8));
     }
     let (tx, ty) = clamp_xy(to_x, to_y);
-    sess.vptr.motion_absolute(0, tx, ty, w, h);
+    sess.vptr.motion_absolute(event_time_ms(), tx, ty, w, h);
     sess.vptr.frame();
-    sess.vptr.button(0, btn, ButtonState::Released);
+    sess.queue.roundtrip(&mut sess.state)?;
+    sess.vptr
+        .button(event_time_ms(), btn, ButtonState::Released);
     sess.vptr.frame();
     // Sync the synthetic-cursor registry with the drag endpoint so a
     // subsequent `get_cursor_position` reports where we left the pointer.
@@ -1088,38 +1628,58 @@ pub fn drag(
 /// foreign-toplevel exposes no pid and Wayland delivers keys to the *focused*
 /// surface, so this is window_id-free; pair it with `click`/`activate` to put
 /// the intended window in focus first.
-pub fn type_text(text: &str) -> anyhow::Result<()> {
+pub fn type_text(window_id: u64, text: &str) -> anyhow::Result<()> {
     if text.is_empty() {
         return Ok(());
     }
+    activate_window_for_input(window_id)?;
     // Lead with a no-op Shift_L tap: on a freshly-focused window under a headless
     // seat (notably sway), the compositor needs the first virtual-keyboard event
     // to wire up keyboard routing, and that first key is dropped. Sacrificing a
     // modifier tap (no character) absorbs the drop so the real text lands intact;
     // it's harmless where routing is already live (labwc).
-    let out = std::process::Command::new("wtype")
+    let result = std::process::Command::new("wtype")
         .args(["-k", "Shift_L", "--"])
         .arg(text)
-        .output()?;
-    if !out.status.success() {
-        anyhow::bail!("wtype failed: {}", String::from_utf8_lossy(&out.stderr));
+        .output();
+    match result {
+        Ok(out) if out.status.success() => Ok(()),
+        // `wtype` relies on `zwp_virtual_keyboard_v1`, which KWin/Plasma and
+        // Mutter/GNOME don't implement (and the binary may be missing wtype
+        // entirely). On a portal-input build, route typing through libei's
+        // `ei_text` interface instead. See #1982.
+        other => with_wtype_libei_fallback(
+            || {
+                libei_wait_keyboard_ready()?;
+                activate_window_for_input(window_id)?;
+                libei_type_text(text)
+            },
+            other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
+        ),
     }
-    Ok(())
 }
 
 /// Press a single named key into the focused Wayland surface via `wtype -k`.
-pub fn press_key(key: &str) -> anyhow::Result<()> {
+pub fn press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
+    activate_window_for_input(window_id)?;
     let keysym = key_to_keysym(key);
-    let out = std::process::Command::new("wtype")
-        .args(["-k", &keysym])
-        .output()?;
-    if !out.status.success() {
-        anyhow::bail!(
-            "wtype -k {keysym} failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+    // Keep the sacrificial modifier and requested key in one virtual-keyboard
+    // lifetime. Starting a second wtype process creates a fresh protocol object,
+    // causing headless seats to drop the requested key as their first event.
+    let result = std::process::Command::new("wtype")
+        .args(["-k", "Shift_L", "-k", &keysym])
+        .output();
+    match result {
+        Ok(out) if out.status.success() => Ok(()),
+        other => with_wtype_libei_fallback(
+            || {
+                libei_wait_keyboard_ready()?;
+                activate_window_for_input(window_id)?;
+                libei_press_key(key)
+            },
+            other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
+        ),
     }
-    Ok(())
 }
 
 /// Press a key combination (modifiers + final key) via `wtype`. Each modifier
@@ -1127,30 +1687,70 @@ pub fn press_key(key: &str) -> anyhow::Result<()> {
 /// `wtype -M ctrl -M shift -k key -m shift -m ctrl`. Unknown values pass
 /// straight to wtype's `-k` so single-character keys and X keysym names work
 /// as-is. This is the Wayland equivalent of the X11 `send_key` modifier mask.
-pub fn hotkey(keys: &[String]) -> anyhow::Result<()> {
+pub fn hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
+    activate_window_for_input(window_id)?;
     let (mods, final_key) = partition_modifiers(keys)?;
+    if let Ok(()) = virtual_keyboard::hotkey(&mods, &final_key) {
+        return Ok(());
+    }
     let keysym = key_to_keysym(&final_key);
-    let mut args: Vec<String> = Vec::new();
-    for m in &mods {
+    let args = wtype_hotkey_args(&mods, &keysym);
+    let result = std::process::Command::new("wtype").args(&args).output();
+    match result {
+        Ok(out) if out.status.success() => Ok(()),
+        other => {
+            let stderr = other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned());
+            #[cfg(feature = "portal-input")]
+            {
+                return with_wtype_libei_fallback(
+                    || {
+                        libei::wait_keyboard_ready()?;
+                        activate_window_for_input(window_id)?;
+                        libei_hotkey(&mods, &final_key)
+                    },
+                    stderr,
+                );
+            }
+            #[cfg(not(feature = "portal-input"))]
+            {
+                anyhow::bail!(
+                    "wtype {} failed: {}",
+                    args.join(" "),
+                    stderr.unwrap_or_else(|_| "wtype unavailable".into())
+                );
+            }
+        }
+    }
+}
+
+fn wtype_hotkey_args(mods: &[String], keysym: &str) -> Vec<String> {
+    // Keep the same harmless first-event primer used by `press_key`. A fresh
+    // virtual-keyboard object on headless seats can drop its first event. Give
+    // wlroots one event cycle after the primer and modifier transitions;
+    // otherwise Chromium can miss a coalesced shortcut even though wtype exits
+    // successfully.
+    let mut args: Vec<String> = vec![
+        "-k".into(),
+        "Shift_L".into(),
+        "-s".into(),
+        "30".into(),
+    ];
+    for m in mods {
         args.push("-M".into());
         args.push(m.clone());
     }
+    args.push("-s".into());
+    args.push("20".into());
     args.push("-k".into());
-    args.push(keysym.clone());
+    args.push(keysym.to_owned());
+    args.push("-s".into());
+    args.push("20".into());
     // Release modifiers in reverse press order.
     for m in mods.iter().rev() {
         args.push("-m".into());
         args.push(m.clone());
     }
-    let out = std::process::Command::new("wtype").args(&args).output()?;
-    if !out.status.success() {
-        anyhow::bail!(
-            "wtype {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-    Ok(())
+    args
 }
 
 /// Split a `keys` array into wtype-compatible modifier names and a single
@@ -1199,29 +1799,478 @@ fn key_to_keysym(key: &str) -> String {
     .to_string()
 }
 
-// ── EIS nested-compositor injection ────────────────────────────────────────
+// ── libei / portal fallback adapters ───────────────────────────────────────
+//
+// These bridge the wlroots-shaped public input API (output-relative integer
+// coordinates, cua button codes, X-keysym key names) onto the libei worker
+// (`libei` module), which speaks logical device-region floats and evdev
+// codes. They are the recovery path for compositors with no
+// `zwlr_virtual_pointer_v1` (KWin/Plasma, Mutter/GNOME) — see #1982.
+//
+// In a build WITHOUT the `portal-input` feature the `libei` module does not
+// exist, so each adapter compiles to an error stub. The dispatch seams above
+// only ever CALL these inside `#[cfg(feature = "portal-input")]` branches, so
+// the stubs are dead in that build; they exist purely so the closures passed
+// to `with_libei_fallback` / `with_wtype_libei_fallback` type-check.
+
+/// libei recovery wrapper for the `wtype`-based typing/key functions: when the
+/// virtual-keyboard shell-out failed (`wtype_err`), try the libei `run` on a
+/// portal-input build, otherwise surface the original wtype failure.
+fn with_wtype_libei_fallback(
+    #[allow(unused_variables)] run: impl FnOnce() -> anyhow::Result<()>,
+    wtype_err: Result<String, std::io::Error>,
+) -> anyhow::Result<()> {
+    #[cfg(feature = "portal-input")]
+    {
+        match wtype_err {
+            Ok(stderr) => tracing::info!(
+                "wtype failed ({stderr}); falling back to libei/portal typing"
+            ),
+            Err(e) => tracing::info!(
+                "wtype unavailable ({e}); falling back to libei/portal typing"
+            ),
+        }
+        run()
+    }
+    #[cfg(not(feature = "portal-input"))]
+    {
+        let _ = run;
+        match wtype_err {
+            Ok(stderr) => anyhow::bail!("wtype failed: {stderr}"),
+            Err(e) => anyhow::bail!("wtype unavailable: {e}"),
+        }
+    }
+}
+
+// Stubs for the no-feature build: the dispatch seams never call these (the
+// libei branch in `with_libei_fallback` / `with_wtype_libei_fallback` is
+// `#[cfg]`-d out), but the closures still need them to exist to type-check.
+#[cfg(not(feature = "portal-input"))]
+fn libei_wait_pointer_ready() -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_wait_scroll_ready() -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_wait_keyboard_ready() -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_click(_x: i32, _y: i32, _count: u32, _button: u8) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_scroll(_direction: &str, _amount: u32) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_move_absolute(_x: i32, _y: i32) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+#[allow(clippy::too_many_arguments)]
+fn libei_drag(
+    _from_x: i32,
+    _from_y: i32,
+    _to_x: i32,
+    _to_y: i32,
+    _steps: u32,
+    _button: u8,
+) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_type_text(_text: &str) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_press_key(_key: &str) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(feature = "portal-input")]
+fn cua_button_to_libei(button: u8) -> libei::Button {
+    match button {
+        2 => libei::Button::Middle,
+        3 => libei::Button::Right,
+        _ => libei::Button::Left,
+    }
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_wait_pointer_ready() -> anyhow::Result<()> {
+    libei::wait_pointer_ready()
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_wait_scroll_ready() -> anyhow::Result<()> {
+    libei::wait_scroll_ready()
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_wait_keyboard_ready() -> anyhow::Result<()> {
+    libei::wait_keyboard_ready()
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_click(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+    let btn = cua_button_to_libei(button);
+    let (w, h) = output_dimensions()?;
+    let (px, py) = normalize_click_xy(x, y, w, h);
+    libei::move_absolute(px as f64, py as f64)?;
+    for i in 0..count.max(1) {
+        if i > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(80));
+        }
+        libei::click(px as f64, py as f64, btn)?;
+    }
+    record_synth_cursor(px, py);
+    Ok(())
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_scroll(direction: &str, amount: u32) -> anyhow::Result<()> {
+    // libei scroll is logical-unit deltas; mirror the wlroots ±10/tick step.
+    let (dx, dy): (f64, f64) = match direction.to_ascii_lowercase().as_str() {
+        "up" => (0.0, -10.0),
+        "down" => (0.0, 10.0),
+        "left" => (-10.0, 0.0),
+        "right" => (10.0, 0.0),
+        other => anyhow::bail!("unknown scroll direction: {other}"),
+    };
+    for i in 0..amount.max(1) {
+        if i > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        libei::scroll(dx, dy)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_move_absolute(x: i32, y: i32) -> anyhow::Result<()> {
+    // Match `move_cursor_absolute_vptr`: clamp to output bounds (no
+    // default-to-centre — an explicit (0,0) move means the top-left corner).
+    let (w, h) = output_dimensions()?;
+    let px = x.clamp(0, (w as i32).saturating_sub(1));
+    let py = y.clamp(0, (h as i32).saturating_sub(1));
+    libei::move_absolute(px as f64, py as f64)?;
+    record_synth_cursor(px, py);
+    Ok(())
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_drag(
+    from_x: i32,
+    from_y: i32,
+    to_x: i32,
+    to_y: i32,
+    steps: u32,
+    button: u8,
+) -> anyhow::Result<()> {
+    // ei_button exposes separate Press/Released states, so the libei worker can
+    // hold the button across the interpolated motion — a genuine
+    // press→move→release drag. Clamp both endpoints to the output — but NOT via
+    // `normalize_click_xy`, whose (0,0)→centre convention (for coordinate-free
+    // clicks) is wrong here: a drag endpoint is always explicit and (0,0) is a
+    // valid top-left corner target.
+    let btn = cua_button_to_libei(button);
+    let (w, h) = output_dimensions()?;
+    let cx = |x: i32| x.clamp(0, (w as i32).saturating_sub(1));
+    let cy = |y: i32| y.clamp(0, (h as i32).saturating_sub(1));
+    libei::drag(
+        cx(from_x) as f64,
+        cy(from_y) as f64,
+        cx(to_x) as f64,
+        cy(to_y) as f64,
+        steps,
+        btn,
+    )?;
+    record_synth_cursor(cx(to_x), cy(to_y));
+    Ok(())
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_type_text(text: &str) -> anyhow::Result<()> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    libei::type_text(text)
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_press_key(key: &str) -> anyhow::Result<()> {
+    let keycode = key_to_evdev(key)
+        .ok_or_else(|| anyhow::anyhow!("no evdev keycode mapping for key '{key}' (libei path)"))?;
+    libei::press_key(keycode)
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_hotkey(mods: &[String], key: &str) -> anyhow::Result<()> {
+    use libei::KeyTransition::{Press, Release};
+
+    let mut modifier_codes = Vec::with_capacity(mods.len());
+    for modifier in mods {
+        modifier_codes.push(match modifier.as_str() {
+            "ctrl" => 29,
+            "shift" => 42,
+            "alt" => 56,
+            "logo" => 125,
+            other => anyhow::bail!("no evdev keycode mapping for modifier '{other}'"),
+        });
+    }
+    let keycode = key_to_evdev(key)
+        .ok_or_else(|| anyhow::anyhow!("no evdev keycode mapping for key '{key}' (libei path)"))?;
+    let mut transitions = Vec::with_capacity(modifier_codes.len() * 2 + 2);
+    transitions.extend(modifier_codes.iter().copied().map(Press));
+    transitions.push(Press(keycode));
+    transitions.push(Release(keycode));
+    transitions.extend(modifier_codes.iter().rev().copied().map(Release));
+    libei::key_sequence(&transitions)
+}
+
+/// Map cua key names to Linux evdev keycodes for the libei `press_key` path
+/// (libei emulates raw evdev, not X keysyms). Mirrors [`key_to_keysym`] but
+/// emits `linux/input-event-codes.h` values. Returns `None` for keys with no
+/// known mapping so the caller can fail loudly.
+fn key_to_evdev(key: &str) -> Option<u32> {
+    let code = match key.to_lowercase().as_str() {
+        "enter" | "return" => 28, // KEY_ENTER
+        "tab" => 15,              // KEY_TAB
+        "esc" | "escape" => 1,    // KEY_ESC
+        "space" => 57,            // KEY_SPACE
+        "backspace" => 14,        // KEY_BACKSPACE
+        "delete" | "del" => 111,  // KEY_DELETE
+        "up" => 103,              // KEY_UP
+        "down" => 108,            // KEY_DOWN
+        "left" => 105,            // KEY_LEFT
+        "right" => 106,           // KEY_RIGHT
+        "home" => 102,            // KEY_HOME
+        "end" => 107,             // KEY_END
+        "pageup" | "page_up" => 104,    // KEY_PAGEUP
+        "pagedown" | "page_down" => 109, // KEY_PAGEDOWN
+        // Letters a-z. evdev codes follow the QWERTY scancode layout, not the
+        // alphabet, so each is listed explicitly (linux/input-event-codes.h).
+        "a" => 30,  // KEY_A
+        "b" => 48,  // KEY_B
+        "c" => 46,  // KEY_C
+        "d" => 32,  // KEY_D
+        "e" => 18,  // KEY_E
+        "f" => 33,  // KEY_F
+        "g" => 34,  // KEY_G
+        "h" => 35,  // KEY_H
+        "i" => 23,  // KEY_I
+        "j" => 36,  // KEY_J
+        "k" => 37,  // KEY_K
+        "l" => 38,  // KEY_L
+        "m" => 50,  // KEY_M
+        "n" => 49,  // KEY_N
+        "o" => 24,  // KEY_O
+        "p" => 25,  // KEY_P
+        "q" => 16,  // KEY_Q
+        "r" => 19,  // KEY_R
+        "s" => 31,  // KEY_S
+        "t" => 20,  // KEY_T
+        "u" => 22,  // KEY_U
+        "v" => 47,  // KEY_V
+        "w" => 17,  // KEY_W
+        "x" => 45,  // KEY_X
+        "y" => 21,  // KEY_Y
+        "z" => 44,  // KEY_Z
+        // Digits. KEY_1=2 .. KEY_9=10, KEY_0=11 (input-event-codes.h).
+        "1" => 2,   // KEY_1
+        "2" => 3,   // KEY_2
+        "3" => 4,   // KEY_3
+        "4" => 5,   // KEY_4
+        "5" => 6,   // KEY_5
+        "6" => 7,   // KEY_6
+        "7" => 8,   // KEY_7
+        "8" => 9,   // KEY_8
+        "9" => 10,  // KEY_9
+        "0" => 11,  // KEY_0
+        // Function keys. KEY_F1=59 .. KEY_F10=68, then KEY_F11=87, KEY_F12=88.
+        "f1" => 59,
+        "f2" => 60,
+        "f3" => 61,
+        "f4" => 62,
+        "f5" => 63,
+        "f6" => 64,
+        "f7" => 65,
+        "f8" => 66,
+        "f9" => 67,
+        "f10" => 68,
+        "f11" => 87,
+        "f12" => 88,
+        _ => return None,
+    };
+    Some(code)
+}
+
+// ── Nested cua-compositor injection ────────────────────────────────────────
 //
 // When cua-driver's nested compositor is `cua-compositor` (our patched wlroots,
 // see nix/cua-driver/compositor/), it exposes a line-protocol control socket at
 // $CUA_INJECT_SOCKET for what stock Wayland forbids: focus-FREE per-surface
-// keyboard injection and MULTI-cursor pointer injection, both routed to a target
-// window by its xdg app_id. These helpers speak that protocol.
+// keyboard injection and MULTI-cursor pointer injection, routed by stable PID
+// when available and xdg app_id only as a fallback. These helpers speak that
+// protocol.
+//
+// The protocol is a simple line-based v1 exchange with per-command
+// acknowledgement: the client sends `INJECT_PROTO_HELLO` and the compositor
+// echoes it (or replies `err ...`), then every command line is answered by
+// exactly one `ok` / `err <reason>` line. The client fails on a protocol
+// mismatch, a read timeout, an EOF, or any compositor error line — an
+// acknowledgement is transport evidence only, not proof the target changed.
 
-/// The control socket path, when running against the EIS nested compositor.
+/// Version banner exchanged at connect time: the client sends this line and the
+/// compositor must echo it back verbatim to confirm both speak v1.
+const INJECT_PROTO_HELLO: &str = "cua-inject v1";
+
+/// The exact named keys the nested compositor's `k` command can emit — the
+/// whitelist in `cua_key_named` (cua_compositor_patch.py). Compared
+/// case-insensitively, matching the compositor's `strcasecmp`.
+const INJECT_NAMED_KEYS: &[&str] = &[
+    "enter", "return", "tab", "escape", "esc", "backspace", "space", "up", "down", "left", "right",
+    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+];
+
+/// The control socket path, when running against the nested cua-compositor.
 pub fn inject_socket_path() -> Option<String> {
     std::env::var("CUA_INJECT_SOCKET")
         .ok()
         .filter(|s| !s.is_empty())
 }
 
-/// True when input should be routed through the EIS compositor's control socket
-/// (focus-free / multi-cursor) rather than wtype / virtual-pointer.
+/// True when input should be routed through the nested cua-compositor's control
+/// socket (focus-free / multi-cursor) rather than wtype / virtual-pointer.
 pub fn is_inject_mode() -> bool {
     inject_socket_path().is_some()
 }
 
-fn inject_send(lines: &[String]) -> anyhow::Result<()> {
-    use std::io::Write;
+/// Reject any character the nested compositor cannot type before it reaches the
+/// wire. The compositor's chartab (`cua_init_keymap`) only covers printable
+/// ASCII (`0x20..=0x7E`) plus newline and tab; anything else — Unicode, other
+/// control bytes — would be silently dropped, so fail loudly instead.
+fn validate_injectable_text(text: &str) -> anyhow::Result<()> {
+    for ch in text.chars() {
+        let ok = ch == '\n' || ch == '\t' || (ch.is_ascii() && !ch.is_ascii_control());
+        if !ok {
+            anyhow::bail!(
+                "cua-compositor cannot type {ch:?}: only printable ASCII plus newline and tab \
+                 are supported in the v1 injection protocol"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Reject any key name outside the compositor's named-key whitelist before
+/// sending. Mirrors `cua_key_named`; unsupported names must fail here rather
+/// than being silently ignored by the compositor.
+fn validate_injectable_key(key: &str) -> anyhow::Result<()> {
+    let normalized = key.trim().to_ascii_lowercase();
+    if INJECT_NAMED_KEYS.contains(&normalized.as_str()) {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "cua-compositor does not support key {key:?}; supported keys: {}",
+            INJECT_NAMED_KEYS.join(", ")
+        );
+    }
+}
+
+fn validate_injectable_hotkey(keys: &[String]) -> anyhow::Result<(String, String)> {
+    let (key, modifiers) = keys
+        .split_last()
+        .ok_or_else(|| anyhow::anyhow!("cua-compositor hotkey requires a non-modifier key"))?;
+    let key = key.trim().to_ascii_lowercase();
+    if !(key.len() == 1 && key.is_ascii()) && !INJECT_NAMED_KEYS.contains(&key.as_str()) {
+        anyhow::bail!("cua-compositor does not support hotkey key {key:?}");
+    }
+    let mut normalized = Vec::with_capacity(modifiers.len());
+    for modifier in modifiers {
+        let modifier = modifier.trim().to_ascii_lowercase();
+        let canonical = match modifier.as_str() {
+            "ctrl" | "control" => "ctrl",
+            "shift" => "shift",
+            "alt" | "option" => "alt",
+            "meta" | "super" | "win" | "cmd" => "meta",
+            _ => anyhow::bail!("cua-compositor does not support modifier {modifier:?}"),
+        };
+        normalized.push(canonical);
+    }
+    if normalized.is_empty() {
+        anyhow::bail!("cua-compositor hotkey requires at least one modifier");
+    }
+    Ok((normalized.join(","), key))
+}
+
+/// Interpret the compositor's handshake reply. Accepts only the verbatim v1
+/// banner; a compositor `err ...` line or anything else is a protocol mismatch.
+fn parse_inject_hello(line: &str) -> anyhow::Result<()> {
+    let trimmed = line.trim();
+    if trimmed == INJECT_PROTO_HELLO {
+        Ok(())
+    } else if let Some(reason) = trimmed.strip_prefix("err") {
+        anyhow::bail!(
+            "cua-compositor rejected the v1 handshake:{}",
+            if reason.trim().is_empty() {
+                String::new()
+            } else {
+                format!(" {}", reason.trim())
+            }
+        )
+    } else {
+        anyhow::bail!(
+            "cua-compositor protocol mismatch: expected {INJECT_PROTO_HELLO:?}, got {trimmed:?}"
+        )
+    }
+}
+
+/// Interpret a single per-command acknowledgement line. `ok` succeeds; `err
+/// <reason>` and any unrecognised line fail.
+fn parse_inject_reply(line: &str) -> anyhow::Result<()> {
+    let trimmed = line.trim();
+    if trimmed == "ok" {
+        Ok(())
+    } else if let Some(reason) = trimmed.strip_prefix("err") {
+        let reason = reason.trim();
+        if reason.is_empty() {
+            anyhow::bail!("cua-compositor rejected the command");
+        }
+        anyhow::bail!("cua-compositor rejected the command: {reason}")
+    } else {
+        anyhow::bail!("unexpected cua-compositor response: {trimmed:?}")
+    }
+}
+
+/// Read one newline-terminated response line, mapping timeout and EOF to clear
+/// errors so the caller never blocks forever on an unresponsive compositor.
+fn read_inject_line(reader: &mut impl std::io::BufRead) -> anyhow::Result<String> {
+    let mut line = String::new();
+    let n = reader.read_line(&mut line).map_err(|e| {
+        if matches!(
+            e.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ) {
+            anyhow::anyhow!("cua-compositor did not respond within the timeout")
+        } else {
+            anyhow::anyhow!("cua-compositor read failed: {e}")
+        }
+    })?;
+    if n == 0 {
+        anyhow::bail!("cua-compositor closed the connection before responding");
+    }
+    Ok(line)
+}
+
+/// Connect to the nested cua-compositor control socket, perform the v1
+/// handshake, then send each command line and require exactly one
+/// acknowledgement per command. Fails on protocol mismatch, timeout, EOF, or a
+/// compositor error line — the earlier fire-and-forget path hid all of these.
+fn inject_exchange(lines: &[String]) -> anyhow::Result<Vec<String>> {
+    use std::io::{BufReader, Write};
     use std::os::unix::net::UnixStream;
     let path = inject_socket_path().ok_or_else(|| anyhow::anyhow!("CUA_INJECT_SOCKET not set"))?;
     // The nested compositor may still be starting; retry the connect briefly.
@@ -1235,36 +2284,80 @@ fn inject_send(lines: &[String]) -> anyhow::Result<()> {
             Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
         }
     }
-    let mut s =
+    let stream =
         stream.ok_or_else(|| anyhow::anyhow!("could not connect to inject socket {path}"))?;
-    let mut buf = String::new();
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+    let mut writer = stream.try_clone()?;
+    let mut reader = BufReader::new(stream);
+
+    // v1 handshake: send our banner and require the compositor to echo it.
+    writeln!(writer, "{INJECT_PROTO_HELLO}")?;
+    writer.flush()?;
+    parse_inject_hello(&read_inject_line(&mut reader)?)?;
+
+    let mut replies = Vec::with_capacity(lines.len());
+    // One command per line; block on its response before the next.
     for l in lines {
-        buf.push_str(l);
-        buf.push('\n');
+        writeln!(writer, "{l}")?;
+        writer.flush()?;
+        replies.push(read_inject_line(&mut reader)?);
     }
-    s.write_all(buf.as_bytes())?;
-    s.flush()?;
-    // Give the compositor a moment to process before the socket closes.
-    std::thread::sleep(std::time::Duration::from_millis(80));
+    Ok(replies)
+}
+
+fn inject_send(lines: &[String]) -> anyhow::Result<()> {
+    for reply in inject_exchange(lines)? {
+        parse_inject_reply(&reply)?;
+    }
     Ok(())
 }
 
-/// Resolve a window_id (foreign-toplevel protocol id) to its xdg app_id by
-/// enumerating toplevels — the inject protocol addresses windows by app_id.
-pub fn app_id_for_window(window_id: u64) -> Option<String> {
-    let conn = Connection::connect_to_env().ok()?;
-    let mut queue = conn.new_event_queue::<State>();
-    let qh = queue.handle();
-    conn.display().get_registry(&qh, ());
-    let mut state = State::default();
-    queue.roundtrip(&mut state).ok()?;
-    for _ in 0..4 {
-        queue.roundtrip(&mut state).ok()?;
+fn parse_inject_geometry(line: &str) -> anyhow::Result<((i32, i32), (i32, i32))> {
+    let fields = line.split_whitespace().collect::<Vec<_>>();
+    if fields.len() == 5 && fields[0] == "geometry" {
+        return Ok((
+            (fields[1].parse()?, fields[2].parse()?),
+            (fields[3].parse()?, fields[4].parse()?),
+        ));
     }
-    state
-        .toplevels
-        .get(&(window_id as u32))
-        .map(|t| t.app_id.clone())
+    if let Some(reason) = line.trim().strip_prefix("err") {
+        anyhow::bail!("cua-compositor geometry query failed: {}", reason.trim());
+    }
+    anyhow::bail!("unexpected cua-compositor geometry response: {:?}", line.trim())
+}
+
+/// Return the offset that rebases native Wayland accessibility coordinates into
+/// the nested compositor's root-surface/output coordinate space.
+pub fn inject_accessibility_offset(pid: u32) -> Option<(i32, i32)> {
+    if !is_inject_mode() || pid == 0 {
+        return None;
+    }
+    let replies = inject_exchange(&[format!("g {pid}")]).ok()?;
+    replies
+        .first()
+        .and_then(|line| parse_inject_geometry(line).ok())
+        .map(|geometry| geometry.0)
+}
+
+fn inject_window_origin(pid: u32) -> Option<(i32, i32)> {
+    if !is_inject_mode() || pid == 0 {
+        return None;
+    }
+    let replies = inject_exchange(&[format!("g {pid}")]).ok()?;
+    replies
+        .first()
+        .and_then(|line| parse_inject_geometry(line).ok())
+        .map(|geometry| geometry.1)
+}
+
+/// Resolve a window_id to its xdg app_id via the stable identity registry that
+/// [`list_windows`] populates (falling back to sway IPC / AT-SPI through
+/// [`identity_for`]) — the nested cua-compositor injection protocol addresses
+/// windows by app_id. Returns `None` when no identity is registered or the
+/// resolved app_id is empty, so callers can surface a clear error.
+pub fn app_id_for_window(window_id: u64) -> Option<String> {
+    identity_for(window_id)
+        .map(|identity| identity.app_id)
         .filter(|s| !s.is_empty())
 }
 
@@ -1295,25 +2388,77 @@ fn evdev_button(x_button: u32) -> u32 {
     }
 }
 
-/// Focus-free type into the window's surface (no focus change).
+/// Sentinel error when a window_id has no registered cua-compositor identity.
+fn no_app_id(window_id: u64) -> anyhow::Error {
+    anyhow::anyhow!(
+        "no known cua-compositor app_id for window {window_id}; call list_windows first so its \
+         Wayland identity is registered"
+    )
+}
+
+/// Resolve the strongest target token understood by the private nested
+/// compositor. AT-SPI window IDs are synthetic on Wayland, but its process ID
+/// is the same credential the compositor observes on the owning wl_client.
+/// Fall back to app_id for clients whose accessibility metadata has no PID.
+pub fn inject_target_for_window(window_id: u64) -> anyhow::Result<String> {
+    if let Some(pid) = crate::atspi::list_windows(None)
+        .into_iter()
+        .find(|window| window.xid == window_id)
+        .and_then(|window| window.pid)
+    {
+        return Ok(format!("pid:{pid}"));
+    }
+    app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))
+}
+
+/// Focus-free type into the window's surface (no focus change). Rejects any
+/// character the compositor cannot emit before touching the socket.
 pub fn inject_type_text(window_id: u64, text: &str) -> anyhow::Result<()> {
-    let app = app_id_for_window(window_id)
-        .ok_or_else(|| anyhow::anyhow!("no Wayland app_id for window {window_id}"))?;
+    validate_injectable_text(text)?;
+    let app = inject_target_for_window(window_id)?;
     inject_send(&[format!("t {app} {}", to_hex(text))])
 }
 
-/// Focus-free named-key press into the window's surface.
+/// Focus-free named-key press into the window's surface. Rejects any key
+/// outside the compositor's whitelist before touching the socket.
 pub fn inject_press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
-    let app = app_id_for_window(window_id)
-        .ok_or_else(|| anyhow::anyhow!("no Wayland app_id for window {window_id}"))?;
-    inject_send(&[format!("k {app} {key}")])
+    validate_injectable_key(key)?;
+    let app = inject_target_for_window(window_id)?;
+    inject_send(&[format!("k {app} {}", key.trim())])
 }
 
-/// Focus-free click into the window's surface via the nested EIS compositor.
+/// Focus-free modifier chord into the target surface.
+pub fn inject_hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
+    let (modifiers, key) = validate_injectable_hotkey(keys)?;
+    let app = inject_target_for_window(window_id)?;
+    inject_send(&[format!("h {app} {modifiers} {key}")])
+}
+
+/// Focus-free wheel/axis input at one target-local point.
+pub fn inject_scroll(
+    window_id: u64,
+    x: f64,
+    y: f64,
+    direction: &str,
+    amount: u32,
+) -> anyhow::Result<()> {
+    let app = inject_target_for_window(window_id)?;
+    let (axis, value) = match direction.to_ascii_lowercase().as_str() {
+        "up" => (0, -15.0),
+        "down" | "page" => (0, 15.0),
+        "left" => (1, -15.0),
+        "right" => (1, 15.0),
+        _ => anyhow::bail!("unsupported cua-compositor scroll direction {direction:?}"),
+    };
+    let mut lines = vec![format!("m {app} 0 {x:.1} {y:.1}")];
+    lines.extend((0..amount.max(1)).map(|_| format!("a {app} 0 {axis} {value:.1}")));
+    inject_send(&lines)
+}
+
+/// Focus-free click into the window's surface via the nested cua-compositor.
 /// Coordinates are window-local, matching the rest of the inject protocol.
 pub fn inject_click(window_id: u64, x: f64, y: f64, count: u32, button: u8) -> anyhow::Result<()> {
-    let app = app_id_for_window(window_id)
-        .ok_or_else(|| anyhow::anyhow!("no Wayland app_id for window {window_id}"))?;
+    let app = inject_target_for_window(window_id)?;
     let btn = evdev_button(button as u32);
     let n = count.max(1);
     let mut lines = Vec::with_capacity((n as usize) * 4);
@@ -1417,28 +2562,117 @@ pub fn inject_parallel_drags(drags: &[InjectDrag]) -> anyhow::Result<()> {
     inject_send(&lines)
 }
 
-/// Window-enumeration dispatcher: native Wayland when applicable, else X11.
+/// Focus-free single drag using the same per-surface path as parallel drags.
+pub fn inject_drag(
+    window_id: u64,
+    from: (f64, f64),
+    to: (f64, f64),
+    steps: usize,
+    x_button: u32,
+) -> anyhow::Result<()> {
+    let app_id = inject_target_for_window(window_id)?;
+    inject_parallel_drags(&[InjectDrag {
+        app_id,
+        idx: 0,
+        x_button,
+        path: vec![from, to],
+        steps,
+    }])
+}
+
+fn wayland_atspi_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
+    let mut windows = crate::atspi::list_windows(filter_pid);
+    // AT-SPI can retain a toolkit's default placement (commonly 120,120)
+    // after Sway has placed the real toplevel at another origin. Reconcile the
+    // fallback records with compositor-owned metadata before exposing them to
+    // callers; element bounds already use this same authoritative Sway tree.
+    for window in &mut windows {
+        let sway = window
+            .pid
+            .and_then(sway_ipc::window_for_pid)
+            .or_else(|| sway_ipc::window_for_title(&window.title))
+            .or_else(|| sway_ipc::window_for_app_id(&window.app_name));
+        if let Some(sway) = sway {
+            window.xid = sway.id;
+            window.x = sway.x;
+            window.y = sway.y;
+            window.width = sway.width;
+            window.height = sway.height;
+            window.is_on_screen = sway.visible && sway.width > 0 && sway.height > 0;
+        }
+    }
+    if is_inject_mode() {
+        for window in &mut windows {
+            if let Some(pid) = window.pid {
+                if let Some((window_x, window_y)) = inject_window_origin(pid) {
+                    window.x = window_x;
+                    window.y = window_y;
+                }
+            }
+        }
+    }
+    windows
+}
+
+/// Window-enumeration dispatcher: native Wayland when available, else X11.
 pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
-    if is_wayland() {
-        // wlroots compositors expose zwlr_foreign_toplevel_management — use it
-        // (it has no pid, so filter_pid can't apply there).
-        match list_windows() {
-            Ok(ws) if !ws.is_empty() => return ws,
+    if wayland_enabled() && std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        // Prefer the richer wlroots protocol. The generic staging protocol is
+        // only consulted when wlroots yields no windows (including when its
+        // manager global is absent).
+        let native = match list_windows() {
+            Ok(ws) if !ws.is_empty() => Ok(enrich_native_windows(
+                ws,
+                wayland_atspi_windows(filter_pid),
+                is_inject_mode(),
+            )),
+            Ok(_) => ext_toplevel::list_windows(),
+            Err(wlr_error) => ext_toplevel::list_windows().map_err(|ext_error| {
+                anyhow::anyhow!(
+                    "wlr provider failed ({wlr_error}); ext provider failed ({ext_error})"
+                )
+            }),
+        };
+        match native {
+            Ok(ws) if !ws.is_empty() => {
+                if let Some(pid) = filter_pid {
+                    if let Some(filtered) = native_windows_for_pid(ws, pid) {
+                        return filtered;
+                    }
+                } else {
+                    return ws;
+                }
+                // A compositor window without pid metadata cannot satisfy a
+                // pid-scoped request. Continue to the AT-SPI registry.
+                let ws = wayland_atspi_windows(filter_pid);
+                if !ws.is_empty() {
+                    return ws;
+                }
+            }
             Ok(_) => {
-                // GNOME Mutter / KDE KWin don't implement foreign-toplevel, so the
-                // list came back empty. Native Wayland apps have no X11 XID either,
-                // so fall back to enumerating windows from the AT-SPI registry
-                // (keyed by pid — the same tree get_window_state walks).
-                let ws = crate::atspi::list_windows(filter_pid);
+                if let Some(ws) =
+                    shell_helper::list_windows(filter_pid).filter(|ws| !ws.is_empty())
+                {
+                    return ws;
+                }
+                let ws = wayland_atspi_windows(filter_pid);
                 if !ws.is_empty() {
                     return ws;
                 }
             }
             Err(e) => {
+                if let Some(ws) =
+                    shell_helper::list_windows(filter_pid).filter(|ws| !ws.is_empty())
+                {
+                    tracing::debug!(
+                        "native Wayland protocols unavailable ({e}); using compositor helper"
+                    );
+                    return ws;
+                }
                 tracing::warn!(
-                    "wayland foreign-toplevel list_windows failed: {e}; trying AT-SPI registry"
+                    "native Wayland list_windows failed: {e}; trying AT-SPI registry"
                 );
-                let ws = crate::atspi::list_windows(filter_pid);
+                let ws = wayland_atspi_windows(filter_pid);
                 if !ws.is_empty() {
                     return ws;
                 }
@@ -1446,7 +2680,124 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
         }
         // Last resort under Wayland: an Xwayland app may still have an X11 XID.
     }
-    crate::x11::list_windows(filter_pid)
+    // If native enumeration and its AT-SPI fallback found nothing, X11 may still
+    // expose XWayland clients. Merge one final AT-SPI snapshot so native windows
+    // remain visible on hybrid sessions even when neither foreign-toplevel
+    // protocol is advertised (#1978). Gated on the native-Wayland opt-in.
+    //
+    // Caveats for the merged AT-SPI entries: they carry a synthetic (non-X11)
+    // xid and zero geometry (x/y/w/h = 0), like the existing wlroots AT-SPI
+    // fallback — so `bring_to_front` / `screenshot_window` / pixel translation
+    // against them error cleanly rather than acting (input on GNOME/KDE routes
+    // by pid + screen coords, not xid, so it's unaffected). Dedup is per-pid, so
+    // the rare app owning BOTH an XWayland window and a separate native-Wayland
+    // toplevel would list only the XWayland one.
+    let mut ws = crate::x11::list_windows(filter_pid);
+    if wayland_enabled() && std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        let seen: std::collections::HashSet<u32> = ws.iter().filter_map(|w| w.pid).collect();
+        // A specific pid already resolved via X11 needs no AT-SPI walk (a full
+        // D-Bus enumeration of every registered app): it can only add duplicates.
+        let already_covered = filter_pid.map_or(false, |p| seen.contains(&p));
+        if !already_covered {
+            merge_atspi_windows(&mut ws, &seen, wayland_atspi_windows(filter_pid));
+        }
+    }
+    ws
+}
+
+fn merge_atspi_windows(
+    windows: &mut Vec<WindowInfo>,
+    x11_pids: &std::collections::HashSet<u32>,
+    atspi_windows: Vec<WindowInfo>,
+) {
+    for window in atspi_windows {
+        // XWayland apps appear in both lists; keep the X11 entry (real XID +
+        // geometry) and retain every native frame whose pid X11 did not expose.
+        if window.pid.is_none_or(|pid| !x11_pids.contains(&pid)) {
+            windows.push(window);
+        }
+    }
+}
+
+fn enrich_native_windows(
+    mut native: Vec<WindowInfo>,
+    atspi: Vec<WindowInfo>,
+    adopt_atspi_ids: bool,
+) -> Vec<WindowInfo> {
+    let mut claimed = std::collections::HashSet::new();
+    for window in &mut native {
+        if window.pid.is_some() {
+            continue;
+        }
+        let native_title = undecorated_native_title(window);
+        let title_match = atspi.iter().enumerate().find_map(|(index, candidate)| {
+            (!claimed.contains(&index)
+                && !native_title.is_empty()
+                && candidate.title == native_title)
+                .then_some(index)
+        });
+        let app_match = title_match.or_else(|| {
+            let matches = atspi
+                .iter()
+                .enumerate()
+                .filter(|(index, candidate)| {
+                    !claimed.contains(index)
+                        && !window.app_name.is_empty()
+                        && candidate.app_name == window.app_name
+                })
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            (matches.len() == 1).then(|| matches[0])
+        });
+        let Some(index) = app_match else { continue };
+        claimed.insert(index);
+        let candidate = &atspi[index];
+        window.pid = candidate.pid;
+        if adopt_atspi_ids {
+            let toplevel = Toplevel {
+                title: undecorated_native_title(window).to_owned(),
+                app_id: window.app_name.clone(),
+                closed: false,
+            };
+            window.xid = candidate.xid;
+            remember_identity(window.xid, &toplevel);
+        }
+        if window.width == 0 || window.height == 0 {
+            window.x = candidate.x;
+            window.y = candidate.y;
+            window.width = candidate.width;
+            window.height = candidate.height;
+        }
+        if adopt_atspi_ids {
+            if let Some(pid) = candidate.pid {
+                if let Some((window_x, window_y)) = inject_window_origin(pid) {
+                    window.x = window_x;
+                    window.y = window_y;
+                }
+            }
+        }
+        window.is_on_screen = candidate.is_on_screen;
+    }
+    native
+}
+
+fn undecorated_native_title(window: &WindowInfo) -> &str {
+    if window.app_name.is_empty() {
+        return &window.title;
+    }
+    let suffix = format!(" [{}]", window.app_name);
+    window.title.strip_suffix(&suffix).unwrap_or(&window.title)
+}
+
+/// Return native records only when they contain a real match for a pid-scoped
+/// request. Ext records whose AT-SPI merge left pid unknown must not suppress
+/// the later AT-SPI and X11 fallback providers.
+fn native_windows_for_pid(windows: Vec<WindowInfo>, pid: u32) -> Option<Vec<WindowInfo>> {
+    let matching: Vec<_> = windows
+        .into_iter()
+        .filter(|window| window.pid == Some(pid))
+        .collect();
+    (!matching.is_empty()).then_some(matching)
 }
 
 /// Snapshot of which wlroots manager globals the running compositor advertises.
@@ -1542,3 +2893,211 @@ impl Dispatch<wl_registry::WlRegistry, ()> for ExtProbeState {
 // compatibility with earlier slice constants.
 #[allow(dead_code)]
 const _BTN_LEFT_ALIAS: u32 = BTN_LEFT;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn window(xid: u64, pid: Option<u32>, title: &str) -> WindowInfo {
+        WindowInfo {
+            xid,
+            pid,
+            app_name: String::new(),
+            title: title.to_owned(),
+            is_on_screen: true,
+            z_index: None,
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        }
+    }
+
+    #[test]
+    fn atspi_merge_keeps_x11_geometry_owner_and_native_only_frames() {
+        let mut windows = vec![window(10, Some(100), "XWayland")];
+        let x11_pids = std::collections::HashSet::from([100]);
+        merge_atspi_windows(
+            &mut windows,
+            &x11_pids,
+            vec![
+                window(100 << 16, Some(100), "XWayland duplicate"),
+                window(200 << 16, Some(200), "Native Wayland"),
+                window(1, None, "Unknown native frame"),
+            ],
+        );
+        assert_eq!(windows.len(), 3);
+        assert_eq!(windows[0].xid, 10);
+        assert_eq!(windows[1].pid, Some(200));
+        assert_eq!(windows[2].pid, None);
+    }
+
+    #[test]
+    fn zero_geometry_does_not_replace_a_real_observed_origin() {
+        let pid = u32::MAX - 17;
+        let mut observed = window(1, Some(pid), "Observed");
+        observed.x = 120;
+        observed.y = 80;
+        remember_observed_window_origins(&[observed]);
+        assert_eq!(observed_window_origin(pid), Some((120, 80)));
+
+        remember_observed_window_origins(&[window(2, Some(pid), "Unknown")]);
+        assert_eq!(observed_window_origin(pid), Some((120, 80)));
+    }
+
+    #[test]
+    fn native_enrichment_matches_plain_atspi_title() {
+        let mut native = window(42, None, "CUA Fixture [cua-fixture]");
+        native.app_name = "cua-fixture".into();
+        let mut accessible = window(123 << 16, Some(123), "CUA Fixture");
+        accessible.x = 20;
+        accessible.y = 30;
+        accessible.width = 800;
+        accessible.height = 600;
+
+        let enriched = enrich_native_windows(vec![native], vec![accessible], false);
+
+        assert_eq!(enriched[0].xid, 42);
+        assert_eq!(enriched[0].pid, Some(123));
+        assert_eq!((enriched[0].x, enriched[0].y), (20, 30));
+        assert_eq!((enriched[0].width, enriched[0].height), (800, 600));
+    }
+
+    #[test]
+    fn unmatched_ext_windows_do_not_satisfy_pid_filter() {
+        let windows = vec![window(0xF000_0000, None, "Protocol-only")];
+        assert!(native_windows_for_pid(windows, 4242).is_none());
+    }
+
+    #[test]
+    fn native_title_match_recovers_pid_without_replacing_native_id() {
+        let native = vec![window(77, None, "CuaTestHarness")];
+        let mut accessible = window(123 << 16, Some(123), "CuaTestHarness");
+        accessible.x = 20;
+        accessible.y = 30;
+        accessible.width = 800;
+        accessible.height = 600;
+        let enriched = enrich_native_windows(native, vec![accessible], false);
+        assert_eq!(enriched[0].xid, 77);
+        assert_eq!(enriched[0].pid, Some(123));
+        assert_eq!(
+            (enriched[0].x, enriched[0].y, enriched[0].width, enriched[0].height),
+            (20, 30, 800, 600)
+        );
+    }
+
+    #[test]
+    fn nested_enrichment_adopts_stable_atspi_id() {
+        let native = vec![window(77, None, "CuaTestHarness")];
+        let accessible = window(123 << 16, Some(123), "CuaTestHarness");
+        let enriched = enrich_native_windows(native, vec![accessible], true);
+        assert_eq!(enriched[0].xid, 123 << 16);
+        assert_eq!(enriched[0].pid, Some(123));
+        assert_eq!(identity_for(enriched[0].xid).unwrap().title, "CuaTestHarness");
+    }
+
+    #[test]
+    fn sway_window_capture_is_cropped_to_compositor_geometry() {
+        let source = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            8,
+            6,
+            image::Rgba([20, 40, 60, 255]),
+        ));
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        source
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .expect("encode fixture PNG");
+        let cropped = crop_png_to_rect(encoded.get_ref(), 2, 1, 3, 4, "fixture")
+            .expect("crop fixture PNG");
+        let decoded = image::load_from_memory(&cropped).expect("decode cropped PNG");
+        assert_eq!((decoded.width(), decoded.height()), (3, 4));
+    }
+
+    #[test]
+    fn injectable_text_accepts_printable_ascii_newline_and_tab() {
+        validate_injectable_text("Hello, World! 123 @#$%\t\n").expect("printable ASCII is typable");
+        // The full printable ASCII span the compositor chartab covers.
+        let printable: String = (0x20u8..=0x7e).map(|b| b as char).collect();
+        validate_injectable_text(&printable).expect("every printable ASCII byte is typable");
+    }
+
+    #[test]
+    fn injectable_text_rejects_unicode_and_other_controls() {
+        for bad in ["café", "emoji 😀", "bell\u{07}", "null\u{00}", "delete\u{7f}", "cr\r"] {
+            assert!(
+                validate_injectable_text(bad).is_err(),
+                "{bad:?} must be rejected before it reaches the compositor"
+            );
+        }
+    }
+
+    #[test]
+    fn injectable_key_accepts_whitelist_case_insensitively() {
+        for good in ["enter", "Enter", "RETURN", "tab", "Escape", "esc", "space", "up", "Left", "f1", "F12"] {
+            validate_injectable_key(good).unwrap_or_else(|e| panic!("{good:?} should pass: {e}"));
+        }
+    }
+
+    #[test]
+    fn injectable_key_rejects_unsupported_names() {
+        for bad in ["f13", "ctrl", "a", "delete", "home", "pageup", ""] {
+            assert!(
+                validate_injectable_key(bad).is_err(),
+                "{bad:?} is not in the compositor whitelist"
+            );
+        }
+    }
+
+    #[test]
+    fn injectable_hotkey_normalizes_supported_chords() {
+        let keys = vec!["control".to_owned(), "SHIFT".to_owned(), "7".to_owned()];
+        assert_eq!(
+            validate_injectable_hotkey(&keys).expect("supported chord"),
+            ("ctrl,shift".to_owned(), "7".to_owned())
+        );
+        assert!(validate_injectable_hotkey(&["7".to_owned()]).is_err());
+        assert!(validate_injectable_hotkey(&["hyper".to_owned(), "k".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn wtype_hotkey_keeps_primer_chord_and_releases_in_order() {
+        let args = wtype_hotkey_args(&["ctrl".into(), "shift".into()], "7");
+        assert_eq!(
+            args,
+            [
+                "-k", "Shift_L", "-s", "30", "-M", "ctrl", "-M", "shift", "-s", "20",
+                "-k", "7", "-s", "20", "-m", "shift", "-m", "ctrl",
+            ]
+        );
+    }
+
+    #[test]
+    fn hello_reply_parses_exact_banner_and_rejects_mismatch() {
+        parse_inject_hello("cua-inject v1\n").expect("verbatim banner is accepted");
+        parse_inject_hello("  cua-inject v1  ").expect("surrounding whitespace is tolerated");
+        assert!(parse_inject_hello("cua-inject v2").is_err());
+        assert!(parse_inject_hello("err unsupported-version").is_err());
+        assert!(parse_inject_hello("garbage").is_err());
+    }
+
+    #[test]
+    fn command_reply_parses_ok_and_surfaces_error_reason() {
+        parse_inject_reply("ok\n").expect("ok is success");
+        parse_inject_reply("ok").expect("ok without newline is success");
+        let err = parse_inject_reply("err ambiguous-app-id\n").unwrap_err();
+        assert!(err.to_string().contains("ambiguous-app-id"));
+        assert!(parse_inject_reply("err").is_err());
+        assert!(parse_inject_reply("maybe").is_err());
+    }
+
+    #[test]
+    fn geometry_reply_is_strict_and_signed() {
+        assert_eq!(
+            parse_inject_geometry("geometry -4 23 10 20\n").unwrap(),
+            ((-4, 23), (10, 20))
+        );
+        assert!(parse_inject_geometry("geometry 1").is_err());
+        assert!(parse_inject_geometry("err target-not-found").is_err());
+        assert!(parse_inject_geometry("ok").is_err());
+    }
+}

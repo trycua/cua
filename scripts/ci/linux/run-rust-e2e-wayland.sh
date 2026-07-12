@@ -49,10 +49,8 @@ export XDG_SESSION_TYPE=wayland
 export XDG_CURRENT_DESKTOP=sway
 export XDG_SESSION_DESKTOP=sway
 export WLR_BACKENDS=headless
-export WLR_RENDERER=gles2
+export WLR_RENDERER=pixman
 export WLR_RENDERER_ALLOW_SOFTWARE=1
-export LIBGL_ALWAYS_SOFTWARE=1
-export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
 export WLR_LIBINPUT_NO_DEVICES=1
 export WLR_HEADLESS_OUTPUTS=1
 export CUA_DRIVER_RS_ENABLE_WAYLAND=1
@@ -60,9 +58,10 @@ export CUA_WAYLAND_RECORDING_OUTPUT=HEADLESS-1
 export ELECTRON_OZONE_PLATFORM_HINT=wayland
 export GDK_BACKEND=wayland
 export QT_QPA_PLATFORM=wayland
-# The headless compositor uses Mesa software GLES so WebKit can create its EGL
-# display without depending on a runner GPU or a DRM render node. DMA-BUF still
-# has no useful device in this lane, so keep that transport disabled.
+# WebKitGTK's accelerated compositor requires a DRM render node. The canonical
+# hosted lane has none, so keep its best-effort software settings explicit;
+# native-Wayland WebKit coverage runs on the representative GNOME/KDE VMs.
+export WEBKIT_DISABLE_COMPOSITING_MODE=1
 export WEBKIT_DISABLE_DMABUF_RENDERER=1
 # This isolated CI session uses a private runtime directory and no user home
 # namespaces. Modern WebKitGTK ignores WEBKIT_FORCE_SANDBOX; use its explicit

@@ -88,7 +88,7 @@ fn advertise_accessibility_to_session(mode: AdvertiseMode) -> anyhow::Result<()>
     // runtime of its own, then join it — no nesting, torn down once it returns.
     std::thread::Builder::new()
         .name("cua-a11y-advertise".into())
-        .spawn(|| {
+        .spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;

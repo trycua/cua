@@ -1584,7 +1584,9 @@ pub fn hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
     activate_window_for_input(window_id)?;
     let (mods, final_key) = partition_modifiers(keys)?;
     let keysym = key_to_keysym(&final_key);
-    let mut args: Vec<String> = Vec::new();
+    // Keep the same harmless first-event primer used by `press_key`. A fresh
+    // virtual-keyboard object on headless seats can drop its first event.
+    let mut args: Vec<String> = vec!["-k".into(), "Shift_L".into()];
     for m in &mods {
         args.push("-M".into());
         args.push(m.clone());

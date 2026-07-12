@@ -2278,6 +2278,50 @@ impl Tool for TypeTextTool {
             }
         }
 
+        // Renderer EditableText writes can update the accessible value without
+        // emitting the DOM input event. For an explicit foreground request on
+        // native Wayland, focus the named field and send real keyboard input so
+        // Chromium/WebKit observe the same event sequence as a user.
+        if delivery.is_foreground()
+            && crate::wayland::wayland_input_enabled()
+            && (is_chromium_embedder(pid) || is_webkitgtk_embedder(pid))
+        {
+            if let Some(idx) = resolved_elem_idx {
+                let focused = tokio::task::spawn_blocking(move || {
+                    crate::atspi::focus_element(pid, idx)
+                })
+                .await;
+                match focused {
+                    Ok(Ok(true)) => {}
+                    Ok(Ok(false)) => {
+                        return ToolResult::error(format!(
+                            "AT-SPI Component.GrabFocus returned false for element {idx}"
+                        ))
+                    }
+                    Ok(Err(error)) => return ToolResult::error(error.to_string()),
+                    Err(error) => return ToolResult::error(format!("Task error: {error}")),
+                }
+
+                let text_w = text.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    crate::wayland::type_text(xid, &text_w)
+                })
+                .await;
+                return match result {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "Typed {text_len} character(s) (via Wayland virtual-keyboard)."
+                    ))
+                    .with_structured(type_text_structured(
+                        "key_events",
+                        text_len,
+                        false,
+                    )),
+                    Ok(Err(error)) => ToolResult::error(error.to_string()),
+                    Err(error) => ToolResult::error(format!("Task error: {error}")),
+                };
+            }
+        }
+
         // AX addressing names one exact editable. Try this focus-free route
         // before native Wayland keyboard injection, which can only target the
         // compositor's globally focused surface.

@@ -2524,6 +2524,7 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
             Ok(ws) if !ws.is_empty() => Ok(enrich_native_windows(
                 ws,
                 crate::atspi::list_windows(filter_pid),
+                is_inject_mode(),
             )),
             Ok(_) => ext_toplevel::list_windows(),
             Err(wlr_error) => ext_toplevel::list_windows().map_err(|ext_error| {
@@ -2618,7 +2619,11 @@ fn merge_atspi_windows(
     }
 }
 
-fn enrich_native_windows(mut native: Vec<WindowInfo>, atspi: Vec<WindowInfo>) -> Vec<WindowInfo> {
+fn enrich_native_windows(
+    mut native: Vec<WindowInfo>,
+    atspi: Vec<WindowInfo>,
+    adopt_atspi_ids: bool,
+) -> Vec<WindowInfo> {
     let mut claimed = std::collections::HashSet::new();
     for window in &mut native {
         if window.pid.is_some() {
@@ -2648,6 +2653,15 @@ fn enrich_native_windows(mut native: Vec<WindowInfo>, atspi: Vec<WindowInfo>) ->
         claimed.insert(index);
         let candidate = &atspi[index];
         window.pid = candidate.pid;
+        if adopt_atspi_ids {
+            let toplevel = Toplevel {
+                title: undecorated_native_title(window).to_owned(),
+                app_id: window.app_name.clone(),
+                closed: false,
+            };
+            window.xid = candidate.xid;
+            remember_identity(window.xid, &toplevel);
+        }
         if window.width == 0 || window.height == 0 {
             window.x = candidate.x;
             window.y = candidate.y;
@@ -2820,7 +2834,7 @@ mod tests {
         accessible.width = 800;
         accessible.height = 600;
 
-        let enriched = enrich_native_windows(vec![native], vec![accessible]);
+        let enriched = enrich_native_windows(vec![native], vec![accessible], false);
 
         assert_eq!(enriched[0].xid, 42);
         assert_eq!(enriched[0].pid, Some(123));
@@ -2842,13 +2856,23 @@ mod tests {
         accessible.y = 30;
         accessible.width = 800;
         accessible.height = 600;
-        let enriched = enrich_native_windows(native, vec![accessible]);
+        let enriched = enrich_native_windows(native, vec![accessible], false);
         assert_eq!(enriched[0].xid, 77);
         assert_eq!(enriched[0].pid, Some(123));
         assert_eq!(
             (enriched[0].x, enriched[0].y, enriched[0].width, enriched[0].height),
             (20, 30, 800, 600)
         );
+    }
+
+    #[test]
+    fn nested_enrichment_adopts_stable_atspi_id() {
+        let native = vec![window(77, None, "CuaTestHarness")];
+        let accessible = window(123 << 16, Some(123), "CuaTestHarness");
+        let enriched = enrich_native_windows(native, vec![accessible], true);
+        assert_eq!(enriched[0].xid, 123 << 16);
+        assert_eq!(enriched[0].pid, Some(123));
+        assert_eq!(identity_for(enriched[0].xid).unwrap().title, "CuaTestHarness");
     }
 
     #[test]

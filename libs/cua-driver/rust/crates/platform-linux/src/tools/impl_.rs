@@ -1839,7 +1839,7 @@ impl Tool for ClickTool {
         };
         let window_id_resolved: Option<u64> = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
-                window_id.map(|v| v as u64)
+                window_id_arg.or_else(|| window_id.map(|v| v as u64))
             }
             cua_driver_core::element_token::ResolvedElement::None => window_id_arg,
         };
@@ -2203,7 +2203,7 @@ impl Tool for TypeTextTool {
             } => (Some(*element_index), window_id.map(|v| v as u64)),
             cua_driver_core::element_token::ResolvedElement::None => (None, None),
         };
-        let xid_opt = resolved_window_id.or_else(|| args.opt_u64("window_id"));
+        let xid_opt = args.opt_u64("window_id").or(resolved_window_id);
 
         // Resolve XID: use window_id if given, else first window for pid.
         let xid = match xid_opt {
@@ -2725,7 +2725,7 @@ impl Tool for PressKeyTool {
         };
         let xid_opt = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
-                window_id.map(|v| v as u64).or(window_id_arg)
+                window_id_arg.or_else(|| window_id.map(|v| v as u64))
             }
             cua_driver_core::element_token::ResolvedElement::None => window_id_arg,
         };
@@ -2957,7 +2957,7 @@ impl Tool for HotkeyTool {
         };
         let xid_opt = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
-                window_id.map(|value| value as u64).or(window_id_arg)
+                window_id_arg.or_else(|| window_id.map(|value| value as u64))
             }
             cua_driver_core::element_token::ResolvedElement::None => window_id_arg,
         };
@@ -3568,7 +3568,8 @@ impl Tool for DoubleClickTool {
         };
         let window_id_resolved: Option<u64> = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
-                window_id.map(|v| v as u64)
+                args.opt_u64("window_id")
+                    .or_else(|| window_id.map(|v| v as u64))
             }
             cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
         };
@@ -3794,7 +3795,8 @@ impl Tool for RightClickTool {
         };
         let window_id_resolved: Option<u64> = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
-                window_id.map(|v| v as u64)
+                args.opt_u64("window_id")
+                    .or_else(|| window_id.map(|v| v as u64))
             }
             cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
         };

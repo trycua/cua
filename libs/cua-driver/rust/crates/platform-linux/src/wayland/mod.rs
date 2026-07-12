@@ -243,6 +243,15 @@ fn identity_for(id: u64) -> Option<ToplevelIdentity> {
                 app_id: window.app_id,
             })
         })
+        .or_else(|| {
+            crate::atspi::list_windows(None)
+                .into_iter()
+                .find(|window| window.xid == id || u64::from(window.xid as u32) == id)
+                .map(|window| ToplevelIdentity {
+                    title: window.title,
+                    app_id: window.app_name,
+                })
+        })
 }
 
 fn matching_handle(state: &State, id: u64) -> Option<ZwlrForeignToplevelHandleV1> {

@@ -1478,7 +1478,7 @@ pub fn perform_action_at_screen_point(
             // correctly; Screen is (0,0)) plus the window's screen origin (the
             // GNOME Shell helper on Wayland, _GTK_FRAME_EXTENTS on X11). When no
             // offset resolves, fall back to CoordType::Screen (correct on Qt/GTK3).
-            let offset = window_to_screen_offset(pid, xid);
+            let offset = window_to_screen_offset(pid, xid, None);
             let coord = if offset.is_some() {
                 CoordType::Window
             } else {
@@ -1670,7 +1670,7 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
             // Prefer WINDOW coords + a deterministic screen offset — fixes GTK4,
             // whose CoordType::Screen collapses every element to (0,0). Fall back to
             // Screen on Wayland / when no X11 window resolves (offset is None).
-            match window_to_screen_offset(pid, 0) {
+            match window_to_screen_offset(pid, 0, None) {
                 Some((ox, oy)) => {
                     let (x, y, w, h) = comp
                         .get_extents(CoordType::Window)
@@ -1778,7 +1778,7 @@ fn parse_gtk_frame_extents(vals: &[u32]) -> Option<(i32, i32)> {
 /// path and the WINDOW reconstruction can never regress a toolkit that was
 /// already correct. Also returns `None` on native Wayland (clients may not
 /// query screen origins, by design) or when no X11 window resolves.
-fn window_to_screen_offset(pid: u32, xid: u64) -> Option<(i32, i32)> {
+fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i32, i32)> {
     if crate::wayland::is_wayland() {
         // Native Wayland: clients can't query a window's screen origin, and
         // AT-SPI CoordType::Screen collapses to (0,0) on Mutter. The bundled
@@ -1789,7 +1789,8 @@ fn window_to_screen_offset(pid: u32, xid: u64) -> Option<(i32, i32)> {
         // `_GTK_FRAME_EXTENTS` path below. `None` (no extension) keeps the
         // legacy Screen path (still (0,0), but no worse than before).
         return crate::wayland::shell_helper::window_origin_for_pid(pid)
-            .or_else(|| crate::wayland::sway_ipc::window_origin_for_pid(pid));
+            .or_else(|| crate::wayland::sway_ipc::window_origin_for_pid(pid))
+            .or_else(|| title.and_then(crate::wayland::sway_ipc::window_origin_for_title));
     }
     // Resolve a usable window xid. `xid == 0` means "no hint" (get_element_bounds
     // has no window context); fall back to this pid's first window — the same
@@ -1850,7 +1851,14 @@ async fn element_bounds_for_visited(
     // distinct per-widget WINDOW coords instead. On Wayland / when no X11
     // window resolves, `offset` is None and we keep the legacy Screen path
     // so non-X11 behaviour is unchanged.
-    let offset = window_to_screen_offset(pid, xid);
+    let window_title = visited.iter().find_map(|node| {
+        matches!(
+            node.role.to_ascii_lowercase().as_str(),
+            "frame" | "window" | "dialog" | "alert" | "file chooser"
+        )
+        .then_some(node.name.as_str())
+    });
+    let offset = window_to_screen_offset(pid, xid, window_title);
     let coord = if offset.is_some() {
         CoordType::Window
     } else {

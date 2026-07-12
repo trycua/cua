@@ -121,6 +121,19 @@ pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
     Some((window.x, window.y))
 }
 
+pub fn window_origin_for_title(title: &str) -> Option<(i32, i32)> {
+    let window = list_windows()?
+        .into_iter()
+        .filter(|window| {
+            window.width > 0
+                && window.height > 0
+                && (window.title == title
+                    || (!window.title.is_empty() && title.starts_with(&window.title)))
+        })
+        .max_by_key(|window| (window.focused, window.visible))?;
+    Some((window.x, window.y))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

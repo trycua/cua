@@ -37,6 +37,12 @@ jobs:
             visual: false
             result_link: result-cua-driver-set-config
             artifact_name: ""
+          - name: NixOS set_value EditableText test
+            check_attr: cua-driver-set-value
+            timeout_minutes: 15
+            visual: false
+            result_link: result-cua-driver-set-value
+            artifact_name: ""
           - name: Linux cursor click GIF test
             check_attr: cua-driver-linux-cursor-click-gif
             timeout_minutes: 12

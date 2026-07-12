@@ -1,0 +1,49 @@
+---
+title: 'Troubleshoot Kubernetes image pulls'
+description: 'Diagnose Pending Cua workloads before changing or restarting them.'
+---
+
+When a Cua workload stays `Pending`, identify the failing lifecycle stage before
+changing resource requests or restarting the workload. A scheduled pod whose init
+container reports `ErrImagePull` or `ImagePullBackOff` has passed scheduling; CPU,
+memory, affinity, and PVC changes will not repair an unavailable image.
+
+## Inspect the pod
+
+```bash
+kubectl -n <namespace> get pod <pod> -o wide
+kubectl -n <namespace> describe pod <pod>
+kubectl -n <namespace> get events \
+  --field-selector involvedObject.name=<pod> \
+  --sort-by=.lastTimestamp
+```
+
+Record the exact image reference, failing container, registry response, and
+`PodScheduled` condition. Treat these messages differently:
+
+- `NotFound` or `manifest unknown`: verify that the exact tag or digest was published.
+- `Unauthorized` or `FailedToRetrieveImagePullSecret`: verify the referenced pull
+  secret through the approved secret-management path.
+- `FailedScheduling`: inspect capacity, taints, affinity, and unbound PVC events.
+
+## Remediate safely
+
+1. Verify the requested image exists in the registry before editing the workload.
+2. Prefer an approved immutable digest. Publish or promote the intended build when
+   the reference is absent; do not guess a nearby tag.
+3. Repair pull credentials only when registry or event evidence identifies an
+   authentication failure.
+4. Reconcile or restart the workload only after correcting the reference or
+   credentials. Keep the previous approved reference available for rollback.
+
+## Verify recovery
+
+```bash
+kubectl -n <namespace> get pod <pod> -w
+kubectl -n <namespace> describe pod <pod>
+```
+
+Confirm the failing init container terminates successfully, the pod reaches
+`Running`, and the corresponding pending-pod alert resolves. If the image pulls but
+initialization still fails, start a new investigation from the new container status
+and events rather than applying the original diagnosis.

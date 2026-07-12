@@ -3,6 +3,7 @@
   "icon": "Wrench",
   "pages": [
     "index",
+    "troubleshoot-kubernetes-image-pulls",
     "driver",
     "sandbox",
     "lume",

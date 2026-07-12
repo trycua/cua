@@ -1826,6 +1826,25 @@ fn screen_extent_rebase(
     }
 }
 
+fn rebase_renderer_window_offset(
+    mut offset: (i32, i32),
+    frame_origin: Option<(i32, i32)>,
+) -> (i32, i32) {
+    if let Some((frame_x, frame_y)) = frame_origin {
+        // Chromium may expose a negative renderer-local frame origin. Rebase
+        // that shape, but keep positive content insets: its descendants are
+        // already relative to the content origin and subtracting the inset
+        // moves first-row controls above the captured Wayland window.
+        if frame_x < 0 {
+            offset.0 = offset.0.saturating_sub(frame_x);
+        }
+        if frame_y < 0 {
+            offset.1 = offset.1.saturating_sub(frame_y);
+        }
+    }
+    offset
+}
+
 /// Screen-coordinate bounds for the exact visited sequence rendered into the
 /// current snapshot. Nodes without a usable Component interface, or whose
 /// extents query fails/times out, are omitted rather than borrowing another
@@ -1932,11 +1951,10 @@ async fn element_bounds_for_visited(
     } else {
         None
     };
-    let (mut offset_x, mut offset_y) = offset.or(screen_rebase).unwrap_or((0, 0));
-    if let Some((frame_x, frame_y)) = window_frame_origin {
-        offset_x = offset_x.saturating_sub(frame_x);
-        offset_y = offset_y.saturating_sub(frame_y);
-    }
+    let (offset_x, offset_y) = rebase_renderer_window_offset(
+        offset.or(screen_rebase).unwrap_or((0, 0)),
+        window_frame_origin,
+    );
     if let Some((ox, oy)) = offset {
         dlog!("element bounds: WINDOW coords + screen offset ({ox},{oy})");
     } else if let Some((ox, oy)) = screen_rebase {
@@ -1992,7 +2010,8 @@ async fn element_bounds_for_visited(
 mod coord_tests {
     use super::parse_gtk_frame_extents;
     use super::{
-        is_indexable_capabilities, is_passive_role, screen_extent_rebase, select_click_target,
+        is_indexable_capabilities, is_passive_role, rebase_renderer_window_offset,
+        screen_extent_rebase, select_click_target,
     };
 
     #[test]
@@ -2008,6 +2027,18 @@ mod coord_tests {
         assert_eq!(screen_extent_rebase((604, 80), (0, 0)), Some((604, 80)));
         assert_eq!(screen_extent_rebase((604, 100), (604, 80)), None);
         assert_eq!(screen_extent_rebase((604, 80), (604, 80)), None);
+    }
+
+    #[test]
+    fn renderer_window_offset_only_rebases_negative_frame_origins() {
+        assert_eq!(
+            rebase_renderer_window_offset((100, 50), Some((-8, -29))),
+            (108, 79)
+        );
+        assert_eq!(
+            rebase_renderer_window_offset((100, 50), Some((0, 29))),
+            (100, 50)
+        );
     }
 
     #[test]

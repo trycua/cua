@@ -1334,14 +1334,77 @@ pub fn scroll(window_id: u64, direction: &str, amount: u32) -> anyhow::Result<()
 /// Translate window-local screenshot coordinates into compositor output
 /// coordinates when the active compositor exposes the target geometry.
 pub fn window_local_to_output(window_id: u64, x: i32, y: i32) -> (i32, i32) {
-    if let Some(window) = sway_ipc::window_for_id(window_id) {
-        return (window.x.saturating_add(x), window.y.saturating_add(y));
-    }
-    list_windows_dispatch(None)
-        .into_iter()
-        .find(|window| window.xid == window_id && window.width > 0 && window.height > 0)
-        .map(|window| (window.x.saturating_add(x), window.y.saturating_add(y)))
+    window_geometry(window_id)
+        .map(|(window_x, window_y, _, _)| {
+            (window_x.saturating_add(x), window_y.saturating_add(y))
+        })
         .unwrap_or((x, y))
+}
+
+/// Resolve geometry through stable title/app identity when a foreign-toplevel
+/// object ID came from an earlier Wayland connection. Protocol object IDs are
+/// connection-local, so direct equality is only a fast path.
+pub fn window_geometry(window_id: u64) -> Option<(i32, i32, u32, u32)> {
+    if let Some(window) = sway_ipc::window_for_id(window_id) {
+        return Some((window.x, window.y, window.width, window.height));
+    }
+
+    let identity = identity_for(window_id);
+    if let Some(identity) = identity.as_ref() {
+        if let Some(windows) = sway_ipc::list_windows() {
+            let title_matches = windows
+                .iter()
+                .filter(|window| !identity.title.is_empty() && window.title == identity.title)
+                .collect::<Vec<_>>();
+            if title_matches.len() == 1 {
+                let window = title_matches[0];
+                return Some((window.x, window.y, window.width, window.height));
+            }
+            let app_matches = windows
+                .iter()
+                .filter(|window| !identity.app_id.is_empty() && window.app_id == identity.app_id)
+                .collect::<Vec<_>>();
+            if app_matches.len() == 1 {
+                let window = app_matches[0];
+                return Some((window.x, window.y, window.width, window.height));
+            }
+        }
+    }
+
+    let windows = list_windows_dispatch(None);
+    if let Some(window) = windows
+        .iter()
+        .find(|window| window.xid == window_id && window.width > 0 && window.height > 0)
+    {
+        return Some((window.x, window.y, window.width, window.height));
+    }
+    let identity = identity?;
+    let title_matches = windows
+        .iter()
+        .filter(|window| {
+            window.width > 0
+                && window.height > 0
+                && !identity.title.is_empty()
+                && undecorated_native_title(window) == identity.title
+        })
+        .collect::<Vec<_>>();
+    if title_matches.len() == 1 {
+        let window = title_matches[0];
+        return Some((window.x, window.y, window.width, window.height));
+    }
+    let app_matches = windows
+        .iter()
+        .filter(|window| {
+            window.width > 0
+                && window.height > 0
+                && !identity.app_id.is_empty()
+                && window.app_name == identity.app_id
+        })
+        .collect::<Vec<_>>();
+    (app_matches.len() == 1).then(|| {
+        let window = app_matches[0];
+        (window.x, window.y, window.width, window.height)
+    })
 }
 
 /// Scroll after positioning the synthetic pointer over an output-relative

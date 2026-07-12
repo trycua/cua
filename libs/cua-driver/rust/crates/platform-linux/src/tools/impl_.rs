@@ -999,17 +999,16 @@ fn resolve_element_local_coords(
     };
 
     if crate::wayland::wayland_input_enabled() {
-        let window = crate::wayland::list_windows_dispatch(Some(pid))
-            .into_iter()
-            .find(|window| window.xid == xid)
+        let (window_x, window_y, window_width, window_height) =
+            crate::wayland::window_geometry(xid)
             .ok_or_else(|| anyhow::anyhow!("No Wayland geometry for window {xid}"))?;
-        if window.width == 0 || window.height == 0 {
+        if window_width == 0 || window_height == 0 {
             anyhow::bail!("Wayland window {xid} has no usable geometry");
         }
         return Ok((
             xid,
-            screen_cx - window.x as f64,
-            screen_cy - window.y as f64,
+            screen_cx - window_x as f64,
+            screen_cy - window_y as f64,
         ));
     }
 

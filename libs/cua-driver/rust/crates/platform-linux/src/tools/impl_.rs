@@ -3651,6 +3651,9 @@ impl Tool for DoubleClickTool {
                         .then(|| crate::wayland::window_local_to_output(xid, lxi, lyi));
                     let cursor_id_for_task = cursor_id.clone();
                     let click_result = tokio::task::spawn_blocking(move || {
+                        if crate::wayland::is_inject_mode() {
+                            return crate::wayland::inject_click(xid, lx, ly, 2, 1);
+                        }
                         if crate::wayland::wayland_input_enabled() {
                             let (output_x, output_y) = wayland_point.unwrap_or((lxi, lyi));
                             return crate::wayland::click(xid, output_x, output_y, 2, 1);
@@ -3736,6 +3739,9 @@ impl Tool for DoubleClickTool {
         let (xi, yi) = (x as i32, y as i32);
         let cursor_id_for_task = cursor_id.clone();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            if crate::wayland::is_inject_mode() {
+                return crate::wayland::inject_click(xid, x, y, 2, 1);
+            }
             if crate::wayland::wayland_input_enabled() {
                 let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
                 return crate::wayland::click(xid, output_x, output_y, 2, 1);
@@ -3878,6 +3884,9 @@ impl Tool for RightClickTool {
                         .then(|| crate::wayland::window_local_to_output(xid, lxi, lyi));
                     let cursor_id_for_task = cursor_id.clone();
                     let click_result = tokio::task::spawn_blocking(move || {
+                        if crate::wayland::is_inject_mode() {
+                            return crate::wayland::inject_click(xid, lx, ly, 1, 3);
+                        }
                         if crate::wayland::wayland_input_enabled() {
                             let (output_x, output_y) = wayland_point.unwrap_or((lxi, lyi));
                             return crate::wayland::click(xid, output_x, output_y, 1, 3);
@@ -3963,6 +3972,9 @@ impl Tool for RightClickTool {
         let (xi, yi) = (x as i32, y as i32);
         let cursor_id_for_task = cursor_id.clone();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            if crate::wayland::is_inject_mode() {
+                return crate::wayland::inject_click(xid, x, y, 1, 3);
+            }
             if crate::wayland::wayland_input_enabled() {
                 let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
                 return crate::wayland::click(xid, output_x, output_y, 1, 3);

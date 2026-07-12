@@ -148,10 +148,11 @@ static const char *cua_activate_pid(struct tinywl_server *server, pid_t target_p
  * a non-focused target beneath another focused surface is therefore occluded. */
 static void cua_query_state(struct tinywl_server *server, pid_t target_pid, char *out, size_t out_len) {
 	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
+	struct wlr_surface *focused_root = focused ? wlr_surface_get_root_surface(focused) : NULL;
 	struct tinywl_toplevel *t, *target = NULL, *focused_toplevel = NULL;
 	wl_list_for_each(t, &server->toplevels, link) {
 		struct wlr_surface *surface = t->xdg_toplevel ? t->xdg_toplevel->base->surface : NULL;
-		if (surface == focused) focused_toplevel = t;
+		if (surface == focused_root) focused_toplevel = t;
 		if (target_pid > 0 && cua_toplevel_pid(t) == target_pid) target = t;
 	}
 	pid_t focused_pid = cua_toplevel_pid(focused_toplevel);
@@ -173,13 +174,13 @@ static void cua_ptr_leave(struct wlr_seat *seat, struct wlr_surface *surf) {
  * independent cursors against the same or different surfaces. Focus-free: we
  * write straight to the client's wl_pointer resources, never touching the seat
  * focus or any real cursor. */
-static void cua_motion(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, double x, double y) {
-	if (!t || idx < 0 || idx >= CUA_MAXDEV) return;
+static bool cua_motion(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, double x, double y) {
+	if (!t || idx < 0 || idx >= CUA_MAXDEV) return false;
 	struct wlr_surface *surface = t->xdg_toplevel->base->surface;
 	struct wlr_box geo = t->xdg_toplevel->base->geometry;
 	wl_fixed_t sx = wl_fixed_from_double(geo.x + x), sy = wl_fixed_from_double(geo.y + y);
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
-	if (!sc || wl_list_empty(&sc->pointers)) return;
+	if (!sc || wl_list_empty(&sc->pointers)) return false;
 	struct wl_resource *res;
 	if (cua_ptr[idx].entered != surface) {
 		if (cua_ptr[idx].entered) cua_ptr_leave(server->seat, cua_ptr[idx].entered);
@@ -189,24 +190,26 @@ static void cua_motion(struct tinywl_server *server, struct tinywl_toplevel *t, 
 	}
 	uint32_t tm = cua_now_ms();
 	wl_resource_for_each(res, &sc->pointers) { wl_pointer_send_motion(res, tm, sx, sy); cua_pframe(res); }
+	return true;
 }
-static void cua_button(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, uint32_t button, bool pressed) {
-	if (!t || idx < 0 || idx >= CUA_MAXDEV) return;
+static bool cua_button(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, uint32_t button, bool pressed) {
+	if (!t || idx < 0 || idx >= CUA_MAXDEV) return false;
 	struct wlr_surface *surface = t->xdg_toplevel->base->surface;
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
-	if (!sc || wl_list_empty(&sc->pointers)) return;
+	if (!sc || wl_list_empty(&sc->pointers)) return false;
 	uint32_t tm = cua_now_ms(), bs = wlr_seat_client_next_serial(sc);
 	struct wl_resource *res;
 	wl_resource_for_each(res, &sc->pointers) {
 		wl_pointer_send_button(res, bs, tm, button, pressed ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED);
 		cua_pframe(res);
 	}
+	return true;
 }
-static void cua_axis(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, uint32_t axis, double value) {
-	if (!t || idx < 0 || idx >= CUA_MAXDEV) return;
+static bool cua_axis(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, uint32_t axis, double value) {
+	if (!t || idx < 0 || idx >= CUA_MAXDEV) return false;
 	struct wlr_surface *surface = t->xdg_toplevel->base->surface;
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
-	if (!sc || wl_list_empty(&sc->pointers)) return;
+	if (!sc || wl_list_empty(&sc->pointers)) return false;
 	uint32_t tm = cua_now_ms();
 	struct wl_resource *res;
 	wl_resource_for_each(res, &sc->pointers) {
@@ -215,6 +218,7 @@ static void cua_axis(struct tinywl_server *server, struct tinywl_toplevel *t, in
 		wl_pointer_send_axis(res, tm, axis, wl_fixed_from_double(value));
 		cua_pframe(res);
 	}
+	return true;
 }
 static void cua_init_keymap(void) {
 	struct xkb_context *ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
@@ -373,13 +377,13 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 		int idx; double x, y;
 		if (sscanf(line, "m %127s %d %lf %lf", app, &idx, &x, &y) != 4) return "bad-args";
 		if (!(t = cua_resolve_target(server, app, &err))) return err;
-		cua_motion(server, t, idx, x, y);
+		if (!cua_motion(server, t, idx, x, y)) return "no-pointer-resource";
 		return NULL;
 	} else if (!strcmp(cmd, "b")) {
 		int idx; unsigned btn, pr;
 		if (sscanf(line, "b %127s %d %u %u", app, &idx, &btn, &pr) != 4) return "bad-args";
 		if (!(t = cua_resolve_target(server, app, &err))) return err;
-		cua_button(server, t, idx, btn, pr != 0);
+		if (!cua_button(server, t, idx, btn, pr != 0)) return "no-pointer-resource";
 		return NULL;
 	} else if (!strcmp(cmd, "t")) {
 		char hex[8192];
@@ -403,7 +407,7 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 		int idx; unsigned axis; double value;
 		if (sscanf(line, "a %127s %d %u %lf", app, &idx, &axis, &value) != 4) return "bad-args";
 		if (!(t = cua_resolve_target(server, app, &err))) return err;
-		cua_axis(server, t, idx, axis, value);
+		if (!cua_axis(server, t, idx, axis, value)) return "no-pointer-resource";
 		return NULL;
 	}
 	return "unknown-command";

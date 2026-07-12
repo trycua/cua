@@ -2039,6 +2039,7 @@ const INJECT_PROTO_HELLO: &str = "cua-inject v1";
 /// case-insensitively, matching the compositor's `strcasecmp`.
 const INJECT_NAMED_KEYS: &[&str] = &[
     "enter", "return", "tab", "escape", "esc", "backspace", "space", "up", "down", "left", "right",
+    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
 ];
 
 /// The control socket path, when running against the nested cua-compositor.

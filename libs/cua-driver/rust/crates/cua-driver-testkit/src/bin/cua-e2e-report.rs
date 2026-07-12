@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use cua_driver_testkit::e2e::{
-    read_json_lines, validate_catalog, CaseDeclaration, CaseResult, EnvironmentRecord,
-    EnvironmentStatus, DECLARATION_SCHEMA, ENVIRONMENT_SCHEMA,
+    environment_schema_supported, read_json_lines, validate_catalog, CaseDeclaration, CaseResult,
+    EnvironmentRecord, EnvironmentStatus, DECLARATION_SCHEMA,
 };
 
 fn value(args: &[String], name: &str) -> Option<String> {
@@ -48,13 +48,15 @@ fn main() {
     let results: Vec<CaseResult> = read_json_lines(&results)
         .unwrap_or_else(|errors| panic!("invalid results:\n{}", errors.join("\n")));
     let mut source_sha = None;
+    let mut environment_record = None;
     if let Some(path) = environment {
         let records: Vec<EnvironmentRecord> = read_json_lines(&path)
             .unwrap_or_else(|errors| panic!("invalid environment:\n{}", errors.join("\n")));
         assert_eq!(records.len(), 1, "expected one environment record");
-        assert_eq!(
-            records[0].schema, ENVIRONMENT_SCHEMA,
-            "unsupported environment schema"
+        assert!(
+            environment_schema_supported(&records[0].schema),
+            "unsupported environment schema: {}",
+            records[0].schema,
         );
         source_sha = records[0].source_sha.clone();
         if records[0].status == EnvironmentStatus::Error {
@@ -68,6 +70,7 @@ fn main() {
             eprintln!("E2E environment is not ready: {}", records[0].message);
             std::process::exit(2);
         }
+        environment_record = records.into_iter().next();
     }
     let summary = validate_catalog(
         &declarations,
@@ -76,10 +79,11 @@ fn main() {
         require_video,
     )
     .unwrap_or_else(|errors| panic!("invalid E2E report:\n{}", errors.join("\n")));
-    let markdown = summary.markdown_with_declarations_and_source(
+    let markdown = summary.markdown_with_declarations_source_and_environment(
         &declarations,
         &results,
         source_sha.as_deref(),
+        environment_record.as_ref(),
     );
     emit(markdown, output.as_ref());
 }

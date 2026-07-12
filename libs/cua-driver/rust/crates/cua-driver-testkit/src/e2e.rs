@@ -11,7 +11,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 
 pub const DECLARATION_SCHEMA: &str = "cua-e2e-case/v2";
-pub const ENVIRONMENT_SCHEMA: &str = "cua-e2e-environment/v2";
+pub const ENVIRONMENT_SCHEMA_V2: &str = "cua-e2e-environment/v2";
+pub const ENVIRONMENT_SCHEMA: &str = "cua-e2e-environment/v3";
 pub const RESULT_SCHEMA: &str = "cua-e2e-result/v2";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -133,6 +134,7 @@ pub enum DriverRoute {
     LinuxXTest,
     LinuxLibei,
     LinuxWaylandVirtualPointer,
+    LinuxCuaCompositorInject,
     Cdp,
     Composite,
 }
@@ -143,6 +145,24 @@ pub fn shared_web_route(
     action: &str,
     targeting: Targeting,
     delivery: Delivery,
+) -> Result<DriverRoute, String> {
+    shared_web_route_for_environment(
+        platform,
+        display_server,
+        action,
+        targeting,
+        delivery,
+        nested_inject_from_env(),
+    )
+}
+
+fn shared_web_route_for_environment(
+    platform: Platform,
+    display_server: DisplayServer,
+    action: &str,
+    targeting: Targeting,
+    delivery: Delivery,
+    nested_inject: bool,
 ) -> Result<DriverRoute, String> {
     use DriverRoute as Route;
 
@@ -198,6 +218,10 @@ pub fn shared_web_route(
             Ok(Route::Composite)
         }
 
+        (Platform::Linux, DisplayServer::Wayland, Targeting::Px, _) if nested_inject =>
+        {
+            Ok(Route::LinuxCuaCompositorInject)
+        }
         (Platform::Linux, DisplayServer::Wayland, Targeting::Px, _) => {
             Ok(Route::LinuxWaylandVirtualPointer)
         }
@@ -222,6 +246,12 @@ pub fn shared_web_route(
             Targeting::Ax,
             "right_click" | "double_click" | "press_key" | "hotkey",
         ) => pointer_or_key_route(Route::LinuxXSendEvent, Route::LinuxXTest),
+        (
+            Platform::Linux,
+            DisplayServer::Wayland,
+            Targeting::Ax,
+            "right_click" | "double_click" | "press_key" | "hotkey",
+        ) if nested_inject => Ok(Route::LinuxCuaCompositorInject),
         (
             Platform::Linux,
             DisplayServer::Wayland,
@@ -301,6 +331,10 @@ pub struct EnvironmentRecord {
     pub platform: Platform,
     pub display_server: DisplayServer,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compositor: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_backends: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_sha: Option<String>,
     pub status: EnvironmentStatus,
     pub duration_ms: u128,
@@ -313,6 +347,8 @@ impl EnvironmentRecord {
             schema: ENVIRONMENT_SCHEMA.to_owned(),
             platform: Platform::current(),
             display_server: DisplayServer::current(),
+            compositor: compositor_from_env(),
+            input_backends: input_backends_from_env(),
             source_sha: source_sha_from_env(),
             status: EnvironmentStatus::Ready,
             duration_ms: duration.as_millis(),
@@ -325,11 +361,82 @@ impl EnvironmentRecord {
             schema: ENVIRONMENT_SCHEMA.to_owned(),
             platform: Platform::current(),
             display_server: DisplayServer::current(),
+            compositor: compositor_from_env(),
+            input_backends: input_backends_from_env(),
             source_sha: source_sha_from_env(),
             status: EnvironmentStatus::Error,
             duration_ms: duration.as_millis(),
             message: message.into(),
         }
+    }
+}
+
+pub fn environment_schema_supported(schema: &str) -> bool {
+    matches!(schema, ENVIRONMENT_SCHEMA | ENVIRONMENT_SCHEMA_V2)
+}
+
+fn nested_inject_from_env() -> bool {
+    std::env::var_os("CUA_INJECT_SOCKET").is_some()
+}
+
+fn compositor_from_env() -> Option<String> {
+    if let Ok(value) = std::env::var("CUA_E2E_COMPOSITOR") {
+        if !value.trim().is_empty() {
+            return Some(value);
+        }
+    }
+    match (Platform::current(), DisplayServer::current()) {
+        (Platform::Windows, DisplayServer::Win32) => Some("windows-desktop".to_owned()),
+        (Platform::Macos, DisplayServer::Quartz) => Some("windowserver".to_owned()),
+        (Platform::Linux, DisplayServer::X11) => Some("openbox-x11".to_owned()),
+        (Platform::Linux, DisplayServer::Wayland) if nested_inject_from_env() => {
+            Some("cua-compositor-nested".to_owned())
+        }
+        (Platform::Linux, DisplayServer::Wayland) => {
+            let desktop = std::env::var("XDG_CURRENT_DESKTOP")
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if desktop.contains("sway") {
+                Some("sway".to_owned())
+            } else if desktop.contains("gnome") {
+                Some("gnome-mutter".to_owned())
+            } else if desktop.contains("kde") || desktop.contains("plasma") {
+                Some("kwin".to_owned())
+            } else {
+                Some("wayland-unknown".to_owned())
+            }
+        }
+        _ => None,
+    }
+}
+
+fn input_backends_from_env() -> Vec<String> {
+    if let Ok(value) = std::env::var("CUA_E2E_INPUT_BACKENDS") {
+        let mut backends = value
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        backends.sort();
+        backends.dedup();
+        return backends;
+    }
+    match (Platform::current(), DisplayServer::current()) {
+        (Platform::Windows, DisplayServer::Win32) => vec!["win32".to_owned(), "uia".to_owned()],
+        (Platform::Macos, DisplayServer::Quartz) => {
+            vec!["accessibility".to_owned(), "cg-event".to_owned()]
+        }
+        (Platform::Linux, DisplayServer::X11) => vec![
+            "atspi".to_owned(),
+            "xsend-event".to_owned(),
+            "xtest".to_owned(),
+        ],
+        (Platform::Linux, DisplayServer::Wayland) if nested_inject_from_env() => {
+            vec!["atspi".to_owned(), "cua-compositor-inject".to_owned()]
+        }
+        (Platform::Linux, DisplayServer::Wayland) => vec!["atspi".to_owned()],
+        _ => Vec::new(),
     }
 }
 
@@ -705,12 +812,42 @@ impl ValidationSummary {
         results: &[CaseResult],
         source_sha: Option<&str>,
     ) -> String {
+        self.markdown_with_declarations_source_and_environment(
+            declarations,
+            results,
+            source_sha,
+            None,
+        )
+    }
+
+    pub fn markdown_with_declarations_source_and_environment(
+        &self,
+        declarations: &[CaseSpec],
+        results: &[CaseResult],
+        source_sha: Option<&str>,
+        environment: Option<&EnvironmentRecord>,
+    ) -> String {
         let mut output = format!(
             "# CUA Driver E2E\n\n**Result:** {} delivered, {} refused, {} failed, {} skipped\n\n",
             self.delivered, self.refused, self.failed, self.skipped
         );
         if let Some(source_sha) = source_sha {
             output.push_str(&format!("**Source SHA:** `{source_sha}`\n\n"));
+        }
+        if let Some(environment) = environment {
+            let compositor = environment.compositor.as_deref().unwrap_or("unknown");
+            let input_backends = if environment.input_backends.is_empty() {
+                "unknown".to_owned()
+            } else {
+                environment.input_backends.join(", ")
+            };
+            output.push_str(&format!(
+                "**Environment:** `{:?}/{:?}` · compositor `{}` · input backends `{}`\n\n",
+                environment.platform,
+                environment.display_server,
+                markdown_inline_code(compositor),
+                markdown_inline_code(&input_backends),
+            ));
         }
         output.push_str("## Declared Coverage\n\n");
         output.push_str(&declared_coverage_markdown(declarations, results));
@@ -760,6 +897,10 @@ impl ValidationSummary {
         }
         output
     }
+}
+
+fn markdown_inline_code(value: &str) -> String {
+    value.replace('`', "\\`").replace('\n', " ")
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -2062,5 +2203,44 @@ mod tests {
             ),
             Ok(DriverRoute::WindowsTargetedInjection)
         );
+    }
+
+    #[test]
+    fn nested_wayland_pixel_route_is_distinct_from_stock_wayland() {
+        let stock = shared_web_route_for_environment(
+            Platform::Linux,
+            DisplayServer::Wayland,
+            "left_click",
+            Targeting::Px,
+            Delivery::Background,
+            false,
+        );
+        let nested = shared_web_route_for_environment(
+            Platform::Linux,
+            DisplayServer::Wayland,
+            "left_click",
+            Targeting::Px,
+            Delivery::Background,
+            true,
+        );
+        assert_eq!(stock, Ok(DriverRoute::LinuxWaylandVirtualPointer));
+        assert_eq!(nested, Ok(DriverRoute::LinuxCuaCompositorInject));
+    }
+
+    #[test]
+    fn environment_v2_artifacts_remain_readable() {
+        let record: EnvironmentRecord = serde_json::from_value(serde_json::json!({
+            "schema": ENVIRONMENT_SCHEMA_V2,
+            "platform": "linux",
+            "display_server": "wayland",
+            "source_sha": null,
+            "status": "ready",
+            "duration_ms": 1,
+            "message": ""
+        }))
+        .expect("v2 environment record should deserialize");
+        assert!(environment_schema_supported(&record.schema));
+        assert_eq!(record.compositor, None);
+        assert!(record.input_backends.is_empty());
     }
 }

@@ -7848,6 +7848,7 @@ impl Tool for BringToFrontTool {
         let outcome =
             tokio::task::spawn_blocking(move || -> Result<(u64, u64, bool, bool), String> {
             use windows::Win32::Foundation::HWND;
+            use windows::Win32::Graphics::Dwm::DwmFlush;
             use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
             use windows::Win32::UI::WindowsAndMessaging::{
                 GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow,
@@ -7931,14 +7932,28 @@ impl Tool for BringToFrontTool {
             let now_fg = unsafe { GetForegroundWindow() };
 
             // A restored HWND can stop reporting iconic before its compositor
-            // surface is painted. Wait on the real capture path so callers and
-            // trajectory recording can observe the restored window immediately.
+            // surface is painted. Wait for DWM and two consecutive unobscured
+            // captures so callers and the trajectory hook share the same
+            // readiness guarantee instead of racing the first Electron frame.
             if was_minimized {
-                for _ in 0..20 {
-                    if crate::capture::screenshot_window_bytes(hwnd).is_ok() {
-                        break;
+                let _ = unsafe { DwmFlush() };
+                let mut stable_frames = 0;
+                for _ in 0..80 {
+                    match crate::capture::screenshot_window_bytes_with_occlusion(hwnd) {
+                        Ok((png, false)) if !png.is_empty() => {
+                            stable_frames += 1;
+                            if stable_frames == 2 {
+                                break;
+                            }
+                        }
+                        _ => stable_frames = 0,
                     }
                     std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+                if stable_frames < 2 {
+                    return Err(format!(
+                        "restored hwnd 0x{hwnd:x} did not produce two stable capture frames"
+                    ));
                 }
             }
             Ok((prev_fg_addr, now_fg.0 as u64, raised, was_minimized))

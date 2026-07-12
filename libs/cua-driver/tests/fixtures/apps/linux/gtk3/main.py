@@ -36,7 +36,10 @@ def section(box, title):
 class HarnessWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="CuaTestHarness GTK3")
-        self.set_default_size(480, 760)
+        # Keep every canonical control on-screen at the 1280x1024 CI desktop.
+        # The nested scroll viewport must be visible for a real wheel event;
+        # otherwise AT-SPI quite correctly reports no screen geometry for it.
+        self.set_default_size(560, 940)
         self.counter = 0
         self.clicks = 0
         self._last_action = "none"
@@ -129,11 +132,15 @@ class HarnessWindow(Gtk.Window):
         inner.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         inner.set_size_request(-1, 140)
         tall = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        scroll_target = aid(Gtk.Button(label="Scroll viewport target"), "scroll-tall-viewport")
+        scroll_target.set_can_focus(False)
+        tall.pack_start(scroll_target, False, False, 0)
         tall.pack_start(Gtk.Label(label="SCROLL_TOP_MARKER_v1", xalign=0), False, False, 0)
         for i in range(2, 41):
             tall.pack_start(Gtk.Label(label=f"line {i:02d}", xalign=0), False, False, 0)
         tall.pack_start(Gtk.Label(label="SCROLL_BOTTOM_MARKER_v1", xalign=0), False, False, 0)
         inner.add(tall)
+        aid(inner.get_vscrollbar(), "scroll-tall-vertical")
         root.pack_start(inner, False, False, 0)
         self.scroll_inner = inner
         self.scroll_status = Gtk.Label(label="scroll_offset=0", xalign=0)

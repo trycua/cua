@@ -896,7 +896,7 @@ catalog_test!(
         delivery: Delivery::Background,
         route: DriverRoute::LinuxAtSpiAction,
         operation: Operation::Scroll {
-            target: "scroll bar",
+            target: "scroll-tall-vertical",
             pixel: false,
             state_key: "scroll_offset="
         },
@@ -910,7 +910,7 @@ catalog_test!(
         delivery: Delivery::Background,
         route: DriverRoute::LinuxXSendEvent,
         operation: Operation::Scroll {
-            target: "scroll bar",
+            target: "scroll-tall-viewport",
             pixel: true,
             state_key: "scroll_offset="
         },
@@ -924,7 +924,7 @@ catalog_test!(
         delivery: Delivery::Foreground,
         route: DriverRoute::LinuxXTest,
         operation: Operation::Scroll {
-            target: "scroll bar",
+            target: "scroll-tall-viewport",
             pixel: true,
             state_key: "scroll_offset="
         },

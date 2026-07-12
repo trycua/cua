@@ -368,7 +368,11 @@ async fn check_wayland_backend() -> CheckEntry {
 
 #[cfg(target_os = "linux")]
 fn probe_x11_connect() -> bool {
+    // Mirror the window-enumeration path (#1978): a connection counts as
+    // reachable if EITHER the pure-Rust client or the libxcb fallback
+    // connects, so the doctor verdict matches what `list_windows` can do.
     x11rb::rust_connection::RustConnection::connect(None).is_ok()
+        || x11rb::xcb_ffi::XCBConnection::connect(None).is_ok()
 }
 
 #[cfg(not(target_os = "linux"))]

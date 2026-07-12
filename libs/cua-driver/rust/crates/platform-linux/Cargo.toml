@@ -18,8 +18,10 @@ pip-preview = { path = "../pip-preview" }
 tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# X11 background input + window enumeration
-x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape", "xtest"] }
+# X11 background input + window enumeration.
+# `allow-unsafe-code` enables the libxcb-backed `XCBConnection`, used as a
+# fallback when the pure-Rust connect fails strict auth-cookie matching (#1978).
+x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape", "xtest", "allow-unsafe-code"] }
 x11 = { version = "2.21", features = ["xlib", "xinput", "xtest"] }
 base64 = { workspace = true }
 image = { workspace = true }

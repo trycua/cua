@@ -238,13 +238,13 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     // The WGC sibling path at `wgc.rs:58` already short-circuits this case;
     // the GDI/PrintWindow fallback below + the screen-region BitBlt fallback
     // both happily produced the degenerate PNG. Guarding here covers both
-    // and matches the WGC error shape so callers can `list_windows` or
-    // raise the window before retrying.
+    // and matches the WGC error shape so callers can `list_windows` and
+    // restore the window before retrying.
     if IsIconic(hwnd).as_bool() {
         bail!(
             "cannot capture minimized window 0x{hwnd_raw:x}: it has no \
-             rendered content. Restore the window first via list_windows \
-             / raise_window. The PrintWindow GDI path and the screen-region \
+             rendered content. Call bring_to_front with this window_id to \
+             restore it first. The PrintWindow GDI path and the screen-region \
              BitBlt fallback both return an all-black bitmap for iconic \
              windows."
         );
@@ -565,4 +565,3 @@ pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>
 pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
     cua_driver_core::image_utils::png_dimensions(data)
 }
-

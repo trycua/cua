@@ -58,7 +58,8 @@ unsafe fn wgc_capture_impl(hwnd: HWND) -> Result<(Vec<u8>, u32, u32)> {
     if IsIconic(hwnd).as_bool() {
         bail!(
             "WGC cannot capture a minimized window (no rendered content). \
-             Restore the window first — `get_window_state` still returns the \
+             Call bring_to_front with this window_id to restore it first. \
+             `get_window_state` still returns the \
              UIA tree for a minimized window (the screenshot is reported \
              unavailable)."
         );

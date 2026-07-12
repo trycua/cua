@@ -638,11 +638,9 @@ impl Tool for ListWindowsTool {
                 one?\".\n\n\
                 Per-record fields: window_id (HWND), pid + app_name, title, \
                 bounds {x, y, width, height}, layer (always 0), z_index (stacking order), \
-                is_on_screen. The macOS-specific on_current_space / space_ids fields are \
+                is_on_screen, minimized. The macOS-specific on_current_space / space_ids fields are \
                 omitted on Windows; current_space_id is null.\n\n\
-                Inputs: pid (optional pid filter), on_screen_only (bool, default false — \
-                Windows currently only enumerates visible non-minimized windows; this flag \
-                is accepted but has no effect on the result set yet).".into(),
+                Inputs: pid (optional pid filter), on_screen_only (bool, default false).".into(),
             input_schema: json!({"type":"object","properties":{
                 "pid":{"type":"integer","description":"Optional pid filter. When set, only this pid's windows are returned."},
                 "on_screen_only":{"type":"boolean","description":"When true, drop windows that aren't currently on-screen. Default false."}
@@ -654,8 +652,8 @@ impl Tool for ListWindowsTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let filter_pid = args.opt_u64("pid").map(|v| v as u32);
-        let _on_screen_only = args.bool_or("on_screen_only", false);
-        let (windows, pid_to_name) = tokio::task::spawn_blocking(move || {
+        let on_screen_only = args.bool_or("on_screen_only", false);
+        let (mut windows, pid_to_name) = tokio::task::spawn_blocking(move || {
             let wins = crate::win32::list_windows(filter_pid);
             let procs = crate::win32::list_processes();
             let map: std::collections::HashMap<u32, String> =
@@ -664,9 +662,12 @@ impl Tool for ListWindowsTool {
         })
         .await
         .unwrap_or_default();
+        if on_screen_only {
+            windows.retain(|w| w.is_on_screen);
+        }
 
         // Swift surfaces a warning when a pid filter matches nothing.
-        if let Some(fp) = filter_pid {
+        let missing_pid_warning = if let Some(fp) = filter_pid {
             if windows.is_empty() {
                 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
                 use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
@@ -677,14 +678,17 @@ impl Tool for ListWindowsTool {
                     p
                 };
                 let fg_name = pid_to_name.get(&fg_pid).map(|s| s.as_str()).unwrap_or("?");
-                let msg = format!(
+                Some(format!(
                     "⚠️ No windows found for pid {fp}. The pid may be wrong or the app may not \
                      have created a window yet. The current frontmost app appears to be \
                      \"{fg_name}\" (pid {fg_pid})."
-                );
-                return ToolResult::text(msg);
+                ))
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
         // z_index: list_windows merges EnumWindows first (which the Win32
         // window manager returns in canonical top-to-bottom z-order), then
@@ -709,7 +713,8 @@ impl Tool for ListWindowsTool {
                     "bounds":     { "x": w.x, "y": w.y, "width": w.width, "height": w.height },
                     "layer":      0,
                     "z_index":    z_index,
-                    "is_on_screen": true,
+                    "is_on_screen": w.is_on_screen,
+                    "minimized":    w.minimized,
                 })
             })
             .collect();
@@ -731,6 +736,9 @@ impl Tool for ListWindowsTool {
              (SkyLight Space SPIs unavailable — on_current_space / space_ids omitted.)"
         );
         let mut lines = vec![header];
+        if let Some(warning) = missing_pid_warning {
+            lines.push(warning);
+        }
         for r in &records {
             let app = r["app_name"].as_str().unwrap_or("?");
             let pid = r["pid"].as_u64().unwrap_or(0);
@@ -759,6 +767,7 @@ impl Tool for ListWindowsTool {
                 json!({
                     "window_id": w.hwnd, "pid": w.pid, "title": w.title,
                     "x": w.x, "y": w.y, "width": w.width, "height": w.height,
+                    "is_on_screen": w.is_on_screen, "minimized": w.minimized,
                 })
             })
             .collect();
@@ -933,7 +942,7 @@ impl Tool for GetWindowStateTool {
             // surface *why* there's no image (the iconic-window guard from
             // #1973 / PR #1974 is the load-bearing case: minimized windows
             // legitimately can't be captured, and the caller needs to know
-            // to call `raise_window` / `list_windows` instead of retrying).
+            // to call `bring_to_front` instead of retrying).
             // The previous `Err(_) => None` silently dropped the error and
             // upstream agents saw an empty response with no signal.
             let (screenshot, screenshot_err) = if do_shot {
@@ -7836,12 +7845,14 @@ impl Tool for BringToFrontTool {
         // trick mirrors `send_key_synthesized` (input/keyboard.rs:313-345)
         // and is validated by `flash-repro/16-edge-launch-fg.ps1` for the
         // Edge launch focus-steal recovery case.
-        let outcome = tokio::task::spawn_blocking(move || -> Result<(u64, u64, bool), String> {
+        let outcome =
+            tokio::task::spawn_blocking(move || -> Result<(u64, u64, bool, bool), String> {
             use windows::Win32::Foundation::HWND;
             use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
             use windows::Win32::UI::WindowsAndMessaging::{
-                GetForegroundWindow, GetWindowThreadProcessId, IsWindow, SetForegroundWindow,
-                SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+                GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow,
+                SetForegroundWindow, SetWindowPos, ShowWindowAsync, HWND_NOTOPMOST, HWND_TOPMOST,
+                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_RESTORE,
             };
 
             let target = HWND(hwnd as *mut _);
@@ -7851,6 +7862,25 @@ impl Tool for BringToFrontTool {
 
             let prev_fg = unsafe { GetForegroundWindow() };
             let prev_fg_addr = prev_fg.0 as u64;
+
+            // Iconic windows have no rendered pixels and live at the sentinel
+            // (-32000, -32000) position. Restore before changing z-order so
+            // bring_to_front is also the advertised recovery path for capture.
+            let was_minimized = unsafe { IsIconic(target) }.as_bool();
+            if was_minimized {
+                let _ = unsafe { ShowWindowAsync(target, SW_RESTORE) };
+                for _ in 0..20 {
+                    if !unsafe { IsIconic(target) }.as_bool() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+                if unsafe { IsIconic(target) }.as_bool() {
+                    return Err(format!(
+                        "restore request did not complete for minimized hwnd 0x{hwnd:x}"
+                    ));
+                }
+            }
 
             // Lock-free z-order raise FIRST: bring the window to the top of the
             // normal band (the HWND_TOPMOST→HWND_NOTOPMOST force-to-front trick)
@@ -7899,12 +7929,12 @@ impl Tool for BringToFrontTool {
                 let _ = unsafe { AttachThreadInput(my_tid, fg_tid, false) };
             }
             let now_fg = unsafe { GetForegroundWindow() };
-            Ok((prev_fg_addr, now_fg.0 as u64, raised))
+            Ok((prev_fg_addr, now_fg.0 as u64, raised, was_minimized))
         })
         .await;
 
         match outcome {
-            Ok(Ok((prev, now, raised))) => {
+            Ok(Ok((prev, now, raised, restored))) => {
                 let focused = now == hwnd;
                 let msg = if focused {
                     format!("✅ bring_to_front: pid {pid} hwnd 0x{hwnd:x} is now foreground (was 0x{prev:x}).")
@@ -7932,6 +7962,7 @@ impl Tool for BringToFrontTool {
                     "target_hwnd":      format!("0x{hwnd:x}"),
                     "landed_on_target": focused,
                     "raised":           raised,
+                    "restored":         restored,
                 }))
             }
             Ok(Err(e)) => ToolResult::error(format!("bring_to_front: {e}")),

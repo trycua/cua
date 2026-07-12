@@ -1,10 +1,31 @@
-name: "E2E: Rust Linux Wayland interactive"
+name: "E2E: Rust Linux Wayland"
 
 on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Optional commit, branch, or tag override"
+        description: "Optional full 40-character commit SHA; defaults to dispatch SHA"
+        required: false
+        default: ""
+      environment:
+        description: "Wayland environment to validate"
+        required: false
+        type: choice
+        default: sway
+        options:
+          - sway
+      lane:
+        description: "Diagnostic lane; canonical dispatches use all"
+        required: false
+        type: choice
+        default: all
+        options:
+          - all
+          - shared
+          - native
+          - capture
+      cell_filter:
+        description: "Optional shared-cell substring for targeted diagnostics"
         required: false
         default: ""
 
@@ -13,28 +34,73 @@ permissions:
   actions: read
 
 jobs:
+  source:
+    name: "Resolve exact source"
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      lanes: ${{ steps.resolve.outputs.lanes }}
+    steps:
+      - id: resolve
+        name: Validate source SHA
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+        run: |
+          sha="${REQUESTED_SHA:-$DISPATCH_SHA}"
+          if [[ ! "$sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "ref must be a full 40-character commit SHA" >&2
+            exit 2
+          fi
+          echo "sha=${sha,,}" >> "$GITHUB_OUTPUT"
+          case "${{ inputs.lane }}" in
+            all) echo 'lanes=["shared","native","capture"]' >> "$GITHUB_OUTPUT" ;;
+            shared|native|capture) printf 'lanes=["%s"]\n' "${{ inputs.lane }}" >> "$GITHUB_OUTPUT" ;;
+            *) echo "unsupported lane: ${{ inputs.lane }}" >&2; exit 2 ;;
+          esac
+
   wayland:
-    name: "Linux / native Wayland Rust matrix"
+    name: "Linux / ${{ inputs.environment }} / ${{ matrix.lane }}"
+    needs: source
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: ${{ fromJSON(needs.source.outputs.lanes) }}
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+      CUA_E2E_INTERNAL_LANE: ${{ matrix.lane }}
+      CUA_E2E_CELL_FILTER: ${{ inputs.cell_filter }}
+      CUA_E2E_WAYLAND_SESSION: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
-      - name: Install Nix
-        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Sway and Rust build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            sway wf-recorder grim wtype dbus dbus-x11 at-spi2-core libglib2.0-bin \
+            python3-gi gir1.2-gtk-3.0 libgtk-3-dev clang pkg-config \
+            libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev \
+            libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev \
+            libxext-dev libdrm-dev libgbm-dev libwebkit2gtk-4.1-dev \
+            libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev \
+            ffmpeg jq
       - name: Run complete native Wayland matrix
-        run: >-
-          nix develop .#cua-driver-wayland-e2e
-          -c scripts/ci/linux/run-rust-e2e-wayland.sh
+        shell: bash
+        env:
+          CUA_AT_SPI_BUS_LAUNCHER: /usr/libexec/at-spi-bus-launcher
+        run: scripts/ci/linux/run-rust-e2e-wayland.sh
       - name: Upload Wayland results
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         with:
-          name: rust-linux-wayland
+          name: rust-linux-wayland-${{ inputs.environment }}-${{ matrix.lane }}
           path: artifacts/cua-driver/linux
           if-no-files-found: ignore
           compression-level: 0
@@ -42,36 +108,78 @@ jobs:
 
   summary:
     if: always()
-    needs: [wayland]
-    name: "Linux / native Wayland summary"
+    needs: [source, wayland]
+    name: "Linux / pure Wayland summary"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ needs.source.outputs.sha }}
       - name: Download Wayland results
         continue-on-error: true
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4
         with:
-          name: rust-linux-wayland
-          path: artifacts/rust-linux-wayland
+          pattern: rust-linux-wayland-${{ inputs.environment }}-*
+          path: artifacts
       - name: Publish typed matrix summary
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          summary="artifacts/rust-linux-wayland/summary.md"
-          artifact_id=$(gh api \
-            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
-            --jq '.artifacts[] | select(.name == "rust-linux-wayland") | .id' | head -n 1)
-          if [[ -f "$summary" && -n "$artifact_id" ]]; then
-            artifact_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts/$artifact_id"
-            scripts/ci/link-e2e-evidence.sh "$summary" "$artifact_url" >> "$GITHUB_STEP_SUMMARY"
-          elif [[ -f "$summary" ]]; then
-            cat "$summary" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "# CUA Rust Linux Wayland E2E" >> "$GITHUB_STEP_SUMMARY"
-            echo >> "$GITHUB_STEP_SUMMARY"
-            echo "No typed matrix summary was produced; inspect the Wayland job log." >> "$GITHUB_STEP_SUMMARY"
+          output=matrix-summary.md
+          artifacts_json=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100")
+          {
+            echo "# CUA Rust Linux Wayland E2E: ${{ inputs.environment }}"
+            echo
+            echo "Shared, native, and capture lanes run independently on clean runners."
+          } > "$output"
+          found=0
+          while IFS= read -r summary; do
+            found=1
+            artifact=$(basename "$(dirname "$summary")")
+            artifact_id=$(jq -r --arg name "$artifact" \
+              '.artifacts[] | select(.name == $name) | .id' <<< "$artifacts_json" | head -n 1)
+            echo >> "$output"
+            echo "## $artifact" >> "$output"
+            if [[ -n "$artifact_id" && "$artifact_id" != "null" ]]; then
+              artifact_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts/$artifact_id"
+              scripts/ci/link-e2e-evidence.sh "$summary" "$artifact_url" >> "$output"
+            else
+              cat "$summary" >> "$output"
+            fi
+          done < <(find artifacts -type f -name summary.md -print | sort)
+          if [[ "$found" == 0 ]]; then
+            echo >> "$output"
+            echo "No typed lane summary was produced; inspect the lane logs." >> "$output"
           fi
+          {
+            echo
+            echo "## Trajectory videos"
+            echo
+            echo "| Lane | Videos | Artifact |"
+            echo "| --- | ---: | --- |"
+          } >> "$output"
+          for lane in shared native capture; do
+            artifact="rust-linux-wayland-${{ inputs.environment }}-$lane"
+            recording_dir="artifacts/$artifact/recordings"
+            video_count=0
+            [[ -d "$recording_dir" ]] && video_count=$(find "$recording_dir" -type f -name recording.mp4 | wc -l | tr -d ' ')
+            artifact_id=$(jq -r --arg name "$artifact" \
+              '.artifacts[] | select(.name == $name) | .id' <<< "$artifacts_json" | head -n 1)
+            if [[ -n "$artifact_id" && "$artifact_id" != "null" ]]; then
+              artifact_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts/$artifact_id"
+              link="[Open artifact]($artifact_url)"
+            else
+              link="Not produced"
+            fi
+            echo "| $lane | $video_count | $link |" >> "$output"
+          done
+          cat "$output" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload combined summary
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: rust-linux-wayland-matrix-summary
+          path: matrix-summary.md
+          if-no-files-found: error

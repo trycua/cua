@@ -15,7 +15,7 @@
 //!     specific non-focused window the way X11/macOS/Windows can (this is a
 //!     platform constraint, reported honestly, like macOS pixel input being
 //!     driver-unverifiable). When no libei backend is available
-//!     (`PORTAL_LIBEI_ENABLED == false`) the tool returns a structured
+//!     (`PORTAL_INPUT_ENABLED == false`) the tool returns a structured
 //!     `background_unavailable` error so the caller can escalate to foreground.
 //!
 //! - `foreground` — activate the target first, inject, then restore the prior
@@ -92,31 +92,46 @@ pub fn delivery_mode_schema() -> Value {
 /// Reason a `background` delivery cannot be performed on Wayland.
 #[derive(Copy, Clone, Debug)]
 pub enum BackgroundUnavailable {
-    /// No libei backend (built without `portal-libei`, or the portal session
+    /// No libei backend (built without `portal-input`, or the portal session
     /// was denied / unavailable). Input has no actuator at all.
     NoLibeiBackend,
-    /// X11/Chromium does not accept a key chord addressed to an unfocused
-    /// renderer without briefly moving focus, which background delivery forbids.
-    ChromiumHotkey,
+    /// X11/Chromium does not accept synthetic pointer or keyboard input
+    /// addressed to an occluded, unfocused renderer without briefly moving
+    /// focus, which background delivery forbids.
+    ChromiumInput,
+    /// The remaining backend can only inject into the globally focused widget.
+    FocusedInputOnly,
+    /// WebKitGTK rejects synthetic XSendEvent input and no real target-addressed
+    /// pointer backend is available in this session.
+    WebKitSyntheticInput,
 }
 
 impl BackgroundUnavailable {
     fn code(self) -> &'static str {
         match self {
             Self::NoLibeiBackend => "background_unavailable",
-            Self::ChromiumHotkey => "background_unavailable",
+            Self::ChromiumInput => "background_unavailable",
+            Self::FocusedInputOnly => "background_unavailable",
+            Self::WebKitSyntheticInput => "background_unavailable",
         }
     }
     fn detail(self) -> &'static str {
         match self {
             Self::NoLibeiBackend => {
                 "no libei input backend on this Wayland compositor (built without \
-                 portal-libei, or the xdg-desktop-portal RemoteDesktop session was \
+                 portal-input, or the xdg-desktop-portal RemoteDesktop session was \
                  unavailable/denied): synthetic input has no actuator"
             }
-            Self::ChromiumHotkey => {
-                "Chromium/Electron does not accept a key chord addressed to an \
-                 unfocused renderer through X11 background injection"
+            Self::ChromiumInput => {
+                "Chromium/Electron does not accept pointer or keyboard input \
+                 addressed to an occluded, unfocused renderer through X11 \
+                 background injection"
+            }
+            Self::FocusedInputOnly => {
+                "the requested target has no focus-free input backend; the remaining XTest/X11 route can only deliver to the globally focused widget"
+            }
+            Self::WebKitSyntheticInput => {
+                "WebKitGTK rejects synthetic XSendEvent input and this session has no real target-addressed pointer backend"
             }
         }
     }

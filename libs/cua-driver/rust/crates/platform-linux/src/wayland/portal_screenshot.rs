@@ -27,6 +27,15 @@ use ashpd::desktop::screenshot::Screenshot;
 /// on the first call per session unless they've pre-approved the
 /// requesting binary in their DE's privacy settings.
 pub fn screenshot_via_portal() -> anyhow::Result<Vec<u8>> {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return std::thread::spawn(screenshot_via_portal_blocking)
+            .join()
+            .map_err(|_| anyhow::anyhow!("xdg-desktop-portal Screenshot worker panicked"))?;
+    }
+    screenshot_via_portal_blocking()
+}
+
+fn screenshot_via_portal_blocking() -> anyhow::Result<Vec<u8>> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

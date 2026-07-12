@@ -55,7 +55,9 @@ target_slug="$(printf '%s' "$target" | tr -c 'A-Za-z0-9_.-' '_')"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 
 exclude_args=(
-  --exclude=.git/
+  # A linked worktree stores `.git` as a file, while a normal checkout stores
+  # it as a directory. Neither host-specific form belongs on a verification VM.
+  --exclude=.git
   --exclude=.DS_Store
   --exclude='._*'
   --exclude=target/

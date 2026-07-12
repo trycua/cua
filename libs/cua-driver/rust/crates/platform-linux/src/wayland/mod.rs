@@ -1136,6 +1136,31 @@ pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<Vptr
 /// compositors must refuse until they provide an equally target-addressable
 /// adapter, because global injection without this gate can affect the wrong app.
 pub fn activate_window_for_input(window_id: u64) -> anyhow::Result<()> {
+    let pid = crate::atspi::list_windows(None)
+        .into_iter()
+        .find(|window| window.xid == window_id)
+        .and_then(|window| window.pid);
+    activate_window_for_input_target(window_id, pid)
+}
+
+/// Activate a Wayland target with an explicit process identity when available.
+/// The bundled compositor does not depend on connection-local Wayland object
+/// ids: its control protocol resolves the one mapped toplevel owned by `pid`.
+pub fn activate_window_for_input_target(
+    window_id: u64,
+    target_pid: Option<u32>,
+) -> anyhow::Result<()> {
+    if is_inject_mode() {
+        let pid = target_pid.ok_or_else(|| {
+            anyhow::anyhow!(
+                "foreground_unavailable: cua-compositor activation requires a verified target pid"
+            )
+        })?;
+        inject_send(&[format!("f {pid}")])?;
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        return Ok(());
+    }
+
     let conn = Connection::connect_to_env()?;
     let mut queue = conn.new_event_queue::<State>();
     let qh = queue.handle();

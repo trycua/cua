@@ -126,6 +126,22 @@ static pid_t cua_toplevel_pid(struct tinywl_toplevel *t) {
 	wl_client_get_credentials(client, &pid, &uid, &gid);
 	return pid;
 }
+/* Focus exactly one mapped toplevel owned by `target_pid`. Refuse ambiguity:
+ * process-scoped activation is only safe when the process owns one window. */
+static const char *cua_activate_pid(struct tinywl_server *server, pid_t target_pid) {
+	struct tinywl_toplevel *t, *found = NULL;
+	int matches = 0;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (target_pid > 0 && cua_toplevel_pid(t) == target_pid) {
+			found = t;
+			matches++;
+		}
+	}
+	if (matches == 0) return "unknown-pid";
+	if (matches > 1) return "ambiguous-pid";
+	focus_toplevel(found);
+	return NULL;
+}
 /* Independent observer query used only by the Rust E2E testkit. The target is
  * selected by the Wayland client's process credentials, not by driver-owned
  * object ids. In this minimal compositor every mapped toplevel shares origin;
@@ -421,10 +437,18 @@ static int cua_conn_readable(int fd, uint32_t mask, void *data) {
 				return cua_conn_drop(c, fd);
 			}
 		} else {
-			int query_pid;
+			int query_pid, activate_pid;
 			if (sscanf(p, "q %d", &query_pid) == 1) {
 				char msg[128]; cua_query_state(c->server, (pid_t)query_pid, msg, sizeof msg);
 				cua_reply(fd, msg);
+			} else if (sscanf(p, "f %d", &activate_pid) == 1) {
+				const char *err = cua_activate_pid(c->server, (pid_t)activate_pid);
+				wl_display_flush_clients(c->server->wl_display);
+				if (err) {
+					char msg[128]; snprintf(msg, sizeof msg, "err %s", err); cua_reply(fd, msg);
+				} else {
+					cua_reply(fd, "ok");
+				}
 			} else {
 				const char *err = cua_handle_cmd(c->server, p);
 				/* Deliver injected events before acking so `ok` means "processed",

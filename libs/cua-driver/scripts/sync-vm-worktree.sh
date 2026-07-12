@@ -62,6 +62,7 @@ exclude_args=(
   --exclude=.DS_Store
   --exclude='._*'
   --exclude=target/
+  --exclude=libs/cua-driver/rust/test-apps/
   --exclude=node_modules/
   --exclude=.venv/
   --exclude=__pycache__/
@@ -75,6 +76,7 @@ tar_exclude_args=(
   --exclude ./.DS_Store
   --exclude '._*'
   --exclude ./target
+  --exclude ./libs/cua-driver/rust/test-apps
   --exclude ./node_modules
   --exclude ./.venv
   --exclude '*/__pycache__'

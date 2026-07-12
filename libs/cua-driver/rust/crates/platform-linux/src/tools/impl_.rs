@@ -6533,7 +6533,7 @@ impl Tool for BringToFrontTool {
                 },
             };
             let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::activate_window_for_input(window_id)
+                crate::wayland::activate_window_for_input_target(window_id, Some(pid))
             })
             .await;
             return match result {

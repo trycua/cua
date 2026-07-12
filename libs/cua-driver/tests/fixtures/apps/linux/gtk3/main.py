@@ -40,7 +40,10 @@ class HarnessWindow(Gtk.Window):
         self.counter = 0
         self.clicks = 0
         self._last_action = "none"
+        self._double_click_pending = False
         self._menu_action = "none"
+        self.key_presses = 0
+        self.hotkeys = 0
 
         # Top-level scroller so every control is reachable even on a short window.
         scroller = Gtk.ScrolledWindow()
@@ -81,6 +84,12 @@ class HarnessWindow(Gtk.Window):
         root.pack_start(self.click_target, False, False, 0)
         self.click_status = Gtk.Label(label="last_action=none  clicks=0", xalign=0)
         root.pack_start(self.click_status, False, False, 0)
+
+        # ── keyboard delivery ─────────────────────────────────────────────
+        self.key_status = Gtk.Label(label="last_key=none  key_presses=0", xalign=0)
+        root.pack_start(self.key_status, False, False, 0)
+        self.hotkey_status = Gtk.Label(label="last_hotkey=none  hotkeys=0", xalign=0)
+        root.pack_start(self.hotkey_status, False, False, 0)
 
         # ── slider ────────────────────────────────────────────────────────
         section(root, "slider")
@@ -148,6 +157,7 @@ class HarnessWindow(Gtk.Window):
         root.pack_start(ext, False, False, 0)
 
         self.connect("destroy", Gtk.main_quit)
+        self.connect("key-press-event", self.on_key_press)
 
     # ── handlers ──────────────────────────────────────────────────────────
     def on_increment(self, *_):
@@ -163,16 +173,22 @@ class HarnessWindow(Gtk.Window):
 
     def on_click_target(self, *_):
         self.clicks += 1
-        self._last_action = "click"
-        self.click_status.set_text(f"last_action=click  clicks={self.clicks}")
+        if self._double_click_pending:
+            self._double_click_pending = False
+        else:
+            self._last_action = "click"
+        self.click_status.set_text(f"last_action={self._last_action}  clicks={self.clicks}")
 
     def on_click_target_press(self, _w, ev):
         if ev.type == Gdk.EventType.DOUBLE_BUTTON_PRESS:
+            self._double_click_pending = True
             self._last_action = "double_click"
             self.click_status.set_text(f"last_action=double_click  clicks={self.clicks}")
         elif ev.button == 3:
             self._last_action = "right_click"
             self.click_status.set_text(f"last_action=right_click  clicks={self.clicks}")
+        elif ev.button == 1:
+            self._double_click_pending = False
 
     def on_scale(self, s):
         self.scale_status.set_text(f"slider_value={int(s.get_value())}")
@@ -187,6 +203,22 @@ class HarnessWindow(Gtk.Window):
     def on_ctx_item(self, _w, lbl):
         self._menu_action = lbl
         self.ctx_status.set_text(f"menu_action={lbl}")
+
+    def on_key_press(self, _w, ev):
+        key = (Gdk.keyval_name(ev.keyval) or "unknown").lower()
+        ctrl = bool(ev.state & Gdk.ModifierType.CONTROL_MASK)
+        shift = bool(ev.state & Gdk.ModifierType.SHIFT_MASK)
+        if ctrl and shift and key == "k":
+            self.hotkeys += 1
+            self.hotkey_status.set_text(
+                f"last_hotkey=ctrl+shift+k  hotkeys={self.hotkeys}"
+            )
+            return True
+        if key == "f5":
+            self.key_presses += 1
+            self.key_status.set_text(f"last_key=f5  key_presses={self.key_presses}")
+            return True
+        return False
 
     def on_scroll(self, adj):
         self.scroll_status.set_text(f"scroll_offset={int(adj.get_value())}")

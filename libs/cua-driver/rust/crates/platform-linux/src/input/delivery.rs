@@ -15,7 +15,7 @@
 //!     specific non-focused window the way X11/macOS/Windows can (this is a
 //!     platform constraint, reported honestly, like macOS pixel input being
 //!     driver-unverifiable). When no libei backend is available
-//!     (`PORTAL_LIBEI_ENABLED == false`) the tool returns a structured
+//!     (`PORTAL_INPUT_ENABLED == false`) the tool returns a structured
 //!     `background_unavailable` error so the caller can escalate to foreground.
 //!
 //! - `foreground` — activate the target first, inject, then restore the prior
@@ -92,7 +92,7 @@ pub fn delivery_mode_schema() -> Value {
 /// Reason a `background` delivery cannot be performed on Wayland.
 #[derive(Copy, Clone, Debug)]
 pub enum BackgroundUnavailable {
-    /// No libei backend (built without `portal-libei`, or the portal session
+    /// No libei backend (built without `portal-input`, or the portal session
     /// was denied / unavailable). Input has no actuator at all.
     NoLibeiBackend,
     /// X11/Chromium does not accept synthetic pointer or keyboard input
@@ -119,7 +119,7 @@ impl BackgroundUnavailable {
         match self {
             Self::NoLibeiBackend => {
                 "no libei input backend on this Wayland compositor (built without \
-                 portal-libei, or the xdg-desktop-portal RemoteDesktop session was \
+                 portal-input, or the xdg-desktop-portal RemoteDesktop session was \
                  unavailable/denied): synthetic input has no actuator"
             }
             Self::ChromiumInput => {

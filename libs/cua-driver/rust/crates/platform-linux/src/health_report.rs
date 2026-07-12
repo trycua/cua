@@ -304,7 +304,7 @@ async fn check_wayland_backend() -> CheckEntry {
             );
         }
     };
-    let remote_desktop_portal_reachable = if crate::wayland::PORTAL_LIBEI_ENABLED {
+    let remote_desktop_portal_reachable = if crate::wayland::PORTAL_INPUT_ENABLED {
         tokio::task::spawn_blocking(probe_portal_remote_desktop)
             .await
             .ok()
@@ -315,7 +315,7 @@ async fn check_wayland_backend() -> CheckEntry {
     };
     classify_wayland_backend(
         &snap,
-        crate::wayland::PORTAL_LIBEI_ENABLED,
+        crate::wayland::PORTAL_INPUT_ENABLED,
         remote_desktop_portal_reachable,
     )
 }
@@ -382,7 +382,7 @@ fn classify_wayland_backend(
                  screen capture are unaffected."
             ),
             "Use the portal-enabled Linux build (compiled with --features \
-             portal-libei) for input on KDE Plasma / GNOME, or a wlroots \
+             portal-input) for input on KDE Plasma / GNOME, or a wlroots \
              compositor (sway, labwc, hyprland) where zwlr_virtual_pointer exists.",
         );
     }
@@ -519,7 +519,7 @@ fn probe_portal_screenshot() -> anyhow::Result<bool> {
 
 #[cfg(target_os = "linux")]
 fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
-    #[cfg(feature = "portal-libei")]
+    #[cfg(feature = "portal-input")]
     {
         use ashpd::desktop::remote_desktop::RemoteDesktop;
 
@@ -545,7 +545,7 @@ fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
             }
         })
     }
-    #[cfg(not(feature = "portal-libei"))]
+    #[cfg(not(feature = "portal-input"))]
     {
         Ok(false)
     }

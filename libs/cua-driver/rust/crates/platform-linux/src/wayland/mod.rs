@@ -16,27 +16,15 @@ pub mod persistent_vptr;
 pub mod portal_screenshot;
 pub mod shell_helper;
 pub mod sway_ipc;
-// `portal_screencast` (PipeWire per-window capture) and `libei` (GNOME/KDE
-// input via xdg-desktop-portal RemoteDesktop) need libpipewire-0.3 and reis
-// at build time, which the cross-platform release container (debian:11,
-// GLIBC_2.31 floor) can't satisfy without bumping the floor. They're behind
-// the `portal-libei` feature so the published binaries stay portable; the
-// Nix build (which already has modern PipeWire + libei from nixpkgs)
-// enables it. Wlroots screencopy + virtual-pointer remain unconditional.
-#[cfg(feature = "portal-libei")]
+// RemoteDesktop/libei input is portable and ships in release binaries.
+// PipeWire ScreenCast capture remains separately gated for modern/Nix builds.
+#[cfg(feature = "portal-input")]
 pub mod libei;
-#[cfg(feature = "portal-libei")]
+#[cfg(feature = "portal-capture")]
 pub mod portal_screencast;
 
-/// Whether this binary was compiled with the `portal-libei` feature — the
-/// xdg-desktop-portal RemoteDesktop + libei input path. It is the ONLY input
-/// backend that works on non-wlroots compositors (KWin/Plasma, Mutter/GNOME),
-/// which do not implement `zwlr_virtual_pointer_v1`. The published
-/// curl-pipe-bash tarball is built WITHOUT it (#1967 — debian:11 CD container
-/// lacks a new-enough PipeWire/libei), so on those compositors input injection
-/// has no backend and silently no-ops. Consulted by the doctor and the input
-/// dispatch so that failure is reported instead of hidden. See #1982.
-pub const PORTAL_LIBEI_ENABLED: bool = cfg!(feature = "portal-libei");
+/// Whether the GNOME/KDE RemoteDesktop + libei input backend is compiled in.
+pub const PORTAL_INPUT_ENABLED: bool = cfg!(feature = "portal-input");
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
@@ -996,7 +984,7 @@ fn is_no_vptr(err: &anyhow::Error) -> bool {
 
 /// Run the wlroots virtual-pointer closure `f`; if it fails specifically
 /// because the compositor exposes no `zwlr_virtual_pointer_manager_v1` and this
-/// binary carries the `portal-libei` feature, run the libei `fallback` instead.
+/// binary carries the `portal-input` feature, run the libei `fallback` instead.
 /// Any other wlroots error (and the no-vptr error in a build without the
 /// feature) propagates unchanged. This is the single seam through which #1982's
 /// KDE/GNOME input recovery flows.
@@ -1007,14 +995,14 @@ fn with_libei_fallback<T>(
     match f() {
         Ok(v) => Ok(v),
         Err(e) if is_no_vptr(&e) => {
-            #[cfg(feature = "portal-libei")]
+            #[cfg(feature = "portal-input")]
             {
                 tracing::info!(
                     "wlroots virtual-pointer unavailable ({e}); falling back to libei/portal"
                 );
                 return fallback();
             }
-            #[cfg(not(feature = "portal-libei"))]
+            #[cfg(not(feature = "portal-input"))]
             {
                 Err(e)
             }
@@ -1060,7 +1048,7 @@ pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<Vptr
     // foreign-toplevel up front would mask the marker and leave the libei
     // fallback dead. See #1982.
     let mgr = state.vptr_manager.clone().ok_or_else(|| {
-        if PORTAL_LIBEI_ENABLED {
+        if PORTAL_INPUT_ENABLED {
             // The caller (via `with_libei_fallback`) recognises NO_VPTR_MARKER
             // and re-routes the op through the libei/portal backend, which DOES
             // reach KWin/Plasma and Mutter/GNOME. Keep the marker in the text.
@@ -1119,7 +1107,7 @@ pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<Vptr
 /// fallback (which never opens a `VptrSession`) to reproduce the vptr path's
 /// default-to-centre and clamp behaviour so both backends treat coordinates
 /// identically. Falls back to `(1, 1)` when no output reports a mode.
-#[cfg(feature = "portal-libei")]
+#[cfg(feature = "portal-input")]
 fn output_dimensions() -> anyhow::Result<(u32, u32)> {
     let conn = Connection::connect_to_env()?;
     let mut queue = conn.new_event_queue::<State>();
@@ -1137,7 +1125,7 @@ fn output_dimensions() -> anyhow::Result<(u32, u32)> {
 /// fallback: `(0, 0)` defaults to the output centre, and any value is clamped
 /// to `[0, dim-1]`. Keeps `click(.., 0, 0, ..)` landing on centre rather than
 /// the top-left corner across both backends.
-#[cfg(feature = "portal-libei")]
+#[cfg(feature = "portal-input")]
 fn normalize_click_xy(x: i32, y: i32, w: u32, h: u32) -> (i32, i32) {
     let (px, py) = if x == 0 && y == 0 {
         ((w / 2) as i32, (h / 2) as i32)
@@ -1421,7 +1409,7 @@ pub fn type_text(text: &str) -> anyhow::Result<()> {
         Ok(out) if out.status.success() => Ok(()),
         // `wtype` relies on `zwp_virtual_keyboard_v1`, which KWin/Plasma and
         // Mutter/GNOME don't implement (and the binary may be missing wtype
-        // entirely). On a portal-libei build, route typing through libei's
+        // entirely). On a portal-input build, route typing through libei's
         // `ei_text` interface instead. See #1982.
         other => with_wtype_libei_fallback(
             || libei_type_text(text),
@@ -1472,7 +1460,7 @@ pub fn hotkey(keys: &[String]) -> anyhow::Result<()> {
         Ok(out) if out.status.success() => Ok(()),
         other => {
             let stderr = other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned());
-            #[cfg(feature = "portal-libei")]
+            #[cfg(feature = "portal-input")]
             {
                 // A bare key (no modifiers) is just a single key press, which
                 // the libei adapter handles. Route it through the same wtype→
@@ -1494,7 +1482,7 @@ pub fn hotkey(keys: &[String]) -> anyhow::Result<()> {
                     stderr.unwrap_or_else(|_| "wtype unavailable".into())
                 );
             }
-            #[cfg(not(feature = "portal-libei"))]
+            #[cfg(not(feature = "portal-input"))]
             {
                 anyhow::bail!(
                     "wtype {} failed: {}",
@@ -1560,20 +1548,20 @@ fn key_to_keysym(key: &str) -> String {
 // codes. They are the recovery path for compositors with no
 // `zwlr_virtual_pointer_v1` (KWin/Plasma, Mutter/GNOME) — see #1982.
 //
-// In a build WITHOUT the `portal-libei` feature the `libei` module does not
+// In a build WITHOUT the `portal-input` feature the `libei` module does not
 // exist, so each adapter compiles to an error stub. The dispatch seams above
-// only ever CALL these inside `#[cfg(feature = "portal-libei")]` branches, so
+// only ever CALL these inside `#[cfg(feature = "portal-input")]` branches, so
 // the stubs are dead in that build; they exist purely so the closures passed
 // to `with_libei_fallback` / `with_wtype_libei_fallback` type-check.
 
 /// libei recovery wrapper for the `wtype`-based typing/key functions: when the
 /// virtual-keyboard shell-out failed (`wtype_err`), try the libei `run` on a
-/// portal-libei build, otherwise surface the original wtype failure.
+/// portal-input build, otherwise surface the original wtype failure.
 fn with_wtype_libei_fallback(
     #[allow(unused_variables)] run: impl FnOnce() -> anyhow::Result<()>,
     wtype_err: Result<String, std::io::Error>,
 ) -> anyhow::Result<()> {
-    #[cfg(feature = "portal-libei")]
+    #[cfg(feature = "portal-input")]
     {
         match wtype_err {
             Ok(stderr) => tracing::info!(
@@ -1585,7 +1573,7 @@ fn with_wtype_libei_fallback(
         }
         run()
     }
-    #[cfg(not(feature = "portal-libei"))]
+    #[cfg(not(feature = "portal-input"))]
     {
         let _ = run;
         match wtype_err {
@@ -1598,19 +1586,19 @@ fn with_wtype_libei_fallback(
 // Stubs for the no-feature build: the dispatch seams never call these (the
 // libei branch in `with_libei_fallback` / `with_wtype_libei_fallback` is
 // `#[cfg]`-d out), but the closures still need them to exist to type-check.
-#[cfg(not(feature = "portal-libei"))]
+#[cfg(not(feature = "portal-input"))]
 fn libei_click(_x: i32, _y: i32, _count: u32, _button: u8) -> anyhow::Result<()> {
-    unreachable!("libei fallback compiled out (no portal-libei feature)")
+    unreachable!("libei fallback compiled out (no portal-input feature)")
 }
-#[cfg(not(feature = "portal-libei"))]
+#[cfg(not(feature = "portal-input"))]
 fn libei_scroll(_direction: &str, _amount: u32) -> anyhow::Result<()> {
-    unreachable!("libei fallback compiled out (no portal-libei feature)")
+    unreachable!("libei fallback compiled out (no portal-input feature)")
 }
-#[cfg(not(feature = "portal-libei"))]
+#[cfg(not(feature = "portal-input"))]
 fn libei_move_absolute(_x: i32, _y: i32) -> anyhow::Result<()> {
-    unreachable!("libei fallback compiled out (no portal-libei feature)")
+    unreachable!("libei fallback compiled out (no portal-input feature)")
 }
-#[cfg(not(feature = "portal-libei"))]
+#[cfg(not(feature = "portal-input"))]
 #[allow(clippy::too_many_arguments)]
 fn libei_drag(
     _from_x: i32,
@@ -1620,18 +1608,18 @@ fn libei_drag(
     _steps: u32,
     _button: u8,
 ) -> anyhow::Result<()> {
-    unreachable!("libei fallback compiled out (no portal-libei feature)")
+    unreachable!("libei fallback compiled out (no portal-input feature)")
 }
-#[cfg(not(feature = "portal-libei"))]
+#[cfg(not(feature = "portal-input"))]
 fn libei_type_text(_text: &str) -> anyhow::Result<()> {
-    unreachable!("libei fallback compiled out (no portal-libei feature)")
+    unreachable!("libei fallback compiled out (no portal-input feature)")
 }
-#[cfg(not(feature = "portal-libei"))]
+#[cfg(not(feature = "portal-input"))]
 fn libei_press_key(_key: &str) -> anyhow::Result<()> {
-    unreachable!("libei fallback compiled out (no portal-libei feature)")
+    unreachable!("libei fallback compiled out (no portal-input feature)")
 }
 
-#[cfg(feature = "portal-libei")]
+#[cfg(feature = "portal-input")]
 fn cua_button_to_libei(button: u8) -> libei::Button {
     match button {
         2 => libei::Button::Middle,
@@ -1640,7 +1628,7 @@ fn cua_button_to_libei(button: u8) -> libei::Button {
     }
 }
 
-#[cfg(feature = "portal-libei")]
+#[cfg(feature = "portal-input")]
 fn libei_click(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
     let btn = cua_button_to_libei(button);
     let (w, h) = output_dimensions()?;
@@ -1656,7 +1644,7 @@ fn libei_click(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "portal-libei")]
+#[cfg(feature = "portal-input")]
 fn libei_scroll(direction: &str, amount: u32) -> anyhow::Result<()> {
     // libei scroll is logical-unit deltas; mirror the wlroots ±10/tick step.
     let (dx, dy): (f64, f64) = match direction.to_ascii_lowercase().as_str() {
@@ -1675,7 +1663,7 @@ fn libei_scroll(direction: &str, amount: u32) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "portal-libei")]
+#[cfg(feature = "portal-input")]
 fn libei_move_absolute(x: i32, y: i32) -> anyhow::Result<()> {
     // Match `move_cursor_absolute_vptr`: clamp to output bounds (no
     // default-to-centre — an explicit (0,0) move means the top-left corner).
@@ -1687,7 +1675,7 @@ fn libei_move_absolute(x: i32, y: i32) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "portal-libei")]
+#[cfg(feature = "portal-input")]
 fn libei_drag(
     from_x: i32,
     from_y: i32,
@@ -1718,7 +1706,7 @@ fn libei_drag(
     Ok(())
 }
 
-#[cfg(feature = "portal-libei")]
+#[cfg(feature = "portal-input")]
 fn libei_type_text(text: &str) -> anyhow::Result<()> {
     if text.is_empty() {
         return Ok(());
@@ -1726,7 +1714,7 @@ fn libei_type_text(text: &str) -> anyhow::Result<()> {
     libei::type_text(text)
 }
 
-#[cfg(feature = "portal-libei")]
+#[cfg(feature = "portal-input")]
 fn libei_press_key(key: &str) -> anyhow::Result<()> {
     let keycode = key_to_evdev(key)
         .ok_or_else(|| anyhow::anyhow!("no evdev keycode mapping for key '{key}' (libei path)"))?;
@@ -1737,7 +1725,7 @@ fn libei_press_key(key: &str) -> anyhow::Result<()> {
 /// (libei emulates raw evdev, not X keysyms). Mirrors [`key_to_keysym`] but
 /// emits `linux/input-event-codes.h` values. Returns `None` for keys with no
 /// known mapping so the caller can fail loudly.
-#[cfg(feature = "portal-libei")]
+#[cfg(feature = "portal-input")]
 fn key_to_evdev(key: &str) -> Option<u32> {
     let code = match key.to_lowercase().as_str() {
         "enter" | "return" => 28, // KEY_ENTER

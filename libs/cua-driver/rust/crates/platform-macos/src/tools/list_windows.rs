@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 
 pub struct ListWindowsTool;
@@ -13,7 +16,7 @@ fn def() -> &'static ToolDef {
             Includes off-screen windows (minimized, on another Space, hidden-launched). \
             Use this to find a window_id before calling get_window_state.\n\n\
             Per-record fields: window_id, pid, app_name, title, bounds \
-            (x/y/width/height, top-left origin), z_index (higher = frontmost), \
+            (x/y/width/height, top-left origin), z_index (0 = backmost; higher = closer to front), \
             is_on_screen, on_current_space.".into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -38,7 +41,9 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for ListWindowsTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;

@@ -390,7 +390,7 @@ impl Tool for ListWindowsTool {
     fn def(&self) -> &ToolDef {
         LIST_WINDOWS_DEF.get_or_init(|| ToolDef {
             name: "list_windows".into(),
-            description: "List top-level X11 windows via _NET_CLIENT_LIST.".into(),
+            description: "List top-level windows. Each record includes window_id, nullable pid, app_name, title, bounds, layer, nullable z_index, and is_on_screen. z_index is zero-based from back to front; null means stacking order is unknown.".into(),
             input_schema: json!({"type":"object","properties":{
                 "pid":{"type":"integer"},
                 "on_screen_only":{"type":"boolean","description":"When true, filter to visible windows only. Default false."}
@@ -431,7 +431,8 @@ impl Tool for ListWindowsTool {
 /// The Linux `WindowInfo` struct (see `crate::x11::WindowInfo`) exposes
 /// neither an app name nor a visibility flag, so `app_name` is an empty
 /// string and `is_on_screen` defaults to `true` — the same best-effort
-/// default the Windows backend uses.
+/// default the Windows backend uses. `z_index` is null for Wayland/AT-SPI
+/// sources that do not expose stacking order.
 fn window_record_json(w: &crate::x11::WindowInfo) -> Value {
     json!({
         "window_id": w.xid,
@@ -440,6 +441,8 @@ fn window_record_json(w: &crate::x11::WindowInfo) -> Value {
         "title": w.title,
         // Canonical cross-platform geometry (macOS/Windows parity).
         "bounds": { "x": w.x, "y": w.y, "width": w.width, "height": w.height },
+        "layer": 0,
+        "z_index": w.z_index,
         "is_on_screen": true,
         // Legacy alias: flat fields kept inline for pre-existing callers.
         "x": w.x, "y": w.y,
@@ -461,6 +464,7 @@ mod list_windows_tests {
             y: 20,
             width: 300,
             height: 400,
+            z_index: Some(2),
         };
         let rec = window_record_json(&w);
 
@@ -484,6 +488,24 @@ mod list_windows_tests {
         assert_eq!(rec["is_on_screen"], json!(true));
         assert_eq!(rec["window_id"], json!(42));
         assert_eq!(rec["title"], json!("Example"));
+        assert_eq!(rec["layer"], json!(0));
+        assert_eq!(rec["z_index"], json!(2));
+    }
+
+    #[test]
+    fn record_uses_null_when_stacking_order_is_unknown() {
+        let w = crate::x11::WindowInfo {
+            xid: 42,
+            pid: None,
+            title: "Example".to_owned(),
+            x: 0,
+            y: 0,
+            width: 300,
+            height: 400,
+            z_index: None,
+        };
+
+        assert_eq!(window_record_json(&w)["z_index"], Value::Null);
     }
 }
 

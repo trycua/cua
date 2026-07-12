@@ -632,8 +632,8 @@ impl Tool for ListWindowsTool {
                 have a visible window right now?\", \"which of this pid's windows is the main \
                 one?\".\n\n\
                 Per-record fields: window_id (HWND), pid + app_name, title, \
-                bounds {x, y, width, height}, layer (always 0), z_index (stacking order), \
-                is_on_screen. The macOS-specific on_current_space / space_ids fields are \
+                bounds {x, y, width, height}, layer (always 0), z_index (0 = backmost; \
+                higher = closer to front), is_on_screen. The macOS-specific on_current_space / space_ids fields are \
                 omitted on Windows; current_space_id is null.\n\n\
                 Inputs: pid (optional pid filter), on_screen_only (bool, default false — \
                 Windows currently only enumerates visible non-minimized windows; this flag \
@@ -686,9 +686,9 @@ impl Tool for ListWindowsTool {
         // appends any UIA-only HWNDs UIA found that EnumWindows missed
         // (UIA-only entries land at the bottom of the z-stack — they have
         // no canonical Win32 ordering). Higher list index = farther from
-        // front. Swift convention: higher z_index = closer to front.
-        // Invert via `(len - 1 - i)` so the front-most window gets the
-        // largest z.
+        // front. Cross-platform invariant: 0 is backmost and higher z_index
+        // means closer to the front. Invert via `(len - 1 - i)` so the
+        // frontmost window gets the largest z.
         let n = windows.len();
         let records: Vec<serde_json::Value> = windows
             .iter()

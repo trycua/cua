@@ -857,10 +857,57 @@ pub(crate) unsafe fn borrowed_fd(fd: i32) -> std::os::fd::OwnedFd {
 /// output-level path used by `get_window_state`'s vision payload.
 pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     if is_wayland() {
-        screenshot_bytes()
+        let bytes = screenshot_bytes()?;
+        if sway_ipc::window_for_id(xid).is_some() {
+            crop_sway_window_png(&bytes, xid)
+        } else {
+            Ok(bytes)
+        }
     } else {
         crate::capture::screenshot_window_bytes(xid)
     }
+}
+
+fn crop_sway_window_png(output_png: &[u8], window_id: u64) -> anyhow::Result<Vec<u8>> {
+    let window = sway_ipc::window_for_id(window_id)
+        .ok_or_else(|| anyhow::anyhow!("Sway window {window_id} is no longer available"))?;
+    crop_png_to_rect(
+        output_png,
+        window.x,
+        window.y,
+        window.width,
+        window.height,
+        &format!("Sway window {window_id}"),
+    )
+}
+
+fn crop_png_to_rect(
+    output_png: &[u8],
+    rect_x: i32,
+    rect_y: i32,
+    rect_width: u32,
+    rect_height: u32,
+    label: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let image = image::load_from_memory(output_png)?;
+    let image_width = image.width();
+    let image_height = image.height();
+    let x = rect_x.max(0) as u32;
+    let y = rect_y.max(0) as u32;
+    if x >= image_width || y >= image_height {
+        anyhow::bail!(
+            "{label} origin ({x},{y}) is outside captured output {image_width}x{image_height}"
+        );
+    }
+    let width = rect_width.min(image_width - x);
+    let height = rect_height.min(image_height - y);
+    if width == 0 || height == 0 {
+        anyhow::bail!("{label} has empty capture geometry");
+    }
+    let cropped = image.crop_imm(x, y, width, height);
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    cropped.write_to(&mut cursor, image::ImageFormat::Png)?;
+    Ok(cursor.into_inner())
 }
 
 /// Display-level capture dispatcher. Cascade:
@@ -914,6 +961,9 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
 /// crop with.
 pub fn screenshot_window_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     if is_wayland() {
+        if sway_ipc::window_for_id(xid).is_some() {
+            return crop_sway_window_png(&screenshot_bytes()?, xid);
+        }
         anyhow::bail!(
             "per-window screenshot is not yet supported on native Wayland — \
              zwlr_screencopy_manager_v1 is output-only and ext-image-copy-capture-v1 \
@@ -2163,5 +2213,22 @@ mod tests {
         assert_eq!(windows[0].xid, 10);
         assert_eq!(windows[1].pid, Some(200));
         assert_eq!(windows[2].pid, None);
+    }
+
+    #[test]
+    fn sway_window_capture_is_cropped_to_compositor_geometry() {
+        let source = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            8,
+            6,
+            image::Rgba([20, 40, 60, 255]),
+        ));
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        source
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .expect("encode fixture PNG");
+        let cropped = crop_png_to_rect(encoded.get_ref(), 2, 1, 3, 4, "fixture")
+            .expect("crop fixture PNG");
+        let decoded = image::load_from_memory(&cropped).expect("decode cropped PNG");
+        assert_eq!((decoded.width(), decoded.height()), (3, 4));
     }
 }

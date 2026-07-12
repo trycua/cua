@@ -127,6 +127,33 @@ impl PageBackend for LinuxPageBackend {
         let result = cua_driver_core::cdp::evaluate(port, javascript, true).await?;
         Ok(format!("cdp.runtime.evaluate.user_gesture: {result}"))
     }
+
+    async fn execute_javascript_targeted(
+        &self,
+        pid: i32,
+        window_id: u32,
+        javascript: &str,
+        cdp_port: Option<u16>,
+        target_url_contains: Option<&str>,
+    ) -> anyhow::Result<String> {
+        if cdp_port.is_none() && target_url_contains.is_none() {
+            return self.execute_javascript(pid, window_id, javascript).await;
+        }
+        let port = cdp_port.or_else(|| {
+            std::env::var("CUA_DRIVER_CDP_PORT")
+                .ok()
+                .and_then(|value| value.parse::<u16>().ok())
+        }).ok_or_else(|| anyhow::anyhow!(
+            "targeted execute_javascript on Linux requires cdp_port or CUA_DRIVER_CDP_PORT"
+        ))?;
+        let result = cua_driver_core::cdp::evaluate_targeted(
+            port,
+            javascript,
+            true,
+            target_url_contains,
+        ).await?;
+        Ok(format!("cdp.runtime.evaluate.user_gesture: {result}"))
+    }
 }
 
 /// Map common CSS selectors to AT-SPI role names. Returns `None` for `*` or

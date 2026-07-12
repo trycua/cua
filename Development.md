@@ -99,7 +99,9 @@ do not duplicate that matrix. Start with:
 - [`libs/cua-driver/rust/README.md`](libs/cua-driver/rust/README.md) for the Cargo workspace.
 - [`libs/cua-driver/rust/crates/cua-driver/tests/README.md`](libs/cua-driver/rust/crates/cua-driver/tests/README.md) for test ownership.
 - [`scripts/ci/README.md`](scripts/ci/README.md) for canonical OS runners.
-- [Platform support and validation](https://cua.ai/docs/reference/cua-driver/platform-support) for the public capability and evidence contract.
+- [Platform support](https://cua.ai/docs/reference/cua-driver/platform-support) for current capability boundaries.
+- [How Cua Driver is validated](https://cua.ai/docs/concepts/how-cua-driver-is-validated) for the public evidence model.
+- [Platform roadmap](https://cua.ai/docs/reference/cua-driver/platform-roadmap) for remaining work and platform boundaries.
 
 Windows and macOS desktop tests need a real user session. Windows requires an
 active console or RDP session. macOS requires a logged-in session with

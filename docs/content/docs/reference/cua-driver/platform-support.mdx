@@ -1,6 +1,6 @@
 ---
-title: Platform Support and Validation
-description: Current operating-system and window-system support, known limits, and the evidence used to prevent desktop behavior regressions between releases.
+title: Platform Support
+description: Current operating-system and window-system support, proven surfaces, and known capability boundaries.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -39,10 +39,10 @@ capture, activation, and input protocols.
 | Environment                     | State                 | What is proven                                                                                                                                                                                    | Main limits                                                                                                                                                                                                                                                |
 | ------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | X11/Xorg                        | Supported             | Window discovery and capture, AT-SPI trees and actions, foreground pointer and keyboard input, semantic background delivery, desktop scope, and structured refusals                               | Raw background delivery depends on the target toolkit. X11 accepting an event does not prove the application handled it.                                                                                                                                   |
-| Sway (wlroots reference lane)   | Supported with limits | Native discovery, screencopy, GTK controls, 29/36 Electron full-run rows, and all 9 Electron PX-background rows in the focused replacement run | Focus-bound background input returns structured refusals. Foreground Electron AX right/double click and AX/PX hotkey remain incomplete. Other wlroots compositors are expected to share protocol support but are not yet proven. |
+| Sway (wlroots reference lane)   | Supported with limits | Native discovery, screencopy, GTK controls, partial Electron shared coverage, and the complete Electron PX-background group                                                                       | Focus-bound background input returns structured refusals. A complete accepted shared renderer matrix remains open. Other wlroots compositors are expected to share protocol support but are not yet proven.                                                |
 | GNOME/Mutter                    | Supported with limits | AT-SPI actions, GTK controls, compositor-backed window geometry and capture, verified foreground activation, and portal/libei foreground input                                                    | The bundled WinRects Shell helper and one Shell-session restart are prerequisites for authoritative geometry and activation. Portal video recording remains incomplete.                                                                                    |
 | KDE/KWin                        | Experimental          | Plasma 6 session startup, GTK AT-SPI discovery, generic discovery where exposed, and portal interface availability                                                                                | cua-driver does not yet have a target-addressable KWin activation adapter, and no complete behavioral matrix is accepted. Focus-bound input refuses rather than risking delivery to the wrong application.                                                  |
-| `cua-compositor` nested session | Experimental          | Native GTK passed 31/31 typed rows, capture/scope passed 5/5, and the latest full Electron run passed 26/36 before focused repairs. Evidence includes the private route, observer, and video. | The complete shared matrix is not accepted. Unicode text and a canonical parallel-drag row remain unproven; this route does not establish a stock-Wayland capability. |
+| `cua-compositor` nested session | Experimental          | Native GTK behavior, capture and scope, private route metadata, independent observation, and per-cell video                                                                                       | The complete shared renderer matrix is not accepted. Unicode text and a canonical parallel-drag row remain unproven; this route does not establish a stock-Wayland capability.                                                                              |
 | XWayland                        | Supported with limits | X11 routes are used when the application exposes a real X11 window; native Wayland and AT-SPI fallbacks cover mixed sessions                                                                      | Capabilities depend on whether the application is actually using X11 or native Wayland.                                                                                                                                                                    |
 
 ### Wayland background AX and PX
@@ -79,123 +79,13 @@ fixture evidence remain unproven.
   desktop. It is not a silent success.
 </Callout>
 
-## How support is validated
+## Related documentation
 
-Validation has two layers. Unit tests protect deterministic code and protocol
-contracts. Harness end-to-end tests prove that a real desktop action reached
-the intended application.
-
-### Unit and protocol gates
-
-These tests run without a target GUI application. They cover:
-
-- MCP and CLI schemas, transport, sessions, and error envelopes
-- element identity and snapshot lifetime
-- platform route selection and structured refusal codes
-- image, capture, coordinate, and input helpers
-- Linux package builds and supported distribution toolchains
-- compile-time checks for each operating-system backend
-
-Unit tests can prove that a route was selected correctly. They cannot prove
-that a click, key, scroll, or drag changed a real application.
-
-### Harness end-to-end tests
-
-The canonical E2E suites build small applications from source in this
-repository, launch them in a real user desktop session, and drive them through
-the Rust driver. The applications expose deterministic state that is separate
-from the driver's response.
-
-| Platform | Shared harnesses               | Native harnesses and surfaces                   |
-| -------- | ------------------------------ | ----------------------------------------------- |
-| Windows  | Electron and Tauri             | WPF, WinUI 3, and WebView2                      |
-| macOS    | Electron, Tauri, and WKWebView | AppKit and SwiftUI                              |
-| Linux    | Electron and Tauri             | GTK 3 across X11 and supported Wayland sessions |
-
-The complete Electron and Tauri catalog is proven on Linux X11. Sway has
-accepted native GTK coverage and partial Electron coverage. Its hosted
-Tauri/WebKitGTK environment does not expose a representative renderer tree
-without DRM/EGL. GNOME's accepted evidence currently covers the native GTK,
-capture, and desktop-scope owners; its complete shared renderer lane remains
-open.
-
-Each declared test cell records the following dimensions:
-
-| Dimension       | Examples                                                                                               |
-| --------------- | ------------------------------------------------------------------------------------------------------ |
-| Action          | left click, right click, double click, type text, key, hotkey, scroll, drag, child window, editor save |
-| Addressing      | AX element or PX coordinate                                                                            |
-| Delivery        | foreground or background                                                                               |
-| Scope           | target window or full desktop                                                                          |
-| Surface         | Electron, native toolkit, embedded web view, or compositor                                             |
-| Expected result | delivered or one exact structured refusal                                                              |
-
-Foreground and background are dimensions of each action. They are not separate
-test suites. When an action supports both, both forms belong in the catalog.
-
-## What counts as a pass
-
-A successful driver response is insufficient. A delivery cell passes only
-after an independent oracle observes the intended effect.
-
-| Oracle               | What it proves                                                                          |
-| -------------------- | --------------------------------------------------------------------------------------- |
-| Fixture state        | The application recorded the click, text, key, selection, scroll, drag, or saved state. |
-| Accessibility state  | UIA, AX, or AT-SPI reports the expected control value or structure.                     |
-| Pixel state          | Before and after images show the required visible change.                               |
-| Focus and z-order    | A background action did not activate or raise the target.                               |
-| Cursor state         | The real user cursor did not move when the route promised background delivery.          |
-| Leaked-input journal | The foreground sentinel did not receive the target's click or keyboard input.           |
-| Protocol state       | An unsupported route returned the exact documented refusal code.                        |
-
-For a background refusal to pass, the expected refusal code must match and all
-required side-effect oracles must remain clean. An unknown error, a no-op, or
-an `ok` response without application state fails the cell.
-
-## Evidence retained for each run
-
-Reporter-enforced hosted GUI runs retain enough evidence to diagnose both
-driver regressions and invalid test environments:
-
-- a typed case declaration and typed result for every expected cell
-- the exact source commit used to build the driver and fixtures
-- a full-desktop MP4 for each behavior cell
-- before and after screenshots and accessibility state where required
-- a trajectory containing tool arguments and results
-- fixture journals, driver logs, and environment preflight results
-- a GitHub Actions summary with every matrix row and its artifact link
-
-The reporter rejects missing rows, duplicate rows, undeclared results,
-contradictory outcomes, missing required oracles, and incomplete evidence. A
-setup failure cannot become a smaller green matrix.
-
-GNOME currently has accepted native behavioral evidence without equivalent
-portal MP4 coverage. That missing video lane is recorded as an evidence gap; it
-is not presented as reporter-enforced parity with the hosted Sway lane.
-
-## Release validation policy
-
-Automatic checks and interactive desktop validation have different roles:
-
-| Validation class                            | Execution                                                 | Role between releases                                                                                    |
-| ------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Unit, protocol, compile, and package checks | Automatic CI, split by affected platform where configured | Reject deterministic contract, build, and packaging regressions.                                         |
-| Linux distribution checks                   | Automatic CI                                              | Compile and package against the maintained Linux distribution set.                                       |
-| Interactive harness E2E                     | Maintainer-triggered on a real user session               | Validate affected desktop behavior against the canonical Rust catalog before support claims are changed. |
-| Evidence reporter                           | Part of canonical hosted GUI runs                         | Reject missing matrix rows, changed contracts, incomplete artifacts, and false-success results.          |
-| Support reference                           | Updated with accepted evidence                            | Record delivered capabilities, exact refusals, and remaining gaps.                                       |
-
-Interactive E2E is not currently an enforced release gate on every platform.
-Windows, Linux X11, and Linux Wayland have dispatchable GitHub Actions
-workflows. macOS uses the same Rust catalog through its local runner in a
-logged-in session with the required permissions.
-
-Each accepted run builds the driver and fixtures from one exact source commit.
-The same Rust case catalog defines local and CI behavior, so a hosted runner
-does not introduce a second source of truth. A capability change requires new
-application-state evidence or a declared refusal; skips and weaker oracles do
-not establish support.
-
-For repository layout and contributor entry points, see
-[Development](/reference/cua-driver/development). For the public action-routing
-contract, see [Interface contracts](/reference/cua-driver/contracts).
+- [How Cua Driver is validated](/concepts/how-cua-driver-is-validated) explains
+  why unit tests and application-owned E2E evidence have different roles.
+- [Platform roadmap](/reference/cua-driver/platform-roadmap) records the
+  remaining engineering work, evidence gaps, and platform boundaries.
+- [Known limits](/reference/cua-driver/limits) lists target-specific constraints
+  and available alternatives.
+- [Development](/reference/cua-driver/development) provides contributor entry
+  points and canonical validation commands.

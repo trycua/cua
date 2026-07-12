@@ -1,6 +1,8 @@
 # Linux support completion plan
 
-**Status:** Implemented; representative desktop gaps remain
+**Status:** Historical implementation plan. Current outcomes live in
+`action-support.md`; remaining work lives in the
+[public platform roadmap](https://cua.ai/docs/reference/cua-driver/platform-roadmap).
 
 **Scope:** Linux driver behavior, canonical Rust E2E evidence, and release validation
 

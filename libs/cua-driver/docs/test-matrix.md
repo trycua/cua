@@ -170,7 +170,10 @@ allowed, and the desktop-side-effect oracles pass.
 | Linux unit/source | Nix Linux CI | `nix build .#checks.x86_64-linux.cua-driver-build .#checks.x86_64-linux.cua-driver-linux-rust-unit` |
 | Windows unit/compile | `windows-latest` | Package-scoped `cargo test --all-targets --no-run --locked` |
 | Windows Harness E2E | Active Windows user session | `scripts/ci/windows/run-rust-e2e.ps1 -RequireGui` |
-| Linux Harness E2E | Nix X11 or Wayland session | `scripts/ci/linux/run-rust-e2e.sh` |
+| Linux X11 Harness E2E | Nix X11 session | `scripts/ci/linux/run-rust-e2e.sh` |
+| Linux Sway Harness E2E | Controlled wlroots session | `scripts/ci/linux/run-rust-e2e-wayland.sh` |
+| Linux nested-compositor E2E | Controlled experimental session | `scripts/ci/linux/run-rust-e2e-inject.sh` |
+| Linux representative desktop E2E | Existing GNOME, KDE, or Xorg login | `scripts/ci/linux/run-rust-e2e-desktop.sh <desktop>` |
 | macOS Harness E2E | Logged-in macOS session with permissions | `scripts/ci/macos/run-rust-e2e.sh` |
 
 Workflows select private execution lanes. Rust source owns scenario definitions,

@@ -1,11 +1,16 @@
 ---
 title: Known Limits
-description: Documented behavioral limits of Cua Driver and available workarounds
+description: Documented behavioral limits of Cua Driver and available alternatives
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Cua Driver uses best-effort background delivery for every app it can reach via accessibility or routed pixel input. A handful of targets and platform quirks fall outside that envelope. The macOS cases come first, followed by the Linux session-stack limits.
+Cua Driver attempts background delivery only when the operating system and
+target expose a route that can be addressed safely. Unsupported shapes return a
+structured refusal instead of reporting a silent success. This page lists
+target-specific constraints and available alternatives; see
+[Platform Support](/reference/cua-driver/platform-support) for the broader
+operating-system matrix.
 
 ---
 

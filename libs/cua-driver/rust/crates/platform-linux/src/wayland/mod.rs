@@ -2303,19 +2303,17 @@ fn merge_atspi_windows(
     }
 }
 
-fn enrich_native_windows(
-    mut native: Vec<WindowInfo>,
-    atspi: Vec<WindowInfo>,
-) -> Vec<WindowInfo> {
+fn enrich_native_windows(mut native: Vec<WindowInfo>, atspi: Vec<WindowInfo>) -> Vec<WindowInfo> {
     let mut claimed = std::collections::HashSet::new();
     for window in &mut native {
         if window.pid.is_some() {
             continue;
         }
+        let native_title = undecorated_native_title(window);
         let title_match = atspi.iter().enumerate().find_map(|(index, candidate)| {
             (!claimed.contains(&index)
-                && !window.title.is_empty()
-                && candidate.title == window.title)
+                && !native_title.is_empty()
+                && candidate.title == native_title)
                 .then_some(index)
         });
         let app_match = title_match.or_else(|| {
@@ -2344,6 +2342,14 @@ fn enrich_native_windows(
         window.is_on_screen = candidate.is_on_screen;
     }
     native
+}
+
+fn undecorated_native_title(window: &WindowInfo) -> &str {
+    if window.app_name.is_empty() {
+        return &window.title;
+    }
+    let suffix = format!(" [{}]", window.app_name);
+    window.title.strip_suffix(&suffix).unwrap_or(&window.title)
 }
 
 /// Return native records only when they contain a real match for a pid-scoped
@@ -2487,6 +2493,24 @@ mod tests {
         assert_eq!(windows[0].xid, 10);
         assert_eq!(windows[1].pid, Some(200));
         assert_eq!(windows[2].pid, None);
+    }
+
+    #[test]
+    fn native_enrichment_matches_plain_atspi_title() {
+        let mut native = window(42, None, "CUA Fixture [cua-fixture]");
+        native.app_name = "cua-fixture".into();
+        let mut accessible = window(123 << 16, Some(123), "CUA Fixture");
+        accessible.x = 20;
+        accessible.y = 30;
+        accessible.width = 800;
+        accessible.height = 600;
+
+        let enriched = enrich_native_windows(vec![native], vec![accessible]);
+
+        assert_eq!(enriched[0].xid, 42);
+        assert_eq!(enriched[0].pid, Some(123));
+        assert_eq!((enriched[0].x, enriched[0].y), (20, 30));
+        assert_eq!((enriched[0].width, enriched[0].height), (800, 600));
     }
 
     #[test]

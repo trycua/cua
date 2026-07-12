@@ -778,6 +778,7 @@ pub mod linux {
         X11,
         Sway,
         Gnome,
+        CuaCompositor,
         Missing,
     }
 
@@ -795,7 +796,9 @@ pub mod linux {
                 .unwrap_or(false)
                 || std::env::var_os("WAYLAND_DISPLAY").is_some();
             let session = if explicit_wayland {
-                if sway_available() {
+                if cua_compositor_available() {
+                    SessionKind::CuaCompositor
+                } else if sway_available() {
                     SessionKind::Sway
                 } else if gnome_windows().is_ok() {
                     SessionKind::Gnome
@@ -835,12 +838,14 @@ pub mod linux {
                     cursor: true,
                     leaked_input: false,
                 },
-                SessionKind::Sway | SessionKind::Gnome => ObserverCapabilities {
-                    focus: true,
-                    z_order: true,
-                    cursor: false,
-                    leaked_input: false,
-                },
+                SessionKind::Sway | SessionKind::Gnome | SessionKind::CuaCompositor => {
+                    ObserverCapabilities {
+                        focus: true,
+                        z_order: true,
+                        cursor: false,
+                        leaked_input: false,
+                    }
+                }
                 SessionKind::Missing => ObserverCapabilities::default(),
             }
         }
@@ -850,6 +855,7 @@ pub mod linux {
                 SessionKind::X11 => x11_snapshot(target),
                 SessionKind::Sway => sway_snapshot(target),
                 SessionKind::Gnome => gnome_snapshot(target),
+                SessionKind::CuaCompositor => cua_compositor_snapshot(target),
                 SessionKind::Missing => Ok(DesktopSnapshot {
                     foreground: None,
                     input_focus: None,
@@ -876,6 +882,7 @@ pub mod linux {
                     SessionKind::X11 => x11_focus_identity(),
                     SessionKind::Sway => sway_focus_identity(),
                     SessionKind::Gnome => gnome_focus_identity(),
+                    SessionKind::CuaCompositor => cua_compositor_focus_identity(),
                     SessionKind::Missing => Ok(None),
                 };
                 let mut previous = focus_identity().ok().flatten();
@@ -949,6 +956,115 @@ pub mod linux {
 
     fn sway_available() -> bool {
         std::env::var_os("SWAYSOCK").is_some_and(|value| !value.is_empty()) && sway_tree().is_ok()
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct CuaCompositorState {
+        focused_pid: Option<u64>,
+        target_z: TargetZ,
+    }
+
+    fn parse_cua_compositor_state(line: &str) -> Result<CuaCompositorState, ObserverError> {
+        let mut fields = line.split_whitespace();
+        if fields.next() != Some("state") {
+            return Err(ObserverError::new(format!(
+                "invalid cua-compositor observer response: {line:?}"
+            )));
+        }
+        let focused_pid = fields
+            .next()
+            .ok_or_else(|| ObserverError::new("cua-compositor state omitted focused pid"))?
+            .parse::<u64>()
+            .map_err(|error| ObserverError::new(format!("invalid focused pid: {error}")))?;
+        let target_z = match fields.next() {
+            Some("foreground") => TargetZ::Foreground,
+            Some("background_occluded") => TargetZ::BackgroundOccluded,
+            Some("background_visible") => TargetZ::BackgroundVisible,
+            Some("not_found") => TargetZ::NotFound,
+            Some(value) => {
+                return Err(ObserverError::new(format!(
+                    "invalid cua-compositor target state: {value}"
+                )))
+            }
+            None => {
+                return Err(ObserverError::new(
+                    "cua-compositor state omitted target state",
+                ))
+            }
+        };
+        if fields.next().is_some() {
+            return Err(ObserverError::new(
+                "cua-compositor state contained trailing fields",
+            ));
+        }
+        Ok(CuaCompositorState {
+            focused_pid: (focused_pid != 0).then_some(focused_pid),
+            target_z,
+        })
+    }
+
+    fn cua_compositor_state(target_pid: u32) -> Result<CuaCompositorState, ObserverError> {
+        use std::io::{BufRead, BufReader, Write};
+        use std::os::unix::net::UnixStream;
+
+        let socket = std::env::var("CUA_INJECT_SOCKET")
+            .map_err(|_| ObserverError::new("CUA_INJECT_SOCKET is not set"))?;
+        let stream = UnixStream::connect(&socket).map_err(|error| {
+            ObserverError::new(format!("connect cua-compositor observer socket: {error}"))
+        })?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .map_err(|error| ObserverError::new(format!("set observer timeout: {error}")))?;
+        let mut writer = stream
+            .try_clone()
+            .map_err(|error| ObserverError::new(format!("clone observer socket: {error}")))?;
+        let mut reader = BufReader::new(stream);
+
+        writeln!(writer, "cua-inject v1")
+            .and_then(|_| writer.flush())
+            .map_err(|error| ObserverError::new(format!("write observer handshake: {error}")))?;
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .map_err(|error| ObserverError::new(format!("read observer handshake: {error}")))?;
+        if line.trim() != "cua-inject v1" {
+            return Err(ObserverError::new(format!(
+                "cua-compositor observer handshake mismatch: {:?}",
+                line.trim()
+            )));
+        }
+
+        writeln!(writer, "q {target_pid}")
+            .and_then(|_| writer.flush())
+            .map_err(|error| ObserverError::new(format!("write observer query: {error}")))?;
+        line.clear();
+        let read = reader
+            .read_line(&mut line)
+            .map_err(|error| ObserverError::new(format!("read observer query: {error}")))?;
+        if read == 0 {
+            return Err(ObserverError::new(
+                "cua-compositor closed the observer query",
+            ));
+        }
+        parse_cua_compositor_state(&line)
+    }
+
+    fn cua_compositor_available() -> bool {
+        std::env::var_os("CUA_INJECT_SOCKET").is_some() && cua_compositor_state(0).is_ok()
+    }
+
+    fn cua_compositor_snapshot(target: TargetWindow) -> Result<DesktopSnapshot, ObserverError> {
+        let state = cua_compositor_state(target.pid)?;
+        Ok(DesktopSnapshot {
+            foreground: state.focused_pid,
+            input_focus: state.focused_pid,
+            target_z: state.target_z,
+            cursor_pos: None,
+        })
+    }
+
+    fn cua_compositor_focus_identity() -> Result<Option<u64>, ObserverError> {
+        Ok(cua_compositor_state(0)?.focused_pid)
     }
 
     #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -1435,6 +1551,29 @@ pub mod linux {
                 target: Some((20, false, Some(11))),
             };
             assert_eq!(classify_sway_target(&state), TargetZ::Minimized);
+        }
+
+        #[test]
+        fn cua_compositor_state_is_strict_and_pid_based() {
+            assert_eq!(
+                parse_cua_compositor_state("state 200 background_occluded\n")
+                    .expect("valid compositor state"),
+                CuaCompositorState {
+                    focused_pid: Some(200),
+                    target_z: TargetZ::BackgroundOccluded,
+                }
+            );
+            assert_eq!(
+                parse_cua_compositor_state("state 0 not_found")
+                    .expect("zero means no focused client"),
+                CuaCompositorState {
+                    focused_pid: None,
+                    target_z: TargetZ::NotFound,
+                }
+            );
+            assert!(parse_cua_compositor_state("ok").is_err());
+            assert!(parse_cua_compositor_state("state 1 unknown").is_err());
+            assert!(parse_cua_compositor_state("state 1 foreground trailing").is_err());
         }
 
         #[test]

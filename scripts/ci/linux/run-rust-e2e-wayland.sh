@@ -6,16 +6,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="$(mktemp -d)"
 SWAY_CONFIG="$(mktemp)"
-SWAY_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/sway.log"
+SESSION_KIND="${CUA_E2E_WAYLAND_SESSION:-sway}"
+COMPOSITOR_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/${SESSION_KIND}.log"
 ATSPI_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/at-spi-bus.log"
-SWAY_PID=""
+COMPOSITOR_PID=""
 DBUS_PID=""
 ATSPI_PID=""
 
 cleanup() {
-  if [[ -n "${SWAY_PID}" ]]; then
-    kill "${SWAY_PID}" 2>/dev/null || true
-    wait "${SWAY_PID}" 2>/dev/null || true
+  if [[ -n "${COMPOSITOR_PID}" ]]; then
+    kill "${COMPOSITOR_PID}" 2>/dev/null || true
+    wait "${COMPOSITOR_PID}" 2>/dev/null || true
   fi
   if [[ -n "${DBUS_PID}" ]]; then
     kill "${DBUS_PID}" 2>/dev/null || true
@@ -29,7 +30,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$(dirname "${SWAY_LOG}")"
+mkdir -p "$(dirname "${COMPOSITOR_LOG}")"
 chmod 700 "${RUNTIME_DIR}"
 cat > "${SWAY_CONFIG}" <<'EOF'
 xwayland disable
@@ -54,8 +55,15 @@ export WLR_RENDERER_ALLOW_SOFTWARE=1
 export WLR_LIBINPUT_NO_DEVICES=1
 export WLR_HEADLESS_OUTPUTS=1
 export CUA_DRIVER_RS_ENABLE_WAYLAND=1
-export CUA_E2E_COMPOSITOR=sway
-export CUA_E2E_INPUT_BACKENDS=atspi,wlr-virtual-pointer
+if [[ "${SESSION_KIND}" == cua-compositor ]]; then
+  export CUA_E2E_COMPOSITOR=cua-compositor-nested
+  export CUA_E2E_INPUT_BACKENDS=atspi,cua-compositor-inject
+  export CUA_E2E_HARNESS_FILTER=electron
+  export CUA_INJECT_SOCKET="${XDG_RUNTIME_DIR}/cua-inject.sock"
+else
+  export CUA_E2E_COMPOSITOR=sway
+  export CUA_E2E_INPUT_BACKENDS=atspi,wlr-virtual-pointer
+fi
 export CUA_WAYLAND_RECORDING_OUTPUT=HEADLESS-1
 export ELECTRON_OZONE_PLATFORM_HINT=wayland
 export GDK_BACKEND=wayland
@@ -150,14 +158,22 @@ if ! gdbus call --session \
   exit 1
 fi
 
-sway --unsupported-gpu --config "${SWAY_CONFIG}" > "${SWAY_LOG}" 2>&1 &
-SWAY_PID=$!
+if [[ "${SESSION_KIND}" == cua-compositor ]]; then
+  command -v cua-compositor >/dev/null || {
+    echo "cua-compositor is required for the nested injection lane" >&2
+    exit 1
+  }
+  cua-compositor > "${COMPOSITOR_LOG}" 2>&1 &
+else
+  sway --unsupported-gpu --config "${SWAY_CONFIG}" > "${COMPOSITOR_LOG}" 2>&1 &
+fi
+COMPOSITOR_PID=$!
 
 deadline=$((SECONDS + 20))
 while ((SECONDS < deadline)); do
-  if ! kill -0 "${SWAY_PID}" 2>/dev/null; then
-    echo "Sway exited before its Wayland socket became ready" >&2
-    cat "${SWAY_LOG}" >&2
+  if ! kill -0 "${COMPOSITOR_PID}" 2>/dev/null; then
+    echo "${SESSION_KIND} exited before its Wayland socket became ready" >&2
+    cat "${COMPOSITOR_LOG}" >&2
     exit 1
   fi
   socket="$(find "${XDG_RUNTIME_DIR}" -maxdepth 1 -type s -name 'wayland-*' -print -quit)"
@@ -169,24 +185,36 @@ while ((SECONDS < deadline)); do
 done
 
 if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
-  echo "Sway did not create a Wayland socket within 20 seconds" >&2
-  cat "${SWAY_LOG}" >&2
+  echo "${SESSION_KIND} did not create a Wayland socket within 20 seconds" >&2
+  cat "${COMPOSITOR_LOG}" >&2
   exit 1
 fi
 
-export SWAYSOCK="$(find "${XDG_RUNTIME_DIR}" -maxdepth 1 -type s -name 'sway-ipc.*.sock' -print -quit)"
-if [[ -z "${SWAYSOCK}" ]]; then
-  echo "Sway did not expose its IPC socket" >&2
-  cat "${SWAY_LOG}" >&2
-  exit 1
+if [[ "${SESSION_KIND}" == cua-compositor ]]; then
+  deadline=$((SECONDS + 10))
+  while [[ ! -S "${CUA_INJECT_SOCKET}" ]] && ((SECONDS < deadline)); do
+    sleep 0.2
+  done
+  if [[ ! -S "${CUA_INJECT_SOCKET}" ]]; then
+    echo "cua-compositor did not expose its injection socket" >&2
+    cat "${COMPOSITOR_LOG}" >&2
+    exit 1
+  fi
+else
+  export SWAYSOCK="$(find "${XDG_RUNTIME_DIR}" -maxdepth 1 -type s -name 'sway-ipc.*.sock' -print -quit)"
+  if [[ -z "${SWAYSOCK}" ]]; then
+    echo "Sway did not expose its IPC socket" >&2
+    cat "${COMPOSITOR_LOG}" >&2
+    exit 1
+  fi
 fi
 
-echo "Native Wayland E2E session: ${WAYLAND_DISPLAY}"
+echo "Native Wayland E2E session: ${SESSION_KIND} on ${WAYLAND_DISPLAY}"
 set +e
 "${SCRIPT_DIR}/run-rust-e2e.sh" "$@"
 status=$?
 set -e
-if [[ "${status}" != 0 ]]; then
+if [[ "${status}" != 0 && "${SESSION_KIND}" == sway ]]; then
   swaymsg -t get_tree > "${REPO_ROOT}/artifacts/cua-driver/linux/sway-tree.json" 2>/dev/null || true
 fi
 exit "${status}"

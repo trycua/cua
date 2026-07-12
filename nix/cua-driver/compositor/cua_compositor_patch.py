@@ -109,6 +109,31 @@ static struct tinywl_toplevel *cua_resolve_target(struct tinywl_server *server, 
 	if (matches > 1) { *err = "ambiguous-app-id"; return NULL; }
 	return found;
 }
+static pid_t cua_toplevel_pid(struct tinywl_toplevel *t) {
+	if (!t || !t->xdg_toplevel || !t->xdg_toplevel->base->surface) return 0;
+	struct wl_client *client = wl_resource_get_client(t->xdg_toplevel->base->surface->resource);
+	pid_t pid = 0; uid_t uid = 0; gid_t gid = 0;
+	wl_client_get_credentials(client, &pid, &uid, &gid);
+	return pid;
+}
+/* Independent observer query used only by the Rust E2E testkit. The target is
+ * selected by the Wayland client's process credentials, not by driver-owned
+ * object ids. In this minimal compositor every mapped toplevel shares origin;
+ * a non-focused target beneath another focused surface is therefore occluded. */
+static void cua_query_state(struct tinywl_server *server, pid_t target_pid, char *out, size_t out_len) {
+	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
+	struct tinywl_toplevel *t, *target = NULL, *focused_toplevel = NULL;
+	wl_list_for_each(t, &server->toplevels, link) {
+		struct wlr_surface *surface = t->xdg_toplevel ? t->xdg_toplevel->base->surface : NULL;
+		if (surface == focused) focused_toplevel = t;
+		if (target_pid > 0 && cua_toplevel_pid(t) == target_pid) target = t;
+	}
+	pid_t focused_pid = cua_toplevel_pid(focused_toplevel);
+	const char *state = !target ? "not_found" :
+		(target == focused_toplevel ? "foreground" :
+		 (focused_toplevel ? "background_occluded" : "background_visible"));
+	snprintf(out, out_len, "state %d %s", (int)focused_pid, state);
+}
 static void cua_ptr_leave(struct wlr_seat *seat, struct wlr_surface *surf) {
 	if (!surf) return;
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(seat, wl_resource_get_client(surf->resource));
@@ -323,16 +348,22 @@ static int cua_conn_readable(int fd, uint32_t mask, void *data) {
 				return cua_conn_drop(c, fd);
 			}
 		} else {
-			const char *err = cua_handle_cmd(c->server, p);
-			/* Deliver injected events before acking so `ok` means "processed",
-			 * never merely "parsed". */
-			wl_display_flush_clients(c->server->wl_display);
-			if (err) {
-				char msg[128];
-				snprintf(msg, sizeof msg, "err %s", err);
+			int query_pid;
+			if (sscanf(p, "q %d", &query_pid) == 1) {
+				char msg[128]; cua_query_state(c->server, (pid_t)query_pid, msg, sizeof msg);
 				cua_reply(fd, msg);
 			} else {
-				cua_reply(fd, "ok");
+				const char *err = cua_handle_cmd(c->server, p);
+				/* Deliver injected events before acking so `ok` means "processed",
+				 * never merely "parsed". */
+				wl_display_flush_clients(c->server->wl_display);
+				if (err) {
+					char msg[128];
+					snprintf(msg, sizeof msg, "err %s", err);
+					cua_reply(fd, msg);
+				} else {
+					cua_reply(fd, "ok");
+				}
 			}
 		}
 		p = nl + 1;

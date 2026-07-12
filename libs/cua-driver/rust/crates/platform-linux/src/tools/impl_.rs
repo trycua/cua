@@ -2322,6 +2322,27 @@ impl Tool for TypeTextTool {
             }
         }
 
+        // The nested compositor owns a raw per-surface route. Prefer it over an
+        // AX value write so renderer fixtures observe real keyboard events.
+        if crate::wayland::is_inject_mode() {
+            let text_w = text.clone();
+            let result =
+                tokio::task::spawn_blocking(move || crate::wayland::inject_type_text(xid, &text_w))
+                    .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Typed {text_len} character(s) (focus-free via cua-compositor)."
+                ))
+                .with_structured(type_text_structured(
+                    "key_events",
+                    text_len,
+                    false,
+                )),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
         // AX addressing names one exact editable. Try this focus-free route
         // before native Wayland keyboard injection, which can only target the
         // compositor's globally focused surface.
@@ -2344,28 +2365,6 @@ impl Tool for TypeTextTool {
                 }
                 _ => {}
             }
-        }
-
-        // Nested cua-compositor: focus-free per-surface typing into window_id
-        // (the target need not be focused). Routed over the inject control socket.
-        if crate::wayland::is_inject_mode() {
-            let text_len = text.chars().count();
-            let text_w = text.clone();
-            let result =
-                tokio::task::spawn_blocking(move || crate::wayland::inject_type_text(xid, &text_w))
-                    .await;
-            return match result {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "Typed {text_len} character(s) (focus-free via cua-compositor)."
-                ))
-                .with_structured(type_text_structured(
-                    "key_events",
-                    text_len,
-                    false,
-                )),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
-                Err(e) => ToolResult::error(format!("Task error: {e}")),
-            };
         }
 
         // Native Wayland: keys go to the *focused* surface (no pid/window

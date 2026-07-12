@@ -116,6 +116,17 @@ fn host_specs() -> Vec<HostSpec> {
         });
     }
 
+    if let Ok(filter) = std::env::var("CUA_E2E_HARNESS_FILTER") {
+        let selected = filter
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .collect::<std::collections::HashSet<_>>();
+        if !selected.is_empty() {
+            hosts.retain(|host| selected.contains(host.name));
+        }
+    }
+
     hosts
 }
 
@@ -837,9 +848,18 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         // occluded, unfocused toplevel. Focus-free AT-SPI button actions are
         // the exception: they are externally verified by the fixture and the
         // focus/z-order/leak sentinels.
-        match (action, targeting) {
-            ("left_click" | "child_window", Targeting::Ax) => Vec::new(),
-            _ => vec![RefusalCode::BackgroundUnavailable],
+        if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
+            match (action, targeting) {
+                ("hotkey" | "scroll" | "drag" | "editor_save", _) => {
+                    vec![RefusalCode::BackgroundUnavailable]
+                }
+                _ => Vec::new(),
+            }
+        } else {
+            match (action, targeting) {
+                ("left_click" | "child_window", Targeting::Ax) => Vec::new(),
+                _ => vec![RefusalCode::BackgroundUnavailable],
+            }
         }
     } else if cfg!(target_os = "linux")
         && spec.name == "tauri"

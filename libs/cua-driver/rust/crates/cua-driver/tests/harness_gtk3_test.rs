@@ -530,10 +530,10 @@ fn row_expects_refusal(row: CatalogRow) -> bool {
     if row.delivery != Delivery::Background {
         return false;
     }
-    if matches!(
-        row.operation,
-        Operation::PressKey { .. } | Operation::Hotkey { .. }
-    ) {
+    let inject_mode = std::env::var_os("CUA_INJECT_SOCKET").is_some();
+    if matches!(row.operation, Operation::Hotkey { .. })
+        || (matches!(row.operation, Operation::PressKey { .. }) && !inject_mode)
+    {
         return true;
     }
     let focus_bound_pointer = matches!(
@@ -552,7 +552,14 @@ fn row_expects_refusal(row: CatalogRow) -> bool {
         return true;
     }
     DisplayServer::current() == DisplayServer::Wayland
+        && !inject_mode
         && (focus_bound_pointer || matches!(row.operation, Operation::PxTypeText { .. }))
+        || (DisplayServer::current() == DisplayServer::Wayland
+            && inject_mode
+            && matches!(
+                row.operation,
+                Operation::Scroll { pixel: true, .. } | Operation::Drag { .. }
+            ))
 }
 
 fn run_catalog_row(row: CatalogRow) {
@@ -563,7 +570,11 @@ fn run_catalog_row(row: CatalogRow) {
                 row.operation,
                 Operation::PressKey { .. } | Operation::Hotkey { .. }
             )) {
-        DriverRoute::LinuxWaylandVirtualPointer
+        if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
+            DriverRoute::LinuxCuaCompositorInject
+        } else {
+            DriverRoute::LinuxWaylandVirtualPointer
+        }
     } else {
         row.route
     };

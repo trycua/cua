@@ -81,9 +81,9 @@ command -v jq >/dev/null || { echo "jq is required for E2E ownership validation"
 if [[ "${BUILD_FIXTURES}" == 1 ]]; then
   cargo build --release -p cua-driver --manifest-path "${RUST_ROOT}/Cargo.toml"
   case "${SUITE}" in
-    shared) FIXTURE_TARGETS="electron,tauri" ;;
+    shared) FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri}" ;;
     native|capture) FIXTURE_TARGETS="electron,gtk3" ;;
-    *) FIXTURE_TARGETS="electron,tauri,gtk3" ;;
+    *) FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri},gtk3" ;;
   esac
   bash "${DRIVER_ROOT}/tests/fixtures/build/linux.sh" --only "${FIXTURE_TARGETS}"
 fi

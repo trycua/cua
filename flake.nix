@@ -30,6 +30,8 @@
             src = rustSrc;
           };
 
+          cuaCompositorPackage = pkgs.callPackage ./nix/cua-driver/compositor { };
+
           # nixpkgs builds the AT-SPI launcher for NixOS's system profile.
           # The E2E shell also runs on non-NixOS hosts such as GitHub's Ubuntu
           # image, so point its private accessibility bus at store binaries.
@@ -77,22 +79,8 @@
             pipewire
             webkitgtk_4_1
           ];
-        in
-        {
-          packages = {
-            cua-driver = cuaDriverPackage;
-            default = cuaDriverPackage;
-          };
 
-          checks = {
-            cua-driver-build = cuaDriverPackage;
-            cua-driver-linux-rust-unit = import ./nix/cua-driver/tests/rust-unit.nix {
-              inherit pkgs;
-              src = rustSrc;
-            };
-          };
-
-          devShells.cua-driver-wayland-e2e = pkgs.mkShell {
+          waylandE2eShell = pkgs.mkShell {
             # hostAtSpi is referenced by absolute launcher path below, but is
             # deliberately not a shell package: adding its rebuilt library and
             # typelib hooks alongside GTK's stock AT-SPI closure loads two ATK
@@ -100,6 +88,7 @@
             packages = with pkgs; [
               cargo
               clang
+              cuaCompositorPackage
               dbus
               ffmpeg
               gobject-introspection
@@ -124,6 +113,25 @@
               export XDG_DATA_DIRS="${hostAtSpi}/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
             '';
           };
+        in
+        {
+          packages = {
+            cua-compositor = cuaCompositorPackage;
+            cua-driver = cuaDriverPackage;
+            default = cuaDriverPackage;
+          };
+
+          checks = {
+            cua-compositor-build = cuaCompositorPackage;
+            cua-driver-build = cuaDriverPackage;
+            cua-driver-linux-rust-unit = import ./nix/cua-driver/tests/rust-unit.nix {
+              inherit pkgs;
+              src = rustSrc;
+            };
+          };
+
+          devShells.cua-driver-wayland-e2e = waylandE2eShell;
+          devShells.cua-driver-inject-e2e = waylandE2eShell;
         }
       )
     // {

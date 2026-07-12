@@ -677,7 +677,10 @@ impl Tool for ListWindowsTool {
                      have created a window yet. The current frontmost app appears to be \
                      \"{fg_name}\" (pid {fg_pid})."
                 );
-                return ToolResult::text(msg);
+                return ToolResult::text(msg).with_structured(json!({
+                    "windows": [],
+                    "current_space_id": serde_json::Value::Null,
+                }));
             }
         }
 

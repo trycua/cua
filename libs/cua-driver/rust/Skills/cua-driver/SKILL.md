@@ -510,7 +510,7 @@ against a specific window.
 
 | Intent | Tool | Notes |
 |---|---|---|
-| List an app's windows | `list_windows({pid})` | returns `window_id`, `title`, `bounds`, `z_index`, `is_on_screen`, `on_current_space`. Already included in `launch_app`'s response — only call this for long-lived pids |
+| List an app's windows | `list_windows({pid})` | read `structuredContent.windows`. Common fields are `window_id`, nullable `pid`, `app_name`, `title`, `bounds`, and `is_on_screen`; optional platform metadata includes `layer`, nullable `z_index`, `on_current_space`, and `space_ids`. Already included in `launch_app` responses — only call this for long-lived pids |
 | Snapshot a window | `get_window_state({pid, window_id})` | returns `tree_markdown` + `screenshot_*`; populates the `(pid, window_id)` element_index cache |
 | Left click | `click({pid, window_id, element_index})` | default `action: "press"`. Pixel form: `click({pid, x, y})` (window_id optional) — `modifier: ["cmd"\|"ctrl"]` |
 | Double-click / open | `double_click({pid, window_id, element_index})` | Default action when the element advertises one (Open on Finder items / openable rows), else stamped pixel double-click at the element's center |

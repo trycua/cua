@@ -1157,6 +1157,15 @@ pub fn evdev_pointer_button(button: u8) -> u32 {
     }
 }
 
+fn event_time_ms() -> u32 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis()
+        .clamp(1, u32::MAX as u128) as u32
+}
+
 /// Click a native Wayland toplevel identified by its `window_id` (the
 /// foreign-toplevel protocol id from `list_windows`) at output-relative
 /// `(x, y)`, with `button` (1/2/3 = left/middle/right) emitted `count` times.
@@ -1175,6 +1184,7 @@ pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::
 /// [`with_libei_fallback`] when the compositor exposes no virtual-pointer.
 fn click_vptr(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
     let mut sess = open_vptr_session(Some(window_id))?;
+    std::thread::sleep(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
     let (px, py) = if x == 0 && y == 0 {
         ((w / 2) as i32, (h / 2) as i32)
@@ -1188,11 +1198,17 @@ fn click_vptr(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow:
         if i > 0 {
             std::thread::sleep(std::time::Duration::from_millis(80));
         }
-        sess.vptr.motion_absolute(0, px, py, w, h);
+        sess.vptr.motion_absolute(event_time_ms(), px, py, w, h);
         sess.vptr.frame();
-        sess.vptr.button(0, btn, ButtonState::Pressed);
+        sess.queue.roundtrip(&mut sess.state)?;
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        sess.vptr
+            .button(event_time_ms(), btn, ButtonState::Pressed);
         sess.vptr.frame();
-        sess.vptr.button(0, btn, ButtonState::Released);
+        sess.queue.roundtrip(&mut sess.state)?;
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        sess.vptr
+            .button(event_time_ms(), btn, ButtonState::Released);
         sess.vptr.frame();
         sess.queue.roundtrip(&mut sess.state)?;
     }
@@ -1234,7 +1250,8 @@ fn scroll_vptr(window_id: u64, direction: &str, amount: u32) -> anyhow::Result<(
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
         sess.vptr.axis_source(AxisSource::Wheel);
-        sess.vptr.axis_discrete(0, axis, value, sign);
+        sess.vptr
+            .axis_discrete(event_time_ms(), axis, value, sign);
         sess.vptr.frame();
         sess.queue.roundtrip(&mut sess.state)?;
     }
@@ -1290,7 +1307,7 @@ fn move_cursor_absolute_vptr(window_id: Option<u64>, x: i32, y: i32) -> anyhow::
     let (w, h) = (sess.output_w, sess.output_h);
     let px = x.clamp(0, (w as i32).saturating_sub(1)) as u32;
     let py = y.clamp(0, (h as i32).saturating_sub(1)) as u32;
-    sess.vptr.motion_absolute(0, px, py, w, h);
+    sess.vptr.motion_absolute(event_time_ms(), px, py, w, h);
     sess.vptr.frame();
     sess.queue.roundtrip(&mut sess.state)?;
     record_synth_cursor(px as i32, py as i32);
@@ -1331,6 +1348,7 @@ fn drag_vptr(
     button: u8,
 ) -> anyhow::Result<()> {
     let mut sess = open_vptr_session(Some(window_id))?;
+    std::thread::sleep(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
     let btn = evdev_pointer_button(button);
     let clamp_xy = |x: i32, y: i32| -> (u32, u32) {
@@ -1340,9 +1358,12 @@ fn drag_vptr(
         )
     };
     let (fx, fy) = clamp_xy(from_x, from_y);
-    sess.vptr.motion_absolute(0, fx, fy, w, h);
+    sess.vptr.motion_absolute(event_time_ms(), fx, fy, w, h);
     sess.vptr.frame();
-    sess.vptr.button(0, btn, ButtonState::Pressed);
+    sess.queue.roundtrip(&mut sess.state)?;
+    std::thread::sleep(std::time::Duration::from_millis(15));
+    sess.vptr
+        .button(event_time_ms(), btn, ButtonState::Pressed);
     sess.vptr.frame();
     sess.queue.roundtrip(&mut sess.state)?;
     let n = steps.max(1);
@@ -1351,15 +1372,18 @@ fn drag_vptr(
         let ix = (from_x as f64 + (to_x - from_x) as f64 * t).round() as i32;
         let iy = (from_y as f64 + (to_y - from_y) as f64 * t).round() as i32;
         let (cx, cy) = clamp_xy(ix, iy);
-        sess.vptr.motion_absolute(0, cx, cy, w, h);
+        sess.vptr
+            .motion_absolute(event_time_ms(), cx, cy, w, h);
         sess.vptr.frame();
         sess.queue.roundtrip(&mut sess.state)?;
         std::thread::sleep(std::time::Duration::from_millis(8));
     }
     let (tx, ty) = clamp_xy(to_x, to_y);
-    sess.vptr.motion_absolute(0, tx, ty, w, h);
+    sess.vptr.motion_absolute(event_time_ms(), tx, ty, w, h);
     sess.vptr.frame();
-    sess.vptr.button(0, btn, ButtonState::Released);
+    sess.queue.roundtrip(&mut sess.state)?;
+    sess.vptr
+        .button(event_time_ms(), btn, ButtonState::Released);
     sess.vptr.frame();
     // Sync the synthetic-cursor registry with the drag endpoint so a
     // subsequent `get_cursor_position` reports where we left the pointer.
@@ -1406,6 +1430,10 @@ pub fn type_text(text: &str) -> anyhow::Result<()> {
 /// Press a single named key into the focused Wayland surface via `wtype -k`.
 pub fn press_key(key: &str) -> anyhow::Result<()> {
     let keysym = key_to_keysym(key);
+    let _ = std::process::Command::new("wtype")
+        .args(["-k", "Shift_L"])
+        .output();
+    std::thread::sleep(std::time::Duration::from_millis(20));
     let result = std::process::Command::new("wtype").args(["-k", &keysym]).output();
     match result {
         Ok(out) if out.status.success() => Ok(()),

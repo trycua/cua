@@ -2297,6 +2297,7 @@ pub fn run_dump_docs_with_type(registry: &ToolRegistry, pretty: bool, doc_type: 
             "name":         def.name,
             "description":  def.description,
             "input_schema": def.input_schema,
+            "output_schema": cua_driver_core::tool::output_schema_for(&def.name),
             "read_only":    def.read_only,
             "destructive":  def.destructive,
             "idempotent":   def.idempotent,

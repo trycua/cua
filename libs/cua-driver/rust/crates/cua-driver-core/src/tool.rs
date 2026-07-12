@@ -52,7 +52,7 @@ impl ToolDef {
         // claim is a one-file change, and sibling PRs touching
         // individual tool files don't conflict with this surface.
         let caps = default_capabilities_for(&self.name);
-        serde_json::json!({
+        let mut entry = serde_json::json!({
             "name": self.name,
             "description": self.description,
             "inputSchema": self.input_schema,
@@ -63,7 +63,64 @@ impl ToolDef {
                 "openWorldHint": self.open_world,
             },
             "capabilities": caps,
-        })
+        });
+        if let Some(schema) = output_schema_for(&self.name) {
+            entry["outputSchema"] = schema;
+        }
+        entry
+    }
+}
+
+/// Canonical MCP structured-output schemas for tools whose result is a stable
+/// cross-platform contract. Platform-only fields remain optional and unknown
+/// additive fields are allowed so backends can expose native metadata.
+pub fn output_schema_for(tool_name: &str) -> Option<Value> {
+    match tool_name {
+        "list_windows" => Some(serde_json::json!({
+            "type": "object",
+            "required": ["windows"],
+            "properties": {
+                "windows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": [
+                            "window_id", "pid", "app_name", "title", "bounds",
+                            "is_on_screen"
+                        ],
+                        "properties": {
+                            "window_id": { "type": "integer" },
+                            "pid": { "type": ["integer", "null"] },
+                            "app_name": { "type": "string" },
+                            "title": { "type": "string" },
+                            "bounds": {
+                                "type": "object",
+                                "required": ["x", "y", "width", "height"],
+                                "properties": {
+                                    "x": { "type": "number" },
+                                    "y": { "type": "number" },
+                                    "width": { "type": "number" },
+                                    "height": { "type": "number" }
+                                },
+                                "additionalProperties": false
+                            },
+                            "layer": { "type": "integer" },
+                            "z_index": { "type": ["integer", "null"] },
+                            "is_on_screen": { "type": "boolean" },
+                            "on_current_space": { "type": ["boolean", "null"] },
+                            "space_ids": {
+                                "type": ["array", "null"],
+                                "items": { "type": "integer" }
+                            }
+                        },
+                        "additionalProperties": true
+                    }
+                },
+                "current_space_id": { "type": ["integer", "null"] }
+            },
+            "additionalProperties": true
+        })),
+        _ => None,
     }
 }
 
@@ -732,6 +789,24 @@ mod capability_tests {
             .and_then(|v| v.as_array())
             .expect("capabilities must be present even if empty");
         assert!(caps.is_empty());
+    }
+
+    #[test]
+    fn list_windows_advertises_the_canonical_output_schema() {
+        let entry = dummy_def("list_windows").to_list_entry();
+        let schema = &entry["outputSchema"];
+        assert_eq!(schema["required"], serde_json::json!(["windows"]));
+
+        let record = &schema["properties"]["windows"]["items"];
+        assert_eq!(record["properties"]["pid"]["type"], serde_json::json!(["integer", "null"]));
+        assert_eq!(record["properties"]["z_index"]["type"], serde_json::json!(["integer", "null"]));
+        assert_eq!(record["additionalProperties"], true);
+    }
+
+    #[test]
+    fn tools_without_a_stable_output_contract_omit_output_schema() {
+        let entry = dummy_def("click").to_list_entry();
+        assert!(entry.get("outputSchema").is_none());
     }
 
     #[test]

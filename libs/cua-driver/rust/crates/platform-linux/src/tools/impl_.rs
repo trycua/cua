@@ -410,6 +410,9 @@ impl Tool for ListWindowsTool {
         if on_screen_only {
             windows.retain(|window| window.is_on_screen);
         }
+        if crate::wayland::is_wayland() {
+            crate::wayland::remember_observed_window_origins(&windows);
+        }
         let mut lines = vec![format!("Found {} windows:", windows.len())];
         for w in &windows {
             lines.push(format!(

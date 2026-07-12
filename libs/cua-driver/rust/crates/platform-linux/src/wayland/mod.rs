@@ -220,6 +220,28 @@ fn identity_registry() -> &'static Mutex<HashMap<u64, ToplevelIdentity>> {
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn observed_origin_registry() -> &'static Mutex<HashMap<u32, (i32, i32)>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<u32, (i32, i32)>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn remember_observed_window_origins(windows: &[WindowInfo]) {
+    if let Ok(mut registry) = observed_origin_registry().lock() {
+        for window in windows {
+            if let Some(pid) = window.pid {
+                registry.insert(pid, (window.x, window.y));
+            }
+        }
+    }
+}
+
+pub fn observed_window_origin(pid: u32) -> Option<(i32, i32)> {
+    observed_origin_registry()
+        .lock()
+        .ok()
+        .and_then(|registry| registry.get(&pid).copied())
+}
+
 fn remember_identity(id: u64, toplevel: &Toplevel) {
     if let Ok(mut registry) = identity_registry().lock() {
         registry.insert(

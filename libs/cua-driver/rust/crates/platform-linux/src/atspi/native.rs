@@ -1789,6 +1789,7 @@ fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i
         // `_GTK_FRAME_EXTENTS` path below. `None` (no extension) keeps the
         // legacy Screen path (still (0,0), but no worse than before).
         return crate::wayland::inject_accessibility_offset(pid)
+            .or_else(|| crate::wayland::observed_window_origin(pid))
             .or_else(|| {
                 crate::wayland::sway_ipc::window_for_id(xid)
                     .map(|window| (window.x, window.y))

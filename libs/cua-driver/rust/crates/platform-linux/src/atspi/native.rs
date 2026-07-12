@@ -1933,7 +1933,11 @@ async fn web_document_origin_for_visited(visited: &[Visited<'_>], pid: u32) -> O
     } else {
         None
     };
-    combine_wayland_content_offsets(compositor, document)
+    let combined = combine_wayland_content_offsets(compositor, document);
+    dlog!(
+        "Wayland web content offset: compositor={compositor:?} document={document:?} combined={combined:?}"
+    );
+    combined
 }
 
 fn screen_extent_rebase(

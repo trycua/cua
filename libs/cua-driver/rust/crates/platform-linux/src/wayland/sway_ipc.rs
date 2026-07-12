@@ -29,6 +29,8 @@ struct Node {
     #[serde(default)]
     window_rect: Rect,
     #[serde(default)]
+    deco_rect: Rect,
+    #[serde(default)]
     focused: bool,
     #[serde(default = "default_visible")]
     visible: bool,
@@ -64,6 +66,17 @@ pub struct Window {
 fn collect(node: &Node, windows: &mut Vec<Window>) {
     if let Some(pid) = node.pid {
         if !node.name.is_empty() || !node.app_id.is_empty() {
+            // Sway normally reports the client surface origin in
+            // `window_rect`. Some server-decorated Wayland clients instead
+            // leave that origin at zero and expose the title-bar inset only
+            // through `deco_rect`; use it as the content origin in that shape.
+            let content_y = if node.window_rect.y != 0 {
+                node.window_rect.y
+            } else {
+                node.deco_rect
+                    .y
+                    .saturating_add(node.deco_rect.height.max(0))
+            };
             windows.push(Window {
                 id: node.id,
                 pid,
@@ -74,7 +87,7 @@ fn collect(node: &Node, windows: &mut Vec<Window>) {
                 width: node.rect.width.max(0) as u32,
                 height: node.rect.height.max(0) as u32,
                 content_x: node.window_rect.x,
-                content_y: node.window_rect.y,
+                content_y,
                 focused: node.focused,
                 visible: node.visible,
                 fullscreen: node.fullscreen_mode != 0,
@@ -113,7 +126,7 @@ pub fn window_for_id(id: u64) -> Option<Window> {
     list_windows()?.into_iter().find(|window| window.id == id)
 }
 
-fn window_for_pid(pid: u32) -> Option<Window> {
+pub fn window_for_pid(pid: u32) -> Option<Window> {
     list_windows()?
         .into_iter()
         .filter(|window| window.pid == pid && window.width > 0 && window.height > 0)
@@ -124,6 +137,29 @@ fn window_for_pid(pid: u32) -> Option<Window> {
                 u64::from(window.width) * u64::from(window.height),
             )
         })
+}
+
+pub fn window_for_title(title: &str) -> Option<Window> {
+    list_windows()?
+        .into_iter()
+        .filter(|window| {
+            window.width > 0
+                && window.height > 0
+                && (window.title == title
+                    || (!window.title.is_empty() && title.starts_with(&window.title))
+                    || (!title.is_empty() && window.title.starts_with(title)))
+        })
+        .max_by_key(|window| (window.focused, window.visible))
+}
+
+pub fn window_for_app_id(app_id: &str) -> Option<Window> {
+    if app_id.is_empty() {
+        return None;
+    }
+    list_windows()?
+        .into_iter()
+        .filter(|window| window.width > 0 && window.height > 0 && window.app_id == app_id)
+        .max_by_key(|window| (window.focused, window.visible))
 }
 
 pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
@@ -138,15 +174,7 @@ pub fn window_content_offset_for_pid(pid: u32) -> Option<(i32, i32)> {
 }
 
 pub fn window_origin_for_title(title: &str) -> Option<(i32, i32)> {
-    let window = list_windows()?
-        .into_iter()
-        .filter(|window| {
-            window.width > 0
-                && window.height > 0
-                && (window.title == title
-                    || (!window.title.is_empty() && title.starts_with(&window.title)))
-        })
-        .max_by_key(|window| (window.focused, window.visible))?;
+    let window = window_for_title(title)?;
     Some((window.x, window.y))
 }
 
@@ -187,5 +215,23 @@ mod tests {
         assert!(windows[0].focused);
         assert!(windows[0].fullscreen);
         assert_eq!(windows[1].title, "Dialog");
+    }
+
+    #[test]
+    fn decoration_height_fills_zero_window_content_origin() {
+        let tree = br#"{
+          "id": 1,
+          "nodes": [{
+            "id": 10,
+            "name": "Tauri",
+            "app_id": "cua-test-harness",
+            "pid": 123,
+            "rect": {"x": 0, "y": 0, "width": 940, "height": 780},
+            "window_rect": {"x": 0, "y": 0, "width": 940, "height": 733},
+            "deco_rect": {"x": 0, "y": 0, "width": 940, "height": 47}
+          }]
+        }"#;
+        let windows = parse_tree(tree).expect("parse decorated Sway tree");
+        assert_eq!((windows[0].content_x, windows[0].content_y), (0, 47));
     }
 }

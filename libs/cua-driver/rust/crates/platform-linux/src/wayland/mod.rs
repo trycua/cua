@@ -2582,6 +2582,25 @@ pub fn inject_drag(
 
 fn wayland_atspi_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     let mut windows = crate::atspi::list_windows(filter_pid);
+    // AT-SPI can retain a toolkit's default placement (commonly 120,120)
+    // after Sway has placed the real toplevel at another origin. Reconcile the
+    // fallback records with compositor-owned metadata before exposing them to
+    // callers; element bounds already use this same authoritative Sway tree.
+    for window in &mut windows {
+        let sway = window
+            .pid
+            .and_then(sway_ipc::window_for_pid)
+            .or_else(|| sway_ipc::window_for_title(&window.title))
+            .or_else(|| sway_ipc::window_for_app_id(&window.app_name));
+        if let Some(sway) = sway {
+            window.xid = sway.id;
+            window.x = sway.x;
+            window.y = sway.y;
+            window.width = sway.width;
+            window.height = sway.height;
+            window.is_on_screen = sway.visible && sway.width > 0 && sway.height > 0;
+        }
+    }
     if is_inject_mode() {
         for window in &mut windows {
             if let Some(pid) = window.pid {

@@ -7,7 +7,7 @@
 #   * focus-FREE per-surface KEYBOARD injection (type into an unfocused window),
 #   * MULTI-cursor pointer injection (N independent cursors on one window),
 #
-# both routed to a target window by its xdg app_id, driven over a tiny line
+# both routed by stable process identity (with app_id fallback), driven over a tiny line
 # protocol on a unix control socket ($CUA_INJECT_SOCKET). It also exposes
 # foreign-toplevel-management (so cua-driver's list_windows enumerates windows)
 # and screencopy (so grim captures the output) — the same protocols labwc gives
@@ -15,7 +15,7 @@
 #
 # The injection primitives (cua_motion/cua_button/cua_kbd_*) deliver wl_pointer/
 # wl_keyboard straight to a target client's resources, bypassing seat focus —
-# routed by app_id (not positional device index) and transported over a plain
+# routed by process identity rather than a connection-local object id and transported over a plain
 # socket rather than libei/EIS, since cua owns both ends and the portal/libei
 # layer buys nothing here. The socket speaks a versioned v1 line protocol: the
 # client sends the `cua-inject v1` banner (echoed back on match), then every
@@ -215,10 +215,16 @@ static void cua_ptr_leave(struct wlr_seat *seat, struct wlr_surface *surf) {
  * focus or any real cursor. */
 static bool cua_motion(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, double x, double y) {
 	if (!t || idx < 0 || idx >= CUA_MAXDEV) return false;
-	struct wlr_surface *surface = t->xdg_toplevel->base->surface;
-	/* Public PX coordinates come from the cropped root-surface screenshot, so
-	 * they already include any client-side decoration inset. */
-	wl_fixed_t sx = wl_fixed_from_double(x), sy = wl_fixed_from_double(y);
+	/* Public PX coordinates come from the cropped root-surface screenshot. Hit
+	 * test that point through the scene so Chromium/WebKit child surfaces receive
+	 * enter/motion in their own local coordinates instead of the top-level root. */
+	int scene_x = 0, scene_y = 0;
+	if (!wlr_scene_node_coords(&t->scene_tree->node, &scene_x, &scene_y)) return false;
+	struct wlr_surface *surface = NULL;
+	double local_x = 0, local_y = 0;
+	struct tinywl_toplevel *hit = desktop_toplevel_at(server, scene_x + x, scene_y + y, &surface, &local_x, &local_y);
+	if (hit != t || !surface) return false;
+	wl_fixed_t sx = wl_fixed_from_double(local_x), sy = wl_fixed_from_double(local_y);
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
 	if (!sc || wl_list_empty(&sc->pointers)) return false;
 	struct wl_resource *res;

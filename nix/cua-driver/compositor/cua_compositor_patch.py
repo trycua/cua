@@ -221,10 +221,16 @@ static bool cua_motion(struct tinywl_server *server, struct tinywl_toplevel *t, 
 	 * enter/motion in their own local coordinates instead of the top-level root. */
 	int scene_x = 0, scene_y = 0;
 	if (!wlr_scene_node_coords(&t->scene_tree->node, &scene_x, &scene_y)) return false;
-	struct wlr_surface *surface = NULL;
 	double local_x = 0, local_y = 0;
-	struct tinywl_toplevel *hit = desktop_toplevel_at(server, scene_x + x, scene_y + y, &surface, &local_x, &local_y);
-	if (hit != t || !surface) return false;
+	/* Search only the requested toplevel's scene subtree. A global hit test
+	 * would select the foreground sentinel when this target is occluded. */
+	struct wlr_scene_node *node = wlr_scene_node_at(&t->scene_tree->node,
+		scene_x + x, scene_y + y, &local_x, &local_y);
+	if (!node || node->type != WLR_SCENE_NODE_BUFFER) return false;
+	struct wlr_scene_buffer *buffer = wlr_scene_buffer_from_node(node);
+	struct wlr_scene_surface *scene_surface = wlr_scene_surface_try_from_buffer(buffer);
+	if (!scene_surface) return false;
+	struct wlr_surface *surface = scene_surface->surface;
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
 	if (!sc || wl_list_empty(&sc->pointers)) {
 		/* Chromium can compose a renderer-owned child surface whose wl_client

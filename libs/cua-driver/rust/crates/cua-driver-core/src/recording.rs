@@ -860,13 +860,19 @@ mod tests {
     fn turn_capture_brackets_action_and_preserves_post_action_aliases() {
         static SCREENSHOTS: AtomicUsize = AtomicUsize::new(0);
         static STATES: AtomicUsize = AtomicUsize::new(0);
-        set_screenshot_fn(|_, _| {
-            let phase = SCREENSHOTS.fetch_add(1, Ordering::SeqCst);
-            Some(if phase == 0 {
-                b"before".to_vec()
-            } else {
-                b"after".to_vec()
-            })
+        set_screenshot_fn(|window_id, pid| {
+            if (window_id, pid) == (Some(2), Some(1)) {
+                let phase = SCREENSHOTS.fetch_add(1, Ordering::SeqCst);
+                return Some(if phase == 0 {
+                    b"before".to_vec()
+                } else {
+                    b"after".to_vec()
+                });
+            }
+            // Other recording tests share this process-global hook and may run
+            // concurrently. Give them stable bytes without advancing this
+            // test's before/after phase counter.
+            Some(b"after".to_vec())
         });
         set_ax_snapshot_fn(|_, _| {
             let phase = STATES.fetch_add(1, Ordering::SeqCst);

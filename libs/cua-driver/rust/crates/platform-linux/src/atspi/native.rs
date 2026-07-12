@@ -1216,46 +1216,86 @@ pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> R
                 .proxies()
                 .await
                 .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
-            let action = proxies
-                .action()
-                .await
-                .map_err(|e| anyhow!("Action interface unavailable: {e}"))?;
             let wanted = match direction {
                 "up" => ["scrollup", "scrollbackward"],
                 "left" => ["scrollleft", "scrollbackward"],
                 "right" => ["scrollright", "scrollforward"],
                 _ => ["scrolldown", "scrollforward"],
             };
-            let count = call(action.n_actions())
-                .await
-                .and_then(|result| result.ok())
-                .unwrap_or(0);
             let mut selected = None;
-            for action_index in 0..count {
-                if let Some(Ok(name)) = call(action.get_name(action_index)).await {
-                    let normalized: String = name
-                        .chars()
-                        .filter(|ch| ch.is_ascii_alphanumeric())
-                        .flat_map(|ch| ch.to_lowercase())
-                        .collect();
-                    if wanted.iter().any(|candidate| *candidate == normalized) {
-                        selected = Some(action_index);
-                        break;
+            let mut action_proxy = None;
+            if let Ok(action) = proxies.action().await {
+                let count = call(action.n_actions())
+                    .await
+                    .and_then(|result| result.ok())
+                    .unwrap_or(0);
+                for action_index in 0..count {
+                    if let Some(Ok(name)) = call(action.get_name(action_index)).await {
+                        let normalized: String = name
+                            .chars()
+                            .filter(|ch| ch.is_ascii_alphanumeric())
+                            .flat_map(|ch| ch.to_lowercase())
+                            .collect();
+                        if wanted.iter().any(|candidate| *candidate == normalized) {
+                            selected = Some(action_index);
+                            break;
+                        }
                     }
                 }
+                action_proxy = Some(action);
             }
-            let action_index = selected.ok_or_else(|| {
-                anyhow!("element {idx} exposes no directional scroll action for {direction}")
-            })?;
-            for _ in 0..amount.max(1) {
-                match call(action.do_action(action_index)).await {
-                    Some(Ok(true)) => {}
-                    Some(Ok(false)) => return Err(anyhow!("scroll action returned false")),
-                    Some(Err(e)) => return Err(anyhow!("scroll action failed: {e}")),
-                    None => return Err(anyhow!("scroll action timed out")),
+
+            if let (Some(action), Some(action_index)) = (action_proxy, selected) {
+                for _ in 0..amount.max(1) {
+                    match call(action.do_action(action_index)).await {
+                        Some(Ok(true)) => {}
+                        Some(Ok(false)) => return Err(anyhow!("scroll action returned false")),
+                        Some(Err(e)) => return Err(anyhow!("scroll action failed: {e}")),
+                        None => return Err(anyhow!("scroll action timed out")),
+                    }
                 }
+                return Ok(());
             }
-            Ok(())
+
+            if target.has_value {
+                let value = proxies
+                    .value()
+                    .await
+                    .map_err(|e| anyhow!("Value interface unavailable: {e}"))?;
+                let current = call(value.current_value())
+                    .await
+                    .and_then(|result| result.ok())
+                    .ok_or_else(|| anyhow!("scroll value lookup timed out"))?;
+                let minimum = call(value.minimum_value())
+                    .await
+                    .and_then(|result| result.ok())
+                    .unwrap_or(current);
+                let maximum = call(value.maximum_value())
+                    .await
+                    .and_then(|result| result.ok())
+                    .unwrap_or(current);
+                let increment = call(value.minimum_increment())
+                    .await
+                    .and_then(|result| result.ok())
+                    .filter(|increment| *increment > 0.0)
+                    .unwrap_or(1.0);
+                let sign = if matches!(direction, "up" | "left") {
+                    -1.0
+                } else {
+                    1.0
+                };
+                let next =
+                    (current + sign * increment * amount.max(1) as f64).clamp(minimum, maximum);
+                call(value.set_current_value(next))
+                    .await
+                    .and_then(|result| result.ok())
+                    .ok_or_else(|| anyhow!("scroll value update timed out"))?;
+                return Ok(());
+            }
+
+            Err(anyhow!(
+                "element {idx} exposes neither directional scroll actions nor Value"
+            ))
         },
         || Err(anyhow!("scroll_element timed out for pid {pid}")),
     )

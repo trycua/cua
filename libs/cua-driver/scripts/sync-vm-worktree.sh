@@ -109,8 +109,9 @@ push_rsync() {
 
 push_tar() {
   remote_mkdir
+  remote_path=${remote_dir/#\~/'$HOME'}
   COPYFILE_DISABLE=1 tar "${tar_exclude_args[@]}" -czf - -C "$repo_root" . \
-    | "$rsync_ssh" "$target" "tar -xzf - -C \"$remote_dir\""
+    | "$rsync_ssh" "$target" "tar -xzf - -C \"$remote_path\""
 }
 
 write_source_marker() {
@@ -132,7 +133,8 @@ pull_artifacts_rsync() {
 }
 
 pull_artifacts_tar() {
-  "$rsync_ssh" "$target" "tar -czf - -C \"$remote_dir/$remote_artifact_dir\" ." \
+  remote_path=${remote_dir/#\~/'$HOME'}
+  "$rsync_ssh" "$target" "tar -czf - -C \"$remote_path/$remote_artifact_dir\" ." \
     | tar -xzf - -C "$dest"
 }
 
@@ -142,7 +144,8 @@ pull_code_rsync() {
 }
 
 pull_code_tar() {
-  "$rsync_ssh" "$target" "tar -czf - -C \"$remote_dir\" ." \
+  remote_path=${remote_dir/#\~/'$HOME'}
+  "$rsync_ssh" "$target" "tar -czf - -C \"$remote_path\" ." \
     | COPYFILE_DISABLE=1 tar "${tar_exclude_args[@]}" -xzf - -C "$repo_root"
 }
 

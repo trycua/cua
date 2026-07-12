@@ -95,21 +95,28 @@ environment or backend gaps separately.
 
 ### Validation and known gaps
 
+> **Evidence update (2026-07-12):** The counts below preserve the evidence that
+> was available when this convergence plan was executed. Current Linux support
+> and run IDs live in `action-support.md`; the original 80-row X11 and early
+> 6/80 Wayland snapshots are superseded by the expanded 108-outcome X11 run,
+> the 31-row Sway GTK3 run, focused Electron evidence, and the GNOME 46 run.
+
 - The stable installed macOS app identity retains Accessibility and Screen
   Recording grants across `install-local`. The complete local matrix passes
   strict daemon identity, fixture, AX, capture, and video preflight.
 - AppKit scroll remains an optional failing gap outside the canonical run.
-- Linux X11 is complete: exact run `29148643166` passed all 80 typed rows, with
-  48 delivered actions and 32 exact refusals. The Nix source gate passed in
-  final-code run `29150690892`.
+- Linux X11 was complete for the original catalog: exact run `29148643166`
+  passed all 80 typed rows, with 48 delivered actions and 32 exact refusals.
+  The current expanded catalog is tracked in `action-support.md`.
 - Windows is complete: exact run `29149710089` passed all 110 typed rows, with
   87 delivered actions and 23 exact refusals. Every cell and lane preflight
   produced parseable MP4 evidence.
-- Pure Wayland remains experimental. Exact run `29150698432` passed strict
+- The first pure-Wayland baseline was experimental. Exact run `29150698432` passed strict
   preflight and executed all 80 rows: 6 delivered and 74 failed, with no skips.
   Sentinel startup noise is gone; issue `#1922` owns the remaining target
   posture metadata, Tauri AX tree, Electron input, AT-SPI geometry, and GTK
-  mapping gaps. Some native targets still use fixed waits; shared and Windows
+  mapping gaps present at that point. Later Sway and GNOME evidence supersedes
+  this baseline. Some native targets still use fixed waits; shared and Windows
   web targets poll external state and allocate CDP ports per process.
 
 ## Target Test Model

@@ -7,6 +7,8 @@ Nix has two jobs in the cua-driver test stack:
 | `cua-driver-build` | Build the shipped Linux package from the locked Rust source | `ci-nix-linux.yml` |
 | `cua-driver-linux-rust-unit` | Compile and run the source-owned headless Rust tests | `ci-nix-linux.yml` |
 | `cua-driver-wayland-e2e` | Provide the Sway, GTK, WebKit, Electron, capture, and Rust toolchain used by native Wayland E2E | `e2e-rust-linux-wayland.yml` |
+| `cua-driver-inject-e2e` | Provide the same typed harness toolchain plus the nested `cua-compositor` package | Experimental nested-injection workflow |
+| `cua-compositor-build` | Build the optional compositor-owned injection backend against pinned wlroots | Flake check |
 
 The Rust tests own all protocol and desktop behavior. The old NixOS Python
 clients, GIF scenarios, real-app smoke rows, and compositor matrix were removed

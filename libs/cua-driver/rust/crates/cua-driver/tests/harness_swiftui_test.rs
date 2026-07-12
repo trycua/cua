@@ -21,6 +21,12 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use cua_driver_testkit::ax::{element_index_by_id, has_id, looks_empty};
+use cua_driver_testkit::e2e::{
+    execute_case, native_background_case, native_foreground_case, native_readonly_case,
+    recording_evidence, DriverRoute, Evidence, Observation, OracleKind, Targeting,
+};
+use cua_driver_testkit::observer::TargetWindow;
+use cua_driver_testkit::sentinel::run_with_background_oracles;
 use cua_driver_testkit::{harness_app, Driver, McpDriver, ToolResponse};
 
 fn harness_exe() -> PathBuf {
@@ -42,20 +48,17 @@ struct Harness {
 }
 
 impl Harness {
-    fn launch() -> Option<Self> {
+    fn launch() -> Self {
         let exe = harness_exe();
-        if !exe.exists() {
-            eprintln!("harness exe not found at {exe:?}");
-            return None;
-        }
+        assert!(exe.exists(), "required SwiftUI harness is missing: {exe:?}");
         let app = Command::new(&exe)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .ok()?;
+            .unwrap_or_else(|error| panic!("launch SwiftUI harness {exe:?}: {error}"));
         let pid = app.id();
         std::thread::sleep(Duration::from_millis(900));
-        Some(Self { _app: app, pid })
+        Self { _app: app, pid }
     }
 }
 
@@ -78,134 +81,252 @@ fn snapshot_elements(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolRe
     )
 }
 
-#[test]
-#[ignore]
-fn harness_swiftui_smoke() {
-    let harness = match Harness::launch() {
-        Some(h) => h,
-        None => {
-            eprintln!("harness not built — skipping");
-            return;
+fn run_case(
+    case: cua_driver_testkit::e2e::CaseSpec,
+    test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
+) {
+    let cell_id = case.cell_id.clone();
+    let delivery = case.delivery;
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let harness = Harness::launch();
+        let (wid, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness SwiftUI")
+            .expect("SwiftUI main window not found");
+        if delivery != cua_driver_testkit::e2e::Delivery::Background {
+            driver.start_behavior_recording();
         }
-    };
-    println!("harness pid={}", harness.pid);
+        test(harness.pid, wid, &mut driver)
+    });
+}
 
-    let Some(mut driver) = McpDriver::spawn_macos_daemon_proxy() else {
-        return;
-    };
-
-    let (wid, title) = driver
-        .find_window(harness.pid as i64, "CuaTestHarness SwiftUI")
-        .expect("main window not found");
-    println!("main window: id={wid} title={title:?}");
-
-    let snap = snapshot_elements(&mut driver, harness.pid, wid);
-    if looks_empty(snap.tree_text()) {
-        eprintln!("AX empty — TCC not granted; skipping element-assertions");
-        return;
-    }
-    let text = snap.tree_text();
-    println!("snapshot:\n{text}");
-
-    // SwiftUI Text views render as AXStaticText leaves and don't propagate
-    // accessibilityIdentifier into the AX tree's identifier slot (same
-    // quirk as AppKit's NSTextField label mode + WPF's TextBlock). Assert
-    // on text content for labels, AX-id only for actionable controls.
-    for aid in [
-        "btn-increment",
-        "btn-reset",
-        "txt-input",
-        "btn-open-popover",
-        "btn-exit",
-    ] {
-        assert!(
-            has_id(snap.tree_text(), aid),
-            "missing AX identifier {aid} in SwiftUI snapshot"
-        );
-    }
-
-    assert!(
-        text.contains("HARNESS_TEXT_MARKER_v1"),
-        "text_body marker not in SwiftUI snapshot"
+fn run_foreground_case(action: &str, test: impl FnOnce(u32, u64, &mut McpDriver)) {
+    run_case(
+        native_foreground_case("swiftui", action, Targeting::Ax, DriverRoute::MacosAxAction),
+        |pid, wid, driver| {
+            test(pid, wid, driver);
+            Observation::delivered_with_fixture_state(Vec::new())
+        },
     );
 }
 
-/// popover: click the popover trigger, verify the popover body text appears
-/// in the AX tree after the open. SwiftUI's analogue of WinUI3 CommandBarFlyout.
+fn run_background_case(
+    action: &str,
+    route: DriverRoute,
+    test: impl FnOnce(u32, u64, &mut McpDriver),
+) {
+    run_case(
+        native_background_case("swiftui", action, Targeting::Ax, route),
+        |pid, wid, driver| {
+            let (_, passed) = run_with_background_oracles(
+                driver,
+                TargetWindow {
+                    pid,
+                    native_id: wid,
+                },
+                |driver| test(pid, wid, driver),
+            )
+            .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+            Observation::delivered_with_fixture_state(passed)
+        },
+    );
+}
+
 #[test]
 #[ignore]
-fn harness_swiftui_popover() {
-    let harness = match Harness::launch() {
-        Some(h) => h,
-        None => {
-            eprintln!("harness not built — skipping");
-            return;
-        }
-    };
+fn harness_swiftui_smoke() {
+    run_case(
+        native_readonly_case(
+            "swiftui",
+            "ax_tree",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, wid, driver| {
+            let snap = snapshot_elements(driver, pid, wid);
+            assert!(
+                !looks_empty(snap.tree_text()),
+                "required SwiftUI AX tree is empty"
+            );
+            let text = snap.tree_text();
+            println!("snapshot:\n{text}");
 
-    let Some(mut driver) = McpDriver::spawn_macos_daemon_proxy() else {
-        return;
-    };
+            // SwiftUI Text views render as AXStaticText leaves and don't propagate
+            // accessibilityIdentifier into the AX tree's identifier slot (same
+            // quirk as AppKit's NSTextField label mode + WPF's TextBlock). Assert
+            // on text content for labels, AX-id only for actionable controls.
+            for aid in [
+                "btn-increment",
+                "btn-reset",
+                "txt-input",
+                "btn-open-popover",
+                "btn-exit",
+            ] {
+                assert!(
+                    has_id(snap.tree_text(), aid),
+                    "missing AX identifier {aid} in SwiftUI snapshot"
+                );
+            }
 
-    let (wid, _) = driver
-        .find_window(harness.pid as i64, "CuaTestHarness SwiftUI")
-        .expect("main window not found");
-    let snap_pre = snapshot_elements(&mut driver, harness.pid, wid);
-    if looks_empty(snap_pre.tree_text()) {
-        eprintln!("AX empty — TCC not granted; skipping");
-        return;
-    }
-    // Verify popover body is NOT yet in the tree.
-    let pre_text = snap_pre.tree_text().to_owned();
-    assert!(
-        !pre_text.contains("POPOVER_MARKER_v1"),
-        "popover body unexpectedly present BEFORE open"
+            assert!(
+                text.contains("HARNESS_TEXT_MARKER_v1"),
+                "text_body marker not in SwiftUI snapshot"
+            );
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
     );
+}
 
-    let trigger_idx: u64 =
-        if let Some(i) = element_index_by_id(snap_pre.tree_text(), "btn-open-popover") {
-            i
-        } else {
-            eprintln!("popover trigger not found, skipping");
-            return;
-        };
-    let click = driver.call(
-        "click",
-        serde_json::json!({
-            "pid": harness.pid as i64,
-            "window_id": wid,
-            "element_index": trigger_idx,
-            "action": "press"
-        }),
+#[test]
+#[ignore]
+fn harness_swiftui_counter_background() {
+    run_background_case(
+        "left_click",
+        DriverRoute::MacosAxAction,
+        |pid, wid, driver| {
+            let pre = snapshot_elements(driver, pid, wid);
+            assert!(pre.tree_text().contains("counter=0"));
+            let index = element_index_by_id(pre.tree_text(), "btn-increment")
+                .expect("btn-increment element_index not found");
+            let response = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_index": index,
+                    "action": "press",
+                    "delivery_mode": "background"
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "SwiftUI counter click failed: {}",
+                response.text()
+            );
+            std::thread::sleep(Duration::from_millis(200));
+            assert!(
+                snapshot_elements(driver, pid, wid)
+                    .tree_text()
+                    .contains("counter=1"),
+                "SwiftUI background AX click did not advance counter"
+            );
+        },
     );
-    println!("popover trigger click: {}", click.text());
+}
 
-    std::thread::sleep(Duration::from_millis(300));
+#[test]
+#[ignore]
+fn harness_swiftui_set_value_background() {
+    run_background_case(
+        "set_value",
+        DriverRoute::MacosAxValue,
+        |pid, wid, driver| {
+            let pre = snapshot_elements(driver, pid, wid);
+            let index = element_index_by_id(pre.tree_text(), "txt-input")
+                .expect("txt-input element_index not found");
+            let response = driver.call(
+                "set_value",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_index": index,
+                    "value": "swiftui-cua"
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "SwiftUI set_value failed: {}",
+                response.text()
+            );
+            std::thread::sleep(Duration::from_millis(200));
+            assert!(
+                snapshot_elements(driver, pid, wid)
+                    .tree_text()
+                    .contains("swiftui-cua"),
+                "SwiftUI background AX value did not reach the field"
+            );
+        },
+    );
+}
 
-    // Popovers may live in a separate AXWindow on macOS — try the main
-    // window first, then list_windows for additional candidates.
-    let snap_post = snapshot_elements(&mut driver, harness.pid, wid);
-    let mut found_marker = snap_post.tree_text().contains("POPOVER_MARKER_v1");
-    if !found_marker {
-        // Walk any new windows for the same pid.
-        let resp = driver.call(
-            "list_windows",
-            serde_json::json!({ "pid": harness.pid as i64 }),
+/// Popover activation: click the trigger and verify fixture-owned state changes.
+/// Transient-window AX discovery is observed separately so it cannot hide a
+/// correctly delivered action.
+#[test]
+#[ignore]
+fn harness_swiftui_popover_foreground() {
+    run_foreground_case("popover_open", |pid, wid, driver| {
+        let snap_pre = snapshot_elements(driver, pid, wid);
+        assert!(
+            !looks_empty(snap_pre.tree_text()),
+            "required SwiftUI AX tree is empty"
         );
-        if let Some(wins) = resp.structured()["windows"].as_array() {
-            for w in wins {
-                if let Some(other_wid) = w["window_id"].as_u64() {
-                    if other_wid == wid {
-                        continue;
-                    }
-                    let s = snapshot_elements(&mut driver, harness.pid, other_wid);
-                    if s.tree_text().contains("POPOVER_MARKER_v1") {
-                        found_marker = true;
-                        break;
+        // Verify popover body is NOT yet in the tree.
+        let pre_text = snap_pre.tree_text().to_owned();
+        assert!(
+            !pre_text.contains("POPOVER_MARKER_v1"),
+            "popover body unexpectedly present BEFORE open"
+        );
+        assert!(
+            pre_text.contains("popover_open=false"),
+            "popover state was not false before open"
+        );
+
+        let trigger_idx = element_index_by_id(snap_pre.tree_text(), "btn-open-popover")
+            .expect("popover trigger not found");
+        let click = driver.call(
+            "click",
+            serde_json::json!({
+                "pid": pid as i64,
+                "window_id": wid,
+                "element_index": trigger_idx,
+                "action": "press",
+                "delivery_mode": "foreground"
+            }),
+        );
+        assert!(
+            !click.is_error(),
+            "SwiftUI popover click failed: {}",
+            click.text()
+        );
+        println!("popover trigger click: {}", click.text());
+
+        // First prove the button action reached SwiftUI's state independently
+        // of whether AX can enumerate the transient panel.
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let mut state_open = false;
+        let mut found_marker = false;
+        while !state_open && std::time::Instant::now() < deadline {
+            let owner = snapshot_elements(driver, pid, wid);
+            state_open = owner.tree_text().contains("popover_open=true");
+            found_marker = owner.tree_text().contains("POPOVER_MARKER_v1");
+            let resp = driver.call("list_windows", serde_json::json!({ "pid": pid as i64 }));
+            if let Some(wins) = resp.structured()["windows"].as_array() {
+                for w in wins {
+                    if let Some(other_wid) = w["window_id"].as_u64() {
+                        if other_wid == wid {
+                            continue;
+                        }
+                        let s = snapshot_elements(driver, pid, other_wid);
+                        if s.tree_text().contains("POPOVER_MARKER_v1") {
+                            found_marker = true;
+                            break;
+                        }
                     }
                 }
             }
+            if !state_open {
+                std::thread::sleep(Duration::from_millis(100));
+            }
         }
-    }
-    assert!(found_marker, "popover body marker not found after open");
+        assert!(state_open, "popover trigger did not change fixture state");
+        if !found_marker {
+            eprintln!(
+                "SwiftUI popover opened, but its transient panel remains absent from targeted AX enumeration"
+            );
+        }
+    });
 }

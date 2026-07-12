@@ -117,6 +117,7 @@ pub(crate) async fn focus_by_pixel(
     let mut click_args = serde_json::json!({
         "pid": pid, "x": x, "y": y,
         "delivery_mode": if foreground { "foreground" } else { "background" },
+        "action": if foreground { "press" } else { "focus" },
     });
     if let Some(wid) = window_id { click_args["window_id"] = serde_json::json!(wid); }
     if let Some(s) = session { click_args["session"] = serde_json::json!(s); }

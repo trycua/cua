@@ -23,11 +23,12 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_action_names, copy_children, copy_string_attr, element_screen_rect, AXUIElementRef,
+    copy_action_names, copy_children, copy_string_attr, element_at_screen_position,
+    element_screen_rect, kAXErrorSuccess, AXUIElementPerformAction, AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
-use core_foundation::base::CFRelease;
+use core_foundation::base::{CFRelease, TCFType};
 
 use super::ToolState;
 
@@ -111,7 +112,7 @@ fn def() -> &'static ToolDef {
                 "delivery_mode": {
                     "type": "string",
                     "enum": ["background", "foreground"],
-                    "description": "Best-effort-background ladder rung for a PIXEL click (default \"background\"). \"background\": post the CGEvent to the pid without fronting. \"foreground\": briefly front the window, click, restore the prior frontmost — the explicit last resort for surfaces that drop background synthetic clicks. Requires window_id. A click is never driver-verifiable (no read-back), so both report verified:false — confirm the effect via screenshot. Use the agent loop: background AX (element_index) → screenshot → background pixel (x/y) → screenshot → delivery_mode:\"foreground\"."
+                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. A click is never driver-verifiable (no read-back), so both report verified:false — confirm the effect via screenshot. Use the agent loop: background AX (element_index) → screenshot → background pixel (x/y) → screenshot → delivery_mode:\"foreground\"."
                 },
                 "scope": {
                     "type": "string",
@@ -224,85 +225,13 @@ impl Tool for ClickTool {
                 .cursor_registry
                 .update_position(&cursor_key, sx, sy);
 
-            // Resolve the frontmost on-screen window under the point (the macOS
-            // peer of Windows' WindowFromPoint). When found, click THAT pid via
-            // the proven SkyLight path (`click_at_xy`, screen coords) — reliable
-            // on AppKit/Chromium where a bare HID post can miss. Only when no
-            // app window owns the pixel (desktop background, etc.) fall back to
-            // the cursor-warp + HID post.
-            // Resolve as (pid, window_id, win_origin_x, win_origin_y) so the
-            // click can stamp the window-LOCAL point — AppKit hit-tests the
-            // stamped window-local coordinate, not the bare screen point, so a
-            // plain screen-coord post misses.
-            // Exclude our OWN windows (the agent-cursor overlay we just glided to
-            // the point sits on top of the target — never resolve the click to it).
-            let own_pid = std::process::id() as i32;
-            let target = {
-                let mut wins = crate::windows::visible_windows();
-                // visible_windows() assigns HIGHER z_index = MORE FRONT
-                // (z_index = total - idx over CGWindowList's front-to-back order).
-                // Sort DESCENDING so the first match is the FRONTMOST window under
-                // the point — the one the agent actually sees in the screenshot.
-                // (Ascending picked the BACKMOST occluded window — a real miss when
-                // windows overlap, e.g. resolving a click to a buried app.)
-                wins.sort_by(|a, b| b.z_index.cmp(&a.z_index)); // front-to-back
-                wins.into_iter()
-                    .find(|w| {
-                        w.layer == 0
-                            && w.pid != own_pid
-                            && sx >= w.bounds.x
-                            && sx < w.bounds.x + w.bounds.width
-                            && sy >= w.bounds.y
-                            && sy < w.bounds.y + w.bounds.height
-                    })
-                    .map(|w| (w.pid, w.window_id, w.bounds.x, w.bounds.y))
-            };
             let btn = button.clone();
-            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<i32>> {
-                match target {
-                    Some((pid, wid, ox, oy)) => {
-                        let (wx, wy) = (sx - ox, sy - oy);
-                        // Honor `btn` on the window-resolved path too: a windowless
-                        // right/middle click over an app window must stay a
-                        // right/middle click, not silently degrade to left. Route to
-                        // the window-local right/middle primitives (single-pair, same
-                        // as the pixel path); `count` only repeats on the left path.
-                        match btn.as_str() {
-                            "right" => crate::input::mouse::right_click_at_xy_with_window_local(
-                                pid,
-                                sx,
-                                sy,
-                                wx,
-                                wy,
-                                wid,
-                                &[],
-                            )?,
-                            "middle" => crate::input::mouse::middle_click_at_xy_with_window_local(
-                                pid,
-                                sx,
-                                sy,
-                                wx,
-                                wy,
-                                &[],
-                            )?,
-                            _ => crate::input::mouse::click_at_xy_with_window_local(
-                                pid,
-                                sx,
-                                sy,
-                                wx,
-                                wy,
-                                wid,
-                                count,
-                                &[],
-                            )?,
-                        }
-                        Ok(Some(pid))
-                    }
-                    None => {
-                        crate::input::mouse::click_at_xy_desktop(sx, sy, count, &btn)?;
-                        Ok(None)
-                    }
-                }
+            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                // Desktop scope is explicitly foreground and vision-driven: post
+                // at the global HID tap so WindowServer delivers to the window
+                // actually visible at this point. PID-posting here would silently
+                // turn the foreground contract back into background delivery.
+                crate::input::mouse::click_at_xy_desktop(sx, sy, count, &btn)
             })
             .await;
             let button_label = match button.as_str() {
@@ -311,18 +240,12 @@ impl Tool for ClickTool {
                 _ => "click",
             };
             return match result {
-                Ok(Ok(Some(pid))) => ToolResult::text(format!(
-                    "✅ Sent {button_label} at desktop-pixel ({sx_shot:.0},{sy_shot:.0}) \
-                     → screen-point ({sx:.0},{sy:.0}) on pid {pid} (desktop scope; \
-                     not driver-verified — confirm via screenshot)."
-                ))
-                .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
-                Ok(Ok(None)) => ToolResult::text(format!(
+                Ok(Ok(())) => ToolResult::text(format!(
                     "✅ Sent screen-absolute {button_label} at desktop-pixel \
                      ({sx_shot:.0},{sy_shot:.0}) → screen-point ({sx:.0},{sy:.0}) \
-                     (desktop scope, no window under point; not driver-verified)."
+                     (desktop scope; not driver-verified)."
                 ))
-                .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
+                .with_structured(serde_json::json!({ "path": "cgevent_hid", "verified": false, "effect": "unverifiable" })),
                 Ok(Err(e)) => ToolResult::error(format!("desktop-scope click failed: {e}")),
                 Err(e) => ToolResult::error(format!("task error: {e}")),
             };
@@ -374,9 +297,8 @@ impl Tool for ClickTool {
         // "middle" has no AX equivalent and falls back to a pixel middle-click
         // at the element's screen-space center.
         let button_str = args.str_or("button", "left").to_lowercase();
-        // delivery_mode: per-call ladder rung. foreground only applies to the
-        // pixel path and needs a window_id to front (else it degrades to
-        // background). A click is never driver-verifiable either way.
+        // delivery_mode: per-call ladder rung. Foreground briefly activates the
+        // target for both AX and pixel paths, then restores the prior app.
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         // Reject unknown buttons explicitly so silent left-click fall-through can't
         // mask a typo. Keep "" → default left for old clients that never sent the field.
@@ -494,7 +416,12 @@ impl Tool for ClickTool {
             // new-window / foreground side-effects and append a one-liner
             // suffix matching Swift's wording.
             let prior_front = apps::frontmost_pid();
-            let snapshot = WindowChangeDetector::snapshot(prior_front);
+            let foreground = delivery_mode.is_foreground();
+            let snapshot = if foreground {
+                WindowChangeDetector::snapshot_without_suppression(prior_front)
+            } else {
+                WindowChangeDetector::snapshot(prior_front)
+            };
 
             // Run AX work on a blocking thread (can't block async executor).
             // Use `effective_action` so button=right rewrites press → show_menu.
@@ -505,12 +432,37 @@ impl Tool for ClickTool {
             // and stomp default for a non-default session).
             let ck = cursor_key.clone();
             let result = focus_guard::with_focus_suppressed(
-                Some(pid),
+                if foreground { None } else { Some(pid) },
                 prior_front,
                 "click.AXPress",
                 || async move {
                     tokio::task::spawn_blocking(move || {
-                        perform_ax_click(element_ptr, idx, pid, wid, &action_clone, &ck)
+                        if foreground {
+                            let mut outcome = None;
+                            let fronted = crate::input::skylight::with_foreground_assist(
+                                pid as libc::pid_t,
+                                wid,
+                                || {
+                                    outcome = Some(perform_ax_click(
+                                        element_ptr,
+                                        idx,
+                                        pid,
+                                        wid,
+                                        &action_clone,
+                                        &ck,
+                                    )?);
+                                    std::thread::sleep(std::time::Duration::from_millis(150));
+                                    Ok(())
+                                },
+                            )?;
+                            let outcome = outcome.ok_or_else(|| {
+                                anyhow::anyhow!("foreground AX click did not execute")
+                            })?;
+                            Ok((outcome, fronted))
+                        } else {
+                            perform_ax_click(element_ptr, idx, pid, wid, &action_clone, &ck)
+                                .map(|outcome| (outcome, false))
+                        }
                     })
                     .await
                 },
@@ -521,7 +473,7 @@ impl Tool for ClickTool {
             let changes = snapshot.detect_async().await;
 
             match result {
-                Ok(Ok((mut msg, needs_webkit_delay, suspected_noop))) => {
+                Ok(Ok(((mut msg, needs_webkit_delay, suspected_noop), fronted))) => {
                     // For text inputs, wait 800ms for WebKit DOM focus to settle
                     // before returning — matches the Swift reference behaviour.
                     if needs_webkit_delay {
@@ -538,7 +490,7 @@ impl Tool for ClickTool {
                     //   * unverifiable — dispatched fine, driver just can't confirm;
                     //     the caller verifies via screenshot.
                     let mut structured = serde_json::json!({
-                        "path": "ax",
+                        "path": if fronted { "ax_fg" } else { "ax" },
                         "verified": false,
                         "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
                     });
@@ -676,6 +628,62 @@ impl Tool for ClickTool {
                 // No window_id → treat x,y as screen coordinates (legacy behaviour).
                 (cx, cy, cx, cy)
             };
+
+            // A background PX action can still use an accessibility delivery
+            // backend after resolving the requested screen point. This keeps
+            // targeting (PX) orthogonal to delivery (AX) and avoids making a
+            // Chromium/AppKit window key merely to satisfy first-mouse rules.
+            if !delivery_mode.is_foreground()
+                && window_id.is_some()
+                && button_str == "left"
+                && count == 1
+                && modifiers.is_empty()
+            {
+                let focus_only = action == "focus";
+                let ax_result = tokio::task::spawn_blocking(move || unsafe {
+                    let Some(element) = element_at_screen_position(pid, screen_x, screen_y) else {
+                        return Ok::<bool, anyhow::Error>(false);
+                    };
+                    let delivered = if focus_only {
+                        crate::input::ax_actions::focus_element(element as usize).is_ok()
+                    } else {
+                        let press = core_foundation::string::CFString::new("AXPress");
+                        AXUIElementPerformAction(element, press.as_concrete_TypeRef())
+                            == kAXErrorSuccess
+                    };
+                    CFRelease(element as _);
+                    Ok(delivered)
+                })
+                .await;
+                match ax_result {
+                    Ok(Ok(true)) => {
+                        let label = if focus_only { "focused" } else { "pressed" };
+                        return ToolResult::text(format!(
+                            "✅ PX hit-test {label} the background element via AX."
+                        ))
+                        .with_structured(serde_json::json!({
+                            "path": "ax",
+                            "verified": false,
+                            "effect": "unverifiable"
+                        }));
+                    }
+                    Ok(Ok(false)) if focus_only => {
+                        return ToolResult::error(
+                            "Background PX focus is unavailable at the requested point.".to_owned(),
+                        )
+                        .with_structured(serde_json::json!({
+                            "code": "background_unavailable"
+                        }));
+                    }
+                    Ok(Err(error)) if focus_only => {
+                        return ToolResult::error(format!("Background PX focus failed: {error}"))
+                            .with_structured(serde_json::json!({
+                                "code": "background_unavailable"
+                            }));
+                    }
+                    _ => {}
+                }
+            }
 
             // Pin the overlay above the target window BEFORE animating so
             // the cursor is already sandwiched correctly while it glides in.

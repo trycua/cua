@@ -167,6 +167,22 @@ impl ForegroundSentinel {
         }
     }
 
+    /// Re-establish the observation boundary after video capture starts.
+    /// Capture backends may briefly perturb foreground state while they attach;
+    /// those setup events are not part of the action under test.
+    pub fn prepare_background_observation(
+        &self,
+        driver: &mut impl Driver,
+        target: TargetWindow,
+    ) -> Result<(), String> {
+        activate_native_foreground(driver, self.target);
+        wait_for_native_focus_stable(self.target);
+        std::thread::sleep(Duration::from_millis(100));
+        fs::write(&self.journal_path, "")
+            .map_err(|error| format!("reset foreground sentinel journal: {error}"))?;
+        self.assert_background_posture(target)
+    }
+
     /// Run one background action while checking the native desktop and the
     /// sentinel journal. The returned oracle list is suitable for a typed E2E
     /// result; any unsupported observation or side effect is an error.
@@ -261,7 +277,6 @@ fn is_wayland_session() -> bool {
             .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn activate_native_foreground(driver: &mut impl Driver, target: TargetWindow) {
     let response = driver.call(
         "bring_to_front",
@@ -331,9 +346,6 @@ fn physically_focus_windows_sentinel(target: TargetWindow) {
     }
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "linux")))]
-fn activate_native_foreground(_driver: &mut impl Driver, _target: TargetWindow) {}
-
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 fn wait_for_native_focus_stable(target: TargetWindow) {
     use crate::observer::{ObserverBackend, TargetZ};
@@ -373,6 +385,7 @@ pub fn run_with_background_oracles<D: Driver + BehaviorRecording, R>(
     let sentinel = ForegroundSentinel::launch(driver);
     sentinel.assert_background_posture(target)?;
     driver.start_behavior_recording();
+    sentinel.prepare_background_observation(driver, target)?;
     sentinel.observe_background(target, || action(driver))
 }
 

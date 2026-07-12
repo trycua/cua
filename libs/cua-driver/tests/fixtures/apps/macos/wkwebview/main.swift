@@ -35,6 +35,15 @@ final class HarnessAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDel
         window.setContentSize(kContentSize)
 
         let config = WKWebViewConfiguration()
+        let journalURL = ProcessInfo.processInfo.environment["CUA_E2E_FIXTURE_JOURNAL_URL"] ?? ""
+        if let encoded = try? JSONEncoder().encode(journalURL),
+           let literal = String(data: encoded, encoding: .utf8) {
+            let source = "window.__CUA_E2E_FIXTURE_JOURNAL_URL = \(literal);"
+            config.userContentController.addUserScript(WKUserScript(
+                source: source,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: false))
+        }
         webView = WKWebView(frame: NSRect(origin: .zero, size: kContentSize), configuration: config)
         webView.autoresizingMask = [.width, .height]
         webView.navigationDelegate = self

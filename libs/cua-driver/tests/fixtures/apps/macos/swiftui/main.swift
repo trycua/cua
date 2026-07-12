@@ -46,6 +46,7 @@ let kScrollOffsetAID = "lbl-scroll-offset"
 let kScrollTopMarker = "SCROLL_TOP_MARKER_v1"
 let kScrollBottomMarker = "SCROLL_BOTTOM_MARKER_v1"
 let kPopupTriggerAID = "btn-open-popover"
+let kPopupStateAID = "lbl-popover-state"
 let kPopupTextAID = "txt-popover-body"
 let kPopupMarker = "POPOVER_MARKER_v1"
 let kExitButtonAID = "btn-exit"
@@ -107,7 +108,7 @@ struct HarnessRootView: View {
                         .accessibilityIdentifier(kIncrementButtonAID)
                     Button("Reset") { counter = 0 }
                         .accessibilityIdentifier(kResetButtonAID)
-                    Text("\(counter)")
+                    Text("counter=\(counter)")
                         .font(.system(size: 18, weight: .semibold, design: .monospaced))
                         .accessibilityIdentifier(kCounterLabelAID)
                 }
@@ -216,6 +217,9 @@ struct HarnessRootView: View {
                                 .padding()
                                 .accessibilityIdentifier(kPopupTextAID)
                         }
+                    Text("popover_open=" + String(showPopover))
+                        .font(.system(.body, design: .monospaced))
+                        .accessibilityIdentifier(kPopupStateAID)
                 }
 
                 Spacer(minLength: 24)

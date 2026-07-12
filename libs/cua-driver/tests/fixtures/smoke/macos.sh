@@ -21,7 +21,7 @@
 #     because the call exits cleanly — flagged in output)
 set -u
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
 DRIVER="$ROOT/libs/cua-driver/rust/target/release/cua-driver"
 [[ -x "$DRIVER" ]] || DRIVER="$ROOT/libs/cua-driver/rust/target/debug/cua-driver"
 HARNESS_APP="$ROOT/libs/cua-driver/rust/test-apps/harness-appkit/CuaTestHarness.AppKit.app"
@@ -43,8 +43,9 @@ run_tool() {
     # Same trap I hit in scripts/linux-smoke.sh.
     local args
     if [[ -z "${2-}" ]]; then args='{}'; else args="$2"; fi
-    local out code
+    local out code first_line
     out=$("$DRIVER" call "$tool" "$args" 2>&1) ; code=$?
+    first_line="${out%%$'\n'*}"
     # Treat documented "this tool is intentionally a per-platform stub"
     # responses as SKIP rather than FAIL — they indicate the tool was
     # called correctly but isn't meaningful on this OS by design.
@@ -54,12 +55,12 @@ run_tool() {
     fi
     if [[ $code -eq 0 ]]; then
         if [[ "$out" == "❌"* || "$out" == "Error:"* ]]; then
-            record "$tool" "FAIL" "exit0+❌: $(echo "$out" | head -1 | cut -c1-100)"
+            record "$tool" "FAIL" "exit0+❌: $(printf '%.100s' "$first_line")"
         else
-            record "$tool" "PASS" "$(echo "$out" | head -1 | cut -c1-100)"
+            record "$tool" "PASS" "$(printf '%.100s' "$first_line")"
         fi
     else
-        record "$tool" "FAIL" "exit=$code: $(echo "$out" | head -1 | cut -c1-100)"
+        record "$tool" "FAIL" "exit=$code: $(printf '%.100s' "$first_line")"
     fi
 }
 
@@ -116,7 +117,7 @@ run_tool set_config '{"max_image_dimension":1024}'
 run_tool set_agent_cursor_enabled '{"enabled":true}'
 run_tool set_agent_cursor_style '{"style":"default"}'
 run_tool set_agent_cursor_motion '{}'
-run_tool set_recording '{"enabled":false}'
+run_tool stop_recording '{}'
 
 # ── group 3: app lifecycle ──────────────────────────────────────────────────
 echo ""
@@ -158,7 +159,7 @@ else
     run_tool click            "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"x\":120,\"y\":80}"
     run_tool double_click     "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"x\":120,\"y\":80}"
     run_tool right_click      "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"x\":120,\"y\":80}"
-    run_tool drag             "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"from_x\":120,\"from_y\":80,\"to_x\":180,\"to_y\":120}"
+    run_tool drag             "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"from_x\":120,\"from_y\":80,\"to_x\":180,\"to_y\":120,\"delivery_mode\":\"foreground\"}"
     run_tool scroll           "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"x\":200,\"y\":400,\"direction\":\"down\"}"
     run_tool type_text        "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"text\":\"hi\"}"
     run_tool press_key        "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"key\":\"a\"}"
@@ -210,3 +211,5 @@ echo "Interpretation:"
 echo "  PASS = tool ran cleanly (exit 0, no ❌ in output)"
 echo "  FAIL = error or non-zero exit"
 echo "  SKIP = intentionally not probed (covered by integration tests, missing fixture, etc.)"
+
+[[ "$fail" -eq 0 ]]

@@ -50,6 +50,7 @@ remote_os="${REMOTE_OS:-posix}"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../../.." && pwd)"
+source_sha="$(git -C "$repo_root" rev-parse HEAD)"
 artifact_root="$repo_root/libs/cua-driver/docs/vm-artifacts"
 target_slug="$(printf '%s' "$target" | tr -c 'A-Za-z0-9_.-' '_')"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -108,6 +109,20 @@ push_tar() {
     | "$rsync_ssh" "$target" "tar -xzf - -C \"$remote_dir\""
 }
 
+write_source_marker() {
+  case "$remote_os" in
+    windows)
+      "$rsync_ssh" "$target" \
+        "powershell -NoProfile -Command \"Set-Content -NoNewline -Path '$remote_dir/.cua-e2e-source-sha' -Value '$source_sha'\""
+      ;;
+    posix)
+      marker_dir=${remote_dir/#\~/"\$HOME"}
+      printf '%s\n' "$source_sha" \
+        | "$rsync_ssh" "$target" "mkdir -p $marker_dir && tee $marker_dir/.cua-e2e-source-sha >/dev/null"
+      ;;
+  esac
+}
+
 pull_artifacts_rsync() {
   rsync -az -e "$rsync_ssh" "$target:$remote_dir/$remote_artifact_dir/" "$dest/"
 }
@@ -134,6 +149,7 @@ case "$mode" in
       tar) push_tar ;;
       *) echo "SYNC_TRANSPORT must be rsync or tar, got: $transport" >&2; exit 2 ;;
     esac
+    write_source_marker
     ;;
 
   pull-artifacts)

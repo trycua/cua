@@ -82,14 +82,19 @@ fn run_preflight() {
             expected_sha.len() == 40 && expected_sha.chars().all(|ch| ch.is_ascii_hexdigit()),
             "CUA_E2E_SOURCE_SHA must be a full commit SHA"
         );
-        let source = Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .output()
-            .expect("git rev-parse HEAD failed");
-        assert!(source.status.success(), "git rev-parse HEAD failed");
-        let actual_sha = String::from_utf8_lossy(&source.stdout);
+        let source = Command::new("git").args(["rev-parse", "HEAD"]).output();
+        let actual_sha = source
+            .ok()
+            .filter(|source| source.status.success())
+            .map(|source| String::from_utf8_lossy(&source.stdout).trim().to_owned())
+            .or_else(|| {
+                std::fs::read_to_string(".cua-e2e-source-sha")
+                    .ok()
+                    .map(|source| source.trim().to_owned())
+            })
+            .expect("neither git HEAD nor .cua-e2e-source-sha identifies the synced source");
         assert_eq!(
-            actual_sha.trim().to_ascii_lowercase(),
+            actual_sha.to_ascii_lowercase(),
             expected_sha.to_ascii_lowercase(),
             "checked-out source does not match the workflow's resolved SHA"
         );

@@ -119,6 +119,7 @@ if [ "$platform" = "Darwin" ]; then
   rm -rf "$appDir"
   mkdir -p "$appDir"
   cp "$elecDir/main.js" "$appDir/"
+  cp "$elecDir/preload.js" "$appDir/"
   cp "$elecDir/package.json" "$appDir/"
   cp -R "$elecDir/web" "$appDir/web"
 
@@ -157,10 +158,12 @@ else
   appDir="$outDir/resources/app"
   mkdir -p "$appDir"
   cp "$elecDir/main.js" "$appDir/"
+  cp "$elecDir/preload.js" "$appDir/"
   cp "$elecDir/package.json" "$appDir/"
   cp -r "$elecDir/web" "$appDir/web"
-  mv "$outDir/electron" "$outDir/CuaTestHarness.Electron"
-  chmod +x "$outDir/CuaTestHarness.Electron"
+  mv "$outDir/electron" "$outDir/CuaTestHarness.Electron.bin"
+  cp "$elecDir/launcher-linux.sh" "$outDir/CuaTestHarness.Electron"
+  chmod +x "$outDir/CuaTestHarness.Electron" "$outDir/CuaTestHarness.Electron.bin"
 
   cat <<EOF
 [OK]    Staged: $outDir/CuaTestHarness.Electron

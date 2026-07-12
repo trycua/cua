@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use cua_driver_testkit::e2e::{
     execute_case, native_background_case, native_foreground_case, native_readonly_case,
     recording_evidence, CaseSpec, Delivery, DisplayServer, DriverRoute, Evidence, Observation,
-    OracleKind, Targeting,
+    OracleKind, RefusalCode, Targeting,
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::run_with_background_oracles;
@@ -282,7 +282,38 @@ struct CatalogRow {
     operation: Operation,
 }
 
-fn invoke_operation(row: CatalogRow, pid: u32, window_id: u64, driver: &mut McpDriver) {
+fn assert_refusal_without_mutation(
+    response: &ToolResponse,
+    before: &str,
+    pid: u32,
+    window_id: u64,
+    driver: &mut McpDriver,
+) {
+    assert!(
+        response.is_error(),
+        "expected background_unavailable refusal"
+    );
+    assert_eq!(
+        response.structured()["code"].as_str(),
+        Some("background_unavailable"),
+        "unexpected refusal: {}",
+        response.text()
+    );
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(
+        snapshot(driver, pid, window_id).tree_text(),
+        before,
+        "refused GTK3 action mutated fixture state"
+    );
+}
+
+fn invoke_operation(
+    row: CatalogRow,
+    pid: u32,
+    window_id: u64,
+    driver: &mut McpDriver,
+    expect_refusal: bool,
+) -> bool {
     let mode = match row.delivery {
         Delivery::Background => "background",
         Delivery::Foreground => "foreground",
@@ -422,13 +453,17 @@ fn invoke_operation(row: CatalogRow, pid: u32, window_id: u64, driver: &mut McpD
                 args["element_index"] = serde_json::json!(element_index(&pre, target));
             }
             let response = driver.call("scroll", args);
+            if expect_refusal {
+                assert_refusal_without_mutation(&response, pre.tree_text(), pid, window_id, driver);
+                return true;
+            }
             assert!(
                 !response.is_error(),
                 "GTK3 scroll failed: {}",
                 response.text()
             );
             wait_for_positive_state(driver, pid, window_id, state_key);
-            return;
+            return false;
         }
         Operation::Drag { target, state_key } => {
             let (x, y, width, height) = element_rect(driver, pid, window_id, &pre, target);
@@ -441,13 +476,17 @@ fn invoke_operation(row: CatalogRow, pid: u32, window_id: u64, driver: &mut McpD
                     "duration_ms": 500, "steps": 30, "delivery_mode": mode
                 }),
             );
+            if expect_refusal {
+                assert_refusal_without_mutation(&response, pre.tree_text(), pid, window_id, driver);
+                return true;
+            }
             assert!(
                 !response.is_error(),
                 "GTK3 drag failed: {}",
                 response.text()
             );
             wait_for_positive_state(driver, pid, window_id, state_key);
-            return;
+            return false;
         }
         Operation::Popover { target, expected } => {
             let index = element_index(&pre, target);
@@ -465,9 +504,14 @@ fn invoke_operation(row: CatalogRow, pid: u32, window_id: u64, driver: &mut McpD
             );
             wait_for_state(driver, pid, window_id, expected);
             assert_popover_marker(driver, pid, window_id);
-            return;
+            return false;
         }
     };
+
+    if expect_refusal {
+        assert_refusal_without_mutation(&response, pre.tree_text(), pid, window_id, driver);
+        return true;
+    }
 
     assert!(
         !response.is_error(),
@@ -478,9 +522,33 @@ fn invoke_operation(row: CatalogRow, pid: u32, window_id: u64, driver: &mut McpD
         response.text()
     );
     wait_for_state(driver, pid, window_id, expected);
+    false
+}
+
+fn row_expects_refusal(row: CatalogRow) -> bool {
+    if row.delivery != Delivery::Background {
+        return false;
+    }
+    if matches!(
+        row.operation,
+        Operation::PressKey { .. } | Operation::Hotkey { .. }
+    ) {
+        return true;
+    }
+    DisplayServer::current() == DisplayServer::Wayland
+        && matches!(
+            row.operation,
+            Operation::PxClick {
+                button: "right",
+                ..
+            } | Operation::PxClick { count: 2, .. }
+                | Operation::Scroll { pixel: true, .. }
+                | Operation::Drag { .. }
+        )
 }
 
 fn run_catalog_row(row: CatalogRow) {
+    let expect_refusal = row_expects_refusal(row);
     let route = if DisplayServer::current() == DisplayServer::Wayland
         && (row.targeting == Targeting::Px
             || matches!(
@@ -496,21 +564,40 @@ fn run_catalog_row(row: CatalogRow) {
         Delivery::Foreground => native_foreground_case("gtk3", row.action, row.targeting, route),
         Delivery::NotApplicable => unreachable!("catalog operations require delivery"),
     };
+    let case = if expect_refusal {
+        case.expecting_refusal(vec![RefusalCode::BackgroundUnavailable])
+    } else {
+        case
+    };
     run_case(case, |pid, window_id, driver| match row.delivery {
         Delivery::Background => {
+            let mut refused = false;
             let (_, passed) = run_with_background_oracles(
                 driver,
                 TargetWindow {
                     pid,
                     native_id: window_id,
                 },
-                |driver| invoke_operation(row, pid, window_id, driver),
+                |driver| {
+                    refused = invoke_operation(row, pid, window_id, driver, expect_refusal);
+                },
             )
             .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
-            Observation::delivered_with_fixture_state(passed)
+            if refused {
+                let mut passed = passed;
+                passed.push(OracleKind::FixtureState);
+                Observation::refused(
+                    RefusalCode::BackgroundUnavailable,
+                    passed,
+                    "GTK3 focus-bound background input was refused",
+                    Evidence::default(),
+                )
+            } else {
+                Observation::delivered_with_fixture_state(passed)
+            }
         }
         Delivery::Foreground => {
-            invoke_operation(row, pid, window_id, driver);
+            assert!(!invoke_operation(row, pid, window_id, driver, false));
             Observation::delivered_with_fixture_state(Vec::new())
         }
         Delivery::NotApplicable => unreachable!(),

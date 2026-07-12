@@ -1199,6 +1199,16 @@ fn is_webkitgtk_embedder(pid: u32) -> bool {
     false
 }
 
+fn maps_indicate_gtk(maps: &str) -> bool {
+    maps.contains("libgtk-3.so") || maps.contains("libgtk-4.so")
+}
+
+fn is_gtk_process(pid: u32) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/maps"))
+        .map(|maps| maps_indicate_gtk(&maps))
+        .unwrap_or(false)
+}
+
 fn unavailable_webkit_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
@@ -1218,6 +1228,17 @@ fn unavailable_webkit_keyboard_background(
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
     (!delivery.is_foreground() && is_webkitgtk_embedder(pid)).then(|| {
+        crate::input::delivery::background_unavailable_error(
+            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+        )
+    })
+}
+
+fn unavailable_gtk_keyboard_background(
+    pid: u32,
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<ToolResult> {
+    (!delivery.is_foreground() && is_gtk_process(pid)).then(|| {
         crate::input::delivery::background_unavailable_error(
             crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
         )
@@ -2594,6 +2615,9 @@ impl Tool for PressKeyTool {
         if let Some(refusal) = unavailable_webkit_keyboard_background(pid, delivery) {
             return refusal;
         }
+        if let Some(refusal) = unavailable_gtk_keyboard_background(pid, delivery) {
+            return refusal;
+        }
         if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
             return refusal;
         }
@@ -2843,6 +2867,9 @@ impl Tool for HotkeyTool {
             return refusal;
         }
         if let Some(refusal) = unavailable_webkit_keyboard_background(pid, delivery) {
+            return refusal;
+        }
+        if let Some(refusal) = unavailable_gtk_keyboard_background(pid, delivery) {
             return refusal;
         }
         if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
@@ -6401,7 +6428,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
 
 #[cfg(test)]
 mod click_button_schema_tests {
-    use super::{chromium_background_must_refuse, ClickTool};
+    use super::{chromium_background_must_refuse, maps_indicate_gtk, ClickTool};
     use cua_driver_core::tool::Tool;
 
     /// Surface 5: schema must advertise the three canonical button values and
@@ -6444,6 +6471,19 @@ mod click_button_schema_tests {
         assert!(!chromium_background_must_refuse(false, true, true));
         assert!(!chromium_background_must_refuse(true, false, true));
         assert!(!chromium_background_must_refuse(false, false, false));
+    }
+
+    #[test]
+    fn gtk_process_maps_are_detected_without_matching_unrelated_libraries() {
+        assert!(maps_indicate_gtk(
+            "7f00-7f01 r-xp /usr/lib/x86_64-linux-gnu/libgtk-3.so.0.2404.32"
+        ));
+        assert!(maps_indicate_gtk(
+            "7f00-7f01 r-xp /nix/store/hash-gtk4/lib/libgtk-4.so.1"
+        ));
+        assert!(!maps_indicate_gtk(
+            "7f00-7f01 r-xp /usr/lib/x86_64-linux-gnu/libgdk_pixbuf-2.0.so"
+        ));
     }
 }
 

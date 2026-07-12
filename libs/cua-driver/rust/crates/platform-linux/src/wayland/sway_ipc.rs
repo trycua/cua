@@ -27,6 +27,8 @@ struct Node {
     #[serde(default)]
     rect: Rect,
     #[serde(default)]
+    window_rect: Rect,
+    #[serde(default)]
     focused: bool,
     #[serde(default = "default_visible")]
     visible: bool,
@@ -52,6 +54,8 @@ pub struct Window {
     pub y: i32,
     pub width: u32,
     pub height: u32,
+    pub content_x: i32,
+    pub content_y: i32,
     pub focused: bool,
     pub visible: bool,
     pub fullscreen: bool,
@@ -69,6 +73,8 @@ fn collect(node: &Node, windows: &mut Vec<Window>) {
                 y: node.rect.y,
                 width: node.rect.width.max(0) as u32,
                 height: node.rect.height.max(0) as u32,
+                content_x: node.window_rect.x,
+                content_y: node.window_rect.y,
                 focused: node.focused,
                 visible: node.visible,
                 fullscreen: node.fullscreen_mode != 0,
@@ -107,8 +113,8 @@ pub fn window_for_id(id: u64) -> Option<Window> {
     list_windows()?.into_iter().find(|window| window.id == id)
 }
 
-pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
-    let window = list_windows()?
+fn window_for_pid(pid: u32) -> Option<Window> {
+    list_windows()?
         .into_iter()
         .filter(|window| window.pid == pid && window.width > 0 && window.height > 0)
         .max_by_key(|window| {
@@ -117,8 +123,18 @@ pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
                 window.visible,
                 u64::from(window.width) * u64::from(window.height),
             )
-        })?;
-    Some((window.x, window.y))
+        })
+}
+
+pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
+    window_for_pid(pid).map(|window| (window.x, window.y))
+}
+
+/// Offset of the application content inside Sway's captured toplevel.
+/// Server-side decorations are part of `rect`/window screenshots but not of
+/// WebKitGTK's AT-SPI `CoordType::Window` descendants.
+pub fn window_content_offset_for_pid(pid: u32) -> Option<(i32, i32)> {
+    window_for_pid(pid).map(|window| (window.content_x, window.content_y))
 }
 
 pub fn window_origin_for_title(title: &str) -> Option<(i32, i32)> {
@@ -150,6 +166,7 @@ mod tests {
               "app_id": "org.example.Editor",
               "pid": 123,
               "rect": {"x": 20, "y": 30, "width": 800, "height": 600},
+              "window_rect": {"x": 0, "y": 47, "width": 800, "height": 553},
               "focused": true,
               "visible": true,
               "fullscreen_mode": 1
@@ -166,6 +183,7 @@ mod tests {
         assert_eq!(windows.len(), 2);
         assert_eq!(windows[0].pid, 123);
         assert_eq!((windows[0].x, windows[0].y), (20, 30));
+        assert_eq!((windows[0].content_x, windows[0].content_y), (0, 47));
         assert!(windows[0].focused);
         assert!(windows[0].fullscreen);
         assert_eq!(windows[1].title, "Dialog");

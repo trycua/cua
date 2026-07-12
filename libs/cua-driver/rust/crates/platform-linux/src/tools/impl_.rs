@@ -3447,25 +3447,31 @@ impl Tool for ScrollTool {
             &resolved
         {
             let idx = *element_index;
-            let direction_for_ax = direction.clone();
-            let ax_result = tokio::task::spawn_blocking(move || {
-                crate::atspi::scroll_element(pid, idx, &direction_for_ax, amount)
-            })
-            .await;
-            if matches!(ax_result, Ok(Ok(()))) {
-                let mode = if delivery.is_foreground() {
-                    "foreground"
-                } else {
-                    "background"
-                };
-                return ToolResult::text(format!(
-                    "Scrolled {direction} {amount} ticks via AT-SPI (delivery_mode:{mode})."
-                ))
-                .with_structured(json!({
-                    "path": "atspi",
-                    "verified": false,
-                    "delivery_mode": mode
-                }));
+            // WebKitGTK acknowledges the AT-SPI scroll action without moving
+            // the DOM scroller. On native Wayland, use a real compositor wheel
+            // event at the resolved element instead of reporting a silent
+            // success. Chromium's AT-SPI scroll path remains effective.
+            if !(crate::wayland::wayland_input_enabled() && is_webkitgtk_embedder(pid)) {
+                let direction_for_ax = direction.clone();
+                let ax_result = tokio::task::spawn_blocking(move || {
+                    crate::atspi::scroll_element(pid, idx, &direction_for_ax, amount)
+                })
+                .await;
+                if matches!(ax_result, Ok(Ok(()))) {
+                    let mode = if delivery.is_foreground() {
+                        "foreground"
+                    } else {
+                        "background"
+                    };
+                    return ToolResult::text(format!(
+                        "Scrolled {direction} {amount} ticks via AT-SPI (delivery_mode:{mode})."
+                    ))
+                    .with_structured(json!({
+                        "path": "atspi",
+                        "verified": false,
+                        "delivery_mode": mode
+                    }));
+                }
             }
         }
 
@@ -3524,7 +3530,37 @@ impl Tool for ScrollTool {
                 return refusal;
             }
             let direction_for_wayland = direction.clone();
-            let output_point = pixel_target.map(|(x, y)| {
+            let local_point = match (pixel_target, &resolved) {
+                (Some(point), _) => Some(point),
+                (
+                    None,
+                    cua_driver_core::element_token::ResolvedElement::Element {
+                        element_index,
+                        ..
+                    },
+                ) => {
+                    let idx = *element_index;
+                    match tokio::task::spawn_blocking(move || {
+                        resolve_element_local_coords(pid, idx, Some(xid))
+                    })
+                    .await
+                    {
+                        Ok(Ok((_resolved_xid, x, y))) => Some((x, y)),
+                        Ok(Err(error)) => {
+                            return ToolResult::error(format!(
+                                "Could not resolve scroll element [{idx}] coordinates: {error}"
+                            ))
+                        }
+                        Err(error) => {
+                            return ToolResult::error(format!(
+                                "Scroll element coordinate task failed: {error}"
+                            ))
+                        }
+                    }
+                }
+                (None, cua_driver_core::element_token::ResolvedElement::None) => None,
+            };
+            let output_point = local_point.map(|(x, y)| {
                 crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32)
             });
             let result = tokio::task::spawn_blocking(move || {

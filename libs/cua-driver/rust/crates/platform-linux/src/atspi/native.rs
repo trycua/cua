@@ -1789,6 +1789,7 @@ fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i
         // `_GTK_FRAME_EXTENTS` path below. `None` (no extension) keeps the
         // legacy Screen path (still (0,0), but no worse than before).
         let authoritative = crate::wayland::inject_accessibility_offset(pid)
+            .or_else(|| crate::wayland::sway_ipc::window_origin_for_pid(pid))
             .or_else(|| {
                 crate::wayland::sway_ipc::window_for_id(xid)
                     .map(|window| (window.x, window.y))
@@ -1800,7 +1801,6 @@ fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i
                 })
             })
             .or_else(|| crate::wayland::shell_helper::window_origin_for_pid(pid))
-            .or_else(|| crate::wayland::sway_ipc::window_origin_for_pid(pid))
             .or_else(|| title.and_then(crate::wayland::sway_ipc::window_origin_for_title));
         // AT-SPI discovery can only guess a native Wayland origin when the
         // compositor exposes no geometry. Keep that observation as the final
@@ -1978,31 +1978,34 @@ async fn element_bounds_for_visited(
         None
     };
     // WebKitGTK exposes page descendants in coordinates relative to its
-    // embedded document, while the captured toplevel includes GTK's
-    // client-side title bar. The document's own Window extents carry that
-    // content inset. Add it only for descendants already known to be inside a
-    // web document; Electron's document starts at (0,0), so this is a no-op
-    // there, and native title-bar controls keep their outer-window geometry.
+    // embedded document, while the captured toplevel can include compositor
+    // server-side decorations. Prefer Sway's authoritative content rectangle;
+    // otherwise the document's own Window extents carry the toolkit inset.
+    // Add it only for descendants already known to be inside a web document;
+    // Electron's document starts at (0,0), so this is a no-op there, and native
+    // title-bar controls keep their outer-window geometry.
     let web_document_origin = if crate::wayland::is_wayland() && offset.is_some() {
-        let document = visited
-            .iter()
-            .find(|node| node.has_component && is_document_role(&node.role));
-        if let Some(document) = document {
-            match call(document.acc.proxies()).await {
-                Some(Ok(proxies)) => match call(proxies.component()).await {
-                    Some(Ok(component)) => {
-                        match call(component.get_extents(CoordType::Window)).await {
-                            Some(Ok((x, y, _, _))) if x >= 0 && y >= 0 => Some((x, y)),
-                            _ => None,
+        crate::wayland::sway_ipc::window_content_offset_for_pid(pid).or_else(|| {
+            let document = visited
+                .iter()
+                .find(|node| node.has_component && is_document_role(&node.role));
+            if let Some(document) = document {
+                match call(document.acc.proxies()).await {
+                    Some(Ok(proxies)) => match call(proxies.component()).await {
+                        Some(Ok(component)) => {
+                            match call(component.get_extents(CoordType::Window)).await {
+                                Some(Ok((x, y, _, _))) if x >= 0 && y >= 0 => Some((x, y)),
+                                _ => None,
+                            }
                         }
-                    }
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
+                }
+            } else {
+                None
             }
-        } else {
-            None
-        }
+        })
     } else {
         None
     };

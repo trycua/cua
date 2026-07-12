@@ -122,15 +122,11 @@ impl CdpSessionCache {
         target_url_contains: Option<&str>,
     ) -> anyhow::Result<String> {
         let arc = self.get_or_connect(port, target_url_contains).await?;
-        let first_attempt = {
+        {
             let mut session = arc.lock().await;
-            match session.ensure_target(port, target_url_contains).await {
-                Ok(()) => do_evaluate(&mut session, javascript).await,
-                Err(e) => Err(e),
+            if session.ensure_target(port, target_url_contains).await.is_ok() {
+                return do_evaluate(&mut session, javascript).await;
             }
-        };
-        if first_attempt.is_ok() {
-            return first_attempt;
         }
 
         self.evict(port).await;
@@ -487,6 +483,7 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+    use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio_tungstenite::{accept_async, tungstenite::Message};
@@ -602,6 +599,69 @@ mod tests {
             cache.evaluate("2", port, Some("#window-a")).await.unwrap(),
             "value-2"
         );
+        server.await.unwrap();
+        assert_eq!(accepted.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn targeted_evaluate_does_not_replay_after_disconnect() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let accepted_by_server = accepted.clone();
+
+        let server = tokio::spawn(async move {
+            let (mut probe, _) = listener.accept().await.unwrap();
+            accepted_by_server.fetch_add(1, Ordering::SeqCst);
+            let mut request = [0u8; 1024];
+            let _ = probe.read(&mut request).await.unwrap();
+            probe
+                .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
+
+            let (socket, _) = listener.accept().await.unwrap();
+            accepted_by_server.fetch_add(1, Ordering::SeqCst);
+            let mut websocket = accept_async(socket).await.unwrap();
+
+            loop {
+                let message = websocket.next().await.unwrap().unwrap();
+                let Message::Text(text) = message else { continue };
+                let request: serde_json::Value = serde_json::from_str(&text).unwrap();
+                let id = request["id"].as_u64().unwrap();
+                let method = request["method"].as_str().unwrap();
+                let response = match method {
+                    "Target.getTargets" => serde_json::json!({
+                        "id": id,
+                        "result": {
+                            "targetInfos": [{
+                                "targetId": "page-a",
+                                "type": "page",
+                                "url": "app://fixture/#window-a"
+                            }]
+                        }
+                    }),
+                    "Target.attachToTarget" => serde_json::json!({
+                        "id": id,
+                        "result": { "sessionId": "session-a" }
+                    }),
+                    "Runtime.evaluate" => break,
+                    other => panic!("unexpected method {other}"),
+                };
+                websocket.send(Message::Text(response.to_string().into())).await.unwrap();
+            }
+            websocket.close(None).await.unwrap();
+
+            if let Ok(Ok((mut retry, _))) =
+                tokio::time::timeout(Duration::from_millis(250), listener.accept()).await
+            {
+                accepted_by_server.fetch_add(1, Ordering::SeqCst);
+                let _ = retry.read(&mut request).await.unwrap();
+            }
+        });
+
+        let cache = CdpSessionCache::new();
+        assert!(cache.evaluate("sideEffect()", port, Some("#window-a")).await.is_err());
         server.await.unwrap();
         assert_eq!(accepted.load(Ordering::SeqCst), 2);
     }

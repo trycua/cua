@@ -14,7 +14,7 @@
     "test:core": "pnpm --filter @trycua/core test",
     "test:computer": "pnpm --filter @trycua/computer test",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm build:core && pnpm -r typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

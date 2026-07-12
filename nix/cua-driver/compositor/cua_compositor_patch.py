@@ -225,9 +225,17 @@ static bool cua_motion(struct tinywl_server *server, struct tinywl_toplevel *t, 
 	double local_x = 0, local_y = 0;
 	struct tinywl_toplevel *hit = desktop_toplevel_at(server, scene_x + x, scene_y + y, &surface, &local_x, &local_y);
 	if (hit != t || !surface) return false;
-	wl_fixed_t sx = wl_fixed_from_double(local_x), sy = wl_fixed_from_double(local_y);
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
-	if (!sc || wl_list_empty(&sc->pointers)) return false;
+	if (!sc || wl_list_empty(&sc->pointers)) {
+		/* Chromium can compose a renderer-owned child surface whose wl_client
+		 * never bound wl_pointer while the owning toplevel client did. Use that
+		 * target root while retaining the caller's screenshot-local point. */
+		surface = t->xdg_toplevel->base->surface;
+		local_x = x; local_y = y;
+		sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
+		if (!sc || wl_list_empty(&sc->pointers)) return false;
+	}
+	wl_fixed_t sx = wl_fixed_from_double(local_x), sy = wl_fixed_from_double(local_y);
 	struct wl_resource *res;
 	if (cua_ptr[idx].entered != surface) {
 		if (cua_ptr[idx].entered) cua_ptr_leave(server->seat, cua_ptr[idx].entered);
@@ -267,7 +275,9 @@ static struct tinywl_toplevel *cua_desktop_motion(struct tinywl_server *server, 
 }
 static bool cua_button(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, uint32_t button, bool pressed) {
 	if (!t || idx < 0 || idx >= CUA_MAXDEV) return false;
-	struct wlr_surface *surface = t->xdg_toplevel->base->surface;
+	/* `cua_motion` establishes the exact child or root surface for this logical
+	 * pointer. Button and axis events must use that same wl_pointer resource. */
+	struct wlr_surface *surface = cua_ptr[idx].entered ? cua_ptr[idx].entered : t->xdg_toplevel->base->surface;
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
 	if (!sc || wl_list_empty(&sc->pointers)) return false;
 	uint32_t tm = cua_now_ms(), bs = wlr_seat_client_next_serial(sc);
@@ -280,7 +290,7 @@ static bool cua_button(struct tinywl_server *server, struct tinywl_toplevel *t, 
 }
 static bool cua_axis(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, uint32_t axis, double value) {
 	if (!t || idx < 0 || idx >= CUA_MAXDEV) return false;
-	struct wlr_surface *surface = t->xdg_toplevel->base->surface;
+	struct wlr_surface *surface = cua_ptr[idx].entered ? cua_ptr[idx].entered : t->xdg_toplevel->base->surface;
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
 	if (!sc || wl_list_empty(&sc->pointers)) return false;
 	uint32_t tm = cua_now_ms();

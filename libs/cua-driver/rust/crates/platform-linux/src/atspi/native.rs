@@ -1977,6 +1977,35 @@ async fn element_bounds_for_visited(
     } else {
         None
     };
+    // WebKitGTK exposes page descendants in coordinates relative to its
+    // embedded document, while the captured toplevel includes GTK's
+    // client-side title bar. The document's own Window extents carry that
+    // content inset. Add it only for descendants already known to be inside a
+    // web document; Electron's document starts at (0,0), so this is a no-op
+    // there, and native title-bar controls keep their outer-window geometry.
+    let web_document_origin = if crate::wayland::is_wayland() && offset.is_some() {
+        let document = visited
+            .iter()
+            .find(|node| node.has_component && is_document_role(&node.role));
+        if let Some(document) = document {
+            match call(document.acc.proxies()).await {
+                Some(Ok(proxies)) => match call(proxies.component()).await {
+                    Some(Ok(component)) => {
+                        match call(component.get_extents(CoordType::Window)).await {
+                            Some(Ok((x, y, _, _))) if x >= 0 && y >= 0 => Some((x, y)),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let (offset_x, offset_y) = rebase_renderer_window_offset(
         offset.or(screen_rebase).unwrap_or((0, 0)),
         window_frame_origin,
@@ -2026,7 +2055,18 @@ async fn element_bounds_for_visited(
             if x == i32::MIN || y == i32::MIN || x < -16384 || y < -16384 || w <= 1 || h <= 1 {
                 continue;
             }
-            out.push((idx, x + offset_x, y + offset_y, w as u32, h as u32));
+            let (document_x, document_y) = if node.in_web_doc {
+                web_document_origin.unwrap_or((0, 0))
+            } else {
+                (0, 0)
+            };
+            out.push((
+                idx,
+                x + offset_x + document_x,
+                y + offset_y + document_y,
+                w as u32,
+                h as u32,
+            ));
         }
     }
     out

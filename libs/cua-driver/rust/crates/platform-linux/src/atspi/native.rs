@@ -147,6 +147,11 @@ fn is_document_role(role: &str) -> bool {
     r.contains("document") || r == "embedded"
 }
 
+fn is_web_process_bus(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.contains("webkit") || name.contains("webprocess")
+}
+
 /// Build an `AccessibleProxy` for an arbitrary (bus name, path) in the tree.
 /// Uses owned `String`s for destination/path so the resulting `BusName`/
 /// `ObjectPath` are `'static` and the proxy borrows only the connection.
@@ -387,7 +392,7 @@ async fn collect_visited_bounded<'a>(
     // few seconds rather than ~25s.
     let mut consecutive_timeouts = 0u32;
 
-    while let Some((oref, depth, in_web_doc)) = stack.pop() {
+    while let Some((oref, depth, inherited_web_doc)) = stack.pop() {
         if budget == 0 {
             dlog!("node budget exhausted; truncating walk");
             break;
@@ -397,6 +402,11 @@ async fn collect_visited_bounded<'a>(
             break;
         }
         budget -= 1;
+        // WebKitGTK publishes its embedded page on a distinct WebProcess
+        // D-Bus peer and can expose blank role names for the entire subtree.
+        // The peer identity is therefore the reliable document boundary when
+        // role-based AT-SPI discovery cannot identify one.
+        let in_web_doc = inherited_web_doc || is_web_process_bus(&oref.name);
 
         // accessible_for builds a proxy whose first use round-trips to the
         // target app. On a modal-grabbed (AT-SPI-unresponsive) app this is the
@@ -1915,15 +1925,34 @@ async fn web_document_origin_for_visited(visited: &[Visited<'_>], pid: u32) -> O
     if !crate::wayland::is_wayland() {
         return None;
     }
-    let compositor = crate::wayland::sway_ipc::window_content_offset_for_pid(pid);
+    let sway_window = crate::wayland::sway_ipc::window_for_pid(pid);
+    let compositor = sway_window
+        .as_ref()
+        .map(|window| (window.content_x, window.content_y));
     let document = visited
         .iter()
-        .find(|node| node.has_component && is_document_role(&node.role));
+        .filter(|node| node.has_component)
+        .filter(|node| is_document_role(&node.role) || node.in_web_doc)
+        .min_by_key(|node| node.depth);
     let document = if let Some(document) = document {
         match call(document.acc.proxies()).await {
             Some(Ok(proxies)) => match call(proxies.component()).await {
                 Some(Ok(component)) => match call(component.get_extents(CoordType::Window)).await {
-                    Some(Ok((x, y, _, _))) if x >= 0 && y >= 0 => Some((x, y)),
+                    Some(Ok((x, y, width, height))) if x >= 0 && y >= 0 => {
+                        let inferred_top = match (compositor, sway_window.as_ref()) {
+                            (Some((_, 0)), Some(window))
+                                if width > 0
+                                    && height > 0
+                                    && (i64::from(window.width) - i64::from(width)).abs() <= 4
+                                    && i64::from(window.height) > i64::from(height) =>
+                            {
+                                (i64::from(window.height) - i64::from(height))
+                                    .min(i64::from(i32::MAX)) as i32
+                            }
+                            _ => 0,
+                        };
+                        Some((x, y.max(inferred_top)))
+                    }
                     _ => None,
                 },
                 _ => None,
@@ -2162,8 +2191,8 @@ mod coord_tests {
     use super::parse_gtk_frame_extents;
     use super::{
         combine_wayland_content_offsets, is_indexable_capabilities, is_passive_role,
-        prefer_authoritative_wayland_origin, rebase_renderer_window_offset, screen_extent_rebase,
-        select_click_target,
+        is_web_process_bus, prefer_authoritative_wayland_origin, rebase_renderer_window_offset,
+        screen_extent_rebase, select_click_target,
     };
 
     #[test]
@@ -2220,6 +2249,13 @@ mod coord_tests {
             Some((0, 47))
         );
         assert_eq!(combine_wayland_content_offsets(None, None), None);
+    }
+
+    #[test]
+    fn webkit_web_process_bus_marks_roleless_document_subtrees() {
+        assert!(is_web_process_bus("org.webkitgtk.WebProcess.1234"));
+        assert!(is_web_process_bus("org.example.WebProcess"));
+        assert!(!is_web_process_bus(":1.42"));
     }
 
     #[test]

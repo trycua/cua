@@ -322,24 +322,26 @@ static void cua_kbd_key(struct wlr_seat_client *sc, uint32_t keycode, bool press
 		wl_keyboard_send_key(res, wlr_seat_client_next_serial(sc), tm, keycode,
 			pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
 }
-static void cua_type_cp(struct tinywl_server *server, struct tinywl_toplevel *t, uint32_t cp) {
-	if (cp >= 128 || !g_chartab[cp].valid) return;
+static bool cua_type_cp(struct tinywl_server *server, struct tinywl_toplevel *t, uint32_t cp) {
+	if (cp >= 128 || !g_chartab[cp].valid) return false;
 	struct wlr_seat_client *sc = cua_kbd_enter(server, t);
-	if (!sc) return;
+	if (!sc) return false;
 	struct cua_keyent e = g_chartab[cp];
 	if (e.shift) cua_kbd_mods(sc, g_shift_mask);
 	cua_kbd_key(sc, e.keycode, true);
 	cua_kbd_key(sc, e.keycode, false);
 	if (e.shift) cua_kbd_mods(sc, 0);
+	return true;
 }
 /* Decode a hex-encoded ASCII string and type it focus-free into `t`. */
-static void cua_type_hex(struct tinywl_server *server, struct tinywl_toplevel *t, const char *hex) {
-	if (!t) return;
+static bool cua_type_hex(struct tinywl_server *server, struct tinywl_toplevel *t, const char *hex) {
+	if (!t) return false;
 	for (const char *p = hex; p[0] && p[1]; p += 2) {
 		int hi = (p[0] <= '9') ? p[0] - '0' : (p[0] | 0x20) - 'a' + 10;
 		int lo = (p[1] <= '9') ? p[1] - '0' : (p[1] | 0x20) - 'a' + 10;
-		cua_type_cp(server, t, (uint32_t)((hi << 4) | lo));
+		if (!cua_type_cp(server, t, (uint32_t)((hi << 4) | lo))) return false;
 	}
+	return true;
 }
 static uint32_t cua_named_keycode(const char *name) {
 	uint32_t kc = 0;
@@ -367,10 +369,9 @@ static int cua_key_named(struct tinywl_server *server, struct tinywl_toplevel *t
 	uint32_t kc = cua_named_keycode(name);
 	if (!kc) return 0;
 	struct wlr_seat_client *sc = cua_kbd_enter(server, t);
-	if (sc) {
-		cua_kbd_key(sc, kc, true);
-		cua_kbd_key(sc, kc, false);
-	}
+	if (!sc) return -1;
+	cua_kbd_key(sc, kc, true);
+	cua_kbd_key(sc, kc, false);
 	return 1;
 }
 static int cua_hotkey(struct tinywl_server *server, struct tinywl_toplevel *t, const char *mods, const char *key) {
@@ -392,12 +393,11 @@ static int cua_hotkey(struct tinywl_server *server, struct tinywl_toplevel *t, c
 		else return 0;
 	}
 	struct wlr_seat_client *sc = cua_kbd_enter(server, t);
-	if (sc) {
-		cua_kbd_mods(sc, mask);
-		cua_kbd_key(sc, kc, true);
-		cua_kbd_key(sc, kc, false);
-		cua_kbd_mods(sc, 0);
-	}
+	if (!sc) return -1;
+	cua_kbd_mods(sc, mask);
+	cua_kbd_key(sc, kc, true);
+	cua_kbd_key(sc, kc, false);
+	cua_kbd_mods(sc, 0);
 	return 1;
 }
 /* ── control socket: one line per command, routed by app_id ───────────────── */
@@ -435,19 +435,23 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 		char hex[8192];
 		if (sscanf(line, "t %127s %8191s", app, hex) != 2) return "bad-args";
 		if (!(t = cua_resolve_target(server, app, &err))) return err;
-		cua_type_hex(server, t, hex);
+		if (!cua_type_hex(server, t, hex)) return "no-keyboard-resource";
 		return NULL;
 	} else if (!strcmp(cmd, "k")) {
 		char key[32];
 		if (sscanf(line, "k %127s %31s", app, key) != 2) return "bad-args";
 		if (!(t = cua_resolve_target(server, app, &err))) return err;
-		if (!cua_key_named(server, t, key)) return "unknown-key";
+		int result = cua_key_named(server, t, key);
+		if (result < 0) return "no-keyboard-resource";
+		if (!result) return "unknown-key";
 		return NULL;
 	} else if (!strcmp(cmd, "h")) {
 		char mods[128], key[32];
 		if (sscanf(line, "h %127s %127s %31s", app, mods, key) != 3) return "bad-args";
 		if (!(t = cua_resolve_target(server, app, &err))) return err;
-		if (!cua_hotkey(server, t, mods, key)) return "unknown-hotkey";
+		int result = cua_hotkey(server, t, mods, key);
+		if (result < 0) return "no-keyboard-resource";
+		if (!result) return "unknown-hotkey";
 		return NULL;
 	} else if (!strcmp(cmd, "a")) {
 		int idx; unsigned axis; double value;

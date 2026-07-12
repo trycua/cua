@@ -2036,8 +2036,8 @@ async fn element_bounds_for_visited(
 mod coord_tests {
     use super::parse_gtk_frame_extents;
     use super::{
-        is_indexable_capabilities, is_passive_role, rebase_renderer_window_offset,
-        screen_extent_rebase, select_click_target,
+        is_indexable_capabilities, is_passive_role, prefer_authoritative_wayland_origin,
+        rebase_renderer_window_offset, screen_extent_rebase, select_click_target,
     };
 
     #[test]

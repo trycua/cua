@@ -37,6 +37,7 @@ meval = "0.2"
 # capture/input protocols added as those slices land). Pure-Rust client; used
 # when running under a Wayland compositor with no X11 (no DISPLAY).
 wayland-client = "0.31"
+wayland-backend = "0.3"
 wayland-scanner = "0.31"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # Wayland staging protocols: ext-foreign-toplevel-list-v1,

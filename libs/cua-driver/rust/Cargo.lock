@@ -1980,6 +1980,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "wayland-backend",
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",

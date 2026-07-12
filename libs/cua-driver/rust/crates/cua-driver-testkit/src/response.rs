@@ -33,6 +33,8 @@ impl ToolResponse {
     pub(crate) fn from_mcp(raw: Value) -> Self {
         let text = raw["result"]["content"][0]["text"]
             .as_str()
+            .or_else(|| raw["error"]["message"].as_str())
+            .or_else(|| raw["error"].as_str())
             .unwrap_or("")
             .to_string();
         let structured = raw["result"]["structuredContent"].clone();
@@ -97,5 +99,25 @@ impl ToolResponse {
             .get("degraded")
             .and_then(Value::as_bool)
             .unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ToolResponse;
+
+    #[test]
+    fn mcp_error_text_accepts_object_and_string_envelopes() {
+        let object = ToolResponse::from_mcp(serde_json::json!({
+            "error": { "message": "object error" }
+        }));
+        assert!(object.is_error());
+        assert_eq!(object.text(), "object error");
+
+        let string = ToolResponse::from_mcp(serde_json::json!({
+            "error": "string error"
+        }));
+        assert!(string.is_error());
+        assert_eq!(string.text(), "string error");
     }
 }

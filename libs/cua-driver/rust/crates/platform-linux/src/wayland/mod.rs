@@ -911,7 +911,12 @@ fn crop_png_to_rect(
 /// 3. X11: existing root-window path.
 pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
     if is_wayland() {
-        // Tier 1: native wlroots screencopy (fast, zero consent).
+        // Tier 1: the opt-in GNOME compositor helper. It avoids probing
+        // wlroots-only protocols and captures the Shell stage without consent.
+        if let Some(bytes) = shell_helper::screenshot_display() {
+            return Ok(bytes);
+        }
+        // Tier 2: native wlroots screencopy (fast, zero consent).
         match screenshot_bytes() {
             Ok(bytes) => return Ok(bytes),
             Err(e) => {
@@ -920,7 +925,7 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
                 );
             }
         }
-        // Tier 2: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+, niri,
+        // Tier 3: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+, niri,
         // hyprland, KDE 6.2+, GNOME 47+).
         match ext_screencopy::screenshot_via_ext_copy() {
             Ok(bytes) => return Ok(bytes),
@@ -930,7 +935,7 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
                 );
             }
         }
-        // Tier 3: xdg-desktop-portal (GNOME, KDE, COSMIC fallback).
+        // Tier 4: xdg-desktop-portal (GNOME, KDE, COSMIC fallback).
         match portal_screenshot::screenshot_via_portal() {
             Ok(bytes) => return Ok(bytes),
             Err(e) => {
@@ -1221,6 +1226,7 @@ pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::
     with_libei_fallback(
         || click_vptr(Some(window_id), x, y, count, button),
         || {
+            libei_wait_pointer_ready()?;
             activate_window_for_input(window_id)?;
             libei_click(x, y, count, button)
         },
@@ -1317,6 +1323,7 @@ pub fn scroll_at(
     with_libei_fallback(
         || scroll_vptr(window_id, point, &direction, amount),
         || {
+            libei_wait_scroll_ready()?;
             activate_window_for_input(window_id)?;
             if let Some((x, y)) = point {
                 libei_move_absolute(x, y)?;
@@ -1442,6 +1449,7 @@ pub fn drag(
     with_libei_fallback(
         || drag_vptr(window_id, from_x, from_y, to_x, to_y, steps, button),
         || {
+            libei_wait_pointer_ready()?;
             activate_window_for_input(window_id)?;
             libei_drag(from_x, from_y, to_x, to_y, steps, button)
         },
@@ -1534,7 +1542,11 @@ pub fn type_text(window_id: u64, text: &str) -> anyhow::Result<()> {
         // entirely). On a portal-input build, route typing through libei's
         // `ei_text` interface instead. See #1982.
         other => with_wtype_libei_fallback(
-            || libei_type_text(text),
+            || {
+                libei_wait_keyboard_ready()?;
+                activate_window_for_input(window_id)?;
+                libei_type_text(text)
+            },
             other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
         ),
     }
@@ -1553,7 +1565,11 @@ pub fn press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
     match result {
         Ok(out) if out.status.success() => Ok(()),
         other => with_wtype_libei_fallback(
-            || libei_press_key(key),
+            || {
+                libei_wait_keyboard_ready()?;
+                activate_window_for_input(window_id)?;
+                libei_press_key(key)
+            },
             other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
         ),
     }
@@ -1588,7 +1604,11 @@ pub fn hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
             #[cfg(feature = "portal-input")]
             {
                 return with_wtype_libei_fallback(
-                    || libei_hotkey(&mods, &final_key),
+                    || {
+                        libei::wait_keyboard_ready()?;
+                        activate_window_for_input(window_id)?;
+                        libei_hotkey(&mods, &final_key)
+                    },
                     stderr,
                 );
             }
@@ -1697,6 +1717,18 @@ fn with_wtype_libei_fallback(
 // libei branch in `with_libei_fallback` / `with_wtype_libei_fallback` is
 // `#[cfg]`-d out), but the closures still need them to exist to type-check.
 #[cfg(not(feature = "portal-input"))]
+fn libei_wait_pointer_ready() -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_wait_scroll_ready() -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_wait_keyboard_ready() -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
 fn libei_click(_x: i32, _y: i32, _count: u32, _button: u8) -> anyhow::Result<()> {
     unreachable!("libei fallback compiled out (no portal-input feature)")
 }
@@ -1735,6 +1767,21 @@ fn cua_button_to_libei(button: u8) -> libei::Button {
         3 => libei::Button::Right,
         _ => libei::Button::Left,
     }
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_wait_pointer_ready() -> anyhow::Result<()> {
+    libei::wait_pointer_ready()
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_wait_scroll_ready() -> anyhow::Result<()> {
+    libei::wait_scroll_ready()
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_wait_keyboard_ready() -> anyhow::Result<()> {
+    libei::wait_keyboard_ready()
 }
 
 #[cfg(feature = "portal-input")]
@@ -2196,14 +2243,17 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
                 }
             }
             Err(e) => {
-                tracing::warn!(
-                    "native Wayland list_windows failed: {e}; trying AT-SPI registry"
-                );
                 if let Some(ws) =
                     shell_helper::list_windows(filter_pid).filter(|ws| !ws.is_empty())
                 {
+                    tracing::debug!(
+                        "native Wayland protocols unavailable ({e}); using compositor helper"
+                    );
                     return ws;
                 }
+                tracing::warn!(
+                    "native Wayland list_windows failed: {e}; trying AT-SPI registry"
+                );
                 let ws = crate::atspi::list_windows(filter_pid);
                 if !ws.is_empty() {
                     return ws;

@@ -263,19 +263,6 @@ fn is_wayland_session() -> bool {
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 fn activate_native_foreground(driver: &mut impl Driver, target: TargetWindow) {
-    #[cfg(target_os = "linux")]
-    if is_wayland_session() {
-        let output = Command::new("swaymsg")
-            .arg(format!(r#"[pid="{}"] focus"#, target.pid))
-            .output()
-            .expect("could not run swaymsg to focus foreground sentinel");
-        assert!(
-            output.status.success(),
-            "could not focus foreground sentinel through Sway: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        return;
-    }
     let response = driver.call(
         "bring_to_front",
         serde_json::json!({

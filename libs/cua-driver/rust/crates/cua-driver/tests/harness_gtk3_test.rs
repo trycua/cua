@@ -482,8 +482,9 @@ fn invoke_operation(
             }
             assert!(
                 !response.is_error(),
-                "GTK3 drag failed: {}",
-                response.text()
+                "GTK3 drag failed: {}; raw={}",
+                response.text(),
+                response.raw
             );
             wait_for_positive_state(driver, pid, window_id, state_key);
             return false;
@@ -545,7 +546,7 @@ fn row_expects_refusal(row: CatalogRow) -> bool {
             | Operation::Drag { .. }
     );
     if DisplayServer::current() == DisplayServer::X11
-        && focus_bound_pointer
+        && (focus_bound_pointer || matches!(row.operation, Operation::PxTypeText { .. }))
         && !platform_linux::input::real_pointer_input_available()
     {
         return true;

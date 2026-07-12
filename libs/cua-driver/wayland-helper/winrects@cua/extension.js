@@ -1,12 +1,18 @@
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+import Shell from 'gi://Shell';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import Cairo from 'cairo';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
+Gio._promisify(Shell.Screenshot.prototype, 'screenshot_stage_to_content');
+Gio._promisify(Shell.Screenshot, 'composite_to_stream');
+
 const IFACE = `<node><interface name="org.cua.WinRects">
 <method name="GetRects"><arg type="s" direction="out" name="json"/></method>
+<method name="Capture"><arg type="s" direction="out" name="png_base64"/></method>
 <method name="Activate"><arg type="u" direction="in" name="id"/><arg type="b" direction="out" name="activated"/></method>
 <method name="MoveCursor"><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/></method>
 <method name="ClickPulse"><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/></method>
@@ -76,6 +82,12 @@ export default class WinRectsExtension extends Extension {
             const w = windows[stacking];
             const actor = actorByWindow.get(w);
             const r = w.get_frame_rect();
+            let buffer = r;
+            try {
+                buffer = w.get_buffer_rect();
+            } catch (_error) {
+                // Older Shell releases may not expose the buffer rectangle.
+            }
             const minimized = Boolean(w.minimized);
             out.push({
                 id: w.get_stable_sequence(),
@@ -85,6 +97,8 @@ export default class WinRectsExtension extends Extension {
                 y: r.y,
                 w: r.width,
                 h: r.height,
+                buffer_x: buffer.x,
+                buffer_y: buffer.y,
                 focused: focusedWindow === w,
                 minimized,
                 visible: Boolean(actor?.visible) && !minimized,
@@ -93,14 +107,41 @@ export default class WinRectsExtension extends Extension {
         }
         return JSON.stringify(out);
     }
-    Activate(id) {
+    async CaptureAsync(_params, invocation) {
+        try {
+            const shooter = new Shell.Screenshot();
+            const [content, scale] = await shooter.screenshot_stage_to_content();
+            const stream = Gio.MemoryOutputStream.new_resizable();
+            await Shell.Screenshot.composite_to_stream(
+                content.get_texture(),
+                0, 0, -1, -1,
+                scale,
+                null, 0, 0, 1,
+                stream
+            );
+            stream.close(null);
+            const encoded = GLib.base64_encode(stream.steal_as_bytes().get_data());
+            invocation.return_value(new GLib.Variant('(s)', [encoded]));
+        } catch (error) {
+            invocation.return_dbus_error('org.cua.WinRects.CaptureFailed', String(error));
+        }
+    }
+    ActivateAsync([id], invocation) {
         const target = global.get_window_actors()
             .map(actor => actor.meta_window)
             .find(window => window?.get_stable_sequence() === id);
-        if (!target)
-            return false;
+        if (!target) {
+            invocation.return_value(new GLib.Variant('(b)', [false]));
+            return;
+        }
         target.activate(global.get_current_time());
-        return true;
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            invocation.return_value(new GLib.Variant(
+                '(b)',
+                [global.display.focus_window === target]
+            ));
+            return GLib.SOURCE_REMOVE;
+        });
     }
     MoveCursor(x, y) {
         if (!this._cursor) return;

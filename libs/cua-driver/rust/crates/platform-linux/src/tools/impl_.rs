@@ -647,7 +647,11 @@ impl Tool for GetWindowStateTool {
                             Some((Some(B64.encode(&png)), None, w, h, original_w))
                         }
                     }
-                    Err(_) => None,
+                    Err(error) => {
+                        return Err(anyhow::anyhow!(
+                            "window screenshot failed for window {xid}: {error}"
+                        ));
+                    }
                 }
             } else {
                 None

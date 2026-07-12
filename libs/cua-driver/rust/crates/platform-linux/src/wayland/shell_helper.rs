@@ -29,7 +29,16 @@ const DEST: &str = "org.cua.WinRects";
 const PATH: &str = "/org/cua/WinRects";
 const IFACE: &str = "org.cua.WinRects";
 
+pub fn available() -> bool {
+    static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *AVAILABLE.get_or_init(|| gdbus_call("GetRects", &[]).is_some())
+}
+
 fn gdbus_call(method: &str, args: &[String]) -> Option<String> {
+    gdbus_call_with_timeout(method, args, Duration::from_millis(800))
+}
+
+fn gdbus_call_with_timeout(method: &str, args: &[String], timeout: Duration) -> Option<String> {
     let mut cmd = Command::new("gdbus");
     cmd.arg("call")
         .arg("--session")
@@ -49,34 +58,85 @@ fn gdbus_call(method: &str, args: &[String]) -> Option<String> {
         .stderr(std::process::Stdio::null())
         .spawn()
         .ok()?;
-    let out = wait_timeout(child, Duration::from_millis(800))?;
+    let out = wait_timeout(child, timeout)?;
     if !out.status.success() {
         return None;
     }
     Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Capture the GNOME stage through the compositor helper.
+///
+/// Mutter does not expose wlroots screencopy protocols, and its one-shot
+/// Screenshot portal may reject an unregistered command-line process. The
+/// opt-in helper already runs inside Shell for geometry and activation, so it
+/// can use Shell's screenshot API without confusing a stable Wayland window id
+/// for an X11 drawable.
+pub fn screenshot_display() -> Option<Vec<u8>> {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+
+    let raw = gdbus_call_with_timeout("Capture", &[], Duration::from_secs(5))?;
+    let start = raw.find('\'')? + 1;
+    let end = raw.rfind('\'')?;
+    if end <= start {
+        return None;
+    }
+    B64.decode(&raw[start..end]).ok()
+}
+
 /// `Child::wait` with a deadline (no extra crates). Kills + reaps on timeout.
 fn wait_timeout(mut child: std::process::Child, dur: Duration) -> Option<std::process::Output> {
+    use std::io::Read;
+
+    // Drain stdout while the child is running. Capture() returns a base64 PNG
+    // that readily exceeds a pipe's ~64 KiB capacity; waiting for exit before
+    // reading deadlocks the child on a full pipe and turns a healthy Shell
+    // response into a false timeout.
+    let stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut stdout = stdout;
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).ok()?;
+        Some(bytes)
+    });
     let deadline = std::time::Instant::now() + dur;
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => return child.wait_with_output().ok(),
+            Ok(Some(status)) => break status,
             Ok(None) => {
                 if std::time::Instant::now() >= deadline {
                     let _ = child.kill();
-                    let _ = child.wait();
+                    let status = child.wait().ok()?;
+                    let _ = reader.join();
+                    if !status.success() {
+                        return None;
+                    }
                     return None;
                 }
                 std::thread::sleep(Duration::from_millis(15));
             }
-            Err(_) => return None,
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return None;
+            }
         }
-    }
+    };
+    let stdout = reader.join().ok().flatten()?;
+    Some(std::process::Output {
+        status,
+        stdout,
+        stderr: Vec::new(),
+    })
 }
 
-/// Screen origin (x, y) of the window backing `pid`, from the extension's
-/// `GetRects`. `None` when the extension is unavailable or no window matches.
+/// Screen origin of the Wayland surface buffer backing `pid`.
+///
+/// GTK's AT-SPI `CoordType::Window` includes client-side shadow extents, while
+/// Mutter's frame rectangle excludes them. The buffer origin preserves those
+/// extents so accessibility frames line up with pixels. Older helpers omit the
+/// buffer fields and fall back to the frame origin.
 pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
     let raw = gdbus_call("GetRects", &[])?;
     // gdbus prints a GVariant tuple like `('[{"pid":..,"x":..}]',)`. Pull the
@@ -88,8 +148,16 @@ pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
     let arr: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
     for w in &arr {
         if w.get("pid").and_then(|p| p.as_u64()) == Some(pid as u64) {
-            let x = w.get("x")?.as_i64()? as i32;
-            let y = w.get("y")?.as_i64()? as i32;
+            let x = w
+                .get("buffer_x")
+                .and_then(serde_json::Value::as_i64)
+                .or_else(|| w.get("x").and_then(serde_json::Value::as_i64))?
+                as i32;
+            let y = w
+                .get("buffer_y")
+                .and_then(serde_json::Value::as_i64)
+                .or_else(|| w.get("y").and_then(serde_json::Value::as_i64))?
+                as i32;
             return Some((x, y));
         }
     }

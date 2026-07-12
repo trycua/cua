@@ -205,7 +205,9 @@ trees, trajectories, and logs are the useful evidence.
 
 Wayland results are compositor-specific. The hosted lane uses Sway to prove
 wlroots protocols. GNOME requires the optional WinRects Shell helper for
-authoritative window geometry, observation, and verified target activation.
+authoritative frame and buffer geometry, observation, capture, and verified
+target activation. A portal/libei grant persists until the user revokes it, so
+subsequent driver processes do not reopen the consent dialog.
 KDE requires a future target-addressable KWin adapter; portal availability by
 itself is not evidence that input can be sent safely to a named window.
 
@@ -334,11 +336,10 @@ hierarchy:
    [`action-support.md`](action-support.md).
 2. **Preserve exact-source validation.** Accepted Windows and macOS runs must
    record one immutable source SHA and retain the typed evidence contract.
-3. **Close compositor-specific Wayland gaps.** Sway GTK3 now passes all 23
-   declared outcomes, including six exact background refusals. Complete the
-   shared Electron/Tauri lane, accept a real GNOME run with the helper and
-   portal consent, and add a representative Plasma 6 lane. Issue `#1922`
-   tracks the grouped backend work.
+3. **Close compositor-specific Wayland gaps.** Sway and a real GNOME 46 session
+   each pass all 31 GTK3 outcomes. Complete the shared Electron/Tauri lane on
+   a representative renderer, add a Plasma 6 lane, and implement a verified
+   KWin activation adapter. Issue `#1922` tracks the grouped backend work.
 4. **Add representative toolkit surfaces.** GTK4, Qt5/Qt6, VTE, VCL, and GL
    canvases remain optional real-app gaps; shared Electron/Tauri coverage does
    not substitute for those native stacks.

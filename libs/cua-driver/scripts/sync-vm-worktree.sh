@@ -67,6 +67,7 @@ exclude_args=(
   --exclude=__pycache__/
   --exclude='*.pyc'
   --exclude=dist/
+  --exclude=vm-out/
 )
 
 tar_exclude_args=(
@@ -79,6 +80,7 @@ tar_exclude_args=(
   --exclude '*/__pycache__'
   --exclude '*.pyc'
   --exclude ./dist
+  --exclude ./vm-out
 )
 
 remote_mkdir() {

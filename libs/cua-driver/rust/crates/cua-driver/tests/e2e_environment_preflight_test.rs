@@ -88,7 +88,10 @@ fn run_preflight() {
             .filter(|source| source.status.success())
             .map(|source| String::from_utf8_lossy(&source.stdout).trim().to_owned())
             .or_else(|| {
-                std::fs::read_to_string(".cua-e2e-source-sha")
+                let marker = std::env::var_os("CUA_E2E_SOURCE_MARKER")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| std::path::PathBuf::from(".cua-e2e-source-sha"));
+                std::fs::read_to_string(marker)
                     .ok()
                     .map(|source| source.trim().to_owned())
             })

@@ -59,6 +59,7 @@ export CUA_TEST_DRIVER_STDERR=1
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 if [[ -z "${CUA_E2E_SOURCE_SHA:-}" && -f "${REPO_ROOT}/.cua-e2e-source-sha" ]]; then
   export CUA_E2E_SOURCE_SHA="$(tr -d '[:space:]' < "${REPO_ROOT}/.cua-e2e-source-sha")"
+  export CUA_E2E_SOURCE_MARKER="${REPO_ROOT}/.cua-e2e-source-sha"
 fi
 if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
   export CUA_E2E_COMPOSITOR="${CUA_E2E_COMPOSITOR:-wayland-unknown}"

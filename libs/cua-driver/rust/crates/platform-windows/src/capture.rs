@@ -207,12 +207,13 @@ pub fn screenshot_window_bytes_with_occlusion(hwnd: u64) -> Result<(Vec<u8>, boo
     match unsafe { screenshot_window_bytes_with_occlusion_unsafe(hwnd) } {
         Ok(capture) => Ok(capture),
         Err(primary_error) => {
+            if primary_error.to_string().contains("minimized window") {
+                return Err(primary_error);
+            }
             // A freshly restored DirectComposition window can temporarily have
             // no usable GDI surface even though DWM is already rendering it.
             // WGC reads the compositor-owned frame and is therefore the right
-            // fallback for this class of capture failure. Preserve the primary
-            // error when WGC also fails so minimized-window classification and
-            // existing remediation text remain intact.
+            // first fallback for this class of capture failure.
             match crate::wgc::screenshot_window_via_wgc(hwnd) {
                 Ok((pixels, width, height)) => Ok((
                     cua_driver_core::image_utils::encode_bgra_to_png(
@@ -220,9 +221,28 @@ pub fn screenshot_window_bytes_with_occlusion(hwnd: u64) -> Result<(Vec<u8>, boo
                     )?,
                     false,
                 )),
-                Err(wgc_error) => Err(primary_error.context(format!(
-                    "Windows.Graphics.Capture fallback also failed: {wgc_error}"
-                ))),
+                Err(wgc_error) => {
+                    // Headless/virtualized Windows sessions can expose DWM but
+                    // no WGC-compatible hardware device. Once a window is
+                    // visible, a desktop-region crop remains a truthful final
+                    // fallback; report whether another window covered it.
+                    let target = HWND(hwnd as *mut _);
+                    let occluded = unsafe { target_is_obscured(target) };
+                    match unsafe { screenshot_via_screen_region(target) } {
+                        Ok((pixels, width, height)) => Ok((
+                            cua_driver_core::image_utils::encode_bgra_to_png(
+                                &pixels,
+                                width as u32,
+                                height as u32,
+                            )?,
+                            occluded,
+                        )),
+                        Err(screen_error) => Err(primary_error.context(format!(
+                            "Windows.Graphics.Capture fallback failed: {wgc_error}; \
+                             desktop-region fallback failed: {screen_error}"
+                        ))),
+                    }
+                }
             }
         }
     }

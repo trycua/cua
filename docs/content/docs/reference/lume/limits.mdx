@@ -80,3 +80,17 @@ lume ssh macos-tahoe 'id -un'
 
 macOS VM disks use sparse files. The configured disk capacity describes the
 guest's logical disk. The host allocation grows as the guest writes data.
+
+## Disk resizing
+
+- Disk resizing is increase-only and requires a stopped VM.
+- macOS resizing supports the standard Lume layout: ISC, main APFS, then paired
+  RecoveryOS.
+- FileVault-encrypted macOS guests are unsupported.
+- The host must run the same or a newer macOS version than the guest.
+- The default rollback copy requires enough host capacity for the allocated
+  RecoveryOS data and copy-on-write metadata.
+- The first macOS increase must leave enough room to relocate RecoveryOS without
+  overlapping its old location. Lume reports the minimum accepted total size.
+- Linux resizing increases the image only. Grow the partition and filesystem in
+  the guest.

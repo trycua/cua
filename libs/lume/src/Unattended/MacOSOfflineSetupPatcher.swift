@@ -55,49 +55,29 @@ final class MacOSOfflineSetupPatcher {
     // MARK: - Disk Attach/Mount
 
     private struct MountedDataVolume {
-        let wholeDisk: String
+        let session: DiskImageSession
         let mountPoint: URL
     }
 
     private func attachDataVolume(diskPath: String) throws -> MountedDataVolume {
-        let attachOutput = try run("/usr/bin/hdiutil", ["attach", "-readwrite", "-nomount", diskPath])
-        guard let wholeDisk = parseWholeDisk(from: attachOutput) else {
-            throw UnattendedError.commandExecutionFailed("Could not determine attached disk from hdiutil output")
-        }
+        let session = DiskImageSession(diskPath: diskPath)
+        let wholeDisk = try session.attach(readWrite: true)
 
         do {
-            let container = try apfsContainer(forMainPartitionOf: wholeDisk)
-            let dataDevice = try dataVolumeDevice(inContainer: container)
-            _ = try run("/usr/sbin/diskutil", ["mount", dataDevice])
-            let mountPoint = try mountPoint(forDevice: dataDevice)
-            return MountedDataVolume(wholeDisk: wholeDisk, mountPoint: mountPoint)
+            let container = try session.apfsContainer(forMainPartitionOf: wholeDisk)
+            let dataDevice = try dataVolumeDevice(inContainer: container, session: session)
+            _ = try session.run("/usr/sbin/diskutil", ["mount", dataDevice])
+            let mountPoint = try mountPoint(forDevice: dataDevice, session: session)
+            return MountedDataVolume(session: session, mountPoint: mountPoint)
         } catch {
-            cleanup(mount: MountedDataVolume(wholeDisk: wholeDisk, mountPoint: URL(fileURLWithPath: "/Volumes/Data")))
+            session.unmountDiskIfMounted()
+            session.detach()
             throw error
         }
     }
 
-    private func parseWholeDisk(from hdiutilOutput: String) -> String? {
-        for line in hdiutilOutput.split(separator: "\n") {
-            let fields = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
-            guard fields.count >= 2 else { continue }
-            if fields[1] == "GUID_partition_scheme" {
-                return fields[0].replacingOccurrences(of: "/dev/", with: "")
-            }
-        }
-        return nil
-    }
-
-    private func apfsContainer(forMainPartitionOf wholeDisk: String) throws -> String {
-        let plist = try runPlist("/usr/sbin/diskutil", ["info", "-plist", "\(wholeDisk)s2"])
-        guard let container = plist["APFSContainerReference"] as? String else {
-            throw UnattendedError.commandExecutionFailed("Could not find APFS container for \(wholeDisk)s2")
-        }
-        return container
-    }
-
-    private func dataVolumeDevice(inContainer container: String) throws -> String {
-        let plist = try runPlist("/usr/sbin/diskutil", ["apfs", "list", "-plist", container])
+    private func dataVolumeDevice(inContainer container: String, session: DiskImageSession) throws -> String {
+        let plist = try session.runPlist("/usr/sbin/diskutil", ["apfs", "list", "-plist", container])
         guard let containers = plist["Containers"] as? [[String: Any]] else {
             throw UnattendedError.commandExecutionFailed("Could not parse APFS container list for \(container)")
         }
@@ -115,8 +95,8 @@ final class MacOSOfflineSetupPatcher {
         throw UnattendedError.commandExecutionFailed("Could not find APFS Data volume in \(container)")
     }
 
-    private func mountPoint(forDevice device: String) throws -> URL {
-        let plist = try runPlist("/usr/sbin/diskutil", ["info", "-plist", device])
+    private func mountPoint(forDevice device: String, session: DiskImageSession) throws -> URL {
+        let plist = try session.runPlist("/usr/sbin/diskutil", ["info", "-plist", device])
         guard let mountPoint = plist["MountPoint"] as? String, !mountPoint.isEmpty else {
             throw UnattendedError.commandExecutionFailed("Could not determine mount point for \(device)")
         }
@@ -124,8 +104,8 @@ final class MacOSOfflineSetupPatcher {
     }
 
     private func cleanup(mount: MountedDataVolume) {
-        _ = try? run("/usr/sbin/diskutil", ["unmount", mount.mountPoint.path])
-        _ = try? run("/usr/bin/hdiutil", ["detach", "/dev/\(mount.wholeDisk)"])
+        _ = try? mount.session.run("/usr/sbin/diskutil", ["unmount", mount.mountPoint.path])
+        mount.session.detach()
     }
 
     // MARK: - Guest Patching
@@ -546,44 +526,6 @@ final class MacOSOfflineSetupPatcher {
         })).sorted()
     }
 
-    // MARK: - Process Helpers
-
-    private func runPlist(_ executable: String, _ arguments: [String]) throws -> [String: Any] {
-        let output = try run(executable, arguments)
-        guard let data = output.data(using: .utf8),
-              let plist = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] else {
-            throw UnattendedError.commandExecutionFailed("Command did not return a plist: \(executable) \(arguments.joined(separator: " "))")
-        }
-        return plist
-    }
-
-    @discardableResult
-    private func run(_ executable: String, _ arguments: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-
-        let output = Pipe()
-        let error = Pipe()
-        process.standardOutput = output
-        process.standardError = error
-
-        try process.run()
-        process.waitUntilExit()
-
-        let stdout = try output.fileHandleForReading.readToEnd() ?? Data()
-        let stderr = try error.fileHandleForReading.readToEnd() ?? Data()
-        let stdoutString = String(data: stdout, encoding: .utf8) ?? ""
-        let stderrString = String(data: stderr, encoding: .utf8) ?? ""
-
-        guard process.terminationStatus == 0 else {
-            throw UnattendedError.commandExecutionFailed(
-                "\(executable) \(arguments.joined(separator: " ")) failed: \(stderrString.isEmpty ? stdoutString : stderrString)"
-            )
-        }
-
-        return stdoutString
-    }
 }
 
 private extension URL {

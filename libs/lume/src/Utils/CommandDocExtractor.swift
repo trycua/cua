@@ -295,11 +295,15 @@ enum CommandDocExtractor {
             options: [
                 OptionDoc(name: "cpu", shortName: nil, help: "New number of CPU cores", type: "Int", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "memory", shortName: nil, help: "New memory size (e.g., 8GB)", type: "String", defaultValue: nil, isOptional: true),
-                OptionDoc(name: "disk-size", shortName: nil, help: "New disk size (e.g., 100GB)", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "disk-size", shortName: nil, help: "New total disk size. Increase only; macOS resizing preserves RecoveryOS and grows APFS.", type: "String", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "display", shortName: nil, help: "New display resolution", type: "String", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
             ],
-            flags: [],
+            flags: [
+                FlagDoc(name: "no-backup", shortName: nil, help: "Skip the macOS rollback backup", defaultValue: false),
+                FlagDoc(name: "keep-backup", shortName: nil, help: "Keep rollback files after a successful macOS resize", defaultValue: false),
+                FlagDoc(name: "dry-run", shortName: nil, help: "Validate the resize plan without modifying the disk", defaultValue: false),
+            ],
             subcommands: []
         )
     }

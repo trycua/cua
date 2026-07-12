@@ -502,6 +502,40 @@ final class LumeMCPServer {
                     ]),
                     "required": .array([.string("name")])
                 ])
+            ),
+            Tool(
+                name: "lume_resize_disk",
+                description: "Grow a stopped VM's disk. For macOS VMs this preserves the paired RecoveryOS partition (relocating it to the new end of disk) and expands the main APFS container so future macOS updates keep working. Grow-only; the VM must be stopped; may take several minutes.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "name": .object([
+                            "type": .string("string"),
+                            "description": .string("Name of the VM to resize")
+                        ]),
+                        "disk_size": .object([
+                            "type": .string("string"),
+                            "description": .string("New disk size, e.g., '100GB'. Must be larger than the current size.")
+                        ]),
+                        "storage": .object([
+                            "type": .string("string"),
+                            "description": .string("Optional storage location name or path")
+                        ]),
+                        "no_backup": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Skip the pre-resize backup (faster, but no automatic rollback on failure). Default false.")
+                        ]),
+                        "keep_backup": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Keep the rollback backup after a successful resize. Default false.")
+                        ]),
+                        "dry_run": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Validate and print the resize plan without modifying the disk. Default false.")
+                        ])
+                    ]),
+                    "required": .array([.string("name"), .string("disk_size")])
+                ])
             )
         ]
     }
@@ -527,6 +561,8 @@ final class LumeMCPServer {
                 return try await handleExec(params.arguments)
             case "lume_create_vm":
                 return try await handleCreateVM(params.arguments)
+            case "lume_resize_disk":
+                return try await handleResizeDisk(params.arguments)
             case "check_for_update":
                 return try await handleCheckForUpdate(params.arguments)
             default:
@@ -662,6 +698,26 @@ final class LumeMCPServer {
 
         try controller.clone(name: name, newName: newName)
         return CallTool.Result(content: [.text("VM '\(name)' cloned to '\(newName)' successfully.")])
+    }
+
+    private func handleResizeDisk(_ args: [String: Value]?) async throws -> CallTool.Result {
+        guard let name = args?["name"]?.stringValue else {
+            return CallTool.Result(content: [.text("Error: 'name' is required")], isError: true)
+        }
+        guard let diskSizeString = args?["disk_size"]?.stringValue else {
+            return CallTool.Result(content: [.text("Error: 'disk_size' is required")], isError: true)
+        }
+        let storage = args?["storage"]?.stringValue
+        let noBackup = args?["no_backup"]?.boolValue ?? false
+        let keepBackup = args?["keep_backup"]?.boolValue ?? false
+        let dryRun = args?["dry_run"]?.boolValue ?? false
+        let diskSize = try parseSize(diskSizeString)
+
+        try controller.updateSettings(
+            name: name, diskSize: diskSize, storage: storage, noBackup: noBackup,
+            keepBackup: keepBackup, dryRun: dryRun)
+        return CallTool.Result(
+            content: [.text("VM '\(name)' disk resized to \(diskSizeString) successfully.")])
     }
 
     private func handleDeleteVM(_ args: [String: Value]?) async throws -> CallTool.Result {

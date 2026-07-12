@@ -325,6 +325,7 @@ async fn check_wayland_backend() -> CheckEntry {
     // cursor renders but clicks/keys are never delivered, while list_windows
     // and capture still work. Report that explicitly instead of the misleading
     // "input may fall back" partial-pass below.
+    #[cfg(target_os = "linux")]
     if !snap.virtual_pointer && !crate::wayland::PORTAL_LIBEI_ENABLED {
         return CheckEntry::fail(
             NAME_WAYLAND_BACKEND,

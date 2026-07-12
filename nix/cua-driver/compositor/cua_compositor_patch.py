@@ -181,6 +181,19 @@ static void cua_query_state(struct tinywl_server *server, pid_t target_pid, char
 		 (focused_toplevel ? "background_occluded" : "background_visible"));
 	snprintf(out, out_len, "state %d %s", (int)focused_pid, state);
 }
+static const char *cua_query_geometry(struct tinywl_server *server, pid_t target_pid, char *out, size_t out_len) {
+	struct tinywl_toplevel *t, *target = NULL;
+	int matches = 0;
+	wl_list_for_each(t, &server->toplevels, link) {
+		if (cua_toplevel_pid(t) == target_pid) { target = t; matches++; }
+	}
+	if (!matches) return "target-not-found";
+	if (matches > 1) return "ambiguous-pid";
+	int x = 0, y = 0;
+	if (!wlr_scene_node_coords(&target->scene_tree->node, &x, &y)) return "unmapped-target";
+	snprintf(out, out_len, "geometry %d %d", x, y);
+	return NULL;
+}
 static void cua_ptr_leave(struct wlr_seat *seat, struct wlr_surface *surf) {
 	if (!surf) return;
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(seat, wl_resource_get_client(surf->resource));
@@ -506,10 +519,18 @@ static int cua_conn_readable(int fd, uint32_t mask, void *data) {
 				return cua_conn_drop(c, fd);
 			}
 		} else {
-			int query_pid, activate_pid;
+			int query_pid, geometry_pid, activate_pid;
 			if (sscanf(p, "q %d", &query_pid) == 1) {
 				char msg[128]; cua_query_state(c->server, (pid_t)query_pid, msg, sizeof msg);
 				cua_reply(fd, msg);
+			} else if (sscanf(p, "g %d", &geometry_pid) == 1) {
+				char msg[128];
+				const char *err = cua_query_geometry(c->server, (pid_t)geometry_pid, msg, sizeof msg);
+				if (err) {
+					char reply[128]; snprintf(reply, sizeof reply, "err %s", err); cua_reply(fd, reply);
+				} else {
+					cua_reply(fd, msg);
+				}
 			} else if (sscanf(p, "f %d", &activate_pid) == 1) {
 				const char *err = cua_activate_pid(c->server, (pid_t)activate_pid);
 				wl_display_flush_clients(c->server->wl_display);

@@ -2219,7 +2219,7 @@ fn read_inject_line(reader: &mut impl std::io::BufRead) -> anyhow::Result<String
 /// handshake, then send each command line and require exactly one
 /// acknowledgement per command. Fails on protocol mismatch, timeout, EOF, or a
 /// compositor error line — the earlier fire-and-forget path hid all of these.
-fn inject_send(lines: &[String]) -> anyhow::Result<()> {
+fn inject_exchange(lines: &[String]) -> anyhow::Result<Vec<String>> {
     use std::io::{BufReader, Write};
     use std::os::unix::net::UnixStream;
     let path = inject_socket_path().ok_or_else(|| anyhow::anyhow!("CUA_INJECT_SOCKET not set"))?;
@@ -2245,13 +2245,43 @@ fn inject_send(lines: &[String]) -> anyhow::Result<()> {
     writer.flush()?;
     parse_inject_hello(&read_inject_line(&mut reader)?)?;
 
-    // One command per line; block on its acknowledgement before the next.
+    let mut replies = Vec::with_capacity(lines.len());
+    // One command per line; block on its response before the next.
     for l in lines {
         writeln!(writer, "{l}")?;
         writer.flush()?;
-        parse_inject_reply(&read_inject_line(&mut reader)?)?;
+        replies.push(read_inject_line(&mut reader)?);
+    }
+    Ok(replies)
+}
+
+fn inject_send(lines: &[String]) -> anyhow::Result<()> {
+    for reply in inject_exchange(lines)? {
+        parse_inject_reply(&reply)?;
     }
     Ok(())
+}
+
+fn parse_inject_geometry(line: &str) -> anyhow::Result<(i32, i32)> {
+    let fields = line.split_whitespace().collect::<Vec<_>>();
+    if fields.len() == 3 && fields[0] == "geometry" {
+        return Ok((fields[1].parse()?, fields[2].parse()?));
+    }
+    if let Some(reason) = line.trim().strip_prefix("err") {
+        anyhow::bail!("cua-compositor geometry query failed: {}", reason.trim());
+    }
+    anyhow::bail!("unexpected cua-compositor geometry response: {:?}", line.trim())
+}
+
+/// Return the output-layout origin of a nested client surface. Native Wayland
+/// accessibility bridges cannot discover this position themselves, so the
+/// compositor supplies it by stable process identity.
+pub fn inject_window_origin(pid: u32) -> Option<(i32, i32)> {
+    if !is_inject_mode() || pid == 0 {
+        return None;
+    }
+    let replies = inject_exchange(&[format!("g {pid}")]).ok()?;
+    replies.first().and_then(|line| parse_inject_geometry(line).ok())
 }
 
 /// Resolve a window_id to its xdg app_id via the stable identity registry that
@@ -2901,5 +2931,13 @@ mod tests {
         assert!(err.to_string().contains("ambiguous-app-id"));
         assert!(parse_inject_reply("err").is_err());
         assert!(parse_inject_reply("maybe").is_err());
+    }
+
+    #[test]
+    fn geometry_reply_is_strict_and_signed() {
+        assert_eq!(parse_inject_geometry("geometry -4 23\n").unwrap(), (-4, 23));
+        assert!(parse_inject_geometry("geometry 1").is_err());
+        assert!(parse_inject_geometry("err target-not-found").is_err());
+        assert!(parse_inject_geometry("ok").is_err());
     }
 }

@@ -581,6 +581,11 @@ src = repl(src,
 # 4) On unmap: drop the foreign-toplevel handle.
 src = repl(src,
     "\twl_list_remove(&toplevel->link);\n}",
+    "\tstruct wlr_surface *cua_surface = toplevel->xdg_toplevel->base->surface;\n"
+    "\tfor (int i = 0; i < CUA_MAXDEV; i++) {\n"
+    "\t\tif (cua_ptr[i].entered == cua_surface) cua_ptr[i].entered = NULL;\n"
+    "\t\tif (cua_kbd_state[i].entered == cua_surface) cua_kbd_state[i].entered = NULL;\n"
+    "\t}\n"
     "\tif (toplevel->ftl) { wl_list_remove(&toplevel->ftl_request_activate.link); wlr_foreign_toplevel_handle_v1_destroy(toplevel->ftl); toplevel->ftl = NULL; }\n"
     "\twl_list_remove(&toplevel->link);\n}",
     "ftl-on-unmap")

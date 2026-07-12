@@ -1983,6 +1983,7 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
+ "wayland-scanner",
  "x11",
  "x11rb",
  "xkbcommon",

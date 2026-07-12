@@ -17,6 +17,7 @@ pub mod persistent_vptr;
 pub mod portal_screenshot;
 pub mod shell_helper;
 pub mod sway_ipc;
+mod virtual_keyboard;
 // RemoteDesktop/libei input is portable and ships in release binaries.
 // PipeWire ScreenCast capture remains separately gated for modern/Nix builds.
 #[cfg(feature = "portal-input")]
@@ -1689,6 +1690,9 @@ pub fn press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
 pub fn hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
     activate_window_for_input(window_id)?;
     let (mods, final_key) = partition_modifiers(keys)?;
+    if let Ok(()) = virtual_keyboard::hotkey(&mods, &final_key) {
+        return Ok(());
+    }
     let keysym = key_to_keysym(&final_key);
     let args = wtype_hotkey_args(&mods, &keysym);
     let result = std::process::Command::new("wtype").args(&args).output();
@@ -2030,7 +2034,6 @@ fn libei_hotkey(mods: &[String], key: &str) -> anyhow::Result<()> {
 /// (libei emulates raw evdev, not X keysyms). Mirrors [`key_to_keysym`] but
 /// emits `linux/input-event-codes.h` values. Returns `None` for keys with no
 /// known mapping so the caller can fail loudly.
-#[cfg(feature = "portal-input")]
 fn key_to_evdev(key: &str) -> Option<u32> {
     let code = match key.to_lowercase().as_str() {
         "enter" | "return" => 28, // KEY_ENTER

@@ -430,28 +430,71 @@ mod tests {
     }
 
     #[test]
-    fn list_windows_defines_nullable_higher_is_frontmost_z_index() {
+    fn list_windows_schema_accepts_every_platform_and_empty_filters() {
         assert!(tool_contract("list_windows").is_none());
         let schema = tool_success_output_schema("list_windows").expect("runtime schema");
-        let z_index = &schema["properties"]["windows"]["items"]["properties"]["z_index"];
+        let record_schema = &schema["properties"]["windows"]["items"];
+        assert_eq!(
+            record_schema["required"],
+            serde_json::json!([
+                "window_id",
+                "pid",
+                "app_name",
+                "title",
+                "bounds",
+                "z_index",
+                "is_on_screen"
+            ])
+        );
+        let z_index = &record_schema["properties"]["z_index"];
         assert_eq!(z_index["type"], serde_json::json!(["integer", "null"]));
         let description = z_index["description"].as_str().expect("description");
         assert!(description.contains("Higher values are closer to the front"));
         assert!(description.contains("must not infer an order"));
 
-        assert_eq!(
-            validate_success_output(
-                "list_windows",
-                serde_json::json!({
-                    "windows": [
-                        {"z_index": 4, "platform_field": true},
-                        {"z_index": null}
-                    ],
-                    "current_space_id": null
-                }),
+        fn window(pid: serde_json::Value, z_index: serde_json::Value) -> serde_json::Value {
+            serde_json::json!({
+                "window_id": 42,
+                "pid": pid,
+                "app_name": "Example",
+                "title": "Document",
+                "bounds": {"x": 1, "y": 2, "width": 300, "height": 200},
+                "z_index": z_index,
+                "is_on_screen": true
+            })
+        }
+
+        let cases = [
+            (
+                "macOS",
+                serde_json::json!({"windows": [window(123.into(), 4.into())], "current_space_id": 1}),
             ),
-            Ok(true)
-        );
+            (
+                "Windows",
+                serde_json::json!({"windows": [window(123.into(), 4.into())], "current_space_id": null}),
+            ),
+            (
+                "X11",
+                serde_json::json!({"windows": [window(123.into(), 4.into())]}),
+            ),
+            (
+                "Wayland",
+                serde_json::json!({"windows": [window(serde_json::Value::Null, serde_json::Value::Null)]}),
+            ),
+            ("empty", serde_json::json!({"windows": []})),
+            (
+                "PID-filtered miss",
+                serde_json::json!({"windows": [], "current_space_id": null}),
+            ),
+        ];
+        for (platform, payload) in cases {
+            assert_eq!(
+                validate_success_output("list_windows", payload),
+                Ok(true),
+                "{platform} payload must satisfy the public contract"
+            );
+        }
+
         assert!(validate_success_output(
             "list_windows",
             serde_json::json!({"windows": [{"z_index": "unknown"}]}),

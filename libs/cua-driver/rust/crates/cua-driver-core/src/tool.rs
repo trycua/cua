@@ -4735,6 +4735,23 @@ mod capability_tests {
             .as_str()
             .expect("description")
             .contains("Higher values are closer to the front"));
+        let record = &entry["outputSchema"]["anyOf"][0]["properties"]["windows"]["items"];
+        assert_eq!(
+            record["required"],
+            serde_json::json!([
+                "window_id",
+                "pid",
+                "app_name",
+                "title",
+                "bounds",
+                "z_index",
+                "is_on_screen"
+            ])
+        );
+        assert_eq!(
+            record["properties"]["pid"]["type"],
+            serde_json::json!(["integer", "null"])
+        );
     }
 
     #[test]

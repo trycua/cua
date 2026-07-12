@@ -2238,21 +2238,43 @@ impl Tool for TypeTextTool {
             }
         }
 
+        let px = args.get("x").and_then(|value| value.as_f64());
+        let py = args.get("y").and_then(|value| value.as_f64());
+        if px.is_some() != py.is_some() {
+            return ToolResult::error("Pass both x and y to type_text, or neither.");
+        }
+        if px.is_some() && resolved_elem_idx.is_some() {
+            return ToolResult::error(
+                "Pass either element_index (ax) or x,y (px) to type_text, not both.",
+            );
+        }
+
+        let text_len = text.chars().count();
+        // The private nested compositor can target the owning Wayland client
+        // directly, so neither AX nor PX addressing needs a focus-changing
+        // prelude in this environment.
+        if crate::wayland::is_inject_mode() {
+            let text_w = text.clone();
+            let result =
+                tokio::task::spawn_blocking(move || crate::wayland::inject_type_text(xid, &text_w))
+                    .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Typed {text_len} character(s) (focus-free via cua-compositor)."
+                ))
+                .with_structured(type_text_structured("key_events", text_len, false)),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
         // ── px form: focus by pixel-click, then type into the now-focused element ──
         // Pass x,y (no element_index/token) for an *element px action*: pixel-click
         // the field to give the renderer the real keyboard focus the AT-SPI path
         // can't, then fall through to the focused-element type path below (it
         // escalates AT-SPI → key events and lands once focused). Reuses ClickTool's
         // exact coordinate translation + delivery_mode.
-        if let (Some(cx), Some(cy)) = (
-            args.get("x").and_then(|v| v.as_f64()),
-            args.get("y").and_then(|v| v.as_f64()),
-        ) {
-            if resolved_elem_idx.is_some() {
-                return ToolResult::error(
-                    "Pass either element_index (ax) or x,y (px) to type_text, not both.",
-                );
-            }
+        if let (Some(cx), Some(cy)) = (px, py) {
             if let Some(refusal) = unavailable_webkit_keyboard_background(pid, delivery) {
                 return refusal;
             }
@@ -2274,8 +2296,6 @@ impl Tool for TypeTextTool {
             // resolved_elem_idx stays None → the type path below writes to the now-
             // focused element via the background key / AT-SPI rung.
         }
-
-        let text_len = text.chars().count();
 
         if resolved_elem_idx.is_some() {
             if let Some(refusal) = unavailable_webkit_keyboard_background(pid, delivery) {
@@ -2325,27 +2345,6 @@ impl Tool for TypeTextTool {
                     Err(error) => ToolResult::error(format!("Task error: {error}")),
                 };
             }
-        }
-
-        // The nested compositor owns a raw per-surface route. Prefer it over an
-        // AX value write so renderer fixtures observe real keyboard events.
-        if crate::wayland::is_inject_mode() {
-            let text_w = text.clone();
-            let result =
-                tokio::task::spawn_blocking(move || crate::wayland::inject_type_text(xid, &text_w))
-                    .await;
-            return match result {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "Typed {text_len} character(s) (focus-free via cua-compositor)."
-                ))
-                .with_structured(type_text_structured(
-                    "key_events",
-                    text_len,
-                    false,
-                )),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
-                Err(e) => ToolResult::error(format!("Task error: {e}")),
-            };
         }
 
         // AX addressing names one exact editable. Try this focus-free route
@@ -2770,6 +2769,41 @@ impl Tool for PressKeyTool {
             return refusal;
         }
 
+        let px = args.get("x").and_then(|value| value.as_f64());
+        let py = args.get("y").and_then(|value| value.as_f64());
+        if px.is_some() != py.is_some() {
+            return ToolResult::error("Pass both x and y to press_key, or neither.");
+        }
+        if px.is_some() && element_index_arg.is_some() {
+            return ToolResult::error(
+                "Pass either element_index (ax) or x,y (px) to press_key, not both.",
+            );
+        }
+
+        // Nested cua-compositor addresses the owning Wayland client directly.
+        // Preserve legacy modifiers by promoting the request to a chord.
+        if crate::wayland::is_inject_mode() {
+            let result = if mods.is_empty() {
+                let key_w = key.clone();
+                tokio::task::spawn_blocking(move || {
+                    crate::wayland::inject_press_key(xid, &key_w)
+                })
+                .await
+            } else {
+                let mut chord = mods.clone();
+                chord.push(key.clone());
+                tokio::task::spawn_blocking(move || crate::wayland::inject_hotkey(xid, &chord))
+                    .await
+            };
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Pressed key '{key}' (focus-free via cua-compositor)."
+                )),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
         // An element-addressed keypress needs to establish the target's
         // focus before the window-level X11 key event is sent. AT-SPI's
         // primary action is the focus-free route for editable web controls;
@@ -2793,14 +2827,7 @@ impl Tool for PressKeyTool {
         }
 
         let px_target = {
-            let px = args.get("x").and_then(|v| v.as_f64());
-            let py = args.get("y").and_then(|v| v.as_f64());
             if let (Some(cx), Some(cy)) = (px, py) {
-                if element_index_arg.is_some() {
-                    return ToolResult::error(
-                        "Pass either element_index (ax) or x,y (px) to press_key, not both.",
-                    );
-                }
                 let from_zoom = args.bool_or("from_zoom", false);
                 if let Err(e) = focus_by_pixel(
                     &self.state,
@@ -2821,21 +2848,6 @@ impl Tool for PressKeyTool {
                 None
             }
         };
-
-        // Nested cua-compositor: focus-free named-key into window_id.
-        if crate::wayland::is_inject_mode() {
-            let key_w = key.clone();
-            let result =
-                tokio::task::spawn_blocking(move || crate::wayland::inject_press_key(xid, &key_w))
-                    .await;
-            return match result {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "Pressed key '{key}' (focus-free via cua-compositor)."
-                )),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
-                Err(e) => ToolResult::error(format!("Task error: {e}")),
-            };
-        }
 
         // Native Wayland: send the key to the focused surface via virtual-keyboard.
         if crate::wayland::wayland_input_enabled() {
@@ -3024,6 +3036,33 @@ impl Tool for HotkeyTool {
             return refusal;
         }
 
+        let px = args.get("x").and_then(|value| value.as_f64());
+        let py = args.get("y").and_then(|value| value.as_f64());
+        if px.is_some() != py.is_some() {
+            return ToolResult::error("Pass both x and y to hotkey, or neither.");
+        }
+        if px.is_some() && element_index_arg.is_some() {
+            return ToolResult::error(
+                "Pass either element_index (ax) or x,y (px) to hotkey, not both.",
+            );
+        }
+
+        if crate::wayland::is_inject_mode() {
+            let mut chord = mods.clone();
+            chord.push(key.clone());
+            let result = tokio::task::spawn_blocking(move || {
+                crate::wayland::inject_hotkey(xid, &chord)
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Pressed hotkey '{key_display}' (focus-free via cua-compositor)."
+                )),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
+        }
+
         if let Some(element_index) = element_index_arg {
             let focused = tokio::task::spawn_blocking(move || {
                 crate::atspi::focus_element(pid, element_index)
@@ -3046,14 +3085,7 @@ impl Tool for HotkeyTool {
         // delivery_mode; after it, deliver the combo via the plain background path
         // (the focus-click already fronted when fg).
         let px_target = {
-            let px = args.get("x").and_then(|v| v.as_f64());
-            let py = args.get("y").and_then(|v| v.as_f64());
             if let (Some(cx), Some(cy)) = (px, py) {
-                if element_index_arg.is_some() {
-                    return ToolResult::error(
-                        "Pass either element_index (ax) or x,y (px) to hotkey, not both.",
-                    );
-                }
                 let from_zoom = args.bool_or("from_zoom", false);
                 if let Err(e) = focus_by_pixel(
                     &self.state,
@@ -3075,22 +3107,6 @@ impl Tool for HotkeyTool {
             }
         };
         let deliver_fg = delivery.is_foreground();
-
-        if crate::wayland::is_inject_mode() {
-            let mut chord = mods.clone();
-            chord.push(key.clone());
-            let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::inject_hotkey(xid, &chord)
-            })
-            .await;
-            return match result {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "Pressed hotkey '{key_display}' (focus-free via cua-compositor)."
-                )),
-                Ok(Err(error)) => ToolResult::error(error.to_string()),
-                Err(error) => ToolResult::error(format!("Task error: {error}")),
-            };
-        }
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::wayland_input_enabled() {
@@ -4908,11 +4924,14 @@ async fn parallel_drag_inject(args: &Value) -> ToolResult {
                 .and_then(|v| v.as_str())
                 .unwrap_or("left"),
         ) as u32;
-        let app = match tokio::task::spawn_blocking(move || crate::wayland::app_id_for_window(xid))
-            .await
+        let app = match tokio::task::spawn_blocking(move || {
+            crate::wayland::inject_target_for_window(xid)
+        })
+        .await
         {
-            Ok(Some(a)) => a,
-            _ => return ToolResult::error(format!("no Wayland app_id for window {xid}")),
+            Ok(Ok(target)) => target,
+            Ok(Err(error)) => return ToolResult::error(error.to_string()),
+            Err(error) => return ToolResult::error(format!("Task error: {error}")),
         };
         drags.push(crate::wayland::InjectDrag {
             app_id: app,

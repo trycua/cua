@@ -104,6 +104,7 @@ static void cua_pframe(struct wl_resource *res) {
 	if (wl_resource_get_version(res) >= WL_POINTER_FRAME_SINCE_VERSION)
 		wl_pointer_send_frame(res);
 }
+static pid_t cua_toplevel_pid(struct tinywl_toplevel *t);
 /* Resolve a target window by its xdg app_id, refusing missing and ambiguous
  * matches so a command never silently drives the wrong window. In v1 duplicate
  * app_ids are simply not addressable. On failure returns NULL and points *err
@@ -111,6 +112,17 @@ static void cua_pframe(struct wl_resource *res) {
 static struct tinywl_toplevel *cua_resolve_target(struct tinywl_server *server, const char *app_id, const char **err) {
 	struct tinywl_toplevel *t, *found = NULL;
 	int matches = 0;
+	if (!strncmp(app_id, "pid:", 4)) {
+		char *end = NULL;
+		long pid = strtol(app_id + 4, &end, 10);
+		if (pid <= 0 || !end || *end) { *err = "bad-pid"; return NULL; }
+		wl_list_for_each(t, &server->toplevels, link) {
+			if (cua_toplevel_pid(t) == (pid_t)pid) { found = t; matches++; }
+		}
+		if (matches == 0) { *err = "unknown-pid"; return NULL; }
+		if (matches > 1) { *err = "ambiguous-pid"; return NULL; }
+		return found;
+	}
 	wl_list_for_each(t, &server->toplevels, link) {
 		const char *a = t->xdg_toplevel ? t->xdg_toplevel->app_id : NULL;
 		if (a && strcmp(a, app_id) == 0) { found = t; matches++; }

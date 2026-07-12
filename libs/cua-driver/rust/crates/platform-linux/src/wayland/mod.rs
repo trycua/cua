@@ -2257,11 +2257,26 @@ fn no_app_id(window_id: u64) -> anyhow::Error {
     )
 }
 
+/// Resolve the strongest target token understood by the private nested
+/// compositor. AT-SPI window IDs are synthetic on Wayland, but its process ID
+/// is the same credential the compositor observes on the owning wl_client.
+/// Fall back to app_id for clients whose accessibility metadata has no PID.
+pub fn inject_target_for_window(window_id: u64) -> anyhow::Result<String> {
+    if let Some(pid) = crate::atspi::list_windows(None)
+        .into_iter()
+        .find(|window| window.xid == window_id)
+        .and_then(|window| window.pid)
+    {
+        return Ok(format!("pid:{pid}"));
+    }
+    app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))
+}
+
 /// Focus-free type into the window's surface (no focus change). Rejects any
 /// character the compositor cannot emit before touching the socket.
 pub fn inject_type_text(window_id: u64, text: &str) -> anyhow::Result<()> {
     validate_injectable_text(text)?;
-    let app = app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))?;
+    let app = inject_target_for_window(window_id)?;
     inject_send(&[format!("t {app} {}", to_hex(text))])
 }
 
@@ -2269,14 +2284,14 @@ pub fn inject_type_text(window_id: u64, text: &str) -> anyhow::Result<()> {
 /// outside the compositor's whitelist before touching the socket.
 pub fn inject_press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
     validate_injectable_key(key)?;
-    let app = app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))?;
+    let app = inject_target_for_window(window_id)?;
     inject_send(&[format!("k {app} {}", key.trim())])
 }
 
 /// Focus-free modifier chord into the target surface.
 pub fn inject_hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
     let (modifiers, key) = validate_injectable_hotkey(keys)?;
-    let app = app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))?;
+    let app = inject_target_for_window(window_id)?;
     inject_send(&[format!("h {app} {modifiers} {key}")])
 }
 
@@ -2288,7 +2303,7 @@ pub fn inject_scroll(
     direction: &str,
     amount: u32,
 ) -> anyhow::Result<()> {
-    let app = app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))?;
+    let app = inject_target_for_window(window_id)?;
     let (axis, value) = match direction.to_ascii_lowercase().as_str() {
         "up" => (0, -15.0),
         "down" | "page" => (0, 15.0),
@@ -2304,7 +2319,7 @@ pub fn inject_scroll(
 /// Focus-free click into the window's surface via the nested cua-compositor.
 /// Coordinates are window-local, matching the rest of the inject protocol.
 pub fn inject_click(window_id: u64, x: f64, y: f64, count: u32, button: u8) -> anyhow::Result<()> {
-    let app = app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))?;
+    let app = inject_target_for_window(window_id)?;
     let btn = evdev_button(button as u32);
     let n = count.max(1);
     let mut lines = Vec::with_capacity((n as usize) * 4);
@@ -2416,7 +2431,7 @@ pub fn inject_drag(
     steps: usize,
     x_button: u32,
 ) -> anyhow::Result<()> {
-    let app_id = app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))?;
+    let app_id = inject_target_for_window(window_id)?;
     inject_parallel_drags(&[InjectDrag {
         app_id,
         idx: 0,

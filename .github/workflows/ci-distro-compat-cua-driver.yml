@@ -18,7 +18,7 @@ name: "CI: cua-driver distro-compat matrix"
 #     built one. This is the only way to catch ABI mismatches because the NixOS
 #     CI builds its own binary against NixOS's own glibc.
 #   - Keep this fast and cheap: containers + --version/doctor only. Full GUI
-#     integration tests stay in nix-build.yml.
+#     behavior stays in the canonical Rust X11 and Wayland E2E workflows.
 #   - Non-blocking by default (continue-on-error: true) — the released binary
 #     may not exist yet on a fresh branch; the job is informational until the
 #     first linux release tag exists.
@@ -27,7 +27,8 @@ name: "CI: cua-driver distro-compat matrix"
 # Also runs on push to main and on workflow_dispatch so it works as a
 # post-release regression guard.
 #
-# Companion to nix-build.yml — does NOT replace it. See CUA-599.
+# Companion to the Rust desktop E2E workflows; it validates released binaries,
+# not source-built harness behavior.
 
 on:
   pull_request:

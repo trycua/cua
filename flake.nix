@@ -21,17 +21,7 @@
       (
         system:
         let
-          pkgs = import nixpkgs {
-            inherit system;
-            # Several Electron-based apps in the background-GUI test matrix
-            # (logseq, joplin, zettlr) pin Electron releases that nixos-26.05
-            # flags as EOL/insecure. These are read-only smoke tests running in
-            # throwaway CI containers, so permit insecure Electron specifically
-            # (version-agnostic, so a nixpkgs bump to a newer EOL Electron keeps
-            # working without editing an exact version string here).
-            config.allowInsecurePredicate =
-              pkg: nixpkgs.lib.hasPrefix "electron" (nixpkgs.lib.getName pkg);
-          };
+          pkgs = import nixpkgs { inherit system; };
 
           rustSrc = ./libs/cua-driver/rust;
 
@@ -39,223 +29,109 @@
             inherit pkgs;
             src = rustSrc;
           };
+
+          cuaCompositorPackage = pkgs.callPackage ./nix/cua-driver/compositor { };
+
+          # nixpkgs builds the AT-SPI launcher for NixOS's system profile.
+          # The E2E shell also runs on non-NixOS hosts such as GitHub's Ubuntu
+          # image, so point its private accessibility bus at store binaries.
+          hostAtSpi = pkgs.at-spi2-core.overrideAttrs (old: {
+            mesonFlags = map (
+              flag:
+              if pkgs.lib.hasPrefix "-Ddbus_daemon=" flag then
+                "-Ddbus_daemon=${pkgs.dbus}/bin/dbus-daemon"
+              else if pkgs.lib.hasPrefix "-Ddbus_broker=" flag then
+                "-Ddbus_broker=${pkgs.dbus-broker}/bin/dbus-broker-launch"
+              else
+                flag
+            ) old.mesonFlags;
+          });
+
+          waylandE2eLibraries = with pkgs; [
+            alsa-lib
+            cairo
+            cups
+            dbus
+            expat
+            glib
+            gtk3
+            libayatana-appindicator
+            libdrm
+            libei
+            libgbm
+            librsvg
+            libsoup_3
+            libx11
+            libxcb
+            libxcomposite
+            libxdamage
+            libxext
+            libxfixes
+            libxi
+            libxkbcommon
+            libxrandr
+            libxtst
+            mesa
+            nspr
+            nss
+            openssl
+            pango
+            pipewire
+            webkitgtk_4_1
+          ];
+
+          waylandE2eShell = extraPackages: pkgs.mkShell {
+            # hostAtSpi is referenced by absolute launcher path below, but is
+            # deliberately not a shell package: adding its rebuilt library and
+            # typelib hooks alongside GTK's stock AT-SPI closure loads two ATK
+            # copies and crashes PyGObject during Gtk import.
+            packages = (with pkgs; [
+              cargo
+              clang
+              dbus
+              ffmpeg
+              gobject-introspection
+              grim
+              jq
+              nodejs
+              pkg-config
+              procps
+              rustc
+              rustfmt
+              sway
+              unzip
+              wf-recorder
+              wtype
+              # Keep the GTK3 fixture on the mature Python/PyGObject combination.
+              (python312.withPackages (pythonPackages: [ pythonPackages.pygobject3 ]))
+            ]) ++ extraPackages;
+            buildInputs = waylandE2eLibraries;
+            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath waylandE2eLibraries;
+            shellHook = ''
+              export NO_AT_BRIDGE=0
+              export CUA_AT_SPI_BUS_LAUNCHER="${hostAtSpi}/libexec/at-spi-bus-launcher"
+              export XDG_DATA_DIRS="${hostAtSpi}/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+            '';
+          };
         in
         {
           packages = {
+            cua-compositor = cuaCompositorPackage;
             cua-driver = cuaDriverPackage;
             default = cuaDriverPackage;
           };
 
-          checks =
-            {
-              cua-driver-build = cuaDriverPackage;
-              # Source-built, headless Rust checks. The desktop behavioral
-              # matrix remains an explicit maintainer-dispatched e2e lane.
-              cua-driver-linux-rust-unit = import ./nix/cua-driver/tests/rust-unit.nix {
-                inherit pkgs;
-                src = rustSrc;
-              };
-            }
-            // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
-              # NixOS container integration test (x86_64-linux only)
-              cua-driver-integration = import ./nix/cua-driver/tests/integration.nix {
-                inherit pkgs;
-                inherit (pkgs) lib;
-                cuaDriverModule = {
-                  imports = [ ./nix/cua-driver/module.nix ];
-                  services.cua-driver.package = cuaDriverPackage;
-                };
-              };
+          checks = {
+            cua-compositor-build = cuaCompositorPackage;
+            cua-driver-build = cuaDriverPackage;
+            cua-driver-linux-rust-unit = import ./nix/cua-driver/tests/rust-unit.nix {
+              inherit pkgs;
+              src = rustSrc;
+            };
+          };
 
-              # set_config persistence test — regression for #1923 (fixed in
-              # #1928): the {key, value} write shape must persist and read back
-              # via get_config (it was silently dropped on Linux before).
-              cua-driver-set-config = import ./nix/cua-driver/tests/set-config.nix {
-                inherit pkgs;
-                inherit (pkgs) lib;
-                cuaDriverModule = {
-                  imports = [ ./nix/cua-driver/module.nix ];
-                  services.cua-driver.package = cuaDriverPackage;
-                };
-              };
-
-              # Screenshot test — uses cua-driver's own get_window_state tool
-              # to capture a screenshot via MCP, proving the driver can see the display
-              cua-driver-screenshot = import ./nix/cua-driver/tests/screenshot.nix {
-                inherit pkgs;
-                inherit (pkgs) lib;
-                cuaDriverModule = {
-                  imports = [ ./nix/cua-driver/module.nix ];
-                  services.cua-driver.package = cuaDriverPackage;
-                };
-              };
-
-              cua-driver-linux-cursor-click-gif = import ./nix/cua-driver/tests/linux-cursor-click-gif.nix {
-                inherit pkgs;
-                inherit (pkgs) lib;
-                cuaDriverModule = {
-                  imports = [ ./nix/cua-driver/module.nix ];
-                  services.cua-driver.package = cuaDriverPackage;
-                };
-              };
-
-              cua-driver-linux-background-terminal-gif = import ./nix/cua-driver/tests/linux-background-terminal-gif.nix {
-                inherit pkgs;
-                inherit (pkgs) lib;
-                cuaDriverModule = {
-                  imports = [ ./nix/cua-driver/module.nix ];
-                  services.cua-driver.package = cuaDriverPackage;
-                };
-              };
-
-              # Multi-cursor (MPX) parallel-drag test on a REAL Xorg brought up
-              # by NixOS services.xserver (dummy video + libinput, on a seat via
-              # a display manager). This is the CI-viable replacement for the
-              # hand-launched-Xorg linux-parallel-drag-gif.nix (which timed out
-              # because a self-launched Xorg couldn't get a VT/seat in the
-              # emulated nixos-test VM). Proves uinput slaves enumerate as X
-              # devices, two cursors draw concurrent window-targeted events, and
-              # the shield grab keeps focus off the drag.
-              cua-driver-linux-parallel-drag-xserver = import ./nix/cua-driver/tests/linux-parallel-drag-xserver.nix {
-                inherit pkgs;
-                inherit (pkgs) lib;
-                cuaDriverModule = {
-                  imports = [ ./nix/cua-driver/module.nix ];
-                  services.cua-driver.package = cuaDriverPackage;
-                };
-              };
-
-              # NOTE: cua-driver-linux-parallel-drag-gif (nix/cua-driver/tests/
-              # linux-parallel-drag-gif.nix) is intentionally NOT a flake check —
-              # it hand-launches Xorg, which can't get a VT/seat in the emulated
-              # GHA nixos-test VM. It is superseded by the services.xserver test
-              # above and kept only for local/real-X manual runs.
-            }
-            // pkgs.lib.optionalAttrs (system == "x86_64-linux") (
-              # Background GUI input coverage — one independent matrix job per
-              # app, proving focus-free typing into real toolkit/browser windows.
-              pkgs.lib.listToAttrs (
-                map (
-                  app:
-                  pkgs.lib.nameValuePair "cua-driver-linux-background-gui-${app}" (
-                    import ./nix/cua-driver/tests/linux-background-gui.nix {
-                      inherit pkgs app;
-                      inherit (pkgs) lib;
-                      cuaDriverModule = {
-                        imports = [ ./nix/cua-driver/module.nix ];
-                        services.cua-driver.package = cuaDriverPackage;
-                      };
-                    }
-                  )
-                  # Real-app matrix: 5 apps per toolkit category run as a LENIENT,
-                  # READ-ONLY skeleton (find window + driver page/get_text + GIF;
-                  # focus-free WRITE / typed-text assertions are added later via
-                  # trajectories). chromium keeps the full CDP focus-free-write
-                  # override; tk is the negative-control full entry (Tk `send`).
-                  # "firefox" remains disabled: historically it did not surface its
-                  # window within the launch timeout in CI. Container tests run at
-                  # native speed, so this may now pass — left disabled pending
-                  # verification.
-                ) [
-                  "chromium"
-                  "tk"
-                  # GTK3
-                  "gtk3-gedit"
-                  "gtk3-mousepad"
-                  # gtk3-geany / gtk3-abiword temporarily disabled: their huge
-                  # AT-SPI trees made the bounds walk + recorder grind in the
-                  # previous emulated VM and the jobs timed out. Container tests run
-                  # at native speed, so this may now pass — re-enable once verified
-                  # fast enough for 700+-node trees.
-                  # "gtk3-geany"
-                  "gtk3-scite"
-                  # "gtk3-abiword"
-                  # GTK4
-                  "gtk4-characters"
-                  # Qt5
-                  "qt5-manuskript"
-                  "qt5-klog"
-                  "qt5-openambit"
-                  # Qt6
-                  "qt6-kate"
-                  "qt6-kcalc"
-                  "qt6-okular"
-                  "qt6-qownnotes"
-                  # Electron
-                  "electron-zettlr"
-                  "electron-joplin"
-                  "electron-logseq"
-                ]
-              )
-            )
-            # Native-Wayland TDD matrix — reproduce the cua-driver scenarios on
-            # real, NATIVE Wayland sessions (XFCE on labwc/wayfire/sway, plus KDE
-            # and GNOME). Apps run as Wayland clients and the tests never set
-            # DISPLAY, so the X11-only driver cannot see them: this is a RED suite
-            # specifying native Wayland support. One check per (desktop × scenario)
-            # and per (desktop × background-GUI app). See
-            # nix/cua-driver/tests/wayland/README.md.
-            // pkgs.lib.optionalAttrs (system == "x86_64-linux") (
-              let
-                # NOTE: xfce-wayfire dropped — the wayfire package fails to
-                # build in the current nixpkgs pin (wf-config can't link
-                # -ldoctest), an upstream packaging bug unrelated to cua-driver.
-                # labwc + sway still cover XFCE-on-wlroots.
-                waylandDesktops = [
-                  "xfce-labwc"
-                  "xfce-sway"
-                  "kde"
-                  "gnome"
-                ];
-                waylandScenarios = {
-                  integration = ./nix/cua-driver/tests/wayland/integration.nix;
-                  screenshot = ./nix/cua-driver/tests/wayland/screenshot.nix;
-                  cursor-click-gif = ./nix/cua-driver/tests/wayland/cursor-click-gif.nix;
-                  background-terminal-gif = ./nix/cua-driver/tests/wayland/background-terminal-gif.nix;
-                  parallel-drag = ./nix/cua-driver/tests/wayland/parallel-drag.nix;
-                };
-                waylandBgApps = [
-                  "foot"
-                  "gtk3-gedit"
-                  "qt6-kcalc"
-                ];
-                waylandModule = {
-                  imports = [ ./nix/cua-driver/module.nix ];
-                  services.cua-driver.package = cuaDriverPackage;
-                };
-                scenarioChecks = pkgs.lib.listToAttrs (
-                  pkgs.lib.concatMap (
-                    desktop:
-                    map (
-                      scenario:
-                      pkgs.lib.nameValuePair "cua-driver-wayland-${desktop}-${scenario}" (
-                        import waylandScenarios.${scenario} {
-                          inherit pkgs desktop;
-                          inherit (pkgs) lib;
-                          cuaDriverModule = waylandModule;
-                        }
-                      )
-                    ) (builtins.attrNames waylandScenarios)
-                  ) waylandDesktops
-                );
-                bgGuiChecks = pkgs.lib.listToAttrs (
-                  pkgs.lib.concatMap (
-                    desktop:
-                    map (
-                      app:
-                      pkgs.lib.nameValuePair "cua-driver-wayland-${desktop}-background-gui-${app}" (
-                        import ./nix/cua-driver/tests/wayland/background-gui.nix {
-                          inherit pkgs desktop app;
-                          inherit (pkgs) lib;
-                          cuaDriverModule = waylandModule;
-                        }
-                      )
-                    ) waylandBgApps
-                  ) waylandDesktops
-                );
-              in
-              scenarioChecks // bgGuiChecks
-            );
+          devShells.cua-driver-wayland-e2e = waylandE2eShell [ ];
+          devShells.cua-driver-inject-e2e = waylandE2eShell [ cuaCompositorPackage ];
         }
       )
     // {

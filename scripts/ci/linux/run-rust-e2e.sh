@@ -97,7 +97,8 @@ if [[ ! -x "${CUA_TEST_DRIVER_BIN}" ]]; then
 fi
 required_fixtures=()
 required_fixtures+=("${CUA_TEST_APPS_ROOT}/harness-electron/CuaTestHarness.Electron")
-if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
+if [[ ("${SUITE}" == shared || "${SUITE}" == all) \
+  && ",${CUA_E2E_HARNESS_FILTER:-electron,tauri}," == *,tauri,* ]]; then
   required_fixtures+=(
     "${CUA_TEST_APPS_ROOT}/harness-tauri/CuaTestHarness.Tauri"
   )

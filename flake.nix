@@ -80,15 +80,14 @@
             webkitgtk_4_1
           ];
 
-          waylandE2eShell = pkgs.mkShell {
+          waylandE2eShell = extraPackages: pkgs.mkShell {
             # hostAtSpi is referenced by absolute launcher path below, but is
             # deliberately not a shell package: adding its rebuilt library and
             # typelib hooks alongside GTK's stock AT-SPI closure loads two ATK
             # copies and crashes PyGObject during Gtk import.
-            packages = with pkgs; [
+            packages = (with pkgs; [
               cargo
               clang
-              cuaCompositorPackage
               dbus
               ffmpeg
               gobject-introspection
@@ -104,7 +103,7 @@
               wtype
               # Keep the GTK3 fixture on the mature Python/PyGObject combination.
               (python312.withPackages (pythonPackages: [ pythonPackages.pygobject3 ]))
-            ];
+            ]) ++ extraPackages;
             buildInputs = waylandE2eLibraries;
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath waylandE2eLibraries;
             shellHook = ''
@@ -130,8 +129,8 @@
             };
           };
 
-          devShells.cua-driver-wayland-e2e = waylandE2eShell;
-          devShells.cua-driver-inject-e2e = waylandE2eShell;
+          devShells.cua-driver-wayland-e2e = waylandE2eShell [ ];
+          devShells.cua-driver-inject-e2e = waylandE2eShell [ cuaCompositorPackage ];
         }
       )
     // {

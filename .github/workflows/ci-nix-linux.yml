@@ -42,6 +42,7 @@ jobs:
       - name: Build package and source-owned Rust tests
         run: >-
           nix build
+          .#checks.x86_64-linux.cua-compositor-build
           .#checks.x86_64-linux.cua-driver-build
           .#checks.x86_64-linux.cua-driver-linux-rust-unit
           --print-build-logs --show-trace

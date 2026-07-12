@@ -67,29 +67,8 @@ impl CdpClient {
     /// "Allow remote debugging?" confirmation the Chrome-toggle path does,
     /// so there's no reason to route it through `CdpSessionCache`.
     pub async fn evaluate(javascript: &str, port: u16) -> anyhow::Result<String> {
-        Self::evaluate_targeted(javascript, port, None).await
-    }
-
-    /// Evaluate JavaScript against the unique page target selected by
-    /// `target_url_contains`. An explicit hint never falls back to another
-    /// page when it is absent or ambiguous.
-    pub async fn evaluate_targeted(
-        javascript: &str,
-        port: u16,
-        target_url_contains: Option<&str>,
-    ) -> anyhow::Result<String> {
-        let mut session = CdpSession::connect(port, target_url_contains).await?;
-        let obj = tokio::time::timeout(
-            Duration::from_secs(10),
-            session.call("Runtime.evaluate", serde_json::json!({
-                "expression": javascript,
-                "returnByValue": true,
-                "awaitPromise": true
-            })),
-        ).await
-        .map_err(|_| anyhow::anyhow!("CDP evaluate timed out after 10s"))??;
-
-        parse_cdp_result(&obj)
+        let mut session = CdpSession::connect(port, None).await?;
+        do_evaluate(&mut session, javascript).await
     }
 }
 
@@ -130,6 +109,35 @@ impl CdpSessionCache {
 
     async fn evict(&self, port: u16) {
         self.sessions.lock().await.remove(&port);
+    }
+
+    /// Evaluate JavaScript against the unique page target selected by
+    /// `target_url_contains`, reusing the cached browser connection. This
+    /// avoids re-triggering Chrome's "Allow remote debugging?" confirmation
+    /// for every targeted page action.
+    pub async fn evaluate(
+        &self,
+        javascript: &str,
+        port: u16,
+        target_url_contains: Option<&str>,
+    ) -> anyhow::Result<String> {
+        let arc = self.get_or_connect(port, target_url_contains).await?;
+        let first_attempt = {
+            let mut session = arc.lock().await;
+            match session.ensure_target(port, target_url_contains).await {
+                Ok(()) => do_evaluate(&mut session, javascript).await,
+                Err(e) => Err(e),
+            }
+        };
+        if first_attempt.is_ok() {
+            return first_attempt;
+        }
+
+        self.evict(port).await;
+        let arc = self.get_or_connect(port, target_url_contains).await?;
+        let mut session = arc.lock().await;
+        session.ensure_target(port, target_url_contains).await?;
+        do_evaluate(&mut session, javascript).await
     }
 
     /// Insert `text` at whatever currently holds DOM focus, via CDP's native
@@ -211,6 +219,20 @@ impl CdpSessionCache {
 
 impl Default for CdpSessionCache {
     fn default() -> Self { Self::new() }
+}
+
+async fn do_evaluate(session: &mut CdpSession, javascript: &str) -> anyhow::Result<String> {
+    let obj = tokio::time::timeout(
+        Duration::from_secs(10),
+        session.call("Runtime.evaluate", serde_json::json!({
+            "expression": javascript,
+            "returnByValue": true,
+            "awaitPromise": true
+        })),
+    ).await
+    .map_err(|_| anyhow::anyhow!("CDP evaluate timed out after 10s"))??;
+
+    parse_cdp_result(&obj)
 }
 
 async fn do_insert_text(session: &mut CdpSession, text: &str) -> anyhow::Result<()> {
@@ -459,7 +481,15 @@ fn pick_target<'a>(pages: &[&'a serde_json::Value], hint: Option<&str>) -> Optio
 
 #[cfg(test)]
 mod tests {
-    use super::pick_target;
+    use super::{pick_target, CdpSessionCache};
+    use futures_util::{SinkExt, StreamExt};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::{accept_async, tungstenite::Message};
 
     fn pages() -> Vec<serde_json::Value> {
         vec![
@@ -500,6 +530,80 @@ mod tests {
             pick_target(&refs, None).and_then(|target| target["url"].as_str()),
             Some("app://fixture/#window-a")
         );
+    }
+
+    #[tokio::test]
+    async fn targeted_evaluate_reuses_browser_websocket() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let accepted_by_server = accepted.clone();
+
+        let server = tokio::spawn(async move {
+            let (mut probe, _) = listener.accept().await.unwrap();
+            accepted_by_server.fetch_add(1, Ordering::SeqCst);
+            let mut request = [0u8; 1024];
+            let _ = probe.read(&mut request).await.unwrap();
+            probe
+                .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
+
+            let (socket, _) = listener.accept().await.unwrap();
+            accepted_by_server.fetch_add(1, Ordering::SeqCst);
+            let mut websocket = accept_async(socket).await.unwrap();
+            let mut attached = 0;
+            let mut evaluated = 0;
+
+            while evaluated < 2 {
+                let message = websocket.next().await.unwrap().unwrap();
+                let Message::Text(text) = message else { continue };
+                let request: serde_json::Value = serde_json::from_str(&text).unwrap();
+                let id = request["id"].as_u64().unwrap();
+                let method = request["method"].as_str().unwrap();
+                let response = match method {
+                    "Target.getTargets" => serde_json::json!({
+                        "id": id,
+                        "result": {
+                            "targetInfos": [{
+                                "targetId": "page-a",
+                                "type": "page",
+                                "url": "app://fixture/#window-a"
+                            }]
+                        }
+                    }),
+                    "Target.attachToTarget" => {
+                        attached += 1;
+                        serde_json::json!({
+                            "id": id,
+                            "result": { "sessionId": format!("session-{attached}") }
+                        })
+                    }
+                    "Runtime.evaluate" => {
+                        evaluated += 1;
+                        serde_json::json!({
+                            "id": id,
+                            "sessionId": request["sessionId"],
+                            "result": { "result": { "value": format!("value-{evaluated}") } }
+                        })
+                    }
+                    other => panic!("unexpected method {other}"),
+                };
+                websocket.send(Message::Text(response.to_string().into())).await.unwrap();
+            }
+        });
+
+        let cache = CdpSessionCache::new();
+        assert_eq!(
+            cache.evaluate("1", port, Some("#window-a")).await.unwrap(),
+            "value-1"
+        );
+        assert_eq!(
+            cache.evaluate("2", port, Some("#window-a")).await.unwrap(),
+            "value-2"
+        );
+        server.await.unwrap();
+        assert_eq!(accepted.load(Ordering::SeqCst), 2);
     }
 }
 

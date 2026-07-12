@@ -111,7 +111,7 @@ impl PageBackend for MacOsPageBackend {
             return self.execute_javascript(pid, window_id, javascript).await;
         }
         let port = resolve_cdp_port(pid, cdp_port, "execute_javascript").await?;
-        CdpClient::evaluate_targeted(javascript, port, target_url_contains).await
+        self.state.cdp_sessions.evaluate(javascript, port, target_url_contains).await
     }
 
     async fn click_element(

@@ -834,9 +834,13 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         && delivery_kind == Delivery::Background
     {
         // Chromium's X11 renderer drops synthetic input addressed to a fully
-        // occluded, unfocused toplevel. The product contract is an exact typed
-        // refusal instead of a successful response followed by silent loss.
-        vec![RefusalCode::BackgroundUnavailable]
+        // occluded, unfocused toplevel. Focus-free AT-SPI button actions are
+        // the exception: they are externally verified by the fixture and the
+        // focus/z-order/leak sentinels.
+        match (action, targeting) {
+            ("left_click" | "child_window", Targeting::Ax) => Vec::new(),
+            _ => vec![RefusalCode::BackgroundUnavailable],
+        }
     } else if cfg!(target_os = "linux")
         && spec.name == "tauri"
         && delivery_kind == Delivery::Background

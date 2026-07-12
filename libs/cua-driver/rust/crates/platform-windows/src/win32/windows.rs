@@ -14,9 +14,10 @@
 //!    `FindAll(TreeScope::Children, ...)` makes no z-order guarantee, so we
 //!    deliberately do NOT let it reorder anything Win32 already reported.
 //!
-//! Both sources apply the same filters (visible, non-iconic, non-empty
-//! title). The `filter_pid` argument is applied to the merged list so the
-//! union/dedupe pipeline runs unconditionally.
+//! Both sources apply the same filters (visible, non-empty title). Minimized
+//! windows remain addressable and are reported as off-screen so callers can
+//! restore them explicitly. The `filter_pid` argument is applied to the merged
+//! list so the union/dedupe pipeline runs unconditionally.
 
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -40,6 +41,8 @@ pub struct WindowInfo {
     pub y: i32,
     pub width: i32,
     pub height: i32,
+    pub is_on_screen: bool,
+    pub minimized: bool,
 }
 
 struct EnumState {
@@ -82,7 +85,7 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     merged
 }
 
-/// Walk `EnumWindows` and collect every visible, non-iconic, non-empty-titled
+/// Walk `EnumWindows` and collect every visible, non-empty-titled
 /// top-level window. No pid filter is applied here — the caller does that on
 /// the merged list.
 fn enumerate_via_enum_windows() -> Vec<WindowInfo> {
@@ -97,10 +100,12 @@ fn enumerate_via_enum_windows() -> Vec<WindowInfo> {
 unsafe extern "system" fn enum_windows_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let state = &*(lparam.0 as *const Mutex<EnumState>);
 
-    // Skip invisible or minimized windows.
-    if IsWindowVisible(hwnd).0 == 0 || IsIconic(hwnd).0 != 0 {
+    // Invisible helper windows are not user-addressable. Iconic windows are:
+    // retain them with explicit state so callers can restore them.
+    if IsWindowVisible(hwnd).0 == 0 {
         return TRUE;
     }
+    let minimized = IsIconic(hwnd).0 != 0;
 
     // Get pid.
     let mut pid: u32 = 0;
@@ -128,6 +133,8 @@ unsafe extern "system" fn enum_windows_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
         y,
         width: w,
         height: h,
+        is_on_screen: !minimized,
+        minimized,
     });
 
     TRUE
@@ -301,5 +308,7 @@ pub fn resolve_uwp_host_window(app_pid: u32) -> Option<WindowInfo> {
         y,
         width: w,
         height: h,
+        is_on_screen: true,
+        minimized: false,
     })
 }

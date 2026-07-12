@@ -262,6 +262,25 @@ impl ElementCache {
         result.map_err(|e| anyhow::anyhow!("UIA SetFocus failed: {e}"))
     }
 
+    pub fn element_has_keyboard_focus(
+        &self,
+        pid: u32,
+        hwnd: u64,
+        element_index: usize,
+    ) -> Option<bool> {
+        let retained = self.get_element_retained(pid, hwnd, element_index)?;
+        if !retained.is_uia() {
+            return None;
+        }
+        let element: IUIAutomationElement =
+            unsafe { IUIAutomationElement::from_raw(retained.as_ptr() as *mut _) };
+        let focused = unsafe { element.CurrentHasKeyboardFocus() }
+            .ok()
+            .map(|value| value.as_bool());
+        std::mem::forget(element);
+        focused
+    }
+
     /// Cached screen rect for the element. Used by the click tool to
     /// compute the right-edge dispatch point for `action:"expand"` on
     /// MSAA BUTTONDROPDOWN.

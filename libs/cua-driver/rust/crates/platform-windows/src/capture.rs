@@ -204,7 +204,48 @@ pub fn screenshot_window_bytes(hwnd: u64) -> Result<Vec<u8>> {
 /// user / LLM should attach an explicit warning. See `target_is_obscured`
 /// for the sampling heuristic.
 pub fn screenshot_window_bytes_with_occlusion(hwnd: u64) -> Result<(Vec<u8>, bool)> {
-    unsafe { screenshot_window_bytes_with_occlusion_unsafe(hwnd) }
+    match unsafe { screenshot_window_bytes_with_occlusion_unsafe(hwnd) } {
+        Ok(capture) => Ok(capture),
+        Err(primary_error) => {
+            if primary_error.to_string().contains("minimized window") {
+                return Err(primary_error);
+            }
+            // A freshly restored DirectComposition window can temporarily have
+            // no usable GDI surface even though DWM is already rendering it.
+            // WGC reads the compositor-owned frame and is therefore the right
+            // first fallback for this class of capture failure.
+            match crate::wgc::screenshot_window_via_wgc(hwnd) {
+                Ok((pixels, width, height)) => Ok((
+                    cua_driver_core::image_utils::encode_bgra_to_png(
+                        &pixels, width, height,
+                    )?,
+                    false,
+                )),
+                Err(wgc_error) => {
+                    // Headless/virtualized Windows sessions can expose DWM but
+                    // no WGC-compatible hardware device. Once a window is
+                    // visible, a desktop-region crop remains a truthful final
+                    // fallback; report whether another window covered it.
+                    let target = HWND(hwnd as *mut _);
+                    let occluded = unsafe { target_is_obscured(target) };
+                    match unsafe { screenshot_via_screen_region(target) } {
+                        Ok((pixels, width, height)) => Ok((
+                            cua_driver_core::image_utils::encode_bgra_to_png(
+                                &pixels,
+                                width as u32,
+                                height as u32,
+                            )?,
+                            occluded,
+                        )),
+                        Err(screen_error) => Err(primary_error.context(format!(
+                            "Windows.Graphics.Capture fallback failed: {wgc_error}; \
+                             desktop-region fallback failed: {screen_error}"
+                        ))),
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Capture a window by HWND, returning (base64_png, width, height).
@@ -238,13 +279,13 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     // The WGC sibling path at `wgc.rs:58` already short-circuits this case;
     // the GDI/PrintWindow fallback below + the screen-region BitBlt fallback
     // both happily produced the degenerate PNG. Guarding here covers both
-    // and matches the WGC error shape so callers can `list_windows` or
-    // raise the window before retrying.
+    // and matches the WGC error shape so callers can `list_windows` and
+    // restore the window before retrying.
     if IsIconic(hwnd).as_bool() {
         bail!(
             "cannot capture minimized window 0x{hwnd_raw:x}: it has no \
-             rendered content. Restore the window first via list_windows \
-             / raise_window. The PrintWindow GDI path and the screen-region \
+             rendered content. Call bring_to_front with this window_id to \
+             restore it first. The PrintWindow GDI path and the screen-region \
              BitBlt fallback both return an all-black bitmap for iconic \
              windows."
         );
@@ -565,4 +606,3 @@ pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>
 pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
     cua_driver_core::image_utils::png_dimensions(data)
 }
-

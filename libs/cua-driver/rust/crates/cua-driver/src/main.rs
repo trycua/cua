@@ -753,17 +753,8 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
     let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
     #[cfg(target_os = "windows")]
     {
-        cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-            if let Some(hwnd) = window_id {
-                platform_windows::capture::screenshot_window_bytes(hwnd).ok()
-            } else if let Some(p) = pid {
-                let wins = platform_windows::win32::list_windows(Some(p as u32));
-                wins.first().and_then(|w| {
-                    platform_windows::capture::screenshot_window_bytes(w.hwnd).ok()
-                })
-            } else {
-                platform_windows::capture::screenshot_display_bytes().ok()
-            }
+        cua_driver_core::recording::set_classified_screenshot_fn(|window_id, pid| {
+            platform_windows::recording_hooks::screenshot_for_recording(window_id, pid)
         });
         cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_windows::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
@@ -834,17 +825,8 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
     let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
     #[cfg(target_os = "windows")]
     {
-        cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-            if let Some(hwnd) = window_id {
-                platform_windows::capture::screenshot_window_bytes(hwnd).ok()
-            } else if let Some(p) = pid {
-                let wins = platform_windows::win32::list_windows(Some(p as u32));
-                wins.first().and_then(|w| {
-                    platform_windows::capture::screenshot_window_bytes(w.hwnd).ok()
-                })
-            } else {
-                platform_windows::capture::screenshot_display_bytes().ok()
-            }
+        cua_driver_core::recording::set_classified_screenshot_fn(|window_id, pid| {
+            platform_windows::recording_hooks::screenshot_for_recording(window_id, pid)
         });
         cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_windows::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()

@@ -48,6 +48,7 @@ try {
     $appDir = Join-Path $outDir "resources\app"
     if (-not (Test-Path $appDir)) { New-Item -ItemType Directory $appDir -Force | Out-Null }
     Copy-Item (Join-Path $elecDir "main.js")      $appDir -Force
+    Copy-Item (Join-Path $elecDir "preload.js")   $appDir -Force
     Copy-Item (Join-Path $elecDir "package.json") $appDir -Force
     Copy-Item $webDir (Join-Path $appDir "web") -Recurse -Force
 

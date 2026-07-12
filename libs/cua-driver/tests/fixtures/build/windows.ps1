@@ -12,7 +12,9 @@
 
 param(
     [ValidateSet("none","wpf","winui3","webview","electron","tauri")]
-    [string]$Skip = "none"
+    [string]$Skip = "none",
+    [ValidateSet("wpf","winui3","webview","electron","tauri")]
+    [string[]]$Targets = @("wpf","winui3","webview","electron","tauri")
 )
 
 Set-StrictMode -Version Latest
@@ -30,6 +32,11 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 }
 
 New-Item -ItemType Directory -Force $testAppsDir | Out-Null
+
+function Should-Build {
+    param([string]$Name)
+    return $Skip -ne $Name -and $Targets -contains $Name
+}
 
 function Publish-Project {
     param([string]$ProjPath, [string]$OutDirName)
@@ -54,10 +61,10 @@ function Publish-Project {
     Write-Host "[OK]    Published: $outDir" -ForegroundColor Green
 }
 
-if ($Skip -ne "wpf") {
+if (Should-Build "wpf") {
     Publish-Project (Join-Path $harnessDir "apps\windows\wpf\CuaTestHarness.Wpf.csproj") "harness-wpf"
 }
-if ($Skip -ne "winui3") {
+if (Should-Build "winui3") {
     $winuiProj = Join-Path $harnessDir "apps\windows\winui3\CuaTestHarness.WinUI3.csproj"
     if (Test-Path $winuiProj) {
         Publish-Project $winuiProj "harness-winui3"
@@ -65,7 +72,7 @@ if ($Skip -ne "winui3") {
         Write-Host "[SKIP] WinUI3 project not present yet - skipping." -ForegroundColor Yellow
     }
 }
-if ($Skip -ne "webview") {
+if (Should-Build "webview") {
     $webProj = Join-Path $harnessDir "apps\windows\webview2\CuaTestHarness.WebView.csproj"
     if (Test-Path $webProj) {
         Publish-Project $webProj "harness-webview"
@@ -73,41 +80,26 @@ if ($Skip -ne "webview") {
         Write-Host "[SKIP] WebView project not present yet - skipping." -ForegroundColor Yellow
     }
 }
-if ($Skip -ne "electron") {
+if (Should-Build "electron") {
     $elecBuild = Join-Path $harnessDir "apps\cross-platform\electron\build.ps1"
     if (Test-Path $elecBuild) {
         Write-Host ""
         Write-Host "[BUILD] electron -> $testAppsDir\harness-electron\" -ForegroundColor Cyan
-        # Electron build sets $ErrorActionPreference=Stop internally and
-        # throws on npm install / publish failure. Wrap so a throw degrades
-        # to a warning rather than aborting the whole harness build.
-        try {
-            & $elecBuild
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "[WARN] Electron build failed (exit $LASTEXITCODE)" -ForegroundColor Yellow
-            }
-        } catch {
-            Write-Host "[WARN] Electron build errored: $($_.Exception.Message)" -ForegroundColor Yellow
-        }
+        & $elecBuild
+        if ($LASTEXITCODE -ne 0) { throw "Electron harness build failed" }
     } else {
-        Write-Host "[SKIP] Electron project not present yet - skipping." -ForegroundColor Yellow
+        throw "Electron build script not found: $elecBuild"
     }
 }
-if ($Skip -ne "tauri") {
+if (Should-Build "tauri") {
     $tauriBuild = Join-Path $harnessDir "apps\cross-platform\tauri\build.ps1"
     if (Test-Path $tauriBuild) {
         Write-Host ""
         Write-Host "[BUILD] tauri -> $testAppsDir\harness-tauri\" -ForegroundColor Cyan
-        try {
-            & $tauriBuild
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "[WARN] Tauri build failed (exit $LASTEXITCODE)" -ForegroundColor Yellow
-            }
-        } catch {
-            Write-Host "[WARN] Tauri build errored: $($_.Exception.Message)" -ForegroundColor Yellow
-        }
+        & $tauriBuild
+        if ($LASTEXITCODE -ne 0) { throw "Tauri harness build failed" }
     } else {
-        Write-Host "[SKIP] Tauri project not present yet - skipping." -ForegroundColor Yellow
+        throw "Tauri build script not found: $tauriBuild"
     }
 }
 

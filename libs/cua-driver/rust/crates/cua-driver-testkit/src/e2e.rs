@@ -1387,8 +1387,29 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             .as_ref()
             .and_then(|value| value[phase][kind]["classification"].as_str())
     };
+    let tool = action.as_ref().and_then(|value| value["tool"].as_str());
+    let successful_restore = action.as_ref().is_some_and(|value| {
+        value["result_summary"]
+            .as_str()
+            .is_some_and(|summary| summary.starts_with("✅ bring_to_front:"))
+    });
+    let restored_state_captured = manifest.as_ref().is_some_and(|value| {
+        value["after"]["state"]["status"].as_str() == Some("captured")
+    });
+    let expected_unavailable_screenshot = |phase: &str| {
+        tool == Some("bring_to_front")
+            && ((phase == "before"
+                && classification(phase, "screenshot") == Some("target_minimized"))
+                || (phase == "after"
+                    && successful_restore
+                    && restored_state_captured
+                    && classification(phase, "screenshot") == Some("capture_failed")))
+    };
 
     for (phase, kind) in [("before", "screenshot"), ("after", "screenshot")] {
+        if expected_unavailable_screenshot(phase) {
+            continue;
+        }
         validate_capture_status(
             manifest.as_ref(),
             &[phase, kind],
@@ -1403,6 +1424,9 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
         ("after.png", "after", "screenshot"),
         ("screenshot.png", "after", "screenshot"),
     ] {
+        if expected_unavailable_screenshot(phase) {
+            continue;
+        }
         validate_nonempty_file(
             &turn.join(file),
             cell_id,
@@ -1910,6 +1934,99 @@ mod tests {
         assert!(errors.iter().any(|error| {
             error.contains("turn-00001/after.png") && error.contains("classified capture_failed")
         }));
+    }
+
+    #[test]
+    fn validator_accepts_minimized_preimage_for_restore_action() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"bring_to_front",
+                "arguments":{"pid":1,"window_id":2}
+            }"#,
+        )
+        .expect("write restore action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"target_minimized"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "click":{"status":"not_applicable","classification":"no_target_pid"}
+            }"#,
+        )
+        .expect("write restore evidence manifest");
+        std::fs::remove_file(turn.join("before.png")).expect("remove unavailable preimage");
+
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("a minimized target cannot provide a pre-restore screenshot");
+    }
+
+    #[test]
+    fn validator_accepts_restored_state_when_host_capture_remains_unavailable() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            r#"{
+                "tool":"bring_to_front",
+                "arguments":{"pid":1,"window_id":2},
+                "result_summary":"✅ bring_to_front: pid 1 hwnd 0x2 is now foreground (was 0x1)."
+            }"#
+            .as_bytes(),
+        )
+        .expect("write successful restore action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"target_minimized"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"capture_failed"}},
+                "click":{"status":"not_applicable","classification":"no_target_pid"}
+            }"#,
+        )
+        .expect("write restored-state evidence manifest");
+        std::fs::remove_file(turn.join("before.png")).expect("remove unavailable preimage");
+        std::fs::remove_file(turn.join("after.png")).expect("remove unavailable after-image");
+        std::fs::remove_file(turn.join("screenshot.png"))
+            .expect("remove unavailable screenshot alias");
+
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("a successful restore remains valid with captured UIA state and video");
+    }
+
+    #[test]
+    fn validator_rejects_missing_after_image_when_restore_did_not_succeed() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"bring_to_front",
+                "arguments":{"pid":1,"window_id":2},
+                "result_summary":"bring_to_front: restore request failed"
+            }"#,
+        )
+        .expect("write failed restore action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"target_minimized"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"capture_failed"}},
+                "click":{"status":"not_applicable","classification":"no_target_pid"}
+            }"#,
+        )
+        .expect("write failed restore evidence manifest");
+        std::fs::remove_file(turn.join("before.png")).expect("remove unavailable preimage");
+        std::fs::remove_file(turn.join("after.png")).expect("remove unavailable after-image");
+        std::fs::remove_file(turn.join("screenshot.png"))
+            .expect("remove unavailable screenshot alias");
+
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("an unsuccessful restore must still fail closed");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("turn-00001/after.png")));
     }
 
     #[test]

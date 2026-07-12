@@ -671,6 +671,8 @@ unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<Wi
         y,
         width: w,
         height: h,
+        is_on_screen: true,
+        minimized: false,
     })
 }
 

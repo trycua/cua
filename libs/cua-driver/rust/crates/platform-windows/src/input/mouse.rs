@@ -16,13 +16,14 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOUSEINPUT, SendInput,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    ChildWindowFromPointEx, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT,
-    GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW, PostMessageW,
-    SetCursorPos, SetWindowPos, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST,
-    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_TOPMOST,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
-    WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    ChildWindowFromPointEx, GetAncestor, GetClassLongPtrW, GetCursorPos, GetForegroundWindow,
+    GetSystemMetrics, GetWindowLongPtrW, PostMessageW, SetCursorPos, SetWindowPos, CS_DBLCLKS,
+    CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, GA_ROOT, GCL_STYLE,
+    CWP_SKIPTRANSPARENT, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST,
+    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONDBLCLK,
+    WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_TOPMOST,
 };
 
 const MK_LBUTTON: u32 = 0x0001;
@@ -30,6 +31,14 @@ const MK_MBUTTON: u32 = 0x0010;
 const MK_RBUTTON: u32 = 0x0002;
 
 const CLICK_DELAY_MS: u64 = 35;
+
+fn posted_press_message(down: u32, double: u32, click_index: usize, wants_double: bool) -> u32 {
+    if wants_double && click_index % 2 == 1 {
+        double
+    } else {
+        down
+    }
+}
 
 /// Walk from `root` down to the deepest visible child that contains
 /// `screen_pt`, mirroring trope-cua's DeepestChildFromScreenPoint.
@@ -99,25 +108,55 @@ fn post_click_on(hwnd: HWND, x: i32, y: i32, count: usize, button: &str) -> Resu
         anyhow::bail!(msg);
     }
 
-    let (down_msg, up_msg, mk_flag) = match button {
-        "right"  => (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON),
-        "middle" => (WM_MBUTTONDOWN, WM_MBUTTONUP, MK_MBUTTON),
-        _        => (WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON),
+    let (down_msg, double_msg, up_msg, mk_flag) = match button {
+        "right" => (WM_RBUTTONDOWN, WM_RBUTTONDBLCLK, WM_RBUTTONUP, MK_RBUTTON),
+        "middle" => (
+            WM_MBUTTONDOWN,
+            WM_MBUTTONDBLCLK,
+            WM_MBUTTONUP,
+            MK_MBUTTON,
+        ),
+        _ => (WM_LBUTTONDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONUP, MK_LBUTTON),
     };
     let lparam  = make_lparam(x, y);
     let wdown   = WPARAM(mk_flag as usize);
     let wup     = WPARAM(0);
+    let wants_double =
+        unsafe { (GetClassLongPtrW(hwnd, GCL_STYLE) as u32 & CS_DBLCLKS.0) != 0 };
+    let prev_fg = unsafe { GetForegroundWindow() };
+    let target_root = unsafe {
+        let root = GetAncestor(hwnd, GA_ROOT);
+        if root.0.is_null() { hwnd } else { root }
+    };
 
+    // Posted pointer messages are normally non-activating, but WebView hosts can
+    // call SetForegroundWindow from their event handlers. Keep the top-level
+    // categorically non-activatable until the complete burst has settled.
+    let _noact = crate::input::NoActivateGuard::arm(hwnd);
     for i in 0..count {
+        let press_msg = posted_press_message(down_msg, double_msg, i, wants_double);
         unsafe {
             // WM_MOUSEMOVE first so hover state is correct before the click.
             PostMessageW(hwnd, WM_MOUSEMOVE, WPARAM(0), lparam)?;
-            PostMessageW(hwnd, down_msg, wdown, lparam)?;
+            // Win32 controls do not infer a double-click from two posted DOWN
+            // messages. The second press must use WM_*BUTTONDBLCLK.
+            PostMessageW(hwnd, press_msg, wdown, lparam)?;
             sleep(Duration::from_millis(CLICK_DELAY_MS));
             PostMessageW(hwnd, up_msg, wup, lparam)?;
         }
         if i + 1 < count {
             sleep(Duration::from_millis(80));
+        }
+    }
+    sleep(Duration::from_millis(50));
+    unsafe {
+        if !prev_fg.0.is_null()
+            && prev_fg != target_root
+            && GetForegroundWindow() == target_root
+        {
+            crate::input::force_foreground_attached(prev_fg);
+            sleep(Duration::from_millis(12));
+            crate::input::force_foreground_attached(prev_fg);
         }
     }
     Ok(())
@@ -298,6 +337,46 @@ pub fn is_chromium_target_window(hwnd: u64) -> bool {
     is_chromium
 }
 
+/// Return true when `hwnd` hosts a Chromium/WebView2 renderer child even if
+/// its own top-level class is framework-specific (for example a Tauri host).
+/// Keep this separate from [`is_chromium_target_window`]: embedded WebView2
+/// surfaces support some UIA/top-level background routes that direct Chromium
+/// frames do not, so delivery policy needs to distinguish the two shapes.
+pub fn has_chromium_descendant(hwnd: u64) -> bool {
+    use windows::Win32::Foundation::{BOOL, FALSE, LPARAM, TRUE};
+    use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, GetClassNameW};
+
+    if hwnd == 0 {
+        return false;
+    }
+    struct Scan {
+        found: bool,
+    }
+    unsafe extern "system" fn child_cb(child: HWND, lparam: LPARAM) -> BOOL {
+        let scan = &mut *(lparam.0 as *mut Scan);
+        let mut buf = [0u16; 64];
+        let n = GetClassNameW(child, &mut buf);
+        if n > 0 {
+            let class = String::from_utf16_lossy(&buf[..n as usize]);
+            if class.starts_with("Chrome_WidgetWin_") || class.starts_with("CefBrowser") {
+                scan.found = true;
+                return FALSE;
+            }
+        }
+        TRUE
+    }
+
+    let mut scan = Scan { found: false };
+    unsafe {
+        let _ = EnumChildWindows(
+            HWND(hwnd as *mut _),
+            Some(child_cb),
+            LPARAM(&mut scan as *mut Scan as isize),
+        );
+    }
+    scan.found
+}
+
 /// Click at **screen** coordinates `(sx, sy)` via `SendInput` against the
 /// system input queue, briefly focusing `target` so the click lands there.
 ///
@@ -344,6 +423,33 @@ pub fn send_click_synthesized_mods(
     count: usize,
     button: &str,
     modifiers: &[&str],
+) -> Result<()> {
+    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, false)
+}
+
+/// SendInput click for an explicit foreground request. Unlike the historical
+/// z-order-assisted path, this activates the target and does not add
+/// `WS_EX_NOACTIVATE`, so retained-mode frameworks such as WPF process the
+/// system-queue pointer event. The caller owns any later foreground restore.
+pub fn send_click_synthesized_active_mods(
+    target: u64,
+    sx: i32,
+    sy: i32,
+    count: usize,
+    button: &str,
+    modifiers: &[&str],
+) -> Result<()> {
+    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, true)
+}
+
+fn send_click_synthesized_mods_impl(
+    target: u64,
+    sx: i32,
+    sy: i32,
+    count: usize,
+    button: &str,
+    modifiers: &[&str],
+    activate: bool,
 ) -> Result<()> {
     let target = HWND(target as *mut _);
     if target.0.is_null() {
@@ -404,8 +510,8 @@ pub fn send_click_synthesized_mods(
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
             mi: MOUSEINPUT {
-                dx: norm_x, dy: norm_y, mouseData: 0,
-                dwFlags: down_flag | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                dx: 0, dy: 0, mouseData: 0,
+                dwFlags: down_flag,
                 time: 0, dwExtraInfo: 0,
             },
         },
@@ -414,8 +520,8 @@ pub fn send_click_synthesized_mods(
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
             mi: MOUSEINPUT {
-                dx: norm_x, dy: norm_y, mouseData: 0,
-                dwFlags: up_flag | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                dx: 0, dy: 0, mouseData: 0,
+                dwFlags: up_flag,
                 time: 0, dwExtraInfo: 0,
             },
         },
@@ -437,12 +543,20 @@ pub fn send_click_synthesized_mods(
         // restore" for pointer input, done the one Windows way that doesn't
         // need UIAccess — the technique the OG GTK path used. (Keyboard
         // foreground still needs *real* focus; only pointer can be z-routed.)
-        let _noact = crate::input::NoActivateGuard::arm(target);
         // Capture whether the target was ALREADY always-on-top so we don't strip
         // that state on restore — only demote below if WE promoted it.
         let was_topmost =
             (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32) & WS_EX_TOPMOST.0 != 0;
-        let _ = SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        let foreground_attach_failed = activate && !crate::input::force_foreground_attached(target);
+        let noactivate = (!activate).then(|| crate::input::NoActivateGuard::arm(target));
+        if !activate || foreground_attach_failed {
+            let flags = if activate {
+                SWP_NOMOVE | SWP_NOSIZE
+            } else {
+                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE
+            };
+            let _ = SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, flags);
+        }
 
         // Move the cursor so the OS hover state matches before the click; the
         // MOUSEEVENTF_MOVE input ensures Chromium's input filter sees a
@@ -462,6 +576,9 @@ pub fn send_click_synthesized_mods(
         let count = count.max(1);
         let mut sent_ok = true;
         for i in 0..count {
+            // Only the move record carries absolute coordinates. Button-only
+            // records act at the current pointer position; adding ABSOLUTE to
+            // them can prevent retained-mode controls from seeing the press.
             let events = [move_input, down_input, up_input];
             let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
             if sent as usize != events.len() {
@@ -478,20 +595,30 @@ pub fn send_click_synthesized_mods(
             SendInput(&mod_ups, std::mem::size_of::<INPUT>() as i32);
         }
 
-        // Brief settle so the target processes the click, then restore z-order:
-        // demote the target out of the topmost band and restack the user's
-        // window on top (no activation), and restore the cursor.
-        sleep(Duration::from_millis(40));
-        if !was_topmost {
+        // Let the target process mouse-up before any background-route restore.
+        // Retained-mode frameworks establish capture/focus on mouse-down and can
+        // lose the click if the real cursor is warped away while those queued
+        // messages are still being dispatched.
+        sleep(Duration::from_millis(if activate { 120 } else { 40 }));
+        if !was_topmost && (!activate || foreground_attach_failed) {
             let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
         }
-        if !prev_fg.0.is_null() && prev_fg != target {
-            let _ = SetWindowPos(prev_fg, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        if !activate {
+            if !prev_fg.0.is_null() && prev_fg != target {
+                let _ = SetWindowPos(prev_fg, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+            }
+            let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
         }
-        let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
-        drop(_noact);
+        drop(noactivate);
         if !sent_ok {
             bail!("SendInput inserted fewer mouse events than expected for the foreground click.");
+        }
+        if activate {
+            let foreground_root = GetAncestor(GetForegroundWindow(), GA_ROOT);
+            let target_root = GetAncestor(target, GA_ROOT);
+            if foreground_root != target_root {
+                bail!("The foreground click did not activate its target window.");
+            }
         }
     }
 
@@ -709,7 +836,28 @@ pub fn send_wheel_synthesized(sx: i32, sy: i32, ticks: i32, horizontal: bool) ->
 
 #[cfg(test)]
 mod wheel_tests {
-    use super::{wheel_mouse_data, WHEEL_DELTA};
+    use super::{posted_press_message, wheel_mouse_data, WHEEL_DELTA};
+    use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONDBLCLK, WM_LBUTTONDOWN};
+
+    #[test]
+    fn posted_double_click_uses_the_win32_double_click_message() {
+        assert_eq!(
+            posted_press_message(WM_LBUTTONDOWN, WM_LBUTTONDBLCLK, 0, true),
+            WM_LBUTTONDOWN
+        );
+        assert_eq!(
+            posted_press_message(WM_LBUTTONDOWN, WM_LBUTTONDBLCLK, 1, true),
+            WM_LBUTTONDBLCLK
+        );
+        assert_eq!(
+            posted_press_message(WM_LBUTTONDOWN, WM_LBUTTONDBLCLK, 2, true),
+            WM_LBUTTONDOWN
+        );
+        assert_eq!(
+            posted_press_message(WM_LBUTTONDOWN, WM_LBUTTONDBLCLK, 1, false),
+            WM_LBUTTONDOWN
+        );
+    }
 
     #[test]
     fn wheel_data_up_is_positive_one_notch() {

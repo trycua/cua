@@ -57,6 +57,15 @@ impl Button {
     }
 }
 
+/// One evdev keyboard state transition in a [`key_sequence`] request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyTransition {
+    Press(u32),
+    Release(u32),
+}
+
+const MAX_KEY_SEQUENCE_TRANSITIONS: usize = 64;
+
 /// Commands the worker thread accepts. Each carries a reply channel so
 /// the caller blocks until the EIS server has received the event.
 enum Cmd {
@@ -82,6 +91,10 @@ enum Cmd {
     },
     PressKey {
         keycode: u32,
+        reply: Sender<anyhow::Result<()>>,
+    },
+    KeySequence {
+        transitions: Vec<KeyTransition>,
         reply: Sender<anyhow::Result<()>>,
     },
     Drag {
@@ -192,6 +205,45 @@ pub fn press_key(keycode: u32) -> anyhow::Result<()> {
     tx()?.send(Cmd::PressKey { keycode, reply: tx_r })
         .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
     rx_r.recv().map_err(|e| anyhow::anyhow!("libei reply closed: {e}"))?
+}
+
+/// Submit an ordered sequence of evdev key press/release transitions.
+///
+/// The worker emits every transition in one emulation session and frames each
+/// transition separately, allowing callers to hold modifiers while pressing a
+/// key. Requests are capped to keep the synchronous worker responsive.
+pub fn key_sequence(transitions: &[KeyTransition]) -> anyhow::Result<()> {
+    validate_key_sequence(transitions)?;
+    if transitions.is_empty() {
+        return Ok(());
+    }
+
+    ensure_started()?;
+    let (tx_r, rx_r) = bounded(1);
+    tx()?
+        .send(Cmd::KeySequence {
+            transitions: transitions.to_vec(),
+            reply: tx_r,
+        })
+        .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
+    rx_r.recv().map_err(|e| anyhow::anyhow!("libei reply closed: {e}"))?
+}
+
+fn validate_key_sequence(transitions: &[KeyTransition]) -> anyhow::Result<()> {
+    if transitions.len() > MAX_KEY_SEQUENCE_TRANSITIONS {
+        anyhow::bail!(
+            "libei key sequence has {} transitions; maximum is {}",
+            transitions.len(),
+            MAX_KEY_SEQUENCE_TRANSITIONS
+        );
+    }
+    Ok(())
+}
+
+fn emit_key_transitions(transitions: &[KeyTransition], mut emit: impl FnMut(KeyTransition, u64)) {
+    for (frame, transition) in transitions.iter().copied().enumerate() {
+        emit(transition, frame as u64);
+    }
 }
 
 /// Press `button` at (from_x, from_y), move through `steps` interpolated points
@@ -714,7 +766,9 @@ impl EisState {
                 self.device_with_interface("ei_pointer_absolute").is_some()
             }
             Cmd::Scroll { .. } => self.device_with_interface("ei_scroll").is_some(),
-            Cmd::PressKey { .. } => self.device_with_interface("ei_keyboard").is_some(),
+            Cmd::PressKey { .. } | Cmd::KeySequence { .. } => {
+                self.device_with_interface("ei_keyboard").is_some()
+            }
             Cmd::TypeText { .. } => {
                 self.device_with_interface("ei_text").is_some()
                     || self.device_with_interface("ei_keyboard").is_some()
@@ -732,6 +786,7 @@ impl EisState {
             Cmd::Scroll { reply, .. } => { let _ = reply.send(result); }
             Cmd::TypeText { reply, .. } => { let _ = reply.send(result); }
             Cmd::PressKey { reply, .. } => { let _ = reply.send(result); }
+            Cmd::KeySequence { reply, .. } => { let _ = reply.send(result); }
             Cmd::Drag { reply, .. } => { let _ = reply.send(result); }
             Cmd::Shutdown => {}
         }
@@ -901,6 +956,27 @@ impl EisState {
                 device.frame(self.last_serial, 0);
                 kb.key(*keycode, reis::ei::keyboard::KeyState::Released);
                 device.frame(self.last_serial, 1);
+                device.stop_emulating(self.last_serial);
+            }
+            Cmd::KeySequence { transitions, .. } => {
+                let device = self.device_with_interface("ei_keyboard")
+                    .ok_or_else(|| anyhow::anyhow!("no EIS keyboard device negotiated yet — wait for handshake"))?;
+                let kb = require_device_interface::<reis::ei::Keyboard>(&self.devices, &device)?;
+
+                device.start_emulating(self.sequence, self.last_serial);
+                self.sequence = self.sequence.wrapping_add(1);
+                emit_key_transitions(transitions, |transition, frame| {
+                    let (keycode, state) = match transition {
+                        KeyTransition::Press(keycode) => {
+                            (keycode, reis::ei::keyboard::KeyState::Press)
+                        }
+                        KeyTransition::Release(keycode) => {
+                            (keycode, reis::ei::keyboard::KeyState::Released)
+                        }
+                    };
+                    kb.key(keycode, state);
+                    device.frame(self.last_serial, frame);
+                });
                 device.stop_emulating(self.last_serial);
             }
             Cmd::Shutdown => {}
@@ -1080,4 +1156,53 @@ fn device_interface<T: reis::Interface>(
         .get(T::NAME)?
         .clone()
         .downcast()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_sequence_accepts_empty_and_maximum_length_requests() {
+        assert!(validate_key_sequence(&[]).is_ok());
+
+        let transitions = vec![KeyTransition::Press(29); MAX_KEY_SEQUENCE_TRANSITIONS];
+        assert!(validate_key_sequence(&transitions).is_ok());
+    }
+
+    #[test]
+    fn key_sequence_rejects_requests_over_the_worker_bound() {
+        let transitions = vec![KeyTransition::Release(29); MAX_KEY_SEQUENCE_TRANSITIONS + 1];
+        let error = validate_key_sequence(&transitions).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "libei key sequence has 65 transitions; maximum is 64"
+        );
+    }
+
+    #[test]
+    fn key_sequence_preserves_transition_order_and_assigns_frames() {
+        let transitions = [
+            KeyTransition::Press(29),
+            KeyTransition::Press(46),
+            KeyTransition::Release(46),
+            KeyTransition::Release(29),
+        ];
+        let mut emitted = Vec::new();
+
+        emit_key_transitions(&transitions, |transition, frame| {
+            emitted.push((transition, frame));
+        });
+
+        assert_eq!(
+            emitted,
+            vec![
+                (KeyTransition::Press(29), 0),
+                (KeyTransition::Press(46), 1),
+                (KeyTransition::Release(46), 2),
+                (KeyTransition::Release(29), 3),
+            ]
+        );
+    }
 }

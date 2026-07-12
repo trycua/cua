@@ -1890,13 +1890,20 @@ impl Tool for ClickTool {
             cursor_id.clone(),
             cursor_overlay::OverlayCommand::PinAbove(xid),
         );
-        // Resolve the screen point the cursor glides to. On native Wayland the
-        // agent already passes screen coordinates (the vision screenshot and
-        // `get_window_state` frames are screen-space, and `window_local_to_screen`
-        // — an X11 `translate_coordinates` call — can't run with DISPLAY unset),
-        // so use them directly. On X11 the coords are window-local; translate.
-        let glide_target = if crate::wayland::wayland_input_enabled() {
-            Some((x, y))
+        // Resolve the screen point the cursor glides to. Tool coordinates are
+        // always window-local screenshot pixels; native Wayland translates
+        // through compositor/AT-SPI geometry while X11 uses XTranslateCoordinates.
+        let wayland_output_point = if crate::wayland::wayland_input_enabled() {
+            Some(crate::wayland::window_local_to_output(
+                xid,
+                x.round() as i32,
+                y.round() as i32,
+            ))
+        } else {
+            None
+        };
+        let glide_target = if let Some((sx, sy)) = wayland_output_point {
+            Some((sx as f64, sy as f64))
         } else {
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y))
                 .await
@@ -1912,6 +1919,7 @@ impl Tool for ClickTool {
         }
 
         let (xi, yi) = (x as i32, y as i32);
+        let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
         let cursor_id_for_task = cursor_id.clone();
         // delivery_mode: background (default) = no-focus-steal injection;
         // foreground = activate the target window (EWMH) first, then inject,
@@ -1925,9 +1933,14 @@ impl Tool for ClickTool {
                 // `element_index` — the coordinate-free path already verified
                 // working. (x,y) are screen coords here, matching the frames in
                 // `get_window_state`. Miss → fall through to the injection paths.
-                if button == 1 && count == 1 {
+                if !delivery.is_foreground() && button == 1 && count == 1 {
                     if let Ok(Some(_)) =
-                        crate::atspi::perform_action_at_screen_point(pid, xid, xi, yi)
+                        crate::atspi::perform_action_at_screen_point(
+                            pid,
+                            xid,
+                            output_x,
+                            output_y,
+                        )
                     {
                         return Ok("wayland_atspi");
                     }
@@ -1942,7 +1955,7 @@ impl Tool for ClickTool {
                 // Native Wayland: focus+raise the target toplevel
                 // (foreign-toplevel `activate`), then drive `count` virtual-pointer
                 // button events. Wayland injection routes to the compositor focus.
-                crate::wayland::click(xid, xi, yi, count as u32, button)?;
+                crate::wayland::click(xid, output_x, output_y, count as u32, button)?;
                 return Ok("wayland_activate");
             }
             // X11 injection. Tiered no-focus-steal delivery (background):
@@ -3189,13 +3202,40 @@ impl Tool for ScrollTool {
             }
         }
 
+        let pixel_target = match (
+            args.get("x").and_then(|value| value.as_f64()),
+            args.get("y").and_then(|value| value.as_f64()),
+        ) {
+            (Some(x), Some(y)) => Some((x, y)),
+            (None, None) => None,
+            _ => return ToolResult::error("Pass both x and y to pixel-target scroll."),
+        };
+        if pixel_target.is_some()
+            && matches!(
+                &resolved,
+                cua_driver_core::element_token::ResolvedElement::Element { .. }
+            )
+        {
+            return ToolResult::error(
+                "Pass either element_index (ax) or x,y (px) to scroll, not both.",
+            );
+        }
+
         if crate::wayland::wayland_input_enabled() {
             if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, false) {
                 return refusal;
             }
             let direction_for_wayland = direction.clone();
+            let output_point = pixel_target.map(|(x, y)| {
+                crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32)
+            });
             let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::scroll(xid, &direction_for_wayland, amount as u32)
+                crate::wayland::scroll_at(
+                    xid,
+                    output_point,
+                    &direction_for_wayland,
+                    amount as u32,
+                )
             })
             .await;
             return match result {
@@ -3219,24 +3259,6 @@ impl Tool for ScrollTool {
         // fallback used (0, 0) in the window, which can report success while
         // Chromium/GTK routes the wheel to the toplevel instead of the
         // requested scroll region.
-        let pixel_target = match (
-            args.get("x").and_then(|value| value.as_f64()),
-            args.get("y").and_then(|value| value.as_f64()),
-        ) {
-            (Some(x), Some(y)) => Some((x, y)),
-            (None, None) => None,
-            _ => return ToolResult::error("Pass both x and y to pixel-target scroll."),
-        };
-        if pixel_target.is_some()
-            && matches!(
-                &resolved,
-                cua_driver_core::element_token::ResolvedElement::Element { .. }
-            )
-        {
-            return ToolResult::error(
-                "Pass either element_index (ax) or x,y (px) to scroll, not both.",
-            );
-        }
         let element_point = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 let idx = *element_index;

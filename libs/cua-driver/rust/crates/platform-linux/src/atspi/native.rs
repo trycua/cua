@@ -786,6 +786,23 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
                         .and_then(|r| r.ok())
                         .filter(|s| !s.is_empty())
                         .unwrap_or_else(|| app_name.clone());
+                    let geometry = match call(frame.proxies()).await {
+                        Some(Ok(proxies)) => match call(proxies.component()).await {
+                            Some(Ok(component)) => {
+                                call(component.get_extents(CoordType::Screen))
+                                    .await
+                                    .and_then(|result| result.ok())
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    let (x, y, width, height) = geometry
+                        .filter(|(_, _, width, height)| *width > 0 && *height > 0)
+                        .map(|(x, y, width, height)| {
+                            (x, y, width.max(0) as u32, height.max(0) as u32)
+                        })
+                        .unwrap_or((0, 0, 0, 0));
                     // Stable, non-zero, unique per (pid, frame ordinal).
                     let xid = (((cpid as u64) << 16) | (i as u64)).max(1);
                     out.push(WindowInfo {
@@ -793,12 +810,12 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
                         pid: Some(cpid),
                         app_name: app_name.clone(),
                         title,
-                        is_on_screen: true,
+                        is_on_screen: width > 0 && height > 0,
                         z_index: None,
-                        x: 0,
-                        y: 0,
-                        width: 0,
-                        height: 0,
+                        x,
+                        y,
+                        width,
+                        height,
                     });
                     emitted += 1;
                 }

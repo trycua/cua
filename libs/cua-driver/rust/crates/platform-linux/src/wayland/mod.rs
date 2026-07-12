@@ -848,9 +848,21 @@ pub(crate) unsafe fn borrowed_fd(fd: i32) -> std::os::fd::OwnedFd {
 /// output-level path used by `get_window_state`'s vision payload.
 pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     if is_wayland() {
-        let bytes = screenshot_bytes()?;
+        let bytes = screenshot_display_dispatch()?;
         if sway_ipc::window_for_id(xid).is_some() {
             crop_sway_window_png(&bytes, xid)
+        } else if let Some(window) = list_windows_dispatch(None)
+            .into_iter()
+            .find(|window| window.xid == xid && window.width > 0 && window.height > 0)
+        {
+            crop_png_to_rect(
+                &bytes,
+                window.x,
+                window.y,
+                window.width,
+                window.height,
+                &format!("Wayland window {xid}"),
+            )
         } else {
             Ok(bytes)
         }
@@ -954,6 +966,19 @@ pub fn screenshot_window_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     if is_wayland() {
         if sway_ipc::window_for_id(xid).is_some() {
             return crop_sway_window_png(&screenshot_bytes()?, xid);
+        }
+        if let Some(window) = list_windows_dispatch(None)
+            .into_iter()
+            .find(|window| window.xid == xid && window.width > 0 && window.height > 0)
+        {
+            return crop_png_to_rect(
+                &screenshot_display_dispatch()?,
+                window.x,
+                window.y,
+                window.width,
+                window.height,
+                &format!("Wayland window {xid}"),
+            );
         }
         anyhow::bail!(
             "per-window screenshot is not yet supported on native Wayland — \
@@ -1216,16 +1241,61 @@ fn click_vptr(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow:
 /// virtual-pointer protocol, mirroring how a real wheel notch decomposes. The
 /// magnitude follows wl_pointer convention: ±10 (in wl_fixed = ×256) per tick.
 pub fn scroll(window_id: u64, direction: &str, amount: u32) -> anyhow::Result<()> {
+    scroll_at(window_id, None, direction, amount)
+}
+
+/// Translate window-local screenshot coordinates into compositor output
+/// coordinates when the active compositor exposes the target geometry.
+pub fn window_local_to_output(window_id: u64, x: i32, y: i32) -> (i32, i32) {
+    if let Some(window) = sway_ipc::window_for_id(window_id) {
+        return (window.x.saturating_add(x), window.y.saturating_add(y));
+    }
+    list_windows_dispatch(None)
+        .into_iter()
+        .find(|window| window.xid == window_id && window.width > 0 && window.height > 0)
+        .map(|window| (window.x.saturating_add(x), window.y.saturating_add(y)))
+        .unwrap_or((x, y))
+}
+
+/// Scroll after positioning the synthetic pointer over an output-relative
+/// target. Wayland routes wheel events to the surface beneath the pointer, so
+/// pixel-addressed scrolls must not inherit an unrelated cursor position.
+pub fn scroll_at(
+    window_id: u64,
+    point: Option<(i32, i32)>,
+    direction: &str,
+    amount: u32,
+) -> anyhow::Result<()> {
     let direction = direction.to_string();
     with_libei_fallback(
-        || scroll_vptr(window_id, &direction, amount),
-        || libei_scroll(&direction, amount),
+        || scroll_vptr(window_id, point, &direction, amount),
+        || {
+            if let Some((x, y)) = point {
+                libei_move_absolute(x, y)?;
+            }
+            libei_scroll(&direction, amount)
+        },
     )
 }
 
 /// wlroots virtual-pointer implementation of [`scroll`].
-fn scroll_vptr(window_id: u64, direction: &str, amount: u32) -> anyhow::Result<()> {
+fn scroll_vptr(
+    window_id: u64,
+    point: Option<(i32, i32)>,
+    direction: &str,
+    amount: u32,
+) -> anyhow::Result<()> {
     let mut sess = open_vptr_session(Some(window_id))?;
+    if let Some((x, y)) = point {
+        let px = x.clamp(0, (sess.output_w as i32).saturating_sub(1)) as u32;
+        let py = y.clamp(0, (sess.output_h as i32).saturating_sub(1)) as u32;
+        sess.vptr
+            .motion_absolute(event_time_ms(), px, py, sess.output_w, sess.output_h);
+        sess.vptr.frame();
+        sess.queue.roundtrip(&mut sess.state)?;
+        record_synth_cursor(px as i32, py as i32);
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
     let (axis, sign): (Axis, i32) = match direction.to_ascii_lowercase().as_str() {
         "up" => (Axis::VerticalScroll, -1),
         "down" => (Axis::VerticalScroll, 1),
@@ -1421,11 +1491,12 @@ pub fn type_text(text: &str) -> anyhow::Result<()> {
 /// Press a single named key into the focused Wayland surface via `wtype -k`.
 pub fn press_key(key: &str) -> anyhow::Result<()> {
     let keysym = key_to_keysym(key);
-    let _ = std::process::Command::new("wtype")
-        .args(["-k", "Shift_L"])
+    // Keep the sacrificial modifier and requested key in one virtual-keyboard
+    // lifetime. Starting a second wtype process creates a fresh protocol object,
+    // causing headless seats to drop the requested key as their first event.
+    let result = std::process::Command::new("wtype")
+        .args(["-k", "Shift_L", "-k", &keysym])
         .output();
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    let result = std::process::Command::new("wtype").args(["-k", &keysym]).output();
     match result {
         Ok(out) if out.status.success() => Ok(()),
         other => with_wtype_libei_fallback(
@@ -1462,24 +1533,9 @@ pub fn hotkey(keys: &[String]) -> anyhow::Result<()> {
             let stderr = other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned());
             #[cfg(feature = "portal-input")]
             {
-                // A bare key (no modifiers) is just a single key press, which
-                // the libei adapter handles. Route it through the same wtype→
-                // libei fallback as `press_key`. Only true modifier chords stay
-                // unsupported: the worker doesn't yet wire ei_keyboard modifier
-                // state, so dropping the modifiers would mis-fire the bare key.
-                // See #1982.
-                if mods.is_empty() {
-                    return with_wtype_libei_fallback(
-                        || libei_press_key(&final_key),
-                        stderr,
-                    );
-                }
-                let _ = &stderr;
-                anyhow::bail!(
-                    "hotkey {keys:?} cannot be delivered: this compositor has no \
-                     virtual-keyboard ({}) and the libei fallback does not yet \
-                     support modifier chords",
-                    stderr.unwrap_or_else(|_| "wtype unavailable".into())
+                return with_wtype_libei_fallback(
+                    || libei_hotkey(&mods, &final_key),
+                    stderr,
                 );
             }
             #[cfg(not(feature = "portal-input"))]
@@ -1618,6 +1674,10 @@ fn libei_type_text(_text: &str) -> anyhow::Result<()> {
 fn libei_press_key(_key: &str) -> anyhow::Result<()> {
     unreachable!("libei fallback compiled out (no portal-input feature)")
 }
+#[cfg(not(feature = "portal-input"))]
+fn libei_hotkey(_mods: &[String], _key: &str) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
 
 #[cfg(feature = "portal-input")]
 fn cua_button_to_libei(button: u8) -> libei::Button {
@@ -1719,6 +1779,30 @@ fn libei_press_key(key: &str) -> anyhow::Result<()> {
     let keycode = key_to_evdev(key)
         .ok_or_else(|| anyhow::anyhow!("no evdev keycode mapping for key '{key}' (libei path)"))?;
     libei::press_key(keycode)
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_hotkey(mods: &[String], key: &str) -> anyhow::Result<()> {
+    use libei::KeyTransition::{Press, Release};
+
+    let mut modifier_codes = Vec::with_capacity(mods.len());
+    for modifier in mods {
+        modifier_codes.push(match modifier.as_str() {
+            "ctrl" => 29,
+            "shift" => 42,
+            "alt" => 56,
+            "logo" => 125,
+            other => anyhow::bail!("no evdev keycode mapping for modifier '{other}'"),
+        });
+    }
+    let keycode = key_to_evdev(key)
+        .ok_or_else(|| anyhow::anyhow!("no evdev keycode mapping for key '{key}' (libei path)"))?;
+    let mut transitions = Vec::with_capacity(modifier_codes.len() * 2 + 2);
+    transitions.extend(modifier_codes.iter().copied().map(Press));
+    transitions.push(Press(keycode));
+    transitions.push(Release(keycode));
+    transitions.extend(modifier_codes.iter().rev().copied().map(Release));
+    libei::key_sequence(&transitions)
 }
 
 /// Map cua key names to Linux evdev keycodes for the libei `press_key` path

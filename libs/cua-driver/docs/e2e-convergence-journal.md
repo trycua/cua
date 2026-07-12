@@ -3,6 +3,21 @@
 This journal records changes and test evidence for the Rust desktop harness
 convergence work. It omits machine names, credentials, and partner names.
 
+## 2026-07-12
+
+| Commit | Change | Verification or finding |
+| --- | --- | --- |
+| `79e5ac2a` to `8161cf56` | Repaired Linux fixture scrolling, Wayland event flushing, accessibility enablement, metadata, portal-input feature packaging, and Linux CI compilation | Exact X11 run `29173767528` passed the expanded GTK3 matrix, while the prior complete X11 run `29148643166` passed all 80 declared outcomes. The portable release build now includes GNOME/KDE RemoteDesktop/libei input without requiring the newer PipeWire capture dependency. |
+| `8719e292` | Made native Wayland pointer coordinates, scroll-at-point, keyboard priming, libei key sequences, and cropped window capture target-aware | Sway GTK3 run `29175153270` passed all 23 rows: 17 delivered outcomes and 6 exact background refusals, with no failures or skips. |
+| `9c65c153` and `7b985276` | Added native GNOME observation, targeted Chromium accessibility, generic `ext_foreign_toplevel_list_v1`, stable identity enrichment, and Chromium frame-origin reconstruction | Linux unit and distro compatibility checks passed. A controlled GNOME probe showed driver-launched Electron in both the Shell window list and AT-SPI without globally enabling the screen reader. |
+| `c9c82908` | Split pure-Wayland shared, native, and capture owners onto independent clean runners | Run `29175548524` no longer exhausted one runner disk. It isolated one Sway hotkey failure, one obsolete standalone-activation failure, and the hosted WebKitGTK renderer limitation instead of hiding later lanes. |
+| `a07ba769` | Routed hybrid GNOME/KDE sessions through native Wayland, enumerated GNOME windows from authoritative Shell metadata, translated every pointer gesture from window-local pixels, and required verified target activation before portal/libei input | Clean Linux unit and six-distro compatibility runs passed at the exact SHA. GNOME now has a verified Shell activation adapter; unsupported KDE foreground injection fails closed rather than acting on the user's currently focused application. Exact X11 and split Wayland E2E reruns are active. |
+
+Native GNOME validation also exposed a verification-host issue: Nix `path:`
+inputs copy untracked `target/` directories when a synced VM checkout has no
+Git metadata. Stale source snapshots consumed the VM disk and were removed;
+this is not a driver failure. Clean GitHub runners are unaffected.
+
 ## 2026-07-11
 
 | Commit | Change | Verification or finding |

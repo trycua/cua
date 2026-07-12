@@ -550,7 +550,8 @@ fn row_expects_refusal(row: CatalogRow) -> bool {
     {
         return true;
     }
-    DisplayServer::current() == DisplayServer::Wayland && focus_bound_pointer
+    DisplayServer::current() == DisplayServer::Wayland
+        && (focus_bound_pointer || matches!(row.operation, Operation::PxTypeText { .. }))
 }
 
 fn run_catalog_row(row: CatalogRow) {
@@ -680,6 +681,19 @@ catalog_test!(
     }
 );
 catalog_test!(
+    harness_gtk3_left_click_ax_foreground,
+    CatalogRow {
+        action: "left_click",
+        targeting: Targeting::Ax,
+        delivery: Delivery::Foreground,
+        route: DriverRoute::LinuxAtSpiAction,
+        operation: Operation::AxClick {
+            target: "btn-increment",
+            expected: "counter=1"
+        },
+    }
+);
+catalog_test!(
     harness_gtk3_left_click_px_background,
     CatalogRow {
         action: "left_click",
@@ -784,6 +798,34 @@ catalog_test!(
     }
 );
 catalog_test!(
+    harness_gtk3_type_text_ax_foreground,
+    CatalogRow {
+        action: "type_text",
+        targeting: Targeting::Ax,
+        delivery: Delivery::Foreground,
+        route: DriverRoute::LinuxAtSpiValue,
+        operation: Operation::AxTypeText {
+            target: "txt-input",
+            text: "ax-typed",
+            expected: "mirror=ax-typed"
+        },
+    }
+);
+catalog_test!(
+    harness_gtk3_type_text_px_background,
+    CatalogRow {
+        action: "type_text",
+        targeting: Targeting::Px,
+        delivery: Delivery::Background,
+        route: DriverRoute::LinuxXSendEvent,
+        operation: Operation::PxTypeText {
+            target: "txt-input",
+            text: "px-typed",
+            expected: "mirror=px-typed"
+        },
+    }
+);
+catalog_test!(
     harness_gtk3_type_text_px_foreground,
     CatalogRow {
         action: "type_text",
@@ -812,6 +854,20 @@ catalog_test!(
     }
 );
 catalog_test!(
+    harness_gtk3_set_value_ax_foreground,
+    CatalogRow {
+        action: "set_value",
+        targeting: Targeting::Ax,
+        delivery: Delivery::Foreground,
+        route: DriverRoute::LinuxAtSpiValue,
+        operation: Operation::AxSetValue {
+            target: "txt-input",
+            value: "set-value",
+            expected: "mirror=set-value"
+        },
+    }
+);
+catalog_test!(
     harness_gtk3_check_ax_background,
     CatalogRow {
         action: "checkbox_toggle",
@@ -825,11 +881,38 @@ catalog_test!(
     }
 );
 catalog_test!(
+    harness_gtk3_check_ax_foreground,
+    CatalogRow {
+        action: "checkbox_toggle",
+        targeting: Targeting::Ax,
+        delivery: Delivery::Foreground,
+        route: DriverRoute::LinuxAtSpiAction,
+        operation: Operation::AxClick {
+            target: "chk-agree",
+            expected: "agreed=True"
+        },
+    }
+);
+catalog_test!(
     harness_gtk3_slider_set_value_ax_background,
     CatalogRow {
         action: "slider_set_value",
         targeting: Targeting::Ax,
         delivery: Delivery::Background,
+        route: DriverRoute::LinuxAtSpiValue,
+        operation: Operation::AxSetValue {
+            target: "sld-value",
+            value: "64",
+            expected: "slider_value=64"
+        },
+    }
+);
+catalog_test!(
+    harness_gtk3_slider_set_value_ax_foreground,
+    CatalogRow {
+        action: "slider_set_value",
+        targeting: Targeting::Ax,
+        delivery: Delivery::Foreground,
         route: DriverRoute::LinuxAtSpiValue,
         operation: Operation::AxSetValue {
             target: "sld-value",
@@ -903,6 +986,20 @@ catalog_test!(
     }
 );
 catalog_test!(
+    harness_gtk3_scroll_ax_foreground,
+    CatalogRow {
+        action: "scroll",
+        targeting: Targeting::Ax,
+        delivery: Delivery::Foreground,
+        route: DriverRoute::LinuxAtSpiAction,
+        operation: Operation::Scroll {
+            target: "scroll-tall-vertical",
+            pixel: false,
+            state_key: "scroll_offset="
+        },
+    }
+);
+catalog_test!(
     harness_gtk3_scroll_px_background,
     CatalogRow {
         action: "scroll",
@@ -962,6 +1059,19 @@ catalog_test!(
         action: "child_window",
         targeting: Targeting::Ax,
         delivery: Delivery::Background,
+        route: DriverRoute::LinuxAtSpiAction,
+        operation: Operation::Popover {
+            target: "btn-open-popover",
+            expected: "popover_open=True"
+        },
+    }
+);
+catalog_test!(
+    harness_gtk3_child_window_ax_foreground,
+    CatalogRow {
+        action: "child_window",
+        targeting: Targeting::Ax,
+        delivery: Delivery::Foreground,
         route: DriverRoute::LinuxAtSpiAction,
         operation: Operation::Popover {
             target: "btn-open-popover",

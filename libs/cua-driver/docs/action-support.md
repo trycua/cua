@@ -1,8 +1,8 @@
 # Desktop action support
 
-This ledger records the canonical Rust harness contracts for Windows and
-macOS. It is derived from typed `CaseSpec` rows and accepted E2E evidence, not
-from a successful driver response alone.
+This ledger records the canonical Rust harness contracts for Windows, macOS,
+and Linux. It is derived from typed `CaseSpec` rows and accepted E2E evidence,
+not from a successful driver response alone.
 
 - **Delivered** means a fixture-owned state change was observed.
 - **Refused** means the exact structured refusal code and all required desktop
@@ -25,6 +25,9 @@ Foreground rows listed here are delivered for both AX and PX.
 | macOS | Electron | left/right/double click AX/PX, type text AX/PX, press key AX/PX, hotkey AX/PX, child window AX/PX, editor save AX | scroll AX/PX and drag PX: `background_unavailable` |
 | macOS | Tauri | left/right/double click AX/PX, type text AX/PX, press key AX/PX, hotkey AX/PX, scroll AX/PX, child window AX/PX, editor save AX | drag PX: `background_unavailable` |
 | macOS | WKWebView | left/right/double click AX/PX, type text AX/PX, press key AX/PX, hotkey AX/PX, scroll AX/PX, child window AX/PX, editor save AX | drag PX: `background_unavailable` |
+| Linux X11 | Electron and Tauri | Canonical AX delivery where the toolkit exposes actionable AT-SPI nodes; supported background left-click/value paths retain strict focus, z-order, cursor, and input-leak oracles | Focus-bound renderer keyboard, scroll, drag, and pointer shapes return exact `background_unavailable` where XSendEvent or XTest cannot satisfy the background contract |
+| Linux Sway | Electron | Native discovery, capture, AX tree, and the supported foreground virtual-pointer/keyboard routes are exercised in the shared lane | Unsupported focus-bound background PX/keyboard routes refuse; the remaining renderer-specific cells are tracked as gaps until the split shared lane passes |
+| Linux Sway | Tauri | Native toplevel discovery and fixture launch are exercised | Hosted software-rendered WebKitGTK does not expose a usable renderer AT-SPI tree without DRM/EGL, so shared Tauri results on the headless Sway runner are environment-limited rather than accepted product evidence |
 
 All shared background rows require fixture state, focus, z-order, cursor, and
 no-leaked-input evidence. Foreground rows require fixture state and retain a
@@ -49,6 +52,22 @@ integrity-level harness can exercise it.
 | AppKit | AX tree/capture; AX background left click, set value, and type text; PX background left/right/double click; PX foreground right/double click and slider drag; AX foreground/background scroll; desktop PX foreground left click | PX background slider drag returns exact `background_unavailable`. Native press key, hotkey, AX-addressed right/double click, and broader control combinations remain unproven. |
 | SwiftUI | AX tree/capture; AX background left click and set value; foreground popover-trigger activation | The fixture proves `popover_open=true`, but the transient panel remains absent from targeted AX enumeration. Other native pointer and keyboard combinations remain unproven. |
 | WKWebView | Full 36-cell shared-web catalog through the dedicated repo-local native host | PX background drag returns exact `background_unavailable`; the other 35 shared cells deliver. Native host-specific controls are outside this fixture. |
+
+## Native Linux
+
+Linux is recorded per display server and compositor because Wayland protocols
+are capabilities, not one uniform API.
+
+| Environment | Proven contracts | Refusals and gaps |
+| --- | --- | --- |
+| X11/Openbox | The exact canonical run passed 80/80 declared outcomes. GTK3 AT-SPI actions and values, foreground XTest pointer/keyboard routes, capture, desktop scope, and supported shared-web cells all reached fixture-owned oracles. | Xvfb does not prove the real-Xorg MPX/uinput background pointer route. Toolkits that reject XSendEvent remain exact refusals or explicit gaps. |
+| Sway/wlroots | GTK3 passed 23/23: AX tree; background AX click, checkbox, child window, scroll, set value, slider, and type; foreground PX left/right/double click, drag, scroll, press key, hotkey, and type; background PX left click through an accessible hit-test. Native screencopy and per-cell video are proven. | Background PX right/double click, drag, scroll, key, and hotkey return exact `background_unavailable`; stock Wayland cannot target those actions at an occluded unfocused surface. |
+| GNOME/Mutter | The optional WinRects helper supplies stable window ids, geometry, stacking, verified activation, and the compositor cursor. AT-SPI remains the semantic element backend; portal/libei is used only after the helper confirms the exact foreground target. | The helper requires installation plus one Shell-session restart. Without it, target-bound foreground input refuses. Portal consent persistence and portal video still need a complete accepted run. |
+| KDE/KWin | AT-SPI semantic actions and generic/ext toplevel discovery are available where the desktop exposes them. Portal input is compiled into release binaries. | A target-addressable KWin activation adapter is not implemented. Foreground portal/libei input therefore refuses instead of injecting into the wrong focused app. Plasma 5.27 on the current cloud image also has a broken compositor socket and is not accepted as behavioral evidence; Plasma 6 needs a representative lane. |
+
+PX background left-click rows may resolve the screen point to an actionable
+AT-SPI node. Such a pass proves the public PX-addressed behavior and its desktop
+side effects, but it does not prove raw pixel delivery to canvases or games.
 
 ## Maintenance rule
 

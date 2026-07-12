@@ -317,6 +317,7 @@ async fn check_wayland_backend() -> CheckEntry {
         &snap,
         crate::wayland::PORTAL_INPUT_ENABLED,
         remote_desktop_portal_reachable,
+        crate::wayland::shell_helper::list_windows(None).is_some(),
     )
 }
 
@@ -324,6 +325,7 @@ fn classify_wayland_backend(
     snap: &crate::wayland::WaylandManagers,
     portal_libei_enabled: bool,
     remote_desktop_portal_reachable: bool,
+    target_activation_available: bool,
 ) -> CheckEntry {
     let msg = format!(
         "foreign-toplevel={ftl}, screencopy={cap}, ext-image-copy={ext_cap}, \
@@ -342,7 +344,7 @@ fn classify_wayland_backend(
         );
     }
     if !snap.virtual_pointer {
-        if remote_desktop_portal_reachable {
+        if remote_desktop_portal_reachable && target_activation_available {
             return CheckEntry::pass(
                 NAME_WAYLAND_BACKEND,
                 format!(
@@ -351,11 +353,25 @@ fn classify_wayland_backend(
                      (proxy reachability only — the full create_session → \
                      select_devices → start → connect_to_eis handshake is NOT \
                      exercised here, to avoid a consent prompt on every doctor \
-                     run, so this is not a guarantee that injection succeeds); \
-                     input attempts the full xdg-desktop-portal + EIS handshake \
-                     on commands for non-wlroots compositors such as GNOME/Mutter \
-                     and KDE/KWin."
+                     run, so this is not a guarantee that injection succeeds). \
+                     The compositor helper also provides verified target \
+                     activation before focus-bound portal input."
                 ),
+            );
+        }
+        if remote_desktop_portal_reachable {
+            return CheckEntry::fail(
+                NAME_WAYLAND_BACKEND,
+                format!(
+                    "The RemoteDesktop portal is reachable, but this compositor \
+                     has no verified target-activation adapter ({msg}). Portal/libei \
+                     input is global and would otherwise affect whichever window is \
+                     focused, so cua-driver refuses foreground dispatch."
+                ),
+                "On GNOME, install and enable the bundled WinRects Shell helper, then \
+                 log out and back in. KDE foreground input remains unavailable until \
+                 a target-addressable KWin activation adapter is installed; AX actions \
+                 and exact background refusals remain usable.",
             );
         }
         if portal_libei_enabled {
@@ -637,7 +653,7 @@ mod tests {
             wl_shm: true,
         };
 
-        let entry = classify_wayland_backend(&snap, true, true);
+        let entry = classify_wayland_backend(&snap, true, true, true);
 
         assert_eq!(entry.status, CheckStatus::Pass);
         assert!(entry.message.contains("portal/libei"), "{}", entry.message);
@@ -655,11 +671,29 @@ mod tests {
             wl_shm: true,
         };
 
-        let entry = classify_wayland_backend(&snap, true, false);
+        let entry = classify_wayland_backend(&snap, true, false, false);
 
         assert_eq!(entry.status, CheckStatus::Fail);
         assert!(entry.message.contains("portal/libei"), "{}", entry.message);
         assert!(entry.hint.as_deref().unwrap_or("").contains("xdg-desktop-portal"));
+    }
+
+    #[test]
+    fn wayland_backend_fails_closed_when_portal_input_cannot_target_a_window() {
+        let snap = crate::wayland::WaylandManagers {
+            foreign_toplevel: false,
+            screencopy: false,
+            ext_image_copy_capture: false,
+            ext_output_image_capture_source: false,
+            virtual_pointer: false,
+            wl_shm: true,
+        };
+
+        let entry = classify_wayland_backend(&snap, true, true, false);
+
+        assert_eq!(entry.status, CheckStatus::Fail);
+        assert!(entry.message.contains("target-activation"), "{}", entry.message);
+        assert!(entry.message.contains("wrong application"), "{}", entry.message);
     }
 
     #[tokio::test]

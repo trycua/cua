@@ -85,7 +85,13 @@ fn element_index(state: &ToolResponse, name: &str) -> u64 {
     })
 }
 
-fn element_rect(state: &ToolResponse, name: &str) -> (f64, f64, f64, f64) {
+fn element_rect(
+    driver: &mut McpDriver,
+    pid: u32,
+    window_id: u64,
+    state: &ToolResponse,
+    name: &str,
+) -> (f64, f64, f64, f64) {
     let index = element_index(state, name);
     let elements = state.structured()["elements"]
         .as_array()
@@ -95,17 +101,18 @@ fn element_rect(state: &ToolResponse, name: &str) -> (f64, f64, f64, f64) {
         .find(|element| element["element_index"].as_u64() == Some(index))
         .and_then(|element| element["frame"].as_object())
         .unwrap_or_else(|| panic!("GTK3 element [{index}] {name:?} has no frame"));
-    let window = elements
-        .iter()
-        .find(|element| {
-            matches!(element["role"].as_str(), Some("frame" | "window"))
-                && element["frame"].is_object()
+    let windows = driver.call("list_windows", serde_json::json!({ "pid": pid as i64 }));
+    let window = windows.structured()["windows"]
+        .as_array()
+        .and_then(|windows| {
+            windows
+                .iter()
+                .find(|window| window["window_id"].as_u64() == Some(window_id))
         })
-        .and_then(|element| element["frame"].as_object())
-        .expect("GTK3 top-level frame is required for PX coordinate conversion");
+        .unwrap_or_else(|| panic!("GTK3 window {window_id} disappeared before PX targeting"));
 
-    let window_width = window["w"].as_f64().unwrap_or(0.0);
-    let window_height = window["h"].as_f64().unwrap_or(0.0);
+    let window_width = window["width"].as_f64().unwrap_or(0.0);
+    let window_height = window["height"].as_f64().unwrap_or(0.0);
     let screenshot_width = state.structured()["screenshot_width"]
         .as_f64()
         .expect("PX targeting requires screenshot_width");
@@ -341,7 +348,7 @@ fn invoke_operation(row: CatalogRow, pid: u32, window_id: u64, driver: &mut McpD
             count,
             expected,
         } => {
-            let (x, y, width, height) = element_rect(&pre, target);
+            let (x, y, width, height) = element_rect(driver, pid, window_id, &pre, target);
             let tool = if count == 2 {
                 "double_click"
             } else if button == "right" {
@@ -365,7 +372,7 @@ fn invoke_operation(row: CatalogRow, pid: u32, window_id: u64, driver: &mut McpD
             text,
             expected,
         } => {
-            let (x, y, width, height) = element_rect(&pre, target);
+            let (x, y, width, height) = element_rect(driver, pid, window_id, &pre, target);
             (
                 driver.call(
                     "type_text",
@@ -408,7 +415,7 @@ fn invoke_operation(row: CatalogRow, pid: u32, window_id: u64, driver: &mut McpD
                 "direction": "down", "amount": 6, "delivery_mode": mode
             });
             if pixel {
-                let (x, y, width, height) = element_rect(&pre, target);
+                let (x, y, width, height) = element_rect(driver, pid, window_id, &pre, target);
                 args["x"] = serde_json::json!(x + width / 2.0);
                 args["y"] = serde_json::json!(y + height / 2.0);
             } else {
@@ -424,7 +431,7 @@ fn invoke_operation(row: CatalogRow, pid: u32, window_id: u64, driver: &mut McpD
             return;
         }
         Operation::Drag { target, state_key } => {
-            let (x, y, width, height) = element_rect(&pre, target);
+            let (x, y, width, height) = element_rect(driver, pid, window_id, &pre, target);
             let response = driver.call(
                 "drag",
                 serde_json::json!({
@@ -796,7 +803,7 @@ catalog_test!(
         delivery: Delivery::Background,
         route: DriverRoute::LinuxAtSpiAction,
         operation: Operation::Scroll {
-            target: "scroll-tall",
+            target: "scroll bar",
             pixel: false,
             state_key: "scroll_offset="
         },
@@ -810,7 +817,7 @@ catalog_test!(
         delivery: Delivery::Background,
         route: DriverRoute::LinuxXSendEvent,
         operation: Operation::Scroll {
-            target: "scroll-tall",
+            target: "scroll bar",
             pixel: true,
             state_key: "scroll_offset="
         },
@@ -824,7 +831,7 @@ catalog_test!(
         delivery: Delivery::Foreground,
         route: DriverRoute::LinuxXTest,
         operation: Operation::Scroll {
-            target: "scroll-tall",
+            target: "scroll bar",
             pixel: true,
             state_key: "scroll_offset="
         },

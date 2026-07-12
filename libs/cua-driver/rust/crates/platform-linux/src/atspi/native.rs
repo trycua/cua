@@ -1985,7 +1985,10 @@ async fn element_bounds_for_visited(
     // Electron's document starts at (0,0), so this is a no-op there, and native
     // title-bar controls keep their outer-window geometry.
     let web_document_origin = if crate::wayland::is_wayland() && offset.is_some() {
-        crate::wayland::sway_ipc::window_content_offset_for_pid(pid).or_else(|| {
+        let compositor_origin = crate::wayland::sway_ipc::window_content_offset_for_pid(pid);
+        if compositor_origin.is_some() {
+            compositor_origin
+        } else {
             let document = visited
                 .iter()
                 .find(|node| node.has_component && is_document_role(&node.role));
@@ -2005,7 +2008,7 @@ async fn element_bounds_for_visited(
             } else {
                 None
             }
-        })
+        }
     } else {
         None
     };

@@ -47,7 +47,6 @@
 
           waylandE2eLibraries = with pkgs; [
             alsa-lib
-            atk
             cairo
             cups
             dbus
@@ -94,9 +93,11 @@
           };
 
           devShells.cua-driver-wayland-e2e = pkgs.mkShell {
-            packages = [
-              hostAtSpi
-            ] ++ (with pkgs; [
+            # hostAtSpi is referenced by absolute launcher path below, but is
+            # deliberately not a shell package: adding its rebuilt library and
+            # typelib hooks alongside GTK's stock AT-SPI closure loads two ATK
+            # copies and crashes PyGObject during Gtk import.
+            packages = with pkgs; [
               cargo
               clang
               dbus
@@ -112,11 +113,9 @@
               sway
               wf-recorder
               wtype
-              # Python 3.13 + PyGObject can double-register AtkImplementorIface
-              # while importing GTK3 in the headless Wayland session. Keep the
-              # fixture interpreter on the mature GTK3/PyGObject combination.
+              # Keep the GTK3 fixture on the mature Python/PyGObject combination.
               (python312.withPackages (pythonPackages: [ pythonPackages.pygobject3 ]))
-            ]);
+            ];
             buildInputs = waylandE2eLibraries;
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath waylandE2eLibraries;
             shellHook = ''

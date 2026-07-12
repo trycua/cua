@@ -62,12 +62,33 @@ export default class WinRectsExtension extends Extension {
         if (this._nameId) { Gio.bus_unown_name(this._nameId); this._nameId = 0; }
     }
     GetRects() {
+        const actors = global.get_window_actors();
+        const actorByWindow = new Map();
+        for (const actor of actors) {
+            if (actor.meta_window)
+                actorByWindow.set(actor.meta_window, actor);
+        }
+        const windows = global.display.sort_windows_by_stacking([...actorByWindow.keys()]);
+        const focusedWindow = global.display.focus_window;
         const out = [];
-        for (const a of global.get_window_actors()) {
-            const w = a.meta_window;
-            if (!w) continue;
+        for (let stacking = 0; stacking < windows.length; stacking++) {
+            const w = windows[stacking];
+            const actor = actorByWindow.get(w);
             const r = w.get_frame_rect();
-            out.push({pid: w.get_pid(), title: w.get_title(), x: r.x, y: r.y, w: r.width, h: r.height});
+            const minimized = Boolean(w.minimized);
+            out.push({
+                id: w.get_stable_sequence(),
+                pid: w.get_pid(),
+                title: w.get_title() ?? '',
+                x: r.x,
+                y: r.y,
+                w: r.width,
+                h: r.height,
+                focused: focusedWindow === w,
+                minimized,
+                visible: Boolean(actor?.visible) && !minimized,
+                stacking,
+            });
         }
         return JSON.stringify(out);
     }

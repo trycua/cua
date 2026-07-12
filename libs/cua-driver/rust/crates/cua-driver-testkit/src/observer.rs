@@ -755,12 +755,13 @@ pub mod macos {
 
 #[cfg(target_os = "linux")]
 pub mod linux {
-    use std::process::Command;
+    use std::process::{Command, Stdio};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::thread::JoinHandle;
     use std::time::Duration;
 
+    use serde::Deserialize;
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::{
         AtomEnum, ConnectionExt, MapState, Rectangle, Window, WindowClass,
@@ -775,7 +776,8 @@ pub mod linux {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum SessionKind {
         X11,
-        Wayland,
+        Sway,
+        Gnome,
         Missing,
     }
 
@@ -793,7 +795,13 @@ pub mod linux {
                 .unwrap_or(false)
                 || std::env::var_os("WAYLAND_DISPLAY").is_some();
             let session = if explicit_wayland {
-                SessionKind::Wayland
+                if sway_available() {
+                    SessionKind::Sway
+                } else if gnome_windows().is_ok() {
+                    SessionKind::Gnome
+                } else {
+                    SessionKind::Missing
+                }
             } else if std::env::var_os("DISPLAY").is_some() {
                 if x11_window_manager_ready() {
                     SessionKind::X11
@@ -827,7 +835,7 @@ pub mod linux {
                     cursor: true,
                     leaked_input: false,
                 },
-                SessionKind::Wayland => ObserverCapabilities {
+                SessionKind::Sway | SessionKind::Gnome => ObserverCapabilities {
                     focus: true,
                     z_order: true,
                     cursor: false,
@@ -840,7 +848,8 @@ pub mod linux {
         fn snapshot(&self, target: TargetWindow) -> Result<DesktopSnapshot, ObserverError> {
             match self.session {
                 SessionKind::X11 => x11_snapshot(target),
-                SessionKind::Wayland => sway_snapshot(target),
+                SessionKind::Sway => sway_snapshot(target),
+                SessionKind::Gnome => gnome_snapshot(target),
                 SessionKind::Missing => Ok(DesktopSnapshot {
                     foreground: None,
                     input_focus: None,
@@ -865,7 +874,8 @@ pub mod linux {
             self.sampler = Some(std::thread::spawn(move || {
                 let focus_identity = || match session {
                     SessionKind::X11 => x11_focus_identity(),
-                    SessionKind::Wayland => sway_focus_identity(),
+                    SessionKind::Sway => sway_focus_identity(),
+                    SessionKind::Gnome => gnome_focus_identity(),
                     SessionKind::Missing => Ok(None),
                 };
                 let mut previous = focus_identity().ok().flatten();
@@ -935,6 +945,154 @@ pub mod linux {
         }
         serde_json::from_slice(&output.stdout)
             .map_err(|error| ObserverError::new(format!("invalid sway tree JSON: {error}")))
+    }
+
+    fn sway_available() -> bool {
+        std::env::var_os("SWAYSOCK").is_some_and(|value| !value.is_empty()) && sway_tree().is_ok()
+    }
+
+    #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+    struct GnomeWindow {
+        id: u64,
+        pid: u32,
+        #[serde(rename = "title")]
+        _title: String,
+        x: i64,
+        y: i64,
+        w: i64,
+        h: i64,
+        focused: bool,
+        minimized: bool,
+        visible: bool,
+        stacking: u64,
+    }
+
+    fn gnome_windows() -> Result<Vec<GnomeWindow>, ObserverError> {
+        let mut child = Command::new("gdbus")
+            .args([
+                "call",
+                "--session",
+                "--dest",
+                "org.cua.WinRects",
+                "--object-path",
+                "/org/cua/WinRects",
+                "--method",
+                "org.cua.WinRects.GetRects",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| ObserverError::new(format!("gdbus GetRects failed: {error}")))?;
+        let deadline = std::time::Instant::now() + Duration::from_millis(800);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    let output = child.wait_with_output().map_err(|error| {
+                        ObserverError::new(format!("gdbus GetRects output failed: {error}"))
+                    })?;
+                    if !output.status.success() {
+                        return Err(ObserverError::new(format!(
+                            "gdbus GetRects exited with {}: {}",
+                            output.status,
+                            String::from_utf8_lossy(&output.stderr)
+                        )));
+                    }
+                    return parse_gnome_windows(&String::from_utf8_lossy(&output.stdout));
+                }
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(15))
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(ObserverError::new("gdbus GetRects timed out"));
+                }
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(ObserverError::new(format!(
+                        "gdbus GetRects wait failed: {error}"
+                    )));
+                }
+            }
+        }
+    }
+
+    fn parse_gnome_windows(raw: &str) -> Result<Vec<GnomeWindow>, ObserverError> {
+        let start = raw
+            .find('[')
+            .ok_or_else(|| ObserverError::new("GetRects response had no JSON array"))?;
+        let end = raw
+            .rfind(']')
+            .filter(|end| *end >= start)
+            .ok_or_else(|| ObserverError::new("GetRects response had no complete JSON array"))?;
+        serde_json::from_str(&raw[start..=end])
+            .map_err(|error| ObserverError::new(format!("invalid GetRects JSON: {error}")))
+    }
+
+    fn gnome_target<'a>(
+        windows: &'a [GnomeWindow],
+        target: TargetWindow,
+    ) -> Option<&'a GnomeWindow> {
+        let matching = windows.iter().filter(|window| window.pid == target.pid);
+        matching
+            .clone()
+            .find(|window| window.id == target.native_id)
+            .or_else(|| matching.max_by_key(|window| window.stacking))
+    }
+
+    fn fully_covers(cover: &GnomeWindow, target: &GnomeWindow) -> bool {
+        target.w > 0
+            && target.h > 0
+            && cover.w > 0
+            && cover.h > 0
+            && cover.x <= target.x
+            && cover.y <= target.y
+            && cover.x.saturating_add(cover.w) >= target.x.saturating_add(target.w)
+            && cover.y.saturating_add(cover.h) >= target.y.saturating_add(target.h)
+    }
+
+    fn classify_gnome_target(windows: &[GnomeWindow], target: TargetWindow) -> TargetZ {
+        let Some(target) = gnome_target(windows, target) else {
+            return TargetZ::NotFound;
+        };
+        if target.focused {
+            TargetZ::Foreground
+        } else if target.minimized || !target.visible {
+            TargetZ::Minimized
+        } else if windows.iter().any(|window| {
+            window.stacking > target.stacking
+                && window.visible
+                && !window.minimized
+                && fully_covers(window, target)
+        }) {
+            TargetZ::BackgroundOccluded
+        } else {
+            TargetZ::BackgroundVisible
+        }
+    }
+
+    fn gnome_focus_identity_from(windows: &[GnomeWindow]) -> Option<u64> {
+        windows
+            .iter()
+            .find(|window| window.focused)
+            .map(|window| window.id)
+    }
+
+    fn gnome_snapshot(target: TargetWindow) -> Result<DesktopSnapshot, ObserverError> {
+        let windows = gnome_windows()?;
+        let focused = gnome_focus_identity_from(&windows);
+        Ok(DesktopSnapshot {
+            foreground: focused,
+            input_focus: focused,
+            target_z: classify_gnome_target(&windows, target),
+            cursor_pos: None,
+        })
+    }
+
+    fn gnome_focus_identity() -> Result<Option<u64>, ObserverError> {
+        Ok(gnome_focus_identity_from(&gnome_windows()?))
     }
 
     fn walk_sway_tree(
@@ -1239,6 +1397,10 @@ pub mod linux {
     mod tests {
         use super::*;
 
+        fn gnome_payload() -> &'static str {
+            r#"('[{"id":10,"pid":100,"title":"target","x":10,"y":20,"w":300,"h":200,"focused":false,"minimized":false,"visible":true,"stacking":0},{"id":20,"pid":200,"title":"sentinel","x":0,"y":0,"w":800,"h":600,"focused":true,"minimized":false,"visible":true,"stacking":1}]',)"#
+        }
+
         #[test]
         fn occlusion_samples_corners_and_center() {
             let bounds = Rectangle {
@@ -1273,6 +1435,52 @@ pub mod linux {
                 target: Some((20, false, Some(11))),
             };
             assert_eq!(classify_sway_target(&state), TargetZ::Minimized);
+        }
+
+        #[test]
+        fn gnome_json_and_focus_identity_are_compositor_derived() {
+            let windows = parse_gnome_windows(gnome_payload()).expect("GNOME JSON");
+            assert_eq!(windows.len(), 2);
+            assert_eq!(gnome_focus_identity_from(&windows), Some(20));
+            assert!(parse_gnome_windows(r#"('[{"pid":100}]',)"#).is_err());
+        }
+
+        #[test]
+        fn gnome_only_full_higher_cover_occludes() {
+            let mut windows = parse_gnome_windows(gnome_payload()).expect("GNOME JSON");
+            let target = TargetWindow {
+                pid: 100,
+                native_id: 10,
+            };
+            assert_eq!(
+                classify_gnome_target(&windows, target),
+                TargetZ::BackgroundOccluded
+            );
+            windows[1].w = 200;
+            assert_eq!(
+                classify_gnome_target(&windows, target),
+                TargetZ::BackgroundVisible
+            );
+            windows[1].w = 800;
+            windows[1].visible = false;
+            assert_eq!(
+                classify_gnome_target(&windows, target),
+                TargetZ::BackgroundVisible
+            );
+        }
+
+        #[test]
+        fn gnome_focused_and_minimized_are_direct() {
+            let mut windows = parse_gnome_windows(gnome_payload()).expect("GNOME JSON");
+            let target = TargetWindow {
+                pid: 100,
+                native_id: 10,
+            };
+            windows[0].focused = true;
+            assert_eq!(classify_gnome_target(&windows, target), TargetZ::Foreground);
+            windows[0].focused = false;
+            windows[0].minimized = true;
+            assert_eq!(classify_gnome_target(&windows, target), TargetZ::Minimized);
         }
     }
 }

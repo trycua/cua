@@ -490,6 +490,14 @@ mod list_windows_tests {
         assert_eq!(rec["window_id"], json!(42));
         assert_eq!(rec["title"], json!("Example"));
     }
+
+    #[test]
+    fn chromium_launch_detection_uses_executable_basename() {
+        assert!(chromium_family_program("/usr/bin/google-chrome-stable"));
+        assert!(chromium_family_program("CuaTestHarness.Electron"));
+        assert!(chromium_family_program("chromium-browser"));
+        assert!(!chromium_family_program("/usr/bin/gnome-text-editor"));
+    }
 }
 
 // ── get_window_state ─────────────────────────────────────────────────────────
@@ -860,7 +868,21 @@ impl Tool for LaunchAppTool {
                     let mut parts = cmd.split_whitespace();
                     let prog = parts.next().unwrap_or(cmd);
                     let rest: Vec<&str> = parts.collect();
-                    match std::process::Command::new(prog).args(&rest).spawn() {
+                    let mut launch = std::process::Command::new(prog);
+                    launch
+                        .args(&rest)
+                        // Enable accessibility for this child without toggling
+                        // GNOME's global ScreenReaderEnabled setting (which can
+                        // launch Orca). Native toolkits ignore these when they
+                        // do not need them.
+                        .env("ACCESSIBILITY_ENABLED", "1")
+                        .env("NO_AT_BRIDGE", "0");
+                    if chromium_family_program(prog)
+                        && !rest.iter().any(|arg| *arg == "--force-renderer-accessibility")
+                    {
+                        launch.arg("--force-renderer-accessibility");
+                    }
+                    match launch.spawn() {
                         Ok(child) => {
                             let pid = child.id();
                             return Ok((
@@ -890,10 +912,15 @@ impl Tool for LaunchAppTool {
             Ok(Ok((message, pid_opt, name))) => {
                 if let Some(pid) = pid_opt {
                     let windows = tokio::task::spawn_blocking(move || {
-                        crate::x11::list_windows(Some(pid))
-                            .iter()
-                            .map(window_record_json)
-                            .collect::<Vec<_>>()
+                        let deadline = std::time::Instant::now()
+                            + std::time::Duration::from_secs(3);
+                        loop {
+                            let windows = crate::wayland::list_windows_dispatch(Some(pid));
+                            if !windows.is_empty() || std::time::Instant::now() >= deadline {
+                                return windows.iter().map(window_record_json).collect::<Vec<_>>();
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                        }
                     })
                     .await
                     .unwrap_or_default();
@@ -920,6 +947,17 @@ impl Tool for LaunchAppTool {
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
+}
+
+fn chromium_family_program(program: &str) -> bool {
+    let basename = std::path::Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program)
+        .to_ascii_lowercase();
+    ["chrome", "chromium", "electron", "brave", "edge"]
+        .iter()
+        .any(|needle| basename.contains(needle))
 }
 
 // ── shared helpers ────────────────────────────────────────────────────────────

@@ -167,6 +167,11 @@ else
 # Electron is a prebuilt host binary. A Nix dev shell's glibc-bearing library
 # path is ABI-incompatible with it, so keep that path out of this child only.
 unset LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH
+# Native GNOME sessions do not advertise ScreenReaderEnabled globally because
+# doing so launches Orca. Activate Chromium accessibility for this process
+# instead, matching the explicit --force-renderer-accessibility launch flag.
+export ACCESSIBILITY_ENABLED=1
+export NO_AT_BRIDGE=0
 exec "$(dirname "$0")/CuaTestHarness.Electron.bin" "$@"
 LAUNCHER
   chmod +x "$outDir/CuaTestHarness.Electron" "$outDir/CuaTestHarness.Electron.bin"

@@ -1,8 +1,8 @@
 //! Native-Wayland backend.
 //!
-//! Used when running under a Wayland compositor with no X11 (WAYLAND_DISPLAY
-//! set, DISPLAY unset). Enumerates toplevels via
-//! `zwlr_foreign_toplevel_manager_v1`, captures per-output screenshots via
+//! Used when the experimental backend is enabled under a Wayland compositor.
+//! Enumerates toplevels via `zwlr_foreign_toplevel_manager_v1` or the generic
+//! staging `ext_foreign_toplevel_list_v1`, captures per-output screenshots via
 //! `zwlr_screencopy_manager_v1` + `wl_shm` (native — `grim` remains a
 //! fallback), and synthesises pointer / scroll / drag input via
 //! `zwlr_virtual_pointer_v1`. Per-window image capture is deferred until
@@ -11,6 +11,7 @@
 //! typed error on pure Wayland.
 
 pub mod ext_screencopy;
+pub mod ext_toplevel;
 pub mod overlay;
 pub mod persistent_vptr;
 pub mod portal_screenshot;
@@ -111,10 +112,10 @@ pub fn is_wayland() -> bool {
 /// functions (`open_vptr_session`'s `NO_VPTR_MARKER` → `with_libei_fallback`),
 /// not from environment variables.
 ///
-/// Screen capture and `list_windows` intentionally keep using [`is_wayland`]:
-/// on an XWayland-co-present GNOME session the X11 dispatch for those is still
-/// serviceable, whereas the native-Wayland enumeration path depends on
-/// `zwlr_foreign_toplevel_manager_v1`, which Mutter does not expose.
+/// Screen capture intentionally keeps using [`is_wayland`]. Window enumeration
+/// runs whenever `WAYLAND_DISPLAY` is present, including hybrid XWayland
+/// sessions, because the generic ext-toplevel protocol can enumerate native
+/// windows that X11 cannot see.
 pub fn wayland_input_enabled() -> bool {
     wayland_enabled() && std::env::var_os("WAYLAND_DISPLAY").is_some()
 }
@@ -1674,11 +1675,6 @@ fn libei_type_text(_text: &str) -> anyhow::Result<()> {
 fn libei_press_key(_key: &str) -> anyhow::Result<()> {
     unreachable!("libei fallback compiled out (no portal-input feature)")
 }
-#[cfg(not(feature = "portal-input"))]
-fn libei_hotkey(_mods: &[String], _key: &str) -> anyhow::Result<()> {
-    unreachable!("libei fallback compiled out (no portal-input feature)")
-}
-
 #[cfg(feature = "portal-input")]
 fn cua_button_to_libei(button: u8) -> libei::Button {
     match button {
@@ -2101,19 +2097,28 @@ pub fn inject_parallel_drags(drags: &[InjectDrag]) -> anyhow::Result<()> {
     inject_send(&lines)
 }
 
-/// Window-enumeration dispatcher: native Wayland when applicable, else X11.
+/// Window-enumeration dispatcher: native Wayland when available, else X11.
 pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
-    if is_wayland() {
-        // wlroots compositors expose zwlr_foreign_toplevel_management — use it
-        // (it has no pid, so filter_pid can't apply there).
-        match list_windows() {
+    if wayland_enabled() && std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        // Prefer the richer wlroots protocol. The generic staging protocol is
+        // only consulted when wlroots yields no windows (including when its
+        // manager global is absent).
+        let native = match list_windows() {
+            Ok(ws) if !ws.is_empty() => Ok(enrich_native_windows(
+                ws,
+                crate::atspi::list_windows(filter_pid),
+            )),
+            Ok(_) => ext_toplevel::list_windows(),
+            Err(wlr_error) => ext_toplevel::list_windows().map_err(|ext_error| {
+                anyhow::anyhow!(
+                    "wlr provider failed ({wlr_error}); ext provider failed ({ext_error})"
+                )
+            }),
+        };
+        match native {
             Ok(ws) if !ws.is_empty() => {
                 if let Some(pid) = filter_pid {
-                    let filtered: Vec<_> = ws
-                        .into_iter()
-                        .filter(|window| window.pid == Some(pid))
-                        .collect();
-                    if !filtered.is_empty() {
+                    if let Some(filtered) = native_windows_for_pid(ws, pid) {
                         return filtered;
                     }
                 } else {
@@ -2127,10 +2132,6 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
                 }
             }
             Ok(_) => {
-                // GNOME Mutter / KDE KWin don't implement foreign-toplevel, so the
-                // list came back empty. Native Wayland apps have no X11 XID either,
-                // so fall back to enumerating windows from the AT-SPI registry
-                // (keyed by pid — the same tree get_window_state walks).
                 let ws = crate::atspi::list_windows(filter_pid);
                 if !ws.is_empty() {
                     return ws;
@@ -2138,7 +2139,7 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
             }
             Err(e) => {
                 tracing::warn!(
-                    "wayland foreign-toplevel list_windows failed: {e}; trying AT-SPI registry"
+                    "native Wayland list_windows failed: {e}; trying AT-SPI registry"
                 );
                 let ws = crate::atspi::list_windows(filter_pid);
                 if !ws.is_empty() {
@@ -2148,12 +2149,10 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
         }
         // Last resort under Wayland: an Xwayland app may still have an X11 XID.
     }
-    // On an XWayland-co-present Wayland session (GNOME/Mutter, KDE/KWin: DISPLAY
-    // is set, so `is_wayland()` above is false), X11 enumeration only sees
-    // XWayland apps — native Wayland apps have no X11 XID and are otherwise
-    // invisible (#1978). Merge in the AT-SPI registry (keyed by pid), which does
-    // surface native Wayland apps that expose accessibility. Gated on the same
-    // opt-in as the rest of the native-Wayland backend.
+    // If native enumeration and its AT-SPI fallback found nothing, X11 may still
+    // expose XWayland clients. Merge one final AT-SPI snapshot so native windows
+    // remain visible on hybrid sessions even when neither foreign-toplevel
+    // protocol is advertised (#1978). Gated on the native-Wayland opt-in.
     //
     // Caveats for the merged AT-SPI entries: they carry a synthetic (non-X11)
     // xid and zero geometry (x/y/w/h = 0), like the existing wlroots AT-SPI
@@ -2187,6 +2186,60 @@ fn merge_atspi_windows(
             windows.push(window);
         }
     }
+}
+
+fn enrich_native_windows(
+    mut native: Vec<WindowInfo>,
+    atspi: Vec<WindowInfo>,
+) -> Vec<WindowInfo> {
+    let mut claimed = std::collections::HashSet::new();
+    for window in &mut native {
+        if window.pid.is_some() {
+            continue;
+        }
+        let title_match = atspi.iter().enumerate().find_map(|(index, candidate)| {
+            (!claimed.contains(&index)
+                && !window.title.is_empty()
+                && candidate.title == window.title)
+                .then_some(index)
+        });
+        let app_match = title_match.or_else(|| {
+            let matches = atspi
+                .iter()
+                .enumerate()
+                .filter(|(index, candidate)| {
+                    !claimed.contains(index)
+                        && !window.app_name.is_empty()
+                        && candidate.app_name == window.app_name
+                })
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            (matches.len() == 1).then(|| matches[0])
+        });
+        let Some(index) = app_match else { continue };
+        claimed.insert(index);
+        let candidate = &atspi[index];
+        window.pid = candidate.pid;
+        if window.width == 0 || window.height == 0 {
+            window.x = candidate.x;
+            window.y = candidate.y;
+            window.width = candidate.width;
+            window.height = candidate.height;
+        }
+        window.is_on_screen = candidate.is_on_screen;
+    }
+    native
+}
+
+/// Return native records only when they contain a real match for a pid-scoped
+/// request. Ext records whose AT-SPI merge left pid unknown must not suppress
+/// the later AT-SPI and X11 fallback providers.
+fn native_windows_for_pid(windows: Vec<WindowInfo>, pid: u32) -> Option<Vec<WindowInfo>> {
+    let matching: Vec<_> = windows
+        .into_iter()
+        .filter(|window| window.pid == Some(pid))
+        .collect();
+    (!matching.is_empty()).then_some(matching)
 }
 
 /// Snapshot of which wlroots manager globals the running compositor advertises.
@@ -2319,6 +2372,29 @@ mod tests {
         assert_eq!(windows[0].xid, 10);
         assert_eq!(windows[1].pid, Some(200));
         assert_eq!(windows[2].pid, None);
+    }
+
+    #[test]
+    fn unmatched_ext_windows_do_not_satisfy_pid_filter() {
+        let windows = vec![window(0xF000_0000, None, "Protocol-only")];
+        assert!(native_windows_for_pid(windows, 4242).is_none());
+    }
+
+    #[test]
+    fn native_title_match_recovers_pid_without_replacing_native_id() {
+        let native = vec![window(77, None, "CuaTestHarness")];
+        let mut accessible = window(123 << 16, Some(123), "CuaTestHarness");
+        accessible.x = 20;
+        accessible.y = 30;
+        accessible.width = 800;
+        accessible.height = 600;
+        let enriched = enrich_native_windows(native, vec![accessible]);
+        assert_eq!(enriched[0].xid, 77);
+        assert_eq!(enriched[0].pid, Some(123));
+        assert_eq!(
+            (enriched[0].x, enriched[0].y, enriched[0].width, enriched[0].height),
+            (20, 30, 800, 600)
+        );
     }
 
     #[test]

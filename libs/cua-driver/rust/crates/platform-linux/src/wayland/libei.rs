@@ -422,7 +422,7 @@ fn open_eis_context() -> anyhow::Result<(reis::ei::Context, PortalKeepAlive)> {
 // Region selection picks the first announced ei_device::Region.
 
 fn run_calloop(context: reis::ei::Context, rx: Receiver<Cmd>) -> anyhow::Result<()> {
-    use calloop::{generic::Generic, EventLoop, Interest, Mode, PostAction};
+    use calloop::{generic::Generic, EventLoop, Interest, Mode};
 
     let mut event_loop: EventLoop<EisState> = EventLoop::try_new()
         .map_err(|e| anyhow::anyhow!("calloop EventLoop::try_new failed: {e}"))?;

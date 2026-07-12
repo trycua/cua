@@ -1885,7 +1885,43 @@ async fn element_bounds_for_visited(
     } else {
         None
     };
-    let (offset_x, offset_y) = offset.or(screen_rebase).unwrap_or((0, 0));
+    // Renderer bridges can expose Window coordinates relative to an internal
+    // frame whose origin is not (0,0) (Chromium commonly reports a negative
+    // title-bar offset). Normalize that frame to the compositor window origin
+    // before adding the screen offset. Native GTK reports (0,0), so this is a
+    // no-op there.
+    let window_frame_origin = if offset.is_some() {
+        let frame = visited.iter().find(|node| {
+            node.has_component
+                && matches!(
+                    node.role.to_ascii_lowercase().as_str(),
+                    "frame" | "window" | "dialog" | "alert" | "file chooser"
+                )
+        });
+        if let Some(frame) = frame {
+            match call(frame.acc.proxies()).await {
+                Some(Ok(proxies)) => match call(proxies.component()).await {
+                    Some(Ok(component)) => {
+                        match call(component.get_extents(CoordType::Window)).await {
+                            Some(Ok((x, y, _, _))) => Some((x, y)),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let (mut offset_x, mut offset_y) = offset.or(screen_rebase).unwrap_or((0, 0));
+    if let Some((frame_x, frame_y)) = window_frame_origin {
+        offset_x = offset_x.saturating_sub(frame_x);
+        offset_y = offset_y.saturating_sub(frame_y);
+    }
     if let Some((ox, oy)) = offset {
         dlog!("element bounds: WINDOW coords + screen offset ({ox},{oy})");
     } else if let Some((ox, oy)) = screen_rebase {

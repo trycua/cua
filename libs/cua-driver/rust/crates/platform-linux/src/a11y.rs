@@ -12,14 +12,12 @@
 //! to the driver. Electron apps shipped as AppImages behave identically; they
 //! embed the same Chromium.
 //!
-//! A real screen reader (Orca) turns the tree on simply by writing that status
-//! property when it starts. We do the same once, at daemon startup. Because the
-//! status object lives on the session-scoped accessibility-bus launcher rather
-//! than in our process, the flag is session-wide, outlives us, and takes effect
-//! retroactively on apps that are already running — no relaunch and no
-//! per-application command-line flag. GTK and Qt gate their own AT-SPI bridges
-//! on the companion `IsEnabled` property, so setting it warms those toolkits
-//! too.
+//! A real screen reader turns the Chromium signal on. Doing that ourselves is
+//! unsafe on GNOME: its settings daemon treats the signal as a user request and
+//! launches Orca. GNOME therefore gets only the generic `IsEnabled` signal by
+//! default. Other desktops retain the Chromium signal for compatibility, and a
+//! caller can choose either policy explicitly with
+//! `CUA_DRIVER_RS_A11Y_ADVERTISE_MODE`.
 //!
 //! Everything here is best-effort. A session without an accessibility bus (some
 //! headless or minimal setups) just yields an error we log and ignore; enabling
@@ -42,6 +40,13 @@ const SCREEN_READER_ENABLED_PROPERTY: &str = "ScreenReaderEnabled";
 /// Companion property GTK/Qt watch to load their AT-SPI bridges.
 const ACCESSIBILITY_IS_ENABLED_PROPERTY: &str = "IsEnabled";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AdvertiseMode {
+    All,
+    IsEnabledOnly,
+    None,
+}
+
 /// Advertise an assistive technology to the session exactly once per daemon
 /// process, so Chromium/Electron (including Electron AppImages), GTK, and Qt
 /// expose their accessibility trees to [`crate::atspi`]. Idempotent and
@@ -50,17 +55,24 @@ const ACCESSIBILITY_IS_ENABLED_PROPERTY: &str = "IsEnabled";
 pub fn ensure_chromium_accessibility_enabled() {
     static ADVERTISED: Once = Once::new();
     ADVERTISED.call_once(|| {
-        // Opt-out for the rare session that wants its accessibility status left
-        // untouched (e.g. one already driven by a real screen reader the user
-        // configured deliberately).
-        if std::env::var_os("CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE").is_some() {
+        let mode = advertise_mode_from(
+            std::env::var_os("CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE").is_some(),
+            std::env::var("CUA_DRIVER_RS_A11Y_ADVERTISE_MODE")
+                .ok()
+                .as_deref(),
+            std::env::var("XDG_CURRENT_DESKTOP")
+                .or_else(|_| std::env::var("XDG_SESSION_DESKTOP"))
+                .or_else(|_| std::env::var("DESKTOP_SESSION"))
+                .ok()
+                .as_deref(),
+        );
+        if mode == AdvertiseMode::None {
             tracing::debug!(
-                "CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE set; leaving session \
-                 accessibility status untouched"
+                "accessibility advertisement disabled; leaving session status untouched"
             );
             return;
         }
-        if let Err(error) = advertise_screen_reader_to_session() {
+        if let Err(error) = advertise_accessibility_to_session(mode) {
             tracing::debug!(
                 "skipped advertising accessibility to the session \
                  (Chromium/Electron trees may stay empty): {error:#}"
@@ -69,7 +81,7 @@ pub fn ensure_chromium_accessibility_enabled() {
     });
 }
 
-fn advertise_screen_reader_to_session() -> anyhow::Result<()> {
+fn advertise_accessibility_to_session(mode: AdvertiseMode) -> anyhow::Result<()> {
     // The daemon's tokio runtime is already driving this thread when the tool
     // registry is built, and `block_on` panics if called from within a runtime.
     // Run the one-shot bus work on a dedicated OS thread that owns a small
@@ -80,14 +92,14 @@ fn advertise_screen_reader_to_session() -> anyhow::Result<()> {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;
-            runtime.block_on(advertise_screen_reader())
+            runtime.block_on(advertise_accessibility(mode))
         })
         .context("spawning the accessibility-advertise thread")?
         .join()
         .map_err(|_| anyhow!("accessibility-advertise thread panicked"))?
 }
 
-async fn advertise_screen_reader() -> anyhow::Result<()> {
+async fn advertise_accessibility(mode: AdvertiseMode) -> anyhow::Result<()> {
     let session_bus = zbus::Connection::session().await?;
     let status = zbus::Proxy::new(
         &session_bus,
@@ -100,7 +112,7 @@ async fn advertise_screen_reader() -> anyhow::Result<()> {
     // Don't clobber a screen reader the user is already running: only write when
     // a flag is currently false, so an active Orca session stays authoritative
     // and we avoid emitting a redundant PropertiesChanged.
-    if !is_flag_set(&status, SCREEN_READER_ENABLED_PROPERTY).await {
+    if mode == AdvertiseMode::All && !is_flag_set(&status, SCREEN_READER_ENABLED_PROPERTY).await {
         status
             .set_property(SCREEN_READER_ENABLED_PROPERTY, true)
             .await?;
@@ -113,8 +125,93 @@ async fn advertise_screen_reader() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn advertise_mode_from(
+    disabled: bool,
+    configured: Option<&str>,
+    desktop: Option<&str>,
+) -> AdvertiseMode {
+    if disabled {
+        return AdvertiseMode::None;
+    }
+    match configured
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("all") => AdvertiseMode::All,
+        Some("is_enabled_only") => AdvertiseMode::IsEnabledOnly,
+        Some("none") => AdvertiseMode::None,
+        Some(other) => {
+            tracing::warn!(
+                mode = other,
+                "unknown CUA_DRIVER_RS_A11Y_ADVERTISE_MODE; using desktop default"
+            );
+            desktop_default_mode(desktop)
+        }
+        None => desktop_default_mode(desktop),
+    }
+}
+
+fn desktop_default_mode(desktop: Option<&str>) -> AdvertiseMode {
+    let is_gnome = desktop.is_some_and(|desktop| {
+        desktop
+            .split([':', ';'])
+            .any(|part| part.trim().eq_ignore_ascii_case("gnome"))
+    });
+    if is_gnome {
+        AdvertiseMode::IsEnabledOnly
+    } else {
+        AdvertiseMode::All
+    }
+}
+
 /// Read a boolean status property, treating an unreadable property as unset so
 /// the caller falls through to writing it.
 async fn is_flag_set(status: &zbus::Proxy<'_>, property: &str) -> bool {
     status.get_property::<bool>(property).await.unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{advertise_mode_from, AdvertiseMode};
+
+    #[test]
+    fn gnome_default_does_not_claim_a_screen_reader() {
+        assert_eq!(
+            advertise_mode_from(false, None, Some("ubuntu:GNOME")),
+            AdvertiseMode::IsEnabledOnly
+        );
+    }
+
+    #[test]
+    fn non_gnome_default_preserves_chromium_compatibility() {
+        assert_eq!(
+            advertise_mode_from(false, None, Some("KDE")),
+            AdvertiseMode::All
+        );
+    }
+
+    #[test]
+    fn explicit_mode_overrides_desktop_default() {
+        assert_eq!(
+            advertise_mode_from(false, Some("all"), Some("GNOME")),
+            AdvertiseMode::All
+        );
+        assert_eq!(
+            advertise_mode_from(false, Some("is_enabled_only"), Some("KDE")),
+            AdvertiseMode::IsEnabledOnly
+        );
+        assert_eq!(
+            advertise_mode_from(false, Some("none"), Some("KDE")),
+            AdvertiseMode::None
+        );
+    }
+
+    #[test]
+    fn legacy_disable_wins_over_explicit_mode() {
+        assert_eq!(
+            advertise_mode_from(true, Some("all"), Some("KDE")),
+            AdvertiseMode::None
+        );
+    }
 }

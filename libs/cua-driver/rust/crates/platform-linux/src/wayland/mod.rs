@@ -2273,10 +2273,9 @@ fn parse_inject_geometry(line: &str) -> anyhow::Result<(i32, i32)> {
     anyhow::bail!("unexpected cua-compositor geometry response: {:?}", line.trim())
 }
 
-/// Return the output-layout origin of a nested client surface. Native Wayland
-/// accessibility bridges cannot discover this position themselves, so the
-/// compositor supplies it by stable process identity.
-pub fn inject_window_origin(pid: u32) -> Option<(i32, i32)> {
+/// Return the offset that rebases native Wayland accessibility coordinates into
+/// the nested compositor's root-surface/output coordinate space.
+pub fn inject_accessibility_offset(pid: u32) -> Option<(i32, i32)> {
     if !is_inject_mode() || pid == 0 {
         return None;
     }
@@ -2667,6 +2666,14 @@ fn enrich_native_windows(
             window.y = candidate.y;
             window.width = candidate.width;
             window.height = candidate.height;
+        }
+        if adopt_atspi_ids {
+            if let Some(pid) = candidate.pid {
+                if let Some((offset_x, offset_y)) = inject_accessibility_offset(pid) {
+                    window.x = candidate.x.saturating_add(offset_x);
+                    window.y = candidate.y.saturating_add(offset_y);
+                }
+            }
         }
         window.is_on_screen = candidate.is_on_screen;
     }

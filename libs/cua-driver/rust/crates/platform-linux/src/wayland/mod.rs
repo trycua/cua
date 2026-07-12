@@ -2554,6 +2554,21 @@ pub fn inject_drag(
     }])
 }
 
+fn wayland_atspi_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
+    let mut windows = crate::atspi::list_windows(filter_pid);
+    if is_inject_mode() {
+        for window in &mut windows {
+            if let Some(pid) = window.pid {
+                if let Some((window_x, window_y)) = inject_window_origin(pid) {
+                    window.x = window_x;
+                    window.y = window_y;
+                }
+            }
+        }
+    }
+    windows
+}
+
 /// Window-enumeration dispatcher: native Wayland when available, else X11.
 pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     if wayland_enabled() && std::env::var_os("WAYLAND_DISPLAY").is_some() {
@@ -2563,7 +2578,7 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
         let native = match list_windows() {
             Ok(ws) if !ws.is_empty() => Ok(enrich_native_windows(
                 ws,
-                crate::atspi::list_windows(filter_pid),
+                wayland_atspi_windows(filter_pid),
                 is_inject_mode(),
             )),
             Ok(_) => ext_toplevel::list_windows(),
@@ -2584,7 +2599,7 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
                 }
                 // A compositor window without pid metadata cannot satisfy a
                 // pid-scoped request. Continue to the AT-SPI registry.
-                let ws = crate::atspi::list_windows(filter_pid);
+                let ws = wayland_atspi_windows(filter_pid);
                 if !ws.is_empty() {
                     return ws;
                 }
@@ -2595,7 +2610,7 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
                 {
                     return ws;
                 }
-                let ws = crate::atspi::list_windows(filter_pid);
+                let ws = wayland_atspi_windows(filter_pid);
                 if !ws.is_empty() {
                     return ws;
                 }
@@ -2612,7 +2627,7 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
                 tracing::warn!(
                     "native Wayland list_windows failed: {e}; trying AT-SPI registry"
                 );
-                let ws = crate::atspi::list_windows(filter_pid);
+                let ws = wayland_atspi_windows(filter_pid);
                 if !ws.is_empty() {
                     return ws;
                 }
@@ -2639,7 +2654,7 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
         // D-Bus enumeration of every registered app): it can only add duplicates.
         let already_covered = filter_pid.map_or(false, |p| seen.contains(&p));
         if !already_covered {
-            merge_atspi_windows(&mut ws, &seen, crate::atspi::list_windows(filter_pid));
+            merge_atspi_windows(&mut ws, &seen, wayland_atspi_windows(filter_pid));
         }
     }
     ws

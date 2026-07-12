@@ -13,3 +13,8 @@ pub trait Driver {
     /// Invoke `tool` with `args`, returning the normalized response.
     fn call(&mut self, tool: &str, args: Value) -> ToolResponse;
 }
+
+/// Explicit lifecycle capability for canonical per-cell behavioral clips.
+pub trait BehaviorRecording {
+    fn start_behavior_recording(&mut self);
+}

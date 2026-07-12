@@ -71,6 +71,7 @@ NORMAL=$(tput sgr0 2>/dev/null || true)
 RED=$(tput setaf 1 2>/dev/null || true)
 GREEN=$(tput setaf 2 2>/dev/null || true)
 BLUE=$(tput setaf 4 2>/dev/null || true)
+YELLOW=$(tput setaf 3 2>/dev/null || true)
 
 if [ "$(id -u)" -eq 0 ] || [ -n "${SUDO_USER:-}" ]; then
     echo "${RED}Error: do not run this script with sudo or as root.${NORMAL}"
@@ -307,6 +308,32 @@ ensure_local_signing_identity() {
     printf -- '-'
 }
 
+# Keychain-backed codesign can wait forever for a GUI authorization prompt when
+# install-local is launched from a headless shell. Keep the install bounded;
+# ad-hoc signing remains a usable fallback for local development.
+codesign_bounded() {
+    local timeout_seconds="$1"
+    shift
+    if command -v gtimeout >/dev/null 2>&1; then
+        gtimeout "$timeout_seconds" codesign "$@"
+    elif command -v perl >/dev/null 2>&1; then
+        perl -e 'alarm shift; exec @ARGV' "$timeout_seconds" codesign "$@"
+    else
+        codesign "$@"
+    fi
+}
+
+clean_partial_bundle_signature() {
+    local app="$1"
+    # A certificate-backed codesign killed by the timeout can leave both a
+    # partial resource seal and `<executable>.cstemp`. Signing over that state
+    # seals the transient file; when the interrupted signer removes it later,
+    # the fallback bundle becomes invalid. Always restart fallback signing from
+    # the unsigned staged bundle.
+    rm -rf "$app/Contents/_CodeSignature"
+    find "$app" -type f -name '*.cstemp' -delete
+}
+
 # --- macOS: wrap the binary in CuaDriver.app for a stable TCC identity ---
 #
 # TCC keys Accessibility / Screen-Recording grants on the bundle
@@ -339,26 +366,56 @@ if [ "$OS" = "Darwin" ]; then
         plutil -replace CFBundleVersion -string "$VERSION_TAG" \
             "$APP_STAGE/Contents/Info.plist" 2>/dev/null || true
     fi
-    # Install to /Applications (user-writable for admins; no sudo — same
-    # as install.sh). Replace any prior bundle wholesale.
-    rm -rf "$APP_DEST"
-    ditto "$APP_STAGE" "$APP_DEST"
-    # Re-sign the whole bundle (--deep covers the inner binary). Required on
+    # Sign the staged bundle before touching the live installation. Required on
     # macOS 26+ where Taskgated rejects a copied binary's stale signature.
     # Prefer the STABLE self-signed identity so TCC grants survive rebuilds;
-    # fall back to ad-hoc (which works but resets grants on the next rebuild).
+    # never downgrade an existing certificate-signed installation to ad-hoc,
+    # because that would invalidate its working TCC grants.
     if command -v codesign >/dev/null 2>&1; then
         SIGN_ID="$(ensure_local_signing_identity)"
         if [ "$SIGN_ID" != "-" ] \
-           && codesign --force --deep --sign "$SIGN_ID" "$APP_DEST" 2>/dev/null; then
-            echo "${GREEN}signed $APP_DEST with a stable local identity — TCC grants survive future install-local rebuilds${NORMAL}"
-        elif codesign --force --deep --sign - "$APP_DEST" 2>/dev/null; then
-            if [ "$SIGN_ID" != "-" ]; then
-                echo "${YELLOW}note: stable-identity signing failed; signed ad-hoc instead (Accessibility/Screen Recording will reset on the next rebuild)${NORMAL}" >&2
-            fi
+           && codesign_bounded 20 --force --deep --sign "$SIGN_ID" "$APP_STAGE" 2>/dev/null; then
+            echo "${GREEN}signed staged app with a stable local identity — TCC grants survive future install-local rebuilds${NORMAL}"
+        elif [ -d "$APP_DEST" ] \
+             && codesign -d -r- "$APP_DEST" 2>&1 | grep -q 'certificate leaf'; then
+            echo "${RED}Error: stable signing failed; preserving the existing certificate-signed $APP_DEST and its TCC grants.${NORMAL}" >&2
+            echo "Unlock/authorize the login-keychain signing key, then rerun install-local." >&2
+            exit 1
         else
-            echo "${YELLOW}warning: codesign of $APP_DEST failed; first run may hit a Gatekeeper/Taskgated prompt${NORMAL}" >&2
+            clean_partial_bundle_signature "$APP_STAGE"
+            if codesign_bounded 20 --force --deep --sign - "$APP_STAGE" 2>/dev/null; then
+                if [ "$SIGN_ID" != "-" ]; then
+                    echo "${YELLOW}note: stable-identity signing failed; signed ad-hoc instead (Accessibility/Screen Recording will reset on the next rebuild)${NORMAL}" >&2
+                fi
+            else
+                clean_partial_bundle_signature "$APP_STAGE"
+                echo "${RED}Error: codesign of staged CuaDriver.app failed; live installation was not changed.${NORMAL}" >&2
+                exit 1
+            fi
         fi
+        if ! codesign --verify --deep --strict "$APP_STAGE" 2>/dev/null; then
+            echo "${RED}Error: staged CuaDriver.app failed signature verification; live installation was not changed.${NORMAL}" >&2
+            exit 1
+        fi
+    fi
+
+    # Install to /Applications (user-writable for admins; no sudo — same as
+    # install.sh). Keep the prior bundle available until the copy completes so
+    # an interrupted install cannot leave a corrupt live app.
+    APP_BACKUP="${APP_DEST}.install-backup.$$"
+    rm -rf "$APP_BACKUP"
+    if [ -d "$APP_DEST" ]; then
+        mv "$APP_DEST" "$APP_BACKUP"
+    fi
+    if ditto "$APP_STAGE" "$APP_DEST"; then
+        rm -rf "$APP_BACKUP"
+    else
+        rm -rf "$APP_DEST"
+        if [ -d "$APP_BACKUP" ]; then
+            mv "$APP_BACKUP" "$APP_DEST"
+        fi
+        echo "${RED}Error: failed to install CuaDriver.app; restored the previous bundle.${NORMAL}" >&2
+        exit 1
     fi
     echo "${GREEN}installed $APP_DEST${NORMAL}"
 

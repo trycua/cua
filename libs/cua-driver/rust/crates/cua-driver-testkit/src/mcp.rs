@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::driver::Driver;
+use crate::driver::{BehaviorRecording, Driver};
 use crate::paths::driver_binary;
 use crate::reaper::{spawn_in_job, ChildReaper};
 use crate::response::ToolResponse;
@@ -27,6 +27,7 @@ pub struct McpDriver {
     rx: Receiver<String>,
     next_id: u32,
     recording_dir: Option<PathBuf>,
+    recording_started: bool,
 }
 
 static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -44,6 +45,11 @@ impl McpDriver {
         Self::spawn_internal(&[], Some(recording_label))
     }
 
+    /// Spawn a named driver with environment variables scoped to this child.
+    pub fn spawn_named_with_env(recording_label: &str, env: &[(&str, &str)]) -> Option<Self> {
+        Self::spawn_internal(env, Some(recording_label))
+    }
+
     /// Spawn the driver with extra environment variables set on the child.
     pub fn spawn_with_env(env: &[(&str, &str)]) -> Option<Self> {
         Self::spawn_internal(env, None)
@@ -58,9 +64,14 @@ impl McpDriver {
 
         let mut reaper = ChildReaper::new();
         let mut cmd = Command::new(&bin);
+        let stderr = if std::env::var_os("CUA_TEST_DRIVER_STDERR").is_some() {
+            Stdio::inherit()
+        } else {
+            Stdio::null()
+        };
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(stderr);
         for (key, value) in env {
             cmd.env(key, value);
         }
@@ -94,9 +105,10 @@ impl McpDriver {
             rx,
             next_id: 2,
             recording_dir: None,
+            recording_started: false,
         };
         d.initialize();
-        d.start_e2e_recording(recording_label);
+        d.prepare_e2e_recording(recording_label);
         Some(d)
     }
 
@@ -144,7 +156,7 @@ impl McpDriver {
         let _ = self.stdin.flush();
     }
 
-    fn start_e2e_recording(&mut self, explicit_label: Option<&str>) {
+    fn prepare_e2e_recording(&mut self, explicit_label: Option<&str>) {
         let Some(root) = std::env::var_os("CUA_E2E_RECORDINGS_ROOT") else {
             return;
         };
@@ -156,6 +168,50 @@ impl McpDriver {
         let label = recording_label(explicit_label.unwrap_or(&thread_name));
         let output_dir =
             PathBuf::from(root).join(format!("{label}-pid{}-{sequence:03}", std::process::id()));
+        std::fs::create_dir_all(&output_dir).unwrap_or_else(|error| {
+            panic!("could not prepare E2E recording directory for {thread_name}: {error}")
+        });
+        let runner_console = crate::windows_setup::minimize_hosted_runner_console();
+        let runner_console_status = runner_console.as_deref().unwrap_or("error");
+        let manifest = serde_json::json!({
+            "schema": "cua-e2e-trajectory/v1",
+            "label": label,
+            "rust_test_thread": thread_name,
+            "process_id": std::process::id(),
+            "sequence": sequence,
+            "behavior_video": {
+                "status": "pending",
+                "baseline_settle_ms": 300
+            },
+            "hosted_runner_console": {
+                "status": runner_console_status
+            }
+        });
+        std::fs::write(
+            output_dir.join("trajectory.json"),
+            serde_json::to_vec_pretty(&manifest).unwrap_or_default(),
+        )
+        .expect("write prepared E2E trajectory manifest");
+        eprintln!(
+            "[testkit] prepared E2E evidence directory {}",
+            output_dir.display()
+        );
+        self.recording_dir = Some(output_dir);
+        if let Err(error) = runner_console {
+            panic!("hosted-runner console cleanup failed before fixture setup: {error}");
+        }
+    }
+
+    /// Begin the behavioral clip after fixture readiness and foreground or
+    /// background posture have been established. The settle interval gives
+    /// the video backend time to encode a visible baseline before dispatch.
+    pub fn start_behavior_recording(&mut self) {
+        let Some(output_dir) = self.recording_dir.clone() else {
+            return;
+        };
+        if self.recording_started {
+            return;
+        }
         let response = self.call(
             "start_recording",
             serde_json::json!({
@@ -167,30 +223,33 @@ impl McpDriver {
             .as_bool()
             .unwrap_or(false);
         if response.is_error() || !video_active {
+            update_behavior_video_status(&output_dir, "error");
             panic!(
-                "E2E video recording did not start for {thread_name}: {}",
-                response.text()
+                "E2E behavioral video did not start after setup: {}; structured={}",
+                response.text(),
+                response.structured()
             );
         }
-        let manifest = serde_json::json!({
-            "schema": "cua-e2e-trajectory/v1",
-            "label": label,
-            "rust_test_thread": thread_name,
-            "process_id": std::process::id(),
-            "sequence": sequence
-        });
-        let _ = std::fs::write(
-            output_dir.join("trajectory.json"),
-            serde_json::to_vec_pretty(&manifest).unwrap_or_default(),
+        self.recording_started = true;
+        update_behavior_video_status(&output_dir, "started");
+        std::thread::sleep(Duration::from_millis(300));
+        mark_behavior_video_baseline_ready(&output_dir);
+        eprintln!(
+            "[testkit] behavioral E2E video started at {}",
+            output_dir.display()
         );
-        eprintln!("[testkit] recording E2E video to {}", output_dir.display());
-        self.recording_dir = Some(output_dir);
     }
 
     fn stop_e2e_recording(&mut self) {
         let Some(output_dir) = self.recording_dir.take() else {
             return;
         };
+        if !self.recording_started {
+            let message = "E2E behavioral video boundary was never reached; fixture setup or posture failed before capture";
+            eprintln!("[testkit] {message}");
+            let _ = std::fs::write(output_dir.join("recording-error.txt"), message);
+            return;
+        }
         let response = self.call("stop_recording", serde_json::json!({}));
         let video_path = output_dir.join("recording.mp4");
         let valid_video = !response.is_error()
@@ -199,6 +258,7 @@ impl McpDriver {
                 .map(|metadata| metadata.len() > 0)
                 .unwrap_or(false);
         if valid_video {
+            update_behavior_video_status(&output_dir, "finalized");
             eprintln!("[testkit] finalized E2E video at {}", video_path.display());
             return;
         }
@@ -209,6 +269,7 @@ impl McpDriver {
             response.text()
         );
         eprintln!("[testkit] {message}");
+        update_behavior_video_status(&output_dir, "error");
         let _ = std::fs::create_dir_all(&output_dir);
         let _ = std::fs::write(output_dir.join("recording-error.txt"), message);
     }
@@ -217,6 +278,11 @@ impl McpDriver {
     /// lifetime should be tied to this driver.
     pub fn reaper(&mut self) -> &mut ChildReaper {
         &mut self.reaper
+    }
+
+    /// Directory for this driver's active per-cell recording, when enabled.
+    pub fn recording_dir(&self) -> Option<&std::path::Path> {
+        self.recording_dir.as_deref()
     }
 
     /// Poll `list_windows` until a window of `pid` whose title contains
@@ -287,6 +353,58 @@ fn recording_label(name: &str) -> String {
     }
 }
 
+impl Driver for McpDriver {
+    fn call(&mut self, tool: &str, args: Value) -> ToolResponse {
+        ToolResponse::from_mcp(self.call_raw(tool, args))
+    }
+}
+
+impl BehaviorRecording for McpDriver {
+    fn start_behavior_recording(&mut self) {
+        McpDriver::start_behavior_recording(self);
+    }
+}
+
+fn update_behavior_video_status(output_dir: &std::path::Path, status: &str) {
+    let path = output_dir.join("trajectory.json");
+    let Ok(bytes) = std::fs::read(&path) else {
+        return;
+    };
+    let Ok(mut manifest) = serde_json::from_slice::<Value>(&bytes) else {
+        return;
+    };
+    manifest["behavior_video"]["status"] = Value::String(status.to_owned());
+    let timestamp_field = match status {
+        "started" => Some("started_at_unix_ms"),
+        "finalized" => Some("finalized_at_unix_ms"),
+        "error" => Some("error_at_unix_ms"),
+        _ => None,
+    };
+    if let Some(field) = timestamp_field {
+        manifest["behavior_video"][field] = Value::from(unix_ms());
+    }
+    let _ = std::fs::write(path, serde_json::to_vec_pretty(&manifest).unwrap_or_default());
+}
+
+fn mark_behavior_video_baseline_ready(output_dir: &std::path::Path) {
+    let path = output_dir.join("trajectory.json");
+    let Ok(bytes) = std::fs::read(&path) else {
+        return;
+    };
+    let Ok(mut manifest) = serde_json::from_slice::<Value>(&bytes) else {
+        return;
+    };
+    manifest["behavior_video"]["baseline_ready_at_unix_ms"] = Value::from(unix_ms());
+    let _ = std::fs::write(path, serde_json::to_vec_pretty(&manifest).unwrap_or_default());
+}
+
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::recording_label;
@@ -298,11 +416,5 @@ mod tests {
             "module--test-name-windows"
         );
         assert_eq!(recording_label("///"), "unnamed-test");
-    }
-}
-
-impl Driver for McpDriver {
-    fn call(&mut self, tool: &str, args: Value) -> ToolResponse {
-        ToolResponse::from_mcp(self.call_raw(tool, args))
     }
 }

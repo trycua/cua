@@ -34,6 +34,18 @@ pub fn driver_binary() -> PathBuf {
     } else {
         "cua-driver"
     };
+    if let Ok(test_exe) = std::env::current_exe() {
+        if let Some(profile_dir) = test_exe
+            .parent()
+            .filter(|dir| dir.file_name().is_some_and(|name| name == "deps"))
+            .and_then(std::path::Path::parent)
+        {
+            let sibling = profile_dir.join(name);
+            if sibling.exists() {
+                return sibling;
+            }
+        }
+    }
     let root = workspace_root();
     let release = root.join("target/release").join(name);
     if release.exists() {

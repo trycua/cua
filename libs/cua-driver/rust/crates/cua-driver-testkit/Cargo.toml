@@ -9,7 +9,21 @@ description = "Shared harness for cua-driver integration tests: MCP/CLI transpor
 publish = false
 
 [dependencies]
+serde = { workspace = true }
 serde_json = { workspace = true }
+tempfile = "3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+objc2-app-kit = { version = "0.2", features = [
+    "NSApplication",
+    "NSRunningApplication",
+    "NSWorkspace",
+    "libc",
+] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.61", features = [
@@ -17,6 +31,9 @@ windows = { version = "0.61", features = [
     # Job Object: assign every spawned test child to a KILL_ON_JOB_CLOSE job so
     # the OS terminates the whole tree when the test process dies for ANY reason.
     "Win32_System_JobObjects",
+    "Win32_System_Console",
     "Win32_Security",
     "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
 ] }

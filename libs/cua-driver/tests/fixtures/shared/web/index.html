@@ -7,16 +7,38 @@
     :root { color-scheme: light dark; }
     body {
       font-family: 'Segoe UI', system-ui, sans-serif;
-      max-width: 860px;
+      max-width: 980px;
       margin: 0 auto;
-      padding: 16px;
+      padding: 10px;
     }
-    fieldset { margin-bottom: 12px; padding: 10px 14px; border-radius: 6px; border: 1px solid #ccc; }
+    h2 { margin: 0 0 2px; }
+    body > p { margin: 0 0 8px; }
+    .harness-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      align-items: start;
+    }
+    .harness-grid h3 { margin: 8px 0; font-size: 14px; overflow-wrap: anywhere; }
+    fieldset { min-width: 0; margin: 0; padding: 6px 8px; border-radius: 6px; border: 1px solid #ccc; }
     legend { font-weight: 600; padding: 0 6px; }
-    label { display: inline-block; min-width: 120px; }
-    .row { display: flex; align-items: center; gap: 10px; margin: 6px 0; flex-wrap: wrap; }
+    label { display: inline-block; min-width: 90px; }
+    .row { display: flex; align-items: center; gap: 8px; margin: 3px 0; flex-wrap: wrap; }
     .mirror, .state { font-family: Consolas, monospace; color: #555; }
-    input[type="range"] { width: 280px; }
+    input[type="range"] { width: 180px; }
+    textarea { max-width: 100%; }
+    #drag-source, #drop-target {
+      width: 110px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      user-select: none;
+      touch-action: none;
+    }
+    #drag-source { background: #1268d6; }
+    #drop-target { background: #178a38; }
     #click-target {
       display: inline-block;
       padding: 8px 18px;
@@ -33,6 +55,7 @@
   <h2 data-cua-id="page-heading">cua-driver Web Harness</h2>
   <p data-cua-id="page-marker" class="marker">WEB_HARNESS_MARKER_v1</p>
 
+  <main class="harness-grid">
   <fieldset>
     <legend>counter</legend>
     <div class="row">
@@ -43,21 +66,10 @@
   </fieldset>
 
   <fieldset>
-    <legend>calculator_task</legend>
-    <div class="row">
-      <button id="calc-1" data-cua-id="calc-1" aria-label="calc-1 1">1</button>
-      <button id="calc-2" data-cua-id="calc-2" aria-label="calc-2 2">2</button>
-      <button id="calc-4" data-cua-id="calc-4" aria-label="calc-4 4">4</button>
-      <button id="calc-plus" data-cua-id="calc-plus" aria-label="calc-plus plus">+</button>
-      <button id="calc-equals" data-cua-id="calc-equals" aria-label="calc-equals equals">=</button>
-      <span class="mirror" id="calc-display" data-cua-id="calc-display">display=0</span>
-    </div>
-  </fieldset>
-
-  <fieldset>
     <legend>text_input</legend>
     <div class="row">
-      <input type="text" id="txt-input" data-cua-id="txt-input" placeholder="type here" />
+      <input type="text" id="txt-input" data-cua-id="txt-input"
+             aria-label="txt-input" placeholder="type here" />
       <span class="mirror" id="lbl-input-mirror" data-cua-id="lbl-input-mirror">mirror=</span>
     </div>
   </fieldset>
@@ -92,8 +104,8 @@
   <fieldset>
     <legend>drag_task</legend>
     <div class="row">
-      <div id="drag-source" data-cua-id="drag-source" aria-label="drag-source" style="position:fixed;left:40px;top:80px;width:220px;height:100px;display:flex;align-items:center;justify-content:center;background:#1268d6;color:white;user-select:none;touch-action:none;z-index:10;">Drag source</div>
-      <div id="drop-target" data-cua-id="drop-target" aria-label="drop-target" style="position:fixed;left:520px;top:520px;width:220px;height:100px;display:flex;align-items:center;justify-content:center;background:#178a38;color:white;z-index:10;">Drop target</div>
+      <div id="drag-source" data-cua-id="drag-source" aria-label="drag-source">Drag source</div>
+      <div id="drop-target" data-cua-id="drop-target" aria-label="drop-target">Drop target</div>
       <span class="mirror" id="drag-status" data-cua-id="drag-status">drag_status=idle</span>
     </div>
   </fieldset>
@@ -115,7 +127,8 @@
   <fieldset>
     <legend>click_target</legend>
     <div class="row">
-      <span id="click-target" data-cua-id="border-click-target">Click target (left / right / double)</span>
+      <span id="click-target" data-cua-id="border-click-target" role="button"
+            tabindex="0" aria-label="border-click-target">Click target (left / right / double)</span>
     </div>
     <div class="row">
       <span class="mirror" id="lbl-last-action" data-cua-id="lbl-last-action">last_action=none</span>
@@ -157,7 +170,7 @@
       <a id="lnk-anchor" data-cua-id="lnk-anchor" href="#section-target">Jump to section</a>
       <span class="mirror" id="lbl-nav-state" data-cua-id="lbl-nav-state">hash=</span>
     </div>
-    <div style="height: 100px"></div>
+    <div style="height: 8px"></div>
     <h3 id="section-target" data-cua-id="section-target">SECTION_TARGET_MARKER_v1</h3>
   </fieldset>
 
@@ -168,12 +181,12 @@
       <span class="mirror" id="lbl-child-window-state" data-cua-id="lbl-child-window-state">child_windows=0</span>
     </div>
   </fieldset>
+  </main>
 
   <script>
   // ----- state -----
   let counter = 0;
   let clickCount = 0;
-  let calculatorExpression = '';
 
   function $(id) { return document.getElementById(id); }
   function updateChkState() {
@@ -189,26 +202,6 @@
   $('btn-reset').addEventListener('click', () => {
     counter = 0;
     $('lbl-counter').textContent = 'counter=0';
-  });
-
-  // Calculator task oracle: the visible display is application state, not a
-  // driver response. It intentionally uses separate buttons so both AX and
-  // pixel-coordinate delivery can be tested against the same result.
-  ['1', '2', '4'].forEach(digit => {
-    $('calc-' + digit).addEventListener('click', () => {
-      calculatorExpression += digit;
-      $('calc-display').textContent = `display=${calculatorExpression}`;
-    });
-  });
-  $('calc-plus').addEventListener('click', () => {
-    calculatorExpression += '+';
-    $('calc-display').textContent = `display=${calculatorExpression}`;
-  });
-  $('calc-equals').addEventListener('click', () => {
-    const parts = calculatorExpression.split('+').map(Number);
-    const result = parts.length === 2 && parts.every(Number.isFinite) ? parts[0] + parts[1] : 'error';
-    calculatorExpression = String(result);
-    $('calc-display').textContent = `display=${calculatorExpression}`;
   });
 
   $('editor-save').addEventListener('click', () => {
@@ -311,6 +304,57 @@
       child.document.close();
     }
   });
+
+  // Publish fixture-owned state to the Rust harness over loopback. AX remains
+  // the targeting surface, but it is not a delivery oracle: embedded WebKit
+  // can retain stale accessible text after the DOM has already changed.
+  (function startFixtureJournal() {
+    const journalUrl = window.cuaE2E?.journalUrl ||
+      window.__CUA_E2E_FIXTURE_JOURNAL_URL || '';
+    if (!journalUrl) return;
+
+    let queued = false;
+    const publish = () => {
+      queued = false;
+      const state = {};
+      document.querySelectorAll('[data-cua-id]').forEach(element => {
+        const entry = { text: (element.textContent || '').trim() };
+        if ('value' in element) entry.value = element.value;
+        if ('checked' in element) entry.checked = element.checked;
+        state[element.dataset.cuaId] = entry;
+      });
+      if (window.cuaE2E?.publishFixtureState) {
+        window.cuaE2E.publishFixtureState(state);
+        return;
+      }
+      fetch(journalUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(state),
+        keepalive: true,
+      }).catch(() => {});
+    };
+    const queuePublish = () => {
+      if (queued) return;
+      queued = true;
+      setTimeout(publish, 0);
+    };
+
+    new MutationObserver(queuePublish).observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+    });
+    for (const event of ['input', 'change', 'keydown', 'pointerup', 'scroll']) {
+      document.addEventListener(event, queuePublish, true);
+    }
+    // Keep the external oracle live even when its first loopback POST races
+    // fixture startup or a host bridge drops one fire-and-forget message.
+    setInterval(queuePublish, 250);
+    queuePublish();
+  })();
   </script>
 </body>
 </html>

@@ -2130,6 +2130,38 @@ impl Tool for TypeTextTool {
             // focused element via the background key / AT-SPI rung.
         }
 
+        let text_len = text.chars().count();
+
+        if resolved_elem_idx.is_some() {
+            if let Some(refusal) = unavailable_webkit_keyboard_background(pid, delivery) {
+                return refusal;
+            }
+        }
+
+        // AX addressing names one exact editable. Try this focus-free route
+        // before native Wayland keyboard injection, which can only target the
+        // compositor's globally focused surface.
+        if let Some(idx) = resolved_elem_idx {
+            let text_at = text.clone();
+            let targeted = tokio::task::spawn_blocking(move || {
+                crate::atspi::type_into_editable_at(pid, idx, &text_at)
+            })
+            .await;
+            match targeted {
+                Ok(Ok(())) => {
+                    return type_text_ax_confirm_result(pid, text_len, "via targeted AT-SPI");
+                }
+                Ok(Err(_)) | Err(_)
+                    if !delivery.is_foreground() && crate::wayland::wayland_input_enabled() =>
+                {
+                    return crate::input::delivery::background_unavailable_error(
+                        crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                    );
+                }
+                _ => {}
+            }
+        }
+
         // EIS nested compositor: focus-FREE per-surface typing into window_id
         // (the target need not be focused). Routed over the inject control socket.
         if crate::wayland::is_inject_mode() {
@@ -2156,7 +2188,11 @@ impl Tool for TypeTextTool {
         // targeting in the protocol). Type via the virtual-keyboard tool; pair
         // with a prior `click`/`activate` to focus the intended window.
         if crate::wayland::wayland_input_enabled() {
-            let text_len = text.chars().count();
+            if !delivery.is_foreground() {
+                return crate::input::delivery::background_unavailable_error(
+                    crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                );
+            }
             let text_w = text.clone();
             let result =
                 tokio::task::spawn_blocking(move || crate::wayland::type_text(&text_w)).await;
@@ -2237,8 +2273,6 @@ impl Tool for TypeTextTool {
                 });
             }
         }
-        let text_len = text.chars().count();
-
         // Foreground means the caller explicitly permits activation. Chromium
         // and WebKitGTK can acknowledge an accessibility write without
         // producing the renderer input event, so web embedders use real XTest
@@ -2278,27 +2312,6 @@ impl Tool for TypeTextTool {
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
-        }
-
-        // AX addressing names one exact editable. Do not let the fallback pick
-        // a different focused or first field in the process.
-        if let Some(idx) = resolved_elem_idx {
-            let text_at = text.clone();
-            let targeted = tokio::task::spawn_blocking(move || {
-                crate::atspi::type_into_editable_at(pid, idx, &text_at)
-            })
-            .await;
-            match targeted {
-                Ok(Ok(())) => {
-                    return type_text_ax_confirm_result(pid, text_len, "via targeted AT-SPI");
-                }
-                Ok(Err(_)) | Err(_) if !delivery.is_foreground() => {
-                    return crate::input::delivery::background_unavailable_error(
-                        crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-                    );
-                }
-                _ => {}
-            }
         }
 
         // Prefer the focused widget — the element the user just clicked. If a

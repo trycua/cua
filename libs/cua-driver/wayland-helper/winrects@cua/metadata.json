@@ -1,1 +1,1 @@
-{"uuid":"winrects@cua","name":"WinRects","description":"Expose window frame rects over D-Bus for cua-driver coordinate reconstruction on Wayland.","shell-version":["46","45","47"],"version":1}
+{"uuid":"winrects@cua","name":"WinRects","description":"Expose window frame rects and verified activation over D-Bus for cua-driver on Wayland.","shell-version":["46","45","47"],"version":2}

@@ -87,35 +87,23 @@ pub fn wayland_enabled() -> bool {
     }
 }
 
-/// True when we should drive Wayland rather than X11: the experimental backend
-/// is opted in ([`wayland_enabled`]), a Wayland display is present, and there is
-/// no X11 DISPLAY to fall back to. Without the opt-in this returns false even on
-/// a pure-Wayland session, so the backend treats it as unsupported rather than
-/// silently engaging an incomplete code path.
+/// True when this is an opted-in Wayland desktop session.
+///
+/// GNOME and KDE export `DISPLAY` for XWayland even when the target and the
+/// desktop are native Wayland. Treating that compatibility variable as proof
+/// of an X11 session routed native windows, capture, video, geometry, and focus
+/// through invalid XIDs. Backend selection below is capability based; the mere
+/// presence of `DISPLAY` must not disable Wayland.
 pub fn is_wayland() -> bool {
-    wayland_enabled()
-        && std::env::var_os("WAYLAND_DISPLAY").is_some()
-        && std::env::var_os("DISPLAY").is_none()
+    wayland_enabled() && std::env::var_os("WAYLAND_DISPLAY").is_some()
 }
 
 /// True when input tools should attempt the Wayland input path (wlroots
 /// virtual-pointer, falling back to libei/portal via [`with_libei_fallback`]).
 ///
-/// Unlike [`is_wayland`] this deliberately does NOT require `DISPLAY` to be
-/// unset. GNOME/Mutter and KDE/KWin always run XWayland, so `DISPLAY` is
-/// essentially always present alongside `WAYLAND_DISPLAY` on those sessions —
-/// which made `is_wayland()` false and left every input tool on the X11 path,
-/// where Mutter/KWin silently drop synthetic XTEST/XSendEvent input (#2105,
-/// #1982, #2022). The right routing signal for *input* is "opted in + a Wayland
-/// compositor is present"; the wlroots-vs-portal decision is then made at
-/// runtime by the compositor-capability probe inside the `wayland::*` input
-/// functions (`open_vptr_session`'s `NO_VPTR_MARKER` → `with_libei_fallback`),
-/// not from environment variables.
-///
-/// Screen capture intentionally keeps using [`is_wayland`]. Window enumeration
-/// runs whenever `WAYLAND_DISPLAY` is present, including hybrid XWayland
-/// sessions, because the generic ext-toplevel protocol can enumerate native
-/// windows that X11 cannot see.
+/// Input-specific alias retained to make dispatch intent explicit. The
+/// wlroots-vs-portal decision is made from live compositor capabilities inside
+/// the `wayland::*` input functions, not from XWayland's `DISPLAY` variable.
 pub fn wayland_input_enabled() -> bool {
     wayland_enabled() && std::env::var_os("WAYLAND_DISPLAY").is_some()
 }
@@ -1128,6 +1116,45 @@ pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<Vptr
     })
 }
 
+/// Focus and raise a specific native Wayland toplevel before focus-bound
+/// keyboard or portal/libei input. wlroots exposes an activation request on its
+/// foreign-toplevel protocol; GNOME uses the bundled compositor helper. Other
+/// compositors must refuse until they provide an equally target-addressable
+/// adapter, because global injection without this gate can affect the wrong app.
+pub fn activate_window_for_input(window_id: u64) -> anyhow::Result<()> {
+    let conn = Connection::connect_to_env()?;
+    let mut queue = conn.new_event_queue::<State>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+    let mut state = State::default();
+    queue.roundtrip(&mut state)?;
+    for _ in 0..4 {
+        queue.roundtrip(&mut state)?;
+    }
+
+    if let (Some(_), Some(seat), Some(handle)) = (
+        state.manager.as_ref(),
+        state.seat.clone(),
+        matching_handle(&state, window_id),
+    ) {
+        handle.activate(&seat);
+        queue.roundtrip(&mut state)?;
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        return Ok(());
+    }
+
+    if shell_helper::activate_window(window_id) {
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        return Ok(());
+    }
+
+    anyhow::bail!(
+        "foreground_unavailable: this Wayland compositor does not expose a verified, \
+         target-addressable activation adapter for window {window_id}; refusing global \
+         input because it could affect the wrong application"
+    )
+}
+
 /// Query the first `wl_output`'s pixel dimensions via a short Wayland
 /// roundtrip, independent of the virtual-pointer protocol. Used by the libei
 /// fallback (which never opens a `VptrSession`) to reproduce the vptr path's
@@ -1192,15 +1219,34 @@ fn event_time_ms() -> u32 {
 /// to discriminate single vs. double clicks.
 pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
     with_libei_fallback(
-        || click_vptr(window_id, x, y, count, button),
+        || click_vptr(Some(window_id), x, y, count, button),
+        || {
+            activate_window_for_input(window_id)?;
+            libei_click(x, y, count, button)
+        },
+    )
+}
+
+/// Click a desktop-absolute point without selecting or activating a toplevel.
+/// This is the Wayland peer of an XTest root-window click and is used only by
+/// the explicit desktop capture scope.
+pub fn click_desktop(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+    with_libei_fallback(
+        || click_vptr(None, x, y, count, button),
         || libei_click(x, y, count, button),
     )
 }
 
 /// wlroots virtual-pointer implementation of [`click`]. Falls back to libei via
 /// [`with_libei_fallback`] when the compositor exposes no virtual-pointer.
-fn click_vptr(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(Some(window_id))?;
+fn click_vptr(
+    window_id: Option<u64>,
+    x: i32,
+    y: i32,
+    count: u32,
+    button: u8,
+) -> anyhow::Result<()> {
+    let mut sess = open_vptr_session(window_id)?;
     std::thread::sleep(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
     let (px, py) = if x == 0 && y == 0 {
@@ -1271,6 +1317,7 @@ pub fn scroll_at(
     with_libei_fallback(
         || scroll_vptr(window_id, point, &direction, amount),
         || {
+            activate_window_for_input(window_id)?;
             if let Some((x, y)) = point {
                 libei_move_absolute(x, y)?;
             }
@@ -1394,7 +1441,10 @@ pub fn drag(
 ) -> anyhow::Result<()> {
     with_libei_fallback(
         || drag_vptr(window_id, from_x, from_y, to_x, to_y, steps, button),
-        || libei_drag(from_x, from_y, to_x, to_y, steps, button),
+        || {
+            activate_window_for_input(window_id)?;
+            libei_drag(from_x, from_y, to_x, to_y, steps, button)
+        },
     )
 }
 
@@ -1463,10 +1513,11 @@ fn drag_vptr(
 /// foreign-toplevel exposes no pid and Wayland delivers keys to the *focused*
 /// surface, so this is window_id-free; pair it with `click`/`activate` to put
 /// the intended window in focus first.
-pub fn type_text(text: &str) -> anyhow::Result<()> {
+pub fn type_text(window_id: u64, text: &str) -> anyhow::Result<()> {
     if text.is_empty() {
         return Ok(());
     }
+    activate_window_for_input(window_id)?;
     // Lead with a no-op Shift_L tap: on a freshly-focused window under a headless
     // seat (notably sway), the compositor needs the first virtual-keyboard event
     // to wire up keyboard routing, and that first key is dropped. Sacrificing a
@@ -1490,7 +1541,8 @@ pub fn type_text(text: &str) -> anyhow::Result<()> {
 }
 
 /// Press a single named key into the focused Wayland surface via `wtype -k`.
-pub fn press_key(key: &str) -> anyhow::Result<()> {
+pub fn press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
+    activate_window_for_input(window_id)?;
     let keysym = key_to_keysym(key);
     // Keep the sacrificial modifier and requested key in one virtual-keyboard
     // lifetime. Starting a second wtype process creates a fresh protocol object,
@@ -1512,7 +1564,8 @@ pub fn press_key(key: &str) -> anyhow::Result<()> {
 /// `wtype -M ctrl -M shift -k key -m shift -m ctrl`. Unknown values pass
 /// straight to wtype's `-k` so single-character keys and X keysym names work
 /// as-is. This is the Wayland equivalent of the X11 `send_key` modifier mask.
-pub fn hotkey(keys: &[String]) -> anyhow::Result<()> {
+pub fn hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
+    activate_window_for_input(window_id)?;
     let (mods, final_key) = partition_modifiers(keys)?;
     let keysym = key_to_keysym(&final_key);
     let mut args: Vec<String> = Vec::new();
@@ -2132,6 +2185,11 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
                 }
             }
             Ok(_) => {
+                if let Some(ws) =
+                    shell_helper::list_windows(filter_pid).filter(|ws| !ws.is_empty())
+                {
+                    return ws;
+                }
                 let ws = crate::atspi::list_windows(filter_pid);
                 if !ws.is_empty() {
                     return ws;
@@ -2141,6 +2199,11 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
                 tracing::warn!(
                     "native Wayland list_windows failed: {e}; trying AT-SPI registry"
                 );
+                if let Some(ws) =
+                    shell_helper::list_windows(filter_pid).filter(|ws| !ws.is_empty())
+                {
+                    return ws;
+                }
                 let ws = crate::atspi::list_windows(filter_pid);
                 if !ws.is_empty() {
                     return ws;

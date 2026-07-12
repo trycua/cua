@@ -7,6 +7,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const IFACE = `<node><interface name="org.cua.WinRects">
 <method name="GetRects"><arg type="s" direction="out" name="json"/></method>
+<method name="Activate"><arg type="u" direction="in" name="id"/><arg type="b" direction="out" name="activated"/></method>
 <method name="MoveCursor"><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/></method>
 <method name="ClickPulse"><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/></method>
 <method name="HideCursor"></method>
@@ -91,6 +92,15 @@ export default class WinRectsExtension extends Extension {
             });
         }
         return JSON.stringify(out);
+    }
+    Activate(id) {
+        const target = global.get_window_actors()
+            .map(actor => actor.meta_window)
+            .find(window => window?.get_stable_sequence() === id);
+        if (!target)
+            return false;
+        target.activate(global.get_current_time());
+        return true;
     }
     MoveCursor(x, y) {
         if (!this._cursor) return;

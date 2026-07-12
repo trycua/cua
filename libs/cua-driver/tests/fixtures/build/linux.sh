@@ -64,7 +64,11 @@ LAUNCHER
     chmod +x "$STAGE/CuaTestHarness.Gtk3"
 
     echo "==> Staged GTK3 harness -> $STAGE/CuaTestHarness.Gtk3"
-    if python3 -c "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk" 2>/dev/null; then
+    gtk_probe=(python3 -c "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk")
+    if command -v timeout >/dev/null 2>&1; then
+        gtk_probe=(timeout 10s "${gtk_probe[@]}")
+    fi
+    if "${gtk_probe[@]}" 2>/dev/null; then
         echo "==> PyGObject/GTK3 present"
     else
         echo "WARNING: PyGObject/GTK3 not importable - install python3-gi gir1.2-gtk-3.0 at-spi2-core" >&2

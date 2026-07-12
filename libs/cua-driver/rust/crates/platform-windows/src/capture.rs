@@ -26,7 +26,7 @@
 //! CUA-542; the screen-region fallback covers the same common
 //! ground at a fraction of the implementation cost.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::{

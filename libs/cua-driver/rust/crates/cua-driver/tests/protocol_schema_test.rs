@@ -25,11 +25,50 @@ fn tools_list_schema_shape() {
     let list_resp = d.recv();
     let tools = list_resp["result"]["tools"].as_array().expect("tools array");
 
+    let properties = |name: &str| {
+        &tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("{name} not found in tools/list"))["inputSchema"]
+            ["properties"]
+    };
+    let enum_contains = |schema: &serde_json::Value, expected: &str| {
+        schema["enum"]
+            .as_array()
+            .map(|values| values.iter().any(|value| value.as_str() == Some(expected)))
+            .unwrap_or(false)
+    };
+
     // Deprecated alias is hidden from tools/list (accepted at invoke time only).
     assert!(
         tools.iter().all(|t| t["name"] != "type_text_chars"),
         "type_text_chars should be hidden from tools/list"
     );
+
+    #[cfg(target_os = "windows")]
+    {
+        for tool in [
+            "click",
+            "double_click",
+            "right_click",
+            "type_text",
+            "press_key",
+            "hotkey",
+            "scroll",
+        ] {
+            let delivery = &properties(tool)["delivery_mode"];
+            assert!(
+                enum_contains(delivery, "background") && enum_contains(delivery, "foreground"),
+                "{tool}.delivery_mode should advertise background and foreground: {delivery:?}"
+            );
+        }
+
+        let capture_scope = &properties("set_config")["capture_scope"];
+        assert!(
+            enum_contains(capture_scope, "window") && enum_contains(capture_scope, "desktop"),
+            "set_config.capture_scope should advertise window and desktop: {capture_scope:?}"
+        );
+    }
 
     // list_windows schema has on_screen_only.
     let lw = tools.iter().find(|t| t["name"] == "list_windows")

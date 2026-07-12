@@ -1387,8 +1387,17 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             .as_ref()
             .and_then(|value| value[phase][kind]["classification"].as_str())
     };
+    let tool = action.as_ref().and_then(|value| value["tool"].as_str());
+    let expected_unavailable_screenshot = |phase: &str| {
+        tool == Some("bring_to_front")
+            && phase == "before"
+            && classification(phase, "screenshot") == Some("target_minimized")
+    };
 
     for (phase, kind) in [("before", "screenshot"), ("after", "screenshot")] {
+        if expected_unavailable_screenshot(phase) {
+            continue;
+        }
         validate_capture_status(
             manifest.as_ref(),
             &[phase, kind],
@@ -1403,6 +1412,9 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
         ("after.png", "after", "screenshot"),
         ("screenshot.png", "after", "screenshot"),
     ] {
+        if expected_unavailable_screenshot(phase) {
+            continue;
+        }
         validate_nonempty_file(
             &turn.join(file),
             cell_id,
@@ -1910,6 +1922,33 @@ mod tests {
         assert!(errors.iter().any(|error| {
             error.contains("turn-00001/after.png") && error.contains("classified capture_failed")
         }));
+    }
+
+    #[test]
+    fn validator_accepts_minimized_preimage_for_restore_action() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"bring_to_front",
+                "arguments":{"pid":1,"window_id":2}
+            }"#,
+        )
+        .expect("write restore action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"target_minimized"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "click":{"status":"not_applicable","classification":"no_target_pid"}
+            }"#,
+        )
+        .expect("write restore evidence manifest");
+        std::fs::remove_file(turn.join("before.png")).expect("remove unavailable preimage");
+
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("a minimized target cannot provide a pre-restore screenshot");
     }
 
     #[test]

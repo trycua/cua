@@ -10,7 +10,6 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
       - "libs/cua-driver/rust/crates/platform-windows/**"
       - "libs/cua-driver/rust/crates/cua-driver-uia/**"
-      - "libs/cua-driver/rust/crates/focus-monitor-win/**"
       - "libs/cua-driver/tests/fixtures/**"
       - ".github/workflows/ci-rust-windows.yml"
   push:
@@ -43,4 +42,4 @@ jobs:
         working-directory: libs/cua-driver/rust
         # Compile every Rust target without executing desktop-dependent integration
         # tests; interactive behavior belongs in e2e-rust-windows.yml.
-        run: cargo test -p cua-driver -p cua-driver-core -p cua-driver-testkit -p platform-windows -p cua-driver-uia -p focus-monitor-win --all-targets --no-run --locked
+        run: cargo test -p cua-driver -p cua-driver-core -p cua-driver-testkit -p platform-windows -p cua-driver-uia --all-targets --no-run --locked

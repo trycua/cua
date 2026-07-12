@@ -70,10 +70,6 @@ try {
     cargo test -p cua-driver --test protocol_handshake_test --no-run
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (protocol_handshake_test) failed" }
 
-    Write-Host "`n[BUILD] cargo test --no-run (guard_ux_test)..." -ForegroundColor Yellow
-    cargo test -p cua-driver --test guard_ux_test --no-run
-    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (guard_ux_test) failed" }
-
     Write-Host "`n[BUILD] cargo test --no-run (harness_wpf_test)..." -ForegroundColor Yellow
     cargo test -p cua-driver --test harness_wpf_test --no-run
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_wpf_test) failed" }
@@ -86,9 +82,14 @@ try {
     cargo test -p cua-driver --test harness_web_test --no-run
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_web_test) failed" }
 
-    Write-Host "`n[BUILD] cargo test --no-run (modality_input_e2e_test)..." -ForegroundColor Yellow
-    cargo test -p cua-driver --test modality_input_e2e_test --no-run
-    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (modality_input_e2e_test) failed" }
+    Write-Host "`n[BUILD] cargo test --no-run (launch_windows_test)..." -ForegroundColor Yellow
+    cargo test -p cua-driver --test launch_windows_test --no-run
+    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (launch_windows_test) failed" }
+
+    Write-Host "`n[BUILD] cargo test --no-run (agent_cursor_windows_test)..." -ForegroundColor Yellow
+    cargo test -p cua-driver --test agent_cursor_windows_test --no-run
+    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (agent_cursor_windows_test) failed" }
+
 } finally { Pop-Location }
 
 # -- 1.5. Build the test fixtures if dependencies are on PATH ------------------
@@ -122,10 +123,6 @@ $protocolBin = Get-ChildItem "$rustRoot\target\debug\deps\protocol_handshake_tes
           Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $protocolBin) { throw "protocol_handshake_test-*.exe not found" }
 Write-Host "protocol_handshake_test: $($protocolBin.Name)"
-
-$guardBin = Get-ChildItem "$rustRoot\target\debug\deps\guard_ux_test-*.exe" |
-         Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if ($guardBin) { Write-Host "guard_ux_test    : $($guardBin.Name)" } else { Write-Host "guard_ux_test    : (not found, will skip)" }
 
 # -- 2. Prepare shared output folder ------------------------------------------
 $outputDir = "$env:TEMP\cua-sandbox-output"

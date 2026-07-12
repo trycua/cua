@@ -14,11 +14,18 @@ pub mod keyboard;
 pub mod delivery;
 pub mod inject;
 
-pub use inject::{inject_click_screen, point_in_window_bounds, NoActivateGuard};
-pub use mouse::{is_chromium_target_window, post_click, post_click_screen, send_click_synthesized, send_click_synthesized_mods, send_wheel_synthesized};
+pub use inject::{
+    inject_click_screen, point_in_window_bounds, ForegroundLockGuard, NoActivateGuard,
+};
+pub(crate) use inject::force_foreground_attached;
+pub use mouse::{
+    has_chromium_descendant, is_chromium_target_window, post_click, post_click_screen,
+    send_click_synthesized, send_click_synthesized_active_mods, send_click_synthesized_mods,
+    send_wheel_synthesized,
+};
 pub use keyboard::{
     is_xaml_host_hwnd, post_char, post_key, post_type_text, post_type_text_with_delay,
-    send_key_synthesized, send_text_synthesized,
+    send_key_synthesized, send_text_synthesized, wait_for_focused_descendant,
 };
 
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};

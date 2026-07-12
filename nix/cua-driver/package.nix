@@ -35,7 +35,7 @@ pkgs.rustPlatform.buildRustPackage {
   cargoLock.lockFile = "${src}/Cargo.lock";
 
   # Build only the main binary crate. The workspace also contains
-  # platform-macos, platform-windows, cua-driver-uia, and focus-monitor-win
+  # platform-macos, platform-windows, and cua-driver-uia
   # which are gated behind cfg(target_os) and won't compile on Linux.
   # Using -p cua-driver ensures Cargo only resolves Linux dependencies.
   #

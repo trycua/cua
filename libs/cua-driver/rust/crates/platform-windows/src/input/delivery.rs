@@ -140,21 +140,38 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
     use EventKind::*;
     if crate::input::is_chromium_target_window(hwnd) {
         // Chromium's input thread architecture requires SendInput-queue
-        // origin for mouse + key-combo events (#1623). Plain keystrokes and
-        // text input via WM_CHAR still work because they go through
-        // Chromium's IME path, which DOES consume Win32 messages.
-        return matches!(kind, MouseClick | MouseMove | MouseScroll | KeyCombo);
+        // origin for pointer and keyboard events (#1623). Posted WM_CHAR and
+        // plain key messages can return success while a background renderer
+        // receives nothing, so they must be refused as honestly as chords.
+        return matches!(
+            kind,
+            MouseClick | MouseMove | MouseScroll | Keystroke | KeyCombo | TextInput
+        );
+    }
+    if crate::input::has_chromium_descendant(hwnd) {
+        // Embedded WebView2 hosts retain useful UIA/top-level routes for
+        // clicks and ValuePattern text. Their drag, wheel and modifier-chord
+        // paths still depend on the renderer's system input queue.
+        return matches!(kind, MouseMove | MouseScroll | KeyCombo);
     }
     if is_wpf_target_window(hwnd) {
-        // WPF ignores posted pointer messages (its input manager drops
-        // WM_MOUSE* unless the live system cursor is over the window). It must
-        // be driven by coordinate-routed system-queue input for clicks/moves.
+        // WPF ignores posted pointer messages unless the live system cursor is
+        // over the window. Its InputManager also ignores posted key messages
+        // while another native window owns foreground; PostMessage still
+        // returns success, so both routes need an honest refusal.
         //
         // Do not classify WM_VSCROLL/WM_HSCROLL here: the scroll tool posts the
         // scrollbar messages directly to the top-level HWND, and WPF hosts that
         // explicitly handle those messages (including our harness hook) can
         // consume them without a foreground swap.
-        return matches!(kind, MouseClick | MouseMove);
+        return wpf_drops_event(kind, target_is_foreground(hwnd));
+    }
+    if is_tk_target_window(hwnd) {
+        // Tk's Windows event loop does not treat posted WM_CHAR/WM_KEYDOWN as
+        // genuine keyboard input for the focused widget. The messages can be
+        // accepted by PostMessage while the Entry receives nothing, so refuse
+        // instead of reporting a false background success.
+        return matches!(kind, Keystroke | KeyCombo | TextInput);
     }
     // NB: WinUI3 (`WinUIDesktopWin32WindowClass`) is deliberately NOT flagged
     // here. It looks WPF-like, but its composition input-site does NOT consume
@@ -190,6 +207,25 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
     false
 }
 
+fn wpf_drops_event(kind: EventKind, target_is_foreground: bool) -> bool {
+    matches!(kind, EventKind::MouseClick | EventKind::MouseMove)
+        || (!target_is_foreground && matches!(kind, EventKind::Keystroke | EventKind::KeyCombo))
+}
+
+fn target_is_foreground(hwnd: u64) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetForegroundWindow, GA_ROOT};
+    if hwnd == 0 {
+        return false;
+    }
+    unsafe {
+        let target = GetAncestor(HWND(hwnd as *mut _), GA_ROOT);
+        let foreground = GetForegroundWindow();
+        let foreground_root = GetAncestor(foreground, GA_ROOT);
+        !target.0.is_null() && target == foreground_root
+    }
+}
+
 /// Detect LibreOffice / OpenOffice (VCL framework) windows.
 ///
 /// VCL on Windows registers window classes with a `SAL` prefix (StarOffice's
@@ -220,6 +256,16 @@ pub fn is_vcl_target_window(hwnd: u64) -> bool {
 /// `delivery_mode:"foreground"`); with an element_index it uses UIA ValuePattern.
 pub fn is_wpf_target_window(hwnd: u64) -> bool {
     read_class_name(hwnd).starts_with("HwndWrapper")
+}
+
+/// Detect Tk/Tkinter top-level windows. Tk registers this stable class name
+/// for its root and child toplevels on Windows.
+pub fn is_tk_target_window(hwnd: u64) -> bool {
+    is_tk_class_name(&read_class_name(hwnd))
+}
+
+fn is_tk_class_name(class: &str) -> bool {
+    class == "TkTopLevel" || class.starts_with("TkTopLevel.")
 }
 
 /// Detect WinUI3 / Windows-App-SDK desktop top-level windows. The frame is a
@@ -352,6 +398,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn detects_tk_toplevel_classes_without_matching_unrelated_windows() {
+        assert!(is_tk_class_name("TkTopLevel"));
+        assert!(is_tk_class_name("TkTopLevel.1"));
+        assert!(!is_tk_class_name("TkChild"));
+        assert!(!is_tk_class_name("Chrome_WidgetWin_1"));
+    }
+
+    #[test]
+    fn wpf_refuses_posted_pointer_and_keyboard_events() {
+        assert!(wpf_drops_event(EventKind::MouseClick, true));
+        assert!(wpf_drops_event(EventKind::MouseMove, true));
+        assert!(wpf_drops_event(EventKind::Keystroke, false));
+        assert!(wpf_drops_event(EventKind::KeyCombo, false));
+        assert!(!wpf_drops_event(EventKind::Keystroke, true));
+        assert!(!wpf_drops_event(EventKind::KeyCombo, true));
+        assert!(!wpf_drops_event(EventKind::TextInput, false));
+        assert!(!wpf_drops_event(EventKind::MouseScroll, false));
+    }
+    #[test]
     fn delivery_mode_parses_known_values() {
         let j = |s: &str| serde_json::json!({"delivery_mode": s});
         assert_eq!(
@@ -401,17 +466,12 @@ mod tests {
         );
         let structured = result.structured_content.as_ref().expect("structured");
         assert_eq!(result.is_error, Some(true));
-        assert_eq!(
-            structured["code"].as_str(),
-            Some("background_occluded")
-        );
+        assert_eq!(structured["code"].as_str(), Some("background_occluded"));
         assert_eq!(structured["event_kind"].as_str(), Some("mouse_click"));
-        assert!(
-            structured["cause"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("occluded")
-        );
+        assert!(structured["cause"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("occluded"));
 
         let text = match &result.content[0] {
             cua_driver_core::protocol::Content::Text { text, .. } => text,

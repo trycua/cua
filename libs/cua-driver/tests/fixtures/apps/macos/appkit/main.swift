@@ -52,7 +52,7 @@ let kMenuItemTitle = "Harness Test Item"
 
 final class HarnessWindowController: NSObject, NSTextFieldDelegate {
     let window: NSWindow
-    let counterLabel = NSTextField(labelWithString: "0")
+    let counterLabel = NSTextField(labelWithString: "counter=0")
     var counterValue = 0
     let textInput = NSTextField(string: "")
     let textInputMirror = NSTextField(labelWithString: "")
@@ -67,7 +67,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
     // Pinned content size — every launch MUST produce a byte-identical window
     // so screenshot dimensions (and the hardcoded pixel coords the harness tests
     // rely on) never drift.
-    static let kContentSize = NSSize(width: 720, height: 1080)
+    static let kContentSize = NSSize(width: 720, height: 860)
 
     override init() {
         let rect = NSRect(origin: NSPoint(x: 100, y: 100), size: HarnessWindowController.kContentSize)
@@ -103,8 +103,8 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
         let content = NSStackView()
         content.orientation = .vertical
         content.alignment = .leading
-        content.spacing = 16
-        content.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        content.spacing = 8
+        content.edgeInsets = NSEdgeInsets(top: 12, left: 20, bottom: 12, right: 20)
         content.translatesAutoresizingMaskIntoConstraints = false
 
         // counter
@@ -232,7 +232,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
         let scrollWrap = NSStackView()
         scrollWrap.orientation = .horizontal
         scrollWrap.spacing = 12
-        let scroller = NSScrollView(frame: NSRect(x: 0, y: 0, width: 360, height: 200))
+        let scroller = NSScrollView(frame: NSRect(x: 0, y: 0, width: 360, height: 120))
         scroller.hasVerticalScroller = true
         scroller.borderType = .lineBorder
         let bodyText = NSTextView(frame: NSRect(x: 0, y: 0, width: 340, height: 600))
@@ -296,12 +296,12 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
 
     @objc private func onIncrement() {
         counterValue += 1
-        counterLabel.stringValue = String(counterValue)
+        counterLabel.stringValue = "counter=\(counterValue)"
     }
 
     @objc private func onReset() {
         counterValue = 0
-        counterLabel.stringValue = "0"
+        counterLabel.stringValue = "counter=0"
     }
 
     @objc private func onExit() {

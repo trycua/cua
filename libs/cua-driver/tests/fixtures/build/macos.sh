@@ -9,7 +9,8 @@
 # Usage:
 #   ./macos.sh                  # build all macOS-runnable harnesses
 #   ./macos.sh --skip swiftui   # skip one target (appkit|swiftui|wkwebview|electron|tauri)
-#   ./macos.sh --clean          # remove staged outputs first
+#   ./macos.sh --only wkwebview # build just one target
+#   ./macos.sh --clean          # archive staged outputs first
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,10 +18,12 @@ HARNESS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 STAGE_DIR="$(cd "$HARNESS_DIR/../../rust/test-apps" && pwd)"
 
 SKIP=""
+ONLY=""
 CLEAN=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --skip) SKIP="$2"; shift 2;;
+        --only) ONLY="$2"; shift 2;;
         --clean) CLEAN=1; shift;;
         -h|--help)
             sed -n '2,11p' "$0"; exit 0;;
@@ -28,8 +31,22 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+archive_existing() {
+    local target="$1"
+    [[ -e "$target" ]] || return 0
+    local archive_root="${TMPDIR:-/tmp}/cua-driver-fixture-build-archive"
+    local stamp
+    stamp="$(date +%Y%m%d-%H%M%S)-$$"
+    mkdir -p "$archive_root"
+    mv "$target" "$archive_root/$(basename "$target").$stamp"
+}
+
 if [[ "$CLEAN" == "1" ]]; then
-    rm -rf "$STAGE_DIR/harness-appkit" "$STAGE_DIR/harness-swiftui" "$STAGE_DIR/harness-wkwebview" "$STAGE_DIR/harness-electron" "$STAGE_DIR/harness-tauri"
+    archive_existing "$STAGE_DIR/harness-appkit"
+    archive_existing "$STAGE_DIR/harness-swiftui"
+    archive_existing "$STAGE_DIR/harness-wkwebview"
+    archive_existing "$STAGE_DIR/harness-electron"
+    archive_existing "$STAGE_DIR/harness-tauri"
     mkdir -p "$STAGE_DIR/harness-appkit" "$STAGE_DIR/harness-swiftui" "$STAGE_DIR/harness-wkwebview" "$STAGE_DIR/harness-electron" "$STAGE_DIR/harness-tauri"
     echo "==> Cleaned stage dirs"
 fi
@@ -41,7 +58,7 @@ build_app() {
     local plist="$bundle/Contents/Info.plist"
 
     echo "==> Building $name"
-    rm -rf "$bundle"
+    archive_existing "$bundle"
     mkdir -p "$bundle/Contents/MacOS"
 
     # shellcheck disable=SC2086  # word-splitting on $frameworks is intentional
@@ -77,21 +94,21 @@ EOF
     echo "    → $bundle"
 }
 
-if [[ "$SKIP" != "appkit" ]]; then
+if [[ -z "$ONLY" || "$ONLY" == "appkit" ]] && [[ "$SKIP" != "appkit" ]]; then
     build_app "CuaTestHarness.AppKit" \
         "$HARNESS_DIR/apps/macos/appkit" \
         "" \
         "harness-appkit"
 fi
 
-if [[ "$SKIP" != "swiftui" ]]; then
+if [[ -z "$ONLY" || "$ONLY" == "swiftui" ]] && [[ "$SKIP" != "swiftui" ]]; then
     build_app "CuaTestHarness.SwiftUI" \
         "$HARNESS_DIR/apps/macos/swiftui" \
         "" \
         "harness-swiftui"
 fi
 
-if [[ "$SKIP" != "wkwebview" ]]; then
+if [[ -z "$ONLY" || "$ONLY" == "wkwebview" ]] && [[ "$SKIP" != "wkwebview" ]]; then
     build_app "CuaTestHarness.WKWebView" \
         "$HARNESS_DIR/apps/macos/wkwebview" \
         "-framework WebKit" \
@@ -105,11 +122,11 @@ if [[ "$SKIP" != "wkwebview" ]]; then
     echo "    → bundled shared/web/index.html into Resources/web/"
 fi
 
-if [[ "$SKIP" != "electron" ]]; then
+if [[ -z "$ONLY" || "$ONLY" == "electron" ]] && [[ "$SKIP" != "electron" ]]; then
     "$HARNESS_DIR/apps/cross-platform/electron/build.sh"
 fi
 
-if [[ "$SKIP" != "tauri" ]]; then
+if [[ -z "$ONLY" || "$ONLY" == "tauri" ]] && [[ "$SKIP" != "tauri" ]]; then
     "$HARNESS_DIR/apps/cross-platform/tauri/build.sh"
 fi
 

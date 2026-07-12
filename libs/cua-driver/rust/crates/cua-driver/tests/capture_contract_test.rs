@@ -417,6 +417,15 @@ fn background_screenshot_preserves_desktop() {
             })
             .expect("establish capture background posture before recording");
         driver.start_behavior_recording();
+        sentinel
+            .prepare_background_observation(
+                &mut driver,
+                TargetWindow {
+                    pid,
+                    native_id: wid,
+                },
+            )
+            .expect("re-establish capture background posture after recording setup");
         let (response, mut passed) = sentinel
             .observe_background(
                 TargetWindow {

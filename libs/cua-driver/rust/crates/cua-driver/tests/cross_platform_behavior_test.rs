@@ -849,12 +849,7 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         // the exception: they are externally verified by the fixture and the
         // focus/z-order/leak sentinels.
         if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
-            match (action, targeting) {
-                ("hotkey" | "scroll" | "drag" | "editor_save", _) => {
-                    vec![RefusalCode::BackgroundUnavailable]
-                }
-                _ => Vec::new(),
-            }
+            Vec::new()
         } else {
             match (action, targeting) {
                 ("left_click" | "child_window", Targeting::Ax) => Vec::new(),

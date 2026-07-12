@@ -1284,6 +1284,7 @@ fn unavailable_webkit_background(
 ) -> Option<ToolResult> {
     (!delivery.is_foreground()
         && is_webkitgtk_embedder(pid)
+        && !crate::wayland::is_inject_mode()
         && !crate::input::real_pointer_input_available())
     .then(|| {
         crate::input::delivery::background_unavailable_error(
@@ -1296,7 +1297,10 @@ fn unavailable_webkit_keyboard_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    (!delivery.is_foreground() && is_webkitgtk_embedder(pid)).then(|| {
+    (!delivery.is_foreground()
+        && is_webkitgtk_embedder(pid)
+        && !crate::wayland::is_inject_mode())
+    .then(|| {
         crate::input::delivery::background_unavailable_error(
             crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
         )
@@ -1307,7 +1311,7 @@ fn unavailable_gtk_keyboard_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    (!delivery.is_foreground() && is_gtk_process(pid)).then(|| {
+    (!delivery.is_foreground() && is_gtk_process(pid) && !crate::wayland::is_inject_mode()).then(|| {
         crate::input::delivery::background_unavailable_error(
             crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
         )
@@ -1320,6 +1324,7 @@ fn unavailable_gtk_pointer_background(
 ) -> Option<ToolResult> {
     (!delivery.is_foreground()
         && is_gtk_process(pid)
+        && !crate::wayland::is_inject_mode()
         && !crate::input::real_pointer_input_available())
     .then(|| {
         crate::input::delivery::background_unavailable_error(
@@ -3071,6 +3076,22 @@ impl Tool for HotkeyTool {
         };
         let deliver_fg = delivery.is_foreground();
 
+        if crate::wayland::is_inject_mode() {
+            let mut chord = mods.clone();
+            chord.push(key.clone());
+            let result = tokio::task::spawn_blocking(move || {
+                crate::wayland::inject_hotkey(xid, &chord)
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Pressed hotkey '{key_display}' (focus-free via cua-compositor)."
+                )),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
+        }
+
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::wayland_input_enabled() {
                 // Native Wayland: route the modifier combo through wtype's
@@ -3332,6 +3353,37 @@ impl Tool for ScrollTool {
             );
         }
 
+        if crate::wayland::is_inject_mode() {
+            let Some((x, y)) = pixel_target else {
+                return crate::input::delivery::background_unavailable_error(
+                    crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                );
+            };
+            let direction_for_inject = direction.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                crate::wayland::inject_scroll(
+                    xid,
+                    x,
+                    y,
+                    &direction_for_inject,
+                    amount as u32,
+                )
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Scrolled {direction} {amount} ticks (focus-free via cua-compositor)."
+                ))
+                .with_structured(json!({
+                    "verified": false,
+                    "delivery_mode": if delivery.is_foreground() { "foreground" } else { "background" },
+                    "route": "cua_compositor_inject"
+                })),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
+        }
+
         if crate::wayland::wayland_input_enabled() {
             if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, false) {
                 return refusal;
@@ -3545,7 +3597,7 @@ impl Tool for DoubleClickTool {
         if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
             return refusal;
         }
-        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, false) {
+        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
             return refusal;
         }
         // Surface 6: element_token / element_index precedence.
@@ -3772,7 +3824,7 @@ impl Tool for RightClickTool {
         if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
             return refusal;
         }
-        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, false) {
+        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
             return refusal;
         }
         // Surface 6: element_token / element_index precedence.
@@ -4005,7 +4057,7 @@ impl Tool for DragTool {
         if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
             return refusal;
         }
-        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, false) {
+        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
             return refusal;
         }
 
@@ -4108,15 +4160,28 @@ impl Tool for DragTool {
         // virtual-pointer (wlroots) or libei (GNOME/KDE) sequence, output-relative
         // coords. Returns early so we don't fall into the X11 XSendEvent loop below.
         if crate::wayland::wayland_input_enabled() {
-            let ((fxi, fyi), (txi, tyi)) = wayland_points.unwrap_or((
-                (from_x.round() as i32, from_y.round() as i32),
-                (to_x.round() as i32, to_y.round() as i32),
-            ));
             let steps_u32 = steps as u32;
-            let drag_result = tokio::task::spawn_blocking(move || {
-                crate::wayland::drag(xid, fxi, fyi, txi, tyi, steps_u32, button)
-            })
-            .await;
+            let drag_result = if crate::wayland::is_inject_mode() {
+                tokio::task::spawn_blocking(move || {
+                    crate::wayland::inject_drag(
+                        xid,
+                        (from_x, from_y),
+                        (to_x, to_y),
+                        steps,
+                        button as u32,
+                    )
+                })
+                .await
+            } else {
+                let ((fxi, fyi), (txi, tyi)) = wayland_points.unwrap_or((
+                    (from_x.round() as i32, from_y.round() as i32),
+                    (to_x.round() as i32, to_y.round() as i32),
+                ));
+                tokio::task::spawn_blocking(move || {
+                    crate::wayland::drag(xid, fxi, fyi, txi, tyi, steps_u32, button)
+                })
+                .await
+            };
             crate::overlay::send_command_for(
                 cursor_id.clone(),
                 cursor_overlay::OverlayCommand::SetPressed(false),

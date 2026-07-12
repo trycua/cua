@@ -2061,6 +2061,32 @@ fn validate_injectable_key(key: &str) -> anyhow::Result<()> {
     }
 }
 
+fn validate_injectable_hotkey(keys: &[String]) -> anyhow::Result<(String, String)> {
+    let (key, modifiers) = keys
+        .split_last()
+        .ok_or_else(|| anyhow::anyhow!("cua-compositor hotkey requires a non-modifier key"))?;
+    let key = key.trim().to_ascii_lowercase();
+    if !(key.len() == 1 && key.is_ascii()) && !INJECT_NAMED_KEYS.contains(&key.as_str()) {
+        anyhow::bail!("cua-compositor does not support hotkey key {key:?}");
+    }
+    let mut normalized = Vec::with_capacity(modifiers.len());
+    for modifier in modifiers {
+        let modifier = modifier.trim().to_ascii_lowercase();
+        let canonical = match modifier.as_str() {
+            "ctrl" | "control" => "ctrl",
+            "shift" => "shift",
+            "alt" | "option" => "alt",
+            "meta" | "super" | "win" | "cmd" => "meta",
+            _ => anyhow::bail!("cua-compositor does not support modifier {modifier:?}"),
+        };
+        normalized.push(canonical);
+    }
+    if normalized.is_empty() {
+        anyhow::bail!("cua-compositor hotkey requires at least one modifier");
+    }
+    Ok((normalized.join(","), key))
+}
+
 /// Interpret the compositor's handshake reply. Accepts only the verbatim v1
 /// banner; a compositor `err ...` line or anything else is a protocol mismatch.
 fn parse_inject_hello(line: &str) -> anyhow::Result<()> {
@@ -2221,6 +2247,34 @@ pub fn inject_press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
     inject_send(&[format!("k {app} {}", key.trim())])
 }
 
+/// Focus-free modifier chord into the target surface.
+pub fn inject_hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
+    let (modifiers, key) = validate_injectable_hotkey(keys)?;
+    let app = app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))?;
+    inject_send(&[format!("h {app} {modifiers} {key}")])
+}
+
+/// Focus-free wheel/axis input at one target-local point.
+pub fn inject_scroll(
+    window_id: u64,
+    x: f64,
+    y: f64,
+    direction: &str,
+    amount: u32,
+) -> anyhow::Result<()> {
+    let app = app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))?;
+    let (axis, value) = match direction.to_ascii_lowercase().as_str() {
+        "up" => (0, -15.0),
+        "down" | "page" => (0, 15.0),
+        "left" => (1, -15.0),
+        "right" => (1, 15.0),
+        _ => anyhow::bail!("unsupported cua-compositor scroll direction {direction:?}"),
+    };
+    let mut lines = vec![format!("m {app} 0 {x:.1} {y:.1}")];
+    lines.extend((0..amount.max(1)).map(|_| format!("a {app} 0 {axis} {value:.1}")));
+    inject_send(&lines)
+}
+
 /// Focus-free click into the window's surface via the nested cua-compositor.
 /// Coordinates are window-local, matching the rest of the inject protocol.
 pub fn inject_click(window_id: u64, x: f64, y: f64, count: u32, button: u8) -> anyhow::Result<()> {
@@ -2326,6 +2380,24 @@ pub fn inject_parallel_drags(drags: &[InjectDrag]) -> anyhow::Result<()> {
         ));
     }
     inject_send(&lines)
+}
+
+/// Focus-free single drag using the same per-surface path as parallel drags.
+pub fn inject_drag(
+    window_id: u64,
+    from: (f64, f64),
+    to: (f64, f64),
+    steps: usize,
+    x_button: u32,
+) -> anyhow::Result<()> {
+    let app_id = app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))?;
+    inject_parallel_drags(&[InjectDrag {
+        app_id,
+        idx: 0,
+        x_button,
+        path: vec![from, to],
+        steps,
+    }])
 }
 
 /// Window-enumeration dispatcher: native Wayland when available, else X11.
@@ -2715,6 +2787,17 @@ mod tests {
                 "{bad:?} is not in the compositor whitelist"
             );
         }
+    }
+
+    #[test]
+    fn injectable_hotkey_normalizes_supported_chords() {
+        let keys = vec!["control".to_owned(), "SHIFT".to_owned(), "7".to_owned()];
+        assert_eq!(
+            validate_injectable_hotkey(&keys).expect("supported chord"),
+            ("ctrl,shift".to_owned(), "7".to_owned())
+        );
+        assert!(validate_injectable_hotkey(&["7".to_owned()]).is_err());
+        assert!(validate_injectable_hotkey(&["hyper".to_owned(), "k".to_owned()]).is_err());
     }
 
     #[test]

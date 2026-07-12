@@ -56,6 +56,9 @@ static struct cua_devstate cua_kbd_state[CUA_MAXDEV];
 static int g_keymap_fd = -1;
 static size_t g_keymap_size = 0;
 static xkb_mod_mask_t g_shift_mask = 1;
+static xkb_mod_mask_t g_ctrl_mask = 0;
+static xkb_mod_mask_t g_alt_mask = 0;
+static xkb_mod_mask_t g_logo_mask = 0;
 struct cua_keyent { uint32_t keycode; int shift; int valid; };
 static struct cua_keyent g_chartab[128];
 static struct wlr_foreign_toplevel_manager_v1 *g_ftl_mgr = NULL;
@@ -66,12 +69,18 @@ static struct wlr_foreign_toplevel_manager_v1 *g_ftl_mgr = NULL;
 STRUCT_FIELD = (
     "\tstruct wlr_xdg_toplevel *xdg_toplevel;\n"
     "\tstruct wlr_foreign_toplevel_handle_v1 *ftl;\n"
+    "\tstruct wl_listener ftl_request_activate;\n"
 )
 
 FUNCS = r"""
 /* v1 control-protocol banner: the client sends this line, the compositor echoes
  * it to confirm both speak v1. Any other first line is refused. */
 #define CUA_PROTO_HELLO "cua-inject v1"
+static void cua_ftl_request_activate(struct wl_listener *listener, void *data) {
+	(void)data;
+	struct tinywl_toplevel *t = wl_container_of(listener, t, ftl_request_activate);
+	focus_toplevel(t);
+}
 static uint32_t cua_now_ms(void) {
 	struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
 	return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
@@ -176,6 +185,20 @@ static void cua_button(struct tinywl_server *server, struct tinywl_toplevel *t, 
 		cua_pframe(res);
 	}
 }
+static void cua_axis(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, uint32_t axis, double value) {
+	if (!t || idx < 0 || idx >= CUA_MAXDEV) return;
+	struct wlr_surface *surface = t->xdg_toplevel->base->surface;
+	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
+	if (!sc || wl_list_empty(&sc->pointers)) return;
+	uint32_t tm = cua_now_ms();
+	struct wl_resource *res;
+	wl_resource_for_each(res, &sc->pointers) {
+		if (wl_resource_get_version(res) >= WL_POINTER_AXIS_SOURCE_SINCE_VERSION)
+			wl_pointer_send_axis_source(res, WL_POINTER_AXIS_SOURCE_WHEEL);
+		wl_pointer_send_axis(res, tm, axis, wl_fixed_from_double(value));
+		cua_pframe(res);
+	}
+}
 static void cua_init_keymap(void) {
 	struct xkb_context *ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	struct xkb_rule_names names = {0};
@@ -193,6 +216,12 @@ static void cua_init_keymap(void) {
 	 * evdev+8; wl_keyboard.key wants the evdev code. */
 	xkb_mod_index_t shift = xkb_keymap_mod_get_index(km, XKB_MOD_NAME_SHIFT);
 	if (shift != XKB_MOD_INVALID) g_shift_mask = (xkb_mod_mask_t)1 << shift;
+	xkb_mod_index_t ctrl = xkb_keymap_mod_get_index(km, XKB_MOD_NAME_CTRL);
+	if (ctrl != XKB_MOD_INVALID) g_ctrl_mask = (xkb_mod_mask_t)1 << ctrl;
+	xkb_mod_index_t alt = xkb_keymap_mod_get_index(km, XKB_MOD_NAME_ALT);
+	if (alt != XKB_MOD_INVALID) g_alt_mask = (xkb_mod_mask_t)1 << alt;
+	xkb_mod_index_t logo = xkb_keymap_mod_get_index(km, XKB_MOD_NAME_LOGO);
+	if (logo != XKB_MOD_INVALID) g_logo_mask = (xkb_mod_mask_t)1 << logo;
 	for (xkb_keycode_t kc = 9; kc < 256; kc++) {
 		for (int lvl = 0; lvl < 2; lvl++) {
 			const xkb_keysym_t *syms;
@@ -261,10 +290,7 @@ static void cua_type_hex(struct tinywl_server *server, struct tinywl_toplevel *t
 		cua_type_cp(server, t, (uint32_t)((hi << 4) | lo));
 	}
 }
-/* Returns 1 when `name` is a recognised key (delivered if the target had a
- * keyboard bound), 0 when it is outside the whitelist so the caller can NAK. */
-static int cua_key_named(struct tinywl_server *server, struct tinywl_toplevel *t, const char *name) {
-	if (!t) return 0;
+static uint32_t cua_named_keycode(const char *name) {
 	uint32_t kc = 0;
 	if (!strcasecmp(name, "enter") || !strcasecmp(name, "return")) kc = KEY_ENTER;
 	else if (!strcasecmp(name, "tab")) kc = KEY_TAB;
@@ -275,11 +301,45 @@ static int cua_key_named(struct tinywl_server *server, struct tinywl_toplevel *t
 	else if (!strcasecmp(name, "down")) kc = KEY_DOWN;
 	else if (!strcasecmp(name, "left")) kc = KEY_LEFT;
 	else if (!strcasecmp(name, "right")) kc = KEY_RIGHT;
+	return kc;
+}
+/* Returns 1 when `name` is a recognised key (delivered if the target had a
+ * keyboard bound), 0 when it is outside the whitelist so the caller can NAK. */
+static int cua_key_named(struct tinywl_server *server, struct tinywl_toplevel *t, const char *name) {
+	if (!t) return 0;
+	uint32_t kc = cua_named_keycode(name);
 	if (!kc) return 0;
 	struct wlr_seat_client *sc = cua_kbd_enter(server, t);
 	if (sc) {
 		cua_kbd_key(sc, kc, true);
 		cua_kbd_key(sc, kc, false);
+	}
+	return 1;
+}
+static int cua_hotkey(struct tinywl_server *server, struct tinywl_toplevel *t, const char *mods, const char *key) {
+	if (!t) return 0;
+	uint32_t kc = cua_named_keycode(key);
+	if (!kc && key[0] && !key[1]) {
+		unsigned char cp = (unsigned char)key[0];
+		if (cp < 128 && g_chartab[cp].valid) kc = g_chartab[cp].keycode;
+	}
+	if (!kc) return 0;
+	xkb_mod_mask_t mask = 0;
+	char copy[128]; snprintf(copy, sizeof copy, "%s", mods);
+	char *save = NULL;
+	for (char *mod = strtok_r(copy, ",", &save); mod; mod = strtok_r(NULL, ",", &save)) {
+		if (!strcasecmp(mod, "ctrl") || !strcasecmp(mod, "control")) mask |= g_ctrl_mask;
+		else if (!strcasecmp(mod, "shift")) mask |= g_shift_mask;
+		else if (!strcasecmp(mod, "alt") || !strcasecmp(mod, "option")) mask |= g_alt_mask;
+		else if (!strcasecmp(mod, "meta") || !strcasecmp(mod, "super") || !strcasecmp(mod, "win") || !strcasecmp(mod, "cmd")) mask |= g_logo_mask;
+		else return 0;
+	}
+	struct wlr_seat_client *sc = cua_kbd_enter(server, t);
+	if (sc) {
+		cua_kbd_mods(sc, mask);
+		cua_kbd_key(sc, kc, true);
+		cua_kbd_key(sc, kc, false);
+		cua_kbd_mods(sc, 0);
 	}
 	return 1;
 }
@@ -315,6 +375,18 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 		if (sscanf(line, "k %127s %31s", app, key) != 2) return "bad-args";
 		if (!(t = cua_resolve_target(server, app, &err))) return err;
 		if (!cua_key_named(server, t, key)) return "unknown-key";
+		return NULL;
+	} else if (!strcmp(cmd, "h")) {
+		char mods[128], key[32];
+		if (sscanf(line, "h %127s %127s %31s", app, mods, key) != 3) return "bad-args";
+		if (!(t = cua_resolve_target(server, app, &err))) return err;
+		if (!cua_hotkey(server, t, mods, key)) return "unknown-hotkey";
+		return NULL;
+	} else if (!strcmp(cmd, "a")) {
+		int idx; unsigned axis; double value;
+		if (sscanf(line, "a %127s %d %u %lf", app, &idx, &axis, &value) != 4) return "bad-args";
+		if (!(t = cua_resolve_target(server, app, &err))) return err;
+		cua_axis(server, t, idx, axis, value);
 		return NULL;
 	}
 	return "unknown-command";
@@ -426,13 +498,15 @@ src = repl(src,
     "\t\t\twlr_foreign_toplevel_handle_v1_set_title(toplevel->ftl, toplevel->xdg_toplevel->title);\n"
     "\t\tif (toplevel->xdg_toplevel->app_id)\n"
     "\t\t\twlr_foreign_toplevel_handle_v1_set_app_id(toplevel->ftl, toplevel->xdg_toplevel->app_id);\n"
+    "\t\ttoplevel->ftl_request_activate.notify = cua_ftl_request_activate;\n"
+    "\t\twl_signal_add(&toplevel->ftl->events.request_activate, &toplevel->ftl_request_activate);\n"
     "\t}\n\n\tfocus_toplevel(toplevel);",
     "ftl-on-map")
 
 # 4) On unmap: drop the foreign-toplevel handle.
 src = repl(src,
     "\twl_list_remove(&toplevel->link);\n}",
-    "\tif (toplevel->ftl) { wlr_foreign_toplevel_handle_v1_destroy(toplevel->ftl); toplevel->ftl = NULL; }\n"
+    "\tif (toplevel->ftl) { wl_list_remove(&toplevel->ftl_request_activate.link); wlr_foreign_toplevel_handle_v1_destroy(toplevel->ftl); toplevel->ftl = NULL; }\n"
     "\twl_list_remove(&toplevel->link);\n}",
     "ftl-on-unmap")
 

@@ -531,8 +531,11 @@ fn row_expects_refusal(row: CatalogRow) -> bool {
         return false;
     }
     let inject_mode = std::env::var_os("CUA_INJECT_SOCKET").is_some();
-    if matches!(row.operation, Operation::Hotkey { .. })
-        || (matches!(row.operation, Operation::PressKey { .. }) && !inject_mode)
+    if !inject_mode
+        && matches!(
+            row.operation,
+            Operation::PressKey { .. } | Operation::Hotkey { .. }
+        )
     {
         return true;
     }
@@ -554,12 +557,6 @@ fn row_expects_refusal(row: CatalogRow) -> bool {
     DisplayServer::current() == DisplayServer::Wayland
         && !inject_mode
         && (focus_bound_pointer || matches!(row.operation, Operation::PxTypeText { .. }))
-        || (DisplayServer::current() == DisplayServer::Wayland
-            && inject_mode
-            && matches!(
-                row.operation,
-                Operation::Scroll { pixel: true, .. } | Operation::Drag { .. }
-            ))
 }
 
 fn run_catalog_row(row: CatalogRow) {

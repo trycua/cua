@@ -75,14 +75,19 @@ Canonical entry points:
 ```text
 Linux X11/session: scripts/ci/linux/run-rust-e2e.sh
 Linux Sway:        scripts/ci/linux/run-rust-e2e-wayland.sh
+Linux nested:      scripts/ci/linux/run-rust-e2e-inject.sh
+Linux GNOME/KDE:   scripts/ci/linux/run-rust-e2e-desktop.sh <gnome|kde>
+Linux real Xorg:   scripts/ci/linux/run-rust-e2e-desktop.sh xorg
 Windows:           .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
 macOS:             scripts/ci/macos/run-rust-e2e.sh
 ```
 
-These suites require an interactive desktop and are often maintainer-triggered.
-They retain typed case/results, screenshots, accessibility state, trajectories,
-logs, and video where the lane supports it. The reporter rejects missing rows,
-false-success responses, undeclared outcomes, and incomplete required evidence.
+The hosted Sway and nested-compositor runners create controlled sessions.
+GNOME, KDE, real Xorg, Windows, and macOS use an existing graphical login. The
+suites are often maintainer-triggered and retain typed case/results,
+screenshots, accessibility state, trajectories, logs, and video where the lane
+supports it. The reporter rejects missing rows, false-success responses,
+undeclared outcomes, and incomplete required evidence.
 
 See:
 

@@ -101,9 +101,11 @@ do not duplicate that matrix. Start with:
 - [`scripts/ci/README.md`](scripts/ci/README.md) for canonical OS runners.
 - [Platform support and validation](https://cua.ai/docs/reference/cua-driver/platform-support) for the public capability and evidence contract.
 
-Interactive desktop tests need a real user session. Windows requires an active
-console or RDP session. macOS requires a logged-in session with Accessibility
-and Screen Recording permissions. Linux X11 and Wayland are separate lanes.
+Windows and macOS desktop tests need a real user session. Windows requires an
+active console or RDP session. macOS requires a logged-in session with
+Accessibility and Screen Recording permissions. The hosted Linux Sway and
+nested-compositor runners create controlled sessions; GNOME, KDE, and real
+Xorg validation use an existing graphical login.
 
 ## Documentation
 

@@ -152,6 +152,24 @@ static const char *cua_activate_pid(struct tinywl_server *server, pid_t target_p
 	if (matches == 0) return "unknown-pid";
 	if (matches > 1) return "ambiguous-pid";
 	focus_toplevel(found);
+	/* tinywl only notifies seat keyboard focus when a physical wlr_keyboard is
+	 * attached. Headless CI has none, so establish the logical focus explicitly
+	 * for observer truth and client activation semantics. */
+	struct wlr_surface *surface = found->xdg_toplevel->base->surface;
+	if (server->seat->keyboard_state.focused_surface != surface) {
+		struct wlr_keyboard_modifiers modifiers = {0};
+		wlr_seat_keyboard_notify_enter(server->seat, surface, NULL, 0, &modifiers);
+	}
+	return NULL;
+}
+static struct tinywl_toplevel *cua_focused_toplevel(struct tinywl_server *server) {
+	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
+	struct wlr_surface *root = focused ? wlr_surface_get_root_surface(focused) : NULL;
+	struct tinywl_toplevel *t;
+	wl_list_for_each(t, &server->toplevels, link) {
+		struct wlr_surface *surface = t->xdg_toplevel ? t->xdg_toplevel->base->surface : NULL;
+		if (surface == root) return t;
+	}
 	return NULL;
 }
 /* Independent observer query used only by the Rust E2E testkit. The target is
@@ -334,6 +352,12 @@ static uint32_t cua_named_keycode(const char *name) {
 	else if (!strcasecmp(name, "down")) kc = KEY_DOWN;
 	else if (!strcasecmp(name, "left")) kc = KEY_LEFT;
 	else if (!strcasecmp(name, "right")) kc = KEY_RIGHT;
+	else if (!strncasecmp(name, "f", 1)) {
+		char *end = NULL; long fn = strtol(name + 1, &end, 10);
+		if (end && !*end && fn >= 1 && fn <= 10) kc = KEY_F1 + (uint32_t)fn - 1;
+		else if (end && !*end && fn == 11) kc = KEY_F11;
+		else if (end && !*end && fn == 12) kc = KEY_F12;
+	}
 	return kc;
 }
 /* Returns 1 when `name` is a recognised key (delivered if the target had a
@@ -385,7 +409,17 @@ static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 	if (sscanf(line, "%7s", cmd) != 1) return "empty";
 	const char *err = NULL;
 	struct tinywl_toplevel *t;
-	if (!strcmp(cmd, "m")) {
+	if (!strcmp(cmd, "d")) {
+		double x, y; unsigned count, btn;
+		if (sscanf(line, "d %lf %lf %u %u", &x, &y, &count, &btn) != 4) return "bad-args";
+		if (!(t = cua_focused_toplevel(server))) return "no-focused-target";
+		if (!cua_motion(server, t, 0, x, y)) return "no-pointer-resource";
+		for (unsigned i = 0; i < (count ? count : 1); i++) {
+			if (!cua_button(server, t, 0, btn, true)) return "no-pointer-resource";
+			if (!cua_button(server, t, 0, btn, false)) return "no-pointer-resource";
+		}
+		return NULL;
+	} else if (!strcmp(cmd, "m")) {
 		int idx; double x, y;
 		if (sscanf(line, "m %127s %d %lf %lf", app, &idx, &x, &y) != 4) return "bad-args";
 		if (!(t = cua_resolve_target(server, app, &err))) return err;

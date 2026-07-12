@@ -2145,6 +2145,43 @@ async fn focus_by_pixel(
     Ok(())
 }
 
+/// Establish widget-local focus inside a nested-compositor target without
+/// changing the compositor's focused toplevel. AX uses Component.GrabFocus;
+/// PX sends a private per-surface left click at the requested local point.
+async fn focus_nested_inject_target(
+    pid: u32,
+    window_id: u64,
+    element_index: Option<usize>,
+    pixel: Option<(f64, f64)>,
+) -> Result<(), ToolResult> {
+    if let Some(index) = element_index {
+        return match tokio::task::spawn_blocking(move || {
+            crate::atspi::focus_element(pid, index)
+        })
+        .await
+        {
+            Ok(Ok(true)) => Ok(()),
+            Ok(Ok(false)) => Err(ToolResult::error(format!(
+                "AT-SPI Component.GrabFocus returned false for element {index}"
+            ))),
+            Ok(Err(error)) => Err(ToolResult::error(error.to_string())),
+            Err(error) => Err(ToolResult::error(format!("Task error: {error}"))),
+        };
+    }
+    if let Some((x, y)) = pixel {
+        return match tokio::task::spawn_blocking(move || {
+            crate::wayland::inject_click(window_id, x, y, 1, 1)
+        })
+        .await
+        {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(ToolResult::error(error.to_string())),
+            Err(error) => Err(ToolResult::error(format!("Task error: {error}"))),
+        };
+    }
+    Ok(())
+}
+
 // ── type_text ─────────────────────────────────────────────────────────────────
 
 pub struct TypeTextTool {
@@ -2250,9 +2287,19 @@ impl Tool for TypeTextTool {
 
         let text_len = text.chars().count();
         // The private nested compositor can target the owning Wayland client
-        // directly, so neither AX nor PX addressing needs a focus-changing
-        // prelude in this environment.
+        // directly. Establish widget-local focus first, without changing the
+        // compositor's focused toplevel, so keys reach the addressed control.
         if crate::wayland::is_inject_mode() {
+            if let Err(error) = focus_nested_inject_target(
+                pid,
+                xid,
+                resolved_elem_idx,
+                px.zip(py),
+            )
+            .await
+            {
+                return error;
+            }
             let text_w = text.clone();
             let result =
                 tokio::task::spawn_blocking(move || crate::wayland::inject_type_text(xid, &text_w))
@@ -2782,6 +2829,11 @@ impl Tool for PressKeyTool {
         // Nested cua-compositor addresses the owning Wayland client directly.
         // Preserve legacy modifiers by promoting the request to a chord.
         if crate::wayland::is_inject_mode() {
+            if let Err(error) =
+                focus_nested_inject_target(pid, xid, element_index_arg, px.zip(py)).await
+            {
+                return error;
+            }
             let result = if mods.is_empty() {
                 let key_w = key.clone();
                 tokio::task::spawn_blocking(move || {
@@ -3047,6 +3099,11 @@ impl Tool for HotkeyTool {
         }
 
         if crate::wayland::is_inject_mode() {
+            if let Err(error) =
+                focus_nested_inject_target(pid, xid, element_index_arg, px.zip(py)).await
+            {
+                return error;
+            }
             let mut chord = mods.clone();
             chord.push(key.clone());
             let result = tokio::task::spawn_blocking(move || {

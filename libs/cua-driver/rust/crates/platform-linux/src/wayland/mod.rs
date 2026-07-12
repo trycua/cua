@@ -1271,6 +1271,10 @@ pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::
 /// This is the Wayland peer of an XTest root-window click and is used only by
 /// the explicit desktop capture scope.
 pub fn click_desktop(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+    if is_inject_mode() {
+        let btn = evdev_button(button as u32);
+        return inject_send(&[format!("d {x} {y} {} {btn}", count.max(1))]);
+    }
     with_libei_fallback(
         || click_vptr(None, x, y, count, button),
         || libei_click(x, y, count, button),

@@ -1224,6 +1224,19 @@ fn unavailable_webkit_keyboard_background(
     })
 }
 
+fn unavailable_wayland_focused_input_background(
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<ToolResult> {
+    (crate::wayland::wayland_input_enabled()
+        && !crate::wayland::is_inject_mode()
+        && !delivery.is_foreground())
+    .then(|| {
+        crate::input::delivery::background_unavailable_error(
+            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+        )
+    })
+}
+
 /// Chromium's X11 renderer drops synthetic input sent to an occluded,
 /// unfocused toplevel. Returning success here would be a silent loss, so all
 /// input tools expose the same typed refusal and leave foreground activation
@@ -2092,6 +2105,11 @@ impl Tool for TypeTextTool {
         if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
             return refusal;
         }
+        if resolved_elem_idx.is_none() {
+            if let Some(refusal) = unavailable_wayland_focused_input_background(delivery) {
+                return refusal;
+            }
+        }
 
         // ── px form: focus by pixel-click, then type into the now-focused element ──
         // Pass x,y (no element_index/token) for an *element px action*: pixel-click
@@ -2575,6 +2593,9 @@ impl Tool for PressKeyTool {
         if let Some(refusal) = unavailable_webkit_keyboard_background(pid, delivery) {
             return refusal;
         }
+        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery) {
+            return refusal;
+        }
 
         // An element-addressed keypress needs to establish the target's
         // focus before the window-level X11 key event is sent. AT-SPI's
@@ -2821,6 +2842,9 @@ impl Tool for HotkeyTool {
             return refusal;
         }
         if let Some(refusal) = unavailable_webkit_keyboard_background(pid, delivery) {
+            return refusal;
+        }
+        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery) {
             return refusal;
         }
 

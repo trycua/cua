@@ -366,7 +366,8 @@ fn classify_wayland_backend(
                     "The RemoteDesktop portal is reachable, but this compositor \
                      has no verified target-activation adapter ({msg}). Portal/libei \
                      input is global and would otherwise affect whichever window is \
-                     focused, so cua-driver refuses foreground dispatch."
+                     focused, potentially the wrong application, so cua-driver \
+                     refuses foreground dispatch."
                 ),
                 "On GNOME, install and enable the bundled WinRects Shell helper, then \
                  log out and back in. KDE foreground input remains unavailable until \

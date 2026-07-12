@@ -106,9 +106,12 @@ dirs = "5"
 default = []
 linux-example = []
 # GNOME/KDE input is pure Rust plus libxkbcommon, which is available in the
-# Debian 11 release container. Ship this feature in ordinary Linux tarballs.
+# Debian 11 release container. Ashpd's RemoteDesktop API exposes ScreenCast
+# stream metadata, so its lightweight screencast module is required here too.
+# The PipeWire frame reader remains isolated in portal-capture below.
 portal-input = [
     "ashpd/remote_desktop",
+    "ashpd/screencast",
     "dep:reis",
     "dep:calloop",
     "dep:enumflags2",

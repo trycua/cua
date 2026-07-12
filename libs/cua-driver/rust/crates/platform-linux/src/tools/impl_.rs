@@ -2015,7 +2015,7 @@ impl Tool for ClickTool {
                 }
                 if crate::wayland::is_inject_mode() {
                     crate::wayland::inject_click(xid, x, y, count as u32, button)?;
-                    return Ok("wayland_libei");
+                    return Ok("wayland_cua_compositor");
                 }
                 if !delivery.is_foreground() {
                     return Ok("background_unavailable");
@@ -2346,7 +2346,7 @@ impl Tool for TypeTextTool {
             }
         }
 
-        // EIS nested compositor: focus-FREE per-surface typing into window_id
+        // Nested cua-compositor: focus-free per-surface typing into window_id
         // (the target need not be focused). Routed over the inject control socket.
         if crate::wayland::is_inject_mode() {
             let text_len = text.chars().count();
@@ -2356,7 +2356,7 @@ impl Tool for TypeTextTool {
                     .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "Typed {text_len} character(s) (focus-free via EIS compositor)."
+                    "Typed {text_len} character(s) (focus-free via cua-compositor)."
                 ))
                 .with_structured(type_text_structured(
                     "key_events",
@@ -2818,7 +2818,7 @@ impl Tool for PressKeyTool {
             }
         };
 
-        // EIS nested compositor: focus-free named-key into window_id.
+        // Nested cua-compositor: focus-free named-key into window_id.
         if crate::wayland::is_inject_mode() {
             let key_w = key.clone();
             let result =
@@ -2826,7 +2826,7 @@ impl Tool for PressKeyTool {
                     .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "Pressed key '{key}' (focus-free via EIS compositor)."
+                    "Pressed key '{key}' (focus-free via cua-compositor)."
                 )),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -4784,7 +4784,7 @@ pub struct ParallelMouseDragTool {
 }
 static PMDRAG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
-/// EIS-compositor path for parallel_mouse_drag: build window-local drag paths
+/// cua-compositor path for parallel_mouse_drag: build window-local drag paths
 /// and run them as concurrent multi-cursor injections over the control socket.
 /// Coordinates stay window-local (the compositor maps them per app_id), so no
 /// X11 geometry/MPX is needed — the X11 path's hard blocker on Wayland.
@@ -4849,7 +4849,7 @@ async fn parallel_drag_inject(args: &Value) -> ToolResult {
     let n = drags.len();
     match tokio::task::spawn_blocking(move || crate::wayland::inject_parallel_drags(&drags)).await {
         Ok(Ok(())) => ToolResult::text(format!(
-            "Ran {n} concurrent drags (multi-cursor via EIS compositor)."
+            "Ran {n} concurrent drags (multi-cursor via cua-compositor)."
         )),
         Ok(Err(e)) => ToolResult::error(e.to_string()),
         Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -4890,7 +4890,7 @@ impl Tool for ParallelMouseDragTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        // EIS nested compositor: run the drags as concurrent multi-cursor
+        // Nested cua-compositor: run the drags as concurrent multi-cursor
         // injections (window-local, no X11 MPX/geometry needed).
         if crate::wayland::is_inject_mode() {
             return parallel_drag_inject(&args).await;

@@ -11,13 +11,15 @@
 # protocol on a unix control socket ($CUA_INJECT_SOCKET). It also exposes
 # foreign-toplevel-management (so cua-driver's list_windows enumerates windows)
 # and screencopy (so grim captures the output) — the same protocols labwc gives
-# the non-nested cells — so the EIS cells keep working end to end.
+# the non-nested cells — so the nested-injection cells keep working end to end.
 #
 # The injection primitives (cua_motion/cua_button/cua_kbd_*) deliver wl_pointer/
 # wl_keyboard straight to a target client's resources, bypassing seat focus —
 # routed by app_id (not positional device index) and transported over a plain
-# socket instead of libei/EIS, since cua owns both ends and the portal/libei
-# layer buys nothing here.
+# socket rather than libei/EIS, since cua owns both ends and the portal/libei
+# layer buys nothing here. The socket speaks a versioned v1 line protocol: the
+# client sends the `cua-inject v1` banner (echoed back on match), then every
+# command line is answered by exactly one `ok` / `err <reason>` acknowledgement.
 #
 # Usage: cua_compositor_patch.py <tinywl.c in> <cua-compositor.c out>
 import sys, io
@@ -67,22 +69,45 @@ STRUCT_FIELD = (
 )
 
 FUNCS = r"""
+/* v1 control-protocol banner: the client sends this line, the compositor echoes
+ * it to confirm both speak v1. Any other first line is refused. */
+#define CUA_PROTO_HELLO "cua-inject v1"
 static uint32_t cua_now_ms(void) {
 	struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
 	return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
+/* Write a single acknowledgement line back to the control client. Best-effort:
+ * a dead peer is torn down by the read side on the next loop iteration. */
+static void cua_reply(int fd, const char *line) {
+	char buf[256];
+	int n = snprintf(buf, sizeof buf, "%s\n", line);
+	if (n < 0) return;
+	if (n >= (int)sizeof buf) n = (int)sizeof buf - 1;
+	ssize_t off = 0;
+	while (off < n) {
+		ssize_t w = write(fd, buf + off, (size_t)n - (size_t)off);
+		if (w <= 0) break;
+		off += w;
+	}
 }
 static void cua_pframe(struct wl_resource *res) {
 	if (wl_resource_get_version(res) >= WL_POINTER_FRAME_SINCE_VERSION)
 		wl_pointer_send_frame(res);
 }
-/* Resolve a target window by its xdg app_id. */
-static struct tinywl_toplevel *cua_find_appid(struct tinywl_server *server, const char *app_id) {
-	struct tinywl_toplevel *t;
+/* Resolve a target window by its xdg app_id, refusing missing and ambiguous
+ * matches so a command never silently drives the wrong window. In v1 duplicate
+ * app_ids are simply not addressable. On failure returns NULL and points *err
+ * at a stable reason token; on success *err is left untouched. */
+static struct tinywl_toplevel *cua_resolve_target(struct tinywl_server *server, const char *app_id, const char **err) {
+	struct tinywl_toplevel *t, *found = NULL;
+	int matches = 0;
 	wl_list_for_each(t, &server->toplevels, link) {
 		const char *a = t->xdg_toplevel ? t->xdg_toplevel->app_id : NULL;
-		if (a && strcmp(a, app_id) == 0) return t;
+		if (a && strcmp(a, app_id) == 0) { found = t; matches++; }
 	}
-	return NULL;
+	if (matches == 0) { *err = "unknown-app-id"; return NULL; }
+	if (matches > 1) { *err = "ambiguous-app-id"; return NULL; }
+	return found;
 }
 static void cua_ptr_leave(struct wlr_seat *seat, struct wlr_surface *surf) {
 	if (!surf) return;
@@ -211,8 +236,10 @@ static void cua_type_hex(struct tinywl_server *server, struct tinywl_toplevel *t
 		cua_type_cp(server, t, (uint32_t)((hi << 4) | lo));
 	}
 }
-static void cua_key_named(struct tinywl_server *server, struct tinywl_toplevel *t, const char *name) {
-	if (!t) return;
+/* Returns 1 when `name` is a recognised key (delivered if the target had a
+ * keyboard bound), 0 when it is outside the whitelist so the caller can NAK. */
+static int cua_key_named(struct tinywl_server *server, struct tinywl_toplevel *t, const char *name) {
+	if (!t) return 0;
 	uint32_t kc = 0;
 	if (!strcasecmp(name, "enter") || !strcasecmp(name, "return")) kc = KEY_ENTER;
 	else if (!strcasecmp(name, "tab")) kc = KEY_TAB;
@@ -223,35 +250,51 @@ static void cua_key_named(struct tinywl_server *server, struct tinywl_toplevel *
 	else if (!strcasecmp(name, "down")) kc = KEY_DOWN;
 	else if (!strcasecmp(name, "left")) kc = KEY_LEFT;
 	else if (!strcasecmp(name, "right")) kc = KEY_RIGHT;
-	if (!kc) return;
+	if (!kc) return 0;
 	struct wlr_seat_client *sc = cua_kbd_enter(server, t);
-	if (!sc) return;
-	cua_kbd_key(sc, kc, true);
-	cua_kbd_key(sc, kc, false);
+	if (sc) {
+		cua_kbd_key(sc, kc, true);
+		cua_kbd_key(sc, kc, false);
+	}
+	return 1;
 }
 /* ── control socket: one line per command, routed by app_id ───────────────── */
-static void cua_handle_cmd(struct tinywl_server *server, char *line) {
+/* Process one command line. Returns NULL on success, else a stable error token
+ * the caller sends back as `err <token>`. The command is only acknowledged
+ * after it has been resolved and applied — never before. */
+static const char *cua_handle_cmd(struct tinywl_server *server, char *line) {
 	char cmd[8], app[128];
-	if (sscanf(line, "%7s", cmd) != 1) return;
+	if (sscanf(line, "%7s", cmd) != 1) return "empty";
+	const char *err = NULL;
+	struct tinywl_toplevel *t;
 	if (!strcmp(cmd, "m")) {
 		int idx; double x, y;
-		if (sscanf(line, "m %127s %d %lf %lf", app, &idx, &x, &y) == 4)
-			cua_motion(server, cua_find_appid(server, app), idx, x, y);
+		if (sscanf(line, "m %127s %d %lf %lf", app, &idx, &x, &y) != 4) return "bad-args";
+		if (!(t = cua_resolve_target(server, app, &err))) return err;
+		cua_motion(server, t, idx, x, y);
+		return NULL;
 	} else if (!strcmp(cmd, "b")) {
 		int idx; unsigned btn, pr;
-		if (sscanf(line, "b %127s %d %u %u", app, &idx, &btn, &pr) == 4)
-			cua_button(server, cua_find_appid(server, app), idx, btn, pr != 0);
+		if (sscanf(line, "b %127s %d %u %u", app, &idx, &btn, &pr) != 4) return "bad-args";
+		if (!(t = cua_resolve_target(server, app, &err))) return err;
+		cua_button(server, t, idx, btn, pr != 0);
+		return NULL;
 	} else if (!strcmp(cmd, "t")) {
 		char hex[8192];
-		if (sscanf(line, "t %127s %8191s", app, hex) == 2)
-			cua_type_hex(server, cua_find_appid(server, app), hex);
+		if (sscanf(line, "t %127s %8191s", app, hex) != 2) return "bad-args";
+		if (!(t = cua_resolve_target(server, app, &err))) return err;
+		cua_type_hex(server, t, hex);
+		return NULL;
 	} else if (!strcmp(cmd, "k")) {
 		char key[32];
-		if (sscanf(line, "k %127s %31s", app, key) == 2)
-			cua_key_named(server, cua_find_appid(server, app), key);
+		if (sscanf(line, "k %127s %31s", app, key) != 2) return "bad-args";
+		if (!(t = cua_resolve_target(server, app, &err))) return err;
+		if (!cua_key_named(server, t, key)) return "unknown-key";
+		return NULL;
 	}
+	return "unknown-command";
 }
-struct cua_conn { struct tinywl_server *server; struct wl_event_source *src; char buf[16384]; size_t len; };
+struct cua_conn { struct tinywl_server *server; struct wl_event_source *src; int hello; char buf[16384]; size_t len; };
 /* Tear a connection down once: remove its event source (else the loop fires it
  * again on freed data -> double free), close the fd, free the state. */
 static int cua_conn_drop(struct cua_conn *c, int fd) {
@@ -267,7 +310,32 @@ static int cua_conn_readable(int fd, uint32_t mask, void *data) {
 	c->len += (size_t)n; c->buf[c->len] = 0;
 	char *p = c->buf, *nl;
 	while ((nl = memchr(p, '\n', (size_t)(c->buf + c->len - p)))) {
-		*nl = 0; cua_handle_cmd(c->server, p); p = nl + 1;
+		*nl = 0;
+		/* Tolerate CRLF clients by trimming a trailing carriage return. */
+		if (nl > p && nl[-1] == '\r') nl[-1] = 0;
+		if (!c->hello) {
+			/* The first line must be the versioned v1 handshake. */
+			if (!strcmp(p, CUA_PROTO_HELLO)) {
+				c->hello = 1;
+				cua_reply(fd, CUA_PROTO_HELLO);
+			} else {
+				cua_reply(fd, "err unsupported-version");
+				return cua_conn_drop(c, fd);
+			}
+		} else {
+			const char *err = cua_handle_cmd(c->server, p);
+			/* Deliver injected events before acking so `ok` means "processed",
+			 * never merely "parsed". */
+			wl_display_flush_clients(c->server->wl_display);
+			if (err) {
+				char msg[128];
+				snprintf(msg, sizeof msg, "err %s", err);
+				cua_reply(fd, msg);
+			} else {
+				cua_reply(fd, "ok");
+			}
+		}
+		p = nl + 1;
 	}
 	size_t rem = (size_t)(c->buf + c->len - p);
 	memmove(c->buf, p, rem); c->len = rem;

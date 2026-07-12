@@ -7,8 +7,8 @@
 //! `zwlr_virtual_pointer_v1` / `zwlr_virtual_keyboard_v1` protocols.
 //!
 //! Sequence:
-//! 1. `ei::Context::connect_to_env()` — fast path when a $LIBEI_SOCKET is
-//!    already exported (cua-compositor / inject mode).
+//! 1. `ei::Context::connect_to_env()` — fast path when a compositor or test
+//!    environment already exports `$LIBEI_SOCKET`.
 //! 2. Fallback: ashpd `RemoteDesktop::create_session` →
 //!    `select_devices(KEYBOARD|POINTER)` →
 //!    `start(session, parent)` (user consent dialog the first time) →
@@ -383,7 +383,7 @@ pub fn shutdown() {
 /// zbus connection) at the end of `open_eis_context`, before the calloop loop
 /// even started, so the session died immediately on those compositors (#2105).
 /// Holding these for the worker's lifetime keeps the connection — and the
-/// session — open. The `$LIBEI_SOCKET` / cua-compositor fast path has no portal
+/// session — open. The direct `$LIBEI_SOCKET` fast path has no portal
 /// session, so it carries `None`.
 #[allow(dead_code)] // fields are keep-alive only; never read
 enum PortalKeepAlive {
@@ -414,13 +414,13 @@ fn worker(rx: Receiver<Cmd>) -> anyhow::Result<()> {
     run_calloop(context, rx)
 }
 
-/// Open the EIS context. Fast path: $LIBEI_SOCKET (cua-compositor /
-/// inject mode). Fallback: ashpd portal RemoteDesktop handshake.
+/// Open the EIS context. Fast path: `$LIBEI_SOCKET` supplied by the environment.
+/// Fallback: ashpd portal RemoteDesktop handshake.
 fn open_eis_context() -> anyhow::Result<(reis::ei::Context, PortalKeepAlive)> {
     if let Some(ctx) = reis::ei::Context::connect_to_env()
         .map_err(|e| anyhow::anyhow!("env ei socket open failed: {e}"))?
     {
-        // $LIBEI_SOCKET / cua-compositor fast path: no portal session to keep alive.
+        // Direct $LIBEI_SOCKET fast path: no portal session to keep alive.
         return Ok((ctx, PortalKeepAlive::None));
     }
 

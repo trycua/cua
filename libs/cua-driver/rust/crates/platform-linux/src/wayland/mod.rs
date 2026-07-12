@@ -1444,8 +1444,8 @@ fn move_cursor_absolute_vptr(window_id: Option<u64>, x: i32, y: i32) -> anyhow::
 /// Press-drag-release on a native Wayland toplevel. Emits one button press at
 /// `(from_x, from_y)`, then `steps` interpolated motion events along the
 /// straight segment to `(to_x, to_y)`, then a release. Coordinates are
-/// output-relative; window-local coords need the EIS inject socket
-/// (`CUA_INJECT_SOCKET`).
+/// output-relative; window-local coords need the nested cua-compositor
+/// injection socket (`CUA_INJECT_SOCKET`).
 pub fn drag(
     window_id: u64,
     from_x: i32,
@@ -1990,29 +1990,142 @@ fn key_to_evdev(key: &str) -> Option<u32> {
     Some(code)
 }
 
-// ── EIS nested-compositor injection ────────────────────────────────────────
+// ── Nested cua-compositor injection ────────────────────────────────────────
 //
 // When cua-driver's nested compositor is `cua-compositor` (our patched wlroots,
 // see nix/cua-driver/compositor/), it exposes a line-protocol control socket at
 // $CUA_INJECT_SOCKET for what stock Wayland forbids: focus-FREE per-surface
 // keyboard injection and MULTI-cursor pointer injection, both routed to a target
 // window by its xdg app_id. These helpers speak that protocol.
+//
+// The protocol is a simple line-based v1 exchange with per-command
+// acknowledgement: the client sends `INJECT_PROTO_HELLO` and the compositor
+// echoes it (or replies `err ...`), then every command line is answered by
+// exactly one `ok` / `err <reason>` line. The client fails on a protocol
+// mismatch, a read timeout, an EOF, or any compositor error line — an
+// acknowledgement is transport evidence only, not proof the target changed.
 
-/// The control socket path, when running against the EIS nested compositor.
+/// Version banner exchanged at connect time: the client sends this line and the
+/// compositor must echo it back verbatim to confirm both speak v1.
+const INJECT_PROTO_HELLO: &str = "cua-inject v1";
+
+/// The exact named keys the nested compositor's `k` command can emit — the
+/// whitelist in `cua_key_named` (cua_compositor_patch.py). Compared
+/// case-insensitively, matching the compositor's `strcasecmp`.
+const INJECT_NAMED_KEYS: &[&str] = &[
+    "enter", "return", "tab", "escape", "esc", "backspace", "space", "up", "down", "left", "right",
+];
+
+/// The control socket path, when running against the nested cua-compositor.
 pub fn inject_socket_path() -> Option<String> {
     std::env::var("CUA_INJECT_SOCKET")
         .ok()
         .filter(|s| !s.is_empty())
 }
 
-/// True when input should be routed through the EIS compositor's control socket
-/// (focus-free / multi-cursor) rather than wtype / virtual-pointer.
+/// True when input should be routed through the nested cua-compositor's control
+/// socket (focus-free / multi-cursor) rather than wtype / virtual-pointer.
 pub fn is_inject_mode() -> bool {
     inject_socket_path().is_some()
 }
 
+/// Reject any character the nested compositor cannot type before it reaches the
+/// wire. The compositor's chartab (`cua_init_keymap`) only covers printable
+/// ASCII (`0x20..=0x7E`) plus newline and tab; anything else — Unicode, other
+/// control bytes — would be silently dropped, so fail loudly instead.
+fn validate_injectable_text(text: &str) -> anyhow::Result<()> {
+    for ch in text.chars() {
+        let ok = ch == '\n' || ch == '\t' || (ch.is_ascii() && !ch.is_ascii_control());
+        if !ok {
+            anyhow::bail!(
+                "cua-compositor cannot type {ch:?}: only printable ASCII plus newline and tab \
+                 are supported in the v1 injection protocol"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Reject any key name outside the compositor's named-key whitelist before
+/// sending. Mirrors `cua_key_named`; unsupported names must fail here rather
+/// than being silently ignored by the compositor.
+fn validate_injectable_key(key: &str) -> anyhow::Result<()> {
+    let normalized = key.trim().to_ascii_lowercase();
+    if INJECT_NAMED_KEYS.contains(&normalized.as_str()) {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "cua-compositor does not support key {key:?}; supported keys: {}",
+            INJECT_NAMED_KEYS.join(", ")
+        );
+    }
+}
+
+/// Interpret the compositor's handshake reply. Accepts only the verbatim v1
+/// banner; a compositor `err ...` line or anything else is a protocol mismatch.
+fn parse_inject_hello(line: &str) -> anyhow::Result<()> {
+    let trimmed = line.trim();
+    if trimmed == INJECT_PROTO_HELLO {
+        Ok(())
+    } else if let Some(reason) = trimmed.strip_prefix("err") {
+        anyhow::bail!(
+            "cua-compositor rejected the v1 handshake:{}",
+            if reason.trim().is_empty() {
+                String::new()
+            } else {
+                format!(" {}", reason.trim())
+            }
+        )
+    } else {
+        anyhow::bail!(
+            "cua-compositor protocol mismatch: expected {INJECT_PROTO_HELLO:?}, got {trimmed:?}"
+        )
+    }
+}
+
+/// Interpret a single per-command acknowledgement line. `ok` succeeds; `err
+/// <reason>` and any unrecognised line fail.
+fn parse_inject_reply(line: &str) -> anyhow::Result<()> {
+    let trimmed = line.trim();
+    if trimmed == "ok" {
+        Ok(())
+    } else if let Some(reason) = trimmed.strip_prefix("err") {
+        let reason = reason.trim();
+        if reason.is_empty() {
+            anyhow::bail!("cua-compositor rejected the command");
+        }
+        anyhow::bail!("cua-compositor rejected the command: {reason}")
+    } else {
+        anyhow::bail!("unexpected cua-compositor response: {trimmed:?}")
+    }
+}
+
+/// Read one newline-terminated response line, mapping timeout and EOF to clear
+/// errors so the caller never blocks forever on an unresponsive compositor.
+fn read_inject_line(reader: &mut impl std::io::BufRead) -> anyhow::Result<String> {
+    let mut line = String::new();
+    let n = reader.read_line(&mut line).map_err(|e| {
+        if matches!(
+            e.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ) {
+            anyhow::anyhow!("cua-compositor did not respond within the timeout")
+        } else {
+            anyhow::anyhow!("cua-compositor read failed: {e}")
+        }
+    })?;
+    if n == 0 {
+        anyhow::bail!("cua-compositor closed the connection before responding");
+    }
+    Ok(line)
+}
+
+/// Connect to the nested cua-compositor control socket, perform the v1
+/// handshake, then send each command line and require exactly one
+/// acknowledgement per command. Fails on protocol mismatch, timeout, EOF, or a
+/// compositor error line — the earlier fire-and-forget path hid all of these.
 fn inject_send(lines: &[String]) -> anyhow::Result<()> {
-    use std::io::Write;
+    use std::io::{BufReader, Write};
     use std::os::unix::net::UnixStream;
     let path = inject_socket_path().ok_or_else(|| anyhow::anyhow!("CUA_INJECT_SOCKET not set"))?;
     // The nested compositor may still be starting; retry the connect briefly.
@@ -2026,36 +2139,34 @@ fn inject_send(lines: &[String]) -> anyhow::Result<()> {
             Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
         }
     }
-    let mut s =
+    let stream =
         stream.ok_or_else(|| anyhow::anyhow!("could not connect to inject socket {path}"))?;
-    let mut buf = String::new();
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+    let mut writer = stream.try_clone()?;
+    let mut reader = BufReader::new(stream);
+
+    // v1 handshake: send our banner and require the compositor to echo it.
+    writeln!(writer, "{INJECT_PROTO_HELLO}")?;
+    writer.flush()?;
+    parse_inject_hello(&read_inject_line(&mut reader)?)?;
+
+    // One command per line; block on its acknowledgement before the next.
     for l in lines {
-        buf.push_str(l);
-        buf.push('\n');
+        writeln!(writer, "{l}")?;
+        writer.flush()?;
+        parse_inject_reply(&read_inject_line(&mut reader)?)?;
     }
-    s.write_all(buf.as_bytes())?;
-    s.flush()?;
-    // Give the compositor a moment to process before the socket closes.
-    std::thread::sleep(std::time::Duration::from_millis(80));
     Ok(())
 }
 
-/// Resolve a window_id (foreign-toplevel protocol id) to its xdg app_id by
-/// enumerating toplevels — the inject protocol addresses windows by app_id.
+/// Resolve a window_id to its xdg app_id via the stable identity registry that
+/// [`list_windows`] populates (falling back to sway IPC / AT-SPI through
+/// [`identity_for`]) — the nested cua-compositor injection protocol addresses
+/// windows by app_id. Returns `None` when no identity is registered or the
+/// resolved app_id is empty, so callers can surface a clear error.
 pub fn app_id_for_window(window_id: u64) -> Option<String> {
-    let conn = Connection::connect_to_env().ok()?;
-    let mut queue = conn.new_event_queue::<State>();
-    let qh = queue.handle();
-    conn.display().get_registry(&qh, ());
-    let mut state = State::default();
-    queue.roundtrip(&mut state).ok()?;
-    for _ in 0..4 {
-        queue.roundtrip(&mut state).ok()?;
-    }
-    state
-        .toplevels
-        .get(&(window_id as u32))
-        .map(|t| t.app_id.clone())
+    identity_for(window_id)
+        .map(|identity| identity.app_id)
         .filter(|s| !s.is_empty())
 }
 
@@ -2086,25 +2197,34 @@ fn evdev_button(x_button: u32) -> u32 {
     }
 }
 
-/// Focus-free type into the window's surface (no focus change).
+/// Sentinel error when a window_id has no registered cua-compositor identity.
+fn no_app_id(window_id: u64) -> anyhow::Error {
+    anyhow::anyhow!(
+        "no known cua-compositor app_id for window {window_id}; call list_windows first so its \
+         Wayland identity is registered"
+    )
+}
+
+/// Focus-free type into the window's surface (no focus change). Rejects any
+/// character the compositor cannot emit before touching the socket.
 pub fn inject_type_text(window_id: u64, text: &str) -> anyhow::Result<()> {
-    let app = app_id_for_window(window_id)
-        .ok_or_else(|| anyhow::anyhow!("no Wayland app_id for window {window_id}"))?;
+    validate_injectable_text(text)?;
+    let app = app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))?;
     inject_send(&[format!("t {app} {}", to_hex(text))])
 }
 
-/// Focus-free named-key press into the window's surface.
+/// Focus-free named-key press into the window's surface. Rejects any key
+/// outside the compositor's whitelist before touching the socket.
 pub fn inject_press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
-    let app = app_id_for_window(window_id)
-        .ok_or_else(|| anyhow::anyhow!("no Wayland app_id for window {window_id}"))?;
-    inject_send(&[format!("k {app} {key}")])
+    validate_injectable_key(key)?;
+    let app = app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))?;
+    inject_send(&[format!("k {app} {}", key.trim())])
 }
 
-/// Focus-free click into the window's surface via the nested EIS compositor.
+/// Focus-free click into the window's surface via the nested cua-compositor.
 /// Coordinates are window-local, matching the rest of the inject protocol.
 pub fn inject_click(window_id: u64, x: f64, y: f64, count: u32, button: u8) -> anyhow::Result<()> {
-    let app = app_id_for_window(window_id)
-        .ok_or_else(|| anyhow::anyhow!("no Wayland app_id for window {window_id}"))?;
+    let app = app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))?;
     let btn = evdev_button(button as u32);
     let n = count.max(1);
     let mut lines = Vec::with_capacity((n as usize) * 4);
@@ -2560,5 +2680,59 @@ mod tests {
             .expect("crop fixture PNG");
         let decoded = image::load_from_memory(&cropped).expect("decode cropped PNG");
         assert_eq!((decoded.width(), decoded.height()), (3, 4));
+    }
+
+    #[test]
+    fn injectable_text_accepts_printable_ascii_newline_and_tab() {
+        validate_injectable_text("Hello, World! 123 @#$%\t\n").expect("printable ASCII is typable");
+        // The full printable ASCII span the compositor chartab covers.
+        let printable: String = (0x20u8..=0x7e).map(|b| b as char).collect();
+        validate_injectable_text(&printable).expect("every printable ASCII byte is typable");
+    }
+
+    #[test]
+    fn injectable_text_rejects_unicode_and_other_controls() {
+        for bad in ["café", "emoji 😀", "bell\u{07}", "null\u{00}", "delete\u{7f}", "cr\r"] {
+            assert!(
+                validate_injectable_text(bad).is_err(),
+                "{bad:?} must be rejected before it reaches the compositor"
+            );
+        }
+    }
+
+    #[test]
+    fn injectable_key_accepts_whitelist_case_insensitively() {
+        for good in ["enter", "Enter", "RETURN", "tab", "Escape", "esc", "space", "up", "Left"] {
+            validate_injectable_key(good).unwrap_or_else(|e| panic!("{good:?} should pass: {e}"));
+        }
+    }
+
+    #[test]
+    fn injectable_key_rejects_unsupported_names() {
+        for bad in ["f1", "ctrl", "a", "delete", "home", "pageup", ""] {
+            assert!(
+                validate_injectable_key(bad).is_err(),
+                "{bad:?} is not in the compositor whitelist"
+            );
+        }
+    }
+
+    #[test]
+    fn hello_reply_parses_exact_banner_and_rejects_mismatch() {
+        parse_inject_hello("cua-inject v1\n").expect("verbatim banner is accepted");
+        parse_inject_hello("  cua-inject v1  ").expect("surrounding whitespace is tolerated");
+        assert!(parse_inject_hello("cua-inject v2").is_err());
+        assert!(parse_inject_hello("err unsupported-version").is_err());
+        assert!(parse_inject_hello("garbage").is_err());
+    }
+
+    #[test]
+    fn command_reply_parses_ok_and_surfaces_error_reason() {
+        parse_inject_reply("ok\n").expect("ok is success");
+        parse_inject_reply("ok").expect("ok without newline is success");
+        let err = parse_inject_reply("err ambiguous-app-id\n").unwrap_err();
+        assert!(err.to_string().contains("ambiguous-app-id"));
+        assert!(parse_inject_reply("err").is_err());
+        assert!(parse_inject_reply("maybe").is_err());
     }
 }

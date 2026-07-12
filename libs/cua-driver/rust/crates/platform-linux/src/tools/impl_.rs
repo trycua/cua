@@ -402,10 +402,14 @@ impl Tool for ListWindowsTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let filter_pid = args.opt_u64("pid").map(|v| v as u32);
-        let windows =
+        let on_screen_only = args.bool_or("on_screen_only", false);
+        let mut windows =
             tokio::task::spawn_blocking(move || crate::wayland::list_windows_dispatch(filter_pid))
                 .await
                 .unwrap_or_default();
+        if on_screen_only {
+            windows.retain(|window| window.is_on_screen);
+        }
         let mut lines = vec![format!("Found {} windows:", windows.len())];
         for w in &windows {
             lines.push(format!(
@@ -428,19 +432,16 @@ impl Tool for ListWindowsTool {
 /// existing Linux callers don't break. Fully additive; no field removed,
 /// no schema_version bump.
 ///
-/// The Linux `WindowInfo` struct (see `crate::x11::WindowInfo`) exposes
-/// neither an app name nor a visibility flag, so `app_name` is an empty
-/// string and `is_on_screen` defaults to `true` — the same best-effort
-/// default the Windows backend uses.
 fn window_record_json(w: &crate::x11::WindowInfo) -> Value {
     json!({
         "window_id": w.xid,
         "pid": w.pid,
-        "app_name": "",
+        "app_name": w.app_name,
         "title": w.title,
         // Canonical cross-platform geometry (macOS/Windows parity).
         "bounds": { "x": w.x, "y": w.y, "width": w.width, "height": w.height },
-        "is_on_screen": true,
+        "is_on_screen": w.is_on_screen,
+        "z_index": w.z_index,
         // Legacy alias: flat fields kept inline for pre-existing callers.
         "x": w.x, "y": w.y,
         "width": w.width, "height": w.height,
@@ -456,7 +457,10 @@ mod list_windows_tests {
         let w = crate::x11::WindowInfo {
             xid: 42,
             pid: Some(1234),
+            app_name: "example-app".to_owned(),
             title: "Example".to_owned(),
+            is_on_screen: true,
+            z_index: Some(3),
             x: 10,
             y: 20,
             width: 300,
@@ -480,8 +484,9 @@ mod list_windows_tests {
         assert_eq!(rec["height"], json!(400));
 
         // Cross-platform companions.
-        assert_eq!(rec["app_name"], json!(""));
+        assert_eq!(rec["app_name"], json!("example-app"));
         assert_eq!(rec["is_on_screen"], json!(true));
+        assert_eq!(rec["z_index"], json!(3));
         assert_eq!(rec["window_id"], json!(42));
         assert_eq!(rec["title"], json!("Example"));
     }

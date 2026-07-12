@@ -609,7 +609,10 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
         out.push(WindowInfo {
             xid: stable_id,
             pid: sway.map(|window| window.pid),
+            app_name: tl.app_id.clone(),
             title,
+            is_on_screen: sway.map(|window| window.visible).unwrap_or(true),
+            z_index: None,
             x: sway.map(|window| window.x).unwrap_or(0),
             y: sway.map(|window| window.y).unwrap_or(0),
             width: sway.map(|window| window.width).unwrap_or(0),
@@ -2216,7 +2219,10 @@ mod tests {
         WindowInfo {
             xid,
             pid,
+            app_name: String::new(),
             title: title.to_owned(),
+            is_on_screen: true,
+            z_index: None,
             x: 0,
             y: 0,
             width: 0,

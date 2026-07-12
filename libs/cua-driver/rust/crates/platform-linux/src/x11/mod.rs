@@ -13,7 +13,10 @@ pub struct WindowInfo {
     /// X11 Window (XID) cast to u64.
     pub xid: u64,
     pub pid: Option<u32>,
+    pub app_name: String,
     pub title: String,
+    pub is_on_screen: bool,
+    pub z_index: Option<usize>,
     pub x: i32,
     pub y: i32,
     pub width: u32,
@@ -37,7 +40,7 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
     let windows = get_window_list(&conn, root)?;
 
     let mut result = Vec::new();
-    for xid in windows {
+    for (z_index, xid) in windows.into_iter().enumerate() {
         let pid = get_window_pid(&conn, xid).ok().flatten();
         if let Some(fp) = filter_pid {
             if pid != Some(fp) { continue; }
@@ -45,6 +48,14 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
 
         let title = get_window_title(&conn, xid).unwrap_or_default();
         if title.trim().is_empty() { continue; }
+        let app_name = get_window_class(&conn, xid)
+            .map(|(instance, class)| if class.is_empty() { instance } else { class })
+            .unwrap_or_default();
+        let is_on_screen = conn
+            .get_window_attributes(xid)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .is_some_and(|attributes| attributes.map_state == MapState::VIEWABLE);
 
         let geom = conn.get_geometry(xid)?.reply().ok();
         let (x, y, w, h) = if let Some(g) = geom {
@@ -56,7 +67,18 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
             (0, 0, 0, 0)
         };
 
-        result.push(WindowInfo { xid: xid as u64, pid, title, x, y, width: w, height: h });
+        result.push(WindowInfo {
+            xid: xid as u64,
+            pid,
+            app_name,
+            title,
+            is_on_screen,
+            z_index: Some(z_index),
+            x,
+            y,
+            width: w,
+            height: h,
+        });
     }
 
     Ok(result)
@@ -140,6 +162,10 @@ fn get_window_title(conn: &RustConnection, window: Window) -> Result<String> {
 /// WM_CLASS atom set, or the property could not be read.
 pub fn wm_class_for_window(xid: u64) -> Option<(String, String)> {
     let (conn, _) = RustConnection::connect(None).ok()?;
+    get_window_class(&conn, xid as u32)
+}
+
+fn get_window_class(conn: &RustConnection, xid: Window) -> Option<(String, String)> {
     let reply = conn
         .get_property(false, xid as u32, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 512)
         .ok()?

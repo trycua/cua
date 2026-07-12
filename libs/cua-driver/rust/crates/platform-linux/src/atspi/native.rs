@@ -791,7 +791,10 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
                     out.push(WindowInfo {
                         xid,
                         pid: Some(cpid),
+                        app_name: app_name.clone(),
                         title,
+                        is_on_screen: true,
+                        z_index: None,
                         x: 0,
                         y: 0,
                         width: 0,
@@ -805,7 +808,10 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
                     out.push(WindowInfo {
                         xid: (cpid as u64).max(1),
                         pid: Some(cpid),
+                        app_name: app_name.clone(),
                         title: app_name,
+                        is_on_screen: true,
+                        z_index: None,
                         x: 0,
                         y: 0,
                         width: 0,

@@ -259,8 +259,8 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
     command
         .args(&spec.args)
         .env("CUA_E2E_FIXTURE_JOURNAL_URL", journal.url())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
     if spec.name == "electron" {
         command.env(
             "CUA_ELECTRON_CDP_PORT",

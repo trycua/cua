@@ -111,6 +111,14 @@ jobs:
             BODY+="\nOr add \`no-release\` to skip."
           fi
 
+          if printf '%s\n' "${AFFECTED[@]}" | grep -qx 'cua-driver-rs'; then
+            BODY+="\n\n### cua-driver desktop release validation\n\n"
+            BODY+="Before adding the release label, a maintainer records green runs on the exact release SHA:\n"
+            BODY+="- [ ] [Linux X11 canonical matrix](https://github.com/${REPO}/actions/workflows/e2e-rust-linux.yml)\n"
+            BODY+="- [ ] [Linux Sway canonical matrix](https://github.com/${REPO}/actions/workflows/e2e-rust-linux-wayland.yml) with environment \`sway\`\n"
+            BODY+="- [ ] Result links and remaining experimental environment gaps are recorded in the PR\n"
+          fi
+
           # Delete previous reminder comment if exists, then post new one
           EXISTING_COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
             --jq ".[] | select(.body | contains(\"${COMMENT_MARKER}\")) | .id" 2>/dev/null | head -1)

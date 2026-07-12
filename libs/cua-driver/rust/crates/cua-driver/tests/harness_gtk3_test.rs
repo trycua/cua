@@ -535,16 +535,22 @@ fn row_expects_refusal(row: CatalogRow) -> bool {
     ) {
         return true;
     }
-    DisplayServer::current() == DisplayServer::Wayland
-        && matches!(
-            row.operation,
-            Operation::PxClick {
-                button: "right",
-                ..
-            } | Operation::PxClick { count: 2, .. }
-                | Operation::Scroll { pixel: true, .. }
-                | Operation::Drag { .. }
-        )
+    let focus_bound_pointer = matches!(
+        row.operation,
+        Operation::PxClick {
+            button: "right",
+            ..
+        } | Operation::PxClick { count: 2, .. }
+            | Operation::Scroll { pixel: true, .. }
+            | Operation::Drag { .. }
+    );
+    if DisplayServer::current() == DisplayServer::X11
+        && focus_bound_pointer
+        && !platform_linux::input::real_pointer_input_available()
+    {
+        return true;
+    }
+    DisplayServer::current() == DisplayServer::Wayland && focus_bound_pointer
 }
 
 fn run_catalog_row(row: CatalogRow) {

@@ -1245,6 +1245,20 @@ fn unavailable_gtk_keyboard_background(
     })
 }
 
+fn unavailable_gtk_pointer_background(
+    pid: u32,
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<ToolResult> {
+    (!delivery.is_foreground()
+        && is_gtk_process(pid)
+        && !crate::input::real_pointer_input_available())
+    .then(|| {
+        crate::input::delivery::background_unavailable_error(
+            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+        )
+    })
+}
+
 fn unavailable_wayland_focused_input_background(
     delivery: crate::input::delivery::DeliveryMode,
     focus_free_inject_supported: bool,
@@ -3192,6 +3206,9 @@ impl Tool for ScrollTool {
         if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
             return refusal;
         }
+        if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
+            return refusal;
+        }
 
         // An element-addressed scroll must land over the element. The old
         // fallback used (0, 0) in the window, which can report success while
@@ -3385,6 +3402,9 @@ impl Tool for DoubleClickTool {
             return refusal;
         }
         if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
+            return refusal;
+        }
+        if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
             return refusal;
         }
         if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, false) {
@@ -3600,6 +3620,9 @@ impl Tool for RightClickTool {
             return refusal;
         }
         if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
+            return refusal;
+        }
+        if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
             return refusal;
         }
         if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, false) {
@@ -3821,6 +3844,9 @@ impl Tool for DragTool {
             return refusal;
         }
         if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
+            return refusal;
+        }
+        if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
             return refusal;
         }
         if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, false) {

@@ -110,13 +110,19 @@ pub(crate) fn check_bundle_identity() -> CheckEntry {
         .and_then(|p| p.to_str().map(str::to_owned))
         .unwrap_or_default();
 
-    let is_correct = bid.as_deref() == Some(CANONICAL_BUNDLE_ID);
     let data = CheckData {
         bundle_identifier: bid.clone(),
         executable_path: if exe.is_empty() { None } else { Some(exe) },
         ..Default::default()
     };
-    if is_correct {
+    if cua_driver_core::embedded_mode() {
+        return CheckEntry::pass(
+            NAME_BUNDLE_IDENTITY,
+            "Embedded mode uses the host application's TCC identity.",
+        )
+        .with_data(data);
+    }
+    if bid.as_deref() == Some(CANONICAL_BUNDLE_ID) {
         return CheckEntry::pass(
             NAME_BUNDLE_IDENTITY,
             format!("Bundle is {CANONICAL_BUNDLE_ID}."),
@@ -282,6 +288,26 @@ mod tests {
     use cua_driver_core::tool::Tool;
     use std::sync::Arc;
 
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::permissions::test_env_lock()
+    }
+
+    fn swap_env(var: &str, value: Option<&str>) -> Option<std::ffi::OsString> {
+        let original = std::env::var_os(var);
+        match value {
+            Some(v) => std::env::set_var(var, v),
+            None => std::env::remove_var(var),
+        }
+        original
+    }
+
+    fn restore_env(var: &str, original: Option<std::ffi::OsString>) {
+        match original {
+            Some(value) => std::env::set_var(var, value),
+            None => std::env::remove_var(var),
+        }
+    }
+
     #[test]
     fn binary_version_always_passes() {
         let entry = check_binary_version();
@@ -316,6 +342,9 @@ mod tests {
 
     #[test]
     fn bundle_identity_in_test_host_fails_with_full_shape() {
+        let _guard = env_lock();
+        let embedded = swap_env(cua_driver_core::EMBEDDED_ENV, None);
+
         // The Rust test binary runs outside CuaDriver.app, so its
         // bundle id is either absent or not com.trycua.driver. Either
         // way the documented fail-mode shape applies: message + hint
@@ -342,6 +371,23 @@ mod tests {
             data.executable_path.is_some(),
             "executable_path must be set so consumers can identify the wrong binary"
         );
+
+        restore_env(cua_driver_core::EMBEDDED_ENV, embedded);
+    }
+
+    #[test]
+    fn bundle_identity_passes_in_embedded_mode() {
+        let _guard = env_lock();
+        let embedded = swap_env(cua_driver_core::EMBEDDED_ENV, Some("1"));
+
+        let entry = check_bundle_identity();
+        assert_eq!(entry.status, CheckStatus::Pass);
+        assert!(entry.message.contains("host application's TCC identity"));
+        assert!(entry.hint.is_none());
+        let data = entry.data.expect("diagnostic data expected");
+        assert!(data.executable_path.is_some());
+
+        restore_env(cua_driver_core::EMBEDDED_ENV, embedded);
     }
 
     // End-to-end through the dispatcher — checks every macOS canonical

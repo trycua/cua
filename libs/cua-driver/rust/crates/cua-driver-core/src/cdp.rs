@@ -25,7 +25,19 @@ pub async fn evaluate(
     expression: &str,
     await_promise: bool,
 ) -> anyhow::Result<String> {
-    let response = cdp_evaluate(port, expression, await_promise).await?;
+    evaluate_targeted(port, expression, await_promise, None).await
+}
+
+/// Evaluate `expression` in the unique page whose URL contains
+/// `target_url_contains`. When no hint is supplied, preserves the legacy
+/// first-page behavior.
+pub async fn evaluate_targeted(
+    port: u16,
+    expression: &str,
+    await_promise: bool,
+    target_url_contains: Option<&str>,
+) -> anyhow::Result<String> {
+    let response = cdp_evaluate(port, expression, await_promise, target_url_contains).await?;
     Ok(format_cdp_result(&response))
 }
 
@@ -35,6 +47,7 @@ async fn cdp_evaluate(
     port: u16,
     expression: &str,
     await_promise: bool,
+    target_url_contains: Option<&str>,
 ) -> anyhow::Result<Value> {
     // A listener can be reachable before Chromium publishes its first page
     // target. Bound both that readiness interval and the HTTP roundtrip.
@@ -45,7 +58,14 @@ async fn cdp_evaluate(
     .await
     .map_err(|_| anyhow::anyhow!("CDP /json discovery on port {port} timed out after 10 s"))??;
 
-    let ws_url = pages[0]
+    let page = pick_page(&pages, target_url_contains)
+        .ok_or_else(|| match target_url_contains {
+            Some(hint) => anyhow::anyhow!(
+                "No unique CDP page URL contains {hint:?} on port {port}"
+            ),
+            None => anyhow::anyhow!("No CDP page tabs found on port {port}"),
+        })?;
+    let ws_url = page
         .get("webSocketDebuggerUrl")
         .and_then(|u| u.as_str())
         .ok_or_else(|| anyhow::anyhow!("Page has no webSocketDebuggerUrl"))?
@@ -67,6 +87,25 @@ async fn cdp_evaluate(
     )
     .await
     .map_err(|_| anyhow::anyhow!("CDP evaluate timed out after 30 s"))?
+}
+
+fn pick_page<'a>(pages: &'a [Value], hint: Option<&str>) -> Option<&'a Value> {
+    match hint {
+        None => pages.first(),
+        Some(hint) => {
+            let hint_lower = hint.to_ascii_lowercase();
+            let mut matches = pages.iter().filter(|page| {
+                page.get("url")
+                    .and_then(Value::as_str)
+                    .is_some_and(|url| url.to_ascii_lowercase().contains(&hint_lower))
+            });
+            let page = matches.next()?;
+            if matches.next().is_some() {
+                return None;
+            }
+            Some(page)
+        }
+    }
 }
 
 fn format_cdp_result(response: &Value) -> String {
@@ -375,5 +414,40 @@ fn encode_len_masked(buf: &mut Vec<u8>, len: usize) {
         for i in (0..8).rev() {
             buf.push((len >> (i * 8)) as u8);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pick_page;
+    use serde_json::json;
+
+    fn pages() -> Vec<serde_json::Value> {
+        vec![
+            json!({ "url": "app://fixture/#window-a", "webSocketDebuggerUrl": "ws://a" }),
+            json!({ "url": "app://fixture/#window-b", "webSocketDebuggerUrl": "ws://b" }),
+        ]
+    }
+
+    #[test]
+    fn targeted_page_selection_is_unique_and_case_insensitive() {
+        let pages = pages();
+        assert_eq!(
+            pick_page(&pages, Some("#WINDOW-B"))
+                .and_then(|page| page["webSocketDebuggerUrl"].as_str()),
+            Some("ws://b")
+        );
+        assert!(pick_page(&pages, Some("#missing")).is_none());
+        assert!(pick_page(&pages, Some("app://fixture/")).is_none());
+    }
+
+    #[test]
+    fn omitted_page_hint_preserves_first_page_behavior() {
+        let pages = pages();
+        assert_eq!(
+            pick_page(&pages, None)
+                .and_then(|page| page["webSocketDebuggerUrl"].as_str()),
+            Some("ws://a")
+        );
     }
 }

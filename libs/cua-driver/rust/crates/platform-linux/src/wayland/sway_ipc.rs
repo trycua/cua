@@ -70,12 +70,21 @@ fn collect(node: &Node, windows: &mut Vec<Window>) {
             // `window_rect`. Some server-decorated Wayland clients instead
             // leave that origin at zero and expose the title-bar inset only
             // through `deco_rect`; use it as the content origin in that shape.
+            let inferred_top_inset = if node.window_rect.height > 0 {
+                node.rect
+                    .height
+                    .saturating_sub(node.window_rect.height)
+                    .max(0)
+            } else {
+                0
+            };
             let content_y = if node.window_rect.y != 0 {
                 node.window_rect.y
             } else {
                 node.deco_rect
                     .y
                     .saturating_add(node.deco_rect.height.max(0))
+                    .max(inferred_top_inset)
             };
             windows.push(Window {
                 id: node.id,
@@ -232,6 +241,24 @@ mod tests {
           }]
         }"#;
         let windows = parse_tree(tree).expect("parse decorated Sway tree");
+        assert_eq!((windows[0].content_x, windows[0].content_y), (0, 47));
+    }
+
+    #[test]
+    fn outer_client_height_delta_fills_missing_decoration_metadata() {
+        let tree = br#"{
+          "id": 1,
+          "nodes": [{
+            "id": 10,
+            "name": "Tauri",
+            "app_id": "cua-test-harness",
+            "pid": 123,
+            "rect": {"x": 0, "y": 0, "width": 940, "height": 780},
+            "window_rect": {"x": 0, "y": 0, "width": 940, "height": 733},
+            "deco_rect": {"x": 0, "y": 0, "width": 0, "height": 0}
+          }]
+        }"#;
+        let windows = parse_tree(tree).expect("parse Sway tree with implicit decoration");
         assert_eq!((windows[0].content_x, windows[0].content_y), (0, 47));
     }
 }

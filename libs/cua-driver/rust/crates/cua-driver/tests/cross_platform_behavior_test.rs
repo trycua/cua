@@ -344,14 +344,51 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
 }
 
 fn snapshot(fixture: &mut Fixture) -> ToolResponse {
-    fixture.driver.call(
+    let state = fixture.driver.call(
         "get_window_state",
         serde_json::json!({
             "pid": fixture.pid as i64,
             "window_id": fixture.wid,
             "capture_mode": "ax"
         }),
-    )
+    );
+    refresh_wayland_window_geometry(fixture);
+    state
+}
+
+#[cfg(target_os = "linux")]
+fn refresh_wayland_window_geometry(fixture: &mut Fixture) {
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        return;
+    }
+    // A compositor may place a newly mapped toplevel after its first
+    // list_windows appearance. Re-read the current compositor-owned geometry
+    // for every snapshot, matching the native GTK harness, instead of turning
+    // that launch-time placement into a stale PX coordinate origin.
+    let windows = fixture.driver.call(
+        "list_windows",
+        serde_json::json!({ "pid": fixture.pid as i64 }),
+    );
+    let Some(window) = windows.structured()["windows"]
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|window| window["pid"].as_u64() == Some(fixture.pid as u64))
+        })
+    else {
+        return;
+    };
+    if let Some(window_id) = window["window_id"].as_u64() {
+        fixture.wid = window_id;
+    }
+    let bounds = &window["bounds"];
+    fixture.window_x = bounds["x"].as_f64().unwrap_or(fixture.window_x);
+    fixture.window_y = bounds["y"].as_f64().unwrap_or(fixture.window_y);
+}
+
+#[cfg(not(target_os = "linux"))]
+fn refresh_wayland_window_geometry(_fixture: &mut Fixture) {
 }
 
 fn window_origin(fixture: &Fixture, _state: &ToolResponse) -> (f64, f64) {

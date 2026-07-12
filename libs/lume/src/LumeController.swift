@@ -271,6 +271,14 @@ final class LumeController {
         }
     }
 
+    /// Validates that no disk-resize transaction is armed for a VM. Blocks
+    /// run/clone/push so an in-progress (or interrupted) resize is never raced.
+    private func validateNoPendingResize(_ vmDir: VMDirectory, name: String) throws {
+        if vmDir.hasResizeMarker() {
+            throw DiskResizeError.resizeInProgress(name)
+        }
+    }
+
     @MainActor
     public func clone(
         name: String, newName: String, sourceLocation: String? = nil, destLocation: String? = nil
@@ -292,7 +300,25 @@ final class LumeController {
 
             // Check if source VM is still being provisioned
             let sourceVmDir = try home.getVMDirectory(normalizedName, storage: actualSourceLocation)
+            guard let resizeGuard = try sourceVmDir.tryAcquireResizeGuard(exclusive: false) else {
+                throw DiskResizeError.resizeInProgress(normalizedName)
+            }
+            defer {
+                flock(resizeGuard.fileDescriptor, LOCK_UN)
+                try? resizeGuard.close()
+            }
             try validateNotProvisioning(sourceVmDir, name: normalizedName)
+            try validateNoPendingResize(sourceVmDir, name: normalizedName)
+
+            let destinationVmDir = try home.getVMDirectory(normalizedNewName, storage: destLocation)
+            guard let destinationGuard = try destinationVmDir.tryAcquireResizeGuard(exclusive: true)
+            else {
+                throw DiskResizeError.resizeInProgress(normalizedNewName)
+            }
+            defer {
+                flock(destinationGuard.fileDescriptor, LOCK_UN)
+                try? destinationGuard.close()
+            }
 
             // Get the source VM and check if it's running
             let sourceVM = try get(name: normalizedName, storage: sourceLocation)
@@ -303,12 +329,11 @@ final class LumeController {
 
             // Check if destination already exists
             do {
-                let destDir = try home.getVMDirectory(normalizedNewName, storage: destLocation)
-                if destDir.exists() {
+                if destinationVmDir.exists() {
                     Logger.error(
                         "Destination VM already exists",
                         metadata: ["destination": normalizedNewName])
-                    throw HomeError.directoryAlreadyExists(path: destDir.dir.path)
+                    throw HomeError.directoryAlreadyExists(path: destinationVmDir.dir.path)
                 }
             } catch VMLocationError.locationNotFound {
                 // Location not found is okay, we'll create it
@@ -831,11 +856,20 @@ final class LumeController {
                 let actualLocation = try self.validateVMExists(normalizedName, storage: storage)
                 vmDir = try home.getVMDirectory(normalizedName, storage: actualLocation)
             }
-            
+
             // Stop VM if it's running
             if SharedVM.shared.getVM(name: normalizedName) != nil {
                 try await stopVM(name: normalizedName)
             }
+
+            guard let resizeGuard = try vmDir.tryAcquireResizeGuard(exclusive: true) else {
+                throw DiskResizeError.resizeInProgress(normalizedName)
+            }
+            defer {
+                flock(resizeGuard.fileDescriptor, LOCK_UN)
+                try? resizeGuard.close()
+            }
+            try validateNoPendingResize(vmDir, name: normalizedName)
             
             try vmDir.delete()
             
@@ -856,8 +890,17 @@ final class LumeController {
         memory: UInt64? = nil,
         diskSize: UInt64? = nil,
         display: String? = nil,
-        storage: String? = nil
+        storage: String? = nil,
+        noBackup: Bool = false,
+        keepBackup: Bool = false,
+        dryRun: Bool = false
     ) throws {
+        if noBackup && keepBackup {
+            throw ValidationError("--no-backup and --keep-backup cannot be used together")
+        }
+        if diskSize == nil && (noBackup || keepBackup || dryRun) {
+            throw ValidationError("Disk-resize options require diskSize")
+        }
         let normalizedName = normalizeVMName(name: name)
         Logger.info(
             "Updating VM settings",
@@ -884,7 +927,10 @@ final class LumeController {
                 try vm.setMemorySize(memory)
             }
             if let diskSize = diskSize {
-                try vm.setDiskSize(diskSize)
+                try vm.resizeDiskSafely(
+                    to: diskSize,
+                    options: DiskResizeOptions(
+                        backup: !noBackup, keepBackup: keepBackup, dryRun: dryRun))
             }
             if let display = display {
                 try vm.setDisplay(display)
@@ -1047,6 +1093,7 @@ final class LumeController {
 
             // Check if VM is still being provisioned
             try validateNotProvisioning(vmDir, name: normalizedName)
+            try validateNoPendingResize(vmDir, name: normalizedName)
 
             // Validate parameters using the located VMDirectory
             try validateRunParameters(
@@ -1219,6 +1266,14 @@ final class LumeController {
 
             // Get the VM directory
             let vmDir = try home.getVMDirectory(name, storage: actualLocation)
+            guard let resizeGuard = try vmDir.tryAcquireResizeGuard(exclusive: false) else {
+                throw DiskResizeError.resizeInProgress(name)
+            }
+            defer {
+                flock(resizeGuard.fileDescriptor, LOCK_UN)
+                try? resizeGuard.close()
+            }
+            try validateNoPendingResize(vmDir, name: name)
 
             // Use configured registry to push the VM
             let imageRegistry = try RegistryFactory.createRegistry(

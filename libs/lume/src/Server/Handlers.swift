@@ -256,7 +256,10 @@ extension Server {
                 memory: sizes.memory,
                 diskSize: sizes.diskSize,
                 display: sizes.display?.string,
-                storage: request.storage
+                storage: request.storage,
+                noBackup: request.noBackup ?? false,
+                keepBackup: request.keepBackup ?? false,
+                dryRun: request.dryRun ?? false
             )
 
             return HTTPResponse(

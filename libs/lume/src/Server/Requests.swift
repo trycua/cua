@@ -111,6 +111,9 @@ struct SetVMRequest: Codable {
     let diskSize: String?
     let display: String?
     let storage: String?
+    let noBackup: Bool?
+    let keepBackup: Bool?
+    let dryRun: Bool?
 
     func parse() throws -> (memory: UInt64?, diskSize: UInt64?, display: VMDisplayResolution?) {
         return (

@@ -1,0 +1,27 @@
+---
+title: MCP tools
+description: Tool reference for Lume's stdio MCP server.
+---
+
+Start the server with `lume serve --mcp`. Tool names use `snake_case`.
+
+## `lume_resize_disk`
+
+Grow a stopped VM disk to a new total size.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | yes | VM name. |
+| `disk_size` | string | yes | New total size, such as `120GB`. Must exceed the current size. |
+| `storage` | string | no | Named storage location or direct path. |
+| `no_backup` | boolean | no | Skip the macOS rollback copy. Defaults to `false`. |
+| `keep_backup` | boolean | no | Keep rollback files after success. Defaults to `false`. |
+| `dry_run` | boolean | no | Validate and print the plan without changing the disk. Defaults to `false`. |
+
+`no_backup` and `keep_backup` cannot both be true. macOS resizing preserves the
+paired RecoveryOS partition and expands the main APFS container. Linux resizing
+increases the image only.
+
+The MCP server also exposes tools for listing, creating, running, stopping,
+cloning, deleting, and accessing VMs. Clients should discover the live tool
+list from MCP so their schemas match the installed Lume version.

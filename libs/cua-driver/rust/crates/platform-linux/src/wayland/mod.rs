@@ -2815,14 +2815,14 @@ mod tests {
 
     #[test]
     fn injectable_key_accepts_whitelist_case_insensitively() {
-        for good in ["enter", "Enter", "RETURN", "tab", "Escape", "esc", "space", "up", "Left"] {
+        for good in ["enter", "Enter", "RETURN", "tab", "Escape", "esc", "space", "up", "Left", "f1", "F12"] {
             validate_injectable_key(good).unwrap_or_else(|e| panic!("{good:?} should pass: {e}"));
         }
     }
 
     #[test]
     fn injectable_key_rejects_unsupported_names() {
-        for bad in ["f1", "ctrl", "a", "delete", "home", "pageup", ""] {
+        for bad in ["f13", "ctrl", "a", "delete", "home", "pageup", ""] {
             assert!(
                 validate_injectable_key(bad).is_err(),
                 "{bad:?} is not in the compositor whitelist"

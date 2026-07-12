@@ -3,8 +3,20 @@
 // tool routes through CDP when --remote-debugging-port is set, so we
 // expose one here on a configurable port.
 
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
+const fs = require('fs');
+const http = require('http');
 const path = require('path');
+const sentinelMode = process.env.CUA_E2E_SENTINEL === '1';
+const fixtureJournalUrl = process.env.CUA_E2E_FIXTURE_JOURNAL_URL || '';
+const sentinelJournalPath = process.env.CUA_E2E_SENTINEL_JOURNAL || '';
+if (process.env.CUA_E2E_USER_DATA_DIR) {
+  app.setPath('userData', process.env.CUA_E2E_USER_DATA_DIR);
+}
+if (process.platform === 'linux' && process.env.WAYLAND_DISPLAY) {
+  app.commandLine.appendSwitch('ozone-platform', 'wayland');
+  app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform');
+}
 
 // Validate CUA_ELECTRON_CDP_PORT before forwarding to Chromium —
 // remote-debugging-port=0 means "pick an ephemeral port" which would
@@ -20,19 +32,57 @@ if (!Number.isInteger(cdpPortNum) || cdpPortNum < 1 || cdpPortNum > 65535) {
 const CDP_PORT = String(cdpPortNum);
 app.commandLine.appendSwitch('remote-debugging-port', CDP_PORT);
 
+ipcMain.on('cua-e2e-config', event => {
+  event.returnValue = { journalUrl: fixtureJournalUrl, sentinelMode };
+});
+
+ipcMain.on('cua-e2e-fixture-state', (_event, state) => {
+  if (!fixtureJournalUrl) return;
+  const body = JSON.stringify(state);
+  const request = http.request(fixtureJournalUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/plain',
+      'Content-Length': Buffer.byteLength(body),
+    },
+  });
+  request.on('error', () => {});
+  request.end(body);
+});
+
+ipcMain.on('cua-e2e-sentinel-event', (_event, entry) => {
+  if (!sentinelMode || !sentinelJournalPath) return;
+  fs.appendFileSync(sentinelJournalPath, `${JSON.stringify(entry)}\n`, 'utf8');
+});
+
 let mainWindow;
 
 function createWindow() {
-  const fixedTitle = `CuaTestHarness Electron [cdp=${CDP_PORT}]`;
+  const fixedTitle = sentinelMode
+    ? `CuaTestHarness Sentinel [cdp=${CDP_PORT}]`
+    : `CuaTestHarness Electron [cdp=${CDP_PORT}]`;
   mainWindow = new BrowserWindow({
-    width: 940,
-    height: 780,
+    width: sentinelMode ? 1280 : 940,
+    height: sentinelMode ? 900 : 780,
+    // Keep the normal fixture inside virtual desktops whose window manager
+    // has no persisted placement policy (notably Openbox under Xvfb).
+    x: sentinelMode ? 0 : 120,
+    y: sentinelMode ? 0 : 120,
     title: fixedTitle,
-    show: false,
+    // Map the normal harness immediately. Xvfb/Openbox can enumerate a
+    // deferred BrowserWindow while never painting it into the root desktop.
+    // The sentinel stays hidden until it has maximized and claimed focus.
+    show: !sentinelMode,
+    // A floating-level macOS window is omitted by cua-driver's deliberate
+    // layer-0 top-level window contract. Foreground + maximized is sufficient
+    // for occlusion there and lets an unexpected target raise remain visible.
+    alwaysOnTop: sentinelMode && process.platform !== 'darwin',
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: !sentinelMode,
+      preload: path.join(__dirname, 'preload.js'),
     },
   });
 
@@ -66,7 +116,21 @@ function createWindow() {
       // our fixedTitle and break the harness-window-discovery test.
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setTitle(fixedTitle);
-        mainWindow.showInactive();
+        if (sentinelMode) {
+          if (process.platform !== 'darwin') {
+            mainWindow.setAlwaysOnTop(true);
+          }
+          mainWindow.maximize();
+          mainWindow.show();
+          mainWindow.focus();
+        } else {
+          // Xvfb/Openbox can keep a showInactive window inspectable through
+          // AT-SPI while never mapping it onto the captured root desktop.
+          // Show it normally; background cells subsequently foreground the
+          // occlusion sentinel before taking their desktop snapshot.
+          mainWindow.show();
+          mainWindow.focus();
+        }
       }
     })
     .catch(err => {

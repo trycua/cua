@@ -191,6 +191,12 @@ static const char *cua_query_geometry(struct tinywl_server *server, pid_t target
 	if (matches > 1) return "ambiguous-pid";
 	int x = 0, y = 0;
 	if (!wlr_scene_node_coords(&target->scene_tree->node, &x, &y)) return "unmapped-target";
+	/* AT-SPI Window coordinates for native GTK are rooted at the xdg window
+	 * geometry, while scene coordinates and screencopy include the complete root
+	 * surface (including client-side decorations). Rebase into that coordinate
+	 * system so `origin + accessible_window_xy` lands on the captured pixel. */
+	struct wlr_box geo = target->xdg_toplevel->base->geometry;
+	x -= geo.x; y -= geo.y;
 	snprintf(out, out_len, "geometry %d %d", x, y);
 	return NULL;
 }
@@ -210,8 +216,9 @@ static void cua_ptr_leave(struct wlr_seat *seat, struct wlr_surface *surf) {
 static bool cua_motion(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, double x, double y) {
 	if (!t || idx < 0 || idx >= CUA_MAXDEV) return false;
 	struct wlr_surface *surface = t->xdg_toplevel->base->surface;
-	struct wlr_box geo = t->xdg_toplevel->base->geometry;
-	wl_fixed_t sx = wl_fixed_from_double(geo.x + x), sy = wl_fixed_from_double(geo.y + y);
+	/* Public PX coordinates come from the cropped root-surface screenshot, so
+	 * they already include any client-side decoration inset. */
+	wl_fixed_t sx = wl_fixed_from_double(x), sy = wl_fixed_from_double(y);
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
 	if (!sc || wl_list_empty(&sc->pointers)) return false;
 	struct wl_resource *res;

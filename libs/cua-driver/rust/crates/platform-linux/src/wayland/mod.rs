@@ -513,6 +513,8 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
             y: 0,
             width: 0,
             height: 0,
+            // wlr-foreign-toplevel-management does not expose stacking order.
+            z_index: None,
         });
     }
     Ok(out)

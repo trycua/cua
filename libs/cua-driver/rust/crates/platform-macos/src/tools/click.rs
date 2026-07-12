@@ -240,7 +240,7 @@ impl Tool for ClickTool {
             let target = {
                 let mut wins = crate::windows::visible_windows();
                 // visible_windows() assigns HIGHER z_index = MORE FRONT
-                // (z_index = total - idx over CGWindowList's front-to-back order).
+                // (z_index = count - 1 - index over CGWindowList's front-to-back order).
                 // Sort DESCENDING so the first match is the FRONTMOST window under
                 // the point — the one the agent actually sees in the screenshot.
                 // (Ascending picked the BACKMOST occluded window — a real miss when

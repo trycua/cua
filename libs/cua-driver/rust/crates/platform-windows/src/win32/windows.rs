@@ -4,8 +4,8 @@
 //!
 //! 1. **`EnumWindows`** (canonical z-order) — the Win32 enumerator walks the
 //!    window manager's z-order list top-to-bottom, so iteration order IS the
-//!    actual z-order. We list these first so the merged array's index reflects
-//!    the true Win32 stacking for any HWND the Win32 path can see.
+//!    actual z-order. We list these first so the tool layer can normalize the
+//!    true Win32 stacking into the shared zero-based `z_index` invariant.
 //!
 //! 2. **UI Automation** (extra coverage) — appended after `EnumWindows`,
 //!    contributing only HWNDs Win32 didn't surface. UIA exposes modern
@@ -49,8 +49,8 @@ struct EnumState {
 /// List top-level visible windows. If `filter_pid` is Some, only that process.
 ///
 /// `EnumWindows` first — its iteration order is the Win32 window manager's
-/// z-order (top-to-bottom), so the merged array's index doubles as a z_index
-/// for any HWND the Win32 path saw. Then UIA-only entries are appended (UIA
+/// z-order (top-to-bottom), which the tool layer reverses into the shared
+/// zero-based `z_index` invariant. Then UIA-only entries are appended (UIA
 /// makes no z-order guarantee, so it must not be allowed to reorder anything
 /// EnumWindows already reported). The pid filter is applied to the merged
 /// list.

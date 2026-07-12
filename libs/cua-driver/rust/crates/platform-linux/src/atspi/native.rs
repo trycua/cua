@@ -754,6 +754,7 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
                         y: 0,
                         width: 0,
                         height: 0,
+                        z_index: None,
                     });
                     emitted += 1;
                 }
@@ -768,6 +769,7 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
                         y: 0,
                         width: 0,
                         height: 0,
+                        z_index: None,
                     });
                 }
             }

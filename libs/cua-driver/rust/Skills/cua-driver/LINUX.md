@@ -122,6 +122,11 @@ CI so the three surfaces can't drift. Linux-relevant notes:
   with `set_config capture_scope=desktop`, then send `x,y` with no
   pid/window_id. Under the default `capture_scope=window` a windowless
   action is rejected with a structured `desktop_scope_disabled` error.
+- **`list_windows` uses the shared `z_index` invariant:** `0` is backmost,
+  larger values are closer to the front, and the frontmost window is `n - 1`
+  when order is known. X11 derives this from `_NET_CLIENT_LIST_STACKING` or
+  `QueryTree`; unordered `_NET_CLIENT_LIST`, native Wayland, and AT-SPI
+  results report `z_index:null` rather than inventing an order.
 
 ## AT-SPI needs the session bus (headless / containers / `runuser`)
 

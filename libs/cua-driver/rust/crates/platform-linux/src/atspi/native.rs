@@ -1793,6 +1793,12 @@ fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i
                 crate::wayland::sway_ipc::window_for_id(xid)
                     .map(|window| (window.x, window.y))
             })
+            .or_else(|| {
+                crate::wayland::sway_ipc::list_windows().and_then(|_| {
+                    crate::wayland::window_geometry(xid)
+                        .map(|(window_x, window_y, _, _)| (window_x, window_y))
+                })
+            })
             .or_else(|| crate::wayland::shell_helper::window_origin_for_pid(pid))
             .or_else(|| crate::wayland::sway_ipc::window_origin_for_pid(pid))
             .or_else(|| title.and_then(crate::wayland::sway_ipc::window_origin_for_title));

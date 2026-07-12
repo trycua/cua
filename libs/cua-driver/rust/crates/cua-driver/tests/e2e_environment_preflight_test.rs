@@ -13,38 +13,60 @@ use cua_driver_testkit::e2e::DisplayServer;
 use cua_driver_testkit::e2e::{write_environment_from_env, EnvironmentRecord};
 use cua_driver_testkit::{driver_binary, harness_app, spawn_in_job, Driver, McpDriver};
 
-fn electron_binary() -> (std::path::PathBuf, Vec<&'static str>) {
+struct PreflightFixture {
+    path: std::path::PathBuf,
+    args: Vec<&'static str>,
+    title: &'static str,
+    ax_marker: &'static str,
+}
+
+fn preflight_fixture() -> PreflightFixture {
     #[cfg(target_os = "windows")]
     {
-        (
-            harness_app("harness-electron", "CuaTestHarness.Electron.exe"),
-            vec![
+        PreflightFixture {
+            path: harness_app("harness-electron", "CuaTestHarness.Electron.exe"),
+            args: vec![
                 "--no-sandbox",
                 "--disable-gpu",
                 "--force-renderer-accessibility",
             ],
-        )
+            title: "CuaTestHarness Electron",
+            ax_marker: "WEB_HARNESS_MARKER_v1",
+        }
     }
     #[cfg(target_os = "macos")]
     {
-        (
-            harness_app(
+        PreflightFixture {
+            path: harness_app(
                 "harness-electron",
                 "CuaTestHarness.Electron.app/Contents/MacOS/Electron",
             ),
-            vec!["--force-renderer-accessibility"],
-        )
+            args: vec!["--force-renderer-accessibility"],
+            title: "CuaTestHarness Electron",
+            ax_marker: "WEB_HARNESS_MARKER_v1",
+        }
     }
     #[cfg(target_os = "linux")]
     {
-        (
-            harness_app("harness-electron", "CuaTestHarness.Electron"),
-            vec![
-                "--no-sandbox",
-                "--disable-gpu",
-                "--force-renderer-accessibility",
-            ],
-        )
+        if std::env::var("CUA_E2E_INTERNAL_LANE").as_deref() == Ok("native") {
+            PreflightFixture {
+                path: harness_app("harness-gtk3", "CuaTestHarness.Gtk3"),
+                args: Vec::new(),
+                title: "CuaTestHarness GTK3",
+                ax_marker: "HARNESS_TEXT_MARKER_v1",
+            }
+        } else {
+            PreflightFixture {
+                path: harness_app("harness-electron", "CuaTestHarness.Electron"),
+                args: vec![
+                    "--no-sandbox",
+                    "--disable-gpu",
+                    "--force-renderer-accessibility",
+                ],
+                title: "CuaTestHarness Electron",
+                ax_marker: "WEB_HARNESS_MARKER_v1",
+            }
+        }
     }
 }
 
@@ -123,11 +145,11 @@ fn run_preflight() {
         "driver version mismatch: {version}"
     );
 
-    let (fixture_path, fixture_args) = electron_binary();
+    let fixture = preflight_fixture();
     assert!(
-        fixture_path.exists(),
+        fixture.path.exists(),
         "required preflight fixture is missing at {}",
-        fixture_path.display()
+        fixture.path.display()
     );
     let recordings_root = std::env::var_os("CUA_E2E_RECORDINGS_ROOT")
         .expect("CUA_E2E_RECORDINGS_ROOT is required for canonical E2E");
@@ -165,9 +187,9 @@ fn run_preflight() {
         })
         .unwrap_or_default();
 
-    let mut command = Command::new(&fixture_path);
+    let mut command = Command::new(&fixture.path);
     command
-        .args(fixture_args)
+        .args(&fixture.args)
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
     let mut child = spawn_in_job(&mut command).expect("preflight fixture failed to launch");
@@ -193,7 +215,7 @@ fn run_preflight() {
                         && window["title"]
                             .as_str()
                             .unwrap_or("")
-                            .contains("CuaTestHarness Electron")
+                            .contains(fixture.title)
                 })
             })
         {
@@ -236,10 +258,7 @@ fn run_preflight() {
                 "capture_mode": "ax"
             }),
         );
-        if !state.is_error()
-            && state.tree_text().contains("WEB_HARNESS_MARKER_v1")
-            && has_image(&state)
-        {
+        if !state.is_error() && state.tree_text().contains(fixture.ax_marker) && has_image(&state) {
             break;
         }
         assert!(

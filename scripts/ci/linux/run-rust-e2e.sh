@@ -62,6 +62,7 @@ if [[ -z "${CUA_E2E_SOURCE_SHA:-}" && -f "${REPO_ROOT}/.cua-e2e-source-sha" ]]; 
   export CUA_E2E_SOURCE_MARKER="${REPO_ROOT}/.cua-e2e-source-sha"
 fi
 if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
+  export GDK_BACKEND="${GDK_BACKEND:-wayland}"
   export CUA_E2E_COMPOSITOR="${CUA_E2E_COMPOSITOR:-wayland-unknown}"
   export CUA_E2E_INPUT_BACKENDS="${CUA_E2E_INPUT_BACKENDS:-atspi}"
 else

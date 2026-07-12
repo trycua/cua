@@ -804,12 +804,22 @@ fn list_windows_blocking(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo>
                         },
                         _ => None,
                     };
-                    let (x, y, width, height) = geometry
+                    let (observed_x, observed_y, width, height) = geometry
                         .filter(|(_, _, width, height)| *width > 0 && *height > 0)
                         .map(|(x, y, width, height)| {
                             (x, y, width.max(0) as u32, height.max(0) as u32)
                         })
                         .unwrap_or((0, 0, 0, 0));
+                    // On native Wayland, AT-SPI frame extents can be a stale
+                    // toolkit default even when the compositor has already
+                    // placed the window elsewhere. Prefer compositor metadata
+                    // by pid/title so list_windows and later element geometry
+                    // share the same screen origin.
+                    let (x, y) = prefer_authoritative_wayland_origin(
+                        authoritative_wayland_origin(cpid, 0, Some(&title)),
+                        Some((observed_x, observed_y)),
+                    )
+                    .unwrap_or((observed_x, observed_y));
                     // Stable, non-zero, unique per (pid, frame ordinal).
                     let xid = (((cpid as u64) << 16) | (i as u64)).max(1);
                     out.push(WindowInfo {
@@ -1389,6 +1399,9 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
                 Some(v) => v,
                 None => return Ok(None),
             };
+            let web_document_origin = web_document_origin_for_visited(&visited, pid)
+                .await
+                .unwrap_or((0, 0));
 
             // Collect actionable nodes whose window-local bounds contain the point,
             // then let `select_click_target` pick the innermost *real actuator* —
@@ -1413,7 +1426,19 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
                 if w <= 0 || h <= 0 {
                     continue;
                 }
-                frames.push((i, x, y, w as u32, h as u32, is_passive_role(&v.role)));
+                let (document_x, document_y) = if v.in_web_doc {
+                    web_document_origin
+                } else {
+                    (0, 0)
+                };
+                frames.push((
+                    i,
+                    x + document_x,
+                    y + document_y,
+                    w as u32,
+                    h as u32,
+                    is_passive_role(&v.role),
+                ));
             }
 
             let Some(idx) = select_click_target(&frames, win_x, win_y) else {
@@ -1472,6 +1497,9 @@ pub fn perform_action_at_screen_point(
                 Some(v) => v,
                 None => return Ok(None),
             };
+            let web_document_origin = web_document_origin_for_visited(&visited, pid)
+                .await
+                .unwrap_or((0, 0));
 
             // Reconstruct each indexable element's SCREEN frame the same way
             // get_window_state does: WINDOW-relative extents (GTK4 reports these
@@ -1507,10 +1535,15 @@ pub fn perform_action_at_screen_point(
                 if x == i32::MIN || y == i32::MIN || w <= 1 || h <= 1 {
                     continue;
                 }
+                let (document_x, document_y) = if node.in_web_doc {
+                    web_document_origin
+                } else {
+                    (0, 0)
+                };
                 frames.push((
                     idx,
-                    x + ox,
-                    y + oy,
+                    x + ox + document_x,
+                    y + oy + document_y,
                     w as u32,
                     h as u32,
                     is_passive_role(&node.role),
@@ -1652,6 +1685,9 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
             let visited = collect_visited(conn, pid)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+            let web_document_origin = web_document_origin_for_visited(&visited, pid)
+                .await
+                .unwrap_or((0, 0));
             let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
             let target = action_nodes
                 .get(idx)
@@ -1676,7 +1712,17 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
                         .get_extents(CoordType::Window)
                         .await
                         .map_err(|e| anyhow!("getExtents failed: {e}"))?;
-                    Ok((x + ox, y + oy, w.max(0) as u32, h.max(0) as u32))
+                    let (document_x, document_y) = if target.in_web_doc {
+                        web_document_origin
+                    } else {
+                        (0, 0)
+                    };
+                    Ok((
+                        x + ox + document_x,
+                        y + oy + document_y,
+                        w.max(0) as u32,
+                        h.max(0) as u32,
+                    ))
                 }
                 None => {
                     let (x, y, w, h) = comp
@@ -1788,20 +1834,7 @@ fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i
         // this reconstructs real screen coords — the GNOME analogue of the X11
         // `_GTK_FRAME_EXTENTS` path below. `None` (no extension) keeps the
         // legacy Screen path (still (0,0), but no worse than before).
-        let authoritative = crate::wayland::inject_accessibility_offset(pid)
-            .or_else(|| crate::wayland::sway_ipc::window_origin_for_pid(pid))
-            .or_else(|| {
-                crate::wayland::sway_ipc::window_for_id(xid)
-                    .map(|window| (window.x, window.y))
-            })
-            .or_else(|| {
-                crate::wayland::sway_ipc::list_windows().and_then(|_| {
-                    crate::wayland::window_geometry(xid)
-                        .map(|(window_x, window_y, _, _)| (window_x, window_y))
-                })
-            })
-            .or_else(|| crate::wayland::shell_helper::window_origin_for_pid(pid))
-            .or_else(|| title.and_then(crate::wayland::sway_ipc::window_origin_for_title));
+        let authoritative = authoritative_wayland_origin(pid, xid, title);
         // AT-SPI discovery can only guess a native Wayland origin when the
         // compositor exposes no geometry. Keep that observation as the final
         // fallback so stale default placement cannot override Sway IPC or a
@@ -1827,11 +1860,80 @@ fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i
     Some((ox + fl, oy + ft))
 }
 
+/// Resolve a native Wayland window origin from compositor-owned metadata.
+/// These sources are authoritative over AT-SPI's observed frame location,
+/// which can remain at a toolkit default after Sway places the real window.
+fn authoritative_wayland_origin(pid: u32, xid: u64, title: Option<&str>) -> Option<(i32, i32)> {
+    if !crate::wayland::is_wayland() {
+        return None;
+    }
+    crate::wayland::inject_accessibility_offset(pid)
+        .or_else(|| crate::wayland::sway_ipc::window_origin_for_pid(pid))
+        .or_else(|| {
+            (xid != 0)
+                .then(|| crate::wayland::sway_ipc::window_for_id(xid))
+                .flatten()
+                .map(|window| (window.x, window.y))
+        })
+        .or_else(|| {
+            (xid != 0)
+                .then(|| {
+                    crate::wayland::sway_ipc::list_windows().and_then(|_| {
+                        crate::wayland::window_geometry(xid)
+                            .map(|(window_x, window_y, _, _)| (window_x, window_y))
+                    })
+                })
+                .flatten()
+        })
+        .or_else(|| crate::wayland::shell_helper::window_origin_for_pid(pid))
+        .or_else(|| title.and_then(crate::wayland::sway_ipc::window_origin_for_title))
+}
+
 fn prefer_authoritative_wayland_origin(
     authoritative: Option<(i32, i32)>,
     observed: Option<(i32, i32)>,
 ) -> Option<(i32, i32)> {
     authoritative.or(observed)
+}
+
+fn combine_wayland_content_offsets(
+    compositor: Option<(i32, i32)>,
+    document: Option<(i32, i32)>,
+) -> Option<(i32, i32)> {
+    match (compositor, document) {
+        (Some((cx, cy)), Some((dx, dy))) => Some((cx + dx, cy + dy)),
+        (Some(offset), None) | (None, Some(offset)) => Some(offset),
+        (None, None) => None,
+    }
+}
+
+/// Offset of embedded web content inside a captured Wayland toplevel.
+/// Compositor decorations and toolkit document offsets are independent and
+/// therefore additive: choosing one or the other leaves WebKit controls one
+/// title bar away from the pixels shown to the caller.
+async fn web_document_origin_for_visited(visited: &[Visited<'_>], pid: u32) -> Option<(i32, i32)> {
+    if !crate::wayland::is_wayland() {
+        return None;
+    }
+    let compositor = crate::wayland::sway_ipc::window_content_offset_for_pid(pid);
+    let document = visited
+        .iter()
+        .find(|node| node.has_component && is_document_role(&node.role));
+    let document = if let Some(document) = document {
+        match call(document.acc.proxies()).await {
+            Some(Ok(proxies)) => match call(proxies.component()).await {
+                Some(Ok(component)) => match call(component.get_extents(CoordType::Window)).await {
+                    Some(Ok((x, y, _, _))) if x >= 0 && y >= 0 => Some((x, y)),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    } else {
+        None
+    };
+    combine_wayland_content_offsets(compositor, document)
 }
 
 fn screen_extent_rebase(
@@ -1977,38 +2079,11 @@ async fn element_bounds_for_visited(
     } else {
         None
     };
-    // WebKitGTK exposes page descendants in coordinates relative to its
-    // embedded document, while the captured toplevel can include compositor
-    // server-side decorations. Prefer Sway's authoritative content rectangle;
-    // otherwise the document's own Window extents carry the toolkit inset.
-    // Add it only for descendants already known to be inside a web document;
-    // Electron's document starts at (0,0), so this is a no-op there, and native
-    // title-bar controls keep their outer-window geometry.
-    let web_document_origin = if crate::wayland::is_wayland() && offset.is_some() {
-        let compositor_origin = crate::wayland::sway_ipc::window_content_offset_for_pid(pid);
-        if compositor_origin.is_some() {
-            compositor_origin
-        } else {
-            let document = visited
-                .iter()
-                .find(|node| node.has_component && is_document_role(&node.role));
-            if let Some(document) = document {
-                match call(document.acc.proxies()).await {
-                    Some(Ok(proxies)) => match call(proxies.component()).await {
-                        Some(Ok(component)) => {
-                            match call(component.get_extents(CoordType::Window)).await {
-                                Some(Ok((x, y, _, _))) if x >= 0 && y >= 0 => Some((x, y)),
-                                _ => None,
-                            }
-                        }
-                        _ => None,
-                    },
-                    _ => None,
-                }
-            } else {
-                None
-            }
-        }
+    // Add compositor decorations and the embedded document origin for web
+    // descendants only. Electron commonly contributes zero for both; WebKitGTK
+    // under Sway needs the sum.
+    let web_document_origin = if offset.is_some() {
+        web_document_origin_for_visited(visited, pid).await
     } else {
         None
     };
@@ -2082,8 +2157,9 @@ async fn element_bounds_for_visited(
 mod coord_tests {
     use super::parse_gtk_frame_extents;
     use super::{
-        is_indexable_capabilities, is_passive_role, prefer_authoritative_wayland_origin,
-        rebase_renderer_window_offset, screen_extent_rebase, select_click_target,
+        combine_wayland_content_offsets, is_indexable_capabilities, is_passive_role,
+        prefer_authoritative_wayland_origin, rebase_renderer_window_offset, screen_extent_rebase,
+        select_click_target,
     };
 
     #[test]
@@ -2123,6 +2199,23 @@ mod coord_tests {
             prefer_authoritative_wayland_origin(None, Some((120, 120))),
             Some((120, 120))
         );
+    }
+
+    #[test]
+    fn wayland_compositor_and_document_offsets_are_additive() {
+        assert_eq!(
+            combine_wayland_content_offsets(Some((0, 47)), Some((0, 0))),
+            Some((0, 47))
+        );
+        assert_eq!(
+            combine_wayland_content_offsets(Some((2, 20)), Some((0, 47))),
+            Some((2, 67))
+        );
+        assert_eq!(
+            combine_wayland_content_offsets(None, Some((0, 47))),
+            Some((0, 47))
+        );
+        assert_eq!(combine_wayland_content_offsets(None, None), None);
     }
 
     #[test]

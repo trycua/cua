@@ -1690,20 +1690,7 @@ pub fn hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
     activate_window_for_input(window_id)?;
     let (mods, final_key) = partition_modifiers(keys)?;
     let keysym = key_to_keysym(&final_key);
-    // Keep the same harmless first-event primer used by `press_key`. A fresh
-    // virtual-keyboard object on headless seats can drop its first event.
-    let mut args: Vec<String> = vec!["-k".into(), "Shift_L".into()];
-    for m in &mods {
-        args.push("-M".into());
-        args.push(m.clone());
-    }
-    args.push("-k".into());
-    args.push(keysym.clone());
-    // Release modifiers in reverse press order.
-    for m in mods.iter().rev() {
-        args.push("-m".into());
-        args.push(m.clone());
-    }
+    let args = wtype_hotkey_args(&mods, &keysym);
     let result = std::process::Command::new("wtype").args(&args).output();
     match result {
         Ok(out) if out.status.success() => Ok(()),
@@ -1730,6 +1717,36 @@ pub fn hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
             }
         }
     }
+}
+
+fn wtype_hotkey_args(mods: &[String], keysym: &str) -> Vec<String> {
+    // Keep the same harmless first-event primer used by `press_key`. A fresh
+    // virtual-keyboard object on headless seats can drop its first event. Give
+    // wlroots one event cycle after the primer and modifier transitions;
+    // otherwise Chromium can miss a coalesced shortcut even though wtype exits
+    // successfully.
+    let mut args: Vec<String> = vec![
+        "-k".into(),
+        "Shift_L".into(),
+        "-s".into(),
+        "30".into(),
+    ];
+    for m in mods {
+        args.push("-M".into());
+        args.push(m.clone());
+    }
+    args.push("-s".into());
+    args.push("20".into());
+    args.push("-k".into());
+    args.push(keysym.to_owned());
+    args.push("-s".into());
+    args.push("20".into());
+    // Release modifiers in reverse press order.
+    for m in mods.iter().rev() {
+        args.push("-m".into());
+        args.push(m.clone());
+    }
+    args
 }
 
 /// Split a `keys` array into wtype-compatible modifier names and a single
@@ -3018,6 +3035,18 @@ mod tests {
         );
         assert!(validate_injectable_hotkey(&["7".to_owned()]).is_err());
         assert!(validate_injectable_hotkey(&["hyper".to_owned(), "k".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn wtype_hotkey_keeps_primer_chord_and_releases_in_order() {
+        let args = wtype_hotkey_args(&["ctrl".into(), "shift".into()], "7");
+        assert_eq!(
+            args,
+            [
+                "-k", "Shift_L", "-s", "30", "-M", "ctrl", "-M", "shift", "-s", "20",
+                "-k", "7", "-s", "20", "-m", "shift", "-m", "ctrl",
+            ]
+        );
     }
 
     #[test]

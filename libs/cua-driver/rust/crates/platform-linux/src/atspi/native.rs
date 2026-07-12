@@ -1788,8 +1788,7 @@ fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i
         // this reconstructs real screen coords — the GNOME analogue of the X11
         // `_GTK_FRAME_EXTENTS` path below. `None` (no extension) keeps the
         // legacy Screen path (still (0,0), but no worse than before).
-        return crate::wayland::inject_accessibility_offset(pid)
-            .or_else(|| crate::wayland::observed_window_origin(pid))
+        let authoritative = crate::wayland::inject_accessibility_offset(pid)
             .or_else(|| {
                 crate::wayland::sway_ipc::window_for_id(xid)
                     .map(|window| (window.x, window.y))
@@ -1803,6 +1802,14 @@ fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i
             .or_else(|| crate::wayland::shell_helper::window_origin_for_pid(pid))
             .or_else(|| crate::wayland::sway_ipc::window_origin_for_pid(pid))
             .or_else(|| title.and_then(crate::wayland::sway_ipc::window_origin_for_title));
+        // AT-SPI discovery can only guess a native Wayland origin when the
+        // compositor exposes no geometry. Keep that observation as the final
+        // fallback so stale default placement cannot override Sway IPC or a
+        // shell helper's authoritative frame.
+        return prefer_authoritative_wayland_origin(
+            authoritative,
+            crate::wayland::observed_window_origin(pid),
+        );
     }
     // Resolve a usable window xid. `xid == 0` means "no hint" (get_element_bounds
     // has no window context); fall back to this pid's first window — the same
@@ -1818,6 +1825,13 @@ fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i
     let (fl, ft) = gtk_frame_extents(win_xid)?;
     let (ox, oy) = x11_window_origin(win_xid)?;
     Some((ox + fl, oy + ft))
+}
+
+fn prefer_authoritative_wayland_origin(
+    authoritative: Option<(i32, i32)>,
+    observed: Option<(i32, i32)>,
+) -> Option<(i32, i32)> {
+    authoritative.or(observed)
 }
 
 fn screen_extent_rebase(
@@ -2050,6 +2064,18 @@ mod coord_tests {
         assert_eq!(
             rebase_renderer_window_offset((100, 50), Some((0, 29))),
             (100, 50)
+        );
+    }
+
+    #[test]
+    fn compositor_origin_wins_over_stale_accessibility_observation() {
+        assert_eq!(
+            prefer_authoritative_wayland_origin(Some((0, 0)), Some((120, 120))),
+            Some((0, 0))
+        );
+        assert_eq!(
+            prefer_authoritative_wayland_origin(None, Some((120, 120))),
+            Some((120, 120))
         );
     }
 

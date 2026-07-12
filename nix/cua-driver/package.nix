@@ -80,6 +80,8 @@ pkgs.rustPlatform.buildRustPackage {
     pipewire
     # libei via reis — same as the ashpd RemoteDesktop+EIS flow.
     libei
+    # reis links its keyboard support directly against libxkbcommon.
+    libxkbcommon
   ];
 
   # Skip tests that require a running X11 display or AT-SPI bus

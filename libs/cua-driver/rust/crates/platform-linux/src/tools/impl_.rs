@@ -1677,9 +1677,6 @@ impl Tool for ClickTool {
             Err(e) => return e,
         };
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
-        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
-            return refusal;
-        }
         let count = args.u64_or("count", 1) as usize;
         // Surface 5: reject unknown buttons so a typo can't silently fall through
         // to a left-click. Empty string keeps back-compat with old clients.
@@ -1758,42 +1755,55 @@ impl Tool for ClickTool {
                 cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
             );
 
-            // Now perform the actual click: AT-SPI doAction(0) first (background-
-            // safe, no focus steal), else XSendEvent at window-local coords. The
-            // AT-SPI rung also reports whether the actuated element looked like a
-            // silent no-op (passive role / no advertised action) — see
-            // perform_action — so the response can flag `effect: "suspected_noop"`.
-            let result =
-                tokio::task::spawn_blocking(move || -> anyhow::Result<(&'static str, bool)> {
-                    if let Ok((_action, suspected_noop)) = crate::atspi::perform_action(pid, idx) {
-                        return Ok(("ax", suspected_noop));
-                    }
-                    let (xid2, lx, ly) = resolve_element_local_coords(pid, idx, xid_hint)?;
-                    crate::input::send_click(xid2, lx as i32, ly as i32, count, button)?;
-                    Ok(("x11_pixel", false))
-                })
-                .await;
+            // Chromium can execute a genuine AT-SPI action without focus. Try
+            // that route before applying its background synthetic-input gate.
+            let ax_result =
+                tokio::task::spawn_blocking(move || crate::atspi::perform_action(pid, idx)).await;
+            if let Ok(Ok((_action, suspected_noop))) = ax_result {
+                let mut structured = json!({
+                    "path": "ax",
+                    "verified": false,
+                    "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
+                });
+                if suspected_noop {
+                    structured["escalation"] = non_ax_escalation();
+                }
+                return ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
+                    .with_structured(structured);
+            }
+            if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+                return refusal;
+            }
+
+            // The AX route was unavailable. Fall back to a target-addressed
+            // X11 event for toolkits that accept it.
+            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                let (xid2, lx, ly) = resolve_element_local_coords(pid, idx, xid_hint)?;
+                crate::input::send_click(xid2, lx as i32, ly as i32, count, button)
+            })
+            .await;
             return match result {
                 // An element click is never driver-verifiable (no read-back) —
                 // verified:false; the caller confirms via screenshot. `effect` is
                 // the richer signal: a passive/role-mismatched AT-SPI actuation is
                 // a likely no-op (→ cross to vision/pixel), otherwise the dispatch
                 // was fine but unconfirmable.
-                Ok(Ok((path, suspected_noop))) => {
-                    let mut structured = json!({
-                        "path": path,
+                Ok(Ok(())) => {
+                    let structured = json!({
+                        "path": "x11_pixel",
                         "verified": false,
-                        "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
+                        "effect": "unverifiable",
                     });
-                    if suspected_noop {
-                        structured["escalation"] = non_ax_escalation();
-                    }
                     ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
                         .with_structured(structured)
                 }
                 Ok(Err(e)) => ToolResult::error(format!("AT-SPI element click failed: {e}")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
+        }
+
+        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+            return refusal;
         }
 
         // Coordinate-based path.
@@ -1872,6 +1882,9 @@ impl Tool for ClickTool {
                     crate::wayland::inject_click(xid, x, y, count as u32, button)?;
                     return Ok("wayland_libei");
                 }
+                if !delivery.is_foreground() {
+                    return Ok("background_unavailable");
+                }
                 // Native Wayland: focus+raise the target toplevel
                 // (foreign-toplevel `activate`), then drive `count` virtual-pointer
                 // button events. Wayland injection routes to the compositor focus.
@@ -1925,6 +1938,11 @@ impl Tool for ClickTool {
             "background"
         };
         match result {
+            Ok(Ok("background_unavailable")) => {
+                crate::input::delivery::background_unavailable_error(
+                    crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                )
+            }
             // A pixel/coordinate click is never driver-verifiable (no read-back) —
             // verified:false, effect:"unverifiable"; the caller confirms via
             // screenshot. path reports the rung taken.

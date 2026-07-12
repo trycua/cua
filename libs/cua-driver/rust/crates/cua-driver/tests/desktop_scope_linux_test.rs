@@ -167,7 +167,11 @@ fn desktop_scope_windowless_click_lands_on_control() {
         Targeting::Px,
         Delivery::Foreground,
         Scope::Desktop,
-        DriverRoute::LinuxXTest,
+        if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
+            DriverRoute::LinuxCuaCompositorInject
+        } else {
+            DriverRoute::LinuxXTest
+        },
         vec![OracleKind::FixtureState],
     );
     execute_case(case, |evidence| {

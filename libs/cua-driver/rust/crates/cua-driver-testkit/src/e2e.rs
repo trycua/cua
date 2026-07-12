@@ -228,6 +228,11 @@ fn shared_web_route_for_environment(
         (Platform::Linux, DisplayServer::X11, Targeting::Px, _) => {
             pointer_or_key_route(Route::LinuxXSendEvent, Route::LinuxXTest)
         }
+        (Platform::Linux, DisplayServer::Wayland, Targeting::Ax, "type_text")
+            if nested_inject =>
+        {
+            Ok(Route::LinuxCuaCompositorInject)
+        }
         (
             Platform::Linux,
             DisplayServer::X11 | DisplayServer::Wayland,
@@ -2225,6 +2230,16 @@ mod tests {
         );
         assert_eq!(stock, Ok(DriverRoute::LinuxWaylandVirtualPointer));
         assert_eq!(nested, Ok(DriverRoute::LinuxCuaCompositorInject));
+
+        let nested_text = shared_web_route_for_environment(
+            Platform::Linux,
+            DisplayServer::Wayland,
+            "type_text",
+            Targeting::Ax,
+            Delivery::Background,
+            true,
+        );
+        assert_eq!(nested_text, Ok(DriverRoute::LinuxCuaCompositorInject));
     }
 
     #[test]

@@ -2286,6 +2286,25 @@ impl Tool for TypeTextTool {
         }
 
         let text_len = text.chars().count();
+        // Native toolkit editables have a stronger focus-free route than raw
+        // compositor keyboard injection. Keep Chromium/WebKit on real key events
+        // because their accessibility bridges may echo a write that never reaches
+        // renderer-owned state.
+        if crate::wayland::is_inject_mode()
+            && resolved_elem_idx.is_some()
+            && !is_chromium_embedder(pid)
+            && !is_webkitgtk_embedder(pid)
+        {
+            let idx = resolved_elem_idx.expect("checked above");
+            let text_at = text.clone();
+            let targeted = tokio::task::spawn_blocking(move || {
+                crate::atspi::type_into_editable_at(pid, idx, &text_at)
+            })
+            .await;
+            if let Ok(Ok(())) = targeted {
+                return type_text_ax_confirm_result(pid, text_len, "via targeted AT-SPI");
+            }
+        }
         // The private nested compositor can target the owning Wayland client
         // directly. Establish widget-local focus first, without changing the
         // compositor's focused toplevel, so keys reach the addressed control.

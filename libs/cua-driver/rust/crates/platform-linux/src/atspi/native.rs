@@ -716,6 +716,15 @@ pub fn walk_tree_bounded(
 /// dereference the xid against X11, so the synthetic value only needs to be
 /// non-zero and to round-trip back from the caller.
 pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return std::thread::spawn(move || list_windows_blocking(filter_pid))
+            .join()
+            .unwrap_or_default();
+    }
+    list_windows_blocking(filter_pid)
+}
+
+fn list_windows_blocking(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
     use crate::x11::WindowInfo;
     runtime().block_on(async {
         let work = async {
@@ -788,11 +797,9 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
                         .unwrap_or_else(|| app_name.clone());
                     let geometry = match call(frame.proxies()).await {
                         Some(Ok(proxies)) => match call(proxies.component()).await {
-                            Some(Ok(component)) => {
-                                call(component.get_extents(CoordType::Screen))
-                                    .await
-                                    .and_then(|result| result.ok())
-                            }
+                            Some(Ok(component)) => call(component.get_extents(CoordType::Screen))
+                                .await
+                                .and_then(|result| result.ok()),
                             _ => None,
                         },
                         _ => None,

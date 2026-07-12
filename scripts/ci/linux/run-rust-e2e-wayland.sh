@@ -63,7 +63,10 @@ export QT_QPA_PLATFORM=wayland
 # renderer on WebKitGTK's non-composited software path.
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
 export WEBKIT_DISABLE_DMABUF_RENDERER=1
-export WEBKIT_FORCE_SANDBOX=0
+# This isolated CI session uses a private runtime directory and no user home
+# namespaces. Modern WebKitGTK ignores WEBKIT_FORCE_SANDBOX; use its explicit
+# test-only escape hatch so the WebProcess can publish its AT-SPI subtree.
+export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
 export NO_AT_BRIDGE=0
 export ACCESSIBILITY_ENABLED=1
 

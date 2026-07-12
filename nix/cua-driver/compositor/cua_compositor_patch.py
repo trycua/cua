@@ -302,8 +302,13 @@ static bool cua_axis(struct tinywl_server *server, struct tinywl_toplevel *t, in
 	uint32_t tm = cua_now_ms();
 	struct wl_resource *res;
 	wl_resource_for_each(res, &sc->pointers) {
+		int32_t step = value < 0 ? -1 : 1;
 		if (wl_resource_get_version(res) >= WL_POINTER_AXIS_SOURCE_SINCE_VERSION)
 			wl_pointer_send_axis_source(res, WL_POINTER_AXIS_SOURCE_WHEEL);
+		if (wl_resource_get_version(res) >= WL_POINTER_AXIS_VALUE120_SINCE_VERSION)
+			wl_pointer_send_axis_value120(res, axis, step * 120);
+		else if (wl_resource_get_version(res) >= WL_POINTER_AXIS_DISCRETE_SINCE_VERSION)
+			wl_pointer_send_axis_discrete(res, axis, step);
 		wl_pointer_send_axis(res, tm, axis, wl_fixed_from_double(value));
 		cua_pframe(res);
 	}

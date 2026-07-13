@@ -354,7 +354,11 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
     // when the user navigates over to grant permissions.
     let _: () = msg_send![window, setLevel: 3i64];
     let product_name = product_name();
-    let title = ns_string(&format!("{product_name} Permissions"));
+    let title = ns_string(&localized_template(
+        "permissions.window_title",
+        "{product} Permissions",
+        &[("{product}", &product_name)],
+    ));
     let _: () = msg_send![window, setTitle: title];
     // Keep native traffic-light controls while matching the focused,
     // title-free onboarding presentation used by Codex.
@@ -794,12 +798,17 @@ enum RowAction {
 }
 
 impl RowAction {
-    fn title(self) -> &'static str {
+    fn title(self) -> String {
         match self {
-            Self::Allow => "Allow",
-            Self::CompleteInSystemSettings => "Complete in System Settings",
-            Self::WaitingForOtherPermission => "Waiting",
-            Self::Allowed => "Allowed",
+            Self::Allow => localized("permissions.action.allow", "Allow"),
+            Self::CompleteInSystemSettings => localized(
+                "permissions.action.complete_in_system_settings",
+                "Complete in System Settings",
+            ),
+            Self::WaitingForOtherPermission => {
+                localized("permissions.action.waiting", "Waiting")
+            }
+            Self::Allowed => localized("permissions.action.allowed", "Allowed"),
         }
     }
 
@@ -921,7 +930,7 @@ unsafe fn update_row(
     let _: () = msg_send![row.title, setTextColor: title_color];
 
     let action = row_action(status, flow, permission);
-    let title = ns_string(action.title());
+    let title = ns_string(&action.title());
     let _: () = msg_send![row.button, setTitle: title];
     style_button(
         row.button,
@@ -935,12 +944,22 @@ unsafe fn update_row(
 fn heading_for(status: PermissionsStatus, product_name: &str) -> String {
     let feature_name = computer_use_feature_name(product_name);
     match status.grant_state() {
-        PermissionGrantState::BothGranted => format!("{feature_name} is ready"),
+        PermissionGrantState::BothGranted => localized_template(
+            "permissions.heading.ready",
+            "{feature} is ready",
+            &[("{feature}", &feature_name)],
+        ),
         PermissionGrantState::AccessibilityGranted
-        | PermissionGrantState::ScreenRecordingGranted => {
-            format!("Finish enabling {feature_name}")
-        }
-        PermissionGrantState::NoneGranted => format!("Enable {feature_name}"),
+        | PermissionGrantState::ScreenRecordingGranted => localized_template(
+            "permissions.heading.finish",
+            "Finish enabling {feature}",
+            &[("{feature}", &feature_name)],
+        ),
+        PermissionGrantState::NoneGranted => localized_template(
+            "permissions.heading.enable",
+            "Enable {feature}",
+            &[("{feature}", &feature_name)],
+        ),
     }
 }
 
@@ -948,34 +967,48 @@ fn computer_use_feature_name(product_name: &str) -> String {
     if product_name.to_ascii_lowercase().contains("computer use") {
         product_name.to_owned()
     } else {
-        format!("{product_name} Computer Use")
+        localized_template(
+            "permissions.feature_name",
+            "{product} Computer Use",
+            &[("{product}", product_name)],
+        )
     }
 }
 
 fn subheading_for(status: PermissionsStatus, product_name: &str) -> String {
     match status.grant_state() {
-        PermissionGrantState::BothGranted => {
-            "Both macOS permissions are active. Computer control can start now.".into()
-        }
-        PermissionGrantState::AccessibilityGranted => {
-            "Accessibility is allowed. Allow Screen Recording to finish setup.".into()
-        }
-        PermissionGrantState::ScreenRecordingGranted => {
-            "Screen Recording is allowed. Allow Accessibility to finish setup.".into()
-        }
-        PermissionGrantState::NoneGranted => format!(
-            "{product_name} needs these permissions to use apps on your Mac.\n\
-             Continue only if you trust the app or client that started {product_name}."
+        PermissionGrantState::BothGranted => localized(
+            "permissions.subheading.ready",
+            "Both macOS permissions are active. Computer control can start now.",
+        ),
+        PermissionGrantState::AccessibilityGranted => localized(
+            "permissions.subheading.accessibility_granted",
+            "Accessibility is allowed. Allow Screen Recording to finish setup.",
+        ),
+        PermissionGrantState::ScreenRecordingGranted => localized(
+            "permissions.subheading.screen_recording_granted",
+            "Screen Recording is allowed. Allow Accessibility to finish setup.",
+        ),
+        PermissionGrantState::NoneGranted => localized_template(
+            "permissions.subheading.none_granted",
+            "{product} needs these permissions to use apps on your Mac.\nContinue only if you trust the app or client that started {product}.",
+            &[("{product}", product_name)],
         ),
     }
 }
 
 fn footer_for(status: PermissionsStatus, product_name: &str) -> String {
     if status.all_granted() {
-        return format!("All set. {product_name} can now use apps on your Mac.");
+        return localized_template(
+            "permissions.footer.ready",
+            "All set. {product} can now use apps on your Mac.",
+            &[("{product}", product_name)],
+        );
     }
-    format!(
-        "macOS grants access to {product_name}, not your terminal. Connected clients can use these grants; revoke them anytime in Privacy & Security."
+    localized_template(
+        "permissions.footer.pending",
+        "macOS grants access to {product}, not your terminal. Connected clients can use these grants; revoke them anytime in Privacy & Security.",
+        &[("{product}", product_name)],
     )
 }
 
@@ -984,7 +1017,48 @@ fn footer_for(status: PermissionsStatus, product_name: &str) -> String {
 /// Bridge `&str` → autoreleased `NSString` via `stringWithUTF8String:`.
 unsafe fn ns_string(text: &str) -> *mut AnyObject {
     let owned = std::ffi::CString::new(text).unwrap_or_default();
-    msg_send![class!(NSString), stringWithUTF8String: owned.as_ptr() as *const c_void]
+    msg_send![class!(NSString), stringWithUTF8String: owned.as_ptr()]
+}
+
+/// Resolve a user-facing string through the main app bundle. Passing the
+/// English source as `value:` preserves the existing copy for bare-binary,
+/// test, and downstream bundles that do not ship this table.
+fn localized(key: &str, english: &str) -> String {
+    unsafe {
+        let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
+        if bundle.is_null() {
+            return english.to_owned();
+        }
+        let value: *mut AnyObject = msg_send![
+            bundle,
+            localizedStringForKey: ns_string(key)
+            value: ns_string(english)
+            table: ns_string("Localizable")
+        ];
+        if value.is_null() {
+            return english.to_owned();
+        }
+        let utf8: *const std::ffi::c_char = msg_send![value, UTF8String];
+        if utf8.is_null() {
+            english.to_owned()
+        } else {
+            std::ffi::CStr::from_ptr(utf8)
+                .to_string_lossy()
+                .into_owned()
+        }
+    }
+}
+
+fn localized_template(
+    key: &str,
+    english: &str,
+    replacements: &[(&str, &str)],
+) -> String {
+    let mut value = localized(key, english);
+    for (placeholder, replacement) in replacements {
+        value = value.replace(placeholder, replacement);
+    }
+    value
 }
 
 /// The name macOS will show in Privacy & Security. Reading it from the main
@@ -1035,7 +1109,10 @@ unsafe fn build_application_icon(
 
 unsafe fn ns_image_for_symbol(symbol: &str) -> *mut AnyObject {
     let name = ns_string(symbol);
-    let desc = ns_string("permission status");
+    let desc = ns_string(&localized(
+        "permissions.accessibility.permission_status",
+        "permission status",
+    ));
     let img: *mut AnyObject = msg_send![class!(NSImage),
         imageWithSystemSymbolName: name
         accessibilityDescription: desc
@@ -1171,7 +1248,7 @@ unsafe fn build_row(
 
     // Title
     let title = build_label(
-        permission.label(),
+        &permission_title(permission),
         15.0,
         /*bold=*/ true,
         NSPoint { x: 88.0, y: 61.0 },
@@ -1188,7 +1265,7 @@ unsafe fn build_row(
 
     // Subtitle (rationale)
     let subtitle = build_label(
-        row_description(permission),
+        &row_description(permission),
         12.0,
         /*bold=*/ false,
         NSPoint { x: 88.0, y: 29.0 },
@@ -1207,7 +1284,7 @@ unsafe fn build_row(
         MissingPermission::ScreenRecording => ButtonAction::ScreenRecording,
     };
     let button = build_button(
-        action.title(),
+        &action.title(),
         NSPoint {
             x: size.width - 224.0,
             y: 38.0,
@@ -1233,10 +1310,29 @@ unsafe fn build_row(
     }
 }
 
-fn row_description(permission: MissingPermission) -> &'static str {
+fn permission_title(permission: MissingPermission) -> String {
     match permission {
-        MissingPermission::Accessibility => "Access app interfaces to read and use controls.",
-        MissingPermission::ScreenRecording => "Capture app windows to know where to click.",
+        MissingPermission::Accessibility => localized(
+            "permissions.permission.accessibility.title",
+            "Accessibility",
+        ),
+        MissingPermission::ScreenRecording => localized(
+            "permissions.permission.screen_recording.title",
+            "Screen Recording",
+        ),
+    }
+}
+
+fn row_description(permission: MissingPermission) -> String {
+    match permission {
+        MissingPermission::Accessibility => localized(
+            "permissions.permission.accessibility.description",
+            "Access app interfaces to read and use controls.",
+        ),
+        MissingPermission::ScreenRecording => localized(
+            "permissions.permission.screen_recording.description",
+            "Capture app windows to know where to click.",
+        ),
     }
 }
 
@@ -1466,6 +1562,36 @@ fn stop_modal() {
 mod tests {
     use super::*;
 
+    const LOCALIZATION_KEYS: &[&str] = &[
+        "permissions.window_title",
+        "permissions.action.allow",
+        "permissions.action.complete_in_system_settings",
+        "permissions.action.waiting",
+        "permissions.action.allowed",
+        "permissions.heading.ready",
+        "permissions.heading.finish",
+        "permissions.heading.enable",
+        "permissions.feature_name",
+        "permissions.subheading.ready",
+        "permissions.subheading.accessibility_granted",
+        "permissions.subheading.screen_recording_granted",
+        "permissions.subheading.none_granted",
+        "permissions.footer.ready",
+        "permissions.footer.pending",
+        "permissions.accessibility.permission_status",
+        "permissions.permission.accessibility.title",
+        "permissions.permission.screen_recording.title",
+        "permissions.permission.accessibility.description",
+        "permissions.permission.screen_recording.description",
+    ];
+
+    fn strings_value<'a>(table: &'a str, key: &str) -> Option<&'a str> {
+        let prefix = format!("\"{key}\" = \"");
+        table
+            .lines()
+            .find_map(|line| line.strip_prefix(&prefix)?.strip_suffix("\";"))
+    }
+
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         crate::permissions::test_env_lock()
     }
@@ -1563,6 +1689,40 @@ mod tests {
         );
         assert!(footer_for(st(false, false), "Cua Driver").contains("not your terminal"));
         assert!(footer_for(st(false, false), "Cua Driver").contains("Connected clients"));
+    }
+
+    #[test]
+    fn app_bundle_ships_complete_english_and_japanese_permission_copy() {
+        let english = include_str!(
+            "../../../../scripts/CuaDriverBundle/Contents/Resources/en.lproj/Localizable.strings"
+        );
+        let japanese = include_str!(
+            "../../../../scripts/CuaDriverBundle/Contents/Resources/ja.lproj/Localizable.strings"
+        );
+
+        for key in LOCALIZATION_KEYS {
+            let english_value = strings_value(english, key)
+                .unwrap_or_else(|| panic!("English localization is missing {key}"));
+            let japanese_value = strings_value(japanese, key)
+                .unwrap_or_else(|| panic!("Japanese localization is missing {key}"));
+            assert!(!english_value.is_empty(), "English localization is empty: {key}");
+            assert!(!japanese_value.is_empty(), "Japanese localization is empty: {key}");
+            assert_ne!(
+                english_value, japanese_value,
+                "Japanese localization must not fall back to English: {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn localized_templates_replace_every_dynamic_product_token() {
+        let value = localized_template(
+            "missing.test.localization.key",
+            "Enable {feature} for {product}",
+            &[("{feature}", "Computer Use"), ("{product}", "Cua Driver")],
+        );
+        assert_eq!(value, "Enable Computer Use for Cua Driver");
+        assert!(!value.contains('{'));
     }
 
     #[test]

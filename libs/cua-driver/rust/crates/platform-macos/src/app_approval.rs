@@ -7,6 +7,7 @@
 //! is consumed by the first valid decision.
 
 use serde::{Deserialize, Serialize};
+use base64::Engine as _;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -31,6 +32,30 @@ impl AppApprovalTarget {
         bundle_id: Option<&str>,
         launch_path: Option<&str>,
     ) -> Result<Self, ApprovalError> {
+        let path = launch_path
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                ApprovalError::InvalidIdentity(
+                    "the app has no canonical launch path for approval".to_owned(),
+                )
+            })?;
+        let code_requirement = crate::code_identity::designated_requirement(Path::new(path))
+            .map_err(|error| {
+                ApprovalError::InvalidIdentity(format!(
+                    "the app signing identity could not be verified for approval: {error}"
+                ))
+            })?;
+        Self::from_signed_app(display_name, bundle_id, Some(path), &code_requirement)
+    }
+
+    #[doc(hidden)]
+    pub fn from_signed_app(
+        display_name: &str,
+        bundle_id: Option<&str>,
+        launch_path: Option<&str>,
+        code_requirement: &str,
+    ) -> Result<Self, ApprovalError> {
         let display_name = display_name.trim();
         if display_name.is_empty() {
             return Err(ApprovalError::InvalidIdentity(
@@ -51,14 +76,28 @@ impl AppApprovalTarget {
             ))
         })?;
         let canonical_path = canonical.to_string_lossy().into_owned();
+        let code_requirement = code_requirement.trim();
+        if code_requirement.is_empty() {
+            return Err(ApprovalError::InvalidIdentity(
+                "the app has no verified signing identity for approval".to_owned(),
+            ));
+        }
+        let encoded_requirement = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(code_requirement.as_bytes());
         let (stable_id, app_identifier) =
             if let Some(bundle_id) = bundle_id.map(str::trim).filter(|value| !value.is_empty()) {
                 (
-                    format!("bundle:{}|path:{canonical_path}", bundle_id.to_lowercase()),
+                    format!(
+                        "bundle:{}|path:{canonical_path}|requirement:{encoded_requirement}",
+                        bundle_id.to_lowercase()
+                    ),
                     bundle_id.to_owned(),
                 )
             } else {
-                (format!("path:{canonical_path}"), canonical_path)
+                (
+                    format!("path:{canonical_path}|requirement:{encoded_requirement}"),
+                    canonical_path,
+                )
             };
         Ok(Self {
             stable_id,
@@ -228,36 +267,28 @@ impl ApprovalGate {
         session_id: &str,
         target: &AppApprovalTarget,
     ) -> Result<ApprovalCheck, ApprovalError> {
-        let broker_token = {
-            let state = self.state.lock().unwrap();
-            state.brokers.get(session_id).cloned().ok_or_else(|| {
-                ApprovalError::Unauthenticated(format!(
-                    "Computer Use requires an authenticated MCP elicitation session before using app '{}'.",
-                    target.display_name
-                ))
-            })?
-        };
+        // Broker ownership is the outer transaction lock for approval checks
+        // and decisions. Whenever both locks are needed, the persistent store
+        // nests inside this lock, so register/unregister cannot replace the
+        // broker while a durable approval decision is being committed.
+        let mut state = self.state.lock().unwrap();
+        let broker_token = state.brokers.get(session_id).cloned().ok_or_else(|| {
+            ApprovalError::Unauthenticated(format!(
+                "Computer Use requires an authenticated MCP elicitation session before using app '{}'.",
+                target.display_name
+            ))
+        })?;
+        if state
+            .session_approvals
+            .contains(&(session_id.to_owned(), target.stable_id.clone()))
         {
-            let state = self.state.lock().unwrap();
-            if state
-                .session_approvals
-                .contains(&(session_id.to_owned(), target.stable_id.clone()))
-            {
-                return Ok(ApprovalCheck::Approved);
-            }
+            return Ok(ApprovalCheck::Approved);
         }
 
         let _store = self.persistent_store_lock.lock().unwrap();
         let _file_store = StoreFileLock::acquire(&self.store_path)?;
         let persistent = self.load_persistent_approvals_unlocked()?;
-        let mut state = self.state.lock().unwrap();
         prune_expired_challenges(&mut state);
-        if state.brokers.get(session_id) != Some(&broker_token) {
-            return Err(ApprovalError::Unauthenticated(format!(
-                "Computer Use requires an authenticated MCP elicitation session before using app '{}'.",
-                target.display_name
-            )));
-        }
         if persistent.contains(&target.stable_id) {
             return Ok(ApprovalCheck::Approved);
         }
@@ -295,29 +326,26 @@ impl ApprovalGate {
         action: ApprovalAction,
         persistence: ApprovalPersistence,
     ) -> Result<ApprovalResolution, ApprovalError> {
-        let challenge = {
-            let mut state = self.state.lock().unwrap();
-            prune_expired_challenges(&mut state);
-            if state.brokers.get(session_id).map(String::as_str) != Some(broker_token) {
-                return Err(ApprovalError::Unauthenticated(
-                    "Computer Use approval resolution requires the authenticated MCP session."
-                        .to_owned(),
-                ));
-            }
-            let challenge = state.challenges.get(challenge_id).ok_or_else(|| {
-                ApprovalError::InvalidChallenge(
-                    "Computer Use approval challenge is invalid, expired, or already used."
-                        .to_owned(),
-                )
-            })?;
-            if challenge.session_id != session_id || challenge.broker_token != broker_token {
-                return Err(ApprovalError::Unauthenticated(
-                    "Computer Use approval challenge does not belong to this authenticated MCP session."
-                        .to_owned(),
-                ));
-            }
-            state.challenges.remove(challenge_id).unwrap()
-        };
+        let mut state = self.state.lock().unwrap();
+        prune_expired_challenges(&mut state);
+        if state.brokers.get(session_id).map(String::as_str) != Some(broker_token) {
+            return Err(ApprovalError::Unauthenticated(
+                "Computer Use approval resolution requires the authenticated MCP session."
+                    .to_owned(),
+            ));
+        }
+        let challenge = state.challenges.get(challenge_id).ok_or_else(|| {
+            ApprovalError::InvalidChallenge(
+                "Computer Use approval challenge is invalid, expired, or already used.".to_owned(),
+            )
+        })?;
+        if challenge.session_id != session_id || challenge.broker_token != broker_token {
+            return Err(ApprovalError::Unauthenticated(
+                "Computer Use approval challenge does not belong to this authenticated MCP session."
+                    .to_owned(),
+            ));
+        }
+        let challenge = state.challenges.remove(challenge_id).unwrap();
 
         match action {
             ApprovalAction::Decline => Ok(ApprovalResolution::Declined {
@@ -346,11 +374,13 @@ impl ApprovalGate {
                     persistent.insert(challenge.stable_id.clone());
                     self.write_persistent_approvals_unlocked(&persistent)?;
                 }
-                self.record_session_approval_if_broker_current(
-                    session_id,
-                    broker_token,
-                    challenge.stable_id,
-                )?;
+                // `state` has remained locked since token/challenge validation,
+                // including across the durable write above. Broker replacement
+                // therefore linearizes either wholly before this decision (and
+                // fails validation) or wholly after the commit.
+                state
+                    .session_approvals
+                    .insert((session_id.to_owned(), challenge.stable_id));
                 Ok(ApprovalResolution::Approved {
                     persistent: persistence == ApprovalPersistence::Always,
                 })
@@ -411,24 +441,6 @@ impl ApprovalGate {
             self.write_persistent_approvals_unlocked(&BTreeSet::new())?;
         }
         Ok(count)
-    }
-
-    fn record_session_approval_if_broker_current(
-        &self,
-        session_id: &str,
-        broker_token: &str,
-        stable_id: String,
-    ) -> Result<(), ApprovalError> {
-        let mut state = self.state.lock().unwrap();
-        if state.brokers.get(session_id).map(String::as_str) != Some(broker_token) {
-            return Err(ApprovalError::Unauthenticated(
-                "Computer Use approval session ended before the decision was committed.".to_owned(),
-            ));
-        }
-        state
-            .session_approvals
-            .insert((session_id.to_owned(), stable_id));
-        Ok(())
     }
 
     fn load_persistent_approvals_unlocked(&self) -> Result<BTreeSet<String>, ApprovalError> {
@@ -714,12 +726,20 @@ mod tests {
         std::fs::create_dir_all(&first).unwrap();
         std::fs::create_dir_all(&second).unwrap();
 
-        let first =
-            AppApprovalTarget::from_app("Editor", Some("com.example.Editor"), first.to_str())
-                .unwrap();
-        let second =
-            AppApprovalTarget::from_app("Editor", Some("com.example.Editor"), second.to_str())
-                .unwrap();
+        let first = AppApprovalTarget::from_signed_app(
+            "Editor",
+            Some("com.example.Editor"),
+            first.to_str(),
+            "identifier com.example.Editor and certificate leaf = H\"01\"",
+        )
+        .unwrap();
+        let second = AppApprovalTarget::from_signed_app(
+            "Editor",
+            Some("com.example.Editor"),
+            second.to_str(),
+            "identifier com.example.Editor and certificate leaf = H\"01\"",
+        )
+        .unwrap();
         assert_ne!(first.stable_id, second.stable_id);
         assert!(first
             .stable_id
@@ -728,6 +748,28 @@ mod tests {
             AppApprovalTarget::from_app("Editor", Some("com.example.Editor"), None),
             Err(ApprovalError::InvalidIdentity(_))
         ));
+    }
+
+    #[test]
+    fn approval_identity_changes_when_same_path_is_resigned() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("Editor.app");
+        std::fs::create_dir_all(&path).unwrap();
+        let original = AppApprovalTarget::from_signed_app(
+            "Editor",
+            Some("com.example.Editor"),
+            path.to_str(),
+            "identifier com.example.Editor and certificate leaf = H\"01\"",
+        )
+        .unwrap();
+        let replacement = AppApprovalTarget::from_signed_app(
+            "Editor",
+            Some("com.example.Editor"),
+            path.to_str(),
+            "identifier com.example.Editor and certificate leaf = H\"02\"",
+        )
+        .unwrap();
+        assert_ne!(original.stable_id, replacement.stable_id);
     }
 
     #[test]
@@ -812,10 +854,11 @@ mod tests {
             ApprovalCheck::Required(_)
         ));
         gate.unregister_broker("session", "broker-b");
-        assert!(matches!(
-            gate.record_session_approval_if_broker_current("session", "broker-b", target.stable_id),
-            Err(ApprovalError::Unauthenticated(_))
-        ));
+        let state = gate.state.lock().unwrap();
+        assert!(!state.brokers.contains_key("session"));
+        assert!(!state
+            .session_approvals
+            .contains(&("session".to_owned(), target.stable_id)));
     }
 
     #[test]
@@ -858,6 +901,86 @@ mod tests {
         assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
         assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
         drop(directory);
+    }
+
+    #[test]
+    fn persistent_commit_holds_broker_ownership_until_the_write_finishes() {
+        use std::sync::{Arc, TryLockError};
+
+        let (_directory, gate) = gate(true);
+        let gate = Arc::new(gate);
+        let target = target();
+        gate.register_broker("session", "broker");
+        let challenge = match gate.check("session", &target).unwrap() {
+            ApprovalCheck::Required(challenge) => challenge,
+            ApprovalCheck::Approved => panic!("unexpected approval"),
+        };
+
+        // Stop the resolver at the interprocess store lock. A race-safe
+        // resolver must already hold ApprovalState here, making broker removal
+        // wait until the durable decision has committed.
+        let file_lock = StoreFileLock::acquire(&gate.store_path).unwrap();
+        let resolving_gate = gate.clone();
+        let resolving = std::thread::spawn(move || {
+            resolving_gate.resolve(
+                "session",
+                "broker",
+                &challenge.id,
+                ApprovalAction::Accept,
+                ApprovalPersistence::Always,
+            )
+        });
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match gate.state.try_lock() {
+                Err(TryLockError::WouldBlock) => break,
+                Err(TryLockError::Poisoned(error)) => panic!("approval state poisoned: {error}"),
+                Ok(state) => drop(state),
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "resolver never held broker ownership while waiting for the store lock"
+            );
+            std::thread::yield_now();
+        }
+
+        let removing_gate = gate.clone();
+        let removing = std::thread::spawn(move || {
+            removing_gate.unregister_broker("session", "broker");
+        });
+        drop(file_lock);
+
+        assert_eq!(
+            resolving.join().unwrap().unwrap(),
+            ApprovalResolution::Approved { persistent: true }
+        );
+        removing.join().unwrap();
+        assert_eq!(gate.list_persistent().unwrap(), vec![target.stable_id]);
+    }
+
+    #[test]
+    fn broker_removal_before_resolution_cannot_leave_a_persistent_grant() {
+        let (_directory, gate) = gate(true);
+        let target = target();
+        gate.register_broker("session", "broker");
+        let challenge = match gate.check("session", &target).unwrap() {
+            ApprovalCheck::Required(challenge) => challenge,
+            ApprovalCheck::Approved => panic!("unexpected approval"),
+        };
+
+        gate.unregister_broker("session", "broker");
+        assert!(matches!(
+            gate.resolve(
+                "session",
+                "broker",
+                &challenge.id,
+                ApprovalAction::Accept,
+                ApprovalPersistence::Always,
+            ),
+            Err(ApprovalError::Unauthenticated(_)) | Err(ApprovalError::InvalidChallenge(_))
+        ));
+        assert!(gate.list_persistent().unwrap().is_empty());
     }
 
     #[test]
@@ -961,16 +1084,18 @@ mod tests {
         let second_path = directory.path().join("Second.app");
         std::fs::create_dir_all(&first_path).unwrap();
         std::fs::create_dir_all(&second_path).unwrap();
-        let first = AppApprovalTarget::from_app(
+        let first = AppApprovalTarget::from_signed_app(
             "Editor",
             Some("com.example.Editor"),
             first_path.to_str(),
+            "identifier com.example.Editor and certificate leaf = H\"01\"",
         )
         .unwrap();
-        let second = AppApprovalTarget::from_app(
+        let second = AppApprovalTarget::from_signed_app(
             "Editor",
             Some("com.example.Editor"),
             second_path.to_str(),
+            "identifier com.example.Editor and certificate leaf = H\"01\"",
         )
         .unwrap();
 

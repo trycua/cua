@@ -4,20 +4,38 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
 
-use crate::protocol::{initialize_result, Request, Response};
+use crate::protocol::{codex_computer_use_initialize_result, initialize_result, Request, Response};
 use crate::tool::ToolRegistry;
 
 /// Run the MCP server, reading JSON-RPC lines from stdin and writing
 /// responses to stdout. Exits when stdin reaches EOF or a fatal I/O
 /// error occurs.
 pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
-    run_with_initialize_result(registry, initialize_result()).await
+    run_with_initialize_result_and_tool_profile(registry, initialize_result(), false).await
 }
 
 /// Run the stdio server with a profile-specific MCP initialize envelope.
 pub async fn run_with_initialize_result(
     registry: Arc<ToolRegistry>,
     initialize: serde_json::Value,
+) -> anyhow::Result<()> {
+    run_with_initialize_result_and_tool_profile(registry, initialize, false).await
+}
+
+/// Run the exact Codex Computer Use compatibility handshake and tool catalog.
+pub async fn run_codex_computer_use_compat(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
+    run_with_initialize_result_and_tool_profile(
+        registry,
+        codex_computer_use_initialize_result(),
+        true,
+    )
+    .await
+}
+
+async fn run_with_initialize_result_and_tool_profile(
+    registry: Arc<ToolRegistry>,
+    initialize: serde_json::Value,
+    codex_computer_use_compat: bool,
 ) -> anyhow::Result<()> {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
@@ -49,7 +67,14 @@ pub async fn run_with_initialize_result(
             }
             Ok(req) => {
                 let id = req.id.clone().unwrap_or(serde_json::Value::Null);
-                handle_request_with_initialize_result(req, id, &registry, &initialize).await
+                handle_request_with_initialize_result(
+                    req,
+                    id,
+                    &registry,
+                    &initialize,
+                    codex_computer_use_compat,
+                )
+                .await
             }
         };
 
@@ -70,7 +95,7 @@ pub async fn run_with_initialize_result(
 /// daemon's HTTP transport (`cua-driver`'s `mcp_http`) so both speak the
 /// exact same MCP semantics.
 pub async fn handle_request(req: Request, id: serde_json::Value, registry: &Arc<ToolRegistry>) -> Response {
-    handle_request_with_initialize_result(req, id, registry, &initialize_result()).await
+    handle_request_with_initialize_result(req, id, registry, &initialize_result(), false).await
 }
 
 async fn handle_request_with_initialize_result(
@@ -78,11 +103,19 @@ async fn handle_request_with_initialize_result(
     id: serde_json::Value,
     registry: &Arc<ToolRegistry>,
     initialize: &serde_json::Value,
+    codex_computer_use_compat: bool,
 ) -> Response {
     match req.method.as_str() {
         "initialize" => Response::ok(id, initialize.clone()),
 
-        "tools/list" => Response::ok(id, registry.tools_list()),
+        "tools/list" => Response::ok(
+            id,
+            if codex_computer_use_compat {
+                registry.codex_computer_use_tools_list()
+            } else {
+                registry.tools_list()
+            },
+        ),
 
         "tools/call" => match req.tool_call() {
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),

@@ -42,6 +42,8 @@
     <string>Cua Driver</string>
     <key>CFBundleDisplayName</key>
     <string>Cua Driver</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
     <key>CFBundleExecutable</key>
     <string>cua-driver</string>
     <!-- Bundle icon shown in Finder / Launchpad / Get Info. Resolves to

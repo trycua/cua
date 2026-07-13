@@ -13,6 +13,8 @@ pub mod apps;
 #[cfg(target_os = "macos")]
 pub mod app_approval;
 #[cfg(target_os = "macos")]
+pub(crate) mod code_identity;
+#[cfg(target_os = "macos")]
 pub mod windows;
 #[cfg(target_os = "macos")]
 pub mod input;

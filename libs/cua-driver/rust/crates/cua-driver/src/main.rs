@@ -630,11 +630,7 @@ fn main() {
                     // Wire up replay tool's back-reference to the registry.
                     registry.init_self_weak();
                     let result = if codex_compat {
-                        cua_driver_core::server::run_with_initialize_result(
-                            registry,
-                            cua_driver_core::protocol::codex_computer_use_initialize_result(),
-                        )
-                        .await
+                        cua_driver_core::server::run_codex_computer_use_compat(registry).await
                     } else {
                         cua_driver_core::server::run(registry).await
                     };

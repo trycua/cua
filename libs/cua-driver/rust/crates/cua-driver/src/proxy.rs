@@ -663,7 +663,7 @@ fn fetch_tools_list_from_daemon(
                         .map(serde_json::Value::String)
                         .collect()
                 });
-            serde_json::json!({
+            let mut entry = serde_json::json!({
                 "name": name,
                 "description": description,
                 "inputSchema": input_schema,
@@ -673,8 +673,11 @@ fn fetch_tools_list_from_daemon(
                     "idempotentHint": idempotent,
                     "openWorldHint": open_world,
                 },
-                "capabilities": capabilities,
-            })
+            });
+            if expected_profile != DaemonProfile::CodexComputerUseCompat {
+                entry["capabilities"] = serde_json::Value::Array(capabilities);
+            }
+            entry
         })
         .collect();
 
@@ -693,11 +696,15 @@ fn fetch_tools_list_from_daemon(
         .cloned()
         .unwrap_or_else(|| serde_json::Value::String("1".to_owned()));
 
-    Ok(serde_json::json!({
-        "tools": mcp_tools,
-        "capability_version": capability_version,
-        "schema_version": schema_version,
-    }))
+    if expected_profile == DaemonProfile::CodexComputerUseCompat {
+        Ok(serde_json::json!({"tools": mcp_tools}))
+    } else {
+        Ok(serde_json::json!({
+            "tools": mcp_tools,
+            "capability_version": capability_version,
+            "schema_version": schema_version,
+        }))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

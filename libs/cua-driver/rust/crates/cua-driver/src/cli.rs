@@ -3595,8 +3595,13 @@ mod tests {
             path: &std::path::Path,
         ) -> String {
             gate.register_broker(session, &format!("broker-{session}"));
-            let target =
-                AppApprovalTarget::from_app(name, Some(bundle_id), path.to_str()).unwrap();
+            let target = AppApprovalTarget::from_signed_app(
+                name,
+                Some(bundle_id),
+                path.to_str(),
+                &format!("identifier {bundle_id} and certificate leaf = H\"01\""),
+            )
+            .unwrap();
             let stable_id = target.stable_id.clone();
             let challenge = match gate.check(session, &target).unwrap() {
                 ApprovalCheck::Required(challenge) => challenge,

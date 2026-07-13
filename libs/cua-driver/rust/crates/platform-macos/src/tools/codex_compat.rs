@@ -359,6 +359,7 @@ struct AppIdentity {
 struct CanonicalAppIdentity {
     bundle_id: Option<String>,
     bundle_path: String,
+    code_requirement: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -386,10 +387,11 @@ fn check_app_approval(
     expected_identity: &CanonicalAppIdentity,
     session_id: &str,
 ) -> Result<crate::app_approval::ApprovalCheck, CompatError> {
-    let target = crate::app_approval::AppApprovalTarget::from_app(
+    let target = crate::app_approval::AppApprovalTarget::from_signed_app(
         &app.name,
         expected_identity.bundle_id.as_deref(),
         Some(&expected_identity.bundle_path),
+        &expected_identity.code_requirement,
     )
     .map_err(|error| CompatError::new("app_approval_unavailable", error.to_string()))?;
     gate.check(session_id, &target)
@@ -399,6 +401,7 @@ fn check_app_approval(
 #[derive(Clone)]
 struct AppSnapshot {
     app: AppIdentity,
+    expected_identity: CanonicalAppIdentity,
     window_id: u32,
     window_title: String,
     generation: u64,
@@ -846,6 +849,7 @@ impl CompatState {
             session,
             AppSnapshot {
                 app,
+                expected_identity,
                 window_id,
                 window_title,
                 generation: 0,
@@ -2119,12 +2123,15 @@ async fn launch_resolved_app(
     };
     let apple_event_bundle_id = identity.bundle_id.clone();
     let dispatch_gate = dispatch_gate.clone();
+    let approved_identity = expected_identity.clone();
     let (pid, live_identity) = tokio::task::spawn_blocking(move || {
         let config = crate::apps::nsworkspace::OpenConfig {
             apple_event_bundle_id,
             ..Default::default()
         };
         let app = guarded_app_launch(&dispatch_gate, || {
+            validate_static_app_identity(&approved_identity)
+                .map_err(|error| anyhow::anyhow!(error.message))?;
             crate::apps::nsworkspace::open_application(&launch_ref, &config)
                 .map_err(|error| anyhow::anyhow!(error.to_string()))
         })
@@ -2166,9 +2173,14 @@ fn canonical_resolved_app_identity(app: &AppIdentity) -> Result<CanonicalAppIden
         .ok_or_else(|| app_identity_error(&app.requested))?;
     let bundle_path =
         canonical_bundle_path(launch_path).ok_or_else(|| app_identity_error(&app.requested))?;
+    let code_requirement = crate::code_identity::designated_requirement(std::path::Path::new(
+        &bundle_path,
+    ))
+    .map_err(|error| app_signing_identity_error(&app.requested, error))?;
     Ok(CanonicalAppIdentity {
         bundle_id: normalized_bundle_id(app.bundle_id.as_deref()),
         bundle_path,
+        code_requirement,
     })
 }
 
@@ -2194,9 +2206,13 @@ fn canonical_running_app_identity(
     let bundle_id = unsafe { app.bundleIdentifier() }.map(|bundle_id| bundle_id.to_string());
     let bundle_url = unsafe { app.bundleURL() }?;
     let bundle_path = unsafe { bundle_url.path() }?.to_string();
+    let bundle_path = canonical_bundle_path(&bundle_path)?;
+    let code_requirement =
+        crate::code_identity::designated_requirement(std::path::Path::new(&bundle_path)).ok()?;
     Some(CanonicalAppIdentity {
         bundle_id: normalized_bundle_id(bundle_id.as_deref()),
-        bundle_path: canonical_bundle_path(&bundle_path)?,
+        bundle_path,
+        code_requirement,
     })
 }
 
@@ -2218,7 +2234,9 @@ fn validate_live_pid_identity(
     expected_identity: &CanonicalAppIdentity,
 ) -> Result<(), CompatError> {
     let live_identity = canonical_running_identity_for_pid(app.pid);
-    validate_canonical_app_identity(expected_identity, live_identity.as_ref(), &app.requested)
+    validate_canonical_app_identity(expected_identity, live_identity.as_ref(), &app.requested)?;
+    crate::code_identity::validate_pid(app.pid as libc::pid_t, &expected_identity.code_requirement)
+        .map_err(|error| app_signing_identity_error(&app.requested, error))
 }
 
 fn validate_canonical_app_identity(
@@ -2234,10 +2252,31 @@ fn validate_canonical_app_identity(
         (None, None) => true,
         _ => false,
     };
-    if !bundle_matches || expected.bundle_path != live.bundle_path {
+    if !bundle_matches
+        || expected.bundle_path != live.bundle_path
+        || expected.code_requirement != live.code_requirement
+    {
         return Err(app_identity_error(app_ref));
     }
+    validate_static_app_identity(expected)?;
     Ok(())
+}
+
+fn validate_static_app_identity(expected: &CanonicalAppIdentity) -> Result<(), CompatError> {
+    crate::code_identity::validate_path(
+        std::path::Path::new(&expected.bundle_path),
+        &expected.code_requirement,
+    )
+    .map_err(|error| app_signing_identity_error(&expected.bundle_path, error))
+}
+
+fn app_signing_identity_error(app_ref: &str, detail: String) -> CompatError {
+    CompatError::new(
+        "app_identity_changed",
+        format!(
+            "The signing identity for '{app_ref}' could not be verified. Refusing Computer Use access: {detail}"
+        ),
+    )
 }
 
 fn app_identity_error(app_ref: &str) -> CompatError {
@@ -2568,16 +2607,7 @@ where
 
 fn validate_live_snapshot(snapshot: &AppSnapshot) -> Result<(), CompatError> {
     enforce_target_policy(&snapshot.app)?;
-    if let Some(expected_bundle) = snapshot.app.bundle_id.as_deref() {
-        let current_bundle = crate::apps::bundle_id_for_pid(snapshot.app.pid);
-        if current_bundle
-            .as_deref()
-            .map(|bundle| !bundle.eq_ignore_ascii_case(expected_bundle))
-            .unwrap_or(true)
-        {
-            return Err(stale_snapshot_error(&snapshot.app.requested));
-        }
-    }
+    validate_live_pid_identity(&snapshot.app, &snapshot.expected_identity)?;
     let window_is_live = crate::windows::all_windows()
         .iter()
         .any(|window| window.pid == snapshot.app.pid && window.window_id == snapshot.window_id);
@@ -3049,14 +3079,19 @@ mod tests {
     }
 
     fn snapshot(requested: &str, session_native: Arc<ToolState>) -> AppSnapshot {
+        let bundle_path = format!("/Applications/{requested}.app");
         AppSnapshot {
             app: AppIdentity {
                 requested: requested.to_owned(),
                 name: requested.to_owned(),
                 bundle_id: Some(format!("com.example.{}", requested.to_lowercase())),
-                launch_path: Some(format!("/Applications/{requested}.app")),
+                launch_path: Some(bundle_path.clone()),
                 pid: 42,
             },
+            expected_identity: canonical_identity(
+                Some(&format!("com.example.{}", requested.to_lowercase())),
+                &bundle_path,
+            ),
             window_id: 7,
             window_title: requested.to_owned(),
             generation: 0,
@@ -3274,13 +3309,26 @@ mod tests {
         CanonicalAppIdentity {
             bundle_id: bundle_id.map(str::to_owned),
             bundle_path: bundle_path.to_owned(),
+            code_requirement: format!("identifier {}", bundle_id.unwrap_or("unsigned.test")),
         }
     }
 
     #[test]
     fn live_app_identity_accepts_matching_bundle_and_path() {
-        let expected = canonical_identity(Some("com.example.App"), "/Applications/App.app");
-        let live = canonical_identity(Some("com.example.app"), "/Applications/App.app");
+        let bundle_path = canonical_bundle_path("/System/Applications/Calculator.app").unwrap();
+        let code_requirement =
+            crate::code_identity::designated_requirement(std::path::Path::new(&bundle_path))
+                .unwrap();
+        let expected = CanonicalAppIdentity {
+            bundle_id: Some("com.apple.calculator".to_owned()),
+            bundle_path: bundle_path.clone(),
+            code_requirement: code_requirement.clone(),
+        };
+        let live = CanonicalAppIdentity {
+            bundle_id: Some("com.apple.Calculator".to_owned()),
+            bundle_path,
+            code_requirement,
+        };
 
         assert!(validate_canonical_app_identity(&expected, Some(&live), "App").is_ok());
     }
@@ -3298,6 +3346,16 @@ mod tests {
     fn live_app_identity_rejects_path_mismatch() {
         let expected = canonical_identity(Some("com.example.app"), "/Applications/App.app");
         let live = canonical_identity(Some("com.example.app"), "/tmp/App.app");
+
+        let error = validate_canonical_app_identity(&expected, Some(&live), "App").unwrap_err();
+        assert_eq!(error.code, "app_identity_changed");
+    }
+
+    #[test]
+    fn live_app_identity_rejects_signing_requirement_mismatch() {
+        let expected = canonical_identity(Some("com.example.app"), "/Applications/App.app");
+        let mut live = canonical_identity(Some("com.example.app"), "/Applications/App.app");
+        live.code_requirement = "identifier com.example.replacement".to_owned();
 
         let error = validate_canonical_app_identity(&expected, Some(&live), "App").unwrap_err();
         assert_eq!(error.code, "app_identity_changed");

@@ -65,6 +65,23 @@ impl ToolDef {
             "capabilities": caps,
         })
     }
+
+    /// MCP tool entry matching Codex Computer Use's public wire contract.
+    /// The native profile keeps its additive capability metadata, while this
+    /// compatibility entry deliberately contains only the built-in fields.
+    pub fn to_codex_computer_use_list_entry(&self) -> Value {
+        serde_json::json!({
+            "name": self.name,
+            "description": self.description,
+            "inputSchema": self.input_schema,
+            "annotations": {
+                "readOnlyHint": self.read_only,
+                "destructiveHint": self.destructive,
+                "idempotentHint": self.idempotent,
+                "openWorldHint": self.open_world,
+            },
+        })
+    }
 }
 
 /// Centralised tool name → capability tokens map. Lookup is by name so
@@ -355,6 +372,17 @@ impl ToolRegistry {
             "capability_version": CAPABILITY_VERSION,
             "schema_version": "1",
         })
+    }
+
+    /// Exact tools/list envelope for Codex Computer Use compatibility.
+    pub fn codex_computer_use_tools_list(&self) -> Value {
+        let tools: Vec<Value> = self
+            .order
+            .iter()
+            .filter_map(|name| self.tools.get(name))
+            .map(|tool| tool.def().to_codex_computer_use_list_entry())
+            .collect();
+        serde_json::json!({"tools": tools})
     }
 
     /// Iterate over (name, &ToolDef) in registration order.

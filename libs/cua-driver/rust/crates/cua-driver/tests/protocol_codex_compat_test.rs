@@ -282,6 +282,14 @@ fn compat_tools_list_is_exact_v829_contract() {
         "jsonrpc":"2.0","id":2,"method":"tools/list"
     }));
     let response = driver.recv();
+    assert_eq!(
+        response["result"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        vec!["tools"]
+    );
     let tools = response["result"]["tools"].as_array().unwrap();
     let names: Vec<&str> = tools
         .iter()
@@ -367,6 +375,11 @@ fn compat_tools_list_is_exact_v829_contract() {
     ];
     for (name, expected) in expected_properties {
         let tool = tools.iter().find(|tool| tool["name"] == *name).unwrap();
+        assert_eq!(
+            tool.as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec!["annotations", "description", "inputSchema", "name"],
+            "wire field mismatch for {name}"
+        );
         let mut properties: Vec<&str> = tool["inputSchema"]["properties"]
             .as_object()
             .unwrap()
@@ -496,6 +509,9 @@ fn absent_flag_preserves_native_surface() {
         "jsonrpc":"2.0","id":2,"method":"tools/list"
     }));
     let response = driver.recv();
+    assert!(response["result"].get("capability_version").is_some());
+    assert!(response["result"].get("schema_version").is_some());
+    assert!(response["result"]["tools"][0].get("capabilities").is_some());
     let names: Vec<&str> = response["result"]["tools"]
         .as_array()
         .unwrap()
@@ -948,6 +964,31 @@ fn compat_proxy_brokers_nested_app_approval_and_retries_once() {
     let mut line = String::new();
     stdout.read_line(&mut line).unwrap();
     assert_eq!(serde_json::from_str::<Value>(line.trim()).unwrap()["id"], 1);
+
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"jsonrpc":"2.0","id":10,"method":"tools/list"})
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    line.clear();
+    stdout.read_line(&mut line).unwrap();
+    let tools_response: Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(
+        tools_response["result"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        vec!["tools"]
+    );
+    for tool in tools_response["result"]["tools"].as_array().unwrap() {
+        assert_eq!(
+            tool.as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec!["annotations", "description", "inputSchema", "name"]
+        );
+    }
 
     writeln!(
         stdin,

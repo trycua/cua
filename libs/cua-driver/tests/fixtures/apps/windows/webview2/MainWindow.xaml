@@ -4,7 +4,7 @@
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="Loading WebView2 fixture"
         AutomationProperties.AutomationId="wnd-main"
-        Width="940" Height="780"
+        Width="900" Height="650"
         WindowStartupLocation="CenterScreen">
     <DockPanel LastChildFill="True">
         <Border DockPanel.Dock="Top" Background="#F0F0F0" Padding="10,6">

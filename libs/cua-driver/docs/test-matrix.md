@@ -74,22 +74,28 @@ The shared harness exposes deterministic external markers for these actions:
 | Action family | Actions | Addressing | Delivery |
 | --- | --- | --- | --- |
 | Pointer | Left click, right click, double click | AX and PX | Background and foreground |
-| Keyboard and text | Type text, Return, hotkey | AX and PX where supported | Background and foreground |
+| Keyboard and text | Type text, Return, hotkey, type then Return | AX and PX where supported | Background and foreground |
 | Scroll | Scroll | AX and PX where supported | Background and foreground |
 | Child windows | Open child window | AX and PX | Background and foreground |
 | Drag | Drag source to drop target | PX | Background and foreground |
 | State controls | Checkbox, radio, combo, slider | AX or PX by control | Mode declared per action |
 | Editor | Type, save, saved-state readback | AX and PX where supported | Mode declared per action |
 
-The Rust shared catalog declares 36 evidence-bearing cells per harness
-application. Windows and Linux run 72 shared cells across Electron and Tauri;
-macOS also runs the native WKWebView host for 108 shared cells. Each host covers
+The Rust shared catalog declares 40 evidence-bearing cells per harness
+application. Windows and Linux run 80 shared cells across Electron and Tauri;
+macOS also runs the native WKWebView host for 120 shared cells. Each host covers
 the full AX/PX and foreground/background cross-product for click, text,
-keyboard, scroll, and child-window actions, plus both delivery modes for PX
-drag and AX editor-save. A
+keyboard, sequential type-then-Return, scroll, and child-window actions, plus
+both delivery modes for PX drag and AX editor-save. A
 background capability refusal is a valid result only when the test verifies the
 declared structured refusal and the no-focus/no-z-order/no-input-leak side
-effect. A refusal fails a cell whose contract requires delivery.
+effect. Background posture requires one foreground window to contain the target
+geometry, not merely overlap it. The lane preflight also injects deliberate
+focus and input violations and requires the sentinel to detect both before its
+results are trusted. A refusal fails a cell whose contract requires delivery.
+Canonical reporting rejects skips and enforces the complete shared catalog
+size for unfiltered runs. Diagnostic filters are allowed, but matching zero
+cells is always an error.
 
 ## Harness E2E: Native Windows
 

@@ -5,7 +5,7 @@
         xmlns:auto="clr-namespace:System.Windows.Automation;assembly=PresentationCore"
         Title="CuaTestHarness WPF"
         AutomationProperties.AutomationId="wnd-main"
-        Width="900" Height="900"
+        Width="900" Height="650"
         WindowStartupLocation="CenterScreen">
     <Window.InputBindings>
         <!-- F5 (no modifiers) — chosen for automated testing. WPF's

@@ -74,6 +74,13 @@ export CUA_TEST_DRIVER_BIN="${RUST_ROOT}/target/release/cua-driver"
 export CUA_TEST_APPS_ROOT="${RUST_ROOT}/test-apps"
 export CUA_TEST_REQUIRE_FIXTURES=1
 export CUA_TEST_DRIVER_STDERR=1
+export CUA_E2E_FORBID_SKIPS=1
+unset CUA_E2E_EXPECTED_MIN_CELLS
+if [[ ("${SUITE}" == shared || "${SUITE}" == all) \
+  && -z "${CUA_E2E_CELL_FILTER:-}" \
+  && -z "${CUA_E2E_HARNESS_FILTER:-}" ]]; then
+  export CUA_E2E_EXPECTED_MIN_CELLS=120
+fi
 
 command -v ffmpeg >/dev/null || { echo "ffmpeg is required for E2E trajectory videos" >&2; exit 1; }
 command -v ffprobe >/dev/null || { echo "ffprobe is required for E2E trajectory validation" >&2; exit 1; }

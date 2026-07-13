@@ -212,6 +212,10 @@ target activation. A portal/libei grant persists until the user revokes it, so
 subsequent driver processes do not reopen the consent dialog.
 KDE requires a future target-addressable KWin adapter; portal availability by
 itself is not evidence that input can be sent safely to a named window.
+Standard Wayland does not expose the physical pointer position, so canonical
+Wayland rows do not claim the real-cursor preservation oracle. Focus, full
+occlusion, sentinel input isolation, liveness, and fixture-state oracles remain
+mandatory.
 
 ## AX, PX, and Delivery
 
@@ -252,8 +256,10 @@ question for any action, harness, or catalog area:
 
 `cua-driver-testkit::DesktopObserver` owns the shared interface. Native Windows,
 macOS, and Linux backends snapshot foreground-window, target z-order, cursor,
-and leaked-input state before and after an action. Background rows opt into the
-observer directly; there is no special guard suite.
+and focus state before and after an action. A separate full-desktop Electron
+sentinel journals keyboard, pointer, wheel, visibility, focus, and heartbeat
+events while it fully covers the target. Background rows opt into both pieces
+of instrumentation directly; there is no special guard suite.
 
 | Invariant or scenario | What it checks |
 | --- | --- |
@@ -263,6 +269,18 @@ observer directly; there is no special guard suite.
 | Child-window click | A target-created window does not unexpectedly become foreground |
 | Background screenshot | Reading the target does not change focus or z-order |
 | Agent cursor visibility | The cursor appears in the captured pixels when enabled and moved |
+
+The sentinel contract fails closed when the target is only partly covered or
+the heartbeat stops. Before any behavioral cells run, the strict environment
+preflight deliberately sends input to the sentinel and deliberately raises the
+background target. The lane proceeds only if the leaked input and transient
+focus loss are observed, the sentinel is restored, and it once again fully
+occludes the target. Windows, macOS, and X11 require the sentinel's live focus
+journal to report the loss. Wayland uses the compositor-backed native focus
+observer because Electron/Ozone does not reliably emit a DOM `blur` event for
+an external surface focus transition. The sentinel heartbeat and leaked-input
+journal remain mandatory on Wayland. This positive control prevents a broken
+guard from making every background row look green.
 
 A focus assertion can prove "no focus steal" while failing to prove that a
 click changed the target application state. An action row must therefore check
@@ -325,7 +343,13 @@ need normal test output and logs; they do not need desktop video.
   established. The sentinel remains a separate test fixture and is reasserted
   after console cleanup.
 - Strict lane preflights fail on missing fixtures, desktop access, permissions,
-  accessibility, capture, or recording support instead of silently skipping.
+  accessibility, capture, recording support, or ineffective background guards
+  instead of silently skipping.
+- Canonical runners set `CUA_E2E_FORBID_SKIPS=1`. Unfiltered shared runs also
+  set `CUA_E2E_EXPECTED_MIN_CELLS` to 80 on Windows/Linux and 120 on macOS, so
+  a filtered, shortened, or accidentally emptied catalog cannot report green.
+  Explicit diagnostic cell or harness filters disable only the minimum-count
+  check; matching no cells still fails inside the Rust matrix.
 - GitHub summaries link every evidence-bearing row to its lane archive and
   display the exact recording path. The trajectory path remains in the typed
   evidence and archive.

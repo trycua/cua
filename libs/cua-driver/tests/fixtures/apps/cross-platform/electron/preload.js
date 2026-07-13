@@ -33,11 +33,23 @@ if (sentinelMode) {
   });
   window.addEventListener('focus', () => record('focus'));
   window.addEventListener('blur', () => record('blur'));
+  window.addEventListener('visibilitychange', () =>
+    record('visibility', { state: document.visibilityState })
+  );
   window.addEventListener('keydown', event =>
     record('keydown', { key: event.key, code: event.code })
   );
+  window.addEventListener('keyup', event =>
+    record('keyup', { key: event.key, code: event.code })
+  );
   window.addEventListener('pointerdown', event =>
     record('pointerdown', { button: event.button, x: event.clientX, y: event.clientY })
+  );
+  window.addEventListener('pointerup', event =>
+    record('pointerup', { button: event.button, x: event.clientX, y: event.clientY })
+  );
+  window.addEventListener('click', event =>
+    record('click', { button: event.button, x: event.clientX, y: event.clientY })
   );
   window.addEventListener('wheel', event =>
     record('wheel', { delta_x: event.deltaX, delta_y: event.deltaY })
@@ -45,4 +57,5 @@ if (sentinelMode) {
   window.addEventListener('contextmenu', event =>
     record('contextmenu', { x: event.clientX, y: event.clientY })
   );
+  setInterval(() => record('heartbeat'), 100);
 }

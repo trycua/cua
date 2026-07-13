@@ -27,9 +27,7 @@ tests/fixtures/
 │       ├── winui3/          # unpackaged WinUI3 app
 │       └── webview2/        # WPF + WebView2 host for shared DOM
 ├── build/                   # host build scripts
-├── smoke/                   # lightweight local smoke runners
-├── linux-container/         # Azure/XFCE Linux verification helpers
-└── modality-recordings/     # recorder scripts and dashboards
+└── smoke/                   # lightweight local smoke runners
 ```
 
 `shared/scenarios.json` is the source of truth for AutomationIds, AX
@@ -44,6 +42,7 @@ Build scripts stage outputs into `libs/cua-driver/rust/test-apps/`.
 # macOS: AppKit, SwiftUI, WKWebView, Electron, Tauri
 libs/cua-driver/tests/fixtures/build/macos.sh
 libs/cua-driver/tests/fixtures/build/macos.sh --skip electron
+libs/cua-driver/tests/fixtures/build/macos.sh --only wkwebview
 
 # Linux: GTK3, Electron, Tauri
 libs/cua-driver/tests/fixtures/build/linux.sh
@@ -69,9 +68,10 @@ Host requirements:
 Rust tests under `libs/cua-driver/rust/crates/cua-driver/tests/` consume the staged
 `rust/test-apps/harness-<name>/` outputs:
 
-- `harness_<toolkit>_test.rs`: toolkit-specific app coverage, usually ignored.
-- `modality_<area>[_<os>]_test.rs`: background input, capture, and desktop
-  modality coverage, ignored/manual or VM-backed.
+- `cross_platform_behavior_test.rs`: typed Electron/Tauri action matrix.
+- `harness_<toolkit>_test.rs`: toolkit-specific app coverage.
+- `capture_contract_test.rs` and `desktop_scope_<os>_test.rs`: capture and
+  desktop-scope contracts.
 - `protocol_*_test.rs` and schema tests: headless protocol coverage, default.
 
 Rust integration tests under `libs/cua-driver/rust/crates/cua-driver/tests/` drive
@@ -99,5 +99,5 @@ the shared Electron/Tauri harnesses through the public MCP interface.
   tests.
 - Keep platform-specific quirks in the relevant Rust test or app source, not in
   the shared fixture.
-- If a recorder finding graduates into an invariant, move it into a Rust test
-  and summarize it here.
+- Record behavioral evidence through the Rust testkit and canonical OS runner;
+  do not add a second Python or shell assertion layer.

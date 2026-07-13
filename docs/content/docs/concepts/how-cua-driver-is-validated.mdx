@@ -1,0 +1,115 @@
+---
+title: "How Cua Driver Is Validated"
+description: "Why Cua Driver uses source-built desktop harnesses, independent application oracles, and retained evidence to validate behavior between releases."
+---
+
+# How Cua Driver Is Validated
+
+Desktop automation crosses boundaries that ordinary unit tests cannot observe.
+A request can be valid, reach an operating-system API, and return success while
+the target application receives nothing. Cua Driver therefore treats protocol
+correctness and observed desktop behavior as two different kinds of evidence.
+
+## Two layers answer different questions
+
+Unit and protocol tests answer whether the driver made a deterministic decision
+correctly. They cover schemas, transport, sessions, element identity, route
+selection, capture helpers, coordinate conversion, and structured errors. They
+run without a target GUI application and catch inexpensive regressions early.
+
+Harness end-to-end tests answer whether an action actually reached a real
+desktop surface. They build a small application from source, launch it in a
+real graphical user session, drive it through the Rust driver, and inspect
+state owned by the application or desktop rather than trusting the response.
+
+Neither layer replaces the other. An E2E result does not exhaustively test
+protocol edge cases, and a unit test cannot prove that a click changed an
+application.
+
+## The harnesses model representative surfaces
+
+The shared harness presents the same deterministic web behavior through
+representative renderer hosts on each operating system. Native harnesses then
+exercise accessibility, controls, windowing, capture, and input APIs that a
+shared renderer cannot represent. The current surface inventory belongs in
+[Platform support](/reference/cua-driver/platform-support); this explanation
+describes the validation model that remains stable as surfaces are added.
+
+These applications are fixtures, not mocks. Each is compiled and launched as a
+real process. Their purpose is to expose deterministic state for clicks, text,
+keys, scrolling, dragging, child windows, controls, and editor behavior. This
+makes a failure reproducible without depending on the changing state of an
+installed third-party application.
+
+## One catalog describes each behavior cell
+
+The Rust catalog records the dimensions that affect delivery:
+
+| Dimension       | Examples                                                                                               |
+| --------------- | ------------------------------------------------------------------------------------------------------ |
+| Action          | left click, right click, double click, type text, key, hotkey, scroll, drag, child window, editor save |
+| Addressing      | AX element or PX coordinate                                                                            |
+| Delivery        | foreground or background                                                                               |
+| Scope           | target window or full desktop                                                                          |
+| Surface         | shared renderer, native toolkit, embedded web view, or compositor                                    |
+| Expected result | delivered or one exact structured refusal                                                              |
+
+Foreground and background are dimensions of an action, not separate test
+families. When a surface supports both delivery modes, both belong in the same
+catalog. A platform-specific runner establishes the desktop session and
+collects evidence, but it does not redefine the expected behavior.
+
+## Independent oracles define success
+
+A successful driver response is not a passing E2E result. A delivered action
+must change state that the fixture or desktop independently owns.
+
+| Oracle               | What it establishes                                                                     |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| Fixture state        | The application recorded the click, text, key, selection, scroll, drag, or saved state. |
+| Accessibility state  | UIA, AX, or AT-SPI reports the expected control value or structure.                     |
+| Pixel state          | Before and after images contain the required visible change.                            |
+| Focus and z-order    | A background action did not activate or raise the target.                               |
+| Cursor state         | The physical user cursor did not move when background delivery promised that property.  |
+| Leaked-input journal | The foreground sentinel did not receive input intended for the background target.       |
+| Protocol state       | An unsupported route returned the exact declared refusal.                               |
+
+Background checks combine target-state and side-effect oracles. This matters
+because input delivered to the wrong foreground application is worse than an
+honest refusal. A refusal passes only when its exact code is expected and the
+desktop remains unchanged.
+
+## Evidence makes a result auditable
+
+Canonical hosted GUI runs retain the typed result for every declared cell, the
+source commit, per-cell desktop video, before and after state, the tool
+trajectory, fixture journals, driver logs, and environment preflight. The
+GitHub Actions summary links each matrix row to its artifacts.
+
+The reporter rejects missing or duplicate rows, undeclared outcomes,
+contradictory results, and incomplete required evidence. A failed environment
+cannot silently turn into a smaller green matrix, and an `ok` response without
+an observed effect remains a failure.
+
+## Release validation balances cost and fidelity
+
+Deterministic unit, protocol, compile, and packaging checks run automatically
+where configured. Interactive E2E suites require a real graphical session and
+are maintainer-triggered because they are slower and more environment-sensitive.
+Windows and Linux have dispatchable GitHub Actions workflows; macOS runs the
+same Rust catalog in a logged-in session with Accessibility and Screen
+Recording permissions.
+
+Each accepted run builds the driver and fixtures from one exact source commit.
+Support claims change only after an unchanged behavior cell produces new
+application-owned evidence or an explicit structured refusal. Skips, weaker
+oracles, and command-return-only checks do not establish support.
+
+## Related reference
+
+- [Platform support](/reference/cua-driver/platform-support) records currently
+  proven environments and limitations.
+- [Platform roadmap](/reference/cua-driver/platform-roadmap) records remaining
+  engineering work and hard platform boundaries.
+- [Interface contracts](/reference/cua-driver/contracts) defines public driver
+  behavior and refusal semantics.

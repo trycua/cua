@@ -3753,7 +3753,16 @@ impl Tool for TypeTextTool {
                     // top-level can't be foregrounded) while the a11y-channel
                     // SetValue still lands. Same fix as the UIA Invoke path.
                     crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || unsafe {
-                        vp.SetValue(&BSTR::from(text_for_uia.as_str()))
+                        // ValuePattern has no caret/selection insertion API. Preserve
+                        // the current document and append as the deterministic
+                        // background fallback; replacing the whole value violates
+                        // type_text's insertion contract for editors.
+                        let current = vp
+                            .CurrentValue()
+                            .map(|value| value.to_string())
+                            .unwrap_or_default();
+                        let inserted = format!("{current}{text_for_uia}");
+                        vp.SetValue(&BSTR::from(inserted.as_str()))
                     })?;
                     Ok(())
                 })()

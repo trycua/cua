@@ -118,7 +118,7 @@ background delivery and attach desktop-side-effect oracles.
 | --- | --- | --- |
 | AppKit | `harness_appkit_test.rs` | AX tree/capture, AX value/text, AX scroll, PX clicks, and foreground slider drag across the proven delivery modes; background drag is an exact refusal |
 | SwiftUI | `harness_swiftui_test.rs` | AX tree/capture, background click/value, and foreground popover-trigger state |
-| WKWebView | `cross_platform_behavior_test.rs` | Dedicated native host running the full 36-cell shared web catalog |
+| WKWebView | `cross_platform_behavior_test.rs` | Dedicated native host running the full 40-cell shared web catalog |
 | Installed-app launch/focus | `installed_app_launch_macos_test.rs` | Real Calculator/TextEdit launch and focus behavior in the canonical logged-in lane |
 | Installed-app text | `installed_app_textedit_macos_test.rs` | Real TextEdit AX background write and verification in the canonical logged-in lane |
 

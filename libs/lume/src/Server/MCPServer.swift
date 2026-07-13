@@ -171,7 +171,7 @@ final class LumeMCPServer {
         - Avoid spaces and special characters
 
         ### Resource Allocation
-        - Default: 4 CPU cores, 8GB RAM, 64GB disk
+        - Default: 4 CPU cores, 8GB RAM, 100GB disk
         - For builds: Consider 8 CPU cores, 16GB RAM
         - Disk grows dynamically (sparse files)
 
@@ -493,7 +493,7 @@ final class LumeMCPServer {
                         ]),
                         "disk_size": .object([
                             "type": .string("string"),
-                            "description": .string("Disk size, e.g., '64GB' (default: 64GB)")
+                            "description": .string("Disk size, e.g., '100GB' (default: 100GB)")
                         ]),
                         "storage": .object([
                             "type": .string("string"),
@@ -803,12 +803,12 @@ final class LumeMCPServer {
             memorySize = 8 * 1024 * 1024 * 1024  // 8GB default
         }
 
-        // Parse disk size (default 64GB)
+        // Parse disk size (default 100GB)
         let diskSize: UInt64
         if let diskStr = args?["disk_size"]?.stringValue {
             diskSize = try parseSize(diskStr)
         } else {
-            diskSize = 64 * 1024 * 1024 * 1024  // 64GB default
+            diskSize = 100 * 1024 * 1024 * 1024  // 100GB default
         }
 
         // Load unattended config if specified

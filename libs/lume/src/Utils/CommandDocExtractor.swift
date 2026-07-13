@@ -128,7 +128,7 @@ enum CommandDocExtractor {
                 OptionDoc(name: "os", shortName: nil, help: "Operating system to install (macOS or linux)", type: "String", defaultValue: "macOS", isOptional: false),
                 OptionDoc(name: "cpu", shortName: nil, help: "Number of CPU cores", type: "Int", defaultValue: "4", isOptional: false),
                 OptionDoc(name: "memory", shortName: nil, help: "Memory size (e.g., 8GB)", type: "String", defaultValue: "8GB", isOptional: false),
-                OptionDoc(name: "disk-size", shortName: nil, help: "Disk size (e.g., 50GB)", type: "String", defaultValue: "50GB", isOptional: false),
+                OptionDoc(name: "disk-size", shortName: nil, help: "Disk size (e.g., 100GB)", type: "String", defaultValue: "100GB for macOS; 50GB for Linux", isOptional: false),
                 OptionDoc(name: "display", shortName: nil, help: "Display resolution (e.g., 1024x768)", type: "String", defaultValue: "1024x768", isOptional: false),
                 OptionDoc(name: "ipsw", shortName: nil, help: "Path to IPSW file or 'latest' for macOS VMs", type: "String", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),

@@ -220,6 +220,8 @@ impl ForegroundSentinel {
                 raised.text()
             ));
         }
+        #[cfg(target_os = "linux")]
+        focus_sway_target(background_target)?;
         wait_for_event(&self.journal_path, "blur", Duration::from_secs(3))?;
         let (_, focus_violations) = self.observe();
         if !focus_violations
@@ -418,8 +420,34 @@ fn activate_native_foreground(driver: &mut impl Driver, target: TargetWindow) {
         "could not activate foreground sentinel: {}",
         response.text()
     );
+    #[cfg(target_os = "linux")]
+    focus_sway_target(target).expect("could not focus foreground sentinel through Sway IPC");
     #[cfg(target_os = "windows")]
     physically_focus_windows_sentinel(target);
+}
+
+#[cfg(target_os = "linux")]
+fn focus_sway_target(target: TargetWindow) -> Result<(), String> {
+    let is_sway = is_wayland_session()
+        && std::env::var("CUA_E2E_WAYLAND_SESSION").is_ok_and(|session| session == "sway");
+    if !is_sway {
+        return Ok(());
+    }
+
+    let criterion = format!("[pid={}]", target.pid);
+    let output = Command::new("swaymsg")
+        .args([criterion.as_str(), "focus"])
+        .output()
+        .map_err(|error| format!("run sway focus canary for pid {}: {error}", target.pid))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "sway focus canary for pid {} failed: {}",
+            target.pid,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
 }
 
 #[cfg(target_os = "windows")]

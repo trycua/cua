@@ -39,16 +39,14 @@ pkgs.rustPlatform.buildRustPackage {
   # which are gated behind cfg(target_os) and won't compile on Linux.
   # Using -p cua-driver ensures Cargo only resolves Linux dependencies.
   #
-  # Enable the `portal-libei` feature so the Nix build pulls the
-  # GNOME/KDE portal stack (PipeWire ScreenCast per-window capture +
-  # libei RemoteDesktop input). nixpkgs provides a recent enough
+  # Enable both portal capabilities so the Nix build pulls the GNOME/KDE
+  # portal stack (PipeWire ScreenCast per-window capture + libei
+  # RemoteDesktop input). nixpkgs provides a recent enough
   # PipeWire (>= 0.3.40 needed by libspa-sys) and libei, so this feature
-  # builds fine here. The cross-platform release CD leaves it off — its
-  # debian:11 container ships PipeWire 0.3.19 (too old for libspa-sys
-  # 0.8) and lacks libei entirely, but the wlroots screencopy +
-  # virtual-pointer paths still cover sway/Hyprland/labwc/wayfire/dwl.
-  cargoBuildFlags = [ "-p" "cua-driver" "--features" "portal-libei" ];
-  cargoTestFlags = [ "-p" "cua-driver" "--features" "portal-libei" ];
+  # builds fine here. Release builds enable portal input as well; keeping
+  # capture explicit here validates both halves of the split feature contract.
+  cargoBuildFlags = [ "-p" "cua-driver" "--features" "portal-input,portal-capture" ];
+  cargoTestFlags = [ "-p" "cua-driver" "--features" "portal-input,portal-capture" ];
 
   # Mostly pure Rust:
   #   x11rb     -> RustConnection (no libxcb C binding)
@@ -80,6 +78,8 @@ pkgs.rustPlatform.buildRustPackage {
     pipewire
     # libei via reis — same as the ashpd RemoteDesktop+EIS flow.
     libei
+    # reis links its keyboard support directly against libxkbcommon.
+    libxkbcommon
   ];
 
   # Skip tests that require a running X11 display or AT-SPI bus

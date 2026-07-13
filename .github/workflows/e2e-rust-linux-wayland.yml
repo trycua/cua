@@ -14,6 +14,7 @@ on:
         default: sway
         options:
           - sway
+          - cua-compositor
       lane:
         description: "Diagnostic lane; canonical dispatches use all"
         required: false
@@ -80,6 +81,7 @@ jobs:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Sway and Rust build dependencies
+        if: inputs.environment == 'sway'
         shell: bash
         run: |
           sudo apt-get update
@@ -91,11 +93,23 @@ jobs:
             libxext-dev libdrm-dev libgbm-dev libwebkit2gtk-4.1-dev \
             libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev \
             ffmpeg jq
+      - name: Install Nix for the custom compositor environment
+        if: inputs.environment == 'cua-compositor'
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
       - name: Run complete native Wayland matrix
         shell: bash
         env:
           CUA_AT_SPI_BUS_LAUNCHER: /usr/libexec/at-spi-bus-launcher
-        run: scripts/ci/linux/run-rust-e2e-wayland.sh
+        run: |
+          if [[ "${{ inputs.environment }}" == "cua-compositor" ]]; then
+            nix develop .#cua-driver-inject-e2e \
+              -c scripts/ci/linux/run-rust-e2e-inject.sh
+          else
+            scripts/ci/linux/run-rust-e2e-wayland.sh
+          fi
       - name: Upload Wayland results
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4

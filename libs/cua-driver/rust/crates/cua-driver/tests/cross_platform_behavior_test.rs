@@ -527,6 +527,36 @@ fn assert_fixture_value(fixture: &Fixture, id: &str, expected: &str) {
     }
 }
 
+fn assert_fixture_single_insertion(
+    fixture: &Fixture,
+    id: &str,
+    initial: &str,
+    inserted: &str,
+) -> String {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let state = fixture.journal.snapshot();
+        if let Some(value) = state[id]["value"].as_str() {
+            if value.len() == initial.len() + inserted.len() {
+                for (offset, _) in value.match_indices(inserted) {
+                    let mut without_insertion = value.to_owned();
+                    without_insertion.replace_range(offset..offset + inserted.len(), "");
+                    if without_insertion == initial {
+                        return value.to_owned();
+                    }
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "{}: fixture value {id:?} did not insert {inserted:?} exactly once into {initial:?}: {state}",
+                fixture.name
+            );
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
 fn assert_fixture_text(fixture: &Fixture, id: &str, expected: &str) {
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
@@ -917,7 +947,6 @@ fn run_editor_save_action(fixture: &mut Fixture, delivery: &str) -> Observation 
                 fixture.name
             )
         });
-    let expected_value = format!("{text}{initial_value}");
     let mut text_args = action_target_args(fixture, &pre, "editor-document", "ax", delivery);
     text_args
         .as_object_mut()
@@ -933,7 +962,8 @@ fn run_editor_save_action(fixture: &mut Fixture, delivery: &str) -> Observation 
         fixture.name,
         response.text()
     );
-    assert_fixture_value(fixture, "editor-document", &expected_value);
+    let expected_value =
+        assert_fixture_single_insertion(fixture, "editor-document", initial_value, &text);
 
     let post_text = snapshot(fixture);
     let journal_before_save = fixture.journal.snapshot();

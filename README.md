@@ -59,9 +59,9 @@
 
 ---
 
-## Cua Drivers - Background computer-use on macOS and Windows, with Linux pre-release
+## Cua Drivers - Background computer-use on macOS, Windows, and Linux
 
-Drive native desktop apps **in the background**. Agents click, type, and verify without stealing the cursor or focus. Use the same CLI and MCP server on macOS and Windows from Claude Code, Cursor, Codex, OpenClaw, and custom clients. Linux support is available as a pre-release backend while platform testing is still in progress.
+Drive native desktop apps **in the background**. Agents click, type, and verify without stealing the cursor or focus. Use the same CLI and MCP server on macOS, Windows, and Linux from Claude Code, Cursor, Codex, OpenClaw, and custom clients. Linux supports X11 and compositor-specific Wayland routes with explicit limits for raw background input.
 
 **macOS / Linux**
 
@@ -93,7 +93,6 @@ Build agents that see screens, click buttons, and complete tasks autonomously. O
 pip install cua
 ```
 
-
 ```python
 # Requires Python 3.11 or later
 from cua import Sandbox, Image
@@ -120,7 +119,6 @@ async with Sandbox.ephemeral(Image.linux()) as sb:   # or .macos() .windows() .a
 
 Evaluate computer-use agents on OSWorld, ScreenSpot, Windows Arena, and custom tasks. Export trajectories for training.
 
-
 ```bash
 # Clone, install, and create base image
 git clone https://github.com/trycua/cua && cd cua/cua-bench
@@ -137,7 +135,6 @@ cb run dataset datasets/cua-bench-basic --agent cua-agent --max-parallel 4
 ## Lume - macOS Virtualization
 
 Create and manage macOS/Linux VMs with near-native performance on Apple Silicon using Apple's Virtualization.Framework.
-
 
 ```bash
 # Install Lume
@@ -163,15 +160,15 @@ of Setup Assistant on its first display boot; see [issue #2155](https://github.c
 
 ## Packages
 
-| Package                                                                     | Description                                                |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| [cua-driver](libs/cua-driver/README.md)                                     | Background computer-use agent for macOS, Windows, and Linux |
-| [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)                    | AI agent framework for computer-use tasks                  |
-| [cua-sandbox](https://cua.ai/docs/cua/reference/sandbox-sdk)                | SDK for creating and controlling sandboxes                 |
-| [cua-computer-server](https://cua.ai/docs/cua/reference/sandbox-sdk)        | Driver for UI interactions and code execution in sandboxes |
-| [cua-bench](https://cua.ai/docs/cuabench)                                   | Benchmarks and RL environments for computer-use            |
-| [lume](https://cua.ai/docs/lume)                                            | macOS/Linux VM management on Apple Silicon                 |
-| [lumier](https://cua.ai/docs/lume/guide/advanced/lumier)                    | Docker-compatible interface for Lume VMs                   |
+| Package                                                              | Description                                                 |
+| -------------------------------------------------------------------- | ----------------------------------------------------------- |
+| [cua-driver](libs/cua-driver/README.md)                              | Background computer-use agent for macOS, Windows, and Linux |
+| [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)             | AI agent framework for computer-use tasks                   |
+| [cua-sandbox](https://cua.ai/docs/cua/reference/sandbox-sdk)         | SDK for creating and controlling sandboxes                  |
+| [cua-computer-server](https://cua.ai/docs/cua/reference/sandbox-sdk) | Driver for UI interactions and code execution in sandboxes  |
+| [cua-bench](https://cua.ai/docs/cuabench)                            | Benchmarks and RL environments for computer-use             |
+| [lume](https://cua.ai/docs/lume)                                     | macOS/Linux VM management on Apple Silicon                  |
+| [lumier](https://cua.ai/docs/lume/guide/advanced/lumier)             | Docker-compatible interface for Lume VMs                    |
 
 ## Resources
 

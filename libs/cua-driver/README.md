@@ -18,6 +18,14 @@ Background computer-use driver for any agents. Speaks MCP over stdio; drives nat
 Start with `rust/README.md`, `rust/crates/cua-driver/tests/README.md`, and
 `tests/fixtures/README.md` when changing driver behavior or tests.
 
+Contributor documentation:
+
+- `docs/test-matrix.md` maps unit and canonical harness E2E suites.
+- `docs/action-support.md` is the empirical platform behavior ledger.
+- `docs/test-harnesses-guide.md` explains fixture and runner ownership.
+- `docs/linux-desktop-validation.md` covers representative Linux sessions.
+- `docs/linux-support-completion-plan.md` preserves the historical Linux plan.
+
 ## Claude Code computer-use compatibility
 
 Standard Claude Code MCP registration:

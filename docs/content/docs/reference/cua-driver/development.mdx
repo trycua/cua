@@ -23,8 +23,34 @@ they stay close to implementation changes.
 - `libs/cua-driver/rust/README.md` maps the Cargo workspace and test classes.
 - `libs/cua-driver/rust/crates/cua-driver/tests/README.md` explains Rust test naming and ignored GUI lanes.
 - `libs/cua-driver/tests/fixtures/README.md` explains source-built harness apps and staged outputs.
-- `libs/cua-driver/rust/crates/cua-driver/tests/README.md` explains Rust test naming and ignored GUI lanes.
 - `libs/cua-driver/scripts/README.md` explains install and VM sync helpers.
+
+## Desktop Validation Entry Points
+
+The canonical GUI runners execute the complete Rust harness catalog. Their
+internal CI lanes may split shared, native, and capture owners for reporting,
+but contributors do not select those partitions directly.
+
+```text
+Linux X11/session: scripts/ci/linux/run-rust-e2e.sh
+Linux Sway:        scripts/ci/linux/run-rust-e2e-wayland.sh
+Linux nested:      scripts/ci/linux/run-rust-e2e-inject.sh
+Linux GNOME/KDE:   scripts/ci/linux/run-rust-e2e-desktop.sh <gnome|kde>
+Linux real Xorg:   scripts/ci/linux/run-rust-e2e-desktop.sh xorg
+Windows:           .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
+macOS:             scripts/ci/macos/run-rust-e2e.sh
+```
+
+The Sway runner creates a controlled stock-wlroots session. Nix owns the Linux
+source/package gate and provides the optional nested `cua-compositor` session;
+it is not the wrapper for every Linux E2E environment. GNOME, KDE, real Xorg,
+Windows, and macOS use an existing graphical login. Windows needs an
+interactive console or RDP session, and macOS needs a logged-in session with
+the required Accessibility and Screen Recording permissions. See
+[Platform support](/reference/cua-driver/platform-support) for current capability
+boundaries, [How Cua Driver is validated](/concepts/how-cua-driver-is-validated)
+for the evidence model, and [Platform roadmap](/reference/cua-driver/platform-roadmap)
+for remaining work.
 
 Build artifacts, VM logs, and local verification journals should stay out of
 git unless they have been promoted into a stable fixture or contributor doc.

@@ -1256,7 +1256,7 @@ pub mod linux {
         target_pid: u32,
         workspace: Option<u64>,
         state: &mut SwayTreeState,
-    ) {
+    ) -> bool {
         let id = node["id"].as_u64();
         let workspace = if node["type"].as_str() == Some("workspace") {
             id
@@ -1267,21 +1267,26 @@ pub mod linux {
         if focused {
             state.focused = id;
             state.focused_workspace = workspace;
-            if node["fullscreen_mode"].as_i64().unwrap_or(0) != 0 {
-                state.focused_fullscreen = id;
-            }
         }
         if node["pid"].as_u64() == Some(u64::from(target_pid)) {
             if let Some(id) = id {
                 state.target = Some((id, node["visible"].as_bool().unwrap_or(true), workspace));
             }
         }
+        let mut subtree_focused = focused;
         for child in ["nodes", "floating_nodes"]
             .into_iter()
             .flat_map(|key| node[key].as_array().into_iter().flatten())
         {
-            walk_sway_tree(child, target_pid, workspace, state);
+            subtree_focused |= walk_sway_tree(child, target_pid, workspace, state);
         }
+        // Sway commonly puts fullscreen_mode on a container while focus belongs
+        // to a descendant surface. Treat the focused subtree as fullscreen so a
+        // sibling hidden behind that container is classified as occluded.
+        if subtree_focused && node["fullscreen_mode"].as_i64().unwrap_or(0) != 0 {
+            state.focused_fullscreen = id;
+        }
+        subtree_focused
     }
 
     fn classify_sway_target(state: &SwayTreeState) -> TargetZ {
@@ -1304,7 +1309,7 @@ pub mod linux {
     fn sway_snapshot(target: TargetWindow) -> Result<DesktopSnapshot, ObserverError> {
         let tree = sway_tree()?;
         let mut state = SwayTreeState::default();
-        walk_sway_tree(&tree, target.pid, None, &mut state);
+        let _ = walk_sway_tree(&tree, target.pid, None, &mut state);
         let target_z = classify_sway_target(&state);
         Ok(DesktopSnapshot {
             foreground: state.focused,
@@ -1317,7 +1322,7 @@ pub mod linux {
     fn sway_focus_identity() -> Result<Option<u64>, ObserverError> {
         let tree = sway_tree()?;
         let mut state = SwayTreeState::default();
-        walk_sway_tree(&tree, 0, None, &mut state);
+        let _ = walk_sway_tree(&tree, 0, None, &mut state);
         Ok(state.focused)
     }
 
@@ -1628,6 +1633,46 @@ pub mod linux {
                 focused_fullscreen: Some(30),
                 target: Some((20, false, Some(10))),
             };
+            assert_eq!(classify_sway_target(&state), TargetZ::BackgroundOccluded);
+        }
+
+        #[test]
+        fn sway_fullscreen_ancestor_of_focused_surface_occludes_target() {
+            let tree = serde_json::json!({
+                "id": 1,
+                "type": "root",
+                "nodes": [{
+                    "id": 10,
+                    "type": "workspace",
+                    "nodes": [
+                        {
+                            "id": 20,
+                            "pid": 100,
+                            "visible": false,
+                            "focused": false,
+                            "fullscreen_mode": 0,
+                            "nodes": []
+                        },
+                        {
+                            "id": 30,
+                            "focused": false,
+                            "fullscreen_mode": 1,
+                            "nodes": [{
+                                "id": 31,
+                                "pid": 200,
+                                "visible": true,
+                                "focused": true,
+                                "fullscreen_mode": 0,
+                                "nodes": []
+                            }]
+                        }
+                    ]
+                }]
+            });
+            let mut state = SwayTreeState::default();
+            assert!(walk_sway_tree(&tree, 100, None, &mut state));
+            assert_eq!(state.focused, Some(31));
+            assert_eq!(state.focused_fullscreen, Some(30));
             assert_eq!(classify_sway_target(&state), TargetZ::BackgroundOccluded);
         }
 

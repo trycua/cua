@@ -100,6 +100,29 @@ fn has_image(response: &cua_driver_testkit::ToolResponse) -> bool {
             .unwrap_or(false)
 }
 
+fn readiness_contract(
+    is_error: bool,
+    element_count: usize,
+    marker_present: bool,
+    image_present: bool,
+) -> bool {
+    !is_error && element_count > 0 && marker_present && image_present
+}
+
+fn preflight_state_ready(response: &cua_driver_testkit::ToolResponse, ax_marker: &str) -> bool {
+    let element_count = response.structured()["element_count"]
+        .as_u64()
+        .map(|count| count as usize)
+        .or_else(|| response.structured()["elements"].as_array().map(Vec::len))
+        .unwrap_or_default();
+    readiness_contract(
+        response.is_error(),
+        element_count,
+        response.tree_text().contains(ax_marker),
+        has_image(response),
+    )
+}
+
 fn run_preflight() {
     if let Ok(expected_sha) = std::env::var("CUA_E2E_SOURCE_SHA") {
         assert!(
@@ -197,7 +220,10 @@ fn run_preflight() {
     let mut child = spawn_in_job(&mut command).expect("preflight fixture failed to launch");
     let launched_pid = child.id() as i64;
 
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + Duration::from_secs(35);
+    let mut last_readiness = "fixture window has not appeared".to_owned();
+    #[cfg(target_os = "linux")]
+    let mut activated_window_id = None;
     let (pid, window_id) = loop {
         if let Some(status) = child
             .try_wait()
@@ -205,71 +231,67 @@ fn run_preflight() {
         {
             panic!("preflight fixture exited before mapping a window: {status}");
         }
-        let response = driver.call("list_windows", serde_json::json!({}));
-        if let Some(window) = response.structured()["windows"]
+        let windows = driver.call("list_windows", serde_json::json!({}));
+        let candidate = windows.structured()["windows"]
             .as_array()
             .and_then(|windows| {
-                windows.iter().find(|window| {
-                    window["window_id"]
-                        .as_u64()
-                        .map(|id| !before_ids.contains(&id))
-                        .unwrap_or(false)
-                        && window["title"]
-                            .as_str()
-                            .unwrap_or("")
-                            .contains(fixture.title)
+                windows.iter().find_map(|window| {
+                    let window_id = window["window_id"].as_u64()?;
+                    let is_new = !before_ids.contains(&window_id);
+                    let title_matches = window["title"]
+                        .as_str()
+                        .unwrap_or("")
+                        .contains(fixture.title);
+                    (is_new && title_matches)
+                        .then(|| (window["pid"].as_i64().unwrap_or(launched_pid), window_id))
                 })
-            })
-        {
-            if let Some(window_id) = window["window_id"].as_u64() {
-                break (window["pid"].as_i64().unwrap_or(launched_pid), window_id);
-            }
+            });
+        if windows.is_error() {
+            last_readiness = format!("list_windows failed: {}", windows.text());
         }
+
+        if let Some((pid, window_id)) = candidate {
+            #[cfg(target_os = "linux")]
+            if DisplayServer::current() == DisplayServer::X11
+                && activated_window_id != Some(window_id)
+            {
+                let activated = driver.call(
+                    "bring_to_front",
+                    serde_json::json!({ "pid": pid, "window_id": window_id }),
+                );
+                assert!(
+                    !activated.is_error(),
+                    "preflight fixture could not be placed on the Linux desktop: {}",
+                    activated.text()
+                );
+                activated_window_id = Some(window_id);
+                std::thread::sleep(Duration::from_millis(300));
+            }
+
+            let state = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": window_id,
+                    "capture_mode": "ax"
+                }),
+            );
+            if preflight_state_ready(&state, fixture.ax_marker) {
+                break (pid, window_id);
+            }
+            last_readiness = state.text().to_owned();
+        }
+
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            panic!("preflight fixture window did not appear");
+            panic!(
+                "preflight could not map a ready fixture window with AX state and screenshot: {last_readiness}"
+            );
         }
         std::thread::sleep(Duration::from_millis(200));
     };
     driver.reaper().push(child);
-
-    #[cfg(target_os = "linux")]
-    {
-        if DisplayServer::current() == DisplayServer::X11 {
-            let activated = driver.call(
-                "bring_to_front",
-                serde_json::json!({ "pid": pid, "window_id": window_id }),
-            );
-            assert!(
-                !activated.is_error(),
-                "preflight fixture could not be placed on the Linux desktop: {}",
-                activated.text()
-            );
-            std::thread::sleep(Duration::from_millis(300));
-        }
-    }
-
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        let state = driver.call(
-            "get_window_state",
-            serde_json::json!({
-                "pid": pid,
-                "window_id": window_id,
-                "capture_mode": "ax"
-            }),
-        );
-        if !state.is_error() && state.tree_text().contains(fixture.ax_marker) && has_image(&state) {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "preflight could not read both AX state and screenshot: {}",
-            state.text()
-        );
-        std::thread::sleep(Duration::from_millis(200));
-    }
 
     driver.start_behavior_recording();
     let target = TargetWindow {
@@ -347,6 +369,15 @@ fn panic_message(payload: &Box<dyn Any + Send>) -> String {
                 .map(|message| (*message).to_owned())
         })
         .unwrap_or_else(|| "preflight panicked without a string payload".to_owned())
+}
+
+#[test]
+fn readiness_requires_nonempty_ax_marker_and_screenshot_together() {
+    assert!(readiness_contract(false, 1, true, true));
+    assert!(!readiness_contract(false, 0, true, true));
+    assert!(!readiness_contract(false, 1, false, true));
+    assert!(!readiness_contract(false, 1, true, false));
+    assert!(!readiness_contract(true, 1, true, true));
 }
 
 #[test]

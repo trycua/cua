@@ -441,31 +441,6 @@ fn focus_sway_target(driver: &mut impl Driver, target: TargetWindow) -> Result<(
         return Ok(());
     }
 
-    let windows = driver.call("list_windows", serde_json::json!({}));
-    if windows.is_error() {
-        return Err(format!(
-            "list windows before Sway focus canary: {}",
-            windows.text()
-        ));
-    }
-    let title = windows.structured()["windows"]
-        .as_array()
-        .and_then(|windows| {
-            windows.iter().find_map(|window| {
-                let same_pid = window["pid"].as_u64() == Some(target.pid as u64);
-                let same_window = window["window_id"].as_u64() == Some(target.native_id);
-                (same_pid && same_window)
-                    .then(|| window["title"].as_str())
-                    .flatten()
-            })
-        })
-        .ok_or_else(|| {
-            format!(
-                "Sway focus canary could not resolve title for pid {} window {}",
-                target.pid, target.native_id
-            )
-        })?;
-
     let tree_output = Command::new("swaymsg")
         .args(["-r", "-t", "get_tree"])
         .output()
@@ -478,16 +453,31 @@ fn focus_sway_target(driver: &mut impl Driver, target: TargetWindow) -> Result<(
     }
     let tree: serde_json::Value = serde_json::from_slice(&tree_output.stdout)
         .map_err(|error| format!("parse Sway tree for focus canary: {error}"))?;
-    let con_id = sway_container_id(&tree, title)
-        .ok_or_else(|| format!("Sway focus canary could not find container titled {title:?}"))?;
+
+    let windows = driver.call("list_windows", serde_json::json!({}));
+    if windows.is_error() {
+        return Err(format!(
+            "list windows before Sway focus canary: {}",
+            windows.text()
+        ));
+    }
+    let title = sway_target_title(windows.structured(), target);
+    let con_id = sway_container_id_by_pid(&tree, target.pid)
+        .or_else(|| title.and_then(|title| sway_container_id(&tree, title)))
+        .ok_or_else(|| {
+            format!(
+                "Sway focus canary could not resolve container for pid {} window {}",
+                target.pid, target.native_id
+            )
+        })?;
 
     let criterion = format!("[con_id={con_id}]");
     let output = Command::new("swaymsg")
         .args(["-r", criterion.as_str(), "focus"])
         .output()
-        .map_err(|error| format!("run Sway focus canary for {title:?}: {error}"))?;
+        .map_err(|error| format!("run Sway focus canary for con_id {con_id}: {error}"))?;
     let result: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("parse Sway focus result for {title:?}: {error}"))?;
+        .map_err(|error| format!("parse Sway focus result for con_id {con_id}: {error}"))?;
     let focused = output.status.success()
         && result.as_array().is_some_and(|results| {
             !results.is_empty() && results.iter().all(|item| item["success"] == true)
@@ -496,11 +486,46 @@ fn focus_sway_target(driver: &mut impl Driver, target: TargetWindow) -> Result<(
         Ok(())
     } else {
         Err(format!(
-            "Sway focus canary for {title:?} failed: stdout={} stderr={}",
+            "Sway focus canary for con_id {con_id} failed: stdout={} stderr={}",
             String::from_utf8_lossy(&output.stdout).trim(),
             String::from_utf8_lossy(&output.stderr).trim(),
         ))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn sway_target_title(windows: &serde_json::Value, target: TargetWindow) -> Option<&str> {
+    let windows = windows["windows"].as_array()?;
+    windows
+        .iter()
+        .find(|window| {
+            window["pid"].as_u64() == Some(target.pid as u64)
+                && window["window_id"].as_u64() == Some(target.native_id)
+        })
+        .and_then(|window| window["title"].as_str())
+        .or_else(|| {
+            let mut titles = windows
+                .iter()
+                .filter(|window| window["pid"].as_u64() == Some(target.pid as u64))
+                .filter_map(|window| window["title"].as_str())
+                .filter(|title| !title.is_empty());
+            let title = titles.next()?;
+            titles.next().is_none().then_some(title)
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn sway_container_id_by_pid(node: &serde_json::Value, pid: u32) -> Option<i64> {
+    if node["pid"].as_u64() == Some(pid as u64) {
+        return node["id"].as_i64();
+    }
+    ["nodes", "floating_nodes"].into_iter().find_map(|key| {
+        node[key].as_array().and_then(|children| {
+            children
+                .iter()
+                .find_map(|child| sway_container_id_by_pid(child, pid))
+        })
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -522,6 +547,46 @@ fn sway_container_id(node: &serde_json::Value, title: &str) -> Option<i64> {
                 .find_map(|child| sway_container_id(child, title))
         })
     })
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod sway_tests {
+    use super::*;
+
+    #[test]
+    fn focus_target_prefers_stable_sway_pid_over_synthetic_window_id() {
+        let tree = serde_json::json!({
+            "id": 1,
+            "nodes": [{
+                "id": 9,
+                "nodes": [{
+                    "id": 42,
+                    "pid": 1234,
+                    "name": "CuaTestHarness Electron"
+                }]
+            }]
+        });
+        assert_eq!(sway_container_id_by_pid(&tree, 1234), Some(42));
+    }
+
+    #[test]
+    fn focus_target_uses_unique_same_process_title_when_window_id_changes() {
+        let windows = serde_json::json!({
+            "windows": [{
+                "pid": 1234,
+                "window_id": 88,
+                "title": "CuaTestHarness Electron [cdp=9223]"
+            }]
+        });
+        let target = TargetWindow {
+            pid: 1234,
+            native_id: 99,
+        };
+        assert_eq!(
+            sway_target_title(&windows, target),
+            Some("CuaTestHarness Electron [cdp=9223]")
+        );
+    }
 }
 
 #[cfg(target_os = "windows")]

@@ -499,7 +499,14 @@ fn focus_sway_target(driver: &mut impl Driver, target: TargetWindow) -> Result<(
 
 #[cfg(target_os = "linux")]
 fn sway_container_id(node: &serde_json::Value, title: &str) -> Option<i64> {
-    if node["name"].as_str() == Some(title) {
+    let raw_title = title
+        .rsplit_once(" [")
+        .map(|(candidate, _)| candidate)
+        .unwrap_or(title);
+    if node["name"]
+        .as_str()
+        .is_some_and(|name| name == title || name == raw_title)
+    {
         return node["id"].as_i64();
     }
     ["nodes", "floating_nodes"].into_iter().find_map(|key| {

@@ -909,6 +909,15 @@ fn run_editor_save_action(fixture: &mut Fixture, delivery: &str) -> Observation 
     let pre = snapshot(fixture);
     let journal_before = fixture.journal.snapshot();
     let text = format!("cua-editor-{delivery}");
+    let initial_value = journal_before["editor-document"]["value"]
+        .as_str()
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: editor fixture did not publish its initial value: {journal_before}",
+                fixture.name
+            )
+        });
+    let expected_value = format!("{text}{initial_value}");
     let mut text_args = action_target_args(fixture, &pre, "editor-document", "ax", delivery);
     text_args
         .as_object_mut()
@@ -924,7 +933,7 @@ fn run_editor_save_action(fixture: &mut Fixture, delivery: &str) -> Observation 
         fixture.name,
         response.text()
     );
-    assert_fixture_value(fixture, "editor-document", &text);
+    assert_fixture_value(fixture, "editor-document", &expected_value);
 
     let post_text = snapshot(fixture);
     let journal_before_save = fixture.journal.snapshot();
@@ -942,7 +951,7 @@ fn run_editor_save_action(fixture: &mut Fixture, delivery: &str) -> Observation 
     assert_fixture_text(
         fixture,
         "editor-status",
-        &format!("editor_status=saved:{text}"),
+        &format!("editor_status=saved:{expected_value}"),
     );
     delivered_observation()
 }

@@ -221,7 +221,7 @@ impl ForegroundSentinel {
             ));
         }
         #[cfg(target_os = "linux")]
-        focus_sway_target(background_target)?;
+        focus_sway_target(driver, background_target)?;
         wait_for_event(&self.journal_path, "blur", Duration::from_secs(3))?;
         let (_, focus_violations) = self.observe();
         if !focus_violations
@@ -421,33 +421,94 @@ fn activate_native_foreground(driver: &mut impl Driver, target: TargetWindow) {
         response.text()
     );
     #[cfg(target_os = "linux")]
-    focus_sway_target(target).expect("could not focus foreground sentinel through Sway IPC");
+    focus_sway_target(driver, target)
+        .expect("could not focus foreground sentinel through Sway IPC");
     #[cfg(target_os = "windows")]
     physically_focus_windows_sentinel(target);
 }
 
 #[cfg(target_os = "linux")]
-fn focus_sway_target(target: TargetWindow) -> Result<(), String> {
+fn focus_sway_target(driver: &mut impl Driver, target: TargetWindow) -> Result<(), String> {
     let is_sway = is_wayland_session()
         && std::env::var("CUA_E2E_WAYLAND_SESSION").is_ok_and(|session| session == "sway");
     if !is_sway {
         return Ok(());
     }
 
-    let criterion = format!("[pid={}]", target.pid);
-    let output = Command::new("swaymsg")
-        .args([criterion.as_str(), "focus"])
+    let windows = driver.call("list_windows", serde_json::json!({}));
+    if windows.is_error() {
+        return Err(format!(
+            "list windows before Sway focus canary: {}",
+            windows.text()
+        ));
+    }
+    let title = windows.structured()["windows"]
+        .as_array()
+        .and_then(|windows| {
+            windows.iter().find_map(|window| {
+                let same_pid = window["pid"].as_u64() == Some(target.pid as u64);
+                let same_window = window["window_id"].as_u64() == Some(target.native_id);
+                (same_pid && same_window)
+                    .then(|| window["title"].as_str())
+                    .flatten()
+            })
+        })
+        .ok_or_else(|| {
+            format!(
+                "Sway focus canary could not resolve title for pid {} window {}",
+                target.pid, target.native_id
+            )
+        })?;
+
+    let tree_output = Command::new("swaymsg")
+        .args(["-r", "-t", "get_tree"])
         .output()
-        .map_err(|error| format!("run sway focus canary for pid {}: {error}", target.pid))?;
-    if output.status.success() {
+        .map_err(|error| format!("read Sway tree for focus canary: {error}"))?;
+    if !tree_output.status.success() {
+        return Err(format!(
+            "read Sway tree for focus canary: {}",
+            String::from_utf8_lossy(&tree_output.stderr).trim()
+        ));
+    }
+    let tree: serde_json::Value = serde_json::from_slice(&tree_output.stdout)
+        .map_err(|error| format!("parse Sway tree for focus canary: {error}"))?;
+    let con_id = sway_container_id(&tree, title)
+        .ok_or_else(|| format!("Sway focus canary could not find container titled {title:?}"))?;
+
+    let criterion = format!("[con_id={con_id}]");
+    let output = Command::new("swaymsg")
+        .args(["-r", criterion.as_str(), "focus"])
+        .output()
+        .map_err(|error| format!("run Sway focus canary for {title:?}: {error}"))?;
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("parse Sway focus result for {title:?}: {error}"))?;
+    let focused = output.status.success()
+        && result.as_array().is_some_and(|results| {
+            !results.is_empty() && results.iter().all(|item| item["success"] == true)
+        });
+    if focused {
         Ok(())
     } else {
         Err(format!(
-            "sway focus canary for pid {} failed: {}",
-            target.pid,
-            String::from_utf8_lossy(&output.stderr).trim()
+            "Sway focus canary for {title:?} failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout).trim(),
+            String::from_utf8_lossy(&output.stderr).trim(),
         ))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn sway_container_id(node: &serde_json::Value, title: &str) -> Option<i64> {
+    if node["name"].as_str() == Some(title) {
+        return node["id"].as_i64();
+    }
+    ["nodes", "floating_nodes"].into_iter().find_map(|key| {
+        node[key].as_array().and_then(|children| {
+            children
+                .iter()
+                .find_map(|child| sway_container_id(child, title))
+        })
+    })
 }
 
 #[cfg(target_os = "windows")]

@@ -69,7 +69,8 @@
     <legend>text_input</legend>
     <div class="row">
       <input type="text" id="txt-input" data-cua-id="txt-input"
-             aria-label="txt-input" placeholder="type here" />
+             aria-label="txt-input" placeholder="type here"
+             autocapitalize="off" autocorrect="off" spellcheck="false" />
       <span class="mirror" id="lbl-input-mirror" data-cua-id="lbl-input-mirror">mirror=</span>
     </div>
   </fieldset>
@@ -78,7 +79,8 @@
     <legend>keyboard_task</legend>
     <div class="row">
       <input type="text" id="keyboard-input" data-cua-id="keyboard-input" autofocus
-             aria-label="keyboard-input" placeholder="keyboard input" />
+             aria-label="keyboard-input" placeholder="keyboard input"
+             autocapitalize="off" autocorrect="off" spellcheck="false" />
       <span class="mirror" id="keyboard-status" data-cua-id="keyboard-status">key_state=none</span>
     </div>
   </fieldset>
@@ -86,7 +88,9 @@
   <fieldset>
     <legend>text_editor_task</legend>
     <div class="row">
-      <textarea id="editor-document" data-cua-id="editor-document" aria-label="editor-document" rows="3" cols="42">Initial conformance text.\nStatus: DRAFT\n</textarea>
+      <textarea id="editor-document" data-cua-id="editor-document" aria-label="editor-document"
+                autocapitalize="off" autocorrect="off" spellcheck="false"
+                rows="3" cols="42">Initial conformance text.\nStatus: DRAFT\n</textarea>
       <button id="editor-save" data-cua-id="editor-save" aria-label="editor-save Save">Save</button>
       <span class="mirror" id="editor-status" data-cua-id="editor-status">editor_status=draft</span>
     </div>

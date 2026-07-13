@@ -136,9 +136,10 @@ fn post_key(pid: i32, key_code: u16, key_down: bool, flags: CGEventFlags) -> any
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let event = CGEvent::new_keyboard_event(source, key_code, key_down)
         .map_err(|_| anyhow::anyhow!("CGEvent::new_keyboard_event failed"))?;
-    if flags != CGEventFlags::CGEventFlagNull {
-        event.set_flags(flags);
-    }
+    // HIDSystemState can inherit physically held modifiers. Always overwrite
+    // the event flags, including the empty case, so an unrelated Shift/Caps
+    // state cannot leak into a targeted key press.
+    event.set_flags(flags);
     post_keyboard_event(pid, &event);
     Ok(())
 }
@@ -148,9 +149,7 @@ fn post_key_no_auth(pid: i32, key_code: u16, key_down: bool, flags: CGEventFlags
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let event = CGEvent::new_keyboard_event(source, key_code, key_down)
         .map_err(|_| anyhow::anyhow!("CGEvent::new_keyboard_event failed"))?;
-    if flags != CGEventFlags::CGEventFlagNull {
-        event.set_flags(flags);
-    }
+    event.set_flags(flags);
     let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
     // attach_auth_message = false → IOHIDPostEvent path → NSMenu fires
     if !crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false) {

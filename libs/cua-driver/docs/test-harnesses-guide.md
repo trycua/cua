@@ -273,10 +273,14 @@ of instrumentation directly; there is no special guard suite.
 The sentinel contract fails closed when the target is only partly covered or
 the heartbeat stops. Before any behavioral cells run, the strict environment
 preflight deliberately sends input to the sentinel and deliberately raises the
-background target. The lane proceeds only if the sentinel reports the leaked
-input and transient focus loss, is restored, and once again fully occludes the
-target. This positive control prevents a broken guard from making every
-background row look green.
+background target. The lane proceeds only if the leaked input and transient
+focus loss are observed, the sentinel is restored, and it once again fully
+occludes the target. Windows, macOS, and X11 require the sentinel's live focus
+journal to report the loss. Wayland uses the compositor-backed native focus
+observer because Electron/Ozone does not reliably emit a DOM `blur` event for
+an external surface focus transition. The sentinel heartbeat and leaked-input
+journal remain mandatory on Wayland. This positive control prevents a broken
+guard from making every background row look green.
 
 A focus assertion can prove "no focus steal" while failing to prove that a
 click changed the target application state. An action row must therefore check

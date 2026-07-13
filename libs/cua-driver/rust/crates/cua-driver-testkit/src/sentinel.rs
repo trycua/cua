@@ -132,14 +132,16 @@ impl ForegroundSentinel {
         {
             violations.push("foreground sentinel heartbeat stopped".to_owned());
         }
-        if events.iter().any(|event| {
-            event_kind(event) == Some("blur")
-                || (event_kind(event) == Some("visibility")
-                    && event["state"].as_str() == Some("hidden"))
-        }) {
-            violations.push("foreground sentinel lost focus".to_owned());
-        } else {
-            passed.push(OracleKind::Focus);
+        if !is_wayland_session() {
+            if events.iter().any(|event| {
+                event_kind(event) == Some("blur")
+                    || (event_kind(event) == Some("visibility")
+                        && event["state"].as_str() == Some("hidden"))
+            }) {
+                violations.push("foreground sentinel lost focus".to_owned());
+            } else {
+                passed.push(OracleKind::Focus);
+            }
         }
         let leaked = events
             .iter()
@@ -222,15 +224,19 @@ impl ForegroundSentinel {
         }
         #[cfg(target_os = "linux")]
         focus_sway_target(driver, background_target)?;
-        wait_for_event(&self.journal_path, "blur", Duration::from_secs(3))?;
-        let (_, focus_violations) = self.observe();
-        if !focus_violations
-            .iter()
-            .any(|violation| violation.contains("lost focus"))
-        {
-            return Err(format!(
-                "focus-loss canary was not detected: {focus_violations:?}"
-            ));
+        if is_wayland_session() {
+            wait_for_native_focus_lost(self.target)?;
+        } else {
+            wait_for_event(&self.journal_path, "blur", Duration::from_secs(3))?;
+            let (_, focus_violations) = self.observe();
+            if !focus_violations
+                .iter()
+                .any(|violation| violation.contains("lost focus"))
+            {
+                return Err(format!(
+                    "focus-loss canary was not detected: {focus_violations:?}"
+                ));
+            }
         }
 
         activate_native_foreground(driver, self.target);
@@ -596,6 +602,32 @@ fn wait_for_native_focus_stable(target: TargetWindow) {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_native_focus_lost(target: TargetWindow) -> Result<(), String> {
+    use crate::observer::{ObserverBackend, TargetZ};
+
+    let backend = NativeObserver::new();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let lost = backend
+            .snapshot(target)
+            .map(|snapshot| snapshot.target_z != TargetZ::Foreground)
+            .unwrap_or(false);
+        if lost {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err("native Wayland focus-loss canary was not detected".to_owned());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn wait_for_native_focus_lost(_target: TargetWindow) -> Result<(), String> {
+    Err("native Wayland focus observation is only available on Linux".to_owned())
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]

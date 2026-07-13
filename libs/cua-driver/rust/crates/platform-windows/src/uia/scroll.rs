@@ -47,6 +47,21 @@ use windows::Win32::UI::Accessibility::{
     UIA_ScrollItemPatternId, UIA_ScrollPatternId,
 };
 
+/// Return UIA's live IsOffscreen state for a retained element pointer.
+///
+/// `None` means the property could not be read. Callers fail open in that case
+/// so a transient UIA query never blocks an otherwise valid coordinate action.
+pub unsafe fn element_is_offscreen(element_ptr: usize) -> Option<bool> {
+    if element_ptr == 0 {
+        return None;
+    }
+    let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    let elem: IUIAutomationElement = IUIAutomationElement::from_raw(element_ptr as *mut _);
+    let result = elem.CurrentIsOffscreen().ok().map(|value| value.as_bool());
+    std::mem::forget(elem);
+    result
+}
+
 /// Ask the UIA element behind `element_ptr` to scroll itself into view, then
 /// return its fresh on-screen center (from the element's *live* bounding rect,
 /// since the cached center is stale once the control has moved).
@@ -84,8 +99,12 @@ pub unsafe fn scroll_into_view_and_recenter(
     // - otherwise the coordinate tap would still miss. This mirrors the caller's
     // own bounds check so an ineffective ScrollIntoView falls through to the
     // ancestor ScrollPattern fallback instead of returning a bogus center.
-    let in_bounds = |c: (i32, i32)| -> Option<(i32, i32)> {
-        if crate::input::point_in_window_bounds(host_hwnd, c.0, c.1) {
+    let actionable = |c: (i32, i32)| -> Option<(i32, i32)> {
+        let visible = elem
+            .CurrentIsOffscreen()
+            .map(|value| !value.as_bool())
+            .unwrap_or(true);
+        if visible && crate::input::point_in_window_bounds(host_hwnd, c.0, c.1) {
             Some(c)
         } else {
             None
@@ -93,8 +112,8 @@ pub unsafe fn scroll_into_view_and_recenter(
     };
 
     let result = scroll_item_into_view(host_hwnd, &elem)
-        .and_then(in_bounds)
-        .or_else(|| scroll_ancestor_into_view(host_hwnd, &elem).and_then(in_bounds));
+        .and_then(actionable)
+        .or_else(|| scroll_ancestors_into_view(host_hwnd, &elem).and_then(actionable));
 
     // Don't Release the cache's ref - the RetainedElement guard owns it.
     std::mem::forget(elem);
@@ -155,9 +174,10 @@ unsafe fn scroll_item_into_view(host_hwnd: u64, elem: &IUIAutomationElement) -> 
     Some(((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2))
 }
 
-/// Strategy 2: walk up to the first vertically-scrollable ancestor and
-/// `ScrollPattern::Scroll` until the target's live rect re-enters the viewport.
-unsafe fn scroll_ancestor_into_view(
+/// Strategy 2: walk every vertically-scrollable ancestor and use
+/// `ScrollPattern::Scroll` until the target's live rect re-enters a visible
+/// viewport.
+unsafe fn scroll_ancestors_into_view(
     host_hwnd: u64,
     elem: &IUIAutomationElement,
 ) -> Option<(i32, i32)> {
@@ -167,9 +187,11 @@ unsafe fn scroll_ancestor_into_view(
         CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
     let walker = automation.ControlViewWalker().ok()?;
 
-    // Find the nearest ancestor that exposes a vertically-scrollable ScrollPattern.
-    let mut scroll_pat: Option<IUIAutomationScrollPattern> = None;
-    let mut container: Option<IUIAutomationElement> = None;
+    // Collect every vertically-scrollable ancestor. Nested controls are common:
+    // a ListItem may already be visible inside its ListBox while that entire
+    // ListBox is clipped by an outer page ScrollViewer. Trying only the nearest
+    // pattern leaves the element hidden even though another ancestor can reveal it.
+    let mut containers: Vec<(IUIAutomationElement, IUIAutomationScrollPattern)> = Vec::new();
     let mut cur = walker.GetParentElement(elem).ok()?;
     for _ in 0..16 {
         if let Ok(p) = cur.GetCurrentPattern(UIA_ScrollPatternId) {
@@ -179,9 +201,7 @@ unsafe fn scroll_ancestor_into_view(
                     .map(|b| b.as_bool())
                     .unwrap_or(false);
                 if scrollable {
-                    container = Some(cur.clone());
-                    scroll_pat = Some(sp);
-                    break;
+                    containers.push((cur.clone(), sp));
                 }
             }
         }
@@ -190,36 +210,45 @@ unsafe fn scroll_ancestor_into_view(
             Err(_) => break,
         }
     }
-    let sp = scroll_pat?;
-    let container = container?;
-    let crect = container.CurrentBoundingRectangle().ok()?;
 
-    // Iteratively scroll the container until the target's center sits inside the
-    // viewport. Large steps to close distance, small steps once we overshoot
-    // (direction flip) so we don't oscillate. All wrapped in the fg bypass.
-    let mut last_dir = 0i32;
-    for _ in 0..60 {
-        let tr = elem.CurrentBoundingRectangle().ok()?;
-        let tcy = (tr.top + tr.bottom) / 2;
-        if tcy >= crect.top && tcy <= crect.bottom {
-            break; // center is within the viewport
+    for (container, sp) in containers {
+        let crect = container.CurrentBoundingRectangle().ok()?;
+        // Iteratively scroll this container until the target's center sits inside
+        // its viewport. If UIA still marks the target off-screen, continue with
+        // the next outer scrollable ancestor.
+        let mut last_dir = 0i32;
+        for _ in 0..60 {
+            let tr = elem.CurrentBoundingRectangle().ok()?;
+            let tcy = (tr.top + tr.bottom) / 2;
+            if tcy >= crect.top && tcy <= crect.bottom {
+                break;
+            }
+            let dir = if tcy < crect.top { -1 } else { 1 };
+            let overshot = last_dir != 0 && dir != last_dir;
+            let amount = match (dir, overshot) {
+                (-1, false) => ScrollAmount_LargeDecrement,
+                (-1, true) => ScrollAmount_SmallDecrement,
+                (_, false) => ScrollAmount_LargeIncrement,
+                (_, true) => ScrollAmount_SmallIncrement,
+            };
+            let scrolled = crate::uia::fg_bypass::run_with_uwp_bypass(host_hwnd as isize, || {
+                sp.Scroll(ScrollAmount_NoAmount, amount)
+            });
+            if scrolled.is_err() {
+                break;
+            }
+            last_dir = dir;
+            sleep(Duration::from_millis(15));
         }
-        let dir = if tcy < crect.top { -1 } else { 1 };
-        let overshot = last_dir != 0 && dir != last_dir;
-        let amount = match (dir, overshot) {
-            (-1, false) => ScrollAmount_LargeDecrement,
-            (-1, true) => ScrollAmount_SmallDecrement,
-            (_, false) => ScrollAmount_LargeIncrement,
-            (_, true) => ScrollAmount_SmallIncrement,
-        };
-        let scrolled = crate::uia::fg_bypass::run_with_uwp_bypass(host_hwnd as isize, || {
-            sp.Scroll(ScrollAmount_NoAmount, amount)
-        });
-        if scrolled.is_err() {
-            break;
+        let rect = elem.CurrentBoundingRectangle().ok()?;
+        let center = ((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2);
+        let visible = elem
+            .CurrentIsOffscreen()
+            .map(|value| !value.as_bool())
+            .unwrap_or(true);
+        if visible && crate::input::point_in_window_bounds(host_hwnd, center.0, center.1) {
+            return Some(center);
         }
-        last_dir = dir;
-        sleep(Duration::from_millis(15)); // let the layout settle before re-reading
     }
 
     let rect = elem.CurrentBoundingRectangle().ok()?;

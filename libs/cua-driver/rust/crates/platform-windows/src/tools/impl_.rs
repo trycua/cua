@@ -58,12 +58,19 @@ fn resolve_onscreen_point_with_scroll(
     cy: i32,
     action_verb: &str,
 ) -> Result<(i32, i32), String> {
-    if crate::input::point_in_window_bounds(hwnd, cx, cy) {
-        return Ok((cx, cy));
-    }
-    // Off-screen: ask the control to scroll itself into view, then re-resolve.
+    let cached_center_in_window = crate::input::point_in_window_bounds(hwnd, cx, cy);
+    // A center can still be clipped by a ScrollViewer or a docked sibling while
+    // remaining inside the outer HWND rectangle. UIA's IsOffscreen property is
+    // authoritative for that case; without it a foreground tap can land on the
+    // visible control covering the stale point (for example a bottom toolbar).
     if let Some(retained) = element_cache.get_element_retained(pid, hwnd, idx) {
         if retained.is_uia() {
+            let is_offscreen = unsafe {
+                crate::uia::scroll::element_is_offscreen(retained.as_ptr())
+            };
+            if cached_center_in_window && is_offscreen != Some(true) {
+                return Ok((cx, cy));
+            }
             if let Some((nx, ny)) = unsafe {
                 crate::uia::scroll::scroll_into_view_and_recenter(hwnd, retained.as_ptr())
             } {
@@ -71,14 +78,18 @@ fn resolve_onscreen_point_with_scroll(
                     return Ok((nx, ny));
                 }
             }
+        } else if cached_center_in_window {
+            return Ok((cx, cy));
         }
         // `retained` drops here → COM Release.
+    } else if cached_center_in_window {
+        return Ok((cx, cy));
     }
     Err(format!(
-        "Element [{idx}] resolves to ({cx},{cy}), outside its window — tried UIA \
-         ScrollIntoView but it is still off-screen, so {action_verb} would land on \
-         whatever is there (e.g. the taskbar). Make the window taller or scroll \
-         the region into view, then retry."
+        "Element [{idx}] resolves to ({cx},{cy}) but is not visibly actionable — \
+         tried UIA ScrollIntoView but it is still off-screen, so {action_verb} \
+         would land on whatever covers that point. Make the window taller or \
+         scroll the region into view, then retry."
     ))
 }
 

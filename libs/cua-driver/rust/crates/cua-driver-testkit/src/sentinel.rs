@@ -462,8 +462,9 @@ fn focus_sway_target(driver: &mut impl Driver, target: TargetWindow) -> Result<(
         ));
     }
     let title = sway_target_title(windows.structured(), target);
-    let con_id = sway_container_id_by_pid(&tree, target.pid)
-        .or_else(|| title.and_then(|title| sway_container_id(&tree, title)))
+    let con_id = title
+        .and_then(|title| sway_container_id(&tree, title))
+        .or_else(|| sway_container_id_by_unique_pid(&tree, target.pid))
         .ok_or_else(|| {
             format!(
                 "Sway focus canary could not resolve container for pid {} window {}",
@@ -515,17 +516,26 @@ fn sway_target_title(windows: &serde_json::Value, target: TargetWindow) -> Optio
 }
 
 #[cfg(target_os = "linux")]
-fn sway_container_id_by_pid(node: &serde_json::Value, pid: u32) -> Option<i64> {
+fn collect_sway_container_ids_by_pid(node: &serde_json::Value, pid: u32, ids: &mut Vec<i64>) {
     if node["pid"].as_u64() == Some(pid as u64) {
-        return node["id"].as_i64();
+        if let Some(id) = node["id"].as_i64() {
+            ids.push(id);
+        }
     }
-    ["nodes", "floating_nodes"].into_iter().find_map(|key| {
-        node[key].as_array().and_then(|children| {
-            children
-                .iter()
-                .find_map(|child| sway_container_id_by_pid(child, pid))
-        })
-    })
+    for key in ["nodes", "floating_nodes"] {
+        if let Some(children) = node[key].as_array() {
+            for child in children {
+                collect_sway_container_ids_by_pid(child, pid, ids);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn sway_container_id_by_unique_pid(node: &serde_json::Value, pid: u32) -> Option<i64> {
+    let mut ids = Vec::new();
+    collect_sway_container_ids_by_pid(node, pid, &mut ids);
+    (ids.len() == 1).then(|| ids[0])
 }
 
 #[cfg(target_os = "linux")]
@@ -554,7 +564,7 @@ mod sway_tests {
     use super::*;
 
     #[test]
-    fn focus_target_prefers_stable_sway_pid_over_synthetic_window_id() {
+    fn focus_target_uses_unique_sway_pid_when_title_is_unavailable() {
         let tree = serde_json::json!({
             "id": 1,
             "nodes": [{
@@ -566,7 +576,20 @@ mod sway_tests {
                 }]
             }]
         });
-        assert_eq!(sway_container_id_by_pid(&tree, 1234), Some(42));
+        assert_eq!(sway_container_id_by_unique_pid(&tree, 1234), Some(42));
+    }
+
+    #[test]
+    fn focus_target_does_not_guess_when_pid_owns_multiple_windows() {
+        let tree = serde_json::json!({
+            "id": 1,
+            "nodes": [
+                {"id": 41, "pid": 1234, "name": "First"},
+                {"id": 42, "pid": 1234, "name": "Second"}
+            ]
+        });
+        assert_eq!(sway_container_id_by_unique_pid(&tree, 1234), None);
+        assert_eq!(sway_container_id(&tree, "Second"), Some(42));
     }
 
     #[test]

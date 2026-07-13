@@ -5,7 +5,7 @@
 use std::any::Any;
 use std::collections::HashSet;
 use std::panic::{self, AssertUnwindSafe};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
@@ -20,6 +20,33 @@ struct PreflightFixture {
     args: Vec<&'static str>,
     title: &'static str,
     ax_marker: &'static str,
+}
+
+struct FixtureChildGuard {
+    child: Option<Child>,
+}
+
+impl FixtureChildGuard {
+    fn new(child: Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    fn child_mut(&mut self) -> &mut Child {
+        self.child.as_mut().expect("fixture child guard is armed")
+    }
+
+    fn into_child(mut self) -> Child {
+        self.child.take().expect("fixture child guard is armed")
+    }
+}
+
+impl Drop for FixtureChildGuard {
+    fn drop(&mut self) {
+        if let Some(child) = &mut self.child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 fn preflight_fixture() -> PreflightFixture {
@@ -217,8 +244,9 @@ fn run_preflight() {
         .args(&fixture.args)
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
-    let mut child = spawn_in_job(&mut command).expect("preflight fixture failed to launch");
+    let child = spawn_in_job(&mut command).expect("preflight fixture failed to launch");
     let launched_pid = child.id() as i64;
+    let mut child = FixtureChildGuard::new(child);
 
     let deadline = Instant::now() + Duration::from_secs(35);
     let mut last_readiness = "fixture window has not appeared".to_owned();
@@ -226,6 +254,7 @@ fn run_preflight() {
     let mut activated_window_id = None;
     let (pid, window_id) = loop {
         if let Some(status) = child
+            .child_mut()
             .try_wait()
             .expect("could not inspect preflight fixture process")
         {
@@ -283,15 +312,13 @@ fn run_preflight() {
         }
 
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
             panic!(
                 "preflight could not map a ready fixture window with AX state and screenshot: {last_readiness}"
             );
         }
         std::thread::sleep(Duration::from_millis(200));
     };
-    driver.reaper().push(child);
+    driver.reaper().push(child.into_child());
 
     driver.start_behavior_recording();
     let target = TargetWindow {

@@ -2,7 +2,7 @@
 
 CLI and framework for macOS and Linux VMs using Apple Virtualization Framework.
 
-**[Documentation](https://cua.ai/docs/lume)** - Installation, guides, and API reference.
+**[Documentation](https://cua.ai/docs/how-to-guides/lume/install-lume)** - Installation, guides, and API reference.
 
 ## Vanilla macOS VMs
 

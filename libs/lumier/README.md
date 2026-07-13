@@ -2,4 +2,4 @@
 
 macOS and Linux virtual machines in a Docker container.
 
-**[Documentation](https://cua.ai/docs/lume/guide/advanced/lumier)** - Installation, guides, and configuration.
+**[Documentation](https://github.com/trycua/cua/tree/main/libs/lumier)** - Installation and usage guide.

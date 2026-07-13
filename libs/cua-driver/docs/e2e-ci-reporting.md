@@ -67,8 +67,12 @@ artifacts/cua-driver/<platform>/
 
 `cases.jsonl` is the executed catalog. `results.jsonl` contains one result for
 every declared cell. In canonical mode, the reporter rejects duplicates,
-missing results, undeclared results, contradictory statuses, missing required
-videos, and missing or invalid expected turn evidence. An `evidence.json`
+missing results, undeclared results, contradictory statuses, forbidden skips,
+an under-sized unfiltered shared catalog, missing required videos, and missing
+or invalid expected turn evidence. Canonical runners set
+`CUA_E2E_FORBID_SKIPS=1` and `CUA_E2E_EXPECTED_MIN_CELLS` (80 on
+Windows/Linux, 120 on macOS). Explicit diagnostic filters omit only the
+minimum-count policy; a filter matching zero cells still fails in Rust. An `evidence.json`
 classification normally makes capture failure auditable without making it
 pass. The one narrow exception is a successful Windows `bring_to_front`
 restoration:

@@ -56,6 +56,13 @@ export CUA_TEST_DRIVER_BIN="${RUST_ROOT}/target/release/cua-driver"
 export CUA_TEST_APPS_ROOT="${RUST_ROOT}/test-apps"
 export CUA_TEST_REQUIRE_FIXTURES=1
 export CUA_TEST_DRIVER_STDERR=1
+export CUA_E2E_FORBID_SKIPS=1
+unset CUA_E2E_EXPECTED_MIN_CELLS
+if [[ ("${SUITE}" == shared || "${SUITE}" == all) \
+  && -z "${CUA_E2E_CELL_FILTER:-}" \
+  && -z "${CUA_E2E_HARNESS_FILTER:-}" ]]; then
+  export CUA_E2E_EXPECTED_MIN_CELLS=80
+fi
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 if [[ -z "${CUA_E2E_SOURCE_SHA:-}" && -f "${REPO_ROOT}/.cua-e2e-source-sha" ]]; then
   export CUA_E2E_SOURCE_SHA="$(tr -d '[:space:]' < "${REPO_ROOT}/.cua-e2e-source-sha")"

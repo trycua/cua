@@ -115,27 +115,48 @@ impl ForegroundSentinel {
 
     pub fn observe(&self) -> (Vec<OracleKind>, Vec<String>) {
         std::thread::sleep(Duration::from_millis(200));
-        let journal = match fs::read_to_string(&self.journal_path) {
-            Ok(journal) => journal,
+        let events = match read_journal_events(&self.journal_path) {
+            Ok(events) => events,
             Err(error) => {
                 return (
                     Vec::new(),
-                    vec![format!(
-                        "foreground sentinel journal could not be read: {error}"
-                    )],
+                    vec![format!("foreground sentinel journal is invalid: {error}")],
                 )
             }
         };
         let mut passed = Vec::new();
         let mut violations = Vec::new();
-        if journal.contains(r#""kind":"blur""#) {
+        if !events
+            .iter()
+            .any(|event| event_kind(event) == Some("heartbeat"))
+        {
+            violations.push("foreground sentinel heartbeat stopped".to_owned());
+        }
+        if events.iter().any(|event| {
+            event_kind(event) == Some("blur")
+                || (event_kind(event) == Some("visibility")
+                    && event["state"].as_str() == Some("hidden"))
+        }) {
             violations.push("foreground sentinel lost focus".to_owned());
         } else {
             passed.push(OracleKind::Focus);
         }
-        let leaked = ["keydown", "pointerdown", "wheel", "contextmenu"]
-            .into_iter()
-            .filter(|kind| journal.contains(&format!(r#""kind":"{kind}""#)))
+        let leaked = events
+            .iter()
+            .filter_map(|event| event_kind(event))
+            .filter(|kind| {
+                matches!(
+                    *kind,
+                    "keydown"
+                        | "keyup"
+                        | "pointerdown"
+                        | "pointerup"
+                        | "click"
+                        | "wheel"
+                        | "contextmenu"
+                        | "input"
+                )
+            })
             .collect::<Vec<_>>();
         if leaked.is_empty() {
             passed.push(OracleKind::NoLeakedInput);
@@ -146,6 +167,77 @@ impl ForegroundSentinel {
             ));
         }
         (passed, violations)
+    }
+
+    /// Prove once per canonical lane that the foreground guard can detect both
+    /// leaked input and transient focus loss. A guard that cannot observe its
+    /// deliberate violations must never be trusted to certify background rows.
+    pub fn assert_guard_canaries(
+        &self,
+        driver: &mut impl Driver,
+        background_target: TargetWindow,
+    ) -> Result<(), String> {
+        wait_for_event(&self.journal_path, "heartbeat", Duration::from_secs(2))?;
+        reset_journal(&self.journal_path)?;
+
+        let leaked_key = driver.call(
+            "press_key",
+            serde_json::json!({
+                "pid": self.target.pid,
+                "window_id": self.target.native_id,
+                "key": "a",
+                "delivery_mode": "foreground",
+            }),
+        );
+        if leaked_key.is_error() {
+            return Err(format!(
+                "foreground input canary could not inject a key: {}",
+                leaked_key.text()
+            ));
+        }
+        wait_for_event(&self.journal_path, "keydown", Duration::from_secs(2))?;
+        let (_, leaked_input_violations) = self.observe();
+        if !leaked_input_violations
+            .iter()
+            .any(|violation| violation.contains("received input events"))
+        {
+            return Err(format!(
+                "foreground input canary was not detected: {leaked_input_violations:?}"
+            ));
+        }
+        reset_journal(&self.journal_path)?;
+
+        let raised = driver.call(
+            "bring_to_front",
+            serde_json::json!({
+                "pid": background_target.pid,
+                "window_id": background_target.native_id,
+            }),
+        );
+        if raised.is_error() {
+            return Err(format!(
+                "focus-loss canary could not raise the background target: {}",
+                raised.text()
+            ));
+        }
+        wait_for_event(&self.journal_path, "blur", Duration::from_secs(3))?;
+        let (_, focus_violations) = self.observe();
+        if !focus_violations
+            .iter()
+            .any(|violation| violation.contains("lost focus"))
+        {
+            return Err(format!(
+                "focus-loss canary was not detected: {focus_violations:?}"
+            ));
+        }
+
+        activate_native_foreground(driver, self.target);
+        wait_for_native_focus_stable(self.target);
+        std::thread::sleep(Duration::from_millis(150));
+        reset_journal(&self.journal_path)?;
+        wait_for_event(&self.journal_path, "heartbeat", Duration::from_secs(2))?;
+        reset_journal(&self.journal_path)?;
+        self.assert_background_posture(background_target)
     }
 
     pub fn target(&self) -> TargetWindow {
@@ -178,8 +270,7 @@ impl ForegroundSentinel {
         activate_native_foreground(driver, self.target);
         wait_for_native_focus_stable(self.target);
         std::thread::sleep(Duration::from_millis(100));
-        fs::write(&self.journal_path, "")
-            .map_err(|error| format!("reset foreground sentinel journal: {error}"))?;
+        reset_journal(&self.journal_path)?;
         self.assert_background_posture(target)
     }
 
@@ -268,6 +359,43 @@ fn wait_for_journal(path: &std::path::Path, deadline: Instant, marker: &str, sta
             "foreground sentinel did not become {state}: {journal}"
         );
         std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn reset_journal(path: &std::path::Path) -> Result<(), String> {
+    fs::write(path, "").map_err(|error| format!("reset foreground sentinel journal: {error}"))
+}
+
+fn read_journal_events(path: &std::path::Path) -> Result<Vec<serde_json::Value>, String> {
+    let journal =
+        fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    journal
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str(line)
+                .map_err(|error| format!("parse sentinel event {line:?}: {error}"))
+        })
+        .collect()
+}
+
+fn event_kind(event: &serde_json::Value) -> Option<&str> {
+    event["kind"].as_str()
+}
+
+fn wait_for_event(path: &std::path::Path, kind: &str, timeout: Duration) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let events = read_journal_events(path)?;
+        if events.iter().any(|event| event_kind(event) == Some(kind)) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "foreground sentinel did not emit {kind:?} within {timeout:?}: {events:?}"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(25));
     }
 }
 

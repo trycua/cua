@@ -399,8 +399,7 @@ fn refresh_wayland_window_geometry(fixture: &mut Fixture) {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn refresh_wayland_window_geometry(_fixture: &mut Fixture) {
-}
+fn refresh_wayland_window_geometry(_fixture: &mut Fixture) {}
 
 fn window_origin(fixture: &Fixture, _state: &ToolResponse) -> (f64, f64) {
     #[cfg(target_os = "macos")]
@@ -509,6 +508,48 @@ fn assert_fixture_contains(fixture: &Fixture, marker: &str) {
         }
         thread::sleep(Duration::from_millis(100));
     }
+}
+
+fn assert_fixture_value(fixture: &Fixture, id: &str, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let state = fixture.journal.snapshot();
+        if state[id]["value"].as_str() == Some(expected) {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "{}: fixture value {id:?} did not reach {expected:?}: {state}",
+                fixture.name
+            );
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn assert_fixture_text(fixture: &Fixture, id: &str, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let state = fixture.journal.snapshot();
+        if state[id]["text"].as_str() == Some(expected) {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "{}: fixture text {id:?} did not reach {expected:?}: {state}",
+                fixture.name
+            );
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn fixture_marker_number(fixture: &Fixture, id: &str, prefix: &str) -> Option<u64> {
+    fixture
+        .journal
+        .text(id)
+        .and_then(|text| text.strip_prefix(prefix).map(str::to_owned))
+        .and_then(|value| value.parse().ok())
 }
 
 fn action_target_args(
@@ -661,6 +702,60 @@ fn run_text_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> O
     Observation::delivered(passed, Evidence::default())
 }
 
+fn run_type_submit_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
+    let pre = snapshot(fixture);
+    let journal_before = fixture.journal.snapshot();
+    let text = format!("cua-submit-{addressing}-{delivery}");
+    let mut type_args = action_target_args(fixture, &pre, "keyboard-input", addressing, delivery);
+    type_args
+        .as_object_mut()
+        .expect("type-submit type_text arguments object")
+        .insert("text".to_owned(), serde_json::json!(text));
+    let type_response = fixture.driver.call("type_text", type_args);
+    if let Some(code) = background_refusal_code(&type_response, delivery) {
+        return refused_without_fixture_mutation(fixture, &journal_before, code, &type_response);
+    }
+    assert!(
+        !type_response.is_error(),
+        "{}: type-submit type_text {addressing}/{delivery} failed: {}",
+        fixture.name,
+        type_response.text()
+    );
+    assert_fixture_value(fixture, "keyboard-input", &text);
+
+    let post_type = snapshot(fixture);
+    let mut enter_args =
+        action_target_args(fixture, &post_type, "keyboard-input", addressing, delivery);
+    enter_args
+        .as_object_mut()
+        .expect("type-submit press_key arguments object")
+        .insert("key".to_owned(), serde_json::json!("return"));
+    let enter_response = fixture.driver.call("press_key", enter_args);
+    if let Some(code) = background_refusal_code(&enter_response, delivery) {
+        return refused_without_fixture_mutation(fixture, &journal_before, code, &enter_response);
+    }
+    assert!(
+        !enter_response.is_error(),
+        "{}: type-submit Enter {addressing}/{delivery} failed: {}",
+        fixture.name,
+        enter_response.text()
+    );
+    assert_fixture_contains(fixture, &format!("key_state=submitted:{text}"));
+
+    let mut passed = vec![OracleKind::FixtureState];
+    if addressing == "px" {
+        passed.extend(unverified_background_protocol_oracle(
+            &type_response,
+            delivery,
+        ));
+    }
+    passed.extend(unverified_background_protocol_oracle(
+        &enter_response,
+        delivery,
+    ));
+    Observation::delivered(passed, Evidence::default())
+}
+
 fn run_press_key_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
     let pre = snapshot(fixture);
     let journal_before = fixture.journal.snapshot();
@@ -728,26 +823,26 @@ fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
         response.text(),
         response.raw
     );
-    thread::sleep(Duration::from_millis(250));
-    let offset = fixture
-        .journal
-        .text("lbl-scroll-offset")
-        .and_then(|text| text.split("scroll_offset=").nth(1).map(str::to_owned))
-        .and_then(|tail| {
-            tail.split(|ch: char| !ch.is_ascii_digit())
-                .next()
-                .map(str::to_owned)
-        })
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(0);
-    assert!(
-        offset > 0,
-        "{}: scroll did not advance the external oracle: {}; response={}; raw={}",
-        fixture.name,
-        fixture.journal.snapshot(),
-        response.text(),
-        response.raw
-    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let offset =
+            fixture_marker_number(fixture, "lbl-scroll-offset", "scroll_offset=").unwrap_or(0);
+        let page =
+            fixture_marker_number(fixture, "lbl-scroll-client-height", "scroll_client_height=")
+                .unwrap_or(0);
+        if page > 0 && offset >= page {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{}: two-page scroll did not advance by at least one viewport: {}; response={}; raw={}",
+            fixture.name,
+            fixture.journal.snapshot(),
+            response.text(),
+            response.raw
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
     delivered_observation()
 }
 
@@ -829,6 +924,7 @@ fn run_editor_save_action(fixture: &mut Fixture, delivery: &str) -> Observation 
         fixture.name,
         response.text()
     );
+    assert_fixture_value(fixture, "editor-document", &text);
 
     let post_text = snapshot(fixture);
     let journal_before_save = fixture.journal.snapshot();
@@ -843,7 +939,11 @@ fn run_editor_save_action(fixture: &mut Fixture, delivery: &str) -> Observation 
         fixture.name,
         response.text()
     );
-    assert_fixture_contains(fixture, "editor_status=saved:");
+    assert_fixture_text(
+        fixture,
+        "editor-status",
+        &format!("editor_status=saved:{text}"),
+    );
     delivered_observation()
 }
 
@@ -876,7 +976,11 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
             ("electron", "right_click" | "double_click" | "drag", _) => {
                 vec![RefusalCode::BackgroundOccluded]
             }
-            ("electron", "type_text" | "press_key" | "hotkey" | "scroll" | "editor_save", _) => {
+            (
+                "electron",
+                "type_text" | "type_submit" | "press_key" | "hotkey" | "scroll" | "editor_save",
+                _,
+            ) => {
                 vec![RefusalCode::BackgroundUnavailable]
             }
             ("tauri", "hotkey", _) | ("tauri", "scroll", Targeting::Px) => {
@@ -917,7 +1021,9 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         // must refuse those background keyboard composites instead of reporting
         // a successful write that the page never observes.
         match (action, targeting) {
-            ("type_text", _) | ("editor_save", Targeting::Ax) | ("press_key" | "hotkey", _) => {
+            ("type_text" | "type_submit", _)
+            | ("editor_save", Targeting::Ax)
+            | ("press_key" | "hotkey", _) => {
                 vec![RefusalCode::BackgroundUnavailable]
             }
             ("right_click" | "double_click" | "scroll", _) | ("drag", Targeting::Px)
@@ -949,7 +1055,7 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         }
         if !expected_background_refusal
             && cfg!(target_os = "windows")
-            && (matches!(action, "press_key" | "hotkey")
+            && (matches!(action, "press_key" | "hotkey" | "type_submit")
                 || (action == "type_text" && targeting == Targeting::Px))
         {
             oracles.push(OracleKind::Protocol);
@@ -1010,12 +1116,6 @@ fn cell_selected(case: &CaseSpec) -> bool {
     parts.peek().is_none() || parts.any(|part| case.cell_id == part || case.cell_id.contains(part))
 }
 
-fn cell_filter_active() -> bool {
-    std::env::var("CUA_E2E_CELL_FILTER")
-        .map(|filter| filter.split(',').any(|part| !part.trim().is_empty()))
-        .unwrap_or(false)
-}
-
 #[test]
 #[ignore]
 fn shared_web_action_matrix_is_state_verified() {
@@ -1047,6 +1147,10 @@ fn shared_web_action_matrix_is_state_verified() {
             (
                 "type_text",
                 run_text_action as fn(&mut Fixture, &str, &str) -> Observation,
+            ),
+            (
+                "type_submit",
+                run_type_submit_action as fn(&mut Fixture, &str, &str) -> Observation,
             ),
             (
                 "press_key",
@@ -1108,8 +1212,8 @@ fn shared_web_action_matrix_is_state_verified() {
         }
     }
     assert!(
-        !cell_filter_active() || selected > 0,
-        "CUA_E2E_CELL_FILTER matched no shared E2E cells"
+        selected > 0,
+        "no shared E2E cells were selected; check CUA_E2E_HARNESS_FILTER and CUA_E2E_CELL_FILTER"
     );
     resume_first_failure(failure);
 }

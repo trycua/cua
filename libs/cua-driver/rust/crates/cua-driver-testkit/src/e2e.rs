@@ -166,6 +166,13 @@ fn shared_web_route_for_environment(
 ) -> Result<DriverRoute, String> {
     use DriverRoute as Route;
 
+    if action == "type_submit" && matches!(targeting, Targeting::Ax | Targeting::Px) {
+        return match delivery {
+            Delivery::Background | Delivery::Foreground => Ok(Route::Composite),
+            Delivery::NotApplicable => Err(format!("{action}: delivery mode is required")),
+        };
+    }
+
     let pointer_or_key_route = |background, foreground| match delivery {
         Delivery::Background => Ok(background),
         Delivery::Foreground => Ok(foreground),
@@ -1159,8 +1166,17 @@ pub fn validate_catalog_with_evidence(
     require_turn_evidence: bool,
 ) -> Result<ValidationSummary, Vec<String>> {
     let mut errors = Vec::new();
+    let policy = CatalogPolicy::from_environment(&mut errors);
     if declarations.is_empty() {
         errors.push("E2E catalog has no declarations".to_owned());
+    }
+    if let Some(minimum) = policy.minimum_cells {
+        if declarations.len() < minimum {
+            errors.push(format!(
+                "E2E catalog declared {} cells, below the required minimum of {minimum}",
+                declarations.len()
+            ));
+        }
     }
     let mut declared = BTreeMap::new();
     for case in declarations {
@@ -1213,7 +1229,14 @@ pub fn validate_catalog_with_evidence(
                 _ => errors.push(format!("passing cell has no valid behavior: {cell_id}")),
             },
             TestStatus::Fail | TestStatus::EnvironmentError => summary.failed += 1,
-            TestStatus::Skip => summary.skipped += 1,
+            TestStatus::Skip => {
+                summary.skipped += 1;
+                if policy.forbid_skips {
+                    errors.push(format!(
+                        "canonical E2E catalog may not skip cell: {cell_id}"
+                    ));
+                }
+            }
         }
 
         if require_video {
@@ -1267,9 +1290,53 @@ pub fn validate_catalog_with_evidence(
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct CatalogPolicy {
+    minimum_cells: Option<usize>,
+    forbid_skips: bool,
+}
+
+impl CatalogPolicy {
+    fn from_environment(errors: &mut Vec<String>) -> Self {
+        Self::parse(
+            std::env::var("CUA_E2E_EXPECTED_MIN_CELLS").ok().as_deref(),
+            std::env::var("CUA_E2E_FORBID_SKIPS").ok().as_deref(),
+            errors,
+        )
+    }
+
+    fn parse(minimum: Option<&str>, forbid_skips: Option<&str>, errors: &mut Vec<String>) -> Self {
+        let minimum_cells = minimum.and_then(|value| match value.parse::<usize>() {
+            Ok(value) if value > 0 => Some(value),
+            _ => {
+                errors.push(format!(
+                    "CUA_E2E_EXPECTED_MIN_CELLS must be a positive integer, got {value:?}"
+                ));
+                None
+            }
+        });
+        let forbid_skips = match forbid_skips {
+            None | Some("") | Some("0") | Some("false") => false,
+            Some("1") | Some("true") => true,
+            Some(value) => {
+                errors.push(format!(
+                    "CUA_E2E_FORBID_SKIPS must be 0/1/false/true, got {value:?}"
+                ));
+                false
+            }
+        };
+        Self {
+            minimum_cells,
+            forbid_skips,
+        }
+    }
+}
+
 fn case_requires_action_turn(case: &CaseSpec) -> bool {
-    !matches!(case.driver_route, DriverRoute::AxRead | DriverRoute::WindowState)
-        && case.action != "screenshot"
+    !matches!(
+        case.driver_route,
+        DriverRoute::AxRead | DriverRoute::WindowState
+    ) && case.action != "screenshot"
 }
 
 fn recording_directory(evidence: &Evidence) -> Option<&Path> {
@@ -1317,7 +1384,9 @@ fn validate_turn_evidence(
                 ));
             }
         }
-        Err(error) => errors.push(format!("invalid trajectory evidence for {cell_id}: {error}")),
+        Err(error) => errors.push(format!(
+            "invalid trajectory evidence for {cell_id}: {error}"
+        )),
     }
 
     let mut turns = match std::fs::read_dir(recording_dir) {
@@ -1393,9 +1462,9 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             .as_str()
             .is_some_and(|summary| summary.starts_with("✅ bring_to_front:"))
     });
-    let restored_state_captured = manifest.as_ref().is_some_and(|value| {
-        value["after"]["state"]["status"].as_str() == Some("captured")
-    });
+    let restored_state_captured = manifest
+        .as_ref()
+        .is_some_and(|value| value["after"]["state"]["status"].as_str() == Some("captured"));
     let expected_unavailable_screenshot = |phase: &str| {
         tool == Some("bring_to_front")
             && ((phase == "before"
@@ -1744,6 +1813,20 @@ mod tests {
     }
 
     #[test]
+    fn strict_catalog_policy_is_explicit_and_rejects_invalid_values() {
+        let mut errors = Vec::new();
+        let policy = CatalogPolicy::parse(Some("80"), Some("true"), &mut errors);
+        assert!(errors.is_empty());
+        assert_eq!(policy.minimum_cells, Some(80));
+        assert!(policy.forbid_skips);
+
+        let mut errors = Vec::new();
+        let policy = CatalogPolicy::parse(Some("0"), Some("sometimes"), &mut errors);
+        assert_eq!(policy, CatalogPolicy::default());
+        assert_eq!(errors.len(), 2);
+    }
+
+    #[test]
     fn validator_rejects_contradictory_status_and_missing_video() {
         let case = delivered_case("contradiction");
         let mut result = CaseResult::evaluate(
@@ -1895,7 +1978,9 @@ mod tests {
 
         let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
             .expect_err("mutable not-applicable cells still need a recorded turn");
-        assert!(errors.iter().any(|error| error.contains("missing turn evidence")));
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("missing turn evidence")));
     }
 
     #[test]
@@ -2284,6 +2369,7 @@ mod tests {
             "right_click",
             "double_click",
             "type_text",
+            "type_submit",
             "press_key",
             "hotkey",
             "scroll",
@@ -2299,7 +2385,7 @@ mod tests {
             cells.push(("drag", Targeting::Px, delivery));
             cells.push(("editor_save", Targeting::Ax, delivery));
         }
-        assert_eq!(cells.len(), 36);
+        assert_eq!(cells.len(), 40);
         for (platform, display_server) in [
             (Platform::Windows, DisplayServer::Win32),
             (Platform::Macos, DisplayServer::Quartz),

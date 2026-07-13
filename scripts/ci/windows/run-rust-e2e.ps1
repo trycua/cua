@@ -49,6 +49,13 @@ $env:CUA_TEST_DRIVER_BIN = Join-Path $rustRoot "target\release\cua-driver.exe"
 $env:CUA_TEST_APPS_ROOT = Join-Path $rustRoot "test-apps"
 $env:CUA_TEST_REQUIRE_FIXTURES = "1"
 $env:CUA_TEST_DRIVER_STDERR = "1"
+$env:CUA_E2E_FORBID_SKIPS = "1"
+Remove-Item Env:CUA_E2E_EXPECTED_MIN_CELLS -ErrorAction SilentlyContinue
+if (($suite -in @("shared", "all")) -and
+    [string]::IsNullOrWhiteSpace($env:CUA_E2E_CELL_FILTER) -and
+    [string]::IsNullOrWhiteSpace($env:CUA_E2E_HARNESS_FILTER)) {
+    $env:CUA_E2E_EXPECTED_MIN_CELLS = "80"
+}
 
 if (-not $NoBuild) {
     & cargo build --release -p cua-driver --manifest-path (Join-Path $rustRoot "Cargo.toml")

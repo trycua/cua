@@ -121,6 +121,7 @@
         <div id="scroll-bottom" data-cua-id="scroll-bottom">SCROLL_BOTTOM_MARKER_v1</div>
       </div>
       <span class="mirror" id="lbl-scroll-offset" data-cua-id="lbl-scroll-offset">scroll_offset=0</span>
+      <span class="mirror" id="lbl-scroll-client-height" data-cua-id="lbl-scroll-client-height">scroll_client_height=0</span>
     </div>
   </fieldset>
 
@@ -207,7 +208,7 @@
   $('editor-save').addEventListener('click', () => {
     const value = $('editor-document').value;
     localStorage.setItem('cua-editor-document', value);
-    $('editor-status').textContent = `editor_status=saved:${value.endsWith('\\n') ? 'newline' : 'exact'}`;
+    $('editor-status').textContent = `editor_status=saved:${value}`;
   });
 
   $('txt-input').addEventListener('input', e => {
@@ -218,7 +219,10 @@
     if (e.ctrlKey && e.shiftKey && e.code === 'Digit7') {
       $('keyboard-status').textContent = 'key_state=hotkey';
     } else if (e.key === 'Enter') {
-      $('keyboard-status').textContent = 'key_state=enter';
+      const value = $('keyboard-input').value;
+      $('keyboard-status').textContent = value
+        ? `key_state=submitted:${value}`
+        : 'key_state=enter';
     }
   });
 
@@ -234,6 +238,7 @@
       d.textContent = 'line ' + String(i).padStart(2, '0');
       lines.appendChild(d);
     }
+    $('lbl-scroll-client-height').textContent = `scroll_client_height=${$('scroll-tall').clientHeight}`;
     $('scroll-tall').addEventListener('scroll', e => {
       $('lbl-scroll-offset').textContent = `scroll_offset=${Math.round(e.target.scrollTop)}`;
     });

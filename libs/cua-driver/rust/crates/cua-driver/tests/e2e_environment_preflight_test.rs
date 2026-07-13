@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 #[cfg(target_os = "linux")]
 use cua_driver_testkit::e2e::DisplayServer;
 use cua_driver_testkit::e2e::{write_environment_from_env, EnvironmentRecord};
+use cua_driver_testkit::observer::TargetWindow;
+use cua_driver_testkit::sentinel::ForegroundSentinel;
 use cua_driver_testkit::{driver_binary, harness_app, spawn_in_job, Driver, McpDriver};
 
 struct PreflightFixture {
@@ -270,6 +272,15 @@ fn run_preflight() {
     }
 
     driver.start_behavior_recording();
+    let target = TargetWindow {
+        pid: pid as u32,
+        native_id: window_id,
+    };
+    let sentinel = ForegroundSentinel::launch(&mut driver);
+    sentinel
+        .assert_guard_canaries(&mut driver, target)
+        .expect("foreground sentinel guard canaries failed");
+    drop(sentinel);
 
     drop(driver);
     let video = recording_dir.join("recording.mp4");

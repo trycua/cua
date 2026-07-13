@@ -112,6 +112,12 @@ Ask the running daemon to exit gracefully.
 | ---- | ---- | ------- | ----------- |
 | `--socket` | String | — | Override the daemon socket or named-pipe path. |
 
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--codex-computer-use-compat` | Target the dedicated Codex Computer Use daemon. |
+
 ### `cua-driver status`
 
 Report whether a Cua Driver daemon is running.
@@ -122,6 +128,12 @@ Report whether a Cua Driver daemon is running.
 | ---- | ---- | ------- | ----------- |
 | `--socket` | String | — | Override the daemon socket or named-pipe path. |
 | `--pid-file` | String | — | Override the pid-file path on Unix targets. |
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--codex-computer-use-compat` | Target the dedicated Codex Computer Use daemon. |
 
 ### `cua-driver mcp-config`
 
@@ -280,6 +292,36 @@ Exit code is non-zero when any probe is an error.
 Print a pasteable install-layout and permission-attribution report.
 
 ## Other commands
+
+### `cua-driver approvals`
+
+Manage permanent Codex Computer Use app approvals.
+
+macOS only. The commands operate on the private local approval store and do not add MCP tools.
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--json` | Emit a machine-readable result. |
+
+#### `cua-driver approvals list`
+
+List permanent app approvals.
+
+#### `cua-driver approvals revoke`
+
+Revoke one permanent app approval.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<bundle-id-or-stable-id>` | String | Yes | Bundle id or stable approval identity to revoke. |
+
+#### `cua-driver approvals clear`
+
+Revoke every permanent app approval.
 
 ### `cua-driver autostart`
 

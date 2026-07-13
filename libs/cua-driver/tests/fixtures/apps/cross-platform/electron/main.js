@@ -124,7 +124,11 @@ function createWindow() {
           if (process.platform !== 'darwin') {
             mainWindow.setAlwaysOnTop(true);
           }
-          mainWindow.maximize();
+          if (process.platform === 'linux' && process.env.WAYLAND_DISPLAY) {
+            mainWindow.setFullScreen(true);
+          } else {
+            mainWindow.maximize();
+          }
           mainWindow.show();
           mainWindow.focus();
         } else {

@@ -43,3 +43,12 @@ claude mcp add --transport stdio cua-computer-use -- cua-driver mcp --claude-cod
 This keeps CuaDriver's normal MCP tools and changes only `screenshot`, which requires `pid` and `window_id` and captures that window only.
 
 Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots still work as CuaDriver calls, but they do not expose the `mcp__cua-computer-use__screenshot` tool name that Claude Code appears to use as the image-grounding cue.
+
+## macOS process identity and permissions
+
+macOS attributes Accessibility and Screen Recording grants to a responsible app identity, not simply to an executable path. Use one of these supported launch modes:
+
+- **Standalone:** install `CuaDriver.app`, grant permissions to it, and start its daemon with `open -n -g -a CuaDriver --args serve`. The installed `cua-driver mcp` CLI may proxy through this daemon automatically.
+- **Embedded:** have the macOS app that owns the grants spawn the driver directly with `CUA_DRIVER_EMBEDDED=1` (or `--embedded`). This keeps the driver in that app's responsibility chain, so it inherits the app's grants. A gateway, terminal, or unrelated helper must not spawn it on the app's behalf.
+
+Directly spawning a raw `cua-driver` binary outside `CuaDriver.app` without embedded mode is unsupported: it has no stable bundle identity for TCC attribution. Do not grant permissions to arbitrary binary paths or rely on that configuration in production. See [`rust/Skills/cua-driver/EMBEDDING.md`](rust/Skills/cua-driver/EMBEDDING.md) for the embedding contract and examples.

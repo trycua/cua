@@ -42,6 +42,17 @@ impl CompatDriver {
         }));
         let initialized = driver.recv();
         assert_eq!(initialized["id"], 1);
+        if compat {
+            assert_eq!(initialized["result"]["serverInfo"]["name"], "Computer Use");
+            assert_eq!(
+                initialized["result"]["capabilities"]["tools"]["listChanged"],
+                false
+            );
+            assert!(initialized["result"].get("instructions").is_none());
+        } else {
+            assert_eq!(initialized["result"]["serverInfo"]["name"], "cua-driver");
+            assert!(initialized["result"]["instructions"].is_string());
+        }
         driver
     }
 

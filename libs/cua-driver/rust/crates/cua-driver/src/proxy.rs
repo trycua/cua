@@ -25,7 +25,9 @@
 
 use std::sync::Arc;
 
-use cua_driver_core::protocol::{initialize_result, Request, Response};
+use cua_driver_core::protocol::{
+    codex_computer_use_initialize_result, initialize_result, Request, Response,
+};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
 
@@ -188,6 +190,7 @@ pub async fn run_proxy(
                         &cached_tools_list,
                         &session_id,
                         &control_ready_rx,
+                        expected_profile,
                     )
                     .await
                 }
@@ -1124,9 +1127,17 @@ async fn handle_proxy_request(
     cached_tools_list: &Arc<serde_json::Value>,
     session_id: &str,
     control_ready: &tokio::sync::watch::Receiver<ControlConnectionState>,
+    expected_profile: DaemonProfile,
 ) -> Response {
     match req.method.as_str() {
-        "initialize" => Response::ok(id, initialize_result()),
+        "initialize" => Response::ok(
+            id,
+            if expected_profile == DaemonProfile::CodexComputerUseCompat {
+                codex_computer_use_initialize_result()
+            } else {
+                initialize_result()
+            },
+        ),
 
         "tools/list" => Response::ok(id, (**cached_tools_list).clone()),
 

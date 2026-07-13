@@ -629,7 +629,16 @@ fn main() {
                     let registry = Arc::new(build_macos_registry_with_compat(compat, codex_compat));
                     // Wire up replay tool's back-reference to the registry.
                     registry.init_self_weak();
-                    if let Err(e) = cua_driver_core::server::run(registry).await {
+                    let result = if codex_compat {
+                        cua_driver_core::server::run_with_initialize_result(
+                            registry,
+                            cua_driver_core::protocol::codex_computer_use_initialize_result(),
+                        )
+                        .await
+                    } else {
+                        cua_driver_core::server::run(registry).await
+                    };
+                    if let Err(e) = result {
                         tracing::error!("MCP server error: {e}");
                     }
                 });

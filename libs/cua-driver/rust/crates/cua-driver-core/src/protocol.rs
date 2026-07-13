@@ -156,6 +156,17 @@ pub fn initialize_result() -> Value {
     })
 }
 
+/// Initialize envelope used by the opt-in Codex Computer Use compatibility
+/// profile. It intentionally matches the built-in Computer Use server shape:
+/// no native cua-driver instructions and a stable non-changing tool catalog.
+pub fn codex_computer_use_initialize_result() -> Value {
+    serde_json::json!({
+        "protocolVersion": "2025-06-18",
+        "capabilities": { "tools": { "listChanged": false } },
+        "serverInfo": { "name": "Computer Use", "version": env!("CARGO_PKG_VERSION") }
+    })
+}
+
 /// MCP `instructions` (`InitializeResult.instructions`) sent to every
 /// connecting client. The spec frames this as a "hint... MAY be added
 /// to the system prompt" — eager, every-turn cost. We keep it under
@@ -206,7 +217,15 @@ If a `cua-driver` skill is loaded in your harness (Claude Code / Codex / OpenCla
 
 #[cfg(test)]
 mod image_mime_type_tests {
-    use super::Content;
+    use super::{codex_computer_use_initialize_result, Content};
+
+    #[test]
+    fn codex_computer_use_initialize_matches_builtin_shape() {
+        let result = codex_computer_use_initialize_result();
+        assert_eq!(result["serverInfo"]["name"], "Computer Use");
+        assert_eq!(result["capabilities"]["tools"]["listChanged"], false);
+        assert!(result.get("instructions").is_none());
+    }
 
     /// Surface 7 contract: image parts serialize an explicit `mimeType` field
     /// (not `mime_type`, not `format`) so MCP consumers don't have to sniff

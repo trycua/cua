@@ -11,6 +11,14 @@ use crate::tool::ToolRegistry;
 /// responses to stdout. Exits when stdin reaches EOF or a fatal I/O
 /// error occurs.
 pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
+    run_with_initialize_result(registry, initialize_result()).await
+}
+
+/// Run the stdio server with a profile-specific MCP initialize envelope.
+pub async fn run_with_initialize_result(
+    registry: Arc<ToolRegistry>,
+    initialize: serde_json::Value,
+) -> anyhow::Result<()> {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
     let mut reader = BufReader::new(stdin);
@@ -41,7 +49,7 @@ pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
             }
             Ok(req) => {
                 let id = req.id.clone().unwrap_or(serde_json::Value::Null);
-                handle_request(req, id, &registry).await
+                handle_request_with_initialize_result(req, id, &registry, &initialize).await
             }
         };
 
@@ -62,8 +70,17 @@ pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
 /// daemon's HTTP transport (`cua-driver`'s `mcp_http`) so both speak the
 /// exact same MCP semantics.
 pub async fn handle_request(req: Request, id: serde_json::Value, registry: &Arc<ToolRegistry>) -> Response {
+    handle_request_with_initialize_result(req, id, registry, &initialize_result()).await
+}
+
+async fn handle_request_with_initialize_result(
+    req: Request,
+    id: serde_json::Value,
+    registry: &Arc<ToolRegistry>,
+    initialize: &serde_json::Value,
+) -> Response {
     match req.method.as_str() {
-        "initialize" => Response::ok(id, initialize_result()),
+        "initialize" => Response::ok(id, initialize.clone()),
 
         "tools/list" => Response::ok(id, registry.tools_list()),
 

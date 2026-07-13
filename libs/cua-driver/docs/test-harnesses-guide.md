@@ -215,7 +215,9 @@ itself is not evidence that input can be sent safely to a named window.
 Standard Wayland does not expose the physical pointer position, so canonical
 Wayland rows do not claim the real-cursor preservation oracle. Focus, full
 occlusion, sentinel input isolation, liveness, and fixture-state oracles remain
-mandatory.
+mandatory. [Issue #2194](https://github.com/trycua/cua/issues/2194) tracks
+compositor, portal/libei, sentinel, and capture-based ways to add a proven
+cursor observer where the environment supports one.
 
 ## AX, PX, and Delivery
 

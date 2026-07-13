@@ -154,7 +154,7 @@ autologin, and disable sleep and screen locking. The default credentials are
 The Tahoe flow is E2E verified. Sequoia may still open the Accessibility step
 of Setup Assistant on its first display boot; see [issue #2155](https://github.com/trycua/cua/issues/2155).
 
-**[Get Started](https://cua.ai/docs/how-to-guides/lume/install-lume)** | **[Limits and Troubleshooting](https://cua.ai/docs/reference/lume/limits)** | **[CLI Reference](https://cua.ai/docs/reference/lume/cli-reference)**
+**[Get Started](https://cua.ai/docs/lume)** | **[FAQ](https://cua.ai/docs/lume/guide/getting-started/faq)** | **[CLI Reference](https://cua.ai/docs/lume/reference/cli-reference)**
 
 ---
 
@@ -167,8 +167,8 @@ of Setup Assistant on its first display boot; see [issue #2155](https://github.c
 | [cua-sandbox](https://cua.ai/docs/cua/reference/sandbox-sdk)         | SDK for creating and controlling sandboxes                  |
 | [cua-computer-server](https://cua.ai/docs/cua/reference/sandbox-sdk) | Driver for UI interactions and code execution in sandboxes  |
 | [cua-bench](https://cua.ai/docs/cuabench)                            | Benchmarks and RL environments for computer-use             |
-| [lume](https://cua.ai/docs/how-to-guides/lume/install-lume)          | macOS/Linux VM management on Apple Silicon                  |
-| [lumier](https://github.com/trycua/cua/tree/main/libs/lumier)        | Docker-compatible interface for Lume VMs                    |
+| [lume](https://cua.ai/docs/lume)                                     | macOS/Linux VM management on Apple Silicon                  |
+| [lumier](https://cua.ai/docs/lume/guide/advanced/lumier)             | Docker-compatible interface for Lume VMs                    |
 
 ## Resources
 

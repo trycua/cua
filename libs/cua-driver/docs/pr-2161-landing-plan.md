@@ -27,6 +27,17 @@ small shared-fixture correction landed separately to keep the foundation PR
 reviewable. Those adaptations preserve the ownership and dependency intent of
 the plan without replaying intermediate branch history.
 
+### Post-merge audit correction
+
+An independent frozen-tree review found one shared-file omission after the
+replacement stack landed: `protocol_schema_test.rs` retained only the Windows
+delivery/scope assertions, excluded Linux, and dropped Linux's unique
+`set_agent_cursor_motion` applied-value check. The follow-up restores the frozen
+cross-platform contract and makes Windows unit CI execute the schema test rather
+than compile it only. The original parity comment's claim that this file was an
+intentional consolidation was incorrect; no driver implementation or accepted
+E2E matrix behavior was lost.
+
 ---
 
 ## 1. Decision and rationale

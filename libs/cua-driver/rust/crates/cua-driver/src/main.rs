@@ -71,7 +71,12 @@ fn init_logging() {
 /// fired exactly once by the post-install script.
 fn emit_entry_telemetry(command: &cli::Command) {
     if let Some(event_name) = cli::telemetry_entry_event(command) {
-        telemetry::capture(&event_name, None);
+        // Attach the bounded, anonymous entry-event properties
+        // (capture_mode / mcp_client / display_server). The helper returns
+        // `None` when a command contributes none, matching the prior
+        // `capture(.., None)` behaviour.
+        let properties = telemetry::entry_event_properties(command);
+        telemetry::capture(&event_name, properties);
     }
 }
 

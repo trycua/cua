@@ -50,13 +50,13 @@ cua-driver telemetry inspect cua_driver_mcp_session_started --json
 cua-driver telemetry inspect cua_driver_mcp_tool_completed --json
 ```
 
-## Common event properties
+## Common client event properties
 
-Every schema-v2 client event has this fixed envelope:
+Every schema-v3 client event has this fixed envelope:
 
 | Property                   | Meaning                                                   |
 | -------------------------- | --------------------------------------------------------- |
-| `telemetry_schema_version` | Fixed integer `2`                                         |
+| `telemetry_schema_version` | Fixed integer `3`                                         |
 | `product_version`          | Installed Cua Driver version                              |
 | `os_family`                | `macos`, `windows`, `linux`, or `other`                   |
 | `os_major`                 | Major operating-system version only                       |
@@ -65,9 +65,10 @@ Every schema-v2 client event has this fixed envelope:
 | `transport`                | `cli`, `mcp_stdio`, `mcp_http`, or `unknown`              |
 | `process_session_id`       | Random ID created once per process and never persisted    |
 | `id_persisted`             | Whether the installation ID came from durable local state |
-| `$geoip_disable`           | Fixed `true`; PostHog GeoIP enrichment is disabled        |
 
 Client events set `$process_person_profile` to `false`. The installation UUID is used only as the PostHog `distinct_id`; it is not duplicated into event properties. This is pseudonymous installation telemetry, not anonymous telemetry.
+
+The client does not send an IP address as an event property. PostHog derives a country code and country name from the network request during ingestion, then discards the client IP before storing the event. A country-only transformation removes city, subdivision, postal-code, coordinate, accuracy-radius, and time-zone properties.
 
 ## Fixed events
 
@@ -114,6 +115,6 @@ Tool-completion events retain only coarse result shape: text, image, mixed, empt
 
 ## Region and deletion controls
 
-Client events are sent to PostHog's EU ingest endpoint with GeoIP enrichment disabled. PostHog does not create person profiles for these events. Network infrastructure may still process request metadata under the [Cua privacy policy](https://cua.ai/privacy-policy), but IP-derived location is not added to the telemetry event.
+Client events are sent to PostHog's EU ingest endpoint. PostHog processes the request IP long enough to derive country-level distribution, then discards the IP before event storage. Stored telemetry keeps only the derived country code and country name; it excludes city, subdivision, postal code, coordinates, accuracy radius, and time zone. PostHog does not create person profiles for these events.
 
 Retention and server-side deletion are governed by the [Cua privacy policy](https://cua.ai/privacy-policy); the client does not enforce a retention window or submit deletion requests. `telemetry reset-id` and uninstall purge controls remove local identity state only. Do not post the installation UUID in a public issue.

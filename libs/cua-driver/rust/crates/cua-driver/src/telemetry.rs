@@ -767,7 +767,7 @@ fn build_payload(
     transport: Transport,
 ) -> Value {
     let mut event_properties = properties.clone();
-    event_properties.insert("telemetry_schema_version".into(), Value::from(2));
+    event_properties.insert("telemetry_schema_version".into(), Value::from(3));
     event_properties
         .entry("product_version")
         .or_insert_with(|| Value::String(current_product_version().into()));
@@ -779,7 +779,6 @@ fn build_payload(
     event_properties.insert("process_session_id".into(), Value::String(process_session_id()));
     event_properties.insert("id_persisted".into(), Value::Bool(identity.persisted));
     event_properties.insert("$process_person_profile".into(), Value::Bool(false));
-    event_properties.insert("$geoip_disable".into(), Value::Bool(true));
     event_properties.insert("$lib".into(), Value::String("cua-driver-rs".into()));
     event_properties.insert("$lib_version".into(), Value::String(current_product_version().into()));
 
@@ -1586,7 +1585,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_payload_has_exact_content_free_envelope_and_no_client_timestamp() {
+    fn v3_payload_allows_server_geoip_without_sending_an_ip_or_client_timestamp() {
         let identity = InstallationIdentity { id: "test-id".into(), persisted: true };
         let payload = build_payload(
             event::MCP_TOOL_COMPLETED,
@@ -1602,11 +1601,14 @@ mod tests {
         for required in [
             "telemetry_schema_version", "product_version", "os_family", "os_major",
             "arch", "is_ci", "transport", "process_session_id", "id_persisted",
-            "$process_person_profile", "$geoip_disable", "$lib", "$lib_version",
+            "$process_person_profile", "$lib", "$lib_version",
             "tool_name", "success",
         ] {
             assert!(properties.contains_key(required), "missing {required}");
         }
+        assert_eq!(properties["telemetry_schema_version"], 3);
+        assert!(!properties.contains_key("$geoip_disable"));
+        assert!(!properties.contains_key("$ip"));
         let serialized = serde_json::to_string(&payload).unwrap().to_ascii_lowercase();
         for forbidden in [
             "prompt", "task_text", "arguments", "result_text", "typed_text", "clipboard",

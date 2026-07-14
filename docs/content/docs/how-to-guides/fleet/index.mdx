@@ -1,0 +1,16 @@
+---
+title: Fleet how-to guides
+description: Build Fleet disk artifacts, configure pools, and claim and connect to a Fleet sandbox.
+---
+
+Fleet maintains compatible, ready-to-claim sandbox capacity. If you are new to Fleet, start with
+[Fleet concepts](/concepts/fleet) for its resource model, then use the task that matches your goal.
+
+- [Build a Linux Fleet image](/how-to-guides/fleet/build-a-linux-image) packages a bootable Linux
+  disk as an OCI containerDisk and references it from a pool.
+- [Build a Windows Fleet image](/how-to-guides/fleet/build-a-windows-image) builds an EFI-compatible
+  Windows containerDisk image for the current Fleet pool contract.
+- [Connect to a Fleet service](/how-to-guides/fleet/connect-to-a-service) claims a sandbox and
+  reaches one of its declared services through the authenticated proxy.
+- [Use the Fleet SDK workflow](/how-to-guides/fleet/use-the-sdk) authenticates with `TrainClient`,
+  selects a pool, and manages a claim from Python.

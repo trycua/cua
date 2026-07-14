@@ -1,0 +1,182 @@
+---
+title: Connect to a Fleet service
+description: Claim a Fleet sandbox with a per-user key and call one of its declared services through the authenticated proxy.
+---
+
+Start with [Use the Fleet SDK workflow](/how-to-guides/fleet/use-the-sdk) for the canonical
+claim lifecycle. This guide extends that lifecycle with explicit service selection and readiness
+handling through the authenticated proxy. For resource boundaries, see [Fleet claims](/concepts/fleet/claims)
+and [Fleet services](/concepts/fleet/services).
+
+## Prerequisites
+
+Install the Python client and set credentials for a **per-user** key. Claims require a client ID that
+starts with `ukey-`; per-pool keys do not have the Kubernetes identity needed to create claims.
+
+```bash
+pip install cua-train --extra-index-url https://wheels.cua.ai/simple/
+
+export CUA_CLIENT_ID=ukey-...
+export CUA_CLIENT_SECRET=...
+export CUA_TOKEN_URL='YOUR_FLEET_OAUTH_TOKEN_ENDPOINT'
+export CUA_BASE_URL='YOUR_FLEET_BASE_URL'
+export FLEET_POOL=my-pool
+export CUA_SERVICE=cua-driver
+export CUA_SERVICE_PATH=/healthz
+```
+
+Set `CUA_TOKEN_URL` to the OAuth token endpoint supplied by your Fleet environment or dashboard,
+then set `CUA_BASE_URL` to that environment's API base URL. Set `CUA_SERVICE` to a service declared
+by the pool and `CUA_SERVICE_PATH` to a path the selected guest actually serves. For example,
+computer-server commonly uses `/status`, while Cua Driver commonly uses `/healthz`; health paths are
+not part of the Fleet service schema.
+
+## Claim and call a service
+
+Save the following as `claim_and_connect.py`. It uses `TrainClient.from_key` for the credentials
+exchange and refreshes the bearer token whenever `get_httpx_client()` is called. Fleet resource
+creation uses the authenticated `/api/k8s` proxy; it is not a generated SDK operation.
+
+```python
+import os
+import time
+import uuid
+
+import httpx
+from cua_train import TrainClient
+
+CLAIM_GROUP = "osgym.cua.ai"
+CLAIM_VERSION = "v1alpha1"
+CLAIM_PLURAL = "osgymsandboxclaims"
+BIND_TIMEOUT_SECONDS = float(os.getenv("CUA_BIND_TIMEOUT_SECONDS", "600"))
+BIND_DEADLINE_SECONDS = int(
+    os.getenv("CUA_BIND_DEADLINE_SECONDS", str(int(BIND_TIMEOUT_SECONDS)))
+)
+if BIND_TIMEOUT_SECONDS <= 0 or BIND_DEADLINE_SECONDS <= 0:
+    raise ValueError("CUA_BIND_TIMEOUT_SECONDS and CUA_BIND_DEADLINE_SECONDS must be positive")
+if BIND_DEADLINE_SECONDS < BIND_TIMEOUT_SECONDS:
+    raise ValueError(
+        "CUA_BIND_DEADLINE_SECONDS must be greater than or equal to "
+        "CUA_BIND_TIMEOUT_SECONDS"
+    )
+SERVICE_TIMEOUT_SECONDS = float(os.getenv("CUA_SERVICE_TIMEOUT_SECONDS", "300"))
+POLL_INTERVAL_SECONDS = 2
+
+pool = os.environ["FLEET_POOL"]
+service = os.getenv("CUA_SERVICE", "cua-driver")
+service_path = os.getenv("CUA_SERVICE_PATH", "/healthz")
+claim_name = f"claim-{uuid.uuid4().hex[:8]}"
+
+client = TrainClient.from_key(
+    token_url=os.environ["CUA_TOKEN_URL"],
+    client_id=os.environ["CUA_CLIENT_ID"],
+    client_secret=os.environ["CUA_CLIENT_SECRET"],
+    base_url=os.environ["CUA_BASE_URL"],
+)
+http = client.get_httpx_client
+
+
+def claim_url(name=None):
+    base = (
+        f"/api/k8s/apis/{CLAIM_GROUP}/{CLAIM_VERSION}/namespaces/"
+        f"{pool}/{CLAIM_PLURAL}"
+    )
+    return f"{base}/{name}" if name else base
+
+
+def validate_service():
+    response = http().get(
+        f"/api/k8s/apis/cua.ai/v1/namespaces/{pool}/osgymworkspacepools/{pool}"
+    )
+    response.raise_for_status()
+    services = response.json().get("spec", {}).get("services") or []
+    declared_names = {item["name"] for item in services if "name" in item}
+    if service not in declared_names:
+        raise RuntimeError(
+            f"Service {service!r} is not declared by pool {pool!r}: {sorted(declared_names)}"
+        )
+
+
+def wait_for_bound():
+    deadline = time.monotonic() + BIND_TIMEOUT_SECONDS
+    while True:
+        response = http().get(claim_url(claim_name))
+        response.raise_for_status()
+        status = response.json().get("status") or {}
+        phase = status.get("phase", "Pending")
+        sandbox = (status.get("sandbox") or {}).get("name")
+        if phase == "Bound" and sandbox:
+            return sandbox
+        if phase == "Failed":
+            raise RuntimeError(f"Claim failed: {status}")
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"Timed out after {BIND_TIMEOUT_SECONDS}s waiting for claim "
+                f"{claim_name!r} to bind (last phase: {phase})"
+            )
+        print(f"Claim phase: {phase}")
+        time.sleep(POLL_INTERVAL_SECONDS)
+
+
+def get_when_ready(path: str) -> httpx.Response:
+    deadline = time.monotonic() + SERVICE_TIMEOUT_SECONDS
+    while True:
+        response = http().get(path)
+        if response.status_code not in (502, 503, 504):
+            response.raise_for_status()
+            return response
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"Timed out after {SERVICE_TIMEOUT_SECONDS}s waiting for {path} "
+                f"(last HTTP status: {response.status_code})"
+            )
+        print(f"Service is starting (HTTP {response.status_code}); retrying")
+        time.sleep(POLL_INTERVAL_SECONDS)
+
+
+created = False
+try:
+    validate_service()
+    response = http().post(
+        claim_url(),
+        json={
+            "apiVersion": f"{CLAIM_GROUP}/{CLAIM_VERSION}",
+            "kind": "OSGymSandboxClaim",
+            "metadata": {"name": claim_name},
+            "spec": {
+                "sandboxTemplateRef": {"name": f"{pool}-template"},
+                "bindDeadline": BIND_DEADLINE_SECONDS,
+            },
+        },
+    )
+    response.raise_for_status()
+    created = True
+
+    sandbox = wait_for_bound()
+    service_base = f"/api/svc/{pool}/{sandbox}-{service}"
+    ready = get_when_ready(f"{service_base}/{service_path.lstrip('/')}")
+    print(f"{sandbox} {service} is ready: HTTP {ready.status_code}")
+finally:
+    if created:
+        response = http().delete(claim_url(claim_name))
+        response.raise_for_status()
+```
+
+The script validates `CUA_SERVICE` against the pool's declared service names before it proxies a
+request. A claim can be `Bound` before the guest process is ready, so it retries only the transient
+proxy responses `502`, `503`, and `504`. The operator defaults an omitted `spec.bindDeadline`
+to 300 seconds, but this example sets it explicitly to match the client wait. Set
+`CUA_BIND_TIMEOUT_SECONDS` to change that wait and `CUA_BIND_DEADLINE_SECONDS` to set the server-side
+claim deadline; the script rejects a deadline shorter than the client wait. Set
+`CUA_SERVICE_TIMEOUT_SECONDS` to adjust service readiness. The defaults are 600 seconds for claim
+waiting and its deadline, and 300 seconds for service readiness.
+
+## Verify and clean up
+
+The script prints the bound sandbox name and successful health-check status, then deletes the claim
+in `finally`. Deleting the claim releases the sandbox back to Fleet. If it fails with `403`, confirm
+that `CUA_CLIENT_ID` starts with `ukey-` and that the per-user key has access to the pool namespace.
+
+For MCP-specific verification, use the Cua Driver endpoint and protocol documented in the
+[Cua Driver MCP reference](/reference/cua-driver/mcp-tools). The HTTP health check above is the simpler
+way to verify routing and guest readiness first.

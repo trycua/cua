@@ -1,0 +1,57 @@
+---
+title: Fleet tutorials
+description: Learn to claim Fleet desktops, connect agents to Cua Driver, and build advanced computer-use workflows.
+---
+
+# Fleet tutorials
+
+Fleet provides pools of ready-to-claim workspaces. These tutorials build from a first browser task to
+agent orchestration and evaluation workflows that use a claimed desktop.
+
+## Learning outcome
+
+By following this series, you can claim a Fleet workspace, connect an authenticated agent to its Cua
+Driver service, verify computer-use results from desktop state, and understand how to extend the
+pattern for orchestration, benchmarking, and training.
+
+## Prerequisites
+
+- Fleet access and per-user Fleet credentials. Claiming requires a client ID that starts with
+  `ukey-`; see [Use the Fleet SDK workflow](/how-to-guides/fleet/use-the-sdk).
+- Python 3.12 or 3.13 for tutorials that use the Fleet Python SDK.
+- Credentials for the model provider used by your chosen agent harness or host MCP client.
+- A Fleet pool with the workload-specific image and declared services required by the tutorial.
+
+## Learning path
+
+1. [Connect Hermes to Fleet Cua Driver](/tutorials/fleet/hermes-and-cua-driver) explains the
+   connection boundary between Hermes and a remotely claimed desktop.
+2. [Surf the web from a Fleet desktop](/tutorials/fleet/surf-the-web) claims a Linux desktop,
+   connects to Cua Driver through Fleet's authenticated service proxy, and verifies a browser task.
+3. [Build a computer-use sub-agent with MCP Sampling](/tutorials/fleet/computer-use-sub-agent-with-mcp-sampling)
+   keeps model access with the host MCP client while a custom server drives the Fleet desktop.
+4. [Benchmark Codex and Claude Code with Cua Bench](/tutorials/fleet/benchmark-codex-and-claude-code-with-cua-bench)
+   compares computer-use harnesses against reproducible tasks.
+5. [Reinforcement learning for computer use](/tutorials/fleet/reinforcement-learning-for-computer-use)
+   covers the next step: collecting and using desktop-agent trajectories for training.
+
+## Verify your result
+
+Each tutorial includes an observable check beyond the agent's narration, such as service health,
+desktop state, a final URL, or a screenshot.
+
+## Clean up
+
+Release Fleet claims and remove temporary credentials or artifacts as each tutorial directs.
+
+## Before you begin
+
+Treat a claimed workspace as a real remote computer. Use only harmless public pages in introductory
+exercises, and do not enter credentials, API keys, personal data, or other sensitive information into
+pages or prompts you do not trust.
+
+## Next steps
+
+- [Build a Fleet Linux image](/how-to-guides/fleet/build-a-linux-image)
+- [Connect to a Fleet service](/how-to-guides/fleet/connect-to-a-service)
+- [Cua Driver MCP tools](/reference/cua-driver/mcp-tools)

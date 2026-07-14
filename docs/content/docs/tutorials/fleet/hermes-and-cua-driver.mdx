@@ -1,0 +1,335 @@
+---
+title: Connect Hermes to Fleet Cua Driver
+description: Hold a Fleet claim for a Hermes session and connect to its authenticated remote Cua Driver MCP endpoint.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Connect Hermes to Fleet Cua Driver
+
+This tutorial connects Hermes to Cua Driver running in a claimed Fleet desktop. The key distinction is
+transport: a local Cua Driver setup starts `cua-driver mcp` as a process, while Fleet exposes Cua Driver
+through an authenticated remote Streamable HTTP endpoint.
+
+## Learning outcome
+
+You can hold a Fleet claim for an agent session, supply Hermes with the authenticated proxied Cua Driver
+endpoint, and verify one bounded desktop task before releasing the claim.
+
+## Prerequisites
+
+- Fleet access and per-user Fleet credentials; Python 3.12 or 3.13.
+- A Fleet pool that declares a `cua-driver` service and whose image runs Cua Driver.
+- Hermes installed with model-provider credentials appropriate for your workload.
+- The Fleet credential environment from [Use the Fleet SDK workflow](/how-to-guides/fleet/use-the-sdk),
+  including `FLEET_POOL`. Optionally set `CUA_BIND_TIMEOUT_SECONDS` for the client wait and
+  `CUA_BIND_DEADLINE_SECONDS` for the server-side claim deadline; both default to 600 seconds here.
+- Familiarity with [Drive your first app](/tutorials/drive-your-first-app) and
+  [Connect your agent to Cua Driver](/how-to-guides/driver/connect-your-agent).
+
+## 1. Keep the claim for the session
+
+The canonical SDK guide releases its example claim in `finally`, which is correct for a one-shot
+lifecycle check but not for an agent session. Save the following as `hold_fleet_claim.py`. It follows
+that claim flow, waits for the declared `cua-driver` service at `/healthz`, writes the proxied MCP URL
+and short-lived bearer token to a private environment file, and keeps the claim alive until interrupted.
+It does not print credentials.
+
+```python
+from __future__ import annotations
+
+import os
+import shlex
+import signal
+import tempfile
+import threading
+import time
+import uuid
+from pathlib import Path
+
+from cua_train import TrainClient
+
+CLAIM_GROUP = "osgym.cua.ai"
+CLAIM_VERSION = "v1alpha1"
+CLAIM_PLURAL = "osgymsandboxclaims"
+POOL_PLURAL = "osgymworkspacepools"
+POLL_INTERVAL_SECONDS = 2
+BIND_TIMEOUT_SECONDS = float(os.getenv("CUA_BIND_TIMEOUT_SECONDS", "600"))
+BIND_DEADLINE_SECONDS = int(
+    os.getenv("CUA_BIND_DEADLINE_SECONDS", str(int(BIND_TIMEOUT_SECONDS)))
+)
+if BIND_DEADLINE_SECONDS <= 0:
+    raise ValueError("CUA_BIND_DEADLINE_SECONDS must be positive")
+if BIND_DEADLINE_SECONDS < BIND_TIMEOUT_SECONDS:
+    raise ValueError(
+        "CUA_BIND_DEADLINE_SECONDS must be greater than or equal to "
+        "CUA_BIND_TIMEOUT_SECONDS"
+    )
+SERVICE_TIMEOUT_SECONDS = float(os.getenv("CUA_SERVICE_TIMEOUT_SECONDS", "300"))
+
+
+def new_client() -> TrainClient:
+    return TrainClient.from_key(
+        token_url=os.environ["CUA_TOKEN_URL"],
+        client_id=os.environ["CUA_CLIENT_ID"],
+        client_secret=os.environ["CUA_CLIENT_SECRET"],
+        base_url=os.environ["CUA_BASE_URL"],
+    )
+
+
+def main() -> None:
+    pool = os.environ["FLEET_POOL"]
+    env_file = Path(os.environ["FLEET_SESSION_ENV"]).expanduser()
+    claim_name = f"claim-{uuid.uuid4().hex[:8]}"
+    refresh_event = threading.Event()
+    client = new_client()
+    http = client.get_httpx_client
+
+    def request_token_refresh(signum, frame) -> None:
+        del signum, frame
+        refresh_event.set()
+
+    def claim_url(name=None):
+        base = f"/api/k8s/apis/{CLAIM_GROUP}/{CLAIM_VERSION}/namespaces/{pool}/{CLAIM_PLURAL}"
+        return f"{base}/{name}" if name else base
+
+    def validate_service() -> None:
+        response = http().get(f"/api/k8s/apis/cua.ai/v1/namespaces/{pool}/{POOL_PLURAL}/{pool}")
+        response.raise_for_status()
+        services = response.json().get("spec", {}).get("services") or []
+        if "cua-driver" not in {service.get("name") for service in services}:
+            raise RuntimeError(f"Pool {pool!r} does not declare the cua-driver service")
+
+    def wait_for_bound() -> str:
+        deadline = time.monotonic() + BIND_TIMEOUT_SECONDS
+        while True:
+            response = http().get(claim_url(claim_name))
+            response.raise_for_status()
+            status = response.json().get("status") or {}
+            sandbox = (status.get("sandbox") or {}).get("name")
+            if status.get("phase") == "Bound" and sandbox:
+                return sandbox
+            if status.get("phase") == "Failed":
+                raise RuntimeError(f"Claim failed: {status}")
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Timed out waiting for claim {claim_name!r} to bind")
+            time.sleep(POLL_INTERVAL_SECONDS)
+
+    def wait_for_healthz(service_base: str) -> None:
+        deadline = time.monotonic() + SERVICE_TIMEOUT_SECONDS
+        while True:
+            response = http().get(f"{service_base}/healthz")
+            if response.status_code not in (502, 503, 504):
+                response.raise_for_status()
+                return
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Timed out waiting for the Cua Driver service to become ready")
+            time.sleep(POLL_INTERVAL_SECONDS)
+
+    def write_session_environment(url: str, authorization: str) -> None:
+        scheme, _, token = authorization.partition(" ")
+        if scheme != "Bearer" or not token:
+            raise RuntimeError("Fleet SDK did not provide a bearer Authorization header")
+        env_file.parent.mkdir(parents=True, exist_ok=True)
+        content = (
+            f"export FLEET_CUA_DRIVER_URL={shlex.quote(url)}\n"
+            f"export FLEET_ACCESS_TOKEN={shlex.quote(token)}\n"
+        )
+        descriptor, temporary_name = tempfile.mkstemp(
+            dir=env_file.parent,
+            prefix=f".{env_file.name}.",
+            text=True,
+        )
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "w") as temporary_file:
+                temporary_file.write(content)
+            os.replace(temporary_name, env_file)
+            os.chmod(env_file, 0o600)
+        finally:
+            if os.path.exists(temporary_name):
+                os.unlink(temporary_name)
+
+    created = False
+    try:
+        validate_service()
+        response = http().post(
+            claim_url(),
+            json={
+                "apiVersion": f"{CLAIM_GROUP}/{CLAIM_VERSION}",
+                "kind": "OSGymSandboxClaim",
+                "metadata": {"name": claim_name},
+                "spec": {
+                    "sandboxTemplateRef": {"name": f"{pool}-template"},
+                    "bindDeadline": BIND_DEADLINE_SECONDS,
+                },
+            },
+        )
+        response.raise_for_status()
+        created = True
+
+        sandbox = wait_for_bound()
+        service_base = f"/api/svc/{pool}/{sandbox}-cua-driver"
+        wait_for_healthz(service_base)
+        mcp_url = f"{os.environ['CUA_BASE_URL'].rstrip('/')}{service_base}/mcp"
+        signal.signal(signal.SIGUSR1, request_token_refresh)
+        print(f"Fleet claim {claim_name} is ready. Session environment: {env_file}")
+        print("Leave this process running; press Ctrl-C here when the agent session is finished.")
+
+        authorization = http().headers.get("Authorization", "")
+        write_session_environment(mcp_url, authorization)
+
+        while True:
+            if refresh_event.wait(timeout=20):
+                client = new_client()
+                http = client.get_httpx_client
+                authorization = http().headers.get("Authorization", "")
+                write_session_environment(mcp_url, authorization)
+                refresh_event.clear()
+            else:
+                authorization = http().headers.get("Authorization", "")
+                write_session_environment(mcp_url, authorization)
+    finally:
+        cleanup_error = None
+        try:
+            if created:
+                response = http().delete(claim_url(claim_name))
+                if response.status_code != 404:
+                    response.raise_for_status()
+        except Exception as error:
+            cleanup_error = error
+            print(
+                f"Could not delete Fleet claim {claim_name}. Delete that claim through the Fleet SDK or dashboard."
+            )
+        finally:
+            env_file.unlink(missing_ok=True)
+        if cleanup_error is not None:
+            raise RuntimeError(f"Fleet claim {claim_name} may still be active") from cleanup_error
+
+
+if __name__ == "__main__":
+    main()
+```
+
+The Fleet operator uses a 300-second bind deadline when `bindDeadline` is omitted. This holder sets it
+explicitly to 600 seconds by default so the server-side deadline matches its default client wait. Change
+the two values with `CUA_BIND_TIMEOUT_SECONDS` and `CUA_BIND_DEADLINE_SECONDS`; the deadline must remain
+positive and at least as long as the client timeout.
+
+Start the holder in one terminal. It must remain running while Hermes uses the desktop:
+
+```bash
+export FLEET_SESSION_ENV="$(mktemp)"
+python hold_fleet_claim.py &
+export FLEET_HOLDER_PID=$!
+
+while [ ! -s "$FLEET_SESSION_ENV" ]; do
+  kill -0 "$FLEET_HOLDER_PID" || { wait "$FLEET_HOLDER_PID"; exit 1; }
+  sleep 1
+done
+```
+
+## 2. Configure Hermes for the remote MCP endpoint
+
+Add this verified HTTP MCP configuration to `~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  fleet-cua-driver:
+    url: '${FLEET_CUA_DRIVER_URL}'
+    headers:
+      Authorization: 'Bearer ${FLEET_ACCESS_TOKEN}'
+```
+
+This is the remote configuration, not the local `command: cua-driver` transport. Hermes resolves
+`${ENV_VAR}` placeholders when it connects. The authoritative reference is the
+[Hermes MCP documentation](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp).
+
+Source the private file in the shell that starts Hermes; this does not print the bearer token:
+
+```bash
+set -a
+. "$FLEET_SESSION_ENV"
+set +a
+hermes chat
+```
+
+After changing `~/.hermes/config.yaml`, run this inside Hermes:
+
+```text
+/reload-mcp
+```
+
+Verify that Hermes lists the remote Cua Driver tools before continuing.
+
+## 3. Handle bearer-token expiry
+
+Hermes uses the static bearer header from its process environment; it does not refresh that header.
+If the server returns `401`, keep the claim holder running, request a fresh token, then start or restart
+Hermes from a shell that sources the refreshed session file:
+
+```bash
+previous_checksum="$(sha256sum "$FLEET_SESSION_ENV" | awk '{print $1}')"
+kill -USR1 "$FLEET_HOLDER_PID"
+
+while :; do
+  kill -0 "$FLEET_HOLDER_PID" || { wait "$FLEET_HOLDER_PID"; exit 1; }
+  current_checksum="$(sha256sum "$FLEET_SESSION_ENV" 2>/dev/null | awk '{print $1}')"
+  [ -n "$current_checksum" ] && [ "$current_checksum" != "$previous_checksum" ] && break
+  sleep 1
+done
+
+set -a
+. "$FLEET_SESSION_ENV"
+set +a
+hermes chat
+```
+
+Restart Hermes after sourcing the changed file, then reload the MCP connection if you changed its config.
+A running Hermes process keeps its old environment, so `/reload-mcp` alone cannot replace a token that
+was exported only in a different shell.
+
+## 4. Run one bounded desktop task
+
+Ask Hermes to perform a simple task on the claimed desktop:
+
+```text
+Using the Fleet Cua Driver MCP server, open the browser and visit https://example.com.
+Do not sign in, submit forms, download files, or navigate away from that site. Return the final browser
+state and a screenshot.
+```
+
+## 5. Verify the desktop state
+
+Inspect the Cua Driver result, not only Hermes's narration. Confirm the browser's final URL and visible
+`Example Domain` content, then inspect the screenshot returned with the final desktop or window state.
+
+<Callout type="warn">
+  Do not enter credentials, API keys, personal information, or other sensitive data into pages or
+  prompts you do not trust.
+</Callout>
+
+## 6. Clean up the claim
+
+Exit Hermes, then stop the holder in its original terminal with Ctrl-C. Its `finally` block deletes the
+claim and removes the temporary session environment file. A non-404 deletion failure still removes the
+file, prints remediation, and exits nonzero so `wait` reports that the claim may still be active. If you
+started it in the background, wait for cleanup to finish:
+
+```bash
+kill -INT "$FLEET_HOLDER_PID"
+wait "$FLEET_HOLDER_PID"
+unset FLEET_CUA_DRIVER_URL FLEET_ACCESS_TOKEN FLEET_SESSION_ENV FLEET_HOLDER_PID
+```
+
+## What happened
+
+The holder kept the Fleet claim alive, supplied an authenticated proxy URL and current bearer to a
+private file, and removed both during cleanup. Hermes connected to Cua Driver through remote HTTP MCP;
+the local `command: cua-driver` setup would control the wrong machine.
+
+## Next steps
+
+- [Surf the web from a Fleet desktop](/tutorials/fleet/surf-the-web)
+- [Build a computer-use sub-agent with MCP Sampling](/tutorials/fleet/computer-use-sub-agent-with-mcp-sampling)
+- [Connect to a Fleet service](/how-to-guides/fleet/connect-to-a-service)

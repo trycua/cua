@@ -1,0 +1,84 @@
+---
+title: Surf the web from a Fleet desktop
+description: Use the authenticated Hermes connection to visit a harmless public page and verify it from Fleet desktop state.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Surf the web from a Fleet desktop
+
+In this tutorial, you use the Fleet claim holder and authenticated Hermes connection from the previous
+tutorial to open a harmless public page in a Fleet Linux desktop. You then verify the browser state
+independently of Hermes's report.
+
+## Learning outcome
+
+You can use Cua Driver through an authenticated Fleet MCP connection and validate a browser task using
+the final URL, visible page state, and screenshot.
+
+## Prerequisites
+
+- Complete [Connect Hermes to Fleet Cua Driver](/tutorials/fleet/hermes-and-cua-driver), including the
+  session holder, remote MCP configuration, and successful Cua Driver tool discovery.
+- Leave the claim-holder process running for the entire browser task. It owns the active claim and writes
+  the temporary credentials used by the Hermes session.
+- A Linux Fleet pool whose image includes a graphical browser and Cua Driver, and whose `services`
+  declaration includes `cua-driver`. See [Build a Fleet Linux image](/how-to-guides/fleet/build-a-linux-image).
+
+<Callout type="warn">
+  Do not enter passwords, API keys, personal information, or other sensitive data into pages or
+  prompts you do not trust. This tutorial uses a harmless public page only.
+</Callout>
+
+## 1. Confirm the authenticated connection
+
+Start Hermes from the shell that sourced the private session environment file in the Hermes tutorial.
+Confirm that the remote Cua Driver tools are available. The session holder already verified the declared
+service at `/healthz` before it wrote the MCP URL and bearer token.
+
+If the service returns `401`, follow the token-expiry procedure in
+[Connect Hermes to Fleet Cua Driver](/tutorials/fleet/hermes-and-cua-driver). Keep the claim holder
+running while you refresh the token and restart the MCP connection.
+
+## 2. Ask Hermes to visit a public page
+
+Give Hermes a narrowly scoped task. Use the browser already present in the Fleet image; Hermes can
+discover and launch it through Cua Driver.
+
+```text
+Using the remotely connected Fleet Cua Driver tools, open a browser and visit https://example.com.
+Do not sign in, submit forms, download files, or navigate away from that site. Report the final URL
+and visible page heading. Take a final desktop or browser-window state with a screenshot.
+```
+
+Cua Driver's inspection tools return both structured state and screenshots. For action and inspection
+semantics, see [MCP tools](/reference/cua-driver/mcp-tools).
+
+## 3. Verify the result yourself
+
+Do not accept Hermes's text alone as proof. Inspect the final Cua Driver response and confirm all of the
+following:
+
+1. The browser's final URL is `https://example.com/` or the browser's equivalent canonical form.
+2. The browser window state shows the expected visible content, including the `Example Domain` heading.
+3. The accompanying screenshot shows the expected page in the browser window.
+
+If any check differs, stop and inspect the browser state before asking Hermes to do anything else.
+
+## 4. Clean up the claim
+
+Exit Hermes, then use the cleanup procedure from
+[Connect Hermes to Fleet Cua Driver](/tutorials/fleet/hermes-and-cua-driver). Leave the holder running
+until the task is complete; stopping it releases the Fleet claim and removes its temporary credentials.
+
+## What happened
+
+Hermes used the authenticated Cua Driver MCP endpoint supplied by the running claim holder. Fleet routed
+that endpoint to the claimed desktop's declared service, while final state and a screenshot provided
+independent evidence of the browser task.
+
+## Next steps
+
+- [Build a computer-use sub-agent with MCP Sampling](/tutorials/fleet/computer-use-sub-agent-with-mcp-sampling)
+- [Cua Driver MCP tools](/reference/cua-driver/mcp-tools)
+- [Connect to a Fleet service](/how-to-guides/fleet/connect-to-a-service)

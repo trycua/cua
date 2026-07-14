@@ -1,1 +1,11 @@
-{ "title": "Tutorials", "icon": "GraduationCap", "pages": ["index", "drive-your-first-app", "your-first-cloud-sandbox", "create-your-first-lume-vm"] }
+{
+  "title": "Tutorials",
+  "icon": "GraduationCap",
+  "pages": [
+    "index",
+    "drive-your-first-app",
+    "your-first-cloud-sandbox",
+    "fleet",
+    "create-your-first-lume-vm"
+  ]
+}

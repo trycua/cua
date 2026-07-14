@@ -1,0 +1,10 @@
+{
+  "title": "Fleet",
+  "pages": [
+    "index",
+    "build-a-linux-image",
+    "build-a-windows-image",
+    "connect-to-a-service",
+    "use-the-sdk"
+  ]
+}

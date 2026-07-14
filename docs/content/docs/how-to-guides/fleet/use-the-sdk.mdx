@@ -1,0 +1,161 @@
+---
+title: Use the Fleet SDK workflow
+description: Authenticate with TrainClient, select a Fleet pool, create a claim, inspect its sandbox, and release it.
+---
+
+Use `TrainClient.from_key` as the authentication entry point. It exchanges client credentials for a
+bearer token and refreshes that token transparently when you obtain an HTTP client. Use a per-user
+`ukey-...` key for claim operations.
+
+This is the canonical Fleet claim-lifecycle guide: it selects a pool, creates and waits for a claim,
+inspects the assigned sandbox, and releases the claim. To route to a selected guest service after that
+lifecycle, see [Connect to a Fleet service](/how-to-guides/fleet/connect-to-a-service).
+
+```bash
+pip install cua-train --extra-index-url https://wheels.cua.ai/simple/
+
+export CUA_CLIENT_ID=ukey-...
+export CUA_CLIENT_SECRET=...
+export CUA_TOKEN_URL='YOUR_FLEET_OAUTH_TOKEN_ENDPOINT'
+export CUA_BASE_URL='YOUR_FLEET_BASE_URL'
+export FLEET_POOL=my-pool
+```
+
+Set `CUA_TOKEN_URL` to the OAuth token endpoint supplied by your Fleet environment or dashboard,
+then set `CUA_BASE_URL` to that environment's API base URL.
+
+## Select a pool and manage a claim
+
+Save the script as `use_fleet.py` and run it with the environment above. The generated SDK exposes
+the operations generated from its API description through `TrainClient`. Fleet pool and claim
+resources in this workflow are Kubernetes custom resources, so this script deliberately uses the
+authenticated low-level `httpx` client for `/api/k8s`; it does not present those proxy calls as
+generated SDK methods.
+
+```python
+import os
+import time
+import uuid
+
+from cua_train import TrainClient
+
+CLAIM_GROUP = "osgym.cua.ai"
+CLAIM_VERSION = "v1alpha1"
+CLAIM_PLURAL = "osgymsandboxclaims"
+POOL_PLURAL = "osgymworkspacepools"
+BIND_TIMEOUT_SECONDS = float(os.getenv("CUA_BIND_TIMEOUT_SECONDS", "600"))
+BIND_DEADLINE_SECONDS = int(
+    os.getenv("CUA_BIND_DEADLINE_SECONDS", str(int(BIND_TIMEOUT_SECONDS)))
+)
+if BIND_TIMEOUT_SECONDS <= 0 or BIND_DEADLINE_SECONDS <= 0:
+    raise ValueError("CUA_BIND_TIMEOUT_SECONDS and CUA_BIND_DEADLINE_SECONDS must be positive")
+if BIND_DEADLINE_SECONDS < BIND_TIMEOUT_SECONDS:
+    raise ValueError(
+        "CUA_BIND_DEADLINE_SECONDS must be greater than or equal to "
+        "CUA_BIND_TIMEOUT_SECONDS"
+    )
+POLL_INTERVAL_SECONDS = 2
+
+requested_pool = os.environ["FLEET_POOL"]
+claim_name = f"claim-{uuid.uuid4().hex[:8]}"
+
+client = TrainClient.from_key(
+    token_url=os.environ["CUA_TOKEN_URL"],
+    client_id=os.environ["CUA_CLIENT_ID"],
+    client_secret=os.environ["CUA_CLIENT_SECRET"],
+    base_url=os.environ["CUA_BASE_URL"],
+)
+http = client.get_httpx_client
+
+
+def pool_url(name=None):
+    base = f"/api/k8s/apis/cua.ai/v1/namespaces/{requested_pool}/{POOL_PLURAL}"
+    return f"{base}/{name}" if name else base
+
+
+def claim_url(name=None):
+    base = (
+        f"/api/k8s/apis/{CLAIM_GROUP}/{CLAIM_VERSION}/namespaces/"
+        f"{requested_pool}/{CLAIM_PLURAL}"
+    )
+    return f"{base}/{name}" if name else base
+
+
+def wait_for_bound():
+    deadline = time.monotonic() + BIND_TIMEOUT_SECONDS
+    while True:
+        response = http().get(claim_url(claim_name))
+        response.raise_for_status()
+        status = response.json().get("status") or {}
+        phase = status.get("phase", "Pending")
+        sandbox = (status.get("sandbox") or {}).get("name")
+        if phase == "Bound" and sandbox:
+            return sandbox, status
+        if phase == "Failed":
+            raise RuntimeError(f"Claim failed: {status}")
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"Timed out after {BIND_TIMEOUT_SECONDS}s waiting for claim "
+                f"{claim_name!r} to bind (last phase: {phase})"
+            )
+        print(f"Claim phase: {phase}")
+        time.sleep(POLL_INTERVAL_SECONDS)
+
+
+pool_list = http().get(pool_url())
+pool_list.raise_for_status()
+pool_names = [item["metadata"]["name"] for item in pool_list.json().get("items", [])]
+if requested_pool not in pool_names:
+    raise RuntimeError(f"Pool {requested_pool!r} is not available: {pool_names}")
+
+pool = http().get(pool_url(requested_pool))
+pool.raise_for_status()
+declared_services = pool.json().get("spec", {}).get("services") or []
+print(f"Selected pool: {requested_pool}")
+print(f"Declared services: {declared_services}")
+
+created = False
+try:
+    response = http().post(
+        claim_url(),
+        json={
+            "apiVersion": f"{CLAIM_GROUP}/{CLAIM_VERSION}",
+            "kind": "OSGymSandboxClaim",
+            "metadata": {"name": claim_name},
+            "spec": {
+                "sandboxTemplateRef": {"name": f"{requested_pool}-template"},
+                "bindDeadline": BIND_DEADLINE_SECONDS,
+            },
+        },
+    )
+    response.raise_for_status()
+    created = True
+
+    sandbox, claim_status = wait_for_bound()
+    print(f"Assigned sandbox: {sandbox}")
+    print(f"Claim status: {claim_status}")
+    for service in declared_services:
+        print(
+            "Declared service: "
+            f"{service.get('name')} on target port {service.get('targetPort')} "
+            f"(protocol={service.get('protocol')})"
+        )
+finally:
+    if created:
+        response = http().delete(claim_url(claim_name))
+        response.raise_for_status()
+        print(f"Released claim: {claim_name}")
+```
+
+## Verify
+
+The script lists pool names in the selected namespace, prints the selected pool's declared services,
+waits until the claim is `Bound`, and prints the assigned sandbox. The operator defaults an omitted
+`spec.bindDeadline` to 300 seconds, but this example sets it explicitly to match the client wait.
+Set `CUA_BIND_TIMEOUT_SECONDS` to change the client wait and `CUA_BIND_DEADLINE_SECONDS` to set the
+server-side claim deadline; the script rejects a deadline shorter than the client wait. Both default
+to 600 seconds. It always attempts to release the claim after the inspection. To keep a sandbox for
+further work, remove the delete call only when you have an explicit cleanup path.
+
+For service selection and readiness handling after a claim binds, see
+[Connect to a Fleet service](/how-to-guides/fleet/connect-to-a-service).

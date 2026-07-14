@@ -1,0 +1,49 @@
+---
+title: 'Fleet images'
+description: 'How Fleet boot artifacts define the operating system and service contract for sandbox replicas.'
+---
+
+A Fleet image is the boot artifact from which a pool's sandbox replicas start. It is an
+infrastructure artifact, such as the container-disk image referenced by a pool template, and it
+defines both the guest operating system and the software that is already present when that guest
+boots.
+
+This is different from the public `cua.Image` abstraction. `cua.Image` is part of the public
+Sandbox SDK's environment-building model. A Fleet image is the infrastructure-level boot input
+used to create managed pool replicas. They can describe related environments, but they are not the
+same resource or lifecycle.
+
+## Image identity is part of the environment
+
+An image reference is part of a pool's definition of compatibility. Pools that use different boot
+artifacts may differ in their operating system, installed applications, drivers, service startup,
+and readiness behavior, even when their CPU and memory requests match.
+
+Treat a deployed image as versioned and immutable in practice. A build-specific reference makes it
+possible to identify the environment a sandbox began with and to reproduce a pool definition.
+Mutable tags such as `latest` make that relationship weaker: the same pool specification can start
+different software over time, and a tag that is no longer published can prevent a replica from
+warming. Pinning a known image reference favors repeatability; following a moving tag favors
+automatic uptake of new builds at the cost of that certainty.
+
+## Boot assumptions belong to the image
+
+The image and its firmware expectation must agree. Linux Fleet images commonly use BIOS firmware,
+while a Windows image that was prepared for EFI needs EFI firmware in its pool template. Firmware
+is therefore not merely a placement setting: a mismatch can keep an otherwise valid image from
+booting as intended.
+
+An image also establishes the service contract for a sandbox. It can include a desktop stack,
+Cua Driver MCP server, an application server, or auxiliary services. Their processes, ports, and
+paths are image-specific. A pool's readiness configuration should test a service that the image
+actually starts; readiness is meaningful only when it represents the capability a claimant needs.
+
+## Images trade flexibility for consistency
+
+Preinstalling dependencies and services makes replicas more uniform and can move setup work out of
+the claim path. The cost is that changing those dependencies requires a new image version and a
+deliberate pool update. Building state after a claim is more flexible, but it makes the claimed
+sandbox less immediately useful and less comparable with other replicas.
+
+Fleet image-building tasks belong in the how-to guides. This page describes why a boot artifact is
+the stable boundary between an environment definition and the reusable capacity that runs it.

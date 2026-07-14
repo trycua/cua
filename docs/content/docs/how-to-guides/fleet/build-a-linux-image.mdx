@@ -1,0 +1,139 @@
+---
+title: Build a Linux Fleet image
+description: Create a bootable Ubuntu disk artifact, publish it as an OCI containerDisk, and configure a Fleet pool.
+---
+
+This guide builds a Linux image for a Fleet pool. A Fleet image is a **bootable infrastructure disk
+artifact**; it is not the public SDK `cua.Image` object. See [Fleet images](/concepts/fleet/images)
+and [Fleet pools](/concepts/fleet/pools) for how this artifact fits the resource model.
+
+## Prerequisites
+
+- A registry that your Fleet deployment can pull from.
+- A pinned Ubuntu 24.04 cloud-image download and its published checksum.
+- A build host with QEMU tools, `libguestfs` tools such as `virt-customize`, Docker or another OCI
+  builder, and a registry login.
+- Installation artifacts and service-unit names for the computer-server, Cua Driver, and noVNC
+  stack your image will run.
+
+## Build and smoke-test the disk
+
+Start with a verified Ubuntu 24.04 cloud image. Keep the source URL and checksum in version control
+so the input remains reproducible.
+
+```bash
+curl -fLO "$UBUNTU_CLOUD_IMAGE_URL"
+echo "$UBUNTU_CLOUD_IMAGE_SHA256  noble-server-cloudimg-amd64.img" | sha256sum --check
+
+qemu-img convert -O qcow2 noble-server-cloudimg-amd64.img workspace.qcow2
+```
+
+Customize a copy of the disk with the packages and artifacts you have pinned. Install the required
+guest services, configure their ports, and enable their **actual** systemd unit names. Do not assume
+unit names from a pool name: they are defined by the components you install.
+
+```bash
+virt-customize -a workspace.qcow2 \
+  --install qemu-guest-agent \
+  --copy-in ./artifacts:/opt/fleet-artifacts \
+  --run-command '/opt/fleet-artifacts/install-computer-server.sh' \
+  --run-command '/opt/fleet-artifacts/install-cua-driver.sh' \
+  --run-command '/opt/fleet-artifacts/install-novnc.sh' \
+  --run-command 'systemctl enable computer-server.service cua-driver.service novnc.service'
+```
+
+Replace the three installer paths and service-unit names with the versions supplied by your image
+build. Those installers should fail on error and leave the computer-server, Cua Driver, and noVNC
+services configured for the ports declared in the pool.
+
+Boot the resulting qcow2 in an isolated test environment and run smoke checks against the guest.
+For example, verify that the readiness port accepts connections, each declared health path responds,
+and the Cua Driver MCP endpoint can complete the operations your workflow needs. Shut down the guest
+cleanly before packaging the disk.
+
+## Package and publish the containerDisk
+
+Stage only the tested qcow2 as `disk.img` and wrap it in a scratch OCI image. The path
+`/disk/disk.img` is the containerDisk payload.
+
+```dockerfile title="Dockerfile"
+FROM scratch
+COPY disk.img /disk/disk.img
+```
+
+```bash
+mkdir -p image-context
+cp workspace.qcow2 image-context/disk.img
+cp Dockerfile image-context/Dockerfile
+
+IMAGE_REPOSITORY=REGISTRY/desktop-workspace
+BUILD_TAG=build-IDENTIFIER
+
+docker build -t "$IMAGE_REPOSITORY:$BUILD_TAG" image-context
+docker push "$IMAGE_REPOSITORY:$BUILD_TAG"
+docker buildx imagetools inspect "$IMAGE_REPOSITORY:$BUILD_TAG"
+```
+
+Replace `REGISTRY` with the registry host and repository that Fleet can pull. After the push,
+read the `Digest` reported by `docker buildx imagetools inspect`, then replace `DIGEST` below with
+that complete digest value. Tags are convenient labels, but they are immutable only when registry
+policy enforces that behavior.
+
+## Reference the image from a pool
+
+Use the pool resource shape below as a starting point. The service names and paths are an interface
+contract for this image; keep them aligned with the services installed in the guest. The example uses
+the current pool field names from the Fleet examples.
+
+```yaml
+apiVersion: cua.ai/v1
+kind: OSGymWorkspacePool
+metadata:
+  name: linux-desktop
+spec:
+  replicas: 2
+  autoscaling:
+    minPoolSize: 1
+    initialPoolSize: 2
+    maxPoolSize: 4
+  template:
+    containerDiskImage: REGISTRY/desktop-workspace@sha256:DIGEST
+    cpuCores: 4
+    memory: 4Gi
+    firmware: bios
+    probes:
+      readinessProbe:
+        tcpSocket:
+          port: 8000
+  services:
+    - name: computer-server
+      targetPort: 8000
+      protocol: TCP
+    - name: cua-driver
+      targetPort: 3000
+      protocol: TCP
+    - name: novnc
+      targetPort: 6080
+      protocol: TCP
+```
+
+Replace both `REGISTRY` and `sha256:DIGEST` in `REGISTRY/desktop-workspace@sha256:DIGEST` with the repository and digest resolved from the pushed artifact.
+Choose `spec.template.cpuCores`, `spec.template.memory`, and `spec.replicas` for the workload and
+available infrastructure. The autoscaling values shown are illustrative capacity settings:
+`minPoolSize` keeps one pool replica as the availability floor, `initialPoolSize` starts at the same
+example size as `replicas`, and `maxPoolSize` permits growth to four replicas. They are not limits on
+services or service connections. See [Fleet pools](/concepts/fleet/pools) for the relationship between
+readiness and capacity.
+
+## Verify
+
+1. Inspect the pushed OCI manifest and pull `REGISTRY/desktop-workspace@sha256:DIGEST` from an environment
+   configured like the Fleet nodes.
+2. Confirm the pulled image contains the disk at `/disk/disk.img` and that QEMU recognizes it as a
+   bootable qcow2 artifact.
+3. Apply the pool and verify its replicas reach the configured readiness rule.
+4. Claim a sandbox and check the computer-server, Cua Driver, and noVNC services through the declared
+   service routes. See [Connect to a Fleet service](/how-to-guides/fleet/connect-to-a-service).
+
+If a pool does not become ready, first verify the exact immutable image reference is pullable, then
+check guest boot logs and the process listening on the readiness probe port.

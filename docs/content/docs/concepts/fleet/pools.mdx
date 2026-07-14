@@ -1,0 +1,45 @@
+---
+title: 'Fleet pools'
+description: 'How a Fleet pool defines compatible, reusable sandbox capacity from one template.'
+---
+
+A Fleet pool is a named group of compatible sandbox replicas. Its template says what each replica
+should be: the boot image, requested CPU and RAM, firmware, readiness behavior, and declared
+services. The pool is the bridge between an image's environment contract and the sandboxes that
+workloads can claim.
+
+## One template, many replicas
+
+`initialPoolSize` sets the pool's starting capacity. When autoscaling is enabled,
+`autoscaling.minPoolSize` sets the lower capacity floor and `maxPoolSize` sets the upper bound.
+These configured sizes describe capacity targets, not readiness. Available capacity is reported from
+the pool's current status and reflects replicas that are ready and unclaimed.
+
+A replica becomes useful only when its guest has booted far enough to satisfy the template's
+readiness rule. A TCP readiness port, for example, can represent an in-guest service being bound
+rather than only a VM launcher being present. Declared services then describe the endpoints that a
+claimed sandbox can expose. CPU, RAM, firmware, readiness, and services are all compatibility
+constraints: replicas in one pool should share them so a claim can be satisfied by any suitable
+warm sandbox.
+
+## Desired and available capacity differ
+
+A pool can have its desired number of replicas without having that number available. Some may still
+be pulling an image, provisioning, booting, resetting after a previous lease, or waiting for their
+readiness service. Conversely, a warm replica that is not claimed is capacity held in reserve. The
+pool's available count is therefore the important number for immediate assignment, while desired
+capacity describes the target the Fleet is working toward.
+
+Warm capacity lowers the chance that a new claim must wait for a complete provisioning path. It
+also consumes resources while idle. A pool design chooses where to sit on that tradeoff rather than
+assuming that every requested replica is immediately usable.
+
+## Pool ownership and namespace scope
+
+The current Fleet API uses a one-pool/one-namespace convention: the pool name and its namespace
+are the same, and the pool provides a corresponding sandbox template for claims. This keeps pool
+capacity, claim authorization, and service routing in one tenancy boundary. It is a current
+convention, not a claim that every Kubernetes deployment must organize capacity this way.
+
+Pools do not give a workload a sandbox by themselves. They maintain the compatible capacity from
+which [claims](/concepts/fleet/claims) obtain an exclusive lease.

@@ -1,0 +1,41 @@
+---
+title: 'Fleet claims'
+description: 'How an OSGymSandboxClaim leases one compatible Fleet sandbox to one workload.'
+---
+
+An `OSGymSandboxClaim` is a workload's request and lease for one sandbox from Fleet capacity. Its
+`sandboxTemplateRef` identifies the compatible sandbox template that the claim needs. In the
+current pool convention, a pool supplies a template named `<pool>-template`, and the claim refers
+to that name. This directs the claim to the capacity maintained for that pool.
+
+## A claim is a lifecycle, not just a lookup
+
+A new claim is normally `Pending` while Fleet finds or prepares a compatible replica. It becomes
+`Bound` when it has been assigned a sandbox, and a `Failed` phase records that the claim could not
+be satisfied. `Bound` is an allocation result: it says which sandbox is leased, not that every
+service inside the guest is already ready to answer requests.
+
+The lease is exclusive. A bound sandbox belongs to that claim rather than being shared between
+unrelated workloads. This preserves the meaning of an isolated computer: files, processes, UI
+state, and service state accumulated during a lease are associated with one claimant.
+
+## Release returns capacity, not guest state
+
+Deleting a claim releases its lease. The released sandbox can return to the pool, but it must be
+reset before reuse. The guest reboot that follows a reset means a sandbox can be bound to a new
+claim before its in-guest services have completed startup. A caller that needs an HTTP or MCP
+endpoint therefore treats claim binding and service readiness as separate conditions.
+
+This reset boundary is why a claim is a better mental model than a permanent machine identifier.
+The stable object for a workload is its lease; the underlying reusable sandbox is Fleet capacity
+that may later serve another claim after it has been returned to a known state.
+
+## Claims sit inside an authorization boundary
+
+Creating claims requires per-user authorization in the current Fleet flow. Per-user credentials
+carry the identity used for namespace access and can create claims; pool-scoped credentials do not
+provide that Kubernetes identity. This protects the relationship between a claim, its pool
+namespace, and the sandbox it receives.
+
+Once a claim is bound, [services](/concepts/fleet/services) provide the route to the workload
+running inside its sandbox.

@@ -1,0 +1,36 @@
+---
+title: 'Fleet autoscaling'
+description: 'How Fleet balances claim demand, warm sandbox capacity, and the cost of idle replicas.'
+---
+
+Fleet autoscaling is the relationship between demand for claims and the compatible sandbox capacity a
+pool maintains. `initialPoolSize` establishes starting capacity. With autoscaling enabled,
+`autoscaling.minPoolSize` sets the lower capacity floor and `maxPoolSize` sets the upper bound.
+These fields govern capacity targets; available capacity remains a status and readiness result.
+Outstanding claims consume ready capacity, while an unclaimed ready replica remains available for
+the next claimant.
+
+## Demand has a provisioning path
+
+When demand is greater than available warm capacity, a claim may wait for a replica to be created
+or returned to readiness. That path can include image retrieval, VM provisioning, guest boot, and
+the readiness check defined by the pool. Its duration depends on the image, infrastructure, guest
+workload, and current conditions, so Fleet concepts do not promise a fixed claim or boot time.
+
+Readiness matters at the end of that path. A running VM is not necessarily a useful sandbox if the
+service a workload needs has not started. The same distinction applies after a reset: a claim can
+be bound while the guest is rebooting and its service remains unavailable.
+
+## Warm capacity is an explicit tradeoff
+
+More warm capacity can reduce the work between a claim and a ready sandbox, but leaves more idle
+resources allocated. Less warm capacity reduces idle cost but makes bursts more likely to wait for
+provisioning and readiness. Scale-down has the same tension: removing idle replicas saves resources
+but leaves less immediately available capacity for later demand.
+
+`maxPoolSize` bounds the amount of capacity that autoscaling can add. That bound is not a promise
+that all capacity below it is instantly provisioned, and it does not replace readiness. The practical limit is the intersection of configured targets, warm
+availability, provisioning progress, and the compatibility requirements of the pending claims.
+
+Autoscaling changes capacity; [claims](/concepts/fleet/claims) still provide the exclusive lease,
+and [services](/concepts/fleet/services) still determine when the leased workload is reachable.

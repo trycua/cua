@@ -1,0 +1,113 @@
+---
+title: Build a Windows Fleet image
+description: Prepare a Windows disk artifact, publish it as an OCI containerDisk, and configure an EFI Fleet pool.
+---
+
+A Windows Fleet image is a bootable infrastructure disk artifact, not the public SDK `cua.Image`
+object. Review [Fleet images](/concepts/fleet/images) and [Fleet pools](/concepts/fleet/pools) before
+choosing the image and capacity settings.
+
+## Prerequisites
+
+- Windows installation media and licensing that you are authorized to use.
+- An unattended-install configuration for your Windows version.
+- A build host that can create and inspect qcow2 disks, package OCI images, and push to the registry
+  that Fleet can pull from.
+- Versioned installation artifacts for the Cua Driver, its service startup configuration, and any
+  computer-server and noVNC services the pool will declare.
+
+## Create and customize the disk
+
+Use your unattended setup to install Windows, VirtIO drivers, and the desktop dependencies into a
+UEFI/GPT disk. During customization, install the Cua Driver and configure it to start automatically
+on boot. Install and configure the computer-server and noVNC components if you declare them in the
+pool. Reboot the guest and smoke-test the services before capturing the disk.
+
+Convert or compress the tested boot disk as qcow2, retaining a known bootable output as `disk.img`.
+
+```bash
+qemu-img convert -c -O qcow2 windows-source-disk.img disk.img
+qemu-img info disk.img
+```
+
+Run a guest smoke test after the conversion: boot `disk.img` with UEFI firmware, confirm the Cua
+Driver service starts, and check the declared health and MCP paths. This ensures the artifact is
+usable before it is made available to a pool.
+
+## Package and publish the OCI artifact
+
+Package the qcow2 as a containerDisk payload.
+
+```dockerfile title="Dockerfile"
+FROM scratch
+ADD --chown=107:107 disk.img /disk/disk.img
+```
+
+```bash
+mkdir -p image-context
+cp disk.img image-context/disk.img
+cp Dockerfile image-context/Dockerfile
+
+IMAGE_REPOSITORY=REGISTRY/windows-desktop
+BUILD_TAG=build-IDENTIFIER
+
+docker build -t "$IMAGE_REPOSITORY:$BUILD_TAG" image-context
+docker push "$IMAGE_REPOSITORY:$BUILD_TAG"
+docker buildx imagetools inspect "$IMAGE_REPOSITORY:$BUILD_TAG"
+```
+
+Replace `REGISTRY` with a registry host and repository accessible to Fleet. After the push,
+read the `Digest` reported by `docker buildx imagetools inspect`, then replace `DIGEST` below with
+that complete digest value. Tags are convenient labels, but they are immutable only when registry
+policy enforces that behavior. Keep the resolved digest and the unattended configuration revision
+together in your release record.
+
+## Configure an EFI pool
+
+Windows images use EFI firmware. The following generic pool declares the services provided by this
+image; update ports and paths to match the guest you built.
+
+```yaml
+apiVersion: cua.ai/v1
+kind: OSGymWorkspacePool
+metadata:
+  name: windows-desktop
+spec:
+  replicas: 2
+  template:
+    containerDiskImage: REGISTRY/windows-desktop@sha256:DIGEST
+    cpuCores: 4
+    memory: 4Gi
+    firmware: efi
+    probes:
+      readinessProbe:
+        tcpSocket:
+          port: 8000
+  services:
+    - name: computer-server
+      targetPort: 8000
+      protocol: TCP
+    - name: cua-driver
+      targetPort: 3000
+      protocol: TCP
+    - name: novnc
+      targetPort: 6080
+      protocol: TCP
+```
+
+Replace both `REGISTRY` and `sha256:DIGEST` in `REGISTRY/windows-desktop@sha256:DIGEST` with the repository and digest resolved from the pushed artifact. Fleet uses
+`spec.template.containerDiskImage` as the direct containerDisk reference. Choose
+`spec.template.cpuCores`, `spec.template.memory`, and `spec.replicas` for your workload. Image build
+pipelines can validate or import disks internally before packaging, but that does not change the
+Fleet pool contract.
+
+## Verify
+
+1. Inspect the OCI manifest and pull `REGISTRY/windows-desktop@sha256:DIGEST` from an environment configured
+   like the Fleet nodes.
+2. Confirm `/disk/disk.img` is present and boots with EFI firmware.
+3. Apply the pool, wait for readiness, then claim a sandbox and verify the computer-server, Cua
+   Driver, and noVNC services through their declared routes.
+
+For a pool that remains unready, distinguish image-pull failures from guest startup failures, then
+check the readiness service inside the Windows guest.

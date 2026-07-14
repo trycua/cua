@@ -1,0 +1,22 @@
+---
+title: 'Fleet concepts'
+description: 'How Fleet composes images, pools, claims, scaling, and services into managed cloud sandboxes.'
+---
+
+Fleet is the managed-cloud model for running compatible sandboxes as shared capacity rather than
+creating every machine from scratch. An [image](/concepts/fleet/images) defines the bootable
+environment. A [pool](/concepts/fleet/pools) turns that environment into compatible replicas. A
+[claim](/concepts/fleet/claims) gives one workload an exclusive lease on one replica. [Autoscaling](/concepts/fleet/auto-scaling) balances demand against warm capacity, and
+[services](/concepts/fleet/services) make the claimed sandbox's workload endpoints reachable.
+
+The resources have different ownership boundaries. Images define what a sandbox contains; pools
+own reusable capacity; claims own temporary use of that capacity; and services describe how work
+inside a sandbox is exposed. Keeping those responsibilities separate lets a Fleet maintain a known
+environment while workloads come and go.
+
+Fleet complements the disposable-computer model in [How sandboxes
+work](/concepts/how-sandboxes-work). That page explains one isolated computer. These pages explain
+how a managed collection of those computers is prepared, assigned, reused, and reached.
+
+For task-oriented material, see the [Fleet how-to guides](/how-to-guides/fleet). For guided
+end-to-end learning, see the [Fleet tutorials](/tutorials/fleet).

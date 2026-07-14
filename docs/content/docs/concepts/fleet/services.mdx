@@ -1,0 +1,45 @@
+---
+title: 'Fleet services'
+description: "How declared sandbox services expose workload endpoints through Fleet's authenticated proxy."
+---
+
+Fleet services describe the endpoints that a sandbox exposes after it is claimed. A pool declares
+services by name and target port as part of its template. Fleet uses those declarations to create
+per-sandbox services, so the service identity is tied to both the sandbox and the declared service
+name rather than to a pool-wide shared endpoint.
+
+## A service is an interface contract
+
+Names and labels identify which service belongs to which pool and sandbox. Ports connect the
+Fleet-facing service to the port the process listens on inside the guest. Health paths and MCP
+paths are then part of the application contract carried by the image. For example, an image may
+serve a health endpoint such as `/healthz` and a Cua Driver MCP endpoint such as `/mcp`; those
+paths are not implicit properties of every Fleet service.
+
+A sandbox can expose more than one service. The primary workload endpoint can coexist with
+auxiliary services for a desktop, a control plane, or application-specific dependencies. Declaring
+them in the pool makes their names and ports part of the replica's compatibility definition, just
+as the image and readiness rule are.
+
+## Routing preserves the tenancy boundary
+
+Clients reach a declared service through the authenticated route
+`/api/svc/{namespace}/{service}/`. The proxy checks that the caller can access the namespace before
+forwarding to the Kubernetes service, and it removes the caller's `Authorization` header before
+the request reaches the guest. The namespace and service name are therefore both routing values and
+authorization boundaries.
+
+For a claimed sandbox, the service name includes the bound sandbox's identity together with the
+declared service name. This is how a claim receives a private route to the endpoint associated with
+its lease.
+
+## Binding and readiness are separate states
+
+A claim can be `Bound` before its guest's service is usable. This is common after a sandbox is
+reset and rebooted for reuse: the allocation exists, while the guest is still starting its
+processes. During that interval, proxy responses such as `502`, `503`, or `504` can be transient
+signals that the upstream workload is unavailable rather than a change in claim ownership.
+
+The important distinction is that a claim answers _which sandbox is leased_, while service
+readiness answers _whether the workload endpoint can respond now_. Connection details belong in the
+Fleet how-to guides; this page defines the boundary those tasks rely on.

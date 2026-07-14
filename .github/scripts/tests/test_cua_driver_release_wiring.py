@@ -57,11 +57,94 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             workflow,
         )
 
+    def test_distro_compat_downloads_release_asset_once_per_run(self) -> None:
+        workflow = self.read(".github/workflows/ci-distro-compat-cua-driver.yml")
+
+        self.assertEqual(workflow.count('curl -fsSL "$BINARY_URL"'), 1)
+        self.assertIn("actions/upload-artifact@v4", workflow)
+        self.assertIn("actions/download-artifact@v4", workflow)
+        self.assertIn("cua-driver-release-${{ steps.pick.outputs.version }}", workflow)
+        self.assertIn('CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"', workflow)
+        self.assertIn('CUA_TELEMETRY_ENABLED: "false"', workflow)
+
     def test_rust_driver_bump_keeps_python_wrapper_version_synced(self) -> None:
         config = self.read("libs/cua-driver/rust/.bumpversion.cfg")
 
         self.assertIn("[bumpversion:file:../python/pyproject.toml]", config)
         self.assertIn("[bumpversion:file:../python/src/cua_driver/__init__.py]", config)
+
+    def test_installers_preserve_legacy_telemetry_state_before_cleanup(self) -> None:
+        for relative_path in (
+            "libs/cua-driver/scripts/_install-rust.sh",
+            "libs/cua-driver/scripts/_install-local-rust.sh",
+        ):
+            installer = self.read(relative_path)
+            cleanup = installer.index('rm -rf "$LEGACY_HOME_DIR"')
+            self.assertLess(
+                installer.index("for telemetry_file in .telemetry_id .installation_recorded"),
+                cleanup,
+                relative_path,
+            )
+            self.assertLess(
+                installer.index('cp -p "$LEGACY_HOME_DIR/$telemetry_file"'),
+                cleanup,
+                relative_path,
+            )
+
+        powershell = self.read("libs/cua-driver/scripts/install.ps1")
+        cleanup = powershell.index(
+            "Remove-Item -LiteralPath $LegacyHomeDir -Recurse -Force"
+        )
+        self.assertLess(
+            powershell.index("foreach ($telemetryFile in @('.telemetry_id', '.installation_recorded'))"),
+            cleanup,
+        )
+        self.assertLess(
+            powershell.index("Copy-Item -LiteralPath $legacyTelemetryPath"),
+            cleanup,
+        )
+
+    def test_local_macos_signing_uses_an_unambiguous_identity_hash(self) -> None:
+        installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")
+
+        self.assertIn(
+            'security find-identity -v -p codesigning "$kc"',
+            installer,
+        )
+        self.assertIn('SIGN_ID="$(ensure_local_signing_identity)"', installer)
+        self.assertIn(
+            'codesign_bounded 20 --force --deep --sign "$SIGN_ID" "$APP_STAGE"',
+            installer,
+        )
+        self.assertNotIn('printf \'%s\' "$CUA_LOCAL_SIGN_CN"; return', installer)
+
+    def test_release_installers_persist_channel_before_binary_swap(self) -> None:
+        shell = self.read("libs/cua-driver/scripts/_install-rust.sh")
+        hint = shell.index('> "$HOME_DIR/.telemetry_install_channel"')
+        self.assertLess(hint, shell.index('ditto "$SRC_APP" "$APP_DEST"'))
+        self.assertLess(hint, shell.index('mv -Tf "$TMP_LINK" "$CURRENT_LINK"'))
+
+        powershell = self.read("libs/cua-driver/scripts/install.ps1")
+        hint = powershell.index("Set-Content -LiteralPath (Join-Path $HomeDir '.telemetry_install_channel')")
+        self.assertLess(hint, powershell.index("Ensure-Junction $CurrentDir    $versionedDir"))
+
+    def test_lifecycle_telemetry_runs_outside_foreground_command(self) -> None:
+        main = self.read("libs/cua-driver/rust/crates/cua-driver/src/main.rs")
+        telemetry = self.read(
+            "libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs"
+        )
+
+        self.assertNotIn("telemetry::ensure_first_run_registration();", main)
+        self.assertGreaterEqual(
+            main.count("telemetry::run_lifecycle_worker_if_requested()"), 2
+        )
+        self.assertGreaterEqual(
+            main.count("telemetry::spawn_first_run_registration_worker()"), 3
+        )
+        self.assertIn("CUA_DRIVER_LIFECYCLE_TELEMETRY_WORKER", telemetry)
+        self.assertIn(".stdin(Stdio::null())", telemetry)
+        self.assertIn(".stdout(Stdio::null())", telemetry)
+        self.assertIn(".stderr(Stdio::null())", telemetry)
 
 
 if __name__ == "__main__":

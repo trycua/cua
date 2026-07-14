@@ -31,7 +31,7 @@ while [ "$#" -gt 0 ]; do
       echo "Usage: $0 [OPTIONS]"
       echo ""
       echo "Options:"
-      echo "  --purge     Also remove all Lume data (VMs, cache, config)"
+      echo "  --purge     Also remove all Lume data, telemetry identity, and config"
       echo "  --force     Skip confirmation prompts"
       echo "  --help      Display this help message"
       echo ""
@@ -64,7 +64,7 @@ if [ "$FORCE" = false ]; then
   echo "This will uninstall Lume from your system."
   if [ "$PURGE_DATA" = true ]; then
     echo "${YELLOW}WARNING: --purge flag detected. This will also delete:${NORMAL}"
-    echo "  - All VMs in ~/.lume/"
+    echo "  - All VMs and the pseudonymous telemetry identity in ~/.lume/"
     echo "  - Configuration in ~/.config/lume/"
     echo "  - Cached images"
   fi
@@ -187,7 +187,7 @@ if [ "$PURGE_DATA" = true ]; then
     fi
 
     rm -rf "$HOME/.lume"
-    echo "  ${GREEN}Removed ~/.lume/ (VMs and cache)${NORMAL}"
+    echo "  ${GREEN}Removed ~/.lume/ (VMs, cache, and telemetry identity)${NORMAL}"
   else
     echo "  ~/.lume/ not found (skipped)"
   fi
@@ -205,7 +205,7 @@ echo ""
 echo "${GREEN}${BOLD}Lume has been successfully uninstalled!${NORMAL}"
 if [ "$PURGE_DATA" = false ]; then
   echo ""
-  echo "Note: Your VMs and configuration were preserved."
+  echo "Note: Your VMs, telemetry identity, and configuration preference were preserved."
   echo "To also remove all data, run with ${BOLD}--purge${NORMAL}:"
   echo "  /bin/bash -c \"\$(curl -fsSL https://cua.ai/lume/uninstall.sh)\" -- --purge"
 fi

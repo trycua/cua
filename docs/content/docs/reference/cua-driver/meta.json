@@ -2,6 +2,7 @@
   "title": "Cua Driver",
   "pages": [
     "cli-reference",
+    "telemetry",
     "macos-permissions",
     "embedding",
     "mcp-tools",

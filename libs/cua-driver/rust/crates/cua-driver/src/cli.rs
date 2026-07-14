@@ -93,13 +93,8 @@ pub enum Command {
         value: Option<String>,
         socket: Option<String>,
     },
-    /// Hidden subcommand used by `scripts/install.sh` to emit the
-    /// one-shot `cua_driver_install` PostHog event. Bypasses the
-    /// opt-out flag (the only call site that does so) so we get a
-    /// usable adoption signal even from users who opt out immediately
-    /// after install. Subsequent runs see the `.installation_recorded`
-    /// marker file and become no-ops.
-    TelemetryInstallEvent,
+    /// Content-free telemetry preference, inspection, and installer hooks.
+    Telemetry(TelemetryCommand),
     /// `cua-driver autostart {enable|disable|status|kick}` —
     /// platform-native auto-start so `cua-driver serve` comes up on
     /// every logon. Windows: Scheduled Task with LogonType=Interactive
@@ -134,6 +129,15 @@ pub enum Command {
     Skills { subcommand: String, flags: Vec<String> },
 }
 
+pub enum TelemetryCommand {
+    InstallEvent,
+    Enable,
+    Disable,
+    Status { json: bool },
+    ResetId,
+    Inspect { event: String },
+}
+
 /// Flags whose next token is a value (not a subcommand).
 /// We skip both the flag and its value when scanning for the subcommand.
 const VALUE_FLAGS: &[&str] = &[
@@ -146,6 +150,50 @@ const VALUE_FLAGS: &[&str] = &[
     // need to be listed here).
     "--experimental-pip-geometry",
 ];
+
+/// Classify the requested finite command without parsing its arguments. The
+/// parent process uses this before `parse_command` so invalid JSON and other
+/// parser exits are still observed as completed failures.
+pub fn finite_command_name_from_argv() -> Option<&'static str> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| matches!(arg.as_str(), "--help" | "-h" | "--version" | "-V")) {
+        return None;
+    }
+    let mut positionals = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        if VALUE_FLAGS.contains(&arg) {
+            index += 2;
+        } else if arg.starts_with('-') {
+            index += 1;
+        } else {
+            positionals.push(arg);
+            index += 1;
+        }
+    }
+    match positionals.first().copied() {
+        None | Some("mcp" | "serve" | "telemetry") => None,
+        Some("list-tools") => Some("list_tools"),
+        Some("describe") => Some("describe"),
+        Some("mcp-config") => Some("mcp_config"),
+        Some("manifest") => Some("manifest"),
+        Some("call") => Some("call"),
+        Some("stop") => Some("stop"),
+        Some("status") => Some("status"),
+        Some("recording") => Some("recording"),
+        Some("dump-docs") => Some("dump_docs"),
+        Some("update") => Some("update"),
+        Some("check-update") => Some("check_update"),
+        Some("doctor") => Some("doctor"),
+        Some("diagnose") => Some("diagnose"),
+        Some("permissions") => Some("permissions"),
+        Some("autostart") => Some("autostart"),
+        Some("skills") => Some("skills"),
+        Some("config") => Some("config"),
+        Some(_) => Some("call"),
+    }
+}
 
 /// Parse the first non-flag positional argument from argv to determine which
 /// subcommand to run.  Cursor-overlay flags are consumed by `CursorConfig`
@@ -162,7 +210,7 @@ pub fn parse_command() -> Command {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("cua-driver {} — cross-platform computer-use automation driver", env!("CARGO_PKG_VERSION"));
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -414,12 +462,24 @@ pub fn parse_command() -> Command {
             Command::Call { tool, json_args, screenshot_out_file, socket: socket.clone() }
         }
         Some("telemetry") => {
-            // Hidden — used by install.sh. Only supports `install-event`
-            // today; left extensible (e.g. future `telemetry status`).
             match pos.next() {
-                Some("install-event") => Command::TelemetryInstallEvent,
+                Some("install-event") => Command::Telemetry(TelemetryCommand::InstallEvent),
+                Some("enable") => Command::Telemetry(TelemetryCommand::Enable),
+                Some("disable") => Command::Telemetry(TelemetryCommand::Disable),
+                Some("status") => Command::Telemetry(TelemetryCommand::Status {
+                    json: args.iter().any(|arg| arg == "--json"),
+                }),
+                Some("reset-id") => Command::Telemetry(TelemetryCommand::ResetId),
+                Some("inspect") => {
+                    let event = pos.next().unwrap_or("").to_owned();
+                    if event.is_empty() {
+                        eprintln!("Usage: cua-driver telemetry inspect <event> --json");
+                        process::exit(64);
+                    }
+                    Command::Telemetry(TelemetryCommand::Inspect { event })
+                }
                 _ => {
-                    eprintln!("Usage: cua-driver telemetry install-event");
+                    eprintln!("Usage: cua-driver telemetry {{enable|disable|status [--json]|reset-id|inspect <event> --json}}");
                     process::exit(64);
                 }
             }
@@ -954,6 +1014,13 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "value", "type": "positional-string", "description": "Config value (for set)." },
                   { "name": "--socket", "type": "string", "description": "Override the daemon socket path." }
               ] },
+            { "name": "telemetry",
+              "description": "Inspect or change content-free telemetry and its pseudonymous installation identity.",
+              "args": [
+                  { "name": "subcommand", "type": "positional-string", "description": "enable | disable | status | reset-id | inspect" },
+                  { "name": "event", "type": "positional-string", "description": "Fixed event name for inspect." },
+                  { "name": "--json", "type": "flag", "description": "Emit machine-readable status or inspection output." }
+              ] },
             { "name": "autostart",
               "description": "Platform-native auto-start so `cua-driver serve` comes up on every logon.",
               "args": [ { "name": "subcommand", "type": "positional-string", "description": "enable | disable | status | kick" } ] },
@@ -1340,7 +1407,8 @@ pub fn run_call(
                     if let Some(err) = resp.error {
                         eprintln!("{err}");
                     }
-                    process::exit(resp.exit_code.unwrap_or(1));
+                    let exit_code = resp.exit_code.unwrap_or(1);
+                    process::exit(exit_code);
                 }
             }
             Err(e) => {
@@ -2201,6 +2269,21 @@ fn cli_docs_json() -> serde_json::Value {
                 ]
             },
             {
+                "name": "telemetry",
+                "abstract": "Inspect or change content-free product telemetry.",
+                "discussion": "Telemetry is default-on. Disable retains the pseudonymous installation ID; reset-id erases the ID and event markers while preserving the preference.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": no_flags,
+                "subcommands": [
+                    {"name":"enable","abstract":"Persistently enable telemetry.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"disable","abstract":"Persistently disable every telemetry request.","discussion":"Retains the local installation ID.","arguments":[],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"status","abstract":"Show the effective setting and redacted identity state.","discussion":"","arguments":[],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit JSON.","default_value":false}],"subcommands":[]},
+                    {"name":"reset-id","abstract":"Erase the installation ID and event markers.","discussion":"The persisted enabled/disabled preference is retained.","arguments":[],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"inspect","abstract":"Build a fixed event payload without sending it.","discussion":"The distinct ID is replaced with a redacted placeholder.","arguments":[{"name":"event","help":"Fixed telemetry event name.","type":"String","is_optional":false}],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit JSON.","default_value":true}],"subcommands":[]}
+                ]
+            },
+            {
                 "name": "check-update",
                 "abstract": "Check whether a newer cua-driver release is available.",
                 "discussion": "Read-only. Uses the same update-state payload as the check_for_update MCP tool.",
@@ -2860,62 +2943,6 @@ mod stdin_bom_tests {
     }
 }
 
-/// Map a parsed [`Command`] to its canonical telemetry event name.
-///
-/// Mirrors Swift's `CuaDriverCommand.telemetryEntryEvent(for:)`. Per-tool
-/// `call <tool>` invocations report as `cua_driver_api_<tool>` so per-tool
-/// usage shows up in aggregate without our ever recording the args.
-///
-/// Returns `None` for [`Command::TelemetryInstallEvent`] — that path emits
-/// the install event directly via [`crate::telemetry::capture_install`]
-/// instead of a per-entry event.
-pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
-    use crate::telemetry::event;
-    let name = match cmd {
-        Command::Mcp { .. } => event::MCP.to_owned(),
-        Command::Serve { .. } => event::SERVE.to_owned(),
-        Command::Stop { .. } => event::STOP.to_owned(),
-        Command::Status { .. } => event::STATUS.to_owned(),
-        Command::ListTools => event::LIST_TOOLS.to_owned(),
-        Command::Describe(_) => event::DESCRIBE.to_owned(),
-        // `call <tool>` → per-tool event (no args, just the tool name).
-        // The tool name flows into the PostHog event name, so we sanitize
-        // it aggressively (see `sanitize_tool_name`) before concatenation —
-        // otherwise weird / path-like / non-ASCII tool names would pollute
-        // dashboards and could even leak user-controlled strings into
-        // telemetry event names.
-        Command::Call { tool, .. } => {
-            if tool.is_empty() {
-                event::CALL.to_owned()
-            } else {
-                format!("{}{}", event::API_PREFIX, sanitize_tool_name(tool))
-            }
-        }
-        Command::McpConfig { .. } => "cua_driver_mcp_config".to_owned(),
-        Command::Manifest { .. } => "cua_driver_manifest".to_owned(),
-        Command::Recording { .. } => event::RECORDING.to_owned(),
-        Command::Config { .. } => event::CONFIG.to_owned(),
-        Command::DumpDocs { .. } => "cua_driver_dump_docs".to_owned(),
-        Command::Update { .. } => "cua_driver_update".to_owned(),
-        Command::CheckUpdate { .. } => "cua_driver_check_update".to_owned(),
-        Command::Doctor { .. } => "cua_driver_doctor".to_owned(),
-        Command::Permissions { .. } => "cua_driver_permissions".to_owned(),
-        Command::Diagnose => "cua_driver_diagnose".to_owned(),
-        // Per-subcommand event so dashboards can split enable / disable /
-        // status / kick separately — they have very different meanings
-        // for adoption. `sanitize_tool_name` already does what we want
-        // (lowercase ASCII / underscore-only / max 64 chars / fallback).
-        Command::Autostart { subcommand } => {
-            format!("cua_driver_autostart_{}", sanitize_tool_name(subcommand))
-        }
-        Command::Skills { subcommand, .. } => {
-            format!("cua_driver_skills_{}", sanitize_tool_name(subcommand))
-        }
-        Command::TelemetryInstallEvent => return None,
-    };
-    Some(name)
-}
-
 /// Normalise a user-provided tool name into a safe PostHog event suffix.
 ///
 /// Tool names are concatenated onto `cua_driver_api_` to build per-tool
@@ -2928,6 +2955,7 @@ pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
 /// 4. Fall back to `"unknown"` when the result is empty (e.g. all non-ASCII
 ///    input), so we still record *that* a call happened without inventing
 ///    a per-payload event name.
+#[cfg(test)]
 fn sanitize_tool_name(name: &str) -> String {
     const MAX_LEN: usize = 64;
     const FALLBACK: &str = "unknown";

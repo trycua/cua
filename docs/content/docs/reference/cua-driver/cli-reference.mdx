@@ -281,6 +281,56 @@ Print a pasteable install-layout and permission-attribution report.
 
 ## Other commands
 
+### `cua-driver telemetry`
+
+Inspect or change content-free product telemetry.
+
+Telemetry is default-on. Disable retains the pseudonymous installation ID; reset-id erases the ID and event markers while preserving the preference.
+
+#### `cua-driver telemetry enable`
+
+Persistently enable telemetry.
+
+#### `cua-driver telemetry disable`
+
+Persistently disable every telemetry request.
+
+Retains the local installation ID.
+
+#### `cua-driver telemetry status`
+
+Show the effective setting and redacted identity state.
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--json` | Emit JSON. |
+
+#### `cua-driver telemetry reset-id`
+
+Erase the installation ID and event markers.
+
+The persisted enabled/disabled preference is retained.
+
+#### `cua-driver telemetry inspect`
+
+Build a fixed event payload without sending it.
+
+The distinct ID is replaced with a redacted placeholder.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<event>` | String | Yes | Fixed telemetry event name. |
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--json` | Emit JSON. |
+
 ### `cua-driver autostart`
 
 Manage platform-native daemon autostart.

@@ -8,6 +8,10 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Cua Driver supports macOS, Windows, and Linux. Use the same **one-line installer** on each platform; the script selects the right install path for the host and *does not require administrator access*.
 
+<Callout type="info">
+  Cua Driver sends content-free product telemetry by default. The installer shows this notice before the first event. Run `cua-driver telemetry disable` at any time to stop telemetry; the preference persists across upgrades. See [Telemetry and privacy](/reference/cua-driver/telemetry) for the exact event schema and identity controls.
+</Callout>
+
 <Tabs items={['macOS', 'Windows', 'Linux']}>
   <Tab value="macOS">
 

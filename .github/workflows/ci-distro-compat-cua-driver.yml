@@ -96,8 +96,27 @@ jobs:
             echo "Binary URL: $BINARY_URL"
           fi
 
+      # Download the public release asset exactly once for the whole workflow.
+      # Matrix jobs consume the Actions artifact below instead of incrementing
+      # the GitHub release asset counter once per distro.
+      - name: Download released binary once
+        if: steps.pick.outputs.version != 'none'
+        env:
+          BINARY_URL: ${{ steps.pick.outputs.binary_url }}
+        run: curl -fsSL "$BINARY_URL" -o cua-driver-release.tar.gz
+
+      - name: Cache released binary for matrix
+        if: steps.pick.outputs.version != 'none'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-release-${{ steps.pick.outputs.version }}
+          path: cua-driver-release.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
   # ── Per-distro smoke-test matrix ─────────────────────────────────────────────
-  # Each job runs in a real distro container, downloads the released binary,
+  # Each job runs in a real distro container, restores the one workflow-cached
+  # released binary,
   # and asserts that:
   #   1. The binary executes at all (catches glibc ABI floor regressions).
   #   2. `--version` prints a version string.
@@ -118,6 +137,12 @@ jobs:
     # Don't block the PR if no release binary exists yet.
     continue-on-error: true
     runs-on: ubuntu-latest
+    env:
+      # The released binary's smoke commands must never create client telemetry
+      # or installation markers from a CI runner. Set both names during the
+      # compatibility window; Rust reads the RS-prefixed variable.
+      CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"
+      CUA_TELEMETRY_ENABLED: "false"
     container:
       image: ${{ matrix.image }}
     strategy:
@@ -174,14 +199,17 @@ jobs:
         if: needs.resolve-version.outputs.version != 'none'
         run: ${{ matrix.pkg_install }}
 
-      - name: Download released binary
+      - name: Restore workflow-cached released binary
         if: needs.resolve-version.outputs.version != 'none'
-        env:
-          BINARY_URL: ${{ needs.resolve-version.outputs.binary_url }}
+        uses: actions/download-artifact@v4
+        with:
+          name: cua-driver-release-${{ needs.resolve-version.outputs.version }}
+          path: release-artifact
+
+      - name: Extract released binary
+        if: needs.resolve-version.outputs.version != 'none'
         run: |
-          echo "Downloading: $BINARY_URL"
-          curl -fsSL "$BINARY_URL" -o cua-driver.tar.gz
-          tar -xzf cua-driver.tar.gz
+          tar -xzf release-artifact/cua-driver-release.tar.gz
           chmod +x cua-driver
           ls -lh cua-driver
 

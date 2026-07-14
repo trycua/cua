@@ -1,5 +1,6 @@
 """Tests for the cua-driver Python wrapper."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -69,6 +70,26 @@ def test_subprocess_args(mock_get_binary, mock_run):
     assert call_args[1]["stdin"] == sys.stdin
     assert call_args[1]["stdout"] == sys.stdout
     assert call_args[1]["stderr"] == sys.stderr
+    assert call_args[1]["env"]["CUA_DRIVER_INSTALL_CHANNEL"] == "python_package"
+
+
+@patch("cua_driver.wrapper.subprocess.run")
+@patch("cua_driver.wrapper.get_binary_path")
+def test_subprocess_preserves_explicit_install_channel(
+    mock_get_binary, mock_run, monkeypatch
+):
+    """An update/install caller's bounded channel takes precedence."""
+    from cua_driver.wrapper import run_cua_driver
+
+    mock_get_binary.return_value = Path("/fake/path/cua-driver")
+    mock_run.return_value = Mock(returncode=0)
+    monkeypatch.setenv("CUA_DRIVER_INSTALL_CHANNEL", "update_apply")
+
+    run_cua_driver(["--version"])
+
+    child_env = mock_run.call_args.kwargs["env"]
+    assert child_env["CUA_DRIVER_INSTALL_CHANNEL"] == "update_apply"
+    assert os.environ["CUA_DRIVER_INSTALL_CHANNEL"] == "update_apply"
 
 
 @patch("cua_driver.wrapper.subprocess.run")

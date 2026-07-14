@@ -212,25 +212,14 @@ fn probe_home_dir() -> Probe {
     )
 }
 
-/// Probe: telemetry state — env-var opt-out + install-id file presence.
-/// Reports without reading the UUID itself (privacy-preserving — only
-/// presence, not value).
+/// Probe the same effective persisted/environment state as `telemetry status`.
 fn probe_telemetry() -> Probe {
-    let env_disabled = std::env::var("CUA_DRIVER_RS_TELEMETRY_ENABLED")
-        .ok()
-        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
-        .unwrap_or(false);
-    let install_id_present = home_dir()
-        .map(|h| h.join(".cua-driver").join(".telemetry_id").exists())
-        .unwrap_or(false);
-    if env_disabled {
-        Probe::ok(
-            "telemetry",
-            "disabled via CUA_DRIVER_RS_TELEMETRY_ENABLED",
-        )
+    let status = crate::telemetry::status();
+    if status.enabled {
+        let identity = if status.installation_id_present { "install-id present" } else { "install-id not yet generated" };
+        Probe::ok("telemetry", format!("enabled via {} ({identity})", status.source))
     } else {
-        let id_state = if install_id_present { "install-id present" } else { "install-id not yet generated" };
-        Probe::ok("telemetry", format!("enabled ({id_state})"))
+        Probe::ok("telemetry", format!("disabled via {} (installation ID retained)", status.source))
     }
 }
 

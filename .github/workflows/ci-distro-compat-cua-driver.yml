@@ -103,7 +103,22 @@ jobs:
         if: steps.pick.outputs.version != 'none'
         env:
           BINARY_URL: ${{ steps.pick.outputs.binary_url }}
-        run: curl -fsSL "$BINARY_URL" -o cua-driver-release.tar.gz
+        run: |
+          # The tag and desktop CD workflows start at the same time. Building,
+          # notarizing, and publishing every platform can take several minutes,
+          # so a tag-triggered compatibility run must wait for the release asset
+          # instead of treating the initial 404 as a broken release.
+          for attempt in $(seq 1 90); do
+            if curl -fsSL "$BINARY_URL" -o cua-driver-release.tar.gz; then
+              exit 0
+            fi
+            if [[ "$attempt" -eq 90 ]]; then
+              echo "ERROR: release asset was still unavailable after 15 minutes"
+              exit 1
+            fi
+            echo "Release asset not available yet (attempt ${attempt}/90); retrying in 10s..."
+            sleep 10
+          done
 
       - name: Cache released binary for matrix
         if: steps.pick.outputs.version != 'none'
@@ -150,12 +165,14 @@ jobs:
       matrix:
         include:
           # Debian family
-          # X11 runtime libs (libx11-6 libxi6 libxtst6 libxext6) and the
-          # Wayland client lib (libwayland-client0) are required because
+          # X11 runtime libs (libx11-6 libxi6 libxtst6 libxext6), the
+          # Wayland client lib (libwayland-client0), and libxkbcommon0 are
+          # required because
           # cua-driver is dynamically linked against the X11 input stack and
-          # the native Wayland backend (added in #1910). They are the runtime
+          # the native Wayland backend. They are the runtime
           # counterparts of the build-time deps
-          # (libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev) used
+          # (libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev
+          # libxkbcommon-dev) used
           # in the CD workflow. Without them the dynamic linker fails before
           # main() and --version exits 127, which the smoke-test correctly
           # treats as an ABI error. Installing only curl+ca-certificates is not
@@ -163,15 +180,15 @@ jobs:
           - distro: "debian:12"
             image: "debian:12"
             glibc_version: "2.36"
-            pkg_install: "apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0"
+            pkg_install: "apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0"
           - distro: "ubuntu:22.04"
             image: "ubuntu:22.04"
             glibc_version: "2.35"
-            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0"
+            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0"
           - distro: "ubuntu:24.04"
             image: "ubuntu:24.04"
             glibc_version: "2.39"
-            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0"
+            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0"
           # RPM family
           # Rocky Linux 9 ships curl-minimal in the base image which conflicts
           # with the full curl package. Use --allowerasing to let dnf replace
@@ -181,11 +198,11 @@ jobs:
           - distro: "rockylinux:9"
             image: "rockylinux:9"
             glibc_version: "2.34"
-            pkg_install: "dnf install -y --setopt=install_weak_deps=False --allowerasing curl ca-certificates libX11 libXi libXtst libXext libwayland-client"
+            pkg_install: "dnf install -y --setopt=install_weak_deps=False --allowerasing curl ca-certificates libX11 libXi libXtst libXext libwayland-client libxkbcommon"
           - distro: "fedora:41"
             image: "fedora:41"
             glibc_version: "2.40"
-            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates libX11 libXi libXtst libXext libwayland-client"
+            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates libX11 libXi libXtst libXext libwayland-client libxkbcommon"
 
     steps:
       - name: Skip if no release binary
@@ -195,7 +212,7 @@ jobs:
           echo "This is expected on branches before the first release tag."
           exit 0
 
-      - name: Install runtime deps (curl, ca-certificates, X11 libs)
+      - name: Install runtime deps (curl, certificates, X11, Wayland, xkbcommon)
         if: needs.resolve-version.outputs.version != 'none'
         run: ${{ matrix.pkg_install }}
 

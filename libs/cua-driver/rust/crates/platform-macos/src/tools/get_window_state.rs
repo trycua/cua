@@ -188,9 +188,26 @@ impl Tool for GetWindowStateTool {
             }
         };
 
-        // Update element cache.
+        let elem_count_for_snapshot = tree_result
+            .as_ref()
+            .map(|r| r.nodes.iter().filter(|n| n.element_index.is_some()).count())
+            .unwrap_or(0);
+        let stable_nodes = tree_result
+            .as_ref()
+            .into_iter()
+            .flat_map(|r| r.nodes.iter())
+            .filter_map(|node| node.element_index.map(|idx| (idx, node.node_identity)));
+        let snapshot_id = cua_driver_core::element_token::global()
+            .register_snapshot_with_identities(
+                pid,
+                window_id,
+                elem_count_for_snapshot,
+                stable_nodes,
+            );
         if let Some(ref r) = tree_result {
-            self.state.element_cache.update(pid, window_id, &r.nodes);
+            self.state
+                .element_cache
+                .update_with_generation(pid, window_id, snapshot_id, &r.nodes);
         }
 
         // Capture the screenshot and deliver it alongside the tree — the
@@ -293,16 +310,6 @@ impl Tool for GetWindowStateTool {
         // generated even when the walk returned no elements so consumers
         // calling `get_window_state` and then immediately re-snapshotting
         // get a clean LRU step every time.
-        let elem_count_for_snapshot = tree_result
-            .as_ref()
-            .map(|r| r.nodes.iter().filter(|n| n.element_index.is_some()).count())
-            .unwrap_or(0);
-        let snapshot_id = cua_driver_core::element_token::global().register_snapshot(
-            pid,
-            window_id,
-            elem_count_for_snapshot,
-        );
-
         // Build the structured `elements` array — one entry per actionable
         // node, matching the order (and indices) of the markdown rendering.
         // This is the preferred consumption path; `tree_markdown` is kept
@@ -327,6 +334,7 @@ impl Tool for GetWindowStateTool {
             "snapshot_id": cua_driver_core::element_token::token_for(snapshot_id, 0)
                 .trim_end_matches(":0")
                 .to_string(),
+            "generation": snapshot_id,
             "_note": "Prefer `elements` — `tree_markdown` will continue to work \
                 but new fields will only be added to the structured side. \
                 Issue #22865: use `max_elements` / `max_depth` to bound the \
@@ -491,6 +499,7 @@ mod tests {
             help: None,
             actions: vec![],
             element_ptr: 0,
+            node_identity: idx.unwrap_or(usize::MAX) as u64,
             depth,
             parent_element_index: parent,
             frame,

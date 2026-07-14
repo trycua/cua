@@ -79,6 +79,9 @@ pub struct AXNode {
     pub actions: Vec<String>,
     /// The raw AXUIElementRef pointer value, for caching.
     pub element_ptr: usize,
+    /// Snapshot-local identity of the exact AXUIElementRef represented by this
+    /// node. Tokens bind this value in addition to pid/window/generation/index.
+    pub node_identity: u64,
     /// Depth in the rendered markdown tree (matches the indent level used in
     /// `tree_markdown`). Layout containers AXScrollArea/AXGroup collapse so
     /// children share the parent's depth.
@@ -395,6 +398,7 @@ unsafe fn walk_element(
             help: help.clone(),
             actions: actions.clone(),
             element_ptr,
+            node_identity: element_ptr as u64,
             depth,
             parent_element_index: parent_index,
             frame,
@@ -422,6 +426,7 @@ unsafe fn walk_element(
             help: help.clone(),
             actions: vec![],
             element_ptr,
+            node_identity: element_ptr as u64,
             depth,
             parent_element_index: parent_index,
             frame,

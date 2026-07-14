@@ -86,7 +86,7 @@ fn def() -> &'static ToolDef {
                 "pid":           { "type": "integer", "description": "Target process ID." },
                 "window_id":     { "type": "integer", "description": "Target window ID. Required for element_index. Optional when element_token is supplied (the token carries it)." },
                 "element_index": { "type": "integer", "description": "Element index from last get_window_state. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op." },
-                "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token` of the last get_window_state. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded — re-snapshot in that case." },
+                "element_token": { "type": "string",  "description": "Opaque stable AX node handle from `structuredContent.elements[].element_token` of the last get_window_state. Strictly bound to pid, window_id, generation, element_index, and AX node identity. If window_id or element_index are also supplied they must match. Unknown, cross-target, stale-generation, or identity-mismatch tokens fail closed." },
                 "x":             { "type": "number",  "description": "X in screenshot pixels, read straight off the image you were handed — no scaling math needed. With pid+window_id (capture_scope=window): window-local pixels from the get_window_state PNG (top-left origin). Windowless (no pid/window_id, capture_scope=desktop): pixels from the get_desktop_state PNG (the native full-display image). Either way, the pixel you read IS the pixel that gets clicked; the driver undoes the Retina backing scale + any downscale internally." },
                 "y":             { "type": "number",  "description": "Y in screenshot pixels (see x). Window-local from get_window_state, or full-display from get_desktop_state under capture_scope=desktop." },
                 "action":        { "type": "string",  "description": "AX action: press, show_menu, pick, confirm, cancel, open." },
@@ -259,31 +259,28 @@ impl Tool for ClickTool {
         // the calling session's cursor, not the shared "default" one.
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
 
-        // Surface 6: resolve element_token / element_index precedence
-        // BEFORE the pixel-path fallback. Token wins on disagreement; a
-        // stale token returns an explicit error instead of silently
-        // falling back to the integer (Surface 6 hard constraint).
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            window_id_arg,
-            "click",
-        ) {
-            Ok(r) => r,
-            Err(e) => return e,
-        };
-        let (element_index, window_id, _via_token) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg, false),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid,
-                element_index: idx,
-                via_token,
-            } => (Some(idx), wid, via_token),
-        };
+        let (element_index, window_id, token_guard, token_generation) =
+            if let Some(token) = element_token_arg.as_deref() {
+                match self.state.element_cache.resolve_token(
+                    pid,
+                    window_id_arg,
+                    element_index_arg,
+                    token,
+                ) {
+                    Ok(validated) => (
+                        Some(validated.element_index),
+                        Some(validated.window_id),
+                        Some(validated.element),
+                        Some(validated.generation),
+                    ),
+                    Err(error) => return error.into_tool_result(),
+                }
+            } else {
+                (element_index_arg, window_id_arg, None, None)
+            };
         let x = args
             .opt_f64("x")
             .or_else(|| args.opt_i64("x").map(|i| i as f64));
@@ -323,14 +320,17 @@ impl Tool for ClickTool {
             // concurrent get_window_state on the same (pid, window_id) while
             // this click is mid-flight (use-after-free → daemon crash). The
             // guard lives to the end of this method, past the AX action below.
-            let element_guard = match self.state.element_cache.get_element_retained(pid, wid, idx) {
-                Some(e) => e,
-                None => {
-                    return ToolResult::error(format!(
-                        "Element index {idx} not found in cache for pid={pid} window_id={wid}. \
-                     Call get_window_state first."
-                    ))
-                }
+            let element_guard = match token_guard {
+                Some(element) => element,
+                None => match self.state.element_cache.get_element_retained(pid, wid, idx) {
+                    Some(e) => e,
+                    None => {
+                        return ToolResult::error(format!(
+                            "Element index {idx} not found in cache for pid={pid} window_id={wid}. \
+                             Call get_window_state first."
+                        ))
+                    }
+                },
             };
             let element_ptr = element_guard.as_ptr();
 
@@ -494,6 +494,11 @@ impl Tool for ClickTool {
                         "verified": false,
                         "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
                     });
+                    if let Some(generation) = token_generation {
+                        structured["element_token"] =
+                            serde_json::json!(element_token_arg.as_deref());
+                        structured["generation"] = serde_json::json!(generation);
+                    }
                     if suspected_noop {
                         structured["escalation"] = serde_json::json!({
                             "recommended": "px",

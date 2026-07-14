@@ -146,6 +146,18 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn(".stdout(Stdio::null())", telemetry)
         self.assertIn(".stderr(Stdio::null())", telemetry)
 
+    def test_released_linux_smoke_waits_for_assets_and_installs_xkbcommon(self) -> None:
+        workflow = self.read(
+            ".github/workflows/ci-distro-compat-cua-driver.yml"
+        )
+
+        self.assertIn("for attempt in $(seq 1 90)", workflow)
+        self.assertIn(
+            "release asset was still unavailable after 15 minutes", workflow
+        )
+        self.assertEqual(workflow.count("libxkbcommon0"), 4)
+        self.assertEqual(workflow.count("libxkbcommon\""), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -279,20 +279,24 @@ echo ""
 # We create a self-signed code-signing cert once (idempotent, in the login
 # keychain) and reuse it. Local dev only; releases are CI-signed.
 #
-# Echoes the `codesign --sign` argument: the cert CN when available, or "-"
-# (ad-hoc) when it can't be created — no codesign/openssl, CI, locked keychain.
+# Echoes the `codesign --sign` argument: the valid identity's SHA-1 when
+# available, or "-" when it can't be created — no codesign/openssl, CI,
+# locked keychain. Use the identity hash rather than the certificate name:
+# stale certificate-only duplicates can share the same name and make codesign
+# reject an otherwise valid identity as ambiguous.
 CUA_LOCAL_SIGN_CN="CuaDriver Local Signing (cua-driver-rs)"
 ensure_local_signing_identity() {
     { [ "$OS" = "Darwin" ] && command -v codesign >/dev/null 2>&1; } || { printf -- '-'; return; }
-    # Reuse if already present (find-certificate finds it regardless of trust;
-    # `find-identity -v` would miss an untrusted self-signed cert).
-    if security find-certificate -c "$CUA_LOCAL_SIGN_CN" >/dev/null 2>&1; then
-        printf '%s' "$CUA_LOCAL_SIGN_CN"; return
-    fi
-    command -v openssl >/dev/null 2>&1 || { printf -- '-'; return; }
     local kc="$HOME/Library/Keychains/login.keychain-db"
     [ -f "$kc" ] || kc="$HOME/Library/Keychains/login.keychain"
     [ -f "$kc" ] || { printf -- '-'; return; }
+    local identity
+    identity="$(security find-identity -v -p codesigning "$kc" 2>/dev/null \
+        | awk -v cn="$CUA_LOCAL_SIGN_CN" 'index($0, "\"" cn "\"") { print $2; exit }')"
+    if [ -n "$identity" ]; then
+        printf '%s' "$identity"; return
+    fi
+    command -v openssl >/dev/null 2>&1 || { printf -- '-'; return; }
     local tmp; tmp="$(mktemp -d)" || { printf -- '-'; return; }
     printf '[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=%s\n[ext]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,codeSigning\n' \
         "$CUA_LOCAL_SIGN_CN" > "$tmp/req.cnf"
@@ -309,8 +313,13 @@ ensure_local_signing_identity() {
             || openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
                 -out "$tmp/id.p12" -passout pass:"$pw" -name "$CUA_LOCAL_SIGN_CN" >/dev/null 2>&1; } \
        && security import "$tmp/id.p12" -k "$kc" -P "$pw" -A -T /usr/bin/codesign >/dev/null 2>&1; then
+        identity="$(security find-identity -v -p codesigning "$kc" 2>/dev/null \
+            | awk -v cn="$CUA_LOCAL_SIGN_CN" 'index($0, "\"" cn "\"") { print $2; exit }')"
         rm -rf "$tmp"
-        printf '%s' "$CUA_LOCAL_SIGN_CN"; return
+        if [ -n "$identity" ]; then
+            printf '%s' "$identity"; return
+        fi
+        printf -- '-'; return
     fi
     rm -rf "$tmp"
     printf -- '-'

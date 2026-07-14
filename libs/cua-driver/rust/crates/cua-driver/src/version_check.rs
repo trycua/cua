@@ -479,6 +479,19 @@ fn cache_path() -> Option<PathBuf> {
 
 // ── HTTP fetch (shared with the `update` subcommand) ─────────────────────
 
+fn github_token() -> Option<String> {
+    std::env::var("GITHUB_TOKEN")
+        .ok()
+        .map(|token| token.trim().to_owned())
+        .filter(|token| !token.is_empty())
+        .or_else(|| {
+            std::env::var("GH_TOKEN")
+                .ok()
+                .map(|token| token.trim().to_owned())
+                .filter(|token| !token.is_empty())
+        })
+}
+
 /// Fetch the highest `cua-driver-rs-v*` release tag from GitHub.
 ///
 /// Uses `ureq` (already a dep via telemetry) so we don't shell out to
@@ -501,10 +514,16 @@ pub fn fetch_latest_version() -> Result<String, String> {
         .build()
         .new_agent();
 
-    let response = agent
+    let mut request = agent
         .get(RELEASES_URL)
         .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", concat!("cua-driver-rs/", env!("CARGO_PKG_VERSION")))
+        .header("User-Agent", concat!("cua-driver-rs/", env!("CARGO_PKG_VERSION")));
+    if let Some(token) = github_token() {
+        // Unauthenticated is 60 req/hr/IP; authenticated is 5000 req/hr.
+        request = request.header("Authorization", format!("Bearer {token}"));
+    }
+
+    let response = request
         .call()
         .map_err(|e| format!("HTTP error: {e}"))?;
 
@@ -609,6 +628,37 @@ mod tests {
             None => unsafe { std::env::remove_var("USERPROFILE"); },
         }
         result
+    }
+
+    // ── GitHub token ────────────────────────────────────────────────────
+
+    #[test]
+    fn github_token_prefers_github_token_and_trims_empty_values() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let saved_github = std::env::var_os("GITHUB_TOKEN");
+        let saved_gh = std::env::var_os("GH_TOKEN");
+
+        unsafe { std::env::set_var("GITHUB_TOKEN", "  github-token  "); }
+        unsafe { std::env::set_var("GH_TOKEN", "  gh-token  "); }
+        assert_eq!(github_token().as_deref(), Some("github-token"));
+
+        unsafe { std::env::set_var("GITHUB_TOKEN", "  \t  "); }
+        assert_eq!(github_token().as_deref(), Some("gh-token"));
+
+        unsafe { std::env::remove_var("GITHUB_TOKEN"); }
+        assert_eq!(github_token().as_deref(), Some("gh-token"));
+
+        unsafe { std::env::set_var("GH_TOKEN", "  "); }
+        assert_eq!(github_token(), None);
+
+        match saved_github {
+            Some(s) => unsafe { std::env::set_var("GITHUB_TOKEN", s); },
+            None => unsafe { std::env::remove_var("GITHUB_TOKEN"); },
+        }
+        match saved_gh {
+            Some(s) => unsafe { std::env::set_var("GH_TOKEN", s); },
+            None => unsafe { std::env::remove_var("GH_TOKEN"); },
+        }
     }
 
     // ── is_newer ────────────────────────────────────────────────────────

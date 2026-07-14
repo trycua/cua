@@ -32,6 +32,8 @@ irm https://cua.ai/driver/install.ps1 | iex
 
 The installer downloads the release under `%USERPROFILE%\.cua-driver\packages\releases\` and exposes `cua-driver.exe` from `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin`. It runs without administrator privileges, detects whether the host is x64 or arm64, and appends the install directory to your User-scope `Path` so new PowerShell windows can resolve `cua-driver.exe`. It also attempts to register the `cua-driver-serve` autostart task; that step needs an interactive session, so on a non-interactive or SSH install it is skipped — set it up later with [`cua-driver autostart enable`](/how-to-guides/driver/keep-running).
 
+On networks that hit GitHub's unauthenticated API rate limit, set `GITHUB_TOKEN` (or `GH_TOKEN`) before installing or checking for updates. The token is used only as a GitHub API bearer token and is never printed.
+
 To skip the PATH change, pass the no-update flag:
 
 ```powershell

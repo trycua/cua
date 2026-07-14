@@ -616,8 +616,42 @@ case "$INSTALL_CHANNEL" in
     install_script|update_apply|python_package|first_run) ;;
     *) INSTALL_CHANNEL="install_script" ;;
 esac
-mkdir -p "$HOME_DIR"
-printf '%s\n' "$INSTALL_CHANNEL" > "$HOME_DIR/.telemetry_install_channel"
+
+# Mirror the runtime's consent precedence before writing the attribution hint:
+# environment override, compatibility override, persisted preference, default-on.
+# This keeps an opted-out install free of telemetry state even when the detached
+# install-event hook returns before reading the hint.
+TELEMETRY_HINT_ENABLED=1
+TELEMETRY_HINT_FROM_ENV=0
+for telemetry_env_name in CUA_DRIVER_RS_TELEMETRY_ENABLED CUA_TELEMETRY_ENABLED; do
+    telemetry_env_value="${!telemetry_env_name:-}"
+    telemetry_env_value="$(printf '%s' "$telemetry_env_value" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    case "$telemetry_env_value" in
+        1|true|yes|on)
+            TELEMETRY_HINT_ENABLED=1
+            TELEMETRY_HINT_FROM_ENV=1
+            break
+            ;;
+        0|false|no|off)
+            TELEMETRY_HINT_ENABLED=0
+            TELEMETRY_HINT_FROM_ENV=1
+            break
+            ;;
+    esac
+done
+if [[ "$TELEMETRY_HINT_FROM_ENV" == "0" && -f "$HOME_DIR/config.json" ]]; then
+    TELEMETRY_CONFIG_VALUE="$(sed -nE 's/.*"telemetry_enabled"[[:space:]]*:[[:space:]]*(true|false).*/\1/p' "$HOME_DIR/config.json" | tail -n 1)"
+    case "$TELEMETRY_CONFIG_VALUE" in
+        true) TELEMETRY_HINT_ENABLED=1 ;;
+        false) TELEMETRY_HINT_ENABLED=0 ;;
+    esac
+fi
+if [[ "$TELEMETRY_HINT_ENABLED" == "1" ]]; then
+    mkdir -p "$HOME_DIR"
+    printf '%s\n' "$INSTALL_CHANNEL" > "$HOME_DIR/.telemetry_install_channel"
+else
+    rm -f "$HOME_DIR/.telemetry_install_channel"
+fi
 
 # macOS: install the .app to /Applications first, then symlink the
 # bin into the bundle so `~/.local/bin/cua-driver` resolves into

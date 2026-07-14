@@ -1123,9 +1123,51 @@ $installChannel = $env:CUA_DRIVER_INSTALL_CHANNEL
 if (-not $installChannel -or $installChannel -notin $allowedChannels) {
     $installChannel = "install_script"
 }
-New-Item -ItemType Directory -Force -Path $HomeDir | Out-Null
-Set-Content -LiteralPath (Join-Path $HomeDir '.telemetry_install_channel') `
-            -Value $installChannel -Encoding Ascii -NoNewline
+
+# Mirror the runtime's consent precedence before writing the attribution hint:
+# environment override, compatibility override, persisted preference, default-on.
+$telemetryHintEnabled = $true
+$telemetryHintFromEnvironment = $false
+foreach ($telemetryEnvironmentName in @('CUA_DRIVER_RS_TELEMETRY_ENABLED', 'CUA_TELEMETRY_ENABLED')) {
+    $telemetryEnvironmentValue = [Environment]::GetEnvironmentVariable($telemetryEnvironmentName)
+    if ($null -eq $telemetryEnvironmentValue) {
+        continue
+    }
+    $telemetryEnvironmentValue = $telemetryEnvironmentValue.Trim().ToLowerInvariant()
+    if ($telemetryEnvironmentValue -in @('1', 'true', 'yes', 'on')) {
+        $telemetryHintEnabled = $true
+        $telemetryHintFromEnvironment = $true
+        break
+    }
+    if ($telemetryEnvironmentValue -in @('0', 'false', 'no', 'off')) {
+        $telemetryHintEnabled = $false
+        $telemetryHintFromEnvironment = $true
+        break
+    }
+}
+if (-not $telemetryHintFromEnvironment) {
+    $telemetryConfigPath = Join-Path $HomeDir 'config.json'
+    if (Test-Path -LiteralPath $telemetryConfigPath) {
+        try {
+            $telemetryConfig = Get-Content -LiteralPath $telemetryConfigPath -Raw | ConvertFrom-Json
+            $telemetryPreference = $telemetryConfig.PSObject.Properties['telemetry_enabled']
+            if ($null -ne $telemetryPreference -and $telemetryPreference.Value -is [bool]) {
+                $telemetryHintEnabled = $telemetryPreference.Value
+            }
+        }
+        catch {
+            # Match the runtime: malformed config falls through to default-on.
+        }
+    }
+}
+$telemetryHintPath = Join-Path $HomeDir '.telemetry_install_channel'
+if ($telemetryHintEnabled) {
+    New-Item -ItemType Directory -Force -Path $HomeDir | Out-Null
+    Set-Content -LiteralPath $telemetryHintPath -Value $installChannel -Encoding Ascii -NoNewline
+}
+else {
+    Remove-Item -LiteralPath $telemetryHintPath -Force -ErrorAction SilentlyContinue
+}
 
 # Wire up the junction chain. The inner junction (current → releases\<v>)
 # is what makes the upgrade atomic; the outer junction (bin → current)

@@ -29,6 +29,18 @@ cua-driver telemetry reset-id
 
 Use `uninstall --purge` when uninstalling if you also want to remove retained Cua Driver state.
 
+## Separate update check
+
+The telemetry setting does not control Cua Driver's update check. On `mcp`, `serve`, and `doctor` startup, Cua Driver may make a content-free request to the public GitHub Releases API and cache the result locally for 20 hours. This request does not include the telemetry installation ID or command usage.
+
+Disable the update check separately when you need to prevent that GitHub request and cache write:
+
+```bash
+CUA_DRIVER_RS_UPDATE_CHECK=false cua-driver mcp
+```
+
+Set the same environment variable in your MCP server configuration to keep the update check disabled across sessions.
+
 ## Inspect events locally
 
 `inspect` builds the event without sending a network request. It replaces the installation ID with a redacted placeholder.

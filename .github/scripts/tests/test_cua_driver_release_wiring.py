@@ -137,8 +137,37 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertLess(hint, shell.index('mv -Tf "$TMP_LINK" "$CURRENT_LINK"'))
 
         powershell = self.read("libs/cua-driver/scripts/install.ps1")
-        hint = powershell.index("Set-Content -LiteralPath (Join-Path $HomeDir '.telemetry_install_channel')")
+        hint = powershell.index("Set-Content -LiteralPath $telemetryHintPath")
         self.assertLess(hint, powershell.index("Ensure-Junction $CurrentDir    $versionedDir"))
+
+    def test_release_installers_gate_channel_hint_on_effective_consent(self) -> None:
+        shell = self.read("libs/cua-driver/scripts/_install-rust.sh")
+        self.assertIn(
+            "for telemetry_env_name in CUA_DRIVER_RS_TELEMETRY_ENABLED CUA_TELEMETRY_ENABLED",
+            shell,
+        )
+        self.assertIn('[[ "$TELEMETRY_HINT_FROM_ENV" == "0"', shell)
+        self.assertIn('"telemetry_enabled"', shell)
+        self.assertIn('[[ "$TELEMETRY_HINT_ENABLED" == "1" ]]', shell)
+
+        powershell = self.read("libs/cua-driver/scripts/install.ps1")
+        self.assertIn(
+            "@('CUA_DRIVER_RS_TELEMETRY_ENABLED', 'CUA_TELEMETRY_ENABLED')",
+            powershell,
+        )
+        self.assertIn("Properties['telemetry_enabled']", powershell)
+        self.assertIn("if ($telemetryHintEnabled)", powershell)
+
+    def test_release_and_skill_installers_do_not_depend_on_github_latest(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+        self.assertIn("prerelease: true", workflow)
+        self.assertIn("make_latest: false", workflow)
+
+        windows_skill = self.read(
+            "libs/cua-driver/rust/Skills/cua-driver/WINDOWS.md"
+        )
+        self.assertIn("https://cua.ai/driver/install.ps1", windows_skill)
+        self.assertNotIn("/releases/latest/download/install.ps1", windows_skill)
 
     def test_lifecycle_telemetry_runs_outside_foreground_command(self) -> None:
         main = self.read("libs/cua-driver/rust/crates/cua-driver/src/main.rs")

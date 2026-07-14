@@ -474,7 +474,7 @@ your prior tool calls earned.
    added to the user PATH by the install script.
    If missing, point the user at:
    ```powershell
-   irm https://github.com/trycua/cua/releases/latest/download/install.ps1 | iex
+   irm https://cua.ai/driver/install.ps1 | iex
    ```
    and stop.
 2. **The daemon must run in an interactive session (Session 1+),

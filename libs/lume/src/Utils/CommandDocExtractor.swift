@@ -540,6 +540,20 @@ enum CommandDocExtractor {
                         CommandDoc(name: "disable", abstract: "Disable image caching", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
                     ]
                 ),
+                CommandDoc(
+                    name: "telemetry",
+                    abstract: "Manage pseudonymous telemetry settings",
+                    discussion: nil,
+                    arguments: [],
+                    options: [],
+                    flags: [],
+                    subcommands: [
+                        CommandDoc(name: "status", abstract: "Show current telemetry status", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
+                        CommandDoc(name: "enable", abstract: "Enable pseudonymous telemetry", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
+                        CommandDoc(name: "disable", abstract: "Disable pseudonymous telemetry", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
+                        CommandDoc(name: "reset-id", abstract: "Delete the pseudonymous installation ID and registration markers", discussion: nil, arguments: [], options: [], flags: [], subcommands: []),
+                    ]
+                ),
             ]
         )
     }

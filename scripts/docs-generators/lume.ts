@@ -217,9 +217,14 @@ async function main() {
 
   // Step 2: Get CLI documentation
   console.log('\n📖 Extracting CLI documentation...');
+  const documentationEnv = {
+    ...process.env,
+    LUME_TELEMETRY_ENABLED: 'false',
+  };
   const cliDocsJson = execSync('.build/release/lume dump-docs --type cli', {
     cwd: LUME_DIR,
     encoding: 'utf-8',
+    env: documentationEnv,
   });
   const cliDocs: CLIDocumentation = JSON.parse(cliDocsJson);
   console.log(`   Found ${cliDocs.commands.length} commands`);
@@ -229,6 +234,7 @@ async function main() {
   const apiDocsJson = execSync('.build/release/lume dump-docs --type api', {
     cwd: LUME_DIR,
     encoding: 'utf-8',
+    env: documentationEnv,
   });
   const apiDocs: HTTPAPIDocumentation = JSON.parse(apiDocsJson);
   console.log(`   Found ${apiDocs.endpoints.length} endpoints`);

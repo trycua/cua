@@ -1,0 +1,144 @@
+---
+title: Run OpenClaw in a local macOS VM
+description: Install OpenClaw in an isolated Lume VM and keep its gateway running headlessly.
+---
+
+This guide shows you how to run an OpenClaw gateway in a local macOS VM on an
+Apple Silicon Mac. The VM keeps OpenClaw separate from your daily macOS
+environment and can run headlessly after setup.
+
+## Before you start
+
+- Use an Apple Silicon Mac with at least 60GB of free disk space.
+- [Install Lume](/how-to-guides/lume/install-lume).
+- Have credentials for the model provider you will select during OpenClaw
+  onboarding.
+
+## Create the VM
+
+Create a macOS Tahoe VM with Lume's unattended setup:
+
+```bash
+lume create openclaw --ipsw latest --unattended tahoe
+```
+
+The unattended preset creates a `lume` account, enables SSH, and configures
+automatic login. Its initial username and password are both `lume`.
+
+Start the VM without opening the VNC client:
+
+```bash
+lume run --no-display openclaw
+```
+
+## Install OpenClaw in the VM
+
+Open an interactive shell in the guest:
+
+```bash
+lume ssh openclaw
+```
+
+Run the official OpenClaw installer without its automatic onboarding step,
+then start onboarding explicitly so it installs the gateway service:
+
+```bash
+curl -fsSL --proto '=https' --tlsv1.2 https://openclaw.ai/install.sh \
+  | bash -s -- --no-onboard
+openclaw onboard --install-daemon
+```
+
+Choose your model provider and channels when prompted. OpenClaw stores its
+configuration inside the VM.
+
+Verify the installation before leaving the guest shell:
+
+```bash
+openclaw --version
+openclaw doctor
+openclaw gateway status
+```
+
+Exit the guest shell when the gateway reports that it is running:
+
+```bash
+exit
+```
+
+## Access the gateway from the host
+
+OpenClaw binds its gateway to the guest loopback interface by default. Get the
+VM IP address:
+
+```bash
+lume get openclaw
+```
+
+In a separate host terminal, forward the default gateway port through SSH:
+
+```bash
+ssh -N -L 18789:127.0.0.1:18789 lume@<VM_IP>
+```
+
+Keep that command running and open `http://127.0.0.1:18789` on the host. Enter
+the gateway credentials created during onboarding when prompted.
+
+## Add macOS-only channels
+
+Run the VM with its display when you need to sign in to Messages or grant macOS
+permissions:
+
+```bash
+lume stop openclaw
+lume run openclaw
+```
+
+For iMessage, follow OpenClaw's [iMessage setup
+guide](https://docs.openclaw.ai/providers/imessage). Messages must be signed in
+inside the VM, and the process running OpenClaw needs Full Disk Access and
+Automation permission.
+
+Return the VM to headless operation after you finish the interactive setup:
+
+```bash
+lume stop openclaw
+lume run --no-display openclaw
+```
+
+## Save a reusable VM
+
+Stop and clone the configured VM before making further changes:
+
+```bash
+lume stop openclaw
+lume clone openclaw openclaw-golden
+lume run --no-display openclaw
+```
+
+The clone contains the guest disk and its OpenClaw configuration. Protect it as
+you would the original VM because it may contain provider and channel
+credentials.
+
+## Troubleshoot the setup
+
+### `lume ssh` cannot connect
+
+Run `lume ls` and confirm that `openclaw` is running and has an IP address. If
+the VM is still booting, wait and run `lume ssh openclaw` again.
+
+### The gateway does not start after boot
+
+Run `lume ssh openclaw 'openclaw gateway status'`. If the service is missing,
+open an interactive guest shell and run `openclaw gateway install`.
+
+### A macOS permission prompt never appears
+
+Restart the VM with `lume run openclaw`, open a terminal in the VM display, and
+run the command that needs permission from that logged-in session.
+
+## Related guides
+
+- [Manage local Lume VMs](/how-to-guides/lume/manage-vms)
+- [How Lume unattended setup works](/concepts/how-lume-unattended-setup-works)
+- [Lume CLI reference](/reference/lume/cli-reference)
+- [OpenClaw macOS VM guide](https://docs.openclaw.ai/install/macos-vm)

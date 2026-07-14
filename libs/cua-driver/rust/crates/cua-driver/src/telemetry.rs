@@ -152,6 +152,15 @@ pub fn reset_id() -> Result<(), String> {
     let Some(home) = telemetry_home_dir() else {
         return Ok(());
     };
+    let legacy = if std::env::var_os(ENV_TELEMETRY_HOME).is_none() {
+        home_root().map(|root| root.join(LEGACY_HOME_SUBDIRECTORY))
+    } else {
+        None
+    };
+    reset_id_in_homes(&home, legacy.as_deref())
+}
+
+fn reset_id_in_homes(home: &Path, legacy: Option<&Path>) -> Result<(), String> {
     let lifecycle_lock = open_lock_file(&home, TELEMETRY_LIFECYCLE_LOCK_FILE_NAME)?;
     lifecycle_lock
         .lock()
@@ -169,18 +178,15 @@ pub fn reset_id() -> Result<(), String> {
         std::fs::remove_dir_all(&releases)
             .map_err(|error| format!("failed to remove {}: {error}", releases.display()))?;
     }
-    if std::env::var_os(ENV_TELEMETRY_HOME).is_none() {
-        if let Some(root) = home_root() {
-            let legacy = root.join(LEGACY_HOME_SUBDIRECTORY);
-            remove_file_if_exists(&legacy.join(TELEMETRY_ID_FILE_NAME))?;
-            remove_file_if_exists(&legacy.join(INSTALLATION_RECORDED_FILE_NAME))?;
-            remove_file_if_exists(&legacy.join(TELEMETRY_RETRY_AFTER_FILE_NAME))?;
-            remove_file_if_exists(&legacy.join(TELEMETRY_INSTALL_CHANNEL_FILE_NAME))?;
-            let legacy_releases = legacy.join(RELEASE_RECORDED_DIRECTORY);
-            if legacy_releases.exists() {
-                std::fs::remove_dir_all(&legacy_releases)
-                    .map_err(|error| format!("failed to remove {}: {error}", legacy_releases.display()))?;
-            }
+    if let Some(legacy) = legacy {
+        remove_file_if_exists(&legacy.join(TELEMETRY_ID_FILE_NAME))?;
+        remove_file_if_exists(&legacy.join(INSTALLATION_RECORDED_FILE_NAME))?;
+        remove_file_if_exists(&legacy.join(TELEMETRY_RETRY_AFTER_FILE_NAME))?;
+        remove_file_if_exists(&legacy.join(TELEMETRY_INSTALL_CHANNEL_FILE_NAME))?;
+        let legacy_releases = legacy.join(RELEASE_RECORDED_DIRECTORY);
+        if legacy_releases.exists() {
+            std::fs::remove_dir_all(&legacy_releases)
+                .map_err(|error| format!("failed to remove {}: {error}", legacy_releases.display()))?;
         }
     }
     Ok(())
@@ -1537,33 +1543,17 @@ mod tests {
     fn reset_erases_legacy_identity_before_migration_can_restore_it() {
         let _guard = ENV_LOCK.lock().unwrap();
         let root = std::env::temp_dir().join(format!("cua-telemetry-reset-{}", uuid::Uuid::new_v4()));
+        let current = root.join(HOME_SUBDIRECTORY);
         let legacy = root.join(LEGACY_HOME_SUBDIRECTORY);
         std::fs::create_dir_all(&legacy).unwrap();
         let legacy_id = uuid::Uuid::new_v4().to_string();
         std::fs::write(legacy.join(TELEMETRY_ID_FILE_NAME), &legacy_id).unwrap();
         std::fs::write(legacy.join(INSTALLATION_RECORDED_FILE_NAME), "1").unwrap();
 
-        let old_home = std::env::var_os("HOME");
-        let old_telemetry_home = std::env::var_os(ENV_TELEMETRY_HOME);
-        unsafe {
-            std::env::set_var("HOME", &root);
-            std::env::remove_var(ENV_TELEMETRY_HOME);
-        }
-        reset_id().unwrap();
-        assert!(read_install_id().is_none());
+        reset_id_in_homes(&current, Some(&legacy)).unwrap();
+        assert!(!current.join(TELEMETRY_ID_FILE_NAME).exists());
         assert!(!legacy.join(TELEMETRY_ID_FILE_NAME).exists());
         assert!(!legacy.join(INSTALLATION_RECORDED_FILE_NAME).exists());
-
-        unsafe {
-            match old_home {
-                Some(value) => std::env::set_var("HOME", value),
-                None => std::env::remove_var("HOME"),
-            }
-            match old_telemetry_home {
-                Some(value) => std::env::set_var(ENV_TELEMETRY_HOME, value),
-                None => std::env::remove_var(ENV_TELEMETRY_HOME),
-            }
-        }
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -39,6 +39,18 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
 
         self.assertIn('["libs/cua-driver/rust/"]="cua-driver-rs"', workflow)
 
+    def test_release_bump_version_only_exposes_rust_driver(self) -> None:
+        workflow = self.read(".github/workflows/release-bump-version.yml")
+
+        self.assertIn("          - cua-driver-rs\n", workflow)
+        self.assertIn('            "cua-driver-rs")\n', workflow)
+        self.assertIn(
+            'echo "directory=libs/cua-driver/rust" >> $GITHUB_OUTPUT', workflow
+        )
+        self.assertNotIn("          - cua-driver\n", workflow)
+        self.assertNotIn('            "cua-driver")\n', workflow)
+        self.assertNotIn("inputs.service == 'cua-driver'", workflow)
+
     def test_release_reminder_tracks_rust_driver(self) -> None:
         workflow = self.read(".github/workflows/ci-release-reminder.yml")
 

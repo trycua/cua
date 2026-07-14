@@ -607,6 +607,18 @@ cleanup_prior_local_install
 
 mkdir -p "$BIN_DIR"
 
+# Persist the bounded installer channel before the new binary becomes visible.
+# If the user invokes Cua Driver before the detached install-event hook wins
+# the lifecycle lock, the ordinary first-run path will still use the installer
+# attribution. The runtime removes this hint after lifecycle delivery succeeds.
+INSTALL_CHANNEL="${CUA_DRIVER_INSTALL_CHANNEL:-install_script}"
+case "$INSTALL_CHANNEL" in
+    install_script|update_apply|python_package|first_run) ;;
+    *) INSTALL_CHANNEL="install_script" ;;
+esac
+mkdir -p "$HOME_DIR"
+printf '%s\n' "$INSTALL_CHANNEL" > "$HOME_DIR/.telemetry_install_channel"
+
 # macOS: install the .app to /Applications first, then symlink the
 # bin into the bundle so `~/.local/bin/cua-driver` resolves into
 # `/Applications/CuaDriver.app/Contents/MacOS/cua-driver`. The
@@ -752,6 +764,14 @@ fi
 # skipped when the user pinned CUA_DRIVER_RS_HOME to the legacy path on
 # purpose. Best-effort + idempotent.
 if [[ -d "$LEGACY_HOME_DIR" && "$HOME_DIR" != "$LEGACY_HOME_DIR" ]]; then
+    mkdir -p "$HOME_DIR"
+    for telemetry_file in .telemetry_id .installation_recorded; do
+        if [[ -f "$LEGACY_HOME_DIR/$telemetry_file" && ! -e "$HOME_DIR/$telemetry_file" ]]; then
+            cp -p "$LEGACY_HOME_DIR/$telemetry_file" "$HOME_DIR/$telemetry_file" 2>/dev/null \
+                && log "preserved legacy telemetry state $telemetry_file" \
+                || log "note: could not preserve legacy telemetry state $telemetry_file"
+        fi
+    done
     rm -rf "$LEGACY_HOME_DIR" 2>/dev/null \
         && log "swept legacy package home $LEGACY_HOME_DIR (reconciled onto $HOME_DIR)" \
         || log "note: could not fully remove legacy package home $LEGACY_HOME_DIR (best-effort)"
@@ -791,11 +811,6 @@ echo "When enabled, Cua collects a pseudonymous installation ID and bounded, con
 echo "  No prompts, tool arguments, screen contents, or file paths are collected."
 echo "  Disable persistently at any time: $BIN_LINK telemetry disable"
 
-INSTALL_CHANNEL="${CUA_DRIVER_INSTALL_CHANNEL:-install_script}"
-case "$INSTALL_CHANNEL" in
-    install_script|update_apply|python_package|first_run) ;;
-    *) INSTALL_CHANNEL="install_script" ;;
-esac
 CUA_DRIVER_INSTALL_CHANNEL="$INSTALL_CHANNEL" \
 CUA_DRIVER_RELEASE_VERSION="$VERSION" \
     "$BIN_LINK" telemetry install-event >/dev/null 2>&1 &

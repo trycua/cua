@@ -5,6 +5,8 @@ description: Exact Cua Driver telemetry controls, event schema, and privacy boun
 
 Cua Driver sends content-free product telemetry to the PostHog EU ingest endpoint. Telemetry is enabled by default. The installer prints a notice before it sends the first event, and the preference persists across driver processes and upgrades.
 
+If an installation or release event fails, the driver leaves its success marker unset and waits 15 minutes before retrying. Commands during that interval do not wait for another telemetry request.
+
 ## Control telemetry
 
 ```bash
@@ -40,30 +42,34 @@ cua-driver telemetry inspect cua_driver_mcp_tool_completed --json
 
 Every schema-v2 client event has this fixed envelope:
 
-| Property | Meaning |
-| --- | --- |
-| `telemetry_schema_version` | Fixed integer `2` |
-| `product_version` | Installed Cua Driver version |
-| `os_family` | `macos`, `windows`, `linux`, or `other` |
-| `os_major` | Major operating-system version only |
-| `arch` | Bounded CPU architecture |
-| `is_ci` | Whether a recognized CI environment is present |
-| `transport` | `cli`, `mcp_stdio`, `mcp_http`, or `unknown` |
-| `process_session_id` | Random ID created once per process and never persisted |
-| `id_persisted` | Whether the installation ID came from durable local state |
-| `$geoip_disable` | Fixed `true`; PostHog GeoIP enrichment is disabled |
+| Property                   | Meaning                                                   |
+| -------------------------- | --------------------------------------------------------- |
+| `telemetry_schema_version` | Fixed integer `2`                                         |
+| `product_version`          | Installed Cua Driver version                              |
+| `os_family`                | `macos`, `windows`, `linux`, or `other`                   |
+| `os_major`                 | Major operating-system version only                       |
+| `arch`                     | Bounded CPU architecture                                  |
+| `is_ci`                    | Whether a recognized CI environment is present            |
+| `transport`                | `cli`, `mcp_stdio`, `mcp_http`, or `unknown`              |
+| `process_session_id`       | Random ID created once per process and never persisted    |
+| `id_persisted`             | Whether the installation ID came from durable local state |
+| `$geoip_disable`           | Fixed `true`; PostHog GeoIP enrichment is disabled        |
 
 Client events set `$process_person_profile` to `false`. The installation UUID is used only as the PostHog `distinct_id`; it is not duplicated into event properties. This is pseudonymous installation telemetry, not anonymous telemetry.
 
 ## Fixed events
 
-| Event | Additional bounded properties |
-| --- | --- |
-| `cua_driver_installation_registered` | `install_channel` |
-| `cua_driver_release_installed` | `install_channel`, `product_version` |
-| `cua_driver_cli_completed` | Completed finite CLI outcomes: fixed `command`, `success`, `exit_class`, and `duration_bucket` |
-| `cua_driver_mcp_session_started` | normalized MCP client and protocol, capability booleans, optional reported agent context |
-| `cua_driver_mcp_tool_completed` | allowlisted tool, success, error class, duration bucket, output type, output-size bucket |
+| Event                                | Additional bounded properties                                                                                                   |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `cua_driver_installation_registered` | `install_channel`                                                                                                               |
+| `cua_driver_release_installed`       | `install_channel`, `product_version`                                                                                            |
+| `cua_driver_mcp`                     | None. Transitional process-start event emitted when `cua-driver mcp` starts; `transport` is `mcp_stdio` in the common envelope. |
+| `cua_driver_serve`                   | None. Transitional process-start event emitted when `cua-driver serve` starts; `transport` is `cli` in the common envelope.     |
+| `cua_driver_cli_completed`           | Completed finite CLI outcomes: fixed `command`, `success`, `exit_class`, and `duration_bucket`                                  |
+| `cua_driver_mcp_session_started`     | normalized MCP client and protocol, capability booleans, optional reported agent context                                        |
+| `cua_driver_mcp_tool_completed`      | allowlisted tool, success, error class, duration bucket, output type, output-size bucket                                        |
+
+The transitional `cua_driver_mcp` and `cua_driver_serve` events carry the common event properties above and no additional properties. They do not contain MCP initialize data, command arguments, or process output.
 
 The legacy `cua_driver_install` event remains part of lifetime registration dashboards so existing installations are not registered a second time.
 

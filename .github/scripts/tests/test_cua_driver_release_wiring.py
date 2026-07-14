@@ -73,6 +73,47 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("[bumpversion:file:../python/pyproject.toml]", config)
         self.assertIn("[bumpversion:file:../python/src/cua_driver/__init__.py]", config)
 
+    def test_installers_preserve_legacy_telemetry_state_before_cleanup(self) -> None:
+        for relative_path in (
+            "libs/cua-driver/scripts/_install-rust.sh",
+            "libs/cua-driver/scripts/_install-local-rust.sh",
+        ):
+            installer = self.read(relative_path)
+            cleanup = installer.index('rm -rf "$LEGACY_HOME_DIR"')
+            self.assertLess(
+                installer.index("for telemetry_file in .telemetry_id .installation_recorded"),
+                cleanup,
+                relative_path,
+            )
+            self.assertLess(
+                installer.index('cp -p "$LEGACY_HOME_DIR/$telemetry_file"'),
+                cleanup,
+                relative_path,
+            )
+
+        powershell = self.read("libs/cua-driver/scripts/install.ps1")
+        cleanup = powershell.index(
+            "Remove-Item -LiteralPath $LegacyHomeDir -Recurse -Force"
+        )
+        self.assertLess(
+            powershell.index("foreach ($telemetryFile in @('.telemetry_id', '.installation_recorded'))"),
+            cleanup,
+        )
+        self.assertLess(
+            powershell.index("Copy-Item -LiteralPath $legacyTelemetryPath"),
+            cleanup,
+        )
+
+    def test_release_installers_persist_channel_before_binary_swap(self) -> None:
+        shell = self.read("libs/cua-driver/scripts/_install-rust.sh")
+        hint = shell.index('> "$HOME_DIR/.telemetry_install_channel"')
+        self.assertLess(hint, shell.index('ditto "$SRC_APP" "$APP_DEST"'))
+        self.assertLess(hint, shell.index('mv -Tf "$TMP_LINK" "$CURRENT_LINK"'))
+
+        powershell = self.read("libs/cua-driver/scripts/install.ps1")
+        hint = powershell.index("Set-Content -LiteralPath (Join-Path $HomeDir '.telemetry_install_channel')")
+        self.assertLess(hint, powershell.index("Ensure-Junction $CurrentDir    $versionedDir"))
+
 
 if __name__ == "__main__":
     unittest.main()

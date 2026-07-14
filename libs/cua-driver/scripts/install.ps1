@@ -1035,6 +1035,14 @@ function Remove-LegacyInstall {
     # 4. Remove the legacy package home tree.
     if (Test-Path -LiteralPath $LegacyHomeDir) {
         try {
+            New-Item -ItemType Directory -Force -Path $HomeDir | Out-Null
+            foreach ($telemetryFile in @('.telemetry_id', '.installation_recorded')) {
+                $legacyTelemetryPath = Join-Path $LegacyHomeDir $telemetryFile
+                $currentTelemetryPath = Join-Path $HomeDir $telemetryFile
+                if ((Test-Path -LiteralPath $legacyTelemetryPath) -and -not (Test-Path -LiteralPath $currentTelemetryPath)) {
+                    Copy-Item -LiteralPath $legacyTelemetryPath -Destination $currentTelemetryPath -Force -ErrorAction Stop
+                }
+            }
             Remove-Item -LiteralPath $LegacyHomeDir -Recurse -Force -ErrorAction Stop
         } catch {
             Write-Host "  (could not remove $LegacyHomeDir : $($_.Exception.Message))" -ForegroundColor Yellow
@@ -1106,6 +1114,19 @@ if (-not $skipDownload) {
     }
 }
 
+# Persist the bounded installer channel before the new junction target becomes
+# visible. If a user command wins the lifecycle lock before the detached hook,
+# the runtime reads this hint and preserves installer attribution. It removes
+# the hint after lifecycle delivery succeeds.
+$allowedChannels = @("install_script", "update_apply", "python_package", "first_run")
+$installChannel = $env:CUA_DRIVER_INSTALL_CHANNEL
+if (-not $installChannel -or $installChannel -notin $allowedChannels) {
+    $installChannel = "install_script"
+}
+New-Item -ItemType Directory -Force -Path $HomeDir | Out-Null
+Set-Content -LiteralPath (Join-Path $HomeDir '.telemetry_install_channel') `
+            -Value $installChannel -Encoding Ascii -NoNewline
+
 # Wire up the junction chain. The inner junction (current → releases\<v>)
 # is what makes the upgrade atomic; the outer junction (bin → current)
 # is what gives users a stable PATH entry.
@@ -1132,12 +1153,6 @@ if (Test-Path -LiteralPath $installedBinary) {
     Write-Host "  No prompts, tool arguments, screen contents, or file paths are collected."
     Write-Host "  Disable persistently at any time: $installedBinary telemetry disable"
     try {
-        $allowedChannels = @("install_script", "update_apply", "python_package", "first_run")
-        $installChannel = $env:CUA_DRIVER_INSTALL_CHANNEL
-        if (-not $installChannel -or $installChannel -notin $allowedChannels) {
-            $installChannel = "install_script"
-        }
-
         # install.ps1 commonly runs via `irm | iex` in the caller's shell.
         # Restore both variables after Start-Process snapshots the environment
         # so the install does not leak transient attribution into that shell.

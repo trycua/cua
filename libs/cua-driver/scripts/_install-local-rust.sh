@@ -144,6 +144,14 @@ CURRENT_LINK="$HOME_DIR/packages/current"
 # and-braces — keeps the home dir layout single-rooted for the user.
 LEGACY_HOME_DIR="$HOME/.cua-driver-rs"
 if [ -d "$LEGACY_HOME_DIR" ] && [ "$HOME_DIR" != "$LEGACY_HOME_DIR" ]; then
+    mkdir -p "$HOME_DIR"
+    for telemetry_file in .telemetry_id .installation_recorded; do
+        if [ -f "$LEGACY_HOME_DIR/$telemetry_file" ] && [ ! -e "$HOME_DIR/$telemetry_file" ]; then
+            cp -p "$LEGACY_HOME_DIR/$telemetry_file" "$HOME_DIR/$telemetry_file" 2>/dev/null \
+                && echo "  Preserved legacy telemetry state $telemetry_file" \
+                || echo "  Could not preserve legacy telemetry state $telemetry_file"
+        fi
+    done
     echo "  Sweeping legacy install dir $LEGACY_HOME_DIR"
     rm -rf "$LEGACY_HOME_DIR"
 fi

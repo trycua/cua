@@ -13,6 +13,8 @@
 
 use serde::Serialize;
 use serde_json::{Map, Value};
+use std::fs::{File, OpenOptions, TryLockError};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -22,12 +24,17 @@ use std::time::Duration;
 const POSTHOG_CAPTURE_URL: &str = "https://eu.i.posthog.com/capture/";
 const POSTHOG_API_KEY: &str = "phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14";
 const POSTHOG_TIMEOUT_SECS: u64 = 3;
+const LIFECYCLE_RETRY_BACKOFF_SECS: u64 = 15 * 60;
 
 const HOME_SUBDIRECTORY: &str = ".cua-driver";
 const LEGACY_HOME_SUBDIRECTORY: &str = ".cua-driver-rs";
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONFIG_ENABLED_KEY: &str = "telemetry_enabled";
 const TELEMETRY_ID_FILE_NAME: &str = ".telemetry_id";
+const TELEMETRY_IDENTITY_LOCK_FILE_NAME: &str = ".telemetry_identity.lock";
+const TELEMETRY_LIFECYCLE_LOCK_FILE_NAME: &str = ".telemetry_lifecycle.lock";
+const TELEMETRY_RETRY_AFTER_FILE_NAME: &str = ".telemetry_retry_after";
+const TELEMETRY_INSTALL_CHANNEL_FILE_NAME: &str = ".telemetry_install_channel";
 const INSTALLATION_RECORDED_FILE_NAME: &str = ".installation_recorded";
 const RELEASE_RECORDED_DIRECTORY: &str = ".release_installed";
 
@@ -56,6 +63,8 @@ pub mod event {
 const INSPECTABLE_EVENTS: &[&str] = &[
     event::INSTALLATION_REGISTERED,
     event::RELEASE_INSTALLED,
+    event::MCP_START_LEGACY,
+    event::SERVE_START_LEGACY,
     event::CLI_COMPLETED,
     event::MCP_SESSION_STARTED,
     event::MCP_TOOL_COMPLETED,
@@ -143,12 +152,36 @@ pub fn reset_id() -> Result<(), String> {
     let Some(home) = telemetry_home_dir() else {
         return Ok(());
     };
+    let lifecycle_lock = open_lock_file(&home, TELEMETRY_LIFECYCLE_LOCK_FILE_NAME)?;
+    lifecycle_lock
+        .lock()
+        .map_err(|error| format!("failed to lock telemetry lifecycle: {error}"))?;
+    let identity_lock = open_lock_file(&home, TELEMETRY_IDENTITY_LOCK_FILE_NAME)?;
+    identity_lock
+        .lock()
+        .map_err(|error| format!("failed to lock telemetry identity: {error}"))?;
     remove_file_if_exists(&home.join(TELEMETRY_ID_FILE_NAME))?;
     remove_file_if_exists(&home.join(INSTALLATION_RECORDED_FILE_NAME))?;
+    remove_file_if_exists(&home.join(TELEMETRY_RETRY_AFTER_FILE_NAME))?;
+    remove_file_if_exists(&home.join(TELEMETRY_INSTALL_CHANNEL_FILE_NAME))?;
     let releases = home.join(RELEASE_RECORDED_DIRECTORY);
     if releases.exists() {
         std::fs::remove_dir_all(&releases)
             .map_err(|error| format!("failed to remove {}: {error}", releases.display()))?;
+    }
+    if std::env::var_os(ENV_TELEMETRY_HOME).is_none() {
+        if let Some(root) = home_root() {
+            let legacy = root.join(LEGACY_HOME_SUBDIRECTORY);
+            remove_file_if_exists(&legacy.join(TELEMETRY_ID_FILE_NAME))?;
+            remove_file_if_exists(&legacy.join(INSTALLATION_RECORDED_FILE_NAME))?;
+            remove_file_if_exists(&legacy.join(TELEMETRY_RETRY_AFTER_FILE_NAME))?;
+            remove_file_if_exists(&legacy.join(TELEMETRY_INSTALL_CHANNEL_FILE_NAME))?;
+            let legacy_releases = legacy.join(RELEASE_RECORDED_DIRECTORY);
+            if legacy_releases.exists() {
+                std::fs::remove_dir_all(&legacy_releases)
+                    .map_err(|error| format!("failed to remove {}: {error}", legacy_releases.display()))?;
+            }
+        }
     }
     Ok(())
 }
@@ -176,24 +209,32 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
         ]),
         event::MCP_SESSION_STARTED => bounded_properties(&[
             ("mcp_client", Value::String("unknown".into())),
+            ("mcp_client_version_major", Value::String("unknown".into())),
             ("protocol_version", Value::String("unknown".into())),
+            ("capability_tools", Value::Bool(false)),
+            ("capability_roots", Value::Bool(false)),
+            ("capability_sampling", Value::Bool(false)),
+            ("capability_experimental", Value::Bool(false)),
+            ("capability_elicitation_form", Value::Bool(false)),
+            ("capability_elicitation_url", Value::Bool(false)),
             ("reported_provider", Value::String("unknown".into())),
             ("reported_model", Value::String("unknown".into())),
+            ("reported_agent", Value::String("unknown".into())),
+            ("reported_agent_version_major", Value::String("unknown".into())),
         ]),
         event::MCP_TOOL_COMPLETED => bounded_properties(&[
             ("tool_name", Value::String("other".into())),
             ("success", Value::Bool(true)),
             ("error_class", Value::String("none".into())),
-            ("duration_bucket", Value::String("lt_100ms".into())),
+            ("duration_bucket", Value::String("lt_10ms".into())),
             ("output_type", Value::String("empty".into())),
             ("output_size_bucket", Value::String("0".into())),
         ]),
         _ => Map::new(),
     };
-    let transport = if event_name.starts_with("cua_driver_mcp_") {
-        Transport::McpStdio
-    } else {
-        Transport::Cli
+    let transport = match event_name {
+        event::MCP_START_LEGACY | event::MCP_SESSION_STARTED | event::MCP_TOOL_COMPLETED => Transport::McpStdio,
+        _ => Transport::Cli,
     };
     Ok(build_payload(event_name, &properties, &identity, transport))
 }
@@ -381,13 +422,26 @@ fn version_major(value: Option<&str>) -> String {
 }
 
 pub fn ensure_first_run_registration() {
-    if !is_enabled() || lifecycle_is_current() {
+    if !is_enabled() || lifecycle_is_current() || lifecycle_retry_deferred() {
+        return;
+    }
+    let Some(home) = telemetry_home_dir() else {
+        return;
+    };
+    let Some(_lifecycle_lock) = try_lifecycle_lock(&home) else {
+        return;
+    };
+    if !is_enabled() || lifecycle_retry_deferred() {
+        return;
+    }
+    if lifecycle_is_current() {
+        let _ = remove_file_if_exists(&home.join(TELEMETRY_INSTALL_CHANNEL_FILE_NAME));
         return;
     }
     eprintln!(
         "Cua Driver sends content-free product telemetry by default. Run `cua-driver telemetry disable` to stop it; `cua-driver telemetry status` shows the current setting."
     );
-    capture_install();
+    capture_install_locked(&home, &mut post_to_posthog);
 }
 
 pub fn capture_install() {
@@ -398,13 +452,28 @@ fn capture_install_with_poster<F>(mut post: F)
 where
     F: FnMut(&Value) -> Result<u16, String>,
 {
-    if !is_enabled() {
+    if !is_enabled() || lifecycle_retry_deferred() {
         return;
     }
     let Some(home) = telemetry_home_dir() else {
         return;
     };
-    let identity = get_or_create_install_id();
+    let Some(_lifecycle_lock) = try_lifecycle_lock(&home) else {
+        return;
+    };
+    if !is_enabled() || lifecycle_is_current() || lifecycle_retry_deferred() {
+        return;
+    }
+    capture_install_locked(&home, &mut post);
+}
+
+fn capture_install_locked<F>(home: &Path, post: &mut F)
+where
+    F: FnMut(&Value) -> Result<u16, String>,
+{
+    let Some(identity) = get_or_create_install_id() else {
+        return;
+    };
     let channel = install_channel();
     let registration_marker = home.join(INSTALLATION_RECORDED_FILE_NAME);
 
@@ -415,11 +484,13 @@ where
             &identity,
             Transport::Cli,
         );
-        if post_success(&mut post, &payload, event::INSTALLATION_REGISTERED) {
+        if post_success(post, &payload, event::INSTALLATION_REGISTERED) {
             if write_marker(&registration_marker).is_err() {
+                defer_lifecycle_retry(home);
                 return;
             }
         } else {
+            defer_lifecycle_retry(home);
             return;
         }
     }
@@ -437,8 +508,15 @@ where
         &identity,
         Transport::Cli,
     );
-    if post_success(&mut post, &payload, event::RELEASE_INSTALLED) {
-        let _ = write_marker(&release_marker);
+    if post_success(post, &payload, event::RELEASE_INSTALLED) {
+        if write_marker(&release_marker).is_ok() {
+            let _ = remove_file_if_exists(&home.join(TELEMETRY_RETRY_AFTER_FILE_NAME));
+            let _ = remove_file_if_exists(&home.join(TELEMETRY_INSTALL_CHANNEL_FILE_NAME));
+        } else {
+            defer_lifecycle_retry(home);
+        }
+    } else {
+        defer_lifecycle_retry(home);
     }
 }
 
@@ -448,6 +526,28 @@ fn lifecycle_is_current() -> bool {
     let release = release_marker_path(&release_version())
         .is_some_and(|path| path.exists());
     registered && release
+}
+
+fn lifecycle_retry_deferred() -> bool {
+    let Some(path) = marker_path(TELEMETRY_RETRY_AFTER_FILE_NAME) else { return false; };
+    let Some(retry_after) = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+    else { return false; };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(retry_after);
+    retry_after > now && retry_after.saturating_sub(now) <= LIFECYCLE_RETRY_BACKOFF_SECS
+}
+
+fn defer_lifecycle_retry(home: &Path) {
+    let retry_after = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs().saturating_add(LIFECYCLE_RETRY_BACKOFF_SECS));
+    if let Ok(retry_after) = retry_after {
+        let _ = std::fs::write(home.join(TELEMETRY_RETRY_AFTER_FILE_NAME), retry_after.to_string());
+    }
 }
 
 fn post_success<F>(post: &mut F, payload: &Value, event_name: &str) -> bool
@@ -475,7 +575,9 @@ pub(crate) fn capture_bounded(
     if !is_enabled() {
         return;
     }
-    let identity = get_or_create_install_id();
+    let Some(identity) = get_or_create_install_id() else {
+        return;
+    };
     let payload = build_payload(event_name, &properties, &identity, transport);
     spawn_payload(event_name, payload);
 }
@@ -518,7 +620,9 @@ pub(crate) fn capture_cli_completed(
         64 => "invalid_input",
         _ => "other",
     };
-    let identity = get_or_create_install_id();
+    let Some(identity) = get_or_create_install_id() else {
+        return;
+    };
     let payload = build_payload(
         event::CLI_COMPLETED,
         &bounded_properties(&[
@@ -809,6 +913,38 @@ fn write_marker(path: &Path) -> Result<(), String> {
         .map_err(|error| format!("failed to write {}: {error}", path.display()))
 }
 
+fn open_lock_file(home: &Path, name: &str) -> Result<File, String> {
+    std::fs::create_dir_all(home)
+        .map_err(|error| format!("failed to create {}: {error}", home.display()))?;
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(home.join(name))
+        .map_err(|error| format!("failed to open telemetry state lock: {error}"))
+}
+
+fn try_lifecycle_lock(home: &Path) -> Option<File> {
+    let file = match open_lock_file(home, TELEMETRY_LIFECYCLE_LOCK_FILE_NAME) {
+        Ok(file) => file,
+        Err(error) => {
+            debug_log(format_args!("lifecycle lock unavailable: {error}"));
+            return None;
+        }
+    };
+    match file.try_lock() {
+        Ok(()) => Some(file),
+        Err(TryLockError::WouldBlock) => {
+            debug_log(format_args!("lifecycle registration already in progress"));
+            None
+        }
+        Err(TryLockError::Error(error)) => {
+            debug_log(format_args!("failed to lock telemetry lifecycle: {error}"));
+            None
+        }
+    }
+}
+
 fn migrate_legacy_telemetry_home() {
     if std::env::var_os(ENV_TELEMETRY_HOME).is_some() {
         return;
@@ -818,6 +954,8 @@ fn migrate_legacy_telemetry_home() {
     let current = root.join(HOME_SUBDIRECTORY);
     if !legacy.is_dir() { return; }
     let _ = std::fs::create_dir_all(&current);
+    let Ok(identity_lock) = open_lock_file(&current, TELEMETRY_IDENTITY_LOCK_FILE_NAME) else { return; };
+    if identity_lock.lock().is_err() { return; }
     for name in [TELEMETRY_ID_FILE_NAME, INSTALLATION_RECORDED_FILE_NAME] {
         let source = legacy.join(name);
         let destination = current.join(name);
@@ -831,6 +969,10 @@ fn migrate_legacy_telemetry_home() {
 fn read_install_id() -> Option<String> {
     migrate_legacy_telemetry_home();
     let path = marker_path(TELEMETRY_ID_FILE_NAME)?;
+    read_install_id_path(&path)
+}
+
+fn read_install_id_path(path: &Path) -> Option<String> {
     let value = std::fs::read_to_string(path).ok()?;
     let trimmed = value.trim();
     if uuid::Uuid::parse_str(trimmed).is_ok() {
@@ -840,22 +982,64 @@ fn read_install_id() -> Option<String> {
     }
 }
 
-fn get_or_create_install_id() -> InstallationIdentity {
-    static CACHE: OnceLock<InstallationIdentity> = OnceLock::new();
-    CACHE.get_or_init(load_or_create_install_id_uncached).clone()
+fn get_or_create_install_id() -> Option<InstallationIdentity> {
+    load_or_create_install_id_uncached()
 }
 
-fn load_or_create_install_id_uncached() -> InstallationIdentity {
+fn load_or_create_install_id_uncached() -> Option<InstallationIdentity> {
     if let Some(id) = read_install_id() {
-        return InstallationIdentity { id, persisted: true };
+        return Some(InstallationIdentity { id, persisted: true });
     }
-    let id = uuid::Uuid::new_v4().to_string();
     let Some(path) = marker_path(TELEMETRY_ID_FILE_NAME) else {
-        return InstallationIdentity { id, persisted: false };
+        static EPHEMERAL_ID: OnceLock<String> = OnceLock::new();
+        return Some(InstallationIdentity {
+            id: EPHEMERAL_ID.get_or_init(|| uuid::Uuid::new_v4().to_string()).clone(),
+            persisted: false,
+        });
     };
-    let persisted = path.parent().is_some_and(|parent| std::fs::create_dir_all(parent).is_ok())
-        && std::fs::write(&path, &id).is_ok();
-    InstallationIdentity { id, persisted }
+    let candidate = uuid::Uuid::new_v4().to_string();
+    match persist_install_id_if_absent(&path, &candidate) {
+        Ok(id) => Some(InstallationIdentity { id, persisted: true }),
+        Err(error) => {
+            debug_log(format_args!("installation identity unavailable: {error}"));
+            None
+        }
+    }
+}
+
+fn persist_install_id_if_absent(path: &Path, candidate: &str) -> Result<String, String> {
+    let home = path.parent().ok_or_else(|| "invalid telemetry identity path".to_owned())?;
+    let identity_lock = open_lock_file(home, TELEMETRY_IDENTITY_LOCK_FILE_NAME)?;
+    identity_lock
+        .lock()
+        .map_err(|error| format!("failed to lock telemetry identity: {error}"))?;
+
+    if let Some(id) = read_install_id_path(path) {
+        return Ok(id);
+    }
+
+    let temporary = home.join(format!(".telemetry-id-{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut file = File::create(&temporary)
+            .map_err(|error| format!("failed to write telemetry identity: {error}"))?;
+        file.write_all(candidate.as_bytes())
+            .map_err(|error| format!("failed to write telemetry identity: {error}"))?;
+        file.sync_data()
+            .map_err(|error| format!("failed to sync telemetry identity: {error}"))?;
+
+        #[cfg(windows)]
+        if path.exists() {
+            std::fs::remove_file(path)
+                .map_err(|error| format!("failed to replace telemetry identity: {error}"))?;
+        }
+        std::fs::rename(&temporary, path)
+            .map_err(|error| format!("failed to persist telemetry identity: {error}"))?;
+        Ok(candidate.to_owned())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn redact_id(id: &str) -> String {
@@ -913,13 +1097,25 @@ fn duration_bucket(elapsed: Duration) -> &'static str {
 }
 
 fn install_channel() -> &'static str {
-    match std::env::var(ENV_INSTALL_CHANNEL).as_deref() {
-        Ok("install_script") => "install_script",
-        Ok("update_apply") => "update_apply",
-        Ok("python_package") => "python_package",
-        Ok("manual_binary") => "manual_binary",
-        Ok("first_run") => "first_run",
-        _ => "first_run",
+    std::env::var(ENV_INSTALL_CHANNEL)
+        .ok()
+        .and_then(|value| normalize_install_channel(&value))
+        .or_else(|| {
+            marker_path(TELEMETRY_INSTALL_CHANNEL_FILE_NAME)
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .and_then(|value| normalize_install_channel(&value))
+        })
+        .unwrap_or("first_run")
+}
+
+fn normalize_install_channel(value: &str) -> Option<&'static str> {
+    match value.trim() {
+        "install_script" => Some("install_script"),
+        "update_apply" => Some("update_apply"),
+        "python_package" => Some("python_package"),
+        "manual_binary" => Some("manual_binary"),
+        "first_run" => Some("first_run"),
+        _ => None,
     }
 }
 
@@ -959,15 +1155,18 @@ fn os_family() -> &'static str {
 }
 
 fn os_major() -> String {
-    let raw = os_version();
-    let start = raw.find(|character: char| character.is_ascii_digit());
-    let Some(start) = start else { return "unknown".into(); };
-    raw[start..]
-        .split(|character: char| !character.is_ascii_digit())
-        .next()
-        .filter(|value| !value.is_empty())
-        .unwrap_or("unknown")
-        .to_owned()
+    static OS_MAJOR: OnceLock<String> = OnceLock::new();
+    OS_MAJOR.get_or_init(|| {
+        let raw = os_version();
+        let start = raw.find(|character: char| character.is_ascii_digit());
+        let Some(start) = start else { return "unknown".into(); };
+        raw[start..]
+            .split(|character: char| !character.is_ascii_digit())
+            .next()
+            .filter(|value| !value.is_empty())
+            .unwrap_or("unknown")
+            .to_owned()
+    }).clone()
 }
 
 fn os_version() -> String {
@@ -1013,9 +1212,15 @@ fn is_ci() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::{Child, Command};
     use std::sync::Mutex;
+    use std::time::Instant;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+    const TEST_CHILD_KIND: &str = "CUA_DRIVER_TELEMETRY_TEST_CHILD_KIND";
+    const TEST_CHILD_ROOT: &str = "CUA_DRIVER_TELEMETRY_TEST_CHILD_ROOT";
+    const TEST_CHILD_INDEX: &str = "CUA_DRIVER_TELEMETRY_TEST_CHILD_INDEX";
+    const TEST_CHILD_CANDIDATE: &str = "CUA_DRIVER_TELEMETRY_TEST_CHILD_CANDIDATE";
 
     fn with_isolated_home<R>(test: impl FnOnce(&Path) -> R) -> R {
         let root = std::env::temp_dir().join(format!("cua-telemetry-{}", uuid::Uuid::new_v4()));
@@ -1038,6 +1243,184 @@ mod tests {
         result
     }
 
+    fn wait_for_path(path: &Path, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if path.exists() { return true; }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        path.exists()
+    }
+
+    fn wait_for_children_ready(directory: &Path, count: usize, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            let ready = std::fs::read_dir(directory)
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with("ready-"))
+                .count();
+            if ready == count { return true; }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    fn wait_for_child(child: &mut Child, timeout: Duration) -> Option<std::process::ExitStatus> {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if let Some(status) = child.try_wait().expect("poll test child") {
+                return Some(status);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        child.try_wait().expect("poll test child")
+    }
+
+    fn spawn_test_child(kind: &str, root: &Path, index: usize) -> Child {
+        Command::new(std::env::current_exe().expect("current test executable"))
+            .arg(match kind {
+                "identity" => "telemetry::tests::identity_process_child",
+                "lifecycle-winner" | "lifecycle-contender" => "telemetry::tests::lifecycle_process_child",
+                _ => panic!("unknown test child kind"),
+            })
+            .arg("--exact")
+            .arg("--nocapture")
+            .env(TEST_CHILD_KIND, kind)
+            .env(TEST_CHILD_ROOT, root)
+            .env(TEST_CHILD_INDEX, index.to_string())
+            .env(TEST_CHILD_CANDIDATE, uuid::Uuid::new_v4().to_string())
+            .spawn()
+            .expect("spawn telemetry test child")
+    }
+
+    #[test]
+    fn identity_process_child() {
+        if std::env::var(TEST_CHILD_KIND).ok().as_deref() != Some("identity") { return; }
+        let root = PathBuf::from(std::env::var_os(TEST_CHILD_ROOT).expect("test child root"));
+        let index = std::env::var(TEST_CHILD_INDEX).expect("test child index");
+        let candidate = std::env::var(TEST_CHILD_CANDIDATE).expect("test child candidate");
+        std::fs::write(root.join(format!("ready-{index}")), "1").expect("signal ready");
+        assert!(wait_for_path(&root.join("go"), Duration::from_secs(15)));
+        let path = marker_path(TELEMETRY_ID_FILE_NAME).expect("identity path");
+        let id = persist_install_id_if_absent(&path, &candidate).expect("persist identity");
+        std::fs::write(root.join(format!("result-{index}")), id).expect("write result");
+    }
+
+    #[test]
+    fn lifecycle_process_child() {
+        let Ok(kind) = std::env::var(TEST_CHILD_KIND) else { return; };
+        if !matches!(kind.as_str(), "lifecycle-winner" | "lifecycle-contender") { return; }
+        let root = PathBuf::from(std::env::var_os(TEST_CHILD_ROOT).expect("test child root"));
+        let index = std::env::var(TEST_CHILD_INDEX).expect("test child index");
+        let mut call = 0usize;
+        capture_install_with_poster(|payload| {
+            call += 1;
+            std::fs::write(
+                root.join(format!("event-{index}-{call}.json")),
+                serde_json::to_vec(payload).expect("serialize captured event"),
+            ).expect("write captured event");
+            if kind == "lifecycle-winner" && call == 1 {
+                std::fs::write(root.join("winner-ready"), "1").expect("signal winner ready");
+                if !wait_for_path(&root.join("release-winner"), Duration::from_secs(15)) {
+                    return Err("parent did not release lifecycle winner".to_owned());
+                }
+            }
+            Ok(200)
+        });
+        std::fs::write(
+            root.join(format!("observed-id-{index}")),
+            read_install_id().unwrap_or_default(),
+        ).expect("write observed identity");
+    }
+
+    #[test]
+    fn installation_identity_creation_is_atomic_across_processes() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|root| {
+            const CHILDREN: usize = 8;
+            let mut children: Vec<_> = (0..CHILDREN)
+                .map(|index| spawn_test_child("identity", root, index))
+                .collect();
+            assert!(wait_for_children_ready(root, CHILDREN, Duration::from_secs(15)));
+            std::fs::write(root.join("go"), "1").unwrap();
+            for child in &mut children {
+                let status = wait_for_child(child, Duration::from_secs(15));
+                if status.is_none() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                assert!(
+                    status.is_some_and(|status| status.success()),
+                    "identity child must finish successfully"
+                );
+            }
+
+            let persisted = read_install_id().expect("persisted identity");
+            assert!(uuid::Uuid::parse_str(&persisted).is_ok());
+            for index in 0..CHILDREN {
+                let observed = std::fs::read_to_string(root.join(format!("result-{index}")))
+                    .expect("child result");
+                assert_eq!(observed, persisted);
+            }
+        });
+    }
+
+    #[test]
+    fn lifecycle_registration_is_single_writer_and_non_blocking_across_processes() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|root| {
+            let mut winner = spawn_test_child("lifecycle-winner", root, 0);
+            assert!(wait_for_path(&root.join("winner-ready"), Duration::from_secs(15)));
+
+            let mut contender = spawn_test_child("lifecycle-contender", root, 1);
+            let contender_status = wait_for_child(&mut contender, Duration::from_secs(5));
+            if contender_status.is_none() {
+                let _ = std::fs::write(root.join("release-winner"), "1");
+                let _ = contender.kill();
+                let _ = winner.kill();
+            }
+            assert!(
+                contender_status.is_some_and(|status| status.success()),
+                "contender must skip a busy lifecycle lock without waiting for network delivery"
+            );
+
+            std::fs::write(root.join("release-winner"), "1").unwrap();
+            let winner_status = wait_for_child(&mut winner, Duration::from_secs(15));
+            if winner_status.is_none() {
+                let _ = winner.kill();
+                let _ = winner.wait();
+            }
+            assert!(
+                winner_status.is_some_and(|status| status.success()),
+                "lifecycle winner must finish successfully"
+            );
+
+            let mut events = std::fs::read_dir(root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with("event-"))
+                .map(|entry| serde_json::from_slice::<Value>(&std::fs::read(entry.path()).unwrap()).unwrap())
+                .collect::<Vec<_>>();
+            events.sort_by_key(|event| event["event"].as_str().unwrap_or_default().to_owned());
+            assert_eq!(events.len(), 2);
+            assert_eq!(events.iter().filter(|item| item["event"] == event::INSTALLATION_REGISTERED).count(), 1);
+            assert_eq!(events.iter().filter(|item| item["event"] == event::RELEASE_INSTALLED).count(), 1);
+            let persisted = read_install_id().expect("persisted identity");
+            assert!(events.iter().all(|item| item["distinct_id"] == persisted));
+            for index in 0..=1 {
+                assert_eq!(
+                    std::fs::read_to_string(root.join(format!("observed-id-{index}"))).unwrap(),
+                    persisted
+                );
+            }
+            assert!(root.join(HOME_SUBDIRECTORY).join(INSTALLATION_RECORDED_FILE_NAME).exists());
+            assert!(release_marker_path(current_product_version()).unwrap().exists());
+        });
+    }
+
     #[test]
     fn precedence_is_environment_then_persisted_then_default() {
         let _guard = ENV_LOCK.lock().unwrap();
@@ -1048,6 +1431,28 @@ mod tests {
             unsafe { std::env::set_var(ENV_TELEMETRY_ENABLED, "true"); }
             assert_eq!(effective_enabled(), (true, "environment"));
             unsafe { std::env::remove_var(ENV_TELEMETRY_ENABLED); }
+        });
+    }
+
+    #[test]
+    fn persisted_install_channel_prevents_first_run_attribution_race() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|root| {
+            let home = root.join(HOME_SUBDIRECTORY);
+            std::fs::create_dir_all(&home).unwrap();
+            std::fs::write(
+                home.join(TELEMETRY_INSTALL_CHANNEL_FILE_NAME),
+                "install_script",
+            )
+            .unwrap();
+            assert_eq!(install_channel(), "install_script");
+
+            unsafe { std::env::set_var(ENV_INSTALL_CHANNEL, "update_apply"); }
+            assert_eq!(install_channel(), "update_apply");
+            unsafe { std::env::remove_var(ENV_INSTALL_CHANNEL); }
+
+            std::fs::write(home.join(TELEMETRY_INSTALL_CHANNEL_FILE_NAME), "invalid").unwrap();
+            assert_eq!(install_channel(), "first_run");
         });
     }
 
@@ -1066,6 +1471,7 @@ mod tests {
             assert_eq!(calls, 0);
             assert_eq!(read_install_id().as_deref(), Some(id.as_str()));
             assert!(!home.join(INSTALLATION_RECORDED_FILE_NAME).exists());
+            assert!(!home.join(TELEMETRY_RETRY_AFTER_FILE_NAME).exists());
             unsafe { std::env::remove_var(ENV_TELEMETRY_ENABLED); }
         });
     }
@@ -1083,8 +1489,31 @@ mod tests {
             assert!(home.join(INSTALLATION_RECORDED_FILE_NAME).exists());
             assert!(!release_marker_path(current_product_version()).unwrap().exists());
 
+            remove_file_if_exists(&home.join(TELEMETRY_RETRY_AFTER_FILE_NAME)).unwrap();
             capture_install_with_poster(|_| Ok(200));
             assert!(release_marker_path(current_product_version()).unwrap().exists());
+        });
+    }
+
+    #[test]
+    fn failed_lifecycle_delivery_defers_retries_without_marking_success() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|root| {
+            let home = root.join(HOME_SUBDIRECTORY);
+            let mut calls = 0;
+            capture_install_with_poster(|_| {
+                calls += 1;
+                Ok(503)
+            });
+            assert_eq!(calls, 1);
+            assert!(lifecycle_retry_deferred());
+            assert!(!home.join(INSTALLATION_RECORDED_FILE_NAME).exists());
+
+            capture_install_with_poster(|_| {
+                calls += 1;
+                Ok(200)
+            });
+            assert_eq!(calls, 1, "retry backoff must prevent per-command network stalls");
         });
     }
 
@@ -1102,6 +1531,40 @@ mod tests {
             assert!(read_install_id().is_none());
             assert!(!home.join(INSTALLATION_RECORDED_FILE_NAME).exists());
         });
+    }
+
+    #[test]
+    fn reset_erases_legacy_identity_before_migration_can_restore_it() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!("cua-telemetry-reset-{}", uuid::Uuid::new_v4()));
+        let legacy = root.join(LEGACY_HOME_SUBDIRECTORY);
+        std::fs::create_dir_all(&legacy).unwrap();
+        let legacy_id = uuid::Uuid::new_v4().to_string();
+        std::fs::write(legacy.join(TELEMETRY_ID_FILE_NAME), &legacy_id).unwrap();
+        std::fs::write(legacy.join(INSTALLATION_RECORDED_FILE_NAME), "1").unwrap();
+
+        let old_home = std::env::var_os("HOME");
+        let old_telemetry_home = std::env::var_os(ENV_TELEMETRY_HOME);
+        unsafe {
+            std::env::set_var("HOME", &root);
+            std::env::remove_var(ENV_TELEMETRY_HOME);
+        }
+        reset_id().unwrap();
+        assert!(read_install_id().is_none());
+        assert!(!legacy.join(TELEMETRY_ID_FILE_NAME).exists());
+        assert!(!legacy.join(INSTALLATION_RECORDED_FILE_NAME).exists());
+
+        unsafe {
+            match old_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+            match old_telemetry_home {
+                Some(value) => std::env::set_var(ENV_TELEMETRY_HOME, value),
+                None => std::env::remove_var(ENV_TELEMETRY_HOME),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1134,6 +1597,28 @@ mod tests {
         ] {
             assert!(!serialized.contains(forbidden), "payload contains {forbidden}: {serialized}");
         }
+    }
+
+    #[test]
+    fn inspect_events_match_the_emitted_bounded_schema() {
+        let session = inspect_event(event::MCP_SESSION_STARTED).unwrap();
+        let session_properties = session["properties"].as_object().unwrap();
+        for field in [
+            "mcp_client", "mcp_client_version_major", "protocol_version",
+            "capability_tools", "capability_roots", "capability_sampling",
+            "capability_experimental", "capability_elicitation_form",
+            "capability_elicitation_url", "reported_provider", "reported_model",
+            "reported_agent", "reported_agent_version_major",
+        ] {
+            assert!(session_properties.contains_key(field), "missing {field}");
+        }
+
+        let tool = inspect_event(event::MCP_TOOL_COMPLETED).unwrap();
+        assert_eq!(tool["properties"]["duration_bucket"], "lt_10ms");
+        let mcp_start = inspect_event(event::MCP_START_LEGACY).unwrap();
+        assert_eq!(mcp_start["properties"]["transport"], "mcp_stdio");
+        let serve_start = inspect_event(event::SERVE_START_LEGACY).unwrap();
+        assert_eq!(serve_start["properties"]["transport"], "cli");
     }
 
     #[test]

@@ -28,6 +28,20 @@ get_window_state      # browser chrome, prompts, downloads, pickers, native fall
 
 The implementation must improve exact targeting and agent ergonomics. It must not hide browser setup inside a getter, silently guess a tab, or create a second copy of native window state.
 
+## Rationale
+
+This proposal comes from recent cross-platform validation of browser automation on macOS, Windows, Linux X11, and Linux Wayland.
+
+Cua Driver currently separates several [capture and delivery modalities](https://cua.ai/docs/concepts/capture-and-delivery-modalities): AX and PX targeting, background and foreground delivery, and window and desktop scope. The [agent action ladder](https://cua.ai/docs/reference/cua-driver/action-selection-policy) starts with background AX, then tries background PX, the `page` tool, and finally foreground delivery. This ordering remains the right safety model because the agent begins with the most semantic and least disruptive route, then escalates only when the previous route is unavailable or cannot be verified. The current OS-specific boundaries are listed in [platform support](https://cua.ai/docs/reference/cua-driver/platform-support).
+
+Web content does not always fit this ladder cleanly. Some Chromium actions cannot be delivered reliably to an occluded or unfocused page through native synthetic pointer or keyboard routes. The same operations can often run in the background through the Chrome DevTools Protocol (CDP) or, on macOS, Apple Events. The current [`page` workflow](https://cua.ai/docs/how-to-guides/driver/drive-a-web-page) exposes some of these routes, but its capabilities vary by operating system, it does not reliably bind the native `pid` and `window_id` to one exact browser tab, and its setup requirements are difficult for an agent to discover before an action fails.
+
+This leaves some browser actions with best-effort background behavior even when a browser-native route could provide full-background execution. Shared-workspace agents need the stronger contract: supported page actions must avoid raising the browser, moving the cursor, stealing focus, or leaking input into the user's active application.
+
+The proposal keeps the existing action ladder and makes its browser rung first-class and capability-aware. `get_browser_state(pid, window_id)` identifies the exact tab when the relationship can be proven and reports the available routes. Supported page actions can then use CDP or Apple Events before falling back to native PX or foreground delivery. `get_window_state` remains the source of truth for browser chrome, permission prompts, downloads, file pickers, and native fallback.
+
+The first implementation step is a binding feasibility spike. If Cua Driver cannot reliably bind, revalidate, or safely refuse multi-window Chromium targets across supported operating systems, the design will change before the public API is committed.
+
 ## Success Criteria
 
 The browser tool is ready for a supported route when all of the following are true:

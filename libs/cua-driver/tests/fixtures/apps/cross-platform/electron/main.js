@@ -61,13 +61,17 @@ function createWindow() {
   const fixedTitle = sentinelMode
     ? `CuaTestHarness Sentinel [cdp=${CDP_PORT}]`
     : `CuaTestHarness Electron [cdp=${CDP_PORT}]`;
+  // GitHub's interactive Windows desktop can be 1024x768. Keep the normal
+  // fixture wholly inside its work area so a maximized sentinel can prove
+  // geometric full occlusion instead of accepting an off-screen target.
+  const compactWindowsFixture = !sentinelMode && process.platform === 'win32';
   mainWindow = new BrowserWindow({
-    width: sentinelMode ? 1280 : 940,
-    height: sentinelMode ? 900 : 780,
+    width: sentinelMode ? 1280 : compactWindowsFixture ? 900 : 940,
+    height: sentinelMode ? 900 : compactWindowsFixture ? 640 : 780,
     // Keep the normal fixture inside virtual desktops whose window manager
     // has no persisted placement policy (notably Openbox under Xvfb).
-    x: sentinelMode ? 0 : 120,
-    y: sentinelMode ? 0 : 120,
+    x: sentinelMode ? 0 : compactWindowsFixture ? 40 : 120,
+    y: sentinelMode ? 0 : compactWindowsFixture ? 40 : 120,
     title: fixedTitle,
     // Map the normal harness immediately. Xvfb/Openbox can enumerate a
     // deferred BrowserWindow while never painting it into the root desktop.
@@ -120,7 +124,11 @@ function createWindow() {
           if (process.platform !== 'darwin') {
             mainWindow.setAlwaysOnTop(true);
           }
-          mainWindow.maximize();
+          if (process.platform === 'linux' && process.env.WAYLAND_DISPLAY) {
+            mainWindow.setFullScreen(true);
+          } else {
+            mainWindow.maximize();
+          }
           mainWindow.show();
           mainWindow.focus();
         } else {

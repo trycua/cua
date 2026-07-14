@@ -115,27 +115,50 @@ impl ForegroundSentinel {
 
     pub fn observe(&self) -> (Vec<OracleKind>, Vec<String>) {
         std::thread::sleep(Duration::from_millis(200));
-        let journal = match fs::read_to_string(&self.journal_path) {
-            Ok(journal) => journal,
+        let events = match read_journal_events(&self.journal_path) {
+            Ok(events) => events,
             Err(error) => {
                 return (
                     Vec::new(),
-                    vec![format!(
-                        "foreground sentinel journal could not be read: {error}"
-                    )],
+                    vec![format!("foreground sentinel journal is invalid: {error}")],
                 )
             }
         };
         let mut passed = Vec::new();
         let mut violations = Vec::new();
-        if journal.contains(r#""kind":"blur""#) {
-            violations.push("foreground sentinel lost focus".to_owned());
-        } else {
-            passed.push(OracleKind::Focus);
+        if !events
+            .iter()
+            .any(|event| event_kind(event) == Some("heartbeat"))
+        {
+            violations.push("foreground sentinel heartbeat stopped".to_owned());
         }
-        let leaked = ["keydown", "pointerdown", "wheel", "contextmenu"]
-            .into_iter()
-            .filter(|kind| journal.contains(&format!(r#""kind":"{kind}""#)))
+        if !is_wayland_session() {
+            if events.iter().any(|event| {
+                event_kind(event) == Some("blur")
+                    || (event_kind(event) == Some("visibility")
+                        && event["state"].as_str() == Some("hidden"))
+            }) {
+                violations.push("foreground sentinel lost focus".to_owned());
+            } else {
+                passed.push(OracleKind::Focus);
+            }
+        }
+        let leaked = events
+            .iter()
+            .filter_map(|event| event_kind(event))
+            .filter(|kind| {
+                matches!(
+                    *kind,
+                    "keydown"
+                        | "keyup"
+                        | "pointerdown"
+                        | "pointerup"
+                        | "click"
+                        | "wheel"
+                        | "contextmenu"
+                        | "input"
+                )
+            })
             .collect::<Vec<_>>();
         if leaked.is_empty() {
             passed.push(OracleKind::NoLeakedInput);
@@ -146,6 +169,83 @@ impl ForegroundSentinel {
             ));
         }
         (passed, violations)
+    }
+
+    /// Prove once per canonical lane that the foreground guard can detect both
+    /// leaked input and transient focus loss. A guard that cannot observe its
+    /// deliberate violations must never be trusted to certify background rows.
+    pub fn assert_guard_canaries(
+        &self,
+        driver: &mut impl Driver,
+        background_target: TargetWindow,
+    ) -> Result<(), String> {
+        wait_for_event(&self.journal_path, "heartbeat", Duration::from_secs(2))?;
+        reset_journal(&self.journal_path)?;
+
+        let leaked_key = driver.call(
+            "press_key",
+            serde_json::json!({
+                "pid": self.target.pid,
+                "window_id": self.target.native_id,
+                "key": "a",
+                "delivery_mode": "foreground",
+            }),
+        );
+        if leaked_key.is_error() {
+            return Err(format!(
+                "foreground input canary could not inject a key: {}",
+                leaked_key.text()
+            ));
+        }
+        wait_for_event(&self.journal_path, "keydown", Duration::from_secs(2))?;
+        let (_, leaked_input_violations) = self.observe();
+        if !leaked_input_violations
+            .iter()
+            .any(|violation| violation.contains("received input events"))
+        {
+            return Err(format!(
+                "foreground input canary was not detected: {leaked_input_violations:?}"
+            ));
+        }
+        reset_journal(&self.journal_path)?;
+
+        let raised = driver.call(
+            "bring_to_front",
+            serde_json::json!({
+                "pid": background_target.pid,
+                "window_id": background_target.native_id,
+            }),
+        );
+        if raised.is_error() {
+            return Err(format!(
+                "focus-loss canary could not raise the background target: {}",
+                raised.text()
+            ));
+        }
+        #[cfg(target_os = "linux")]
+        focus_sway_target(driver, background_target)?;
+        if is_wayland_session() {
+            wait_for_native_focus_lost(self.target)?;
+        } else {
+            wait_for_event(&self.journal_path, "blur", Duration::from_secs(3))?;
+            let (_, focus_violations) = self.observe();
+            if !focus_violations
+                .iter()
+                .any(|violation| violation.contains("lost focus"))
+            {
+                return Err(format!(
+                    "focus-loss canary was not detected: {focus_violations:?}"
+                ));
+            }
+        }
+
+        activate_native_foreground(driver, self.target);
+        wait_for_native_focus_stable(self.target);
+        std::thread::sleep(Duration::from_millis(150));
+        reset_journal(&self.journal_path)?;
+        wait_for_event(&self.journal_path, "heartbeat", Duration::from_secs(2))?;
+        reset_journal(&self.journal_path)?;
+        self.assert_background_posture(background_target)
     }
 
     pub fn target(&self) -> TargetWindow {
@@ -178,8 +278,7 @@ impl ForegroundSentinel {
         activate_native_foreground(driver, self.target);
         wait_for_native_focus_stable(self.target);
         std::thread::sleep(Duration::from_millis(100));
-        fs::write(&self.journal_path, "")
-            .map_err(|error| format!("reset foreground sentinel journal: {error}"))?;
+        reset_journal(&self.journal_path)?;
         self.assert_background_posture(target)
     }
 
@@ -271,6 +370,43 @@ fn wait_for_journal(path: &std::path::Path, deadline: Instant, marker: &str, sta
     }
 }
 
+fn reset_journal(path: &std::path::Path) -> Result<(), String> {
+    fs::write(path, "").map_err(|error| format!("reset foreground sentinel journal: {error}"))
+}
+
+fn read_journal_events(path: &std::path::Path) -> Result<Vec<serde_json::Value>, String> {
+    let journal =
+        fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    journal
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str(line)
+                .map_err(|error| format!("parse sentinel event {line:?}: {error}"))
+        })
+        .collect()
+}
+
+fn event_kind(event: &serde_json::Value) -> Option<&str> {
+    event["kind"].as_str()
+}
+
+fn wait_for_event(path: &std::path::Path, kind: &str, timeout: Duration) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let events = read_journal_events(path)?;
+        if events.iter().any(|event| event_kind(event) == Some(kind)) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "foreground sentinel did not emit {kind:?} within {timeout:?}: {events:?}"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 fn is_wayland_session() -> bool {
     cfg!(target_os = "linux")
         && std::env::var("XDG_SESSION_TYPE")
@@ -290,8 +426,190 @@ fn activate_native_foreground(driver: &mut impl Driver, target: TargetWindow) {
         "could not activate foreground sentinel: {}",
         response.text()
     );
+    #[cfg(target_os = "linux")]
+    focus_sway_target(driver, target)
+        .expect("could not focus foreground sentinel through Sway IPC");
     #[cfg(target_os = "windows")]
     physically_focus_windows_sentinel(target);
+}
+
+#[cfg(target_os = "linux")]
+fn focus_sway_target(driver: &mut impl Driver, target: TargetWindow) -> Result<(), String> {
+    let is_sway = is_wayland_session()
+        && std::env::var("CUA_E2E_WAYLAND_SESSION").is_ok_and(|session| session == "sway");
+    if !is_sway {
+        return Ok(());
+    }
+
+    let tree_output = Command::new("swaymsg")
+        .args(["-r", "-t", "get_tree"])
+        .output()
+        .map_err(|error| format!("read Sway tree for focus canary: {error}"))?;
+    if !tree_output.status.success() {
+        return Err(format!(
+            "read Sway tree for focus canary: {}",
+            String::from_utf8_lossy(&tree_output.stderr).trim()
+        ));
+    }
+    let tree: serde_json::Value = serde_json::from_slice(&tree_output.stdout)
+        .map_err(|error| format!("parse Sway tree for focus canary: {error}"))?;
+
+    let windows = driver.call("list_windows", serde_json::json!({}));
+    if windows.is_error() {
+        return Err(format!(
+            "list windows before Sway focus canary: {}",
+            windows.text()
+        ));
+    }
+    let title = sway_target_title(windows.structured(), target);
+    let con_id = title
+        .and_then(|title| sway_container_id(&tree, title))
+        .or_else(|| sway_container_id_by_unique_pid(&tree, target.pid))
+        .ok_or_else(|| {
+            format!(
+                "Sway focus canary could not resolve container for pid {} window {}",
+                target.pid, target.native_id
+            )
+        })?;
+
+    let criterion = format!("[con_id={con_id}]");
+    let output = Command::new("swaymsg")
+        .args(["-r", criterion.as_str(), "focus"])
+        .output()
+        .map_err(|error| format!("run Sway focus canary for con_id {con_id}: {error}"))?;
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("parse Sway focus result for con_id {con_id}: {error}"))?;
+    let focused = output.status.success()
+        && result.as_array().is_some_and(|results| {
+            !results.is_empty() && results.iter().all(|item| item["success"] == true)
+        });
+    if focused {
+        Ok(())
+    } else {
+        Err(format!(
+            "Sway focus canary for con_id {con_id} failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout).trim(),
+            String::from_utf8_lossy(&output.stderr).trim(),
+        ))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn sway_target_title(windows: &serde_json::Value, target: TargetWindow) -> Option<&str> {
+    let windows = windows["windows"].as_array()?;
+    windows
+        .iter()
+        .find(|window| {
+            window["pid"].as_u64() == Some(target.pid as u64)
+                && window["window_id"].as_u64() == Some(target.native_id)
+        })
+        .and_then(|window| window["title"].as_str())
+        .or_else(|| {
+            let mut titles = windows
+                .iter()
+                .filter(|window| window["pid"].as_u64() == Some(target.pid as u64))
+                .filter_map(|window| window["title"].as_str())
+                .filter(|title| !title.is_empty());
+            let title = titles.next()?;
+            titles.next().is_none().then_some(title)
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn collect_sway_container_ids_by_pid(node: &serde_json::Value, pid: u32, ids: &mut Vec<i64>) {
+    if node["pid"].as_u64() == Some(pid as u64) {
+        if let Some(id) = node["id"].as_i64() {
+            ids.push(id);
+        }
+    }
+    for key in ["nodes", "floating_nodes"] {
+        if let Some(children) = node[key].as_array() {
+            for child in children {
+                collect_sway_container_ids_by_pid(child, pid, ids);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn sway_container_id_by_unique_pid(node: &serde_json::Value, pid: u32) -> Option<i64> {
+    let mut ids = Vec::new();
+    collect_sway_container_ids_by_pid(node, pid, &mut ids);
+    (ids.len() == 1).then(|| ids[0])
+}
+
+#[cfg(target_os = "linux")]
+fn sway_container_id(node: &serde_json::Value, title: &str) -> Option<i64> {
+    let raw_title = title
+        .rsplit_once(" [")
+        .map(|(candidate, _)| candidate)
+        .unwrap_or(title);
+    if node["name"]
+        .as_str()
+        .is_some_and(|name| name == title || name == raw_title)
+    {
+        return node["id"].as_i64();
+    }
+    ["nodes", "floating_nodes"].into_iter().find_map(|key| {
+        node[key].as_array().and_then(|children| {
+            children
+                .iter()
+                .find_map(|child| sway_container_id(child, title))
+        })
+    })
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod sway_tests {
+    use super::*;
+
+    #[test]
+    fn focus_target_uses_unique_sway_pid_when_title_is_unavailable() {
+        let tree = serde_json::json!({
+            "id": 1,
+            "nodes": [{
+                "id": 9,
+                "nodes": [{
+                    "id": 42,
+                    "pid": 1234,
+                    "name": "CuaTestHarness Electron"
+                }]
+            }]
+        });
+        assert_eq!(sway_container_id_by_unique_pid(&tree, 1234), Some(42));
+    }
+
+    #[test]
+    fn focus_target_does_not_guess_when_pid_owns_multiple_windows() {
+        let tree = serde_json::json!({
+            "id": 1,
+            "nodes": [
+                {"id": 41, "pid": 1234, "name": "First"},
+                {"id": 42, "pid": 1234, "name": "Second"}
+            ]
+        });
+        assert_eq!(sway_container_id_by_unique_pid(&tree, 1234), None);
+        assert_eq!(sway_container_id(&tree, "Second"), Some(42));
+    }
+
+    #[test]
+    fn focus_target_uses_unique_same_process_title_when_window_id_changes() {
+        let windows = serde_json::json!({
+            "windows": [{
+                "pid": 1234,
+                "window_id": 88,
+                "title": "CuaTestHarness Electron [cdp=9223]"
+            }]
+        });
+        let target = TargetWindow {
+            pid: 1234,
+            native_id: 99,
+        };
+        assert_eq!(
+            sway_target_title(&windows, target),
+            Some("CuaTestHarness Electron [cdp=9223]")
+        );
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -372,6 +690,32 @@ fn wait_for_native_focus_stable(target: TargetWindow) {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_native_focus_lost(target: TargetWindow) -> Result<(), String> {
+    use crate::observer::{ObserverBackend, TargetZ};
+
+    let backend = NativeObserver::new();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let lost = backend
+            .snapshot(target)
+            .map(|snapshot| snapshot.target_z != TargetZ::Foreground)
+            .unwrap_or(false);
+        if lost {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err("native Wayland focus-loss canary was not detected".to_owned());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn wait_for_native_focus_lost(_target: TargetWindow) -> Result<(), String> {
+    Err("native Wayland focus observation is only available on Linux".to_owned())
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]

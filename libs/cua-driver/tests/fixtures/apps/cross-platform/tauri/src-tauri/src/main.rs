@@ -9,6 +9,17 @@ fn main() {
         .build();
     tauri::Builder::default()
         .plugin(journal_plugin)
+        .setup(|_app| {
+            #[cfg(target_os = "windows")]
+            {
+                use tauri::{LogicalSize, Manager, Size};
+
+                _app.get_webview_window("main")
+                    .expect("Tauri main fixture window")
+                    .set_size(Size::Logical(LogicalSize::new(900.0, 640.0)))?;
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running CuaTestHarness.Tauri");
 }

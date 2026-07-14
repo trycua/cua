@@ -128,6 +128,24 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         hint = powershell.index("Set-Content -LiteralPath (Join-Path $HomeDir '.telemetry_install_channel')")
         self.assertLess(hint, powershell.index("Ensure-Junction $CurrentDir    $versionedDir"))
 
+    def test_lifecycle_telemetry_runs_outside_foreground_command(self) -> None:
+        main = self.read("libs/cua-driver/rust/crates/cua-driver/src/main.rs")
+        telemetry = self.read(
+            "libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs"
+        )
+
+        self.assertNotIn("telemetry::ensure_first_run_registration();", main)
+        self.assertGreaterEqual(
+            main.count("telemetry::run_lifecycle_worker_if_requested()"), 2
+        )
+        self.assertGreaterEqual(
+            main.count("telemetry::spawn_first_run_registration_worker()"), 3
+        )
+        self.assertIn("CUA_DRIVER_LIFECYCLE_TELEMETRY_WORKER", telemetry)
+        self.assertIn(".stdin(Stdio::null())", telemetry)
+        self.assertIn(".stdout(Stdio::null())", telemetry)
+        self.assertIn(".stderr(Stdio::null())", telemetry)
+
 
 if __name__ == "__main__":
     unittest.main()

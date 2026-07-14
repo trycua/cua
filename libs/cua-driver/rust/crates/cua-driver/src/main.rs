@@ -86,7 +86,7 @@ fn maybe_wrap_finite_command() {
         return;
     }
     let Some(command_name) = cli::finite_command_name_from_argv() else { return; };
-    telemetry::ensure_first_run_registration();
+    telemetry::spawn_first_run_registration_worker();
     let Ok(executable) = std::env::current_exe() else { return; };
     let started_at = std::time::Instant::now();
     let status = std::process::Command::new(executable)
@@ -239,6 +239,9 @@ fn main() {
     if telemetry::run_cli_completion_worker_if_requested() {
         return;
     }
+    if telemetry::run_lifecycle_worker_if_requested() {
+        return;
+    }
     maybe_wrap_finite_command();
 
     // ── CLI subcommand dispatch ──────────────────────────────────────────────
@@ -246,7 +249,7 @@ fn main() {
     // cleanly without starting the overlay or NSApplication.
     let command = cli::parse_command();
     if !telemetry::is_wrapped_cli_child() && !matches!(&command, cli::Command::Telemetry(_)) {
-        telemetry::ensure_first_run_registration();
+        telemetry::spawn_first_run_registration_worker();
     }
     emit_entry_telemetry(&command);
     match command {
@@ -615,6 +618,9 @@ fn main() -> anyhow::Result<()> {
     if telemetry::run_cli_completion_worker_if_requested() {
         return Ok(());
     }
+    if telemetry::run_lifecycle_worker_if_requested() {
+        return Ok(());
+    }
     maybe_wrap_finite_command();
 
     // ── CLI subcommand dispatch ──────────────────────────────────────────────
@@ -623,7 +629,7 @@ fn main() -> anyhow::Result<()> {
     // would cause nested block_on panics.
     let command = cli::parse_command();
     if !telemetry::is_wrapped_cli_child() && !matches!(&command, cli::Command::Telemetry(_)) {
-        telemetry::ensure_first_run_registration();
+        telemetry::spawn_first_run_registration_worker();
     }
     emit_entry_telemetry(&command);
     match command {

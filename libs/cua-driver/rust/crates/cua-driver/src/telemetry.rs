@@ -47,6 +47,7 @@ const ENV_CLI_COMPLETION_WORKER: &str = "CUA_DRIVER_CLI_TELEMETRY_WORKER";
 const ENV_CLI_COMPLETION_COMMAND: &str = "CUA_DRIVER_CLI_TELEMETRY_COMMAND";
 const ENV_CLI_COMPLETION_EXIT_CODE: &str = "CUA_DRIVER_CLI_TELEMETRY_EXIT_CODE";
 const ENV_CLI_COMPLETION_DURATION_MS: &str = "CUA_DRIVER_CLI_TELEMETRY_DURATION_MS";
+const ENV_LIFECYCLE_WORKER: &str = "CUA_DRIVER_LIFECYCLE_TELEMETRY_WORKER";
 pub const ENV_INSTALL_CHANNEL: &str = "CUA_DRIVER_INSTALL_CHANNEL";
 pub const ENV_RELEASE_VERSION: &str = "CUA_DRIVER_RELEASE_VERSION";
 
@@ -448,6 +449,33 @@ pub fn ensure_first_run_registration() {
         "Cua Driver sends content-free product telemetry by default. Run `cua-driver telemetry disable` to stop it; `cua-driver telemetry status` shows the current setting."
     );
     capture_install_locked(&home, &mut post_to_posthog);
+}
+
+/// Run lifecycle delivery in a hidden worker before CLI parsing. The normal
+/// process only spawns this worker, so a blackholed telemetry endpoint cannot
+/// delay MCP initialization, daemon startup, or finite CLI commands.
+pub(crate) fn run_lifecycle_worker_if_requested() -> bool {
+    if !parse_env_bool(ENV_LIFECYCLE_WORKER).unwrap_or(false) {
+        return false;
+    }
+    ensure_first_run_registration();
+    true
+}
+
+pub(crate) fn spawn_first_run_registration_worker() {
+    if !is_enabled() || lifecycle_is_current() || lifecycle_retry_deferred() {
+        return;
+    }
+    eprintln!(
+        "Cua Driver sends content-free product telemetry by default. Run `cua-driver telemetry disable` to stop it; `cua-driver telemetry status` shows the current setting."
+    );
+    let Ok(executable) = std::env::current_exe() else { return; };
+    let _ = std::process::Command::new(executable)
+        .env(ENV_LIFECYCLE_WORKER, "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
 }
 
 pub fn capture_install() {

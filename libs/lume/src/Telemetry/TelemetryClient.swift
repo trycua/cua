@@ -14,11 +14,13 @@ final class TelemetryClient: @unchecked Sendable {
     static let telemetryIdFileName = ".telemetry_id"
     static let installationRecordedFileName = ".installation_recorded"
     static let releaseRecordedDirectoryName = ".telemetry_releases"
+    static let lifecycleRetryAfterFileName = ".telemetry_retry_after"
     static let envTelemetryEnabled = "LUME_TELEMETRY_ENABLED"
     static let envTelemetryDebug = "LUME_TELEMETRY_DEBUG"
     static let envInstallChannel = "LUME_INSTALL_CHANNEL"
     static let requestTimeout: TimeInterval = 3
     static let flushTimeout: TimeInterval = 1.5
+    static let lifecycleRetryBackoff: TimeInterval = 15 * 60
     static let schemaVersion = 2
     static let processSessionId = UUID().uuidString
     static let allowedInstallChannels: Swift.Set<String> = [
@@ -95,7 +97,7 @@ final class TelemetryClient: @unchecked Sendable {
   /// per Lume version. Both events honor consent. Each marker is written
   /// only after its corresponding request receives HTTP 2xx.
   func recordInstallation(channel: String? = nil) async {
-    guard isEnabled() else { return }
+    guard isEnabled(), !lifecycleRetryDeferred() else { return }
 
     let installChannel = Self.normalizedInstallChannel(
       channel ?? ProcessInfo.processInfo.environment[Constants.envInstallChannel]
@@ -121,8 +123,9 @@ final class TelemetryClient: @unchecked Sendable {
       async let releaseAccepted = send(
         request: releaseRequest, event: TelemetryEvent.releaseInstalled)
       let (didInstall, didRelease) = await (installAccepted, releaseAccepted)
-      if didInstall { writeMarker(installMarker) }
-      if didRelease { writeMarker(releaseMarker) }
+      let installRecorded = didInstall && writeMarker(installMarker)
+      let releaseRecorded = didRelease && writeMarker(releaseMarker)
+      finishLifecycleAttempt(succeeded: installRecorded && releaseRecorded)
       return
     }
 
@@ -130,7 +133,13 @@ final class TelemetryClient: @unchecked Sendable {
       let request = makeRequest(event: TelemetryEvent.install, properties: properties),
       await send(request: request, event: TelemetryEvent.install)
     {
-      writeMarker(installMarker)
+      if !writeMarker(installMarker) {
+        deferLifecycleRetry()
+        return
+      }
+    } else if needsInstall {
+      deferLifecycleRetry()
+      return
     }
 
     if needsRelease,
@@ -138,8 +147,16 @@ final class TelemetryClient: @unchecked Sendable {
         event: TelemetryEvent.releaseInstalled, properties: properties),
       await send(request: request, event: TelemetryEvent.releaseInstalled)
     {
-      writeMarker(releaseMarker)
+      if !writeMarker(releaseMarker) {
+        deferLifecycleRetry()
+        return
+      }
+    } else if needsRelease {
+      deferLifecycleRetry()
+      return
     }
+
+    clearLifecycleRetry()
   }
 
   /// Wait a short, bounded interval for routine events queued by a
@@ -180,7 +197,7 @@ final class TelemetryClient: @unchecked Sendable {
     installationIdentity = nil
     identityLock.unlock()
 
-    for url in [installationIdURL, installationMarkerURL] {
+    for url in [installationIdURL, installationMarkerURL, lifecycleRetryAfterURL] {
       if FileManager.default.fileExists(atPath: url.path) {
         try FileManager.default.removeItem(at: url)
       }
@@ -368,6 +385,10 @@ final class TelemetryClient: @unchecked Sendable {
     homeDirectory.appendingPathComponent(Constants.releaseRecordedDirectoryName)
   }
 
+  private var lifecycleRetryAfterURL: URL {
+    homeDirectory.appendingPathComponent(Constants.lifecycleRetryAfterFileName)
+  }
+
   private func releaseMarkerURL(version: String) -> URL {
     let safeVersion = version.map { character -> Character in
       character.isLetter || character.isNumber || character == "." || character == "-"
@@ -376,13 +397,53 @@ final class TelemetryClient: @unchecked Sendable {
     return releaseMarkerDirectoryURL.appendingPathComponent(String(safeVersion))
   }
 
-  private func writeMarker(_ url: URL) {
+  @discardableResult
+  private func writeMarker(_ url: URL) -> Bool {
     do {
       try FileManager.default.createDirectory(
         at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
       try "1".write(to: url, atomically: true, encoding: .utf8)
+      return true
     } catch {
       debugLog("Failed to write marker: \(error.localizedDescription)")
+      return false
+    }
+  }
+
+  private func lifecycleRetryDeferred(now: Date = Date()) -> Bool {
+    guard
+      let raw = try? String(contentsOf: lifecycleRetryAfterURL, encoding: .utf8),
+      let retryAfter = TimeInterval(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+    else { return false }
+    let remaining = retryAfter - now.timeIntervalSince1970
+    return remaining > 0 && remaining <= Constants.lifecycleRetryBackoff
+  }
+
+  private func deferLifecycleRetry(now: Date = Date()) {
+    let retryAfter = now.timeIntervalSince1970 + Constants.lifecycleRetryBackoff
+    do {
+      try FileManager.default.createDirectory(at: homeDirectory, withIntermediateDirectories: true)
+      try String(retryAfter).write(
+        to: lifecycleRetryAfterURL, atomically: true, encoding: .utf8)
+    } catch {
+      debugLog("Failed to defer lifecycle retry: \(error.localizedDescription)")
+    }
+  }
+
+  private func clearLifecycleRetry() {
+    guard FileManager.default.fileExists(atPath: lifecycleRetryAfterURL.path) else { return }
+    do {
+      try FileManager.default.removeItem(at: lifecycleRetryAfterURL)
+    } catch {
+      debugLog("Failed to clear lifecycle retry: \(error.localizedDescription)")
+    }
+  }
+
+  private func finishLifecycleAttempt(succeeded: Bool) {
+    if succeeded {
+      clearLifecycleRetry()
+    } else {
+      deferLifecycleRetry()
     }
   }
 

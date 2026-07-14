@@ -89,8 +89,8 @@ func installationMarkersRequireAcceptedRequests() async throws {
   #expect(await recorder.count() == 2)
 }
 
-@Test("failed installation requests leave markers absent for retry")
-func failedInstallationRequestsDoNotWriteMarkers() async throws {
+@Test("failed installation requests defer retries without writing success markers")
+func failedInstallationRequestsDeferRetries() async throws {
   let home = try telemetryTempDirectory()
   defer { try? FileManager.default.removeItem(at: home) }
   let recorder = TelemetryRequestRecorder()
@@ -110,6 +110,13 @@ func failedInstallationRequestsDoNotWriteMarkers() async throws {
   #expect(
     !FileManager.default.fileExists(atPath: home.appendingPathComponent(".telemetry_releases").path)
   )
+  #expect(
+    FileManager.default.fileExists(
+      atPath: home.appendingPathComponent(".telemetry_retry_after").path))
+
+  await recorder.setAccepted(true)
+  await client.recordInstallation(channel: "install_script")
+  #expect(await recorder.count() == 2)
 }
 
 @Test("disabled telemetry creates no ID, request, or marker")

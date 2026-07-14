@@ -34,6 +34,148 @@ impl Request {
             .unwrap_or(Value::Object(Default::default()));
         Ok(ToolCall { name, args })
     }
+
+    /// Extract the small, declared subset of MCP initialize metadata that a
+    /// transport observer may use. The complete initialize payload is never
+    /// retained or forwarded: arbitrary `_meta`, capability payloads, and
+    /// client-defined extension values are deliberately ignored.
+    pub fn initialize_metadata(&self) -> Option<InitializeMetadata> {
+        if self.method != "initialize" {
+            return None;
+        }
+
+        let params = self.params.as_ref();
+        let protocol_version = params
+            .and_then(|p| p.get("protocolVersion"))
+            .and_then(Value::as_str)
+            .and_then(bounded_metadata_value);
+        let client_info = params.and_then(|p| p.get("clientInfo"));
+        let client_name = client_info
+            .and_then(|v| v.get("name"))
+            .and_then(Value::as_str)
+            .and_then(bounded_metadata_value);
+        let client_version = client_info
+            .and_then(|v| v.get("version"))
+            .and_then(Value::as_str)
+            .and_then(bounded_metadata_value);
+
+        let capabilities = params.and_then(|p| p.get("capabilities"));
+        let capability_flags = ClientCapabilityFlags {
+            tools: capability_declared(capabilities, "tools"),
+            roots: capability_declared(capabilities, "roots"),
+            sampling: capability_declared(capabilities, "sampling"),
+            experimental: capability_declared(capabilities, "experimental"),
+            elicitation_form: nested_capability_declared(capabilities, "elicitation", "form"),
+            elicitation_url: nested_capability_declared(capabilities, "elicitation", "url"),
+        };
+
+        let reported_agent_context = params
+            .and_then(|p| p.get("_meta"))
+            .and_then(|m| m.get("ai.cua/agent-context"))
+            .filter(|v| v.is_object())
+            .map(|ctx| ReportedAgentContext {
+                provider: ctx
+                    .get("provider")
+                    .and_then(Value::as_str)
+                    .and_then(bounded_metadata_value),
+                model: ctx
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .and_then(bounded_metadata_value),
+                agent_name: ctx
+                    .get("agent_name")
+                    .and_then(Value::as_str)
+                    .and_then(bounded_metadata_value),
+                agent_version: ctx
+                    .get("agent_version")
+                    .and_then(Value::as_str)
+                    .and_then(bounded_metadata_value),
+            })
+            .filter(ReportedAgentContext::has_any_value);
+
+        Some(InitializeMetadata {
+            protocol_version,
+            client_name,
+            client_version,
+            capability_flags,
+            reported_agent_context,
+        })
+    }
+}
+
+/// Declared and bounded metadata from one MCP initialize request.
+///
+/// Values remain self-reported. A product telemetry layer must normalize them
+/// through its own allowlists before emission.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InitializeMetadata {
+    pub protocol_version: Option<String>,
+    pub client_name: Option<String>,
+    pub client_version: Option<String>,
+    pub capability_flags: ClientCapabilityFlags,
+    pub reported_agent_context: Option<ReportedAgentContext>,
+}
+
+/// Presence-only capability flags. Capability values themselves are ignored.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ClientCapabilityFlags {
+    pub tools: bool,
+    pub roots: bool,
+    pub sampling: bool,
+    pub experimental: bool,
+    pub elicitation_form: bool,
+    pub elicitation_url: bool,
+}
+
+/// Values explicitly reported under
+/// `initialize.params._meta["ai.cua/agent-context"]`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReportedAgentContext {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub agent_name: Option<String>,
+    pub agent_version: Option<String>,
+}
+
+impl ReportedAgentContext {
+    fn has_any_value(&self) -> bool {
+        self.provider.is_some()
+            || self.model.is_some()
+            || self.agent_name.is_some()
+            || self.agent_version.is_some()
+    }
+}
+
+const MAX_METADATA_CHARS: usize = 128;
+
+fn bounded_metadata_value(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let value: String = trimmed
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(MAX_METADATA_CHARS)
+        .collect();
+    (!value.is_empty()).then_some(value)
+}
+
+fn capability_declared(capabilities: Option<&Value>, name: &str) -> bool {
+    capabilities
+        .and_then(|v| v.as_object())
+        .is_some_and(|caps| caps.contains_key(name))
+}
+
+fn nested_capability_declared(
+    capabilities: Option<&Value>,
+    parent: &str,
+    child: &str,
+) -> bool {
+    capabilities
+        .and_then(|v| v.get(parent))
+        .and_then(Value::as_object)
+        .is_some_and(|value| value.contains_key(child))
 }
 
 pub struct ToolCall {
@@ -238,5 +380,104 @@ mod image_mime_type_tests {
         let v = serde_json::to_value(&c).expect("serialize");
         assert_eq!(v.get("type").and_then(|t| t.as_str()), Some("text"));
         assert!(v.get("mimeType").is_none(), "text content must not carry mimeType");
+    }
+}
+
+#[cfg(test)]
+mod initialize_metadata_tests {
+    use super::*;
+
+    fn request(params: Value) -> Request {
+        serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": params,
+        }))
+        .expect("initialize request")
+    }
+
+    #[test]
+    fn extracts_only_declared_initialize_fields() {
+        let req = request(serde_json::json!({
+            "protocolVersion": "2025-06-18",
+            "clientInfo": { "name": "Claude Code", "version": "1.2.3", "secret": "ignore" },
+            "capabilities": {
+                "roots": { "listChanged": true, "arbitrary": "ignored" },
+                "sampling": {},
+                "elicitation": { "form": {}, "url": { "payload": "ignored" } },
+                "experimental": { "anything": "ignored" }
+            },
+            "_meta": {
+                "ai.cua/agent-context": {
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-4-5",
+                    "agent_name": "claude-code",
+                    "agent_version": "1.x",
+                    "prompt": "must not be extracted"
+                },
+                "unrelated": { "task": "must not be extracted" }
+            },
+            "task": "must not be extracted"
+        }));
+
+        let metadata = req.initialize_metadata().expect("initialize metadata");
+        assert_eq!(metadata.protocol_version.as_deref(), Some("2025-06-18"));
+        assert_eq!(metadata.client_name.as_deref(), Some("Claude Code"));
+        assert_eq!(metadata.client_version.as_deref(), Some("1.2.3"));
+        assert!(metadata.capability_flags.roots);
+        assert!(metadata.capability_flags.sampling);
+        assert!(metadata.capability_flags.experimental);
+        assert!(metadata.capability_flags.elicitation_form);
+        assert!(metadata.capability_flags.elicitation_url);
+        assert!(!metadata.capability_flags.tools);
+
+        let agent = metadata
+            .reported_agent_context
+            .as_ref()
+            .expect("reported agent context");
+        assert_eq!(agent.provider.as_deref(), Some("anthropic"));
+        assert_eq!(agent.model.as_deref(), Some("claude-sonnet-4-5"));
+        assert_eq!(agent.agent_name.as_deref(), Some("claude-code"));
+        assert_eq!(agent.agent_version.as_deref(), Some("1.x"));
+
+        let debug = format!("{metadata:?}");
+        for forbidden in ["secret", "prompt", "task", "arbitrary", "payload"] {
+            assert!(!debug.contains(forbidden), "metadata leaked {forbidden}: {debug}");
+        }
+    }
+
+    #[test]
+    fn bounds_reported_strings_and_drops_empty_values() {
+        let long_model = "m".repeat(MAX_METADATA_CHARS + 50);
+        let req = request(serde_json::json!({
+            "clientInfo": { "name": "  client\nname  ", "version": "   " },
+            "_meta": { "ai.cua/agent-context": { "model": long_model } }
+        }));
+        let metadata = req.initialize_metadata().unwrap();
+        assert_eq!(metadata.client_name.as_deref(), Some("clientname"));
+        assert!(metadata.client_version.is_none());
+        assert_eq!(
+            metadata
+                .reported_agent_context
+                .unwrap()
+                .model
+                .unwrap()
+                .chars()
+                .count(),
+            MAX_METADATA_CHARS
+        );
+    }
+
+    #[test]
+    fn non_initialize_requests_have_no_initialize_metadata() {
+        let req: Request = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+            "params": { "clientInfo": { "name": "not-an-initialize" } }
+        }))
+        .unwrap();
+        assert!(req.initialize_metadata().is_none());
     }
 }

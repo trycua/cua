@@ -776,21 +776,29 @@ show_cua_driver_daemon_survivors
 # matching GitHub release. The post-install hint below points at the
 # verb.
 
-# --- Fire the one-shot install telemetry ping ---------------------------
+# --- Record consent-aware install telemetry -----------------------------
 #
-# Anonymous adoption signal — sends `cua_driver_install` to PostHog
-# exactly once per install (guarded by ~/.cua-driver/.installation_recorded
-# on the binary side). The Rust port keeps its install signal independent
-# of the Swift `cua-driver` install (separate marker dir + separate env var)
-# so users can opt out of one without affecting the other.
-#
-# Bypasses the CUA_DRIVER_RS_TELEMETRY_ENABLED check by design — see
-# `telemetry::capture_install()` for the rationale (count adoption even
-# when users opt out immediately after install). Every subsequent event
-# from the binary respects the opt-out normally.
+# Telemetry is default-on, but the binary applies the same effective consent
+# policy to installation events as every other event: environment override,
+# then the persisted preference, then the default. It records the pseudonymous
+# installation once and the installed release once per version. The channel
+# is a fixed enum so an inherited/user-controlled value cannot fragment the
+# dashboard.
 #
 # Background + redirect so a slow / failed POST never blocks the install.
-"$BIN_LINK" telemetry install-event >/dev/null 2>&1 &
+echo "Telemetry defaults to enabled for new installations; saved preferences and environment overrides are honored."
+echo "When enabled, Cua collects a pseudonymous installation ID and bounded, content-free usage metadata."
+echo "  No prompts, tool arguments, screen contents, or file paths are collected."
+echo "  Disable persistently at any time: $BIN_LINK telemetry disable"
+
+INSTALL_CHANNEL="${CUA_DRIVER_INSTALL_CHANNEL:-install_script}"
+case "$INSTALL_CHANNEL" in
+    install_script|update_apply|python_package|first_run) ;;
+    *) INSTALL_CHANNEL="install_script" ;;
+esac
+CUA_DRIVER_INSTALL_CHANNEL="$INSTALL_CHANNEL" \
+CUA_DRIVER_RELEASE_VERSION="$VERSION" \
+    "$BIN_LINK" telemetry install-event >/dev/null 2>&1 &
 disown 2>/dev/null || true
 
 # Auto-extend PATH for users whose shell doesn't already include BIN_DIR.

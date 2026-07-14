@@ -23,8 +23,9 @@
 #   Linux:
 #     - ~/.local/bin/cua-driver symlink (only when it resolves to a
 #       cua-driver path — a Swift-driver symlink is left in place)
-#     - ~/.cua-driver/ (current package home) + legacy ~/.cua-driver-rs/
-#       (telemetry id, config.json, versioned releases, current symlink)
+#     - versioned packages/current symlink under ~/.cua-driver/
+#     - telemetry id, preference, and registration markers are preserved by
+#       default so a reinstall remains the same pseudonymous installation
 #     - ~/.config/systemd/user/cua-driver-rs.service (if --autostart
 #       was used via install-local.sh — stop + disable + remove)
 #     - Skill symlinks under ~/.claude/skills/cua-driver(-rs), ~/.agents/
@@ -33,7 +34,8 @@
 #     - /Applications/CuaDriver.app bundle (+ legacy CuaDriverRs.app)
 #     - ~/.local/bin/cua-driver symlink (only when it resolves into
 #       /Applications/CuaDriver.app)
-#     - ~/.cua-driver/ (current package home) + legacy ~/.cua-driver-rs/
+#     - runtime payloads under ~/.cua-driver/ and legacy ~/.cua-driver-rs/;
+#       telemetry state remains unless --purge is passed
 #     - ~/Library/LaunchAgents/com.trycua.cua-driver-rs.plist (if
 #       --autostart was used via install-local.sh — unload + remove)
 #     - Skill symlinks under ~/.claude/skills/cua-driver(-rs), etc.
@@ -42,7 +44,7 @@
 # symlink use the same bundle id (com.trycua.driver) as the Swift driver,
 # so they're only removed when an unambiguous Rust marker is on disk
 # (~/.cua-driver/packages/, legacy ~/.cua-driver-rs/, CuaDriverRs.app,
-# or the LaunchAgent/systemd unit).
+# the LaunchAgent/systemd unit, or current Rust telemetry state).
 #
 # Also scrubs Claude MCP registrations in ~/.claude.json that match
 # the active backend.
@@ -53,9 +55,11 @@
 #
 # Usage:
 #   /bin/bash -c "$(curl -fsSL https://cua.ai/driver/uninstall.sh)"
+#   /bin/bash -c "$(curl -fsSL https://cua.ai/driver/uninstall.sh)" -- --purge
 #
 # Env overrides (mirror install side):
-#   CUA_DRIVER_RS_HOME    Rust package home to remove (default ~/.cua-driver-rs)
+#   CUA_DRIVER_HOME       Rust package home to remove (default ~/.cua-driver)
+#   CUA_DRIVER_RS_HOME    Legacy alias for CUA_DRIVER_HOME
 set -euo pipefail
 
 # ----------------------------------------------------------------------
@@ -65,6 +69,7 @@ set -euo pipefail
 # ----------------------------------------------------------------------
 USE_RUST_BACKEND=1
 RESET_TCC=1
+PURGE_DATA=0
 FORWARDED_ARGS=()
 PASSTHROUGH=0
 while [[ $# -gt 0 ]]; do
@@ -77,6 +82,7 @@ while [[ $# -gt 0 ]]; do
         --backend=swift)     shift ;;  # retired Swift (no-op)
         --reset-tcc)         RESET_TCC=1; shift ;;  # legacy/explicit default: revoke TCC grants
         --keep-tcc)          RESET_TCC=0; shift ;;  # preserve TCC grants across reinstall
+        --purge)             PURGE_DATA=1; shift ;;  # also delete pseudonymous identity + preference
         --backend=*)
             printf 'error: unknown backend %q; supported: rust\n' "${1#*=}" >&2
             exit 2
@@ -194,8 +200,10 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     #   - ~/.cua-driver-rs/ exists (legacy Rust state dir, pre-rename)
     #   - /Applications/CuaDriverRs.app exists (legacy bundle, pre-rename)
     #   - LaunchAgent plist / systemd unit exists (autostart was used)
+    #   - current telemetry identity/registration marker exists (release
+    #     installs on macOS live in /Applications and have no packages dir)
     RUST_INSTALL_PRESENT=0
-    if [[ -d "$PACKAGES_DIR" || -d "$LEGACY_HOME_DIR" || -d "$LEGACY_APP_BUNDLE" || -f "$LAUNCHAGENT_PLIST" || -f "$SYSTEMD_USER_UNIT" ]]; then
+    if [[ -d "$PACKAGES_DIR" || -d "$LEGACY_HOME_DIR" || -d "$LEGACY_APP_BUNDLE" || -f "$LAUNCHAGENT_PLIST" || -f "$SYSTEMD_USER_UNIT" || -f "$HOME_DIR/.telemetry_id" || -f "$HOME_DIR/.installation_recorded" ]]; then
         RUST_INSTALL_PRESENT=1
     fi
 
@@ -301,25 +309,49 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     fi
 
     # --- Package home ---
-    # Everything under $HOME_DIR (default ~/.cua-driver): telemetry id,
-    # config.json, versioned releases, current symlink, local skill copy,
-    # version_check.json cache. This is the live runtime home now (post
-    # v0.2.16 rename), so gate its removal on the Rust marker — don't nuke
-    # a Swift-only Mac's ~/.cua-driver/config.json on a mistaken run.
+    # A normal uninstall deliberately keeps the pseudonymous installation ID,
+    # persisted telemetry preference, and install/release markers. This lets a
+    # later reinstall be counted as a returning installation without sending
+    # any events while disabled. `--purge` is the explicit identity reset.
+    # All removal remains gated on the Rust marker so a mistaken invocation
+    # cannot damage a Swift-only Mac's shared ~/.cua-driver state.
     if [[ -d "$HOME_DIR" ]]; then
-        if [[ "$RUST_INSTALL_PRESENT" == "1" ]]; then
-            rm -rf "$HOME_DIR"
-            log "removed $HOME_DIR"
+        if [[ "$RUST_INSTALL_PRESENT" == "1" || "$PURGE_DATA" == "1" ]]; then
+            if [[ "$PURGE_DATA" == "1" ]]; then
+                rm -rf "$HOME_DIR"
+                log "purged $HOME_DIR (including telemetry identity and preference)"
+            else
+                # Remove only installer/runtime-owned payloads. Unknown files
+                # and all telemetry state remain untouched.
+                rm -rf "$HOME_DIR/packages" "$HOME_DIR/skills"
+                rm -f \
+                    "$HOME_DIR/.tcc-signing-identity" \
+                    "$HOME_DIR/serve.out.log" \
+                    "$HOME_DIR/serve.err.log"
+                log "removed runtime payloads from $HOME_DIR"
+                log "preserved telemetry identity, preference, and registration markers"
+            fi
         else
             log "$HOME_DIR exists but no Rust marker on disk; leaving it (looks like a Swift-only / shared config dir)"
         fi
     else
         log "no package home at $HOME_DIR (skipping)"
     fi
-    # Legacy pre-rename home is unambiguously Rust — always sweep it.
+    # Preserve legacy telemetry state during a normal uninstall so the
+    # runtime's existing one-shot migration can carry the same identity into
+    # ~/.cua-driver on reinstall.
     if [[ -d "$LEGACY_HOME_DIR" ]]; then
-        rm -rf "$LEGACY_HOME_DIR"
-        log "removed legacy package home $LEGACY_HOME_DIR"
+        if [[ "$PURGE_DATA" == "1" ]]; then
+            rm -rf "$LEGACY_HOME_DIR"
+            log "purged legacy package home $LEGACY_HOME_DIR"
+        else
+            rm -rf "$LEGACY_HOME_DIR/packages" "$LEGACY_HOME_DIR/skills"
+            rm -f \
+                "$LEGACY_HOME_DIR/.tcc-signing-identity" \
+                "$LEGACY_HOME_DIR/serve.out.log" \
+                "$LEGACY_HOME_DIR/serve.err.log"
+            log "removed legacy runtime payloads and preserved legacy telemetry state"
+        fi
     fi
 
     # --- Swift-era macOS data dirs (leave nothing behind) ---
@@ -511,6 +543,15 @@ PY
     if [[ "$OS" == "Darwin" ]]; then
         echo ""
         echo "cua-driver uninstalled."
+        if [[ "$PURGE_DATA" == "0" ]]; then
+            cat << 'TELEMETRYUNMSG'
+
+Telemetry identity and preference were preserved for a future reinstall.
+To delete them too, re-run with --purge:
+
+  /bin/bash -c "$(curl -fsSL https://cua.ai/driver/uninstall.sh)" -- --purge
+TELEMETRYUNMSG
+        fi
         if [[ "$RESET_TCC" != "1" ]]; then
             cat << 'FINALUNMSG'
 
@@ -527,6 +568,15 @@ FINALUNMSG
 
 cua-driver uninstalled.
 FINALUNMSG
+        if [[ "$PURGE_DATA" == "0" ]]; then
+            cat << 'TELEMETRYUNMSG'
+
+Telemetry identity and preference were preserved for a future reinstall.
+To delete them too, re-run with --purge:
+
+  /bin/bash -c "$(curl -fsSL https://cua.ai/driver/uninstall.sh)" -- --purge
+TELEMETRYUNMSG
+        fi
     fi
     exit 0
 fi

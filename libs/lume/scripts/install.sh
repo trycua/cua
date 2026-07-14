@@ -394,6 +394,29 @@ cleanup_deprecated_auto_updater() {
   fi
 }
 
+# Record consent-aware installation and per-version release events through
+# the installed binary so identity, preference precedence, request timeouts,
+# and 2xx-only marker semantics stay in one implementation. This happens
+# before the LaunchAgent can start Lume and race first-run registration.
+record_installation_telemetry() {
+  echo ""
+  echo "${BLUE}Telemetry defaults to enabled for new installations; saved preferences and environment overrides are honored.${NORMAL}"
+  echo "${BLUE}When enabled, Lume collects a pseudonymous installation ID and bounded, content-free usage metadata.${NORMAL}"
+  echo "  No prompts, VM/image names, file paths, or VM contents are collected."
+  echo "  Disable persistently at any time: $INSTALL_DIR/lume config telemetry disable"
+
+  INSTALL_CHANNEL="${LUME_INSTALL_CHANNEL:-install_script}"
+  case "$INSTALL_CHANNEL" in
+    install_script|update_apply|first_run) ;;
+    *) INSTALL_CHANNEL="install_script" ;;
+  esac
+
+  # `--version` is a side-effect-free command after the registration preflight.
+  # Telemetry failure must never turn a successful install into a failure.
+  LUME_INSTALL_CHANNEL="$INSTALL_CHANNEL" \
+    "$INSTALL_DIR/lume" --version >/dev/null 2>&1 || true
+}
+
 # Main installation flow
 main() {
   check_permissions
@@ -401,6 +424,7 @@ main() {
   create_temp_dir
   download_release
   install_binary
+  record_installation_telemetry
 
   echo ""
   echo "${GREEN}${BOLD}Lume has been successfully installed!${NORMAL}"

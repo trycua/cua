@@ -1,257 +1,443 @@
 import Foundation
 
-/// Singleton telemetry client for anonymous usage tracking
-/// Uses PostHog HTTP API directly for CLI compatibility
+/// Pseudonymous, content-free product telemetry for Lume.
+///
+/// Telemetry is enabled by default, can be persistently disabled through
+/// `lume config telemetry disable`, and can be overridden for the current
+/// process with `LUME_TELEMETRY_ENABLED`. The environment always has highest
+/// precedence. Installation and release events obey the same consent decision
+/// as routine usage events.
 final class TelemetryClient: @unchecked Sendable {
-    // MARK: - Constants
+  private enum Constants {
+    static let apiKey = "phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14"
+    static let captureURL = "https://eu.i.posthog.com/capture/"
+    static let telemetryIdFileName = ".telemetry_id"
+    static let installationRecordedFileName = ".installation_recorded"
+    static let releaseRecordedDirectoryName = ".telemetry_releases"
+    static let envTelemetryEnabled = "LUME_TELEMETRY_ENABLED"
+    static let envTelemetryDebug = "LUME_TELEMETRY_DEBUG"
+    static let envInstallChannel = "LUME_INSTALL_CHANNEL"
+    static let requestTimeout: TimeInterval = 3
+    static let flushTimeout: TimeInterval = 1.5
+    static let schemaVersion = 2
+    static let processSessionId = UUID().uuidString
+    static let allowedInstallChannels: Swift.Set<String> = [
+      "install_script", "update_apply", "first_run",
+    ]
+  }
 
-    private enum Constants {
-        static let apiKey = "phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14"
-        static let captureURL = "https://eu.i.posthog.com/capture/"
-        static let telemetryIdFileName = ".telemetry_id"
-        static let installationRecordedFileName = ".installation_recorded"
-        static let envTelemetryEnabled = "LUME_TELEMETRY_ENABLED"
-        static let envTelemetryDebug = "LUME_TELEMETRY_DEBUG"
+  struct Status: Sendable {
+    let enabled: Bool
+    let source: String
+    let persistedEnabled: Bool
+    let installationIdPresent: Bool
+  }
+
+  private struct InstallationIdentity {
+    let value: String
+    let persisted: Bool
+  }
+
+  typealias Poster = @Sendable (URLRequest) async -> Bool
+
+  static let shared = TelemetryClient()
+
+  private var installationIdentity: InstallationIdentity?
+  private let urlSession: URLSession
+  private let homeDirectory: URL
+  private let poster: Poster?
+  private let preferenceProvider: @Sendable () -> Bool
+  private let identityLock = NSLock()
+  private let pendingRequests = DispatchGroup()
+
+  init(
+    settingsManager: SettingsManager = .shared,
+    urlSession: URLSession? = nil,
+    homeDirectory: URL? = nil,
+    poster: Poster? = nil,
+    preferenceProvider: (@Sendable () -> Bool)? = nil
+  ) {
+    self.homeDirectory =
+      homeDirectory
+      ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".lume")
+    self.poster = poster
+    self.preferenceProvider =
+      preferenceProvider ?? { settingsManager.getSettings().telemetryEnabled }
+
+    if let urlSession {
+      self.urlSession = urlSession
+    } else {
+      let config = URLSessionConfiguration.ephemeral
+      config.timeoutIntervalForRequest = Constants.requestTimeout
+      config.timeoutIntervalForResource = Constants.requestTimeout
+      self.urlSession = URLSession(configuration: config)
+    }
+  }
+
+  // MARK: - Public API
+
+  /// Record a routine event without blocking the command. Only fixed,
+  /// typed properties survive `sanitizeProperties`; strings originating
+  /// from image names, VM names, paths, prompts, or arguments are dropped.
+  func record(event: String, properties: [String: Any] = [:]) {
+    guard isEnabled(), let request = makeRequest(event: event, properties: properties) else {
+      return
     }
 
-    // MARK: - Singleton
+    pendingRequests.enter()
+    Task.detached { [self] in
+      _ = await send(request: request, event: event)
+      pendingRequests.leave()
+    }
+  }
 
-    static let shared = TelemetryClient()
+  /// Record the legacy installation event once and the release event once
+  /// per Lume version. Both events honor consent. Each marker is written
+  /// only after its corresponding request receives HTTP 2xx.
+  func recordInstallation(channel: String? = nil) async {
+    guard isEnabled() else { return }
 
-    // MARK: - Properties
+    let installChannel = Self.normalizedInstallChannel(
+      channel ?? ProcessInfo.processInfo.environment[Constants.envInstallChannel]
+    )
+    let installMarker = installationMarkerURL
+    let releaseMarker = releaseMarkerURL(version: Lume.Version.current)
+    let needsInstall = !FileManager.default.fileExists(atPath: installMarker.path)
+    let needsRelease = !FileManager.default.fileExists(atPath: releaseMarker.path)
 
-    private var installationId: String?
-    private let settingsManager: SettingsManager
-    private let urlSession: URLSession
+    guard needsInstall || needsRelease else { return }
 
-    // MARK: - Initialization
+    let properties: [String: Any] = [
+      "install_channel": installChannel,
+      "product_version": Lume.Version.current,
+    ]
 
-    private init(settingsManager: SettingsManager = .shared) {
-        self.settingsManager = settingsManager
-
-        // Configure URL session with short timeout (don't block CLI)
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 10
-        config.timeoutIntervalForResource = 10
-        self.urlSession = URLSession(configuration: config)
+    if needsInstall && needsRelease,
+      let installRequest = makeRequest(event: TelemetryEvent.install, properties: properties),
+      let releaseRequest = makeRequest(
+        event: TelemetryEvent.releaseInstalled, properties: properties)
+    {
+      async let installAccepted = send(request: installRequest, event: TelemetryEvent.install)
+      async let releaseAccepted = send(
+        request: releaseRequest, event: TelemetryEvent.releaseInstalled)
+      let (didInstall, didRelease) = await (installAccepted, releaseAccepted)
+      if didInstall { writeMarker(installMarker) }
+      if didRelease { writeMarker(releaseMarker) }
+      return
     }
 
-    // MARK: - Public Methods
-
-    /// Record a telemetry event
-    /// - Parameters:
-    ///   - event: Event name (e.g., "lume_create", "lume_api_vm_run")
-    ///   - properties: Additional event properties
-    func record(event: String, properties: [String: Any] = [:]) {
-        guard isEnabled() else { return }
-
-        // Lazy load installation ID
-        if installationId == nil {
-            installationId = getOrCreateInstallationId()
-        }
-
-        sendEvent(event: event, properties: properties, bypassOptOut: false)
+    if needsInstall,
+      let request = makeRequest(event: TelemetryEvent.install, properties: properties),
+      await send(request: request, event: TelemetryEvent.install)
+    {
+      writeMarker(installMarker)
     }
 
-    /// Record installation event - sent ONCE on first run, regardless of telemetry opt-out
-    /// This tracks adoption while respecting user's choice to opt out of ongoing telemetry
-    func recordInstallation() {
-        let homeDir = (("~/.lume") as NSString).expandingTildeInPath
-        let markerPath = "\(homeDir)/\(Constants.installationRecordedFileName)"
+    if needsRelease,
+      let request = makeRequest(
+        event: TelemetryEvent.releaseInstalled, properties: properties),
+      await send(request: request, event: TelemetryEvent.releaseInstalled)
+    {
+      writeMarker(releaseMarker)
+    }
+  }
 
-        // Check if we've already recorded installation
-        if FileManager.default.fileExists(atPath: markerPath) {
-            return
-        }
+  /// Wait a short, bounded interval for routine events queued by a
+  /// short-lived CLI command. Long-running `serve` processes do not reach
+  /// this path until shutdown.
+  @discardableResult
+  func flush(timeout: TimeInterval = Constants.flushTimeout) async -> Bool {
+    let group = pendingRequests
+    return await Task.detached {
+      Self.waitForPendingRequests(group, timeout: timeout)
+    }.value
+  }
 
-        // Get or create installation ID
-        let installId = getOrCreateInstallationId()
-        self.installationId = installId
+  private static func waitForPendingRequests(
+    _ group: DispatchGroup, timeout: TimeInterval
+  ) -> Bool {
+    group.wait(timeout: .now() + timeout) == .success
+  }
 
-        // Send installation event (bypasses isEnabled check)
-        sendEvent(event: TelemetryEvent.install, properties: [:], bypassOptOut: true)
+  func isEnabled() -> Bool {
+    effectiveState().enabled
+  }
 
-        // Mark as recorded
-        do {
-            try FileManager.default.createDirectory(atPath: homeDir, withIntermediateDirectories: true)
-            try "1".write(toFile: markerPath, atomically: true, encoding: .utf8)
-        } catch {
-            if isDebugEnabled() {
-                Logger.info("[Telemetry] Failed to write installation marker: \(error.localizedDescription)")
-            }
-        }
+  func status() -> Status {
+    let state = effectiveState()
+    return Status(
+      enabled: state.enabled,
+      source: state.source,
+      persistedEnabled: state.persistedEnabled,
+      installationIdPresent: FileManager.default.fileExists(atPath: installationIdURL.path)
+    )
+  }
 
-        if isDebugEnabled() {
-            Logger.info("[Telemetry] Installation event recorded for: \(installId)")
-        }
+  /// Delete the pseudonymous identity and its registration/release markers.
+  /// The persisted enabled/disabled preference is intentionally retained.
+  func resetInstallationId() throws {
+    identityLock.lock()
+    installationIdentity = nil
+    identityLock.unlock()
+
+    for url in [installationIdURL, installationMarkerURL] {
+      if FileManager.default.fileExists(atPath: url.path) {
+        try FileManager.default.removeItem(at: url)
+      }
+    }
+    if FileManager.default.fileExists(atPath: releaseMarkerDirectoryURL.path) {
+      try FileManager.default.removeItem(at: releaseMarkerDirectoryURL)
+    }
+  }
+
+  /// A direct release-asset/manual first run has no installer in which to
+  /// show the default-on notice. Telemetry management commands skip this
+  /// path so `disable` can be the first action without any event.
+  func shouldShowFirstRunNotice() -> Bool {
+    isEnabled() && !FileManager.default.fileExists(atPath: installationMarkerURL.path)
+  }
+
+  static func normalizedInstallChannel(_ raw: String?) -> String {
+    guard let raw, Constants.allowedInstallChannels.contains(raw) else {
+      return "first_run"
+    }
+    return raw
+  }
+
+  // MARK: - Consent and identity
+
+  private func effectiveState() -> (enabled: Bool, source: String, persistedEnabled: Bool) {
+    let persisted = preferenceProvider()
+    if let raw = ProcessInfo.processInfo.environment[Constants.envTelemetryEnabled],
+      let enabled = Self.parseBoolean(raw)
+    {
+      return (enabled, "environment", persisted)
+    }
+    return (persisted, "persisted", persisted)
+  }
+
+  private static func parseBoolean(_ raw: String) -> Bool? {
+    switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "0", "false", "no", "off": false
+    case "1", "true", "yes", "on": true
+    default: nil
+    }
+  }
+
+  private func getOrCreateInstallationIdentity() -> InstallationIdentity {
+    identityLock.lock()
+    defer { identityLock.unlock() }
+
+    if let installationIdentity { return installationIdentity }
+
+    if let existing = try? String(contentsOf: installationIdURL, encoding: .utf8) {
+      let trimmed = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+      if let parsed = UUID(uuidString: trimmed) {
+        let identity = InstallationIdentity(value: parsed.uuidString, persisted: true)
+        installationIdentity = identity
+        return identity
+      }
     }
 
-    /// Check if telemetry is enabled
-    /// - Returns: true if telemetry should be collected
-    func isEnabled() -> Bool {
-        // Check environment variable first (highest priority for CI/CD)
-        if let envValue = ProcessInfo.processInfo.environment[Constants.envTelemetryEnabled] {
-            let lowercased = envValue.lowercased()
-            if ["0", "false", "no", "off"].contains(lowercased) {
-                return false
-            }
-            if ["1", "true", "yes", "on"].contains(lowercased) {
-                return true
-            }
-        }
-
-        // Check settings
-        return settingsManager.getSettings().telemetryEnabled
+    let newId = UUID().uuidString
+    var persisted = false
+    do {
+      try FileManager.default.createDirectory(
+        at: homeDirectory, withIntermediateDirectories: true)
+      try newId.write(to: installationIdURL, atomically: true, encoding: .utf8)
+      persisted = true
+    } catch {
+      debugLog("Failed to persist installation ID: \(error.localizedDescription)")
     }
 
-    // MARK: - Private Methods
+    let identity = InstallationIdentity(value: newId, persisted: persisted)
+    installationIdentity = identity
+    return identity
+  }
 
-    private func sendEvent(event: String, properties: [String: Any], bypassOptOut: Bool) {
-        guard bypassOptOut || isEnabled() else { return }
+  // MARK: - Request construction and delivery
 
-        let distinctId = installationId ?? getOrCreateInstallationId()
+  private func makeRequest(event: String, properties: [String: Any]) -> URLRequest? {
+    let identity = getOrCreateInstallationIdentity()
+    var eventProperties = sanitizeProperties(properties)
+    eventProperties["lume_version"] = Lume.Version.current
+    eventProperties["product_version"] = Lume.Version.current
+    eventProperties["telemetry_schema_version"] = Constants.schemaVersion
+    eventProperties["os_family"] = "macos"
+    eventProperties["os_major"] = String(ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+    eventProperties["arch"] = architecture()
+    eventProperties["is_ci"] = isCI()
+    eventProperties["transport"] = transport(event: event, properties: properties)
+    eventProperties["process_session_id"] = Constants.processSessionId
+    eventProperties["id_persisted"] = identity.persisted
+    eventProperties["$lib"] = "lume-swift"
+    eventProperties["$lib_version"] = Lume.Version.current
+    eventProperties["$process_person_profile"] = false
+    eventProperties["$geoip_disable"] = true
 
-        // Build event properties
-        var eventProperties = properties
-        eventProperties["lume_version"] = Lume.Version.current
-        eventProperties["os"] = "macos"
-        eventProperties["os_version"] = ProcessInfo.processInfo.operatingSystemVersionString
-        eventProperties["arch"] = getArchitecture()
-        eventProperties["is_ci"] = isCI()
-        eventProperties["$lib"] = "lume-swift"
-        eventProperties["$lib_version"] = Lume.Version.current
+    let payload: [String: Any] = [
+      "api_key": Constants.apiKey,
+      "event": event,
+      "distinct_id": identity.value,
+      "properties": eventProperties,
+    ]
 
-        // Build PostHog capture payload
-        let payload: [String: Any] = [
-            "api_key": Constants.apiKey,
-            "event": event,
-            "distinct_id": distinctId,
-            "properties": eventProperties,
-            "timestamp": ISO8601DateFormatter().string(from: Date())
+    guard let url = URL(string: Constants.captureURL),
+      let jsonData = try? JSONSerialization.data(withJSONObject: payload)
+    else {
+      debugLog("Failed to serialize event payload")
+      return nil
+    }
+
+    var request = URLRequest(url: url, timeoutInterval: Constants.requestTimeout)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = jsonData
+    return request
+  }
+
+  private func transport(event: String, properties: [String: Any]) -> String {
+    if event.hasPrefix("lume_api_") { return "http" }
+    if event == TelemetryEvent.serve, let mode = properties["mode"] as? String,
+      mode == "mcp" || mode == "http"
+    {
+      return mode
+    }
+    return "cli"
+  }
+
+  private func sanitizeProperties(_ properties: [String: Any]) -> [String: Any] {
+    let allowedKeys: Swift.Set<String> = [
+      "cpu", "disk_size", "disk_size_gb", "has_unattended", "headless",
+      "install_channel", "memory", "memory_gb", "mode", "os_type",
+      "product_version",
+    ]
+    var sanitized: [String: Any] = [:]
+    for (key, value) in properties where allowedKeys.contains(key) {
+      switch value {
+      case let value as Bool:
+        sanitized[key] = value
+      case let value as Int:
+        sanitized[key] = value
+      case let value as Int64:
+        sanitized[key] = value
+      case let value as Double where value.isFinite:
+        sanitized[key] = value
+      case let value as String:
+        // Only bounded enums are accepted. User-derived strings such
+        // as image names and custom preset names never pass through.
+        let allowedValues: Swift.Set<String> = [
+          "custom", "first_run", "install_script", "linux", "macos",
+          "offline", "update_apply", "mcp", "http",
         ]
+        sanitized[key] = allowedValues.contains(value) ? value : "unknown"
+      default:
+        continue
+      }
+    }
+    return sanitized
+  }
 
-        guard let url = URL(string: Constants.captureURL),
-              let jsonData = try? JSONSerialization.data(withJSONObject: payload) else {
-            if isDebugEnabled() {
-                Logger.info("[Telemetry] Failed to serialize event payload")
-            }
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = jsonData
-
-        if isDebugEnabled() {
-            Logger.info("[Telemetry] Sending event: \(event)", metadata: ["properties": "\(eventProperties)"])
-        }
-
-        // Fire and forget - don't block CLI execution
-        let debugEnabled = isDebugEnabled()
-        Task.detached {
-            do {
-                let (_, response) = try await self.urlSession.data(for: request)
-                if debugEnabled {
-                    let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-                    Logger.info("[Telemetry] Event sent: \(event), status: \(statusCode)")
-                }
-            } catch {
-                if debugEnabled {
-                    Logger.info("[Telemetry] Failed to send event \(event): \(error.localizedDescription)")
-                }
-            }
-        }
+  private func send(request: URLRequest, event: String) async -> Bool {
+    if let poster {
+      return await poster(request)
     }
 
-    private func isDebugEnabled() -> Bool {
-        if let envValue = ProcessInfo.processInfo.environment[Constants.envTelemetryDebug] {
-            return ["on", "true", "1", "yes"].contains(envValue.lowercased())
-        }
-        return false
+    do {
+      let (_, response) = try await urlSession.data(for: request)
+      let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+      debugLog("Event sent: \(event), status: \(statusCode)")
+      return (200..<300).contains(statusCode)
+    } catch {
+      debugLog("Failed to send event \(event): \(error.localizedDescription)")
+      return false
     }
+  }
 
-    private func getOrCreateInstallationId() -> String {
-        let homeDir = (("~/.lume") as NSString).expandingTildeInPath
-        let idFilePath = "\(homeDir)/\(Constants.telemetryIdFileName)"
+  // MARK: - Paths and platform fields
 
-        // Try to read existing ID
-        if let existingId = try? String(contentsOfFile: idFilePath, encoding: .utf8) {
-            let trimmedId = existingId.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedId.isEmpty {
-                return trimmedId
-            }
-        }
+  private var installationIdURL: URL {
+    homeDirectory.appendingPathComponent(Constants.telemetryIdFileName)
+  }
 
-        // Generate new ID
-        let newId = UUID().uuidString
+  private var installationMarkerURL: URL {
+    homeDirectory.appendingPathComponent(Constants.installationRecordedFileName)
+  }
 
-        // Try to persist it
-        do {
-            try FileManager.default.createDirectory(
-                atPath: homeDir,
-                withIntermediateDirectories: true
-            )
-            try newId.write(toFile: idFilePath, atomically: true, encoding: .utf8)
-        } catch {
-            if isDebugEnabled() {
-                Logger.info("[Telemetry] Failed to persist installation ID: \(error.localizedDescription)")
-            }
-        }
+  private var releaseMarkerDirectoryURL: URL {
+    homeDirectory.appendingPathComponent(Constants.releaseRecordedDirectoryName)
+  }
 
-        return newId
+  private func releaseMarkerURL(version: String) -> URL {
+    let safeVersion = version.map { character -> Character in
+      character.isLetter || character.isNumber || character == "." || character == "-"
+        ? character : "_"
     }
+    return releaseMarkerDirectoryURL.appendingPathComponent(String(safeVersion))
+  }
 
-    private func getArchitecture() -> String {
-        #if arch(arm64)
-        return "arm64"
-        #elseif arch(x86_64)
-        return "x86_64"
-        #else
-        return "unknown"
-        #endif
+  private func writeMarker(_ url: URL) {
+    do {
+      try FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try "1".write(to: url, atomically: true, encoding: .utf8)
+    } catch {
+      debugLog("Failed to write marker: \(error.localizedDescription)")
     }
+  }
 
-    private func isCI() -> Bool {
-        let ciEnvVars = ["CI", "CONTINUOUS_INTEGRATION", "GITHUB_ACTIONS", "GITLAB_CI", "JENKINS_URL", "CIRCLECI"]
-        for envVar in ciEnvVars {
-            if ProcessInfo.processInfo.environment[envVar] != nil {
-                return true
-            }
-        }
-        return false
-    }
+  private func architecture() -> String {
+    #if arch(arm64)
+      "arm64"
+    #elseif arch(x86_64)
+      "x86_64"
+    #else
+      "unknown"
+    #endif
+  }
+
+  private func isCI() -> Bool {
+    let variables = [
+      "CI", "CONTINUOUS_INTEGRATION", "GITHUB_ACTIONS", "GITLAB_CI",
+      "JENKINS_URL", "CIRCLECI", "BUILDKITE", "TF_BUILD", "TEAMCITY_VERSION",
+    ]
+    return variables.contains { ProcessInfo.processInfo.environment[$0] != nil }
+  }
+
+  private func debugLog(_ message: String) {
+    guard let value = ProcessInfo.processInfo.environment[Constants.envTelemetryDebug],
+      Self.parseBoolean(value) == true
+    else { return }
+    Logger.info("[Telemetry] \(message)")
+  }
 }
 
 // MARK: - Telemetry Events
 
-/// Standard telemetry event names
 enum TelemetryEvent {
-    // Installation (sent once, regardless of opt-out)
-    static let install = "lume_install"
+  static let install = "lume_install"
+  static let releaseInstalled = "lume_release_installed"
 
-    // CLI Commands
-    static let create = "lume_create"
-    static let run = "lume_run"
-    static let stop = "lume_stop"
-    static let delete = "lume_delete"
-    static let clone = "lume_clone"
-    static let pull = "lume_pull"
-    static let push = "lume_push"
-    static let serve = "lume_serve"
-    static let setup = "lume_setup"
-    static let config = "lume_config"
+  static let create = "lume_create"
+  static let run = "lume_run"
+  static let stop = "lume_stop"
+  static let delete = "lume_delete"
+  static let clone = "lume_clone"
+  static let pull = "lume_pull"
+  static let push = "lume_push"
+  static let serve = "lume_serve"
+  static let setup = "lume_setup"
+  static let config = "lume_config"
 
-    // API Endpoints
-    static let apiVMList = "lume_api_vm_list"
-    static let apiVMGet = "lume_api_vm_get"
-    static let apiVMCreate = "lume_api_vm_create"
-    static let apiVMRun = "lume_api_vm_run"
-    static let apiVMStop = "lume_api_vm_stop"
-    static let apiVMDelete = "lume_api_vm_delete"
-    static let apiVMClone = "lume_api_vm_clone"
-    static let apiVMUpdate = "lume_api_vm_update"
-    static let apiPull = "lume_api_pull"
-    static let apiPush = "lume_api_push"
-    static let apiImages = "lume_api_images"
+  static let apiVMList = "lume_api_vm_list"
+  static let apiVMGet = "lume_api_vm_get"
+  static let apiVMCreate = "lume_api_vm_create"
+  static let apiVMRun = "lume_api_vm_run"
+  static let apiVMStop = "lume_api_vm_stop"
+  static let apiVMDelete = "lume_api_vm_delete"
+  static let apiVMClone = "lume_api_vm_clone"
+  static let apiVMUpdate = "lume_api_vm_update"
+  static let apiPull = "lume_api_pull"
+  static let apiPush = "lume_api_push"
+  static let apiImages = "lume_api_images"
 }

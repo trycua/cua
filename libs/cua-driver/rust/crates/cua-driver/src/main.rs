@@ -58,20 +58,89 @@ fn init_logging() {
                 .add_directive(tracing::Level::WARN.into()),
         )
         .init();
+    telemetry::register_stdio_observer();
 }
 
-/// Fire the per-entry-point telemetry event (e.g. `cua_driver_mcp`,
-/// `cua_driver_api_click`). Respects the opt-out env var — no-op when
-/// telemetry is disabled. Always returns immediately: the actual POST
-/// happens on a background thread or tokio task.
-///
-/// Mirrors Swift's `TelemetryClient.shared.record(event:)` call at the
-/// top of `CuaDriverCommand.main()`. The install ping is *not* emitted
-/// here — that's the dedicated `telemetry install-event` subcommand
-/// fired exactly once by the post-install script.
+/// Keep entry events only for long-running process starts. Supported finite
+/// command paths emit a bounded event only after their outcome is known.
 fn emit_entry_telemetry(command: &cli::Command) {
-    if let Some(event_name) = cli::telemetry_entry_event(command) {
-        telemetry::capture(&event_name, None);
+    match command {
+        cli::Command::Mcp { .. } => telemetry::capture_start(
+            telemetry::event::MCP_START_LEGACY,
+            telemetry::Transport::McpStdio,
+        ),
+        cli::Command::Serve { .. } => telemetry::capture_start(
+            telemetry::event::SERVE_START_LEGACY,
+            telemetry::Transport::Cli,
+        ),
+        _ => {}
+    }
+}
+
+/// Execute finite commands in a child so the parent can observe every exit,
+/// including validation failures and legacy `process::exit` paths. Delivery is
+/// delegated to a detached, no-output worker after the child exits, so network
+/// latency is never added to the foreground command.
+fn maybe_wrap_finite_command() {
+    if telemetry::is_wrapped_cli_child() {
+        return;
+    }
+    let Some(command_name) = cli::finite_command_name_from_argv() else { return; };
+    telemetry::ensure_first_run_registration();
+    let Ok(executable) = std::env::current_exe() else { return; };
+    let started_at = std::time::Instant::now();
+    let status = std::process::Command::new(executable)
+        .args(std::env::args_os().skip(1))
+        .env(telemetry::cli_wrapped_child_env(), "1")
+        .status();
+    let Ok(status) = status else { return; };
+    let exit_code = status.code().unwrap_or(1);
+    telemetry::spawn_cli_completion_worker(command_name, exit_code, started_at.elapsed());
+    std::process::exit(exit_code);
+}
+
+fn run_telemetry_command(command: cli::TelemetryCommand) {
+    match command {
+        cli::TelemetryCommand::InstallEvent => telemetry::capture_install(),
+        cli::TelemetryCommand::Enable => match telemetry::set_enabled(true) {
+            Ok(()) => println!("Telemetry enabled. The retained installation ID will be reused."),
+            Err(error) => {
+                eprintln!("cua-driver: failed to enable telemetry: {error}");
+                std::process::exit(1);
+            }
+        },
+        cli::TelemetryCommand::Disable => match telemetry::set_enabled(false) {
+            Ok(()) => println!("Telemetry disabled. The local installation ID was retained; run `cua-driver telemetry reset-id` to erase it."),
+            Err(error) => {
+                eprintln!("cua-driver: failed to disable telemetry: {error}");
+                std::process::exit(1);
+            }
+        },
+        cli::TelemetryCommand::Status { json } => {
+            let status = telemetry::status();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&status).expect("serialize telemetry status"));
+            } else {
+                println!("Telemetry: {} (source: {})", if status.enabled { "enabled" } else { "disabled" }, status.source);
+                println!("Installation ID: {}", status.installation_id.as_deref().unwrap_or("not created"));
+                println!("Registration recorded: {}", status.registration_recorded);
+                println!("Current release recorded: {}", status.current_release_recorded);
+            }
+        }
+        cli::TelemetryCommand::ResetId => match telemetry::reset_id() {
+            Ok(()) => println!("Telemetry installation ID and event markers erased. The enable/disable preference was retained."),
+            Err(error) => {
+                eprintln!("cua-driver: failed to reset telemetry ID: {error}");
+                std::process::exit(1);
+            }
+        },
+        cli::TelemetryCommand::Inspect { event } => match telemetry::inspect_event(&event) {
+            Ok(payload) => println!("{}", serde_json::to_string_pretty(&payload).expect("serialize telemetry payload")),
+            Err(error) => {
+                eprintln!("cua-driver: {error}");
+                std::process::exit(64);
+            }
+        },
     }
 }
 
@@ -167,20 +236,22 @@ fn build_macos_registry_with_compat(compat: bool) -> cua_driver_core::tool::Tool
 #[cfg(target_os = "macos")]
 fn main() {
     init_logging();
+    if telemetry::run_cli_completion_worker_if_requested() {
+        return;
+    }
+    maybe_wrap_finite_command();
 
     // ── CLI subcommand dispatch ──────────────────────────────────────────────
     // Handled before AppKit init so `list-tools` / `describe` / `call` exit
     // cleanly without starting the overlay or NSApplication.
     let command = cli::parse_command();
+    if !telemetry::is_wrapped_cli_child() && !matches!(&command, cli::Command::Telemetry(_)) {
+        telemetry::ensure_first_run_registration();
+    }
     emit_entry_telemetry(&command);
     match command {
-        cli::Command::TelemetryInstallEvent => {
-            // Synchronous install ping (see `telemetry::capture_install`).
-            // Blocks on the POST so the `.installation_recorded` marker
-            // is only written on HTTP success — failed POST means next
-            // launch retries. Installer script already runs us in the
-            // background via `&`, so blocking here is fine.
-            telemetry::capture_install();
+        cli::Command::Telemetry(command) => {
+            run_telemetry_command(command);
             return;
         }
         cli::Command::ListTools => {
@@ -441,8 +512,10 @@ fn main() {
             if cli::should_use_daemon_proxy(no_daemon_relaunch) {
                 if let Err(e) = cli::run_mcp_via_daemon_proxy(socket, claude_code_compat) {
                     eprintln!("cua-driver-rs: {e}");
+                    telemetry::flush_pending(std::time::Duration::from_millis(750));
                     std::process::exit(1);
                 }
+                telemetry::flush_pending(std::time::Duration::from_millis(750));
                 return;
             }
             // Fall through to the in-process MCP server below. The
@@ -520,6 +593,7 @@ fn main() {
             // MCP server exited (stdin closed / client disconnected).
             // The main thread is blocked in NSApplication.run() and won't
             // exit on its own — force-exit the process cleanly.
+            telemetry::flush_pending(std::time::Duration::from_millis(750));
             std::process::exit(0);
         })
         .expect("spawn mcp thread");
@@ -538,21 +612,23 @@ fn main() {
 #[cfg(not(target_os = "macos"))]
 fn main() -> anyhow::Result<()> {
     init_logging();
+    if telemetry::run_cli_completion_worker_if_requested() {
+        return Ok(());
+    }
+    maybe_wrap_finite_command();
 
     // ── CLI subcommand dispatch ──────────────────────────────────────────────
     // These commands create their own tokio runtimes internally, so they must
     // run on a plain OS thread — not inside a #[tokio::main] context which
     // would cause nested block_on panics.
     let command = cli::parse_command();
+    if !telemetry::is_wrapped_cli_child() && !matches!(&command, cli::Command::Telemetry(_)) {
+        telemetry::ensure_first_run_registration();
+    }
     emit_entry_telemetry(&command);
     match command {
-        cli::Command::TelemetryInstallEvent => {
-            // Synchronous install ping (see `telemetry::capture_install`).
-            // Blocks on the POST so the `.installation_recorded` marker
-            // is only written on HTTP success — failed POST means next
-            // launch retries. Installer script already runs us in the
-            // background via `&`, so blocking here is fine.
-            telemetry::capture_install();
+        cli::Command::Telemetry(command) => {
+            run_telemetry_command(command);
             return Ok(());
         }
         cli::Command::ListTools => {
@@ -691,8 +767,10 @@ fn main() -> anyhow::Result<()> {
             if cli::should_use_daemon_proxy(no_daemon_relaunch) {
                 if let Err(e) = cli::run_mcp_via_daemon_proxy(socket, claude_code_compat) {
                     eprintln!("cua-driver-rs: {e}");
+                    telemetry::flush_pending(std::time::Duration::from_millis(750));
                     std::process::exit(1);
                 }
+                telemetry::flush_pending(std::time::Duration::from_millis(750));
                 return Ok(());
             }
             // Fall through to the in-process MCP server below. The
@@ -743,6 +821,7 @@ async fn async_main() -> anyhow::Result<()> {
     // CPU after the client is gone (issue #1808). Force a clean process exit so
     // the overlay thread dies with us the moment the transport closes — mirrors
     // the macOS `std::process::exit(0)` after `server::run`.
+    telemetry::flush_pending(std::time::Duration::from_millis(750));
     std::process::exit(if result.is_ok() { 0 } else { 1 });
 }
 

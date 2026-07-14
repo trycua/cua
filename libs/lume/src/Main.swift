@@ -57,8 +57,18 @@ extension Lume {
 // MARK: - Command Execution
 extension Lume {
     public static func main() async {
-        // Record installation event on first run (sent regardless of telemetry opt-out)
-        TelemetryClient.shared.recordInstallation()
+        // Telemetry management must be able to be the first invocation without
+        // creating an ID or making a request. Every other entry point performs
+        // consent-aware registration and per-version release recording before
+        // routine command telemetry can fire.
+        if !isTelemetryManagementInvocation() {
+            let rawChannel = ProcessInfo.processInfo.environment["LUME_INSTALL_CHANNEL"]
+            let channel = TelemetryClient.normalizedInstallChannel(rawChannel)
+            if channel == "first_run" && TelemetryClient.shared.shouldShowFirstRunNotice() {
+                writeTelemetryNoticeToStandardError()
+            }
+            await TelemetryClient.shared.recordInstallation(channel: channel)
+        }
 
         // Print banner when showing help
         if shouldShowBanner() {
@@ -67,8 +77,27 @@ extension Lume {
 
         do {
             try await executeCommand()
+            await TelemetryClient.shared.flush()
         } catch {
+            await TelemetryClient.shared.flush()
             exit(withError: error)
+        }
+    }
+
+    private static func isTelemetryManagementInvocation() -> Bool {
+        let args = Array(CommandLine.arguments.dropFirst())
+        return args.count >= 2 && args[0] == "config" && args[1] == "telemetry"
+    }
+
+    private static func writeTelemetryNoticeToStandardError() {
+        let notice = """
+            Telemetry: enabled by default; Lume collects pseudonymous install and bounded usage metadata only.
+              No prompts, VM/image names, file paths, or VM contents are collected.
+              Disable persistently at any time: lume config telemetry disable
+
+            """
+        if let data = notice.data(using: .utf8) {
+            FileHandle.standardError.write(data)
         }
     }
 

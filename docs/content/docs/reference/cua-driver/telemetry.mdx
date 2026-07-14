@@ -1,0 +1,101 @@
+---
+title: Telemetry and privacy
+description: Exact Cua Driver telemetry controls, event schema, and privacy boundaries.
+---
+
+Cua Driver sends content-free product telemetry to the PostHog EU ingest endpoint. Telemetry is enabled by default. The installer prints a notice before it sends the first event, and the preference persists across driver processes and upgrades.
+
+## Control telemetry
+
+```bash
+cua-driver telemetry status --json
+cua-driver telemetry disable
+cua-driver telemetry enable
+```
+
+An environment override takes precedence over the saved preference:
+
+```bash
+CUA_DRIVER_RS_TELEMETRY_ENABLED=false cua-driver mcp
+```
+
+Disabling telemetry stops telemetry requests. It does not delete the local installation ID, so enabling telemetry later resumes the same pseudonymous installation identity. A normal uninstall also preserves the ID and saved preference. To create a new identity, run:
+
+```bash
+cua-driver telemetry reset-id
+```
+
+Use `uninstall --purge` when uninstalling if you also want to remove retained Cua Driver state.
+
+## Inspect events locally
+
+`inspect` builds the event without sending a network request. It replaces the installation ID with a redacted placeholder.
+
+```bash
+cua-driver telemetry inspect cua_driver_mcp_session_started --json
+cua-driver telemetry inspect cua_driver_mcp_tool_completed --json
+```
+
+## Common event properties
+
+Every schema-v2 client event has this fixed envelope:
+
+| Property | Meaning |
+| --- | --- |
+| `telemetry_schema_version` | Fixed integer `2` |
+| `product_version` | Installed Cua Driver version |
+| `os_family` | `macos`, `windows`, `linux`, or `other` |
+| `os_major` | Major operating-system version only |
+| `arch` | Bounded CPU architecture |
+| `is_ci` | Whether a recognized CI environment is present |
+| `transport` | `cli`, `mcp_stdio`, `mcp_http`, or `unknown` |
+| `process_session_id` | Random ID created once per process and never persisted |
+| `id_persisted` | Whether the installation ID came from durable local state |
+| `$geoip_disable` | Fixed `true`; PostHog GeoIP enrichment is disabled |
+
+Client events set `$process_person_profile` to `false`. The installation UUID is used only as the PostHog `distinct_id`; it is not duplicated into event properties. This is pseudonymous installation telemetry, not anonymous telemetry.
+
+## Fixed events
+
+| Event | Additional bounded properties |
+| --- | --- |
+| `cua_driver_installation_registered` | `install_channel` |
+| `cua_driver_release_installed` | `install_channel`, `product_version` |
+| `cua_driver_cli_completed` | Completed finite CLI outcomes: fixed `command`, `success`, `exit_class`, and `duration_bucket` |
+| `cua_driver_mcp_session_started` | normalized MCP client and protocol, capability booleans, optional reported agent context |
+| `cua_driver_mcp_tool_completed` | allowlisted tool, success, error class, duration bucket, output type, output-size bucket |
+
+The legacy `cua_driver_install` event remains part of lifetime registration dashboards so existing installations are not registered a second time.
+
+## Reported model and agent context
+
+An MCP host can explicitly report agent context in the initialize request:
+
+```json
+{
+  "params": {
+    "_meta": {
+      "ai.cua/agent-context": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5",
+        "agent_name": "claude-code",
+        "agent_version": "1.x"
+      }
+    }
+  }
+}
+```
+
+These values are self-reported and normalized through allowlists. Unknown values become `custom` or `unknown`. Cua Driver does not infer a model from the MCP client name, does not use MCP Sampling to identify the parent model, and does not collect the complete initialize payload. This session event currently covers stdio MCP only; HTTP session telemetry remains disabled until Cua Driver implements explicit HTTP session semantics.
+
+## Data that is never collected
+
+Routine telemetry excludes task text, prompts, tool arguments, tool response bodies, typed text, screenshots, accessibility trees, window titles, application names, file paths, URLs, arbitrary MCP metadata, and raw error messages.
+
+Tool-completion events retain only coarse result shape: text, image, mixed, empty, or unknown; a size bucket; a duration bucket; and a fixed error class. The content itself never crosses the telemetry observer boundary.
+
+## Region and deletion controls
+
+Client events are sent to PostHog's EU ingest endpoint with GeoIP enrichment disabled. PostHog does not create person profiles for these events. Network infrastructure may still process request metadata under the [Cua privacy policy](https://cua.ai/privacy-policy), but IP-derived location is not added to the telemetry event.
+
+Retention and server-side deletion are governed by the [Cua privacy policy](https://cua.ai/privacy-policy); the client does not enforce a retention window or submit deletion requests. `telemetry reset-id` and uninstall purge controls remove local identity state only. Do not post the installation UUID in a public issue.

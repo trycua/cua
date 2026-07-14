@@ -54,6 +54,14 @@ def run_cua_driver(args: Optional[list[str]] = None) -> int:
 
     binary_path = get_binary_path()
 
+    # Let the binary's consent-aware first-run registration distinguish a
+    # bundled Python installation from an installer-script installation. Do
+    # not overwrite an explicit bounded channel inherited from `update` or a
+    # test harness. The Rust binary owns validation, consent, identity, and
+    # per-version deduplication.
+    child_env = os.environ.copy()
+    child_env.setdefault("CUA_DRIVER_INSTALL_CHANNEL", "python_package")
+
     try:
         # Run with direct stdio inheritance - no buffering, no capturing
         result = subprocess.run(
@@ -61,6 +69,7 @@ def run_cua_driver(args: Optional[list[str]] = None) -> int:
             stdin=sys.stdin,
             stdout=sys.stdout,
             stderr=sys.stderr,
+            env=child_env,
         )
         return result.returncode
     except KeyboardInterrupt:

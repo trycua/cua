@@ -57,6 +57,16 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             workflow,
         )
 
+    def test_distro_compat_downloads_release_asset_once_per_run(self) -> None:
+        workflow = self.read(".github/workflows/ci-distro-compat-cua-driver.yml")
+
+        self.assertEqual(workflow.count('curl -fsSL "$BINARY_URL"'), 1)
+        self.assertIn("actions/upload-artifact@v4", workflow)
+        self.assertIn("actions/download-artifact@v4", workflow)
+        self.assertIn("cua-driver-release-${{ steps.pick.outputs.version }}", workflow)
+        self.assertIn('CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"', workflow)
+        self.assertIn('CUA_TELEMETRY_ENABLED: "false"', workflow)
+
     def test_rust_driver_bump_keeps_python_wrapper_version_synced(self) -> None:
         config = self.read("libs/cua-driver/rust/.bumpversion.cfg")
 

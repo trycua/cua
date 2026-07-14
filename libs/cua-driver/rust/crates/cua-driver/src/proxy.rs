@@ -26,6 +26,10 @@
 use std::sync::Arc;
 
 use cua_driver_core::protocol::{initialize_result, Request, Response};
+use cua_driver_core::server::{
+    observe_proxy_session_started, observe_proxy_tool_completed, tool_observation_timer,
+    StdioExecutionPath,
+};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
 
@@ -101,6 +105,7 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
     let mut reader = BufReader::new(stdin);
     let mut writer = tokio::io::BufWriter::new(stdout);
     let mut line = String::new();
+    let mut session_observed = false;
 
     loop {
         line.clear();
@@ -124,8 +129,26 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
                 continue;
             }
             Ok(req) => {
+                let initialize_metadata = (!session_observed)
+                    .then(|| req.initialize_metadata())
+                    .flatten();
+                let tool_timer = tool_observation_timer(
+                    &req,
+                    |name| proxy_knows_tool(&cached_tools_list, name),
+                    StdioExecutionPath::DaemonProxy,
+                );
                 let id = req.id.clone().unwrap_or(serde_json::Value::Null);
-                handle_proxy_request(req, id, &socket_path, &cached_tools_list, &session_id).await
+                let response =
+                    handle_proxy_request(req, id, &socket_path, &cached_tools_list, &session_id)
+                        .await;
+                if let Some(metadata) = initialize_metadata {
+                    observe_proxy_session_started(metadata);
+                    session_observed = true;
+                }
+                if let Some(timer) = tool_timer {
+                    observe_proxy_tool_completed(timer.finish(&response));
+                }
+                response
             }
         };
 
@@ -150,6 +173,20 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
     // `session_end(session_id)` once (idempotent). That single path reliably
     // covers the ungraceful-death case the old best-effort exit hook missed.
     Ok(())
+}
+
+fn proxy_knows_tool(cached_tools_list: &serde_json::Value, name: &str) -> bool {
+    if name == "type_text_chars" {
+        return true;
+    }
+    cached_tools_list
+        .get("tools")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|tools| {
+            tools.iter().any(|tool| {
+                tool.get("name").and_then(serde_json::Value::as_str) == Some(name)
+            })
+        })
 }
 
 /// Own the proxy's single long-lived control connection. Connects directly to
@@ -584,5 +621,19 @@ mod tests {
         assert_eq!(value["result"]["isError"], serde_json::json!(true));
         assert_eq!(value["result"]["content"][0]["text"], "daemon reported failure");
         assert_eq!(value["result"]["structuredContent"]["exit_code"], 1);
+    }
+
+    #[test]
+    fn cached_proxy_tool_allowlist_is_exact() {
+        let cached = serde_json::json!({
+            "tools": [
+                {"name":"click"},
+                {"name":"type_text"}
+            ]
+        });
+        assert!(proxy_knows_tool(&cached, "click"));
+        assert!(proxy_knows_tool(&cached, "type_text_chars"), "deprecated alias stays bounded/known");
+        assert!(!proxy_knows_tool(&cached, "click/private-user-value"));
+        assert!(!proxy_knows_tool(&cached, ""));
     }
 }

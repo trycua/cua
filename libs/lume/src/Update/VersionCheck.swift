@@ -168,6 +168,7 @@ enum LumeVersionCheck {
 
         var environment = ProcessInfo.processInfo.environment
         environment["LUME_VERSION"] = version
+        environment["LUME_INSTALL_CHANNEL"] = "update_apply"
         process.environment = environment
 
         try process.run()

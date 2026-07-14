@@ -1,0 +1,5 @@
+# Require a core maintainer to approve every change.
+* @f-trycua @ddupont808 @r33drichards
+
+# Keep repository policy, automation, and release credentials under the owner.
+/.github/ @f-trycua

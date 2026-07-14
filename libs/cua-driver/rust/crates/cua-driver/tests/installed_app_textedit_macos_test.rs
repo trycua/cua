@@ -57,29 +57,40 @@ fn background_type_on_native_cocoa_is_ax_verified() {
             launch.text()
         );
         let pid = launch.structured()["pid"].as_i64().expect("TextEdit pid");
-        let windows = launch.structured()["windows"]
+        let mut windows = launch.structured()["windows"]
             .as_array()
             .cloned()
             .unwrap_or_default();
-        let wid = windows
-            .first()
-            .and_then(|window| window["window_id"].as_u64())
-            .expect("TextEdit opened no window");
+        assert!(!windows.is_empty(), "TextEdit opened no window");
 
-        // Find the AXTextArea.
-        let state = driver.call(
-            "get_window_state",
-            serde_json::json!({ "pid": pid, "window_id": wid, "capture_mode": "ax" }),
-        );
-        let el = state.structured()["elements"]
-            .as_array()
-            .and_then(|elements| {
-                elements
-                    .iter()
-                    .find(|element| element["role"] == "AXTextArea")
-                    .and_then(|element| element["element_index"].as_u64())
+        // TextEdit can retain an off-screen restoration window alongside the
+        // visible blank document. WindowServer does not guarantee their order,
+        // so prefer visible windows and select the one that actually exposes
+        // the editor instead of assuming `windows[0]` is the document.
+        windows.sort_by_key(|window| !window["is_on_screen"].as_bool().unwrap_or(false));
+        let (wid, el) = windows
+            .iter()
+            .filter_map(|window| window["window_id"].as_u64())
+            .find_map(|window_id| {
+                let state = driver.call(
+                    "get_window_state",
+                    serde_json::json!({
+                        "pid": pid,
+                        "window_id": window_id,
+                        "capture_mode": "ax"
+                    }),
+                );
+                state.structured()["elements"]
+                    .as_array()
+                    .and_then(|elements| {
+                        elements
+                            .iter()
+                            .find(|element| element["role"] == "AXTextArea")
+                            .and_then(|element| element["element_index"].as_u64())
+                    })
+                    .map(|element_index| (window_id, element_index))
             })
-            .expect("TextEdit AXTextArea");
+            .expect("TextEdit opened no window containing an AXTextArea");
 
         let (typed, mut passed) = run_with_background_oracles(
             &mut driver,

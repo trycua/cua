@@ -58,7 +58,11 @@ fn def() -> &'static ToolDef {
              date pickers, native text fields that expose settable AXValue).\n\
              \n\
              For free-form text entry into web inputs, prefer `type_text_chars` \
-             which synthesises key events — AXValue writes are ignored by WebKit."
+             which synthesises key events — AXValue writes are ignored by WebKit.\n\
+             \n\
+             Success returns `changed`, `verified`, and `readback_value` when \
+             AXValue is readable. Repeating the same value is an idempotent \
+             success with `changed:false`."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -71,7 +75,7 @@ fn def() -> &'static ToolDef {
                     "description": "CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used; optional when element_token is supplied (the token carries it)."
                 },
                 "element_index": { "type": "integer", "description": "Element index from last get_window_state. Must be supplied unless element_token is provided. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op." },
-                "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." },
+                "element_token": { "type": "string",  "description": "Opaque stable AX node handle from `structuredContent.elements[].element_token`. Strictly bound to pid, window_id, generation, element_index, and AX node identity. If window_id or element_index are also supplied they must match. Unknown, cross-target, stale-generation, or identity-mismatch tokens fail closed." },
                 "value": {
                     "type": "string",
                     "description": "New value. AX will coerce to the element's native type."
@@ -103,59 +107,58 @@ impl Tool for SetValueTool {
             Err(e) => return e,
         };
 
-        // Surface 6: element_token / element_index precedence. Neither
-        // is now schema-required so the resolver can centralize the
-        // "missing addressing" error message.
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            window_id_arg,
-            "set_value",
-        ) {
-            Ok(r) => r,
-            Err(e) => return e,
-        };
-        let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => {
+        let (element_index, window_id, token_guard, token_generation) =
+            if let Some(token) = element_token_arg.as_deref() {
+                match self.state.element_cache.resolve_token(
+                    pid,
+                    window_id_arg,
+                    element_index_arg,
+                    token,
+                ) {
+                    Ok(validated) => (
+                        validated.element_index,
+                        validated.window_id,
+                        Some(validated.element),
+                        Some(validated.generation),
+                    ),
+                    Err(error) => return error.into_tool_result(),
+                }
+            } else if let Some(element_index) = element_index_arg {
+                let Some(window_id) = window_id_arg else {
+                    return ToolResult::error(
+                        "set_value requires window_id when element_index is used \
+                         (omit only when supplying element_token, which carries it).",
+                    );
+                };
+                (element_index, window_id, None, None)
+            } else {
                 return ToolResult::error(
                     "set_value requires element_index (+ window_id) or element_token to \
                      address the target element.",
-                )
-            }
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: Some(wid),
-                element_index: idx,
-                via_token: _,
-            } => (idx, wid),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: None, ..
-            } => {
-                return ToolResult::error(
-                    "set_value requires window_id when element_index is used \
-                 (omit only when supplying element_token, which carries it).",
-                )
-            }
-        };
+                );
+            };
 
         // Retain out of the cache so a concurrent get_window_state can't free
         // the element mid-action (use-after-free → daemon crash). Guard lives
         // to the end of this method, past the AX write below.
         let element_guard =
-            match self
-                .state
-                .element_cache
-                .get_element_retained(pid, window_id, element_index)
-            {
-                Some(e) => e,
-                None => {
-                    return ToolResult::error(format!(
-                        "Element index {element_index} not found. Call get_window_state first."
-                    ))
-                }
+            match token_guard {
+                Some(element) => element,
+                None => match self.state.element_cache.get_element_retained(
+                    pid,
+                    window_id,
+                    element_index,
+                ) {
+                    Some(e) => e,
+                    None => {
+                        return ToolResult::error(format!(
+                            "Element index {element_index} not found. Call get_window_state first."
+                        ))
+                    }
+                },
             };
         let element_ptr = element_guard.as_ptr();
 
@@ -182,9 +185,24 @@ impl Tool for SetValueTool {
         let changes = snapshot.detect_async().await;
 
         match result {
-            Ok(Ok(mut msg)) => {
-                msg.push_str(&changes.result_suffix());
-                ToolResult::text(msg)
+            Ok(Ok(mut outcome)) => {
+                outcome.message.push_str(&changes.result_suffix());
+                let mut structured = serde_json::json!({
+                    "path": "ax",
+                    "element_index": element_index,
+                    "window_id": window_id,
+                    "changed": outcome.changed,
+                    "verified": outcome.verified,
+                });
+                if let Some(readback) = outcome.readback_value {
+                    structured["value"] = serde_json::json!(readback);
+                    structured["readback_value"] = structured["value"].clone();
+                }
+                if let Some(generation) = token_generation {
+                    structured["element_token"] = serde_json::json!(element_token_arg.as_deref());
+                    structured["generation"] = serde_json::json!(generation);
+                }
+                ToolResult::text(outcome.message).with_structured(structured)
             }
             Ok(Err(e)) => ToolResult::error(format!("set_value failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -194,19 +212,40 @@ impl Tool for SetValueTool {
 
 // ── Blocking implementation (runs on spawn_blocking thread) ─────────────────
 
+struct SetValueOutcome {
+    message: String,
+    readback_value: Option<String>,
+    changed: bool,
+    verified: bool,
+}
+
 fn set_value_blocking(
     element_ptr: usize,
     element_index: usize,
     pid: i32,
     value: &str,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<SetValueOutcome> {
     let element = element_ptr as AXUIElementRef;
 
     let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
+    let before = read_ax_value(element);
+    if before
+        .as_deref()
+        .is_some_and(|current| values_equivalent(current, value))
+    {
+        return Ok(SetValueOutcome {
+            message: format!(
+                "✅ AXValue on [{element_index}] {role} already equals the requested value."
+            ),
+            readback_value: before,
+            changed: false,
+            verified: true,
+        });
+    }
 
-    if role == "AXPopUpButton" {
+    let message = if role == "AXPopUpButton" {
         let element_title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
-        select_popup_option(element, element_index, pid, value, &element_title)
+        select_popup_option(element, element_index, pid, value, &element_title)?
     } else {
         // Default path: write AXValue directly. Numeric controls (AXSlider /
         // AXStepper) reject a CFString with -25201 and need a CFNumber; text
@@ -229,20 +268,51 @@ fn set_value_blocking(
             None => unsafe { set_string_attr(element, "AXValue", value) },
         };
         if err == kAXErrorSuccess {
-            Ok(format!("✅ Set AXValue on [{element_index}] {role}."))
+            format!("✅ Set AXValue on [{element_index}] {role}.")
         } else if let Some(target) = numeric_target {
             // Both direct writes failed for a numeric target — fall back to
             // stepping the control via AXIncrement / AXDecrement actions.
             if step_to_value(element, target) {
-                Ok(format!(
+                format!(
                     "✅ Set AXValue on [{element_index}] {role} via AXIncrement/AXDecrement stepping."
-                ))
+                )
             } else {
                 anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
             }
         } else {
             anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
         }
+    };
+    let readback_value = read_ax_value(element);
+    let verified = readback_value
+        .as_deref()
+        .is_some_and(|current| values_equivalent(current, value));
+    Ok(SetValueOutcome {
+        message,
+        readback_value,
+        changed: true,
+        verified,
+    })
+}
+
+fn read_ax_value(element: AXUIElementRef) -> Option<String> {
+    unsafe { copy_string_attr(element, "AXValue") }
+        .or_else(|| unsafe { copy_number_attr(element, "AXValue") }.map(|value| value.to_string()))
+}
+
+fn values_equivalent(current: &str, requested: &str) -> bool {
+    if current == requested {
+        return true;
+    }
+    match (
+        current.trim().parse::<f64>(),
+        requested.trim().parse::<f64>(),
+    ) {
+        (Ok(current), Ok(requested)) => {
+            (current - requested).abs()
+                <= f64::EPSILON * current.abs().max(requested.abs()).max(1.0)
+        }
+        _ => false,
     }
 }
 
@@ -496,5 +566,19 @@ fn hex_digit(n: u8) -> char {
         0..=9 => (b'0' + n) as char,
         10..=15 => (b'A' + n - 10) as char,
         _ => '0',
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::values_equivalent;
+
+    #[test]
+    fn value_equivalence_is_idempotent_for_text_and_numeric_representations() {
+        assert!(values_equivalent("ready", "ready"));
+        assert!(!values_equivalent("ready", "Ready"));
+        assert!(values_equivalent("1", "1.0"));
+        assert!(values_equivalent("0.5", "0.5000000000000000"));
+        assert!(!values_equivalent("1", "2"));
     }
 }

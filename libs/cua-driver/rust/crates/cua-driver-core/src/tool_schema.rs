@@ -98,9 +98,11 @@ pub fn element_token_schema() -> Value {
     json!({
         "type": "string",
         "description": "Opaque per-snapshot element handle from \
-            `structuredContent.elements[].element_token`. Takes precedence over \
-            element_index when both are supplied. Returns an explicit \"stale\" \
-            error once a newer snapshot supersedes it — re-snapshot in that case."
+            `structuredContent.elements[].element_token`. On macOS click/set_value \
+            it is strictly bound to pid, window_id, generation, element_index, and \
+            AX node identity. If element_index or window_id are also supplied they \
+            must match. Unknown, cross-target, stale-generation, or identity-mismatch \
+            tokens fail closed; call get_window_state again after a stale error."
     })
 }
 

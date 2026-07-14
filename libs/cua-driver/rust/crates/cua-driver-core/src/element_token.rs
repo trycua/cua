@@ -21,18 +21,15 @@
 //!   s{snapshot_id_hex}:{element_index}
 //! ```
 //!
-//! - `snapshot_id_hex` is a lowercase 4-hex-char prefix of a process-
-//!   global u32 snapshot counter (`AtomicU32`). 4 chars gives 16 bits of
-//!   namespace — collisions are statistically impossible inside the
-//!   8-entry-per-pid LRU window we keep, and the prefix stays human-eyeball
-//!   friendly in logs.
+//! - `snapshot_id_hex` is the full lowercase 8-hex-char value of a process-
+//!   global u32 generation counter (`AtomicU32`). Using the complete generation
+//!   prevents old tokens from aliasing newer snapshots after a 16-bit wrap.
 //! - `element_index` is the same `usize` already returned in
 //!   `structuredContent.elements[].element_index`. Keeping it in plain
 //!   sight in the token means a server-side log line like
 //!   `element_token=s7a3f:42` is debug-grep-able without a side-table.
 //!
-//! Tokens are 8–12 chars (`"s0001:0"` up to `"sffff:999"`). Well within
-//! the 8–16 char budget the Surface 6 plan called out.
+//! Example tokens are `"s00000001:0"` and `"sffffffff:999"`.
 //!
 //! ## Validity contract
 //!
@@ -71,8 +68,69 @@ pub const LRU_CAP_PER_PID: usize = 8;
 pub const STALE_TOKEN_ERROR: &str =
     "element_token is stale; call get_window_state again to refresh";
 
+pub const TOKEN_INVALID_CODE: &str = "element_token_invalid";
+pub const TOKEN_UNKNOWN_CODE: &str = "element_token_unknown";
+pub const TOKEN_PID_MISMATCH_CODE: &str = "element_token_pid_mismatch";
+pub const TOKEN_WINDOW_MISMATCH_CODE: &str = "element_token_window_mismatch";
+pub const TOKEN_INDEX_MISMATCH_CODE: &str = "element_token_index_mismatch";
+pub const TOKEN_STALE_GENERATION_CODE: &str = "element_token_stale_generation";
+pub const TOKEN_IDENTITY_MISMATCH_CODE: &str = "element_token_identity_mismatch";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StableTokenError {
+    pub code: &'static str,
+    pub message: String,
+}
+
+impl StableTokenError {
+    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+
+    pub fn into_tool_result(self) -> crate::protocol::ToolResult {
+        crate::protocol::ToolResult::error(self.message.clone()).with_structured(
+            serde_json::json!({
+                "code": self.code,
+                "message": self.message,
+            }),
+        )
+    }
+
+    pub fn stale_generation(generation: u32, pid: i32, window_id: u32) -> Self {
+        Self::new(
+            TOKEN_STALE_GENERATION_CODE,
+            format!(
+                "element_token generation {generation} is stale for pid={pid} \
+                 window_id={window_id}; call get_window_state again"
+            ),
+        )
+    }
+
+    pub fn identity_mismatch(element_index: usize) -> Self {
+        Self::new(
+            TOKEN_IDENTITY_MISMATCH_CODE,
+            format!(
+                "element_token AX node identity no longer matches element_index \
+                 {element_index}; call get_window_state again"
+            ),
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StableTokenBinding {
+    pub pid: i32,
+    pub window_id: u32,
+    pub generation: u32,
+    pub element_index: usize,
+    pub node_identity: u64,
+}
+
 /// One valid snapshot retained in the per-pid LRU.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct SnapshotEntry {
     /// Monotonic, process-global id assigned by [`mint_snapshot_id`].
     snapshot_id: u32,
@@ -84,6 +142,9 @@ struct SnapshotEntry {
     /// resolver rejects out-of-range tokens up-front instead of waiting
     /// for the per-platform cache to NPE.
     max_element_index: usize,
+    /// Optional platform identity binding. macOS supplies this for strict
+    /// same-node validation; other platforms keep the base token contract.
+    node_identities: Option<HashMap<usize, u64>>,
 }
 
 /// Process-global token registry. Thread-safe; tools resolve from any
@@ -116,18 +177,39 @@ impl TokenRegistry {
     /// in its lane, the oldest is evicted and any token that referenced
     /// it becomes stale — that's the contract.
     pub fn register_snapshot(&self, pid: i32, window_id: u32, element_count: usize) -> u32 {
-        // Truncate to the 16-bit space the token format actually
-        // surfaces. The full u32 still increments monotonically — we
-        // just don't widen the on-the-wire token namespace beyond what
-        // the 4-hex-char prefix can carry. Round-trip property:
-        // `resolve(format_token(id, idx))` always finds the entry.
-        let id = mint_snapshot_id() & 0xffff;
+        self.register_snapshot_inner(pid, window_id, element_count, None)
+    }
+
+    pub fn register_snapshot_with_identities(
+        &self,
+        pid: i32,
+        window_id: u32,
+        element_count: usize,
+        nodes: impl IntoIterator<Item = (usize, u64)>,
+    ) -> u32 {
+        self.register_snapshot_inner(
+            pid,
+            window_id,
+            element_count,
+            Some(nodes.into_iter().collect()),
+        )
+    }
+
+    fn register_snapshot_inner(
+        &self,
+        pid: i32,
+        window_id: u32,
+        element_count: usize,
+        node_identities: Option<HashMap<usize, u64>>,
+    ) -> u32 {
+        let id = mint_snapshot_id();
         let mut by_pid = self.by_pid.lock().unwrap();
         let lane = by_pid.entry(pid).or_default();
         lane.push(SnapshotEntry {
             snapshot_id: id,
             window_id,
             max_element_index: element_count.saturating_sub(1),
+            node_identities,
         });
         // Evict oldest. The loop guards against pre-existing over-cap
         // state from a previous version of the binary; in steady state
@@ -136,6 +218,94 @@ impl TokenRegistry {
             lane.remove(0);
         }
         id
+    }
+
+    pub fn resolve_stable(
+        &self,
+        pid: i32,
+        args_window_id: Option<u32>,
+        args_element_index: Option<usize>,
+        token: &str,
+    ) -> Result<StableTokenBinding, StableTokenError> {
+        let (generation, token_index) = parse_token(token).ok_or_else(|| {
+            StableTokenError::new(TOKEN_INVALID_CODE, "element_token has invalid format")
+        })?;
+        let by_pid = self.by_pid.lock().unwrap();
+        let owner = by_pid.iter().find_map(|(owner_pid, lane)| {
+            lane.iter()
+                .find(|entry| entry.snapshot_id == generation)
+                .map(|entry| (*owner_pid, entry))
+        });
+        let (owner_pid, snapshot) = owner.ok_or_else(|| {
+            StableTokenError::new(
+                TOKEN_UNKNOWN_CODE,
+                "element_token is unknown to this cua-driver process",
+            )
+        })?;
+        if owner_pid != pid {
+            return Err(StableTokenError::new(
+                TOKEN_PID_MISMATCH_CODE,
+                format!("element_token belongs to pid={owner_pid}, not requested pid={pid}"),
+            ));
+        }
+        if let Some(window_id) = args_window_id {
+            if snapshot.window_id != window_id {
+                return Err(StableTokenError::new(
+                    TOKEN_WINDOW_MISMATCH_CODE,
+                    format!(
+                        "element_token belongs to window_id={}, not requested window_id={window_id}",
+                        snapshot.window_id
+                    ),
+                ));
+            }
+        }
+        if let Some(element_index) = args_element_index {
+            if token_index != element_index {
+                return Err(StableTokenError::new(
+                    TOKEN_INDEX_MISMATCH_CODE,
+                    format!(
+                        "element_token identifies element_index={token_index}, \
+                         not requested element_index={element_index}"
+                    ),
+                ));
+            }
+        }
+        let current_generation = by_pid
+            .get(&pid)
+            .and_then(|lane| {
+                lane.iter()
+                    .rev()
+                    .find(|entry| entry.window_id == snapshot.window_id)
+            })
+            .map(|entry| entry.snapshot_id);
+        if current_generation != Some(generation) {
+            return Err(StableTokenError::stale_generation(
+                generation,
+                pid,
+                snapshot.window_id,
+            ));
+        }
+        let node_identity = snapshot
+            .node_identities
+            .as_ref()
+            .and_then(|nodes| nodes.get(&token_index))
+            .copied()
+            .ok_or_else(|| {
+                StableTokenError::new(
+                    TOKEN_UNKNOWN_CODE,
+                    format!(
+                        "element_token has no AX node identity for element_index={token_index} \
+                         in generation={generation}"
+                    ),
+                )
+            })?;
+        Ok(StableTokenBinding {
+            pid,
+            window_id: snapshot.window_id,
+            generation,
+            element_index: token_index,
+            node_identity,
+        })
     }
 
     /// Resolve `token` against the LRU for `pid`. On success returns
@@ -220,18 +390,10 @@ fn mint_snapshot_id() -> u32 {
 }
 
 /// Format `(snapshot_id, element_index)` as the canonical token string.
-/// 4-hex-char snapshot prefix means tokens stay under 12 chars even
-/// with 4-digit indices.
-///
-/// Snapshot ids are masked to 16 bits by [`TokenRegistry::register_snapshot`]
-/// before storage so the round trip `resolve(format_token(id, idx))`
-/// closes cleanly without truncation drift. Collision chance inside the
-/// 8-entry LRU window is 8/65536 ≈ 0.01%; the registry treats the
-/// `(pid, snapshot_id)` pair as the lookup key so a same-bits collision
-/// across pids never aliases.
+/// The complete u32 generation is encoded so a stale token cannot alias a
+/// newer snapshot after a 16-bit wrap.
 pub fn format_token(snapshot_id: u32, element_index: usize) -> String {
-    let short = snapshot_id & 0xffff;
-    format!("s{short:04x}:{element_index}")
+    format!("s{snapshot_id:08x}:{element_index}")
 }
 
 /// Parse a canonical token string into `(snapshot_id, element_index)`.
@@ -242,7 +404,7 @@ pub fn format_token(snapshot_id: u32, element_index: usize) -> String {
 fn parse_token(token: &str) -> Option<(u32, usize)> {
     let body = token.strip_prefix('s')?;
     let (hex, idx) = body.split_once(':')?;
-    if hex.len() != 4 {
+    if hex.len() != 8 {
         return None;
     }
     let sid = u32::from_str_radix(hex, 16).ok()?;
@@ -371,36 +533,30 @@ mod tests {
 
     #[test]
     fn token_round_trips_through_format_then_parse() {
-        // Use a low-bit id that survives the 16-bit truncation in
-        // format_token, so we can compare format → parse without losing
-        // information.
         let token = format_token(0x1234, 42);
-        assert_eq!(token, "s1234:42");
+        assert_eq!(token, "s00001234:42");
         let (sid, idx) = parse_token(&token).expect("parse_token should accept its own output");
         assert_eq!(sid, 0x1234);
         assert_eq!(idx, 42);
     }
 
     #[test]
-    fn token_format_pads_to_four_hex_chars() {
-        // Small ids must still have a 4-char prefix so the parser's
-        // length check passes. Surface 6's stated format is "8-16 chars";
-        // we sit comfortably inside that.
+    fn token_format_pads_to_eight_hex_chars() {
         let token = format_token(1, 0);
-        assert_eq!(token, "s0001:0");
+        assert_eq!(token, "s00000001:0");
         let token2 = format_token(0, 999);
-        assert_eq!(token2, "s0000:999");
+        assert_eq!(token2, "s00000000:999");
     }
 
     #[test]
     fn parse_rejects_unknown_prefix_or_shape() {
         assert!(parse_token("").is_none());
-        assert!(parse_token("x1234:42").is_none(), "wrong prefix");
-        assert!(parse_token("s1234").is_none(), "missing colon");
-        assert!(parse_token("s12345:42").is_none(), "hex too long");
-        assert!(parse_token("s123:42").is_none(), "hex too short");
-        assert!(parse_token("szzzz:42").is_none(), "non-hex");
-        assert!(parse_token("s1234:abc").is_none(), "non-decimal index");
+        assert!(parse_token("x00001234:42").is_none(), "wrong prefix");
+        assert!(parse_token("s00001234").is_none(), "missing colon");
+        assert!(parse_token("s000001234:42").is_none(), "hex too long");
+        assert!(parse_token("s001234:42").is_none(), "hex too short");
+        assert!(parse_token("szzzzzzzz:42").is_none(), "non-hex");
+        assert!(parse_token("s00001234:abc").is_none(), "non-decimal index");
     }
 
     #[test]
@@ -659,5 +815,82 @@ mod tests {
         let resolved = resolve_element_args(1, None, None, None, "click")
             .expect("neither arg returns None, not error");
         assert!(matches!(resolved, ResolvedElement::None));
+    }
+
+    #[test]
+    fn stable_token_binds_pid_window_generation_index_and_identity() {
+        let reg = TokenRegistry::new();
+        let generation = reg.register_snapshot_with_identities(10, 20, 5, [(4, 0xfeed)]);
+        let binding = reg
+            .resolve_stable(10, Some(20), Some(4), &format_token(generation, 4))
+            .expect("matching binding resolves");
+        assert_eq!(
+            binding,
+            StableTokenBinding {
+                pid: 10,
+                window_id: 20,
+                generation,
+                element_index: 4,
+                node_identity: 0xfeed,
+            }
+        );
+    }
+
+    #[test]
+    fn stable_token_rejects_cross_pid_and_window() {
+        let reg = TokenRegistry::new();
+        let generation = reg.register_snapshot_with_identities(10, 20, 1, [(0, 7)]);
+        let token = format_token(generation, 0);
+        assert_eq!(
+            reg.resolve_stable(11, Some(20), None, &token)
+                .unwrap_err()
+                .code,
+            TOKEN_PID_MISMATCH_CODE
+        );
+        assert_eq!(
+            reg.resolve_stable(10, Some(21), None, &token)
+                .unwrap_err()
+                .code,
+            TOKEN_WINDOW_MISMATCH_CODE
+        );
+    }
+
+    #[test]
+    fn stable_token_rejects_expired_generation_and_unknown_token() {
+        let reg = TokenRegistry::new();
+        let old_generation = reg.register_snapshot_with_identities(10, 20, 1, [(0, 7)]);
+        let stale = format_token(old_generation, 0);
+        reg.register_snapshot_with_identities(10, 20, 1, [(0, 7)]);
+        assert_eq!(
+            reg.resolve_stable(10, Some(20), None, &stale)
+                .unwrap_err()
+                .code,
+            TOKEN_STALE_GENERATION_CODE
+        );
+        assert_eq!(
+            reg.resolve_stable(10, Some(20), None, &format_token(999, 0))
+                .unwrap_err()
+                .code,
+            TOKEN_UNKNOWN_CODE
+        );
+    }
+
+    #[test]
+    fn stable_token_rejects_conflicting_element_index() {
+        let reg = TokenRegistry::new();
+        let generation = reg.register_snapshot_with_identities(10, 20, 3, [(2, 9)]);
+        let err = reg
+            .resolve_stable(10, Some(20), Some(3), &format_token(generation, 2))
+            .unwrap_err();
+        assert_eq!(err.code, TOKEN_INDEX_MISMATCH_CODE);
+    }
+
+    #[test]
+    fn stable_token_errors_expose_structured_code_and_message() {
+        let result = StableTokenError::new(TOKEN_UNKNOWN_CODE, "unknown token").into_tool_result();
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured error payload");
+        assert_eq!(structured["code"], TOKEN_UNKNOWN_CODE);
+        assert_eq!(structured["message"], "unknown token");
     }
 }

@@ -76,7 +76,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox libgtk-3-dev clang pkg-config \
+            xvfb dbus-x11 at-spi2-core openbox picom libgtk-3-dev clang pkg-config \
             libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev \
             libx11-dev libxi-dev libxtst-dev libxext-dev libssl-dev \
             libxdo-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
@@ -132,7 +132,7 @@ jobs:
           export CUA_E2E_RECORDINGS_ROOT="$artifact/recordings"
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
-            "openbox >/tmp/cua-browser-openbox.log 2>&1 & sleep 2; cd libs/cua-driver/rust; cargo test --release -p cua-driver --test standalone_browser_behavior_test -- --ignored --nocapture --test-threads=1"
+            "openbox >/tmp/cua-browser-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-browser-picom.log 2>&1 & sleep 2; cd libs/cua-driver/rust; cargo test --release -p cua-driver --test standalone_browser_behavior_test -- --ignored --nocapture --test-threads=1"
           cargo run --release -p cua-driver-testkit --manifest-path libs/cua-driver/rust/Cargo.toml --bin cua-e2e-report -- \
             --declarations "$artifact/cases.jsonl" \
             --environment "$artifact/environment.jsonl" \

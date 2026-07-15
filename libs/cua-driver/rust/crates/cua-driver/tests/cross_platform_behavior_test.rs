@@ -1534,9 +1534,15 @@ fn embedded_browser_routes_are_exact_or_refused() {
             failure = result;
         }
     }
+    if selected == 0
+        && std::env::var("CUA_E2E_CELL_FILTER").is_ok_and(|filter| !filter.trim().is_empty())
+    {
+        eprintln!("no embedded-browser rows matched CUA_E2E_CELL_FILTER");
+        return;
+    }
     assert!(
         selected > 0,
-        "no embedded-browser cells were selected; check CUA_E2E_HARNESS_FILTER and CUA_E2E_CELL_FILTER"
+        "no embedded-browser cells were selected; check CUA_E2E_HARNESS_FILTER"
     );
     resume_first_failure(failure);
 }

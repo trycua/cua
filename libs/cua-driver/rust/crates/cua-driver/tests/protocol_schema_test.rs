@@ -80,7 +80,7 @@ fn tools_list_schema_shape() {
         ("browser_prepare", &["pid"][..]),
         ("browser_navigate", &["target_id", "tab_id", "url"][..]),
         ("browser_click", &["target_id", "tab_id"][..]),
-        ("browser_type", &["target_id", "tab_id", "text"][..]),
+        ("browser_type", &["target_id", "tab_id", "ref", "text"][..]),
     ] {
         let tool = tools
             .iter()

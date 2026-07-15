@@ -705,7 +705,8 @@ impl BrowserTypeTool {
             description: "Type text into an exactly-bound tab via the Input domain. \
                 mode=\"insert_text\" (default) uses Input.insertText; \
                 mode=\"keystrokes\" dispatches per-character key events. Pass a ref \
-                to focus that element first. Refused for heuristic bindings."
+                to an editable element from the latest snapshot. A ref is required; \
+                heuristic bindings are refused."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -722,7 +723,7 @@ impl BrowserTypeTool {
                             keystrokes: per-character Input.dispatchKeyEvent."
                     },
                 },
-                "required": ["target_id", "tab_id", "text"],
+                "required": ["target_id", "tab_id", "ref", "text"],
                 "additionalProperties": true
             }),
             read_only: false,
@@ -771,30 +772,51 @@ impl Tool for BrowserTypeTool {
         let conn = &validated.conn;
         let cdp = validated.cdp_session.as_str();
 
-        // Optional focus target.
-        if let Some(ext_ref) = args.opt_str("ref") {
-            let entry = match self
-                .engine
-                .store
-                .resolve_ref(&session, &target_id, &tab_id, &ext_ref)
-            {
-                Ok(e) => e,
-                Err(refusal) => return refusal.to_tool_result(),
-            };
-            if let Err(_e) = conn
-                .call(
-                    Some(cdp),
-                    "DOM.focus",
-                    json!({ "backendNodeId": entry.backend_node_id }),
-                )
-                .await
-            {
-                return BrowserRefusal::new(
-                    BrowserRefusalCode::BrowserRefStale,
-                    "the ref's node can no longer be focused — re-snapshot the tab",
-                )
-                .to_tool_result();
-            }
+        let ext_ref = match args.require_str("ref") {
+            Ok(value) => value,
+            Err(error) => return error,
+        };
+        let entry = match self
+            .engine
+            .store
+            .resolve_ref(&session, &target_id, &tab_id, &ext_ref)
+        {
+            Ok(e) => e,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+        if let Err(_e) = conn
+            .call(
+                Some(cdp),
+                "DOM.focus",
+                json!({ "backendNodeId": entry.backend_node_id }),
+            )
+            .await
+        {
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserRefStale,
+                "the ref's node can no longer be focused — re-snapshot the tab",
+            )
+            .to_tool_result();
+        }
+        let editable = conn
+            .call(
+                Some(cdp),
+                "Runtime.evaluate",
+                json!({
+                    "expression": "(() => { const e = document.activeElement; if (!e) return false; if (e.isContentEditable) return true; if (e.tagName === 'TEXTAREA') return !e.disabled && !e.readOnly; if (e.tagName !== 'INPUT') return false; return !e.disabled && !e.readOnly && !['button','checkbox','color','file','hidden','image','radio','range','reset','submit'].includes((e.type || 'text').toLowerCase()); })()",
+                    "returnByValue": true,
+                }),
+            )
+            .await;
+        if !matches!(
+            editable,
+            Ok(ref value) if value["result"]["value"].as_bool() == Some(true)
+        ) {
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserInputTrustUnavailable,
+                "the requested ref is not a focused editable element",
+            )
+            .to_tool_result();
         }
 
         let typed = if mode == "insert_text" {
@@ -840,6 +862,7 @@ impl Tool for BrowserTypeTool {
                 "status": "ok",
                 "target_id": target_id,
                 "tab_id": tab_id,
+                "ref": ext_ref,
                 "mode": mode,
                 "chars": text.chars().count(),
             })),

@@ -807,17 +807,17 @@ Click a page element (by ref) or viewport coordinates in an exactly-bound tab. D
 
 ### `browser_type`
 
-Type text into an exactly-bound tab via the Input domain. mode="insert_text" (default) uses Input.insertText; mode="keystrokes" dispatches per-character key events. Pass a ref to focus that element first. Refused for heuristic bindings.
+Type text into an exactly-bound tab via the Input domain. mode="insert_text" (default) uses Input.insertText; mode="keystrokes" dispatches per-character key events. Pass a ref to an editable element from the latest snapshot. A ref is required; heuristic bindings are refused.
 
 **Arguments:**
 
 - `mode` (string, optional): insert_text (default): bulk Input.insertText. keystrokes: per-character Input.dispatchKeyEvent.
-- `ref` (string, optional): Page element ref in the p&lt;snapshot&gt;:&lt;index&gt; namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.
+- `ref` (string, required): Page element ref in the p&lt;snapshot&gt;:&lt;index&gt; namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.
 - `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.
 - `tab_id` (string, required): Opaque tab id from get_browser_state (session-scoped).
 - `target_id` (string, required): Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).
 - `text` (string, required): Text to type.
 
 ```json
-{"tab_id":"example","target_id":"example","text":"hello"}
+{"ref":"example","tab_id":"example","target_id":"example","text":"hello"}
 ```

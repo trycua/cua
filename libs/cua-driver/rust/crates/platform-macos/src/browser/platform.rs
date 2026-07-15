@@ -25,12 +25,25 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
 
 fn is_chromium(name: &str, bundle_id: &str) -> bool {
     let value = format!("{name} {bundle_id}").to_ascii_lowercase();
-    [
+    let products = [
         "chrome", "chromium", "electron", "brave", "edge", "vivaldi", "opera", "arc", "thorium",
         "iridium", "yandex",
-    ]
-    .iter()
-    .any(|needle| value.contains(needle))
+    ];
+    value
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| products.contains(&token))
+}
+
+fn loopback_websocket_port(url: &str) -> Option<u16> {
+    ["ws://127.0.0.1:", "ws://localhost:", "ws://[::1]:"]
+        .iter()
+        .find_map(|prefix| {
+            url.strip_prefix(prefix)?
+                .split('/')
+                .next()?
+                .parse::<u16>()
+                .ok()
+        })
 }
 
 fn stable_hash(value: &str) -> u64 {
@@ -154,10 +167,7 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
         let body_start = bytes.windows(4).position(|part| part == b"\r\n\r\n")? + 4;
         let value: serde_json::Value = serde_json::from_slice(&bytes[body_start..]).ok()?;
         let url = value.get("webSocketDebuggerUrl")?.as_str()?.to_owned();
-        (url.starts_with("ws://127.0.0.1:")
-            || url.starts_with("ws://localhost:")
-            || url.starts_with("ws://[::1]:"))
-        .then_some(url)
+        (loopback_websocket_port(&url) == Some(port)).then_some(url)
     })
     .await
     .ok()
@@ -341,5 +351,23 @@ mod tests {
         assert!(is_chromium("Electron", "com.example.fixture"));
         assert!(is_chromium("Google Chrome", "com.google.Chrome"));
         assert!(!is_chromium("Safari", "com.apple.Safari"));
+        assert!(!is_chromium("Search", "com.example.Search"));
+        assert!(!is_chromium("Operator", "com.example.Operator"));
+    }
+
+    #[test]
+    fn websocket_url_must_keep_the_attested_listener_port() {
+        assert_eq!(
+            loopback_websocket_port("ws://127.0.0.1:9222/devtools/browser/id"),
+            Some(9222)
+        );
+        assert_ne!(
+            loopback_websocket_port("ws://localhost:9333/devtools/browser/foreign"),
+            Some(9222)
+        );
+        assert_eq!(
+            loopback_websocket_port("ws://192.0.2.1:9222/devtools"),
+            None
+        );
     }
 }

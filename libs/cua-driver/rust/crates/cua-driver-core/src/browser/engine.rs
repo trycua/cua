@@ -137,7 +137,12 @@ impl BrowserEngine {
             .get("targetInfos")
             .and_then(Value::as_array)
             .cloned()
-            .unwrap_or_default();
+            .ok_or_else(|| {
+                refuse(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    "Target.getTargets returned no targetInfos array",
+                )
+            })?;
 
         let mut out = Vec::new();
         for info in infos {
@@ -152,10 +157,16 @@ impl BrowserEngine {
             if url.starts_with("devtools://") {
                 continue;
             }
-            let target_id = match info.get("targetId").and_then(Value::as_str) {
-                Some(t) => t.to_owned(),
-                None => continue,
-            };
+            let target_id = info
+                .get("targetId")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    refuse(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        "Target.getTargets returned a page without targetId",
+                    )
+                })?;
             let title = info
                 .get("title")
                 .and_then(Value::as_str)
@@ -171,36 +182,61 @@ impl BrowserEngine {
                 .await
             {
                 Ok(win) => {
-                    let Some(window_id) = win.get("windowId").and_then(Value::as_i64) else {
-                        continue;
-                    };
-                    let bounds_v = match conn
+                    let window_id =
+                        win.get("windowId").and_then(Value::as_i64).ok_or_else(|| {
+                            refuse(
+                                BrowserRefusalCode::BrowserRouteUnavailable,
+                                "Browser.getWindowForTarget returned no windowId",
+                            )
+                        })?;
+                    let bounds_v = conn
                         .call(
                             None,
                             "Browser.getWindowBounds",
                             json!({ "windowId": window_id }),
                         )
                         .await
-                    {
-                        Ok(bounds) => bounds,
-                        Err(_) => continue,
+                        .map_err(|error| {
+                            route_err(
+                                "Browser.getWindowBounds failed while proving the native window",
+                                error,
+                            )
+                        })?;
+                    let b = bounds_v.get("bounds").ok_or_else(|| {
+                        refuse(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            "Browser.getWindowBounds returned no bounds object",
+                        )
+                    })?;
+                    let number = |field: &str| {
+                        b.get(field).and_then(Value::as_f64).ok_or_else(|| {
+                            refuse(
+                                BrowserRefusalCode::BrowserRouteUnavailable,
+                                format!("Browser.getWindowBounds returned no numeric {field}"),
+                            )
+                        })
                     };
-                    let b = bounds_v.get("bounds").cloned().unwrap_or(Value::Null);
                     Some((
                         window_id,
                         Rect::new(
-                            b.get("left").and_then(Value::as_f64).unwrap_or(0.0),
-                            b.get("top").and_then(Value::as_f64).unwrap_or(0.0),
-                            b.get("width").and_then(Value::as_f64).unwrap_or(0.0),
-                            b.get("height").and_then(Value::as_f64).unwrap_or(0.0),
+                            number("left")?,
+                            number("top")?,
+                            number("width")?,
+                            number("height")?,
                         ),
                     ))
                 }
                 // Electron's browser endpoint can omit this Browser-domain
                 // method entirely. Retain only that explicit unsupported
-                // shape; transient errors and vanished targets still skip.
+                // shape; every transient/vanished-target error fails the
+                // whole proof rather than shrinking it to a false unique set.
                 Err(error) if error.to_string().contains("(-32601)") => None,
-                Err(_) => continue,
+                Err(error) => {
+                    return Err(route_err(
+                        "Browser.getWindowForTarget failed while proving the native window",
+                        error,
+                    ));
+                }
             };
             out.push(CdpWindowCandidate {
                 cdp_target_id: target_id,

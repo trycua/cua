@@ -385,7 +385,9 @@ Modes:
 - `keystrokes`: trusted key event dispatch;
 - `dom_value`: explicit DOM value mutation, if added after v1 validation.
 
-The result reports the actual mode and trust class. `ref` may be omitted only when the route can prove the exact focused page element.
+The result reports the actual mode and trust class. Browser-tool v1 requires a
+fresh `ref` and proves that it resolves to the focused editable element before
+typing; it refuses rather than reporting success against an unproven focus.
 
 ## Structured Refusals
 

@@ -1219,6 +1219,12 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
         "Electron browser binding must be exact: {}",
         bind.raw
     );
+    assert_eq!(
+        bind.structured()["binding_route"].as_str(),
+        Some("embedded_single_page"),
+        "Electron must exercise the bounded embedded-browser route: {}",
+        bind.raw
+    );
     let target_id = bind.structured()["target_id"]
         .as_str()
         .expect("bind target_id")

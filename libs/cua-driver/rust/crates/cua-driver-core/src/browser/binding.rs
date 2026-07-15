@@ -7,10 +7,10 @@
 //! 1. Filter candidates whose CDP window bounds match the native bounds
 //!    within `tolerance` device pixels.
 //! 2. Exactly one bounds match → **Exact** binding.
-//! 3. Multiple bounds matches (tabs of the same window share bounds) →
-//!    tie-break on the title: the native window title normally embeds
-//!    the active tab's title. A unique title match → **Exact**;
-//!    otherwise → **Ambiguous** (refusal).
+//! 3. Multiple bounds matches are eligible for a title tie-break only
+//!    when every candidate belongs to the same CDP window. Tabs of one
+//!    window share bounds; distinct maximized windows can also share
+//!    bounds and must remain ambiguous.
 //! 4. No bounds match → a unique title match degrades to **Heuristic**
 //!    (read-only); otherwise **None**.
 
@@ -85,10 +85,11 @@ pub fn correlate(
     };
 
     match bounds_matches.len() {
-        1 => BindingOutcome::Bound {
+        1 if bounds_matches[0].cdp_window_id.is_some() => BindingOutcome::Bound {
             candidate: bounds_matches[0].clone(),
             quality: BindingQuality::Exact,
         },
+        1 => BindingOutcome::None,
         0 => {
             // No geometric evidence — title-only fallback is heuristic
             // and therefore read-only downstream.
@@ -105,8 +106,18 @@ pub fn correlate(
             }
         }
         _ => {
-            // Same-window tabs share bounds; the active tab's title is
-            // what the native window shows. Unique title hit → exact.
+            let cdp_window_id = bounds_matches[0].cdp_window_id;
+            if cdp_window_id.is_none()
+                || bounds_matches
+                    .iter()
+                    .any(|candidate| candidate.cdp_window_id != cdp_window_id)
+            {
+                return BindingOutcome::Ambiguous(bounds_matches.len());
+            }
+
+            // Same-window tabs share bounds; the active tab's title is what
+            // the native window shows. A unique title hit is exact only after
+            // the shared CDP-window identity above has been proven.
             let title_hits: Vec<&&CdpWindowCandidate> = bounds_matches
                 .iter()
                 .filter(|c| title_matches(&native.title, &c.title))
@@ -241,6 +252,23 @@ mod tests {
             }
             other => panic!("expected ambiguous, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn distinct_maximized_windows_with_shared_bounds_are_ambiguous() {
+        let n = native("Docs - Chrome", B);
+        let mut other_window = cand("t2", "Docs", B);
+        other_window.cdp_window_id = Some(2);
+        let cands = [cand("t1", "Mail", B), other_window];
+        assert_eq!(correlate(&n, &cands, 4.0), BindingOutcome::Ambiguous(2));
+    }
+
+    #[test]
+    fn geometry_without_a_cdp_window_id_is_not_exact() {
+        let n = native("Docs - Chrome", B);
+        let mut candidate = cand("t1", "Docs", B);
+        candidate.cdp_window_id = None;
+        assert_eq!(correlate(&n, &[candidate], 4.0), BindingOutcome::None);
     }
 
     #[test]

@@ -124,10 +124,19 @@ static CONFIGURED_POLICY: OnceLock<Result<Option<PolicyEngine>, String>> = OnceL
 /// policy snapshot for the lifetime of the driver process.
 pub fn configured_policy() -> Result<Option<&'static PolicyEngine>, String> {
     match CONFIGURED_POLICY.get_or_init(|| {
-        let Some(path) = std::env::var_os(POLICY_FILE_ENV) else {
+        let Some(path_os) = std::env::var_os(POLICY_FILE_ENV) else {
             return Ok(None);
         };
-        PolicyEngine::load(Path::new(&path)).map_err(|error| error.to_string())
+        let path = Path::new(&path_os);
+        if !path.exists() {
+            tracing::warn!(
+                path = %path.display(),
+                "{POLICY_FILE_ENV} is set but the path does not exist; \
+                 policy enforcement is disabled"
+            );
+            return Ok(None);
+        }
+        PolicyEngine::load(path).map_err(|error| error.to_string())
     }) {
         Ok(policy) => Ok(policy.as_ref()),
         Err(error) => Err(error.clone()),
@@ -152,7 +161,7 @@ impl YamlPolicy {
     }
 
     fn from_str(source: &str) -> Result<Self> {
-        let document: RawYamlPolicy = serde_yaml::from_str(source)?;
+        let document: RawYamlPolicy = serde_yaml_ng::from_str(source)?;
         let (allowed_tools, raw_rules) = document.allow.into_parts();
         let denied_tools = document.deny.into_tools();
         for tool in allowed_tools.iter().chain(&denied_tools) {

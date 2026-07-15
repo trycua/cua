@@ -201,7 +201,7 @@ If you use `cua-driver autostart enable`, add the environment variable to the la
 ## Troubleshooting
 
 **All calls are denied even though my policy allows them.**
-Check that `CUA_DRIVER_POLICY_FILE` points to the correct path and that the daemon has been restarted after setting the variable. A typo in the file path causes a startup error, which falls back to denying all calls.
+Check that `CUA_DRIVER_POLICY_FILE` points to the correct path and that the daemon has been restarted after setting the variable. A typo in the file path means the policy file is not found, which disables enforcement and allows all calls. A warning is logged at startup when the path does not exist.
 
 **The daemon fails to start with a policy parse error.**
 YAML policies must not contain empty tool names, and Rego policies must define `data.cua.policy.allow` as a boolean rule. Run `cat $CUA_DRIVER_POLICY_FILE` to confirm the file is readable and syntactically valid.

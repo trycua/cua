@@ -14,7 +14,7 @@ Every MCP tool call passes through one of two dispatch paths:
 - **In-process dispatch.** The MCP server receives the call directly, normalizes arguments, and executes the tool in the same process.
 - **Daemon-proxy dispatch.** A thin `cua-driver mcp` process proxies the call to a running `cua-driver serve` daemon over a Unix socket.
 
-The policy engine is invoked at both points: once in the proxy before it forwards the call, and once in the daemon before it executes it. A policy denial at either point returns an error to the client; the tool implementation is never reached.
+The policy engine is invoked at the in-process MCP handler and at the proxy layer: once in the proxy before it forwards the call, and once in the daemon before it executes it. A policy denial at either point returns an error to the client; the tool implementation is never reached.
 
 ## Deny-by-default
 

@@ -264,10 +264,10 @@ Write policies against the canonical name; the alias is accepted automatically.
 When a call is blocked, the MCP response is a tool error with a human-readable message:
 
 ```
-tool 'shell_execute' is explicitly denied
-tool 'launch_app' is not allowed by the YAML policy
-tool 'type_text' argument constraints were not satisfied: argument 'text' must be at most 500 characters
-tool 'launch_app' is not allowed by the Rego policy
+Permission denied: tool 'shell_execute' is explicitly denied
+Permission denied: tool 'launch_app' is not allowed by the YAML policy
+Permission denied: tool 'type_text' argument constraints were not satisfied: argument 'text' must be at most 500 characters
+Permission denied: tool 'launch_app' is not allowed by the Rego policy
 ```
 
 ---

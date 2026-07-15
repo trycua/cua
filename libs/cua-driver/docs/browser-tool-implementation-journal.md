@@ -169,6 +169,24 @@ schema_consistency_test --test protocol_session_test`: 1 schema, 1
   tool remains available and is not presented as the preferred new mutation
   route.
 
+## Plan-to-implementation audit
+
+| Plan phase | Browser-tool v1 result |
+| --- | --- |
+| Phase 0: binding feasibility | Accepted. Native Chromium uses exact CDP-window geometry; Electron uses the separately bounded single-page/single-native-window proof. Ambiguous targets refuse. |
+| Phase 1: shared CDP foundation | Implemented in `cua-driver-core`, with loopback listener ownership and exact WebSocket-port attestation in all three platform adapters. |
+| Phase 2: session-owned targets | Implemented. Target, tab, snapshot, and ref capabilities are opaque and session-scoped; session teardown removes the namespace. |
+| Phase 3: read-only state | Implemented. Bind and snapshot modes share `get_browser_state`; neither performs setup or mutation. |
+| Phase 4: preparation | Intentionally narrow. Existing owned endpoints are recognized; setup, restart, and profile changes remain explicit structured refusals rather than hidden side effects. |
+| Phase 5: typed mutations | Implemented for navigation, trusted or explicitly synthetic click, and ref-bound editable typing, with mutation-time revalidation. |
+| Phase 6: legacy `page` migration | Deferred. The existing facade remains compatible and separate until adoption evidence supports migration. |
+| Phase 7: release evidence and rollout | Partially complete. Canonical Electron evidence, generated reference, public Diataxis docs, and bundled skills are present. Standalone Chrome/Edge adversarial lanes and embedded-webview expansion remain deferred. |
+
+The v1 milestone therefore satisfies the accepted local implementation scope,
+but it does not claim the later `page` migration or the broader real-browser
+release matrix. macOS canonical evidence also remains pending the local TCC
+reauthorization recorded above.
+
 ## Deferred by design
 
 - Legacy `page` facade migration.

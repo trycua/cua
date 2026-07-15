@@ -176,7 +176,7 @@ The same reservation works for longer jobs. A run can keep its sandbox for as lo
 
 _Cua Fleets spans Linux, Windows, and Android, with macOS in Labs preview on Cua's virtualization stack._
 
-If sandbox startup is already leaving accelerator time on the table, [join the Cua Fleets waitlist](https://cua.ai/signup?redirect_url=%2Fwaitlist).
+If your startup needs to run GUI sandboxes at scale for evaluations or RL, [join the Cua Fleets waitlist](https://cua.ai/signup?redirect_url=%2Fwaitlist).
 
 The code and docs behind the talk are here:
 

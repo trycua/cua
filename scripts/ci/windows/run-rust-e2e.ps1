@@ -50,6 +50,13 @@ $env:CUA_TEST_APPS_ROOT = Join-Path $rustRoot "test-apps"
 $env:CUA_TEST_REQUIRE_FIXTURES = "1"
 $env:CUA_TEST_DRIVER_STDERR = "1"
 $env:CUA_E2E_FORBID_SKIPS = "1"
+$sourceMarker = Join-Path $repoRoot ".cua-e2e-source-sha"
+if (Test-Path $sourceMarker) {
+    $env:CUA_E2E_SOURCE_MARKER = $sourceMarker
+    if ([string]::IsNullOrWhiteSpace($env:CUA_E2E_SOURCE_SHA)) {
+        $env:CUA_E2E_SOURCE_SHA = (Get-Content -Raw $sourceMarker).Trim()
+    }
+}
 Remove-Item Env:CUA_E2E_EXPECTED_MIN_CELLS -ErrorAction SilentlyContinue
 if (($suite -in @("shared", "all")) -and
     [string]::IsNullOrWhiteSpace($env:CUA_E2E_CELL_FILTER) -and

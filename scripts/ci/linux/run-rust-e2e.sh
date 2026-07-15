@@ -64,9 +64,12 @@ if [[ ("${SUITE}" == shared || "${SUITE}" == all) \
   export CUA_E2E_EXPECTED_MIN_CELLS=80
 fi
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
-if [[ -z "${CUA_E2E_SOURCE_SHA:-}" && -f "${REPO_ROOT}/.cua-e2e-source-sha" ]]; then
-  export CUA_E2E_SOURCE_SHA="$(tr -d '[:space:]' < "${REPO_ROOT}/.cua-e2e-source-sha")"
-  export CUA_E2E_SOURCE_MARKER="${REPO_ROOT}/.cua-e2e-source-sha"
+SOURCE_MARKER="${REPO_ROOT}/.cua-e2e-source-sha"
+if [[ -f "${SOURCE_MARKER}" ]]; then
+  export CUA_E2E_SOURCE_MARKER="${CUA_E2E_SOURCE_MARKER:-${SOURCE_MARKER}}"
+  if [[ -z "${CUA_E2E_SOURCE_SHA:-}" ]]; then
+    export CUA_E2E_SOURCE_SHA="$(tr -d '[:space:]' < "${SOURCE_MARKER}")"
+  fi
 fi
 if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
   export GDK_BACKEND="${GDK_BACKEND:-wayland}"

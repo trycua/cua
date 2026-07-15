@@ -1185,6 +1185,19 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
         "browser E2E session did not start: {}",
         started.raw
     );
+    let prepared = fixture.driver.call(
+        "browser_prepare",
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        prepared.structured()["prepared"].as_bool(),
+        Some(true),
+        "browser_prepare did not recognize the fixture's owned endpoint: {}",
+        prepared.raw
+    );
     let bind = fixture.driver.call(
         "get_browser_state",
         serde_json::json!({
@@ -1294,6 +1307,57 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
         stale.raw
     );
     assert_fixture_text(fixture, "lbl-counter", "counter=1");
+
+    let navigated = fixture.driver.call(
+        "browser_navigate",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "url": "about:blank",
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        navigated.structured()["status"].as_str(),
+        Some("ok"),
+        "browser navigation failed: {}",
+        navigated.raw
+    );
+    assert_eq!(
+        navigated.structured()["refs_invalidated"].as_bool(),
+        Some(true),
+        "browser navigation must invalidate page refs: {}",
+        navigated.raw
+    );
+    let blank_snapshot = fixture.driver.call(
+        "get_browser_state",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        blank_snapshot.structured()["url"].as_str(),
+        Some("about:blank"),
+        "browser did not reach the requested page: {}",
+        blank_snapshot.raw
+    );
+    let stale_after_navigation = fixture.driver.call(
+        "browser_click",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "ref": input_ref,
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        stale_after_navigation.structured()["refusal"]["code"].as_str(),
+        Some("browser_ref_stale"),
+        "navigation-invalidated ref should fail closed: {}",
+        stale_after_navigation.raw
+    );
     let ended = fixture
         .driver
         .call("end_session", serde_json::json!({ "session": session }));

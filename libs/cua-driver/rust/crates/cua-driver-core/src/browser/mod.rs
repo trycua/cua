@@ -23,9 +23,10 @@
 //! register_browser_tools(&engine, &mut registry);
 //! ```
 //!
-//! The legacy `crate::cdp` / `crate::page` helpers are untouched; this
-//! module speaks CDP over its own pooled, loopback-validated
-//! WebSocket ([`cdp_ws`]) with an event-capable demultiplexer.
+//! The legacy `crate::page` contract remains separate because its first-page
+//! and URL-hint semantics predate exact browser capabilities. Its CDP paths
+//! nevertheless reuse the pooled, loopback-validated WebSocket transport in
+//! [`cdp_ws`] so the repository has one event-capable demultiplexer.
 //!
 //! v2 DOM-ref slice: snapshots compose shadow DOM (piercing, minus
 //! user-agent roots), same-process iframes (via `contentDocument`),

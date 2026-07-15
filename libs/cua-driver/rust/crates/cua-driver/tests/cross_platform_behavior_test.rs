@@ -247,14 +247,22 @@ fn resume_first_failure(failure: Option<Box<dyn Any + Send>>) {
     }
 }
 
-fn spawn_driver(recording_label: &str) -> Option<McpDriver> {
+fn spawn_driver(recording_label: &str, cdp_port: Option<u16>) -> Option<McpDriver> {
     #[cfg(target_os = "macos")]
     {
+        let _ = cdp_port;
         McpDriver::spawn_macos_daemon_proxy_named(recording_label)
     }
     #[cfg(not(target_os = "macos"))]
     {
-        McpDriver::spawn_named(recording_label)
+        let port = cdp_port.map(|value| value.to_string());
+        match port.as_deref() {
+            Some(port) => McpDriver::spawn_named_with_env(
+                recording_label,
+                &[("CUA_DRIVER_CDP_PORT", port)],
+            ),
+            None => McpDriver::spawn_named(recording_label),
+        }
     }
 }
 
@@ -287,7 +295,9 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
     }
 
     let recording_label = scenario.to_owned();
-    let mut driver = spawn_driver(&recording_label).unwrap_or_else(|| {
+    let cdp_port = matches!(spec.name, "electron" | "webview2")
+        .then(allocate_loopback_port);
+    let mut driver = spawn_driver(&recording_label, cdp_port).unwrap_or_else(|| {
         panic!(
             "cua-driver could not be started for the required {} fixture",
             spec.name
@@ -305,13 +315,13 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
         "electron" => {
             command.env(
                 "CUA_ELECTRON_CDP_PORT",
-                allocate_loopback_port().to_string(),
+                cdp_port.expect("Electron CDP port").to_string(),
             );
         }
         "webview2" => {
             command.env(
                 "CUA_WEBVIEW_CDP_PORT",
-                allocate_loopback_port().to_string(),
+                cdp_port.expect("WebView2 CDP port").to_string(),
             );
         }
         _ => {}
@@ -1203,6 +1213,20 @@ fn cell_selected(case: &CaseSpec) -> bool {
 }
 
 fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
+    let legacy = fixture.driver.call(
+        "page",
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "window_id": fixture.wid,
+            "action": "execute_javascript",
+            "javascript": "document.querySelector('[data-cua-id=page-marker]').textContent",
+        }),
+    );
+    assert!(
+        !legacy.is_error() && legacy.text().contains("WEB_HARNESS_MARKER_v1"),
+        "legacy page transport did not read the Electron fixture marker: {}",
+        legacy.raw
+    );
     let session = format!("browser-v1-e2e-{}", fixture.pid);
     let started = fixture
         .driver

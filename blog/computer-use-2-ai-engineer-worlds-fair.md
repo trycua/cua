@@ -12,7 +12,7 @@ That shift changes what a desktop session looks like. Several agents can work in
 
 The talk followed that shift through three connected layers: Cua Driver gives agents a consistent way to operate desktop windows, enabling multi-player scenarios; Cua-Bench evaluates how well agents complete desktop tasks; and Cua Fleets provides the infrastructure to provision, manage, and scale computers for agent workloads.
 
-<img alt="The Computer-Use 2.0 talk cover, introducing Cua Driver, Cua-Bench, and Cua Fleets" src="./assets/computer-use-2/slide-cover.png" />
+<img alt="The Computer-Use 2.0 talk cover, introducing Cua Driver, Cua-Bench, and Cua Fleets" src="https://github.com/user-attachments/assets/7bacd0fe-dae5-4c65-b6e7-a0e833c23f5c" />
 
 _The session followed Cua Driver, Cua-Bench, and Cua Fleets from interaction to evaluation to scale._
 
@@ -22,13 +22,13 @@ These loops ran in the foreground and took over the system pointer and keyboard.
 
 That architecture was useful. Agents could use existing software without a custom API for every app. But the screen contained nearly everything the agent knew about the task, and mouse and keyboard actions were nearly everything it could do. The GUI was the whole loop.
 
-<img alt="The Computer-Use 1.0 loop: observe a screenshot, reason, and click a target" src="./assets/computer-use-2/computer-use-1-human-loop.png" />
+<img alt="The Computer-Use 1.0 loop: observe a screenshot, reason, and click a target" src="https://github.com/user-attachments/assets/0181e87d-9331-41b2-97bd-c11f022789c5" />
 
 _Computer-Use 1.0: look at the screen, choose one action, and repeat in the foreground._
 
 In many of those systems, the model was also the operator: provider APIs accepted a prompt and screenshot, then returned the next computer action. Computer-Use 2.0 reverses that relationship by letting the main agent own the task and call the desktop only when it needs it.
 
-<img alt="A GUI-first operator receiving a screenshot and returning a click action" src="./assets/computer-use-2/gui-first-operator.png" />
+<img alt="A GUI-first operator receiving a screenshot and returning a click action" src="https://github.com/user-attachments/assets/e5dc2d8e-77a3-4bc3-8696-7abfeb66aab9" />
 
 _Computer-Use 1.0 wired the model directly to a screenshot-and-action loop._
 
@@ -54,17 +54,17 @@ Apps accept and refuse input in different ways, so action selection works as a l
 
 On macOS, background clicks become difficult when an app exposes little accessibility state and the agent has to use coordinates. At a high level, Cua Driver uses Apple's undocumented SkyLight framework to make the target window behave as if it were foreground without raising it, then posts the event to that process. Chromium also needs an off-screen primer click before the actual click. We wrote up the [full implementation](https://cua.ai/blog/inside-macos-window-internals) separately.
 
-<img alt="The macOS background input path through SkyLight, targeted events, and accessibility state" src="./assets/computer-use-2/skylight-background-control.png" />
+<img alt="The macOS background input path through SkyLight, targeted events, and accessibility state" src="https://github.com/user-attachments/assets/723cb6db-1882-4da7-bd71-62b91f3cbb7b" />
 
 _Background input on macOS combines window activation, process-targeted events, a primer click for Chromium, and live accessibility state._
 
 Since April, developing in the open has pushed the driver into Linux distributions and desktop stacks we would never have tested first ourselves. Users found the edge cases, and those reports shaped the Windows and Linux backends. With version 0.8, both are stable on the same Rust interface as macOS.
 
-<img alt="Windows and Linux input backends behind a shared Cua Driver interface" src="./assets/computer-use-2/cross-platform-driver.png" />
+<img alt="Windows and Linux input backends behind a shared Cua Driver interface" src="https://github.com/user-attachments/assets/db0dc82c-bf4a-4045-950a-25a98ec04258" />
 
 _Windows and Linux expose different input systems, while Cua Driver keeps the agent-facing commands consistent._
 
-<img alt="Cua Driver returns window pixels and accessibility state, with accessibility, pixel, and foreground action paths" src="./assets/computer-use-2/cua-driver-action-paths.png" />
+<img alt="Cua Driver returns window pixels and accessibility state, with accessibility, pixel, and foreground action paths" src="https://github.com/user-attachments/assets/e8176711-55bd-4146-9fb1-f424362a79c5" />
 
 _Cua Driver reads window state once, then lets the agent choose the action path that fits the app._
 
@@ -76,13 +76,13 @@ Shipping that interface raises the next question: how do we keep a new release f
 
 [The current test matrix](https://github.com/trycua/cua/blob/main/libs/cua-driver/docs/test-matrix.md) scores more than 500 behavioral checks across Windows, macOS, Linux X11, Sway, and GNOME. It covers Electron, Tauri, native application toolkits, and embedded web views, with the trajectory, video, and logs kept for each run. [H Company](https://hcompany.ai/) has been a partner in this work and helped us audit the matrix for gaps.
 
-<img alt="A Cua Driver regression matrix testing accessibility, background pixel, and foreground actions" src="./assets/computer-use-2/driver-regression-matrix.png" />
+<img alt="A Cua Driver regression matrix testing accessibility, background pixel, and foreground actions" src="https://github.com/user-attachments/assets/4198a963-a8a7-4879-8e6c-e0cfb6d6dbc9" />
 
 _The regression matrix checks whether each action changed the target app and whether a background window stayed in the background._
 
 [Clicky](https://clicky-ai.com/) was the first product to adopt Cua Driver in April. [Hermes](https://hermes-agent.nousresearch.com/), [Qwen Code](https://github.com/QwenLM/qwen-code), [H Company](https://hcompany.ai/), and [Factory's Droid](https://factory.ai/product/droids) followed. Several of those teams have also brought their findings and fixes back to the [upstream repository](https://github.com/trycua/cua/tree/main/libs/cua-driver). Thank you for adopting a new interface early and sending back what broke.
 
-<img alt="Cua Driver adopters including Clicky, Hermes, Qwen Code, H Company, and Factory" src="./assets/computer-use-2/driver-adopters.png" />
+<img alt="Cua Driver adopters including Clicky, Hermes, Qwen Code, H Company, and Factory" src="https://github.com/user-attachments/assets/23736162-bc74-4640-a4b5-d5844411ca93" />
 
 _Teams use Cua Driver through MCP, the CLI, and the SDK, and several have contributed fixes upstream._
 
@@ -96,13 +96,13 @@ A moving cursor is useful when you want to watch an agent. It is a bad way to sc
 
 [Cua-Bench](https://cua.ai/cuabench) defines every task in code as three pieces: setup puts the machine in a known state, the agent attempts the task, and an evaluator checks the result. The evaluator can inspect the files and application state directly, which makes the score deterministic. When a task allows it, the evaluator can also give partial credit for correct work that stopped short of completion.
 
-<img alt="A Cua-Bench task split into setup, agent execution, and evaluation" src="./assets/computer-use-2/cua-bench-task-anatomy.png" />
+<img alt="A Cua-Bench task split into setup, agent execution, and evaluation" src="https://github.com/user-attachments/assets/bbb6ea7b-4316-42ec-b4f9-29af5631338d" />
 
 _A Cua-Bench task separates setup, agent execution, and evaluation._
 
 Building a benchmark environment usually takes desktop expertise and infrastructure. With [cua-bench-ui](https://github.com/trycua/cua/tree/main/libs/python/bench-ui), a small environment can live in one Python file. The file launches its interface as a desktop window on macOS, Windows, or Linux and exposes the application state through an embedded JavaScript bridge. Cua Driver can operate the window while the evaluator reads that state directly. A person or a coding agent can author the file.
 
-<img alt="A one-file Cua-Bench UI environment with its window and inspectable state" src="./assets/computer-use-2/one-file-environments.png" />
+<img alt="A one-file Cua-Bench UI environment with its window and inspectable state" src="https://github.com/user-attachments/assets/828225c1-d1ee-4d16-b24c-074e783e5289" />
 
 _A Cua-Bench UI environment can define its window and inspectable state in one Python file._
 
@@ -118,11 +118,11 @@ Our recent [KiCad evaluation](https://cua.ai/blog/evaluating-gemini-3.5-flash-on
 
 Every full pass was an edit to a schematic or board that already had something on the canvas. The blank-canvas tasks scored zero across all seven models. Models often made reasonable local changes, then ran out of steps before the artifact was complete. That gap is easy to miss in a demo built around one successful run.
 
-<img alt="Six of 25 KiCad tasks completed, with no model building a schematic from a blank canvas" src="./assets/computer-use-2/kicad-capability-cliff.png" />
+<img alt="Six of 25 KiCad tasks completed, with no model building a schematic from a blank canvas" src="https://github.com/user-attachments/assets/4918f027-2fd8-4442-8dbb-a7dec56a9a81" />
 
 _Across 25 expert-authored KiCad tasks, the best model completed six. All six began from an existing design; blank-canvas tasks scored zero._
 
-<img alt="The Cua-Bench KiCad leaderboard showing the leading models completing five or six of 25 tasks" src="./assets/computer-use-2/model-leaderboard.png" />
+<img alt="The Cua-Bench KiCad leaderboard showing the leading models completing five or six of 25 tasks" src="https://github.com/user-attachments/assets/20840ded-1374-44d1-9f97-14b39da09270" />
 
 _The leading agents clustered between five and six full passes, far below the 25-task ceiling._
 
@@ -130,19 +130,19 @@ That leaves another question: can we trust the evaluator itself? Before an envir
 
 A reviewer then reads both trajectories and posts a CodeRabbit-style PR comment with the evidence and a proposed fix for each failure. We use that report to catch evaluators that reward the wrong outcome before we publish the environment. It is evals all the way down.
 
-<img alt="An evaluator QA review that identifies a reward-integrity failure and proposes a fix" src="./assets/computer-use-2/evaluator-qa.png" />
+<img alt="An evaluator QA review that identifies a reward-integrity failure and proposes a fix" src="https://github.com/user-attachments/assets/7be83e16-5705-46c2-bb4d-f9e7b488febd" />
 
 _The QA review traces an evaluator failure back to the trajectory and proposes a fix before the task is published._
 
 Dillon closed his section with one more use for recorded rollouts. At any recorded step, we can reconstruct the action and file state we captured, ask a model to predict the next observation, and score it against what happened. The first version works from that captured state and gives us a narrow test of whether the model understands the environment.
 
-<img alt="A recorded trajectory forked at one step so a model can predict the next state" src="./assets/computer-use-2/world-model-prediction.png" />
+<img alt="A recorded trajectory forked at one step so a model can predict the next state" src="https://github.com/user-attachments/assets/dcd0efd3-126b-4b79-8784-5b86ddd70340" />
 
 _A recorded trajectory can be reconstructed at one step, then used to score a model's prediction of the next state._
 
 ## Keep the fleet ready
 
-<img alt="The transition from measuring agents to scaling evaluation and reinforcement-learning throughput" src="./assets/computer-use-2/fleet-throughput.png" />
+<img alt="The transition from measuring agents to scaling evaluation and reinforcement-learning throughput" src="https://github.com/user-attachments/assets/0b2d24a1-3116-4d3f-a5f6-c3dbd4113f5d" />
 
 _Once agent behavior can be measured, sandbox availability becomes part of evaluation throughput._
 
@@ -150,29 +150,29 @@ Robert closed the talk with the systems problem behind long training runs. Every
 
 Cold starts can only shrink so far. They also get harder as machine images grow or a run spans several operating systems and app configurations. For smaller sandboxes, keeping a few clean environments ready can cost less than leaving a GPU idle while another one starts.
 
-<img alt="Why warm sandbox pools can be cheaper than waiting for every environment to start" src="./assets/computer-use-2/startup-time-floor.png" />
+<img alt="Why warm sandbox pools can be cheaper than waiting for every environment to start" src="https://github.com/user-attachments/assets/02446277-5860-40f4-a19b-3c89a57649f9" />
 
 _Some runtimes have a startup floor, making a small warm pool cheaper than leaving a trainer GPU idle._
 
-<img alt="Worker utilization timeline showing generation interrupted by idle waiting periods" src="./assets/computer-use-2/worker-utilization-idle-time.png" />
+<img alt="Worker utilization timeline showing generation interrupted by idle waiting periods" src="https://github.com/user-attachments/assets/654104b3-8b6d-493a-a4f0-b0b57443fd77" />
 
 _Each idle gap is time the GPU could have spent generating the next action._
 
 [Cua Fleets](https://run.cua.ai) moves startup work into a warm pool, a small group of sandboxes that are already booted and waiting. When a rollout starts, it asks the pool for a sandbox. The pool reserves one and returns its connection details. Internally, we call this reservation a claim. Since the VM has already booted, the rollout only waits for that reservation.
 
-<img alt="A warm pool tracks sandbox demand so rollout workers spend less time waiting for cold starts" src="./assets/computer-use-2/warm-pool-demand.png" />
+<img alt="A warm pool tracks sandbox demand so rollout workers spend less time waiting for cold starts" src="https://github.com/user-attachments/assets/8fddd996-7561-4983-9daf-2c1457321588" />
 
 _Warm sandboxes absorb startup time before a rollout asks for one._
 
 The pool adjusts throughout the training run. Waiting requests make it grow, active reservations hold capacity, and released reservations let it shrink. You set a minimum number of spare sandboxes and a maximum to cap the cost. The pool also waits before scaling down, which prevents a short dip in demand from causing another round of shutdowns and cold starts.
 
-<img alt="Worker utilization after warm pools remove idle gaps between rollout generations" src="./assets/computer-use-2/warm-pool-no-idle.png" />
+<img alt="Worker utilization after warm pools remove idle gaps between rollout generations" src="https://github.com/user-attachments/assets/4f5a0e86-6418-4512-b608-b4438a0c4f24" />
 
 _With ready capacity, rollout workers spend more of the training run generating instead of waiting for a cold start._
 
 The same reservation works for longer jobs. A run can keep its sandbox for as long as it needs the machine. When the run releases it, the pool restarts the sandbox into a clean state and makes it available again.
 
-<img alt="Cua Fleets platform support across Linux, Windows, Android, and macOS" src="./assets/computer-use-2/fleet-platforms.png" />
+<img alt="Cua Fleets platform support across Linux, Windows, Android, and macOS" src="https://github.com/user-attachments/assets/36df63bd-5162-4513-85d6-88bd17b0314d" />
 
 _Cua Fleets spans Linux, Windows, and Android, with macOS in Labs preview on Cua's virtualization stack._
 
@@ -185,4 +185,4 @@ The code and docs behind the talk are here:
 - Join the [Cua Fleets waitlist](https://cua.ai/signup?redirect_url=%2Fwaitlist).
 - Follow the main repository at [github.com/trycua/cua](https://github.com/trycua/cua).
 
-[Browse the Computer-Use 2.0 slides from the talk.](./assets/computer-use-2/computer-use-2-ai-engineer-worlds-fair-slides.pdf)
+[Browse the Computer-Use 2.0 slides from the talk.](https://github.com/user-attachments/files/30055625/computer-use-2-ai-engineer-worlds-fair-slides.pdf)

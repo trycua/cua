@@ -428,6 +428,26 @@ async fn invoke_daemon_tool(
         return DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);
     }
 
+    // Policy enforcement — defense-in-depth for direct daemon socket connections.
+    match cua_driver_core::policy::configured_policy() {
+        Ok(Some(policy)) => match policy.evaluate(&tool_name, &args) {
+            cua_driver_core::policy::PolicyDecision::Allow => {}
+            cua_driver_core::policy::PolicyDecision::Deny(reason) => {
+                observe_daemon_error(observation, 1);
+                return DaemonResponse::err(format!("Permission denied: {reason}"), 1);
+            }
+            cua_driver_core::policy::PolicyDecision::Error(message) => {
+                observe_daemon_error(observation, 1);
+                return DaemonResponse::err(format!("Policy evaluation error: {message}"), 1);
+            }
+        },
+        Ok(None) => {}
+        Err(message) => {
+            observe_daemon_error(observation, 1);
+            return DaemonResponse::err(format!("Policy loading error: {message}"), 1);
+        }
+    }
+
     let session_context = observation_transport.and_then(|transport| {
         let transport = match transport {
             crate::telemetry::Transport::McpStdio => {

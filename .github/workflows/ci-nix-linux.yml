@@ -42,6 +42,10 @@ jobs:
             attribute: cua-driver-build
           - name: Rust unit tests
             attribute: cua-driver-linux-rust-unit
+          - name: YAML policy VM
+            attribute: cua-driver-policy-yaml
+          - name: Rego policy VM
+            attribute: cua-driver-policy-rego
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install Nix

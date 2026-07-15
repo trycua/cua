@@ -210,8 +210,13 @@ else
 fi
 
 echo "Native Wayland E2E session: ${SESSION_KIND} on ${WAYLAND_DISPLAY}"
+SESSION_RUNNER="${CUA_E2E_WAYLAND_RUNNER:-${SCRIPT_DIR}/run-rust-e2e.sh}"
+if [[ ! -x "${SESSION_RUNNER}" ]]; then
+  echo "Wayland session runner is not executable: ${SESSION_RUNNER}" >&2
+  exit 1
+fi
 set +e
-"${SCRIPT_DIR}/run-rust-e2e.sh" "$@"
+"${SESSION_RUNNER}" "$@"
 status=$?
 set -e
 if [[ "${status}" != 0 && "${SESSION_KIND}" == sway ]]; then

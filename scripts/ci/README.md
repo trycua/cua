@@ -11,9 +11,16 @@ Standalone Chrome/Edge adversarial coverage is a separate optional real-browser
 suite because it requires an installed external browser. Run it explicitly:
 
 ```bash
-CUA_TEST_REQUIRE_EXTERNAL_BROWSERS=1 cargo test -p cua-driver \
-  --test standalone_browser_behavior_test -- --ignored \
-  --exact standalone_browser_matrix --nocapture --test-threads=1
+scripts/ci/linux/run-rust-standalone-browser-e2e.sh
+```
+
+The runner requires an existing X11 or Wayland user session and a fresh
+artifact directory. To exercise the same matrix in the repo-owned native Sway
+session, run:
+
+```bash
+CUA_E2E_WAYLAND_RUNNER="$PWD/scripts/ci/linux/run-rust-standalone-browser-e2e.sh" \
+  scripts/ci/linux/run-rust-e2e-wayland.sh
 ```
 
 Release validation sets `CUA_TEST_REQUIRE_EXTERNAL_BROWSERS=1` so a missing

@@ -120,26 +120,11 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          artifact="$PWD/artifacts/cua-driver/standalone-browser"
-          mkdir -p "$artifact/recordings"
-          : > "$artifact/cases.jsonl"
-          : > "$artifact/environment.jsonl"
-          : > "$artifact/results.jsonl"
-          export CUA_TEST_DRIVER_BIN="$PWD/libs/cua-driver/rust/target/release/cua-driver"
-          export CUA_E2E_DECLARATIONS_FILE="$artifact/cases.jsonl"
-          export CUA_E2E_ENVIRONMENT_FILE="$artifact/environment.jsonl"
-          export CUA_E2E_RESULTS_FILE="$artifact/results.jsonl"
-          export CUA_E2E_RECORDINGS_ROOT="$artifact/recordings"
+          export CUA_E2E_ARTIFACT_DIR="$PWD/artifacts/cua-driver/standalone-browser"
+          export CUA_E2E_SKIP_BUILD=1
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
-            "openbox >/tmp/cua-browser-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-browser-picom.log 2>&1 & sleep 2; cd libs/cua-driver/rust; cargo test --release -p cua-driver --test standalone_browser_behavior_test -- --ignored --nocapture --test-threads=1"
-          cargo run --release -p cua-driver-testkit --manifest-path libs/cua-driver/rust/Cargo.toml --bin cua-e2e-report -- \
-            --declarations "$artifact/cases.jsonl" \
-            --environment "$artifact/environment.jsonl" \
-            --results "$artifact/results.jsonl" \
-            --artifact-root "$artifact" \
-            --require-video \
-            --output "$artifact/summary.md"
+            'openbox >/tmp/cua-browser-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-browser-picom.log 2>&1 & sleep 2; exec scripts/ci/linux/run-rust-standalone-browser-e2e.sh'
       - name: Publish job summary
         if: always()
         shell: bash

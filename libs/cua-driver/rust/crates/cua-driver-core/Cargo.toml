@@ -3,6 +3,11 @@ name = "cua-driver-core"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["yaml", "rego"]
+yaml = ["dep:serde_yaml", "dep:regex"]
+rego = ["dep:regorus"]
+
 [dependencies]
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -11,6 +16,9 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 async-trait = "0.1"
+serde_yaml = { version = "0.9", optional = true }
+regex = { version = "1", optional = true }
+regorus = { version = "0.10.1", optional = true }
 # Used by the shared `image_utils` module — pure PNG/JPEG/resize/crosshair
 # helpers extracted from `platform-{macos,windows,linux}/src/capture.rs` so
 # all three platforms call the same code path.
@@ -19,5 +27,8 @@ image = { workspace = true }
 # Used by `cursor_sampler::sample_cursor` to poll the OS mouse position
 # during video recording. Same version as platform-windows uses to avoid
 # a duplicate crate version.
+[dev-dependencies]
+tempfile = "3"
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

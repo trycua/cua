@@ -5,6 +5,7 @@ use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
 
+use crate::policy::{configured_policy, PolicyDecision};
 use crate::protocol::{initialize_result, InitializeMetadata, Request, Response, ResponseBody};
 use crate::tool::ToolRegistry;
 
@@ -263,6 +264,7 @@ pub fn observe_proxy_tool_completed(outcome: ToolCompletionObservation) {
 /// responses to stdout. Exits when stdin reaches EOF or a fatal I/O
 /// error occurs.
 pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
+    configured_policy().map_err(anyhow::Error::msg)?;
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
     let mut reader = BufReader::new(stdin);
@@ -571,6 +573,33 @@ pub async fn handle_request(req: Request, id: serde_json::Value, registry: &Arc<
         "tools/call" => match req.tool_call() {
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
             Ok(call) => {
+                match configured_policy() {
+                    Ok(Some(policy)) => match policy.evaluate(&call.name, &call.args) {
+                        PolicyDecision::Allow => {}
+                        PolicyDecision::Deny(reason) => {
+                            return Response::error(
+                                id,
+                                -32603,
+                                format!("Permission denied: {reason}"),
+                            );
+                        }
+                        PolicyDecision::Error(message) => {
+                            return Response::error(
+                                id,
+                                -32603,
+                                format!("Policy evaluation error: {message}"),
+                            );
+                        }
+                    },
+                    Ok(None) => {}
+                    Err(message) => {
+                        return Response::error(
+                            id,
+                            -32603,
+                            format!("Policy loading error: {message}"),
+                        );
+                    }
+                }
                 let result = registry.invoke(&call.name, call.args).await;
                 match serde_json::to_value(result) {
                     Ok(v) => Response::ok(id, v),

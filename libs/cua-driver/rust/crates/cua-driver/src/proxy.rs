@@ -25,6 +25,7 @@
 
 use std::sync::Arc;
 
+use cua_driver_core::policy::{configured_policy, PolicyDecision};
 use cua_driver_core::protocol::{initialize_result, Request, Response};
 use cua_driver_core::server::{
     observe_proxy_session_started, observe_proxy_tool_completed, tool_observation_timer,
@@ -51,6 +52,7 @@ use crate::serve::{
 /// advertises zero tools and then errors on every call. Matches
 /// Swift `makeProxy`'s `fetchProxyToolList` pre-check.
 pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
+    configured_policy().map_err(anyhow::Error::msg)?;
     if !is_daemon_listening(&socket_path) {
         anyhow::bail!(
             "cua-driver-rs daemon not reachable on {socket_path}. Start it \
@@ -498,6 +500,33 @@ async fn handle_proxy_request(
         "tools/call" => match req.tool_call() {
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
             Ok(call) => {
+                match configured_policy() {
+                    Ok(Some(policy)) => match policy.evaluate(&call.name, &call.args) {
+                        PolicyDecision::Allow => {}
+                        PolicyDecision::Deny(reason) => {
+                            return Response::error(
+                                id,
+                                -32603,
+                                format!("Permission denied: {reason}"),
+                            );
+                        }
+                        PolicyDecision::Error(message) => {
+                            return Response::error(
+                                id,
+                                -32603,
+                                format!("Policy evaluation error: {message}"),
+                            );
+                        }
+                    },
+                    Ok(None) => {}
+                    Err(message) => {
+                        return Response::error(
+                            id,
+                            -32603,
+                            format!("Policy loading error: {message}"),
+                        );
+                    }
+                }
                 forward_tool_call(
                     id,
                     call.name,

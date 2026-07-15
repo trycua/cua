@@ -314,6 +314,18 @@ fn spawn_driver(label: &str) -> McpDriver {
     driver.expect("cua-driver binary/daemon is required for standalone browser E2E")
 }
 
+#[cfg(target_os = "linux")]
+fn configure_linux_browser_command(command: &mut Command) {
+    command.arg("--password-store=basic");
+    let native_wayland = std::env::var("XDG_SESSION_TYPE")
+        .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
+        && std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var_os("DISPLAY").is_none();
+    if native_wayland {
+        command.arg("--ozone-platform=wayland");
+    }
+}
+
 fn command_for_browser(
     spec: &BrowserSpec,
     profile: &Path,
@@ -341,7 +353,7 @@ fn command_for_browser(
         .arg(format!("--window-position={},{}", position.0, position.1))
         .arg("--window-size=980,760");
     #[cfg(target_os = "linux")]
-    command.arg("--password-store=basic");
+    configure_linux_browser_command(&mut command);
     command
         .arg(url)
         .stdout(Stdio::null())
@@ -368,7 +380,7 @@ fn command_for_unprepared_browser(
         .arg(format!("--window-position={},{}", position.0, position.1))
         .arg("--window-size=980,760");
     #[cfg(target_os = "linux")]
-    command.arg("--password-store=basic");
+    configure_linux_browser_command(&mut command);
     command
         .arg(url)
         .stdin(Stdio::null())

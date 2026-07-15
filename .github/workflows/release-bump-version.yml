@@ -18,6 +18,7 @@ on:
           - pypi/computer-server
           - pypi/cloud
           - pypi/core
+          - pypi/fleet
           - pypi/mcp-server
           - pypi/sandbox
           - pypi/sandbox-apps
@@ -26,6 +27,7 @@ on:
           - npm/cli
           - npm/computer
           - npm/core
+          - npm/fleet
           - npm/playground
           - npm/cuabot
           - lume
@@ -102,6 +104,10 @@ jobs:
               echo "directory=libs/python/core" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
               ;;
+            "pypi/fleet")
+              echo "directory=libs/python/cua-fleet" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
             "pypi/mcp-server")
               echo "directory=libs/python/mcp-server" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
@@ -132,6 +138,10 @@ jobs:
               ;;
             "npm/core")
               echo "directory=libs/typescript/core" >> $GITHUB_OUTPUT
+              echo "type=npm" >> $GITHUB_OUTPUT
+              ;;
+            "npm/fleet")
+              echo "directory=libs/typescript/fleet" >> $GITHUB_OUTPUT
               echo "type=npm" >> $GITHUB_OUTPUT
               ;;
             "npm/playground")

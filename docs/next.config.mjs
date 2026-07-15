@@ -4,12 +4,13 @@ import { fileURLToPath } from 'node:url';
 
 const withMDX = createMDX();
 const docsRoot = dirname(fileURLToPath(import.meta.url));
+const workspaceRoot = dirname(docsRoot);
 
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
   turbopack: {
-    root: docsRoot,
+    root: workspaceRoot,
   },
   trailingSlash: false,
   basePath: '/docs',

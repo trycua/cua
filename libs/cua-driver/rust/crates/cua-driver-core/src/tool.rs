@@ -11,9 +11,8 @@ use crate::{
     protocol::{Content, ToolResult},
     recording::{now_ms, screenshot_for, RecordingSession},
     recording_tools::{
-        GetRecordingStateTool, ReplayTrajectoryTool, StartRecordingTool,
+        init_replay_registry, GetRecordingStateTool, ReplayTrajectoryTool, StartRecordingTool,
         StopRecordingTool,
-        init_replay_registry,
     },
     tool_args::ArgsExt,
 };
@@ -139,10 +138,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "parallel_mouse_drag" => &["input.pointer.drag"],
         "mouse_button_down" => &["input.pointer.button"],
         "mouse_button_up" => &["input.pointer.button"],
-        "scroll" => &[
-            "input.pointer.scroll",
-            "accessibility.element_tokens",
-        ],
+        "scroll" => &["input.pointer.scroll", "accessibility.element_tokens"],
         "move_cursor" => &[
             // Visual overlay move, not a real OS pointer move on
             // macOS/Windows — see SKILL.md. Surfaced as
@@ -175,14 +171,8 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         // so we deliberately do NOT claim `terminal_safe` here — the
         // contract is intentionally narrower than `type_text`'s. It
         // still accepts `element_token`, hence the tokens claim.
-        "type_text_chars" => &[
-            "input.keyboard.type",
-            "accessibility.element_tokens",
-        ],
-        "press_key" => &[
-            "input.keyboard.press",
-            "accessibility.element_tokens",
-        ],
+        "type_text_chars" => &["input.keyboard.type", "accessibility.element_tokens"],
+        "press_key" => &["input.keyboard.press", "accessibility.element_tokens"],
         "hotkey" => &["input.keyboard.hotkey"],
         "set_value" => &[
             // Bulk-set an editable field's value — semantically a
@@ -207,10 +197,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "get_cursor_position" => &["screen.cursor.position"],
 
         // ── accessibility / window state ─────────────────────────────
-        "get_accessibility_tree" => &[
-            "accessibility.tree",
-            "accessibility.tree.structured",
-        ],
+        "get_accessibility_tree" => &["accessibility.tree", "accessibility.tree.structured"],
         "get_window_state" => &[
             "accessibility.window_state",
             "accessibility.tree",
@@ -347,8 +334,12 @@ impl ToolRegistry {
     }
 
     pub fn tools_list(&self) -> Value {
-        let list: Vec<Value> =
-            self.order.iter().filter_map(|n| self.tools.get(n)).map(|t| t.def().to_list_entry()).collect();
+        let list: Vec<Value> = self
+            .order
+            .iter()
+            .filter_map(|n| self.tools.get(n))
+            .map(|t| t.def().to_list_entry())
+            .collect();
         // `capability_version` is the contract version for the
         // capability tokens claimed by each tool entry. Bumped on
         // BREAKING vocabulary changes only; additive changes (new
@@ -372,9 +363,9 @@ impl ToolRegistry {
 
     /// Iterate over (name, &ToolDef) in registration order.
     pub fn iter_defs(&self) -> impl Iterator<Item = (&str, &ToolDef)> {
-        self.order.iter().filter_map(move |n| {
-            self.tools.get(n).map(|t| (n.as_str(), t.def()))
-        })
+        self.order
+            .iter()
+            .filter_map(move |n| self.tools.get(n).map(|t| (n.as_str(), t.def())))
     }
 
     /// Get a tool's ToolDef by name, or None if unknown.
@@ -407,15 +398,36 @@ impl ToolRegistry {
 
         // Reserve and capture the turn before dispatch so recorded evidence
         // shows the application immediately before the action changed it.
-        let should_record = self.tools.get(resolved_name)
+        let should_record = self
+            .tools
+            .get(resolved_name)
             .map(|tool| !tool.def().read_only)
             .unwrap_or(false)
             && !matches!(
                 resolved_name,
                 "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
             );
+        let recording_args = if resolved_name == "browser_prepare" {
+            let mut redacted = args.clone();
+            if let Some(arguments) = redacted.as_object_mut() {
+                if arguments.contains_key("approval_token") {
+                    arguments.insert(
+                        "approval_token".to_owned(),
+                        Value::String("[redacted]".to_owned()),
+                    );
+                }
+                arguments.remove("_cua_browser_prepare_mcp_host_approved");
+                arguments.remove("_transport_session_id");
+            }
+            redacted
+        } else {
+            args.clone()
+        };
         let pending_turn = should_record
-            .then(|| self.recording.begin_turn(resolved_name, &args, start_ms))
+            .then(|| {
+                self.recording
+                    .begin_turn(resolved_name, &recording_args, start_ms)
+            })
             .flatten();
 
         let result = match self.tools.get(resolved_name) {
@@ -432,10 +444,15 @@ impl ToolRegistry {
         // stream stays the actual user-action sequence (not the meta
         // start/stop frames).
         if let Some(pending_turn) = pending_turn {
-            let result_text = result.content.iter()
+            let result_text = result
+                .content
+                .iter()
                 .find_map(|c| {
-                    if let Content::Text { text, .. } = c { Some(text.as_str()) }
-                    else { None }
+                    if let Content::Text { text, .. } = c {
+                        Some(text.as_str())
+                    } else {
+                        None
+                    }
                 })
                 .unwrap_or("");
             self.recording.finish_turn(pending_turn, result_text);
@@ -533,34 +550,65 @@ mod capability_tests {
     /// suite.
     const TOOLS_REQUIRING_CAPABILITIES: &[&str] = &[
         // pointer
-        "click", "double_click", "right_click", "drag", "scroll",
-        "move_cursor", "mouse_button_down", "mouse_button_up",
-        "mouse_drag", "parallel_mouse_drag",
+        "click",
+        "double_click",
+        "right_click",
+        "drag",
+        "scroll",
+        "move_cursor",
+        "mouse_button_down",
+        "mouse_button_up",
+        "mouse_drag",
+        "parallel_mouse_drag",
         // keyboard
-        "type_text", "type_text_chars", "press_key", "hotkey", "set_value",
+        "type_text",
+        "type_text_chars",
+        "press_key",
+        "hotkey",
+        "set_value",
         // screen
-        "zoom", "get_screen_size", "get_desktop_state",
+        "zoom",
+        "get_screen_size",
+        "get_desktop_state",
         "get_cursor_position",
         // accessibility
-        "get_accessibility_tree", "get_window_state",
+        "get_accessibility_tree",
+        "get_window_state",
         // app / window
-        "launch_app", "list_apps", "kill_app", "list_windows",
-        "bring_to_front", "debug_window_info",
+        "launch_app",
+        "list_apps",
+        "kill_app",
+        "list_windows",
+        "bring_to_front",
+        "debug_window_info",
         // permissions / config
-        "check_permissions", "get_config", "set_config",
+        "check_permissions",
+        "get_config",
+        "set_config",
         // sessions
-        "start_session", "end_session",
+        "start_session",
+        "end_session",
         // agent cursor
-        "set_agent_cursor_enabled", "set_agent_cursor_motion",
-        "set_agent_cursor_style", "get_agent_cursor_state",
+        "set_agent_cursor_enabled",
+        "set_agent_cursor_motion",
+        "set_agent_cursor_style",
+        "get_agent_cursor_state",
         // recording / replay
-        "start_recording", "stop_recording", "get_recording_state",
-        "replay_trajectory", "install_ffmpeg",
+        "start_recording",
+        "stop_recording",
+        "get_recording_state",
+        "replay_trajectory",
+        "install_ffmpeg",
         // misc
-        "page", "check_for_update", "probe",
+        "page",
+        "check_for_update",
+        "probe",
         // browser-tool v1
-        "get_browser_state", "browser_prepare", "browser_navigate",
-        "browser_click", "browser_type",
+        "get_browser_state",
+        "browser_prepare",
+        "browser_navigate",
+        "browser_click",
+        "browser_type",
     ];
 
     /// All capability tokens in the canonical vocabulary. Any token
@@ -653,8 +701,7 @@ mod capability_tests {
 
     #[test]
     fn every_claimed_capability_is_in_the_canonical_vocabulary() {
-        let vocab: std::collections::HashSet<&str> =
-            CANONICAL_VOCABULARY.iter().copied().collect();
+        let vocab: std::collections::HashSet<&str> = CANONICAL_VOCABULARY.iter().copied().collect();
         for name in TOOLS_REQUIRING_CAPABILITIES {
             for cap in default_capabilities_for(name) {
                 assert!(
@@ -733,20 +780,26 @@ mod capability_tests {
     fn to_list_entry_includes_capabilities_array_for_a_known_tool() {
         let def = dummy_def("click");
         let entry = def.to_list_entry();
-        let caps = entry.get("capabilities")
+        let caps = entry
+            .get("capabilities")
             .and_then(|v| v.as_array())
             .expect("capabilities must be an array");
-        assert!(!caps.is_empty(),
-            "click must claim at least one capability via default_capabilities_for");
+        assert!(
+            !caps.is_empty(),
+            "click must claim at least one capability via default_capabilities_for"
+        );
         // Specifically: click claims the `input.pointer.click.left`
         // family — that's the contract Hermes' cua_backend.py is
         // expected to dispatch on once this surface is wired up.
-        let cap_strs: Vec<&str> =
-            caps.iter().filter_map(|v| v.as_str()).collect();
-        assert!(cap_strs.contains(&"input.pointer.click"),
-            "click missing input.pointer.click: {cap_strs:?}");
-        assert!(cap_strs.contains(&"input.pointer.click.left"),
-            "click missing input.pointer.click.left: {cap_strs:?}");
+        let cap_strs: Vec<&str> = caps.iter().filter_map(|v| v.as_str()).collect();
+        assert!(
+            cap_strs.contains(&"input.pointer.click"),
+            "click missing input.pointer.click: {cap_strs:?}"
+        );
+        assert!(
+            cap_strs.contains(&"input.pointer.click.left"),
+            "click missing input.pointer.click.left: {cap_strs:?}"
+        );
     }
 
     #[test]
@@ -755,7 +808,8 @@ mod capability_tests {
         // present — consumers can rely on the key existing.
         let def = dummy_def("totally_made_up_tool");
         let entry = def.to_list_entry();
-        let caps = entry.get("capabilities")
+        let caps = entry
+            .get("capabilities")
             .and_then(|v| v.as_array())
             .expect("capabilities must be present even if empty");
         assert!(caps.is_empty());

@@ -424,23 +424,15 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         if let Some(endpoint) = self.discover_owned_endpoint(request.pid).await? {
             return Ok(PrepareOutcome {
                 action: PrepareAction::AlreadyPrepared,
+                prepared_pid: Some(endpoint.ownership.owner_pid),
                 endpoint: Some(endpoint),
                 message: "An owned loopback DevTools endpoint is already available.".to_owned(),
+                side_effects: Default::default(),
             });
-        }
-        if !request.consent_granted {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserConsentRequired,
-                "Preparing this browser may require a debug-enabled relaunch; set consent_granted=true after confirming with the user.",
-            ));
         }
         Err(refusal(
             BrowserRefusalCode::BrowserRequiresSetup,
-            if request.allow_restart {
-                "No owned endpoint is available. Relaunch the browser explicitly with launch_app.cdp_debugging_port and a non-default profile."
-            } else {
-                "No owned endpoint is available. Enable a DevTools endpoint explicitly or allow a deliberate browser relaunch."
-            },
+            "No owned endpoint is available. Acting setup is handled by shared core only for a verified driver-owned isolated profile.",
         ))
     }
 }

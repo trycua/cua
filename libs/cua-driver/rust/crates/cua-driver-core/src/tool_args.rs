@@ -30,6 +30,39 @@ use serde_json::Value;
 
 use crate::protocol::ToolResult;
 
+/// Remove transport-reserved arguments supplied by a public caller. Trusted
+/// ingress code calls this before injecting session or approval context, so a
+/// tool request cannot forge underscore-prefixed transport evidence.
+pub fn sanitize_reserved_args(args: &mut Value) {
+    if let Some(object) = args.as_object_mut() {
+        object.retain(|key, _| !key.starts_with('_'));
+    }
+}
+
+#[cfg(test)]
+mod reserved_args_tests {
+    use super::sanitize_reserved_args;
+    use serde_json::json;
+
+    #[test]
+    fn removes_all_top_level_reserved_arguments_only() {
+        let mut args = json!({
+            "pid": 42,
+            "_session_id": "forged",
+            "_cua_browser_prepare_mcp_host_approved": true,
+            "profile": {"mode": "isolated_new", "_future_public_field": "retained"}
+        });
+        sanitize_reserved_args(&mut args);
+        assert_eq!(
+            args,
+            json!({
+                "pid": 42,
+                "profile": {"mode": "isolated_new", "_future_public_field": "retained"}
+            })
+        );
+    }
+}
+
 /// Format the canonical "missing required field" error.
 #[inline]
 fn missing(kind: &str, name: &str) -> ToolResult {
@@ -40,17 +73,13 @@ fn missing(kind: &str, name: &str) -> ToolResult {
 /// present but a different JSON type than the caller asked for.
 #[inline]
 fn wrong_type(kind: &str, name: &str) -> ToolResult {
-    ToolResult::error(format!(
-        "Field {name} has wrong type — expected {kind}"
-    ))
+    ToolResult::error(format!("Field {name} has wrong type — expected {kind}"))
 }
 
 /// Format the canonical out-of-range error for narrowing casts.
 #[inline]
 fn out_of_range(kind: &str, name: &str, raw: i128) -> ToolResult {
-    ToolResult::error(format!(
-        "Field {name} is out of range for {kind}: {raw}"
-    ))
+    ToolResult::error(format!("Field {name} is out of range for {kind}: {raw}"))
 }
 
 /// Extension trait on `&serde_json::Value` (the MCP `arguments` blob)
@@ -177,9 +206,7 @@ impl ArgsExt for Value {
     }
 
     fn opt_str(&self, name: &str) -> Option<String> {
-        self.get(name)
-            .and_then(|v| v.as_str())
-            .map(str::to_owned)
+        self.get(name).and_then(|v| v.as_str()).map(str::to_owned)
     }
 
     fn opt_bool(&self, name: &str) -> Option<bool> {

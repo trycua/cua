@@ -35,12 +35,14 @@
 //! is re-proven before any mutation; frames whose identity or
 //! capability cannot be proven are omitted or refused, never guessed.
 
+pub mod approval;
 pub mod binding;
 pub mod cdp_ws;
 pub mod engine;
 #[cfg(test)]
 pub(crate) mod mock_cdp;
 pub mod platform;
+mod prepare;
 pub mod refusal;
 pub mod store;
 pub mod tools;
@@ -49,7 +51,10 @@ pub mod types;
 mod v2_tests;
 
 pub use engine::BrowserEngine;
-pub use platform::{BrowserPlatform, PrepareAction, PrepareOutcome, PrepareRequest};
+pub use platform::{
+    BrowserPlatform, PrepareAction, PrepareAuthorization, PrepareOutcome, PrepareProfile,
+    PrepareProfileMode, PrepareRequest, PrepareSideEffects,
+};
 pub use refusal::{BrowserRefusal, BrowserRefusalCode};
 pub use tools::register_browser_tools;
 pub use types::{

@@ -184,6 +184,44 @@ fn allocate_loopback_port() -> u16 {
         .port()
 }
 
+fn driver_profile_root() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        return PathBuf::from(std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA"))
+            .join("CuaDriver")
+            .join("BrowserProfiles");
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return PathBuf::from(std::env::var_os("HOME").expect("HOME"))
+            .join("Library")
+            .join("Application Support")
+            .join("CuaDriver")
+            .join("BrowserProfiles");
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let state = std::env::var_os("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(std::env::var_os("HOME").expect("HOME"))
+                    .join(".local")
+                    .join("state")
+            });
+        state.join("cua-driver").join("browser-profiles")
+    }
+}
+
+fn profile_entries(root: &Path) -> HashSet<std::ffi::OsString> {
+    std::fs::read_dir(root)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name())
+        .collect()
+}
+
 fn spawn_driver(label: &str) -> McpDriver {
     #[cfg(target_os = "macos")]
     let driver = McpDriver::spawn_macos_daemon_proxy_named(label);
@@ -219,6 +257,29 @@ fn command_for_browser(
         .arg(url)
         .stdout(Stdio::null())
         .stderr(output);
+    command
+}
+
+fn command_for_unprepared_browser(
+    spec: &BrowserSpec,
+    profile: &Path,
+    url: &str,
+    position: (i32, i32),
+) -> Command {
+    let mut command = Command::new(&spec.executable);
+    command
+        .arg(format!("--user-data-dir={}", profile.display()))
+        .arg("--no-first-run")
+        .arg("--no-default-browser-check")
+        .arg("--disable-background-networking")
+        .arg("--disable-component-update")
+        .arg("--new-window")
+        .arg(format!("--window-position={},{}", position.0, position.1))
+        .arg("--window-size=980,760")
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     command
 }
 
@@ -264,6 +325,62 @@ fn wait_for_fixture_window(
         if Instant::now() >= deadline {
             return None;
         }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn wait_for_exact_browser_binding(
+    driver: &mut McpDriver,
+    pid: u32,
+    session: &str,
+) -> Option<(u64, ToolResponse)> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let windows = driver.call("list_windows", serde_json::json!({ "pid": pid }));
+        for window_id in windows.structured()["windows"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|window| window["window_id"].as_u64())
+        {
+            let state = driver.call(
+                "get_browser_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": window_id,
+                    "session": session,
+                }),
+            );
+            if state.structured()["binding_quality"] == "exact" {
+                return Some((window_id, state));
+            }
+        }
+        if Instant::now() >= deadline {
+            eprintln!(
+                "no exact browser window binding for prepared pid {pid}; last windows={}",
+                windows.raw
+            );
+            return None;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn wait_for_pid_windows_to_close(driver: &mut McpDriver, pid: u32) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let windows = driver.call("list_windows", serde_json::json!({ "pid": pid }));
+        let is_empty = windows.structured()["windows"]
+            .as_array()
+            .is_none_or(Vec::is_empty);
+        if is_empty {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "prepared browser windows remained after end_session: {}",
+            windows.raw
+        );
         thread::sleep(Duration::from_millis(100));
     }
 }
@@ -588,6 +705,178 @@ fn run_roundtrip(spec: &BrowserSpec) {
     });
 }
 
+fn run_prepare_isolated_launch(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-prepare-isolated",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(
+        case(&spec.name, "browser_prepare_isolated_launch"),
+        |evidence| {
+            let source_server = BrowserFixtureServer::start(&standalone_fixture_html());
+            let target_server = BrowserFixtureServer::start(&standalone_fixture_html());
+            let source_profile = tempfile::Builder::new()
+                .prefix("cua-e2e-user-browser-")
+                .tempdir()
+                .expect("create ordinary browser profile");
+            let driver_profiles = driver_profile_root();
+            let profiles_before = profile_entries(&driver_profiles);
+            let mut driver = spawn_driver(&scenario);
+            *evidence = recording_evidence(driver.recording_dir());
+
+            let before = window_ids(&mut driver);
+            let mut source_command = command_for_unprepared_browser(
+                spec,
+                source_profile.path(),
+                source_server.page_url(),
+                (80, 80),
+            );
+            let source_child = spawn_in_job(&mut source_command).expect("launch ordinary browser");
+            driver.reaper().push(source_child);
+            let (source_pid, source_window_id) =
+                wait_for_fixture_window(&mut driver, &before, &source_server)
+                    .expect("ordinary browser fixture window");
+            driver.reaper().track_pid(source_pid);
+
+            let session = format!("standalone-prepare-{source_pid}");
+            let started = driver.call("start_session", serde_json::json!({ "session": session }));
+            assert!(!started.is_error(), "start_session failed: {}", started.raw);
+            driver.start_behavior_recording();
+            let prepared = driver.call(
+                "browser_prepare",
+                serde_json::json!({
+                    "pid": source_pid as i64,
+                    "session": session,
+                    "allow_launch": true,
+                    "profile": {"mode": "isolated_new"},
+                }),
+            );
+            assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
+            assert_eq!(
+                prepared.structured()["action"],
+                "launched_isolated_browser",
+                "{}",
+                prepared.raw
+            );
+            assert_eq!(
+                prepared.structured()["side_effects"]["launched_browser"],
+                true
+            );
+            assert_eq!(
+                prepared.structured()["side_effects"]["created_profile"],
+                true
+            );
+            let prepared_json = prepared.raw.to_string();
+            assert!(
+                !prepared_json.contains(&driver_profiles.display().to_string()),
+                "browser_prepare disclosed its private profile path: {}",
+                prepared.raw
+            );
+            assert!(
+                !prepared_json.contains("approval_token"),
+                "{}",
+                prepared.raw
+            );
+
+            let prepared_pid = prepared.structured()["prepared_pid"]
+                .as_u64()
+                .expect("prepared browser pid") as u32;
+            assert_ne!(prepared_pid, source_pid);
+            let (prepared_window_id, state) =
+                wait_for_exact_browser_binding(&mut driver, prepared_pid, &session)
+                    .expect("isolated browser did not expose an exactly bindable window");
+            let target = state.structured()["target_id"]
+                .as_str()
+                .expect("prepared target id")
+                .to_owned();
+            let tab = state.structured()["tabs"]
+                .as_array()
+                .and_then(|tabs| tabs.iter().find(|tab| tab["active"] == true))
+                .and_then(|tab| tab["tab_id"].as_str())
+                .expect("prepared active tab")
+                .to_owned();
+            let navigated = driver.call(
+                "browser_navigate",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "url": target_server.page_url(),
+                    "session": session,
+                }),
+            );
+            assert_eq!(navigated.structured()["status"], "ok", "{}", navigated.raw);
+            wait_for_observed(&target_server, "WEB_HARNESS_MARKER_v1");
+
+            let target_window = TargetWindow {
+                pid: prepared_pid,
+                native_id: prepared_window_id,
+            };
+            let sentinel = ForegroundSentinel::launch(&mut driver);
+            sentinel
+                .assert_background_posture(target_window)
+                .expect("establish isolated browser background posture");
+            sentinel
+                .prepare_background_observation(&mut driver, target_window)
+                .expect("restore isolated browser background posture");
+            let (mut observation, passed) = sentinel
+                .observe_background(target_window, || {
+                    let snapshot = driver.call(
+                        "get_browser_state",
+                        serde_json::json!({
+                            "target_id": target,
+                            "tab_id": tab,
+                            "session": session,
+                        }),
+                    );
+                    let click_ref = ref_by_label(&snapshot, "id=btn-increment");
+                    let clicked = driver.call(
+                        "browser_click",
+                        serde_json::json!({
+                            "target_id": target,
+                            "tab_id": tab,
+                            "ref": click_ref,
+                            "session": session,
+                        }),
+                    );
+                    assert_eq!(clicked.structured()["status"], "ok", "{}", clicked.raw);
+                    wait_for_text(&target_server, "lbl-counter", "counter=1");
+                    wait_for_text(&source_server, "lbl-counter", "counter=0");
+                    let source_windows =
+                        driver.call("list_windows", serde_json::json!({"pid": source_pid}));
+                    assert!(
+                        source_windows.structured()["windows"]
+                            .as_array()
+                            .is_some_and(|windows| windows.iter().any(|window| {
+                                window["window_id"].as_u64() == Some(source_window_id)
+                            })),
+                        "ordinary browser was modified or terminated: {}",
+                        source_windows.raw
+                    );
+                    Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+                })
+                .expect("observe isolated browser desktop effects");
+            observation.passed_oracles.extend(passed);
+
+            let ended = driver.call("end_session", serde_json::json!({ "session": session }));
+            assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
+            wait_for_pid_windows_to_close(&mut driver, prepared_pid);
+            let profile_deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                if profile_entries(&driver_profiles) == profiles_before {
+                    break;
+                }
+                assert!(
+                    Instant::now() < profile_deadline,
+                    "isolated_new profile remained after end_session"
+                );
+                thread::sleep(Duration::from_millis(100));
+            }
+            observation
+        },
+    );
+}
+
 fn run_stale_ref(spec: &BrowserSpec) {
     let scenario = format!(
         "{}-{}-standalone-stale-ref",
@@ -839,6 +1128,7 @@ fn standalone_browser_matrix() {
             spec.executable.display()
         );
         run_roundtrip(&spec);
+        run_prepare_isolated_launch(&spec);
         run_stale_ref(&spec);
         run_frame_roundtrip(&spec);
         run_multi_tab(&spec);

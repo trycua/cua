@@ -15,8 +15,9 @@ use crate::protocol::ToolResult;
 use crate::tool::{Tool, ToolDef, ToolRegistry};
 use crate::tool_args::ArgsExt;
 
+use super::approval::MCP_HOST_APPROVAL_ARG;
 use super::engine::BrowserEngine;
-use super::platform::PrepareRequest;
+use super::platform::{PrepareAuthorization, PrepareProfile, PrepareRequest};
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::types::BindingQuality;
 
@@ -259,22 +260,32 @@ impl BrowserPrepareTool {
         let def = ToolDef {
             name: "browser_prepare".into(),
             description: "Explicitly prepare an owned DevTools endpoint for a browser \
-                pid. Minimal and never implicit: get_browser_state refuses with \
-                browser_requires_setup instead of calling this for you. Pass \
-                consent=true to authorize consent-gated setup and allow_restart=true \
-                only if the platform may restart the browser."
+                pid. Existing endpoints are detected without side effects. Acting setup \
+                requires MCP-host approval or a short-lived token from the interactive \
+                browser-approve command, allow_launch=true, and a driver-owned isolated \
+                profile. It launches a separate browser and never copies, modifies, or \
+                terminates the requested user profile."
                 .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "pid": { "type": "integer", "description": "Browser process id to prepare." },
-                    "consent": {
-                        "type": "boolean",
-                        "description": "Explicit caller consent for consent-gated setup (default false)."
+                    "approval_token": {
+                        "type": "string",
+                        "description": "Single-use token minted by `cua-driver browser-approve` for direct CLI/raw use. Omit for an MCP-host-approved call."
                     },
-                    "allow_restart": {
+                    "allow_launch": {
                         "type": "boolean",
-                        "description": "Allow the adapter to restart the browser to enable the endpoint (default false)."
+                        "description": "Allow a separate driver-owned isolated Chromium process to be launched (default false)."
+                    },
+                    "profile": {
+                        "type": "object",
+                        "properties": {
+                            "mode": { "type": "string", "enum": ["isolated_new", "isolated_named"] },
+                            "name": { "type": "string", "description": "Required only for isolated_named; 1-64 path-safe ASCII characters." }
+                        },
+                        "required": ["mode"],
+                        "additionalProperties": false
                     },
                     "session": schema_session(),
                 },
@@ -282,8 +293,8 @@ impl BrowserPrepareTool {
                 "additionalProperties": true
             }),
             read_only: false,
-            destructive: false,
-            idempotent: true,
+            destructive: true,
+            idempotent: false,
             open_world: false,
         };
         Self { def, engine }
@@ -301,12 +312,38 @@ impl Tool for BrowserPrepareTool {
             Ok(v) => v,
             Err(e) => return e,
         };
+        let session = match require_explicit_session(&args) {
+            Ok(session) => session,
+            Err(error) => return error,
+        };
+        let profile = match args.get("profile") {
+            None | Some(Value::Null) => None,
+            Some(value) => match serde_json::from_value::<PrepareProfile>(value.clone()) {
+                Ok(profile) => Some(profile),
+                Err(error) => {
+                    return ToolResult::error(format!("invalid browser profile request: {error}"))
+                }
+            },
+        };
+        let authorization = if args
+            .get(MCP_HOST_APPROVAL_ARG)
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            Some(PrepareAuthorization::McpHost)
+        } else {
+            args.opt_str("approval_token")
+                .map(PrepareAuthorization::ApprovalArtifact)
+        };
         let request = PrepareRequest {
             pid,
-            consent_granted: args.opt_bool("consent").unwrap_or(false),
-            allow_restart: args.opt_bool("allow_restart").unwrap_or(false),
+            session,
+            transport_session: args.opt_str("_transport_session_id"),
+            authorization,
+            profile,
+            allow_launch: args.opt_bool("allow_launch").unwrap_or(false),
         };
-        match self.engine.platform.prepare_endpoint(request).await {
+        match self.engine.prepare_browser(request).await {
             Ok(outcome) => {
                 let prepared = outcome.endpoint.is_some();
                 ToolResult::text(format!(
@@ -325,6 +362,8 @@ impl Tool for BrowserPrepareTool {
                     "message": outcome.message,
                     // The ws_url itself stays internal; expose only proof metadata.
                     "endpoint_ownership": outcome.endpoint.map(|e| e.ownership),
+                    "prepared_pid": outcome.prepared_pid,
+                    "side_effects": outcome.side_effects,
                 }))
             }
             Err(refusal) => refusal.to_tool_result(),
@@ -1059,19 +1098,12 @@ mod tests {
 
         async fn prepare_endpoint(
             &self,
-            request: PrepareRequest,
+            _request: PrepareRequest,
         ) -> Result<PrepareOutcome, BrowserRefusal> {
-            if !request.consent_granted {
-                return Err(BrowserRefusal::new(
-                    BrowserRefusalCode::BrowserConsentRequired,
-                    "endpoint setup requires explicit consent",
-                ));
-            }
-            Ok(PrepareOutcome {
-                action: crate::browser::platform::PrepareAction::NoOp,
-                endpoint: None,
-                message: "mock: nothing to do".into(),
-            })
+            Err(BrowserRefusal::new(
+                BrowserRefusalCode::BrowserRequiresSetup,
+                "mock endpoint needs acting setup",
+            ))
         }
     }
 
@@ -1095,6 +1127,16 @@ mod tests {
             "get_browser_state must be strictly read-only"
         );
         assert!(state.def().idempotent);
+
+        let prepare = BrowserPrepareTool::new(e.clone());
+        assert!(prepare.def().destructive);
+        assert!(!prepare.def().idempotent);
+        let prepare_properties = prepare.def().input_schema["properties"]
+            .as_object()
+            .expect("browser_prepare properties");
+        assert!(!prepare_properties.contains_key("consent"));
+        assert!(!prepare_properties.contains_key("allow_restart"));
+        assert!(!prepare_properties.contains_key(MCP_HOST_APPROVAL_ARG));
 
         for (def, name) in [
             (
@@ -1207,22 +1249,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prepare_without_consent_refuses_consent_required() {
+    async fn prepare_requires_non_forgeable_approval_for_acting_setup() {
         let tool = BrowserPrepareTool::new(engine());
         let result = tool
-            .invoke(json!({ "pid": 1, "_session_id": "run-1" }))
+            .invoke(json!({
+                "pid": 1,
+                "allow_launch": true,
+                "profile": { "mode": "isolated_new" },
+                "session": "run-1"
+            }))
             .await;
         assert_eq!(
             structured(&result)["refusal"]["code"],
             "browser_consent_required"
         );
-
-        let ok = tool
-            .invoke(json!({ "pid": 1, "consent": true, "_session_id": "run-1" }))
-            .await;
-        let s = structured(&ok);
-        assert_eq!(s["status"], "ok");
-        assert_eq!(s["prepared"], false);
     }
 
     #[tokio::test]

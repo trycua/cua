@@ -35,6 +35,7 @@ use super::binding::{
 };
 use super::cdp_ws::{CdpConnection, CdpPool};
 use super::platform::BrowserPlatform;
+use super::prepare::ManagedBrowsers;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::store::{
     format_ref, BrowserStore, FrameIdentity, FrameKind, FrameRef, RefEntry, SnapshotRecord,
@@ -54,6 +55,7 @@ pub struct BrowserEngine {
     pub(crate) platform: Arc<dyn BrowserPlatform>,
     pub(crate) store: BrowserStore,
     pub(crate) pool: CdpPool,
+    pub(crate) managed_browsers: ManagedBrowsers,
 }
 
 fn refuse(code: BrowserRefusalCode, msg: impl Into<String>) -> BrowserRefusal {
@@ -208,11 +210,13 @@ impl BrowserEngine {
             platform,
             store: BrowserStore::new(),
             pool: CdpPool::new(),
+            managed_browsers: Default::default(),
         });
         let weak: Weak<Self> = Arc::downgrade(&engine);
         register_session_end_hook(move |session_id| {
             if let Some(engine) = weak.upgrade() {
                 engine.store.remove_session(session_id);
+                engine.cleanup_prepared_session(session_id);
             }
         });
         engine

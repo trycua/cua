@@ -14,19 +14,41 @@ use serde::{Deserialize, Serialize};
 use super::refusal::BrowserRefusal;
 use super::types::{BrowserClassification, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint};
 
-/// Caller-supplied context for an explicit `browser_prepare` call.
-/// Prepare is never implicit: `get_browser_state` must not trigger it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrepareProfileMode {
+    IsolatedNew,
+    IsolatedNamed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrepareProfile {
+    pub mode: PrepareProfileMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrepareAuthorization {
+    McpHost,
+    ApprovalArtifact(String),
+}
+
+/// Caller context for an explicit `browser_prepare` call. Prepare is never
+/// implicit: `get_browser_state` must not trigger it.
+#[derive(Debug, Clone)]
 pub struct PrepareRequest {
     pub pid: i64,
-    /// Whether the caller explicitly granted consent for setup actions
-    /// the platform gates behind consent (e.g. relaunching the browser
-    /// with a debugging port). Adapters that need consent and don't see
-    /// it here refuse with `browser_consent_required`.
-    pub consent_granted: bool,
-    /// Whether the adapter may restart the browser process to enable
-    /// the endpoint. Defaults to false; restart is disruptive.
-    pub allow_restart: bool,
+    pub session: String,
+    /// Private transport lifecycle owner. A daemon-backed MCP proxy supplies
+    /// this independently from the public capability session so either proxy
+    /// disconnect or explicit `end_session` can reap a spawned browser.
+    pub transport_session: Option<String>,
+    pub authorization: Option<PrepareAuthorization>,
+    pub profile: Option<PrepareProfile>,
+    /// Allows launching a separate driver-owned isolated browser process.
+    /// It never authorizes terminating or modifying the requested process.
+    pub allow_launch: bool,
 }
 
 /// What a platform adapter actually did (or found) during prepare.
@@ -39,6 +61,8 @@ pub enum PrepareAction {
     EnabledEndpoint,
     /// The adapter (re)launched the browser with an endpoint.
     RelaunchedBrowser,
+    /// The driver launched a separate isolated browser process.
+    LaunchedIsolatedBrowser,
     /// Nothing was done — see `message` on the outcome.
     NoOp,
 }
@@ -50,6 +74,21 @@ pub struct PrepareOutcome {
     pub action: PrepareAction,
     pub endpoint: Option<OwnedEndpoint>,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepared_pid: Option<i64>,
+    #[serde(default)]
+    pub side_effects: PrepareSideEffects,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PrepareSideEffects {
+    pub launched_browser: bool,
+    pub restarted_browser: bool,
+    pub created_profile: bool,
+    pub reused_driver_profile: bool,
+    pub copied_profile_data: bool,
+    pub changed_preferences: bool,
+    pub displayed_consent_prompt: bool,
 }
 
 /// OS-identity services a platform crate provides to the browser-tool

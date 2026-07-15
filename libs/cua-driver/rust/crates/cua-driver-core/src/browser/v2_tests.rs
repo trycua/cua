@@ -392,6 +392,8 @@ impl BrowserPlatform for FixturePlatform {
             action: PrepareAction::NoOp,
             endpoint: None,
             message: "fixture: nothing to do".into(),
+            prepared_pid: None,
+            side_effects: Default::default(),
         })
     }
 }

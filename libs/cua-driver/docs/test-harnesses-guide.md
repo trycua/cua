@@ -23,7 +23,7 @@ suite selector:
 ```text
 Linux:  scripts/ci/linux/run-rust-e2e.sh
 Windows: .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
-macOS:  scripts/ci/macos/run-rust-e2e.sh
+macOS:  libs/cua-driver/tests/runners/macos-lume/run-all.sh
 ```
 
 The OS workflow may fan the complete matrix out into independent jobs for
@@ -51,7 +51,8 @@ cua/
 |   |   |   |-- shared/web/           Shared web page and external markers
 |   |   |   |-- apps/                 Repo-local fixture sources
 |   |   |   `-- build/                macOS/Linux/Windows fixture builders
-|   |   `-- runners/                  Auxiliary VM and sandbox entrypoints
+|   |   `-- runners/
+|   |       `-- macos-lume/           Maintainer Lume setup and guest entrypoint
 |   `-- docs/                         Test matrix, reporting, and contributor docs
 `-- scripts/ci/
     |-- linux/run-rust-e2e.sh         Linux canonical runner
@@ -171,7 +172,7 @@ background delivery is tested.
 
 ### macOS
 
-Runner: `scripts/ci/macos/run-rust-e2e.sh`
+Runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
 
 | Runner area | Rust test | Real harness or app |
 | --- | --- | --- |
@@ -188,6 +189,9 @@ The WKWebView host runs the same typed shared-web catalog as Electron and
 Tauri. Calculator and TextEdit add typed supporting rows for built-in app
 launch focus and native Cocoa background value delivery. They run in the
 canonical logged-in macOS lane, but they do not replace repo-local fixtures.
+The maintainer wrapper provisions the exact source build and verifies the
+private Lume seed's TCC/signing contract before delegating the behavior matrix
+to `scripts/ci/macos/run-rust-e2e.sh`.
 
 ### Linux
 

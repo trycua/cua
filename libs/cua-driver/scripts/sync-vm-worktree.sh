@@ -61,7 +61,7 @@ if [[ "$mode" == push ]] && [[ -n "$(git -C "$repo_root" status --porcelain --un
   fi
   source_sha="${source_sha}-dirty"
 fi
-artifact_root="$repo_root/libs/cua-driver/docs/vm-artifacts"
+artifact_root="$repo_root/artifacts/cua-driver/vm"
 target_slug="$(printf '%s' "$target" | tr -c 'A-Za-z0-9_.-' '_')"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 
@@ -71,6 +71,18 @@ exclude_args=(
   --exclude=.git
   --exclude=.DS_Store
   --exclude='._*'
+  # Ignored local credentials are still present in a clean Git worktree.
+  # Never copy them to a validation machine.
+  --exclude=.env
+  --exclude=.env.local
+  --exclude=.netrc
+  --exclude=.npmrc
+  --exclude=.pypirc
+  --exclude='*.key'
+  --exclude='*.p12'
+  --exclude='*.pem'
+  --exclude=credentials/
+  --exclude=secrets/
   --exclude=target/
   --exclude=libs/cua-driver/rust/test-apps/
   --exclude=node_modules/
@@ -85,6 +97,23 @@ tar_exclude_args=(
   --exclude ./.git
   --exclude ./.DS_Store
   --exclude '._*'
+  --exclude ./.env
+  --exclude '*/.env'
+  --exclude ./.env.local
+  --exclude '*/.env.local'
+  --exclude ./.netrc
+  --exclude '*/.netrc'
+  --exclude ./.npmrc
+  --exclude '*/.npmrc'
+  --exclude ./.pypirc
+  --exclude '*/.pypirc'
+  --exclude '*.key'
+  --exclude '*.p12'
+  --exclude '*.pem'
+  --exclude '*/credentials'
+  --exclude '*/credentials/*'
+  --exclude '*/secrets'
+  --exclude '*/secrets/*'
   --exclude ./target
   --exclude ./libs/cua-driver/rust/test-apps
   --exclude ./node_modules

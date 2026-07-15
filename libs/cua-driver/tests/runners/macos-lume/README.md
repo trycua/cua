@@ -10,9 +10,23 @@ installs the requested source commit before testing. The preflight rejects a
 source marker, source-built binary, or installed daemon that does not identify
 that exact commit.
 
-## Golden-image contract
+## Before you start
 
-- Use the verified Lume Tahoe unattended image on an Apple Silicon host.
+- Use an Apple Silicon Mac with enough free space for the 150 GB sparse guest.
+- Install Lume and `jq` on the host.
+- Start from a clean, committed checkout of this repository.
+- Keep the public base, private seed, and workers on host-local Lume storage.
+
+## Image contract
+
+- Use the versioned public base `macos-tahoe-cua:26.5.2`; do not use `latest`
+  for an acceptance result.
+- Treat the public image as a sanitized base. It contains macOS Tahoe 26.5.2,
+  SIP disabled, Xcode Command Line Tools 26.6, autologin, and SSH. It does not
+  contain repository source, TCC grants, or a local signing identity.
+- Build one private, host-local seed from the public base. The private seed owns
+  the remaining toolchain, signing identity, and TCC grants and must never be
+  pushed to a registry.
 - Keep the named golden VM stopped and never run tests in it directly.
 - Put no repository credentials, signing secrets, or maintainer private SSH
   keys in the guest. A host public key is sufficient for source sync.
@@ -21,46 +35,78 @@ that exact commit.
   the inherited grants on the next build.
 - Clone one worker per run, retrieve its evidence, then delete the worker.
 
-SIP-off makes the behavior environment reproducible; it is not treated as
-proof that the normal macOS permission flow works. The SIP-on check below owns
-that separate claim.
+SIP-off does not grant or bypass TCC. It makes the disposable behavior lane
+repeatable while the private seed carries grants obtained through the normal
+`CuaDriver.app` prompt flow. The SIP-on check below owns the separate claim that
+the supported permission flow still works with normal platform protection.
 
-## Build the golden image
+## Create the private seed
 
-On the host, create a mutable builder with the Tahoe unattended preset. The
-preset enables SSH and autologin and initially uses `lume` / `lume`.
-Install Lume's optional Recovery input helper before changing SIP:
-
-```bash
-python3 -m pip install --user vncdotool
-```
+Pull the versioned public base into a mutable local builder. The initial guest
+credentials are `lume` / `lume`:
 
 ```bash
-IPSW_URL="$(lume ipsw | tail -n 1)"
-curl -L "$IPSW_URL" -o ~/Downloads/macos-tahoe.ipsw
-lume create cua-driver-macos-e2e-builder \
-  --ipsw ~/Downloads/macos-tahoe.ipsw \
-  --unattended tahoe
-lume sip off cua-driver-macos-e2e-builder --yes
-lume run cua-driver-macos-e2e-builder
+IMAGE=macos-tahoe-cua:26.5.2
+BUILDER=cua-driver-macos-e2e-builder-26.5.2
+lume pull "$IMAGE" "$BUILDER"
+lume run "$BUILDER"
 ```
 
-Keep `lume run` open. In the VM display:
+Keep `lume run` open. In Terminal in the VM display, verify the immutable base
+properties before installing anything:
 
-1. Finish any first-login prompts and keep autologin, sleep prevention, and
-   screen-lock prevention enabled.
-2. Install Xcode Command Line Tools, Rust, Node.js/npm, `ffmpeg`, and `jq`.
-3. Verify that `xcrun swiftc`, `cargo`, `npm`, `ffmpeg`, `ffprobe`, and `jq`
-   are available in a new Terminal window.
-4. Add only the maintainer host's public SSH key to
-   `~/.ssh/authorized_keys`.
+```bash
+sw_vers
+csrutil status
+xcode-select -p
+xcrun swiftc --version
+```
+
+Require macOS 26.5.2 build 25F84, disabled SIP, and
+`/Library/Developer/CommandLineTools`. Stop if any value differs.
+
+Install Homebrew, the fixture/runtime dependencies, and Rust from Terminal in
+the VM display:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+eval "$(/opt/homebrew/bin/brew shellenv)"
+brew install node ffmpeg jq
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+  | sh -s -- -y --profile minimal
+source "$HOME/.cargo/env"
+
+{
+  printf '\n%s\n' 'eval "$(/opt/homebrew/bin/brew shellenv)"'
+  printf '%s\n' '[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"'
+} >> "$HOME/.zprofile"
+```
+
+Open a new Terminal window and require each command to succeed:
+
+```bash
+xcrun swiftc --version
+cargo --version
+node --version
+npm --version
+ffmpeg -version | head -1
+ffprobe -version | head -1
+jq --version
+```
+
+Keep autologin, sleep prevention, and screen-lock prevention enabled. Add only
+the maintainer host's public SSH key to `~/.ssh/authorized_keys`; never copy a
+private key or registry credential into the guest.
 
 From another host terminal, get the builder address and sync a clean committed
 checkout. The sync intentionally omits `.git` and writes the exact commit to
-`.cua-e2e-source-sha`.
+`.cua-e2e-source-sha`. It also excludes ignored credential files such as
+`.env.local`.
 
 ```bash
-VM_IP="$(lume get cua-driver-macos-e2e-builder --format json | jq -r '.ipAddress')"
+BUILDER=cua-driver-macos-e2e-builder-26.5.2
+VM_IP="$(lume get "$BUILDER" --format json | jq -r '.[0].ipAddress')"
 libs/cua-driver/scripts/sync-vm-worktree.sh push "lume@${VM_IP}" '~/cua'
 ```
 
@@ -90,24 +136,25 @@ csrutil status
 ```
 
 All three commands must succeed, and `csrutil status` must report disabled.
-Stop the builder and clone it to a date/version-named seed:
+Stop the builder and clone it to a date/version-named private seed:
 
 ```bash
-lume stop cua-driver-macos-e2e-builder
-lume clone cua-driver-macos-e2e-builder cua-driver-macos-e2e-seed-YYYYMMDD
+SEED=cua-driver-macos-e2e-seed-26.5.2-YYYYMMDD
+lume stop "$BUILDER"
+lume clone "$BUILDER" "$SEED"
 ```
 
-Treat `cua-driver-macos-e2e-seed-YYYYMMDD` as immutable. Record its name,
-macOS build (`sw_vers`), Lume version, Xcode version, Rust version, Node version,
-and signing-certificate hash in the release or maintainer log. Build a new seed
-instead of updating this one in place.
+Treat the seed as immutable and local-only. Record its name, public base tag,
+macOS build (`sw_vers`), Lume version, CLT version, Rust version, Node version,
+and signing-certificate hash in the maintainer log. Build a new seed instead of
+updating this one in place.
 
 ## Run the acceptance gate
 
 Start from a clean committed host checkout. Give the worker a unique name:
 
 ```bash
-SEED=cua-driver-macos-e2e-seed-YYYYMMDD
+SEED=cua-driver-macos-e2e-seed-26.5.2-YYYYMMDD
 WORKER="cua-driver-macos-e2e-$(date -u +%Y%m%dT%H%M%SZ)"
 lume clone "$SEED" "$WORKER"
 echo "$WORKER"
@@ -119,7 +166,7 @@ name and sync the exact host commit:
 
 ```bash
 WORKER=cua-driver-macos-e2e-YYYYMMDDTHHMMSSZ
-VM_IP="$(lume get "$WORKER" --format json | jq -r '.ipAddress')"
+VM_IP="$(lume get "$WORKER" --format json | jq -r '.[0].ipAddress')"
 libs/cua-driver/scripts/sync-vm-worktree.sh push "lume@${VM_IP}" '~/cua'
 ```
 
@@ -146,10 +193,10 @@ lume stop "$WORKER"
 lume delete "$WORKER" --force
 ```
 
-The host stores the pulled summary, typed JSONL rows, environment record,
-logs, screenshots, and MP4 trajectories under
-`libs/cua-driver/docs/vm-artifacts/`. A setup failure is an environment failure,
-not permission to report a smaller green matrix.
+The host stores the pulled summary, typed JSONL rows, environment record, logs,
+screenshots, and MP4 trajectories under `artifacts/cua-driver/vm/`, which Git
+ignores. A setup failure is an environment failure, not permission to report a
+smaller green matrix.
 
 ## Validate the SIP-on permission flow
 
@@ -178,7 +225,7 @@ golden image's inherited grants.
 
 ## Repair or rotate the seed
 
-Discard and rebuild the golden image when its signature becomes ad-hoc, the
-permission check fails, the OS or toolchain needs an update, or the seed has
-been booted for a test. Keep the last known-good stopped seed until its
+Discard and rebuild the private seed when its signature becomes ad-hoc, the
+permission check fails, the public base or toolchain needs an update, or the
+seed has been booted for a test. Keep the last known-good stopped seed until its
 replacement passes one full worker run and one SIP-on permission-flow check.

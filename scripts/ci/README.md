@@ -17,12 +17,18 @@ and native harnesses, see
 | `linux/run-rust-e2e-inject.sh` | Nested `cua-compositor` session | no selector |
 | `linux/run-rust-e2e-desktop.sh` | Existing representative Linux desktop | no selector |
 | `windows/run-rust-e2e.ps1` | Windows console/RDP user session | `-RequireGui` |
-| `macos/run-rust-e2e.sh` | Logged-in macOS session with TCC | no selector |
+| `macos/run-rust-e2e.sh` | Logged-in macOS session already prepared by the maintainer wrapper | no selector |
 
 Use the command without a selector for the canonical complete run. CI sets the
 private `CUA_E2E_INTERNAL_LANE` partition to `shared`, `native`, or `capture`
 when it fans the same matrix into independent jobs. Those values are not public
 alternate suites.
+
+The maintainer-facing macOS command is
+`libs/cua-driver/tests/runners/macos-lume/run-all.sh`. It verifies the private
+Lume seed, installs the exact committed source, and then delegates to the thin
+`macos/run-rust-e2e.sh` matrix runner above. There is no GitHub-hosted macOS GUI
+job.
 
 Run the Wayland wrapper through `nix develop .#cua-driver-wayland-e2e`. It
 creates a pure Wayland session with Xwayland disabled and delegates every

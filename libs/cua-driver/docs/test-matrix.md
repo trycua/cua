@@ -125,10 +125,11 @@ background delivery and attach desktop-side-effect oracles.
 macOS uses the installed ScreenCaptureKit/AX permissions for GUI runs. Its
 maintainer acceptance gate runs in a disposable clone of the stopped Lume
 SIP-off golden image described in the [macOS Lume runner
-guide](../tests/runners/macos-lume/README.md). The repo-local harnesses are
-canonical; Calculator and TextEdit are supporting real-app checks. SwiftUI's
-popover trigger is proven independently from the remaining transient-panel AX
-discovery gap.
+guide](../tests/runners/macos-lume/README.md). Maintainers build that private
+seed from the sanitized public base `macos-tahoe-cua:26.5.2`. The repo-local
+harnesses are canonical; Calculator and TextEdit are supporting real-app
+checks. SwiftUI's popover trigger is proven independently from the remaining
+transient-panel AX discovery gap.
 
 ## Harness E2E: Linux
 

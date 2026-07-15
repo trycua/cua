@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
 DRIVER_ROOT="${REPO_ROOT}/libs/cua-driver"
+RUST_ROOT="${DRIVER_ROOT}/rust"
 ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos"
 SOURCE_MARKER="${CUA_E2E_SOURCE_MARKER:-${REPO_ROOT}/.cua-e2e-source-sha}"
 
@@ -53,7 +54,7 @@ if ! printf '%s\n' "${SIP_STATUS}" | grep -Fq "System Integrity Protection statu
   exit 2
 fi
 
-for command_name in cargo codesign ffmpeg ffprobe jq; do
+for command_name in cargo codesign ffmpeg ffprobe jq node npm xcrun; do
   command -v "${command_name}" >/dev/null 2>&1 || {
     echo "Missing golden-image dependency: ${command_name}" >&2
     exit 2
@@ -83,6 +84,21 @@ export CUA_DRIVER_SOURCE_SHA="${SOURCE_SHA}"
 mkdir -p "${ARTIFACT_DIR}"
 printf '%s\n' "${SIP_STATUS}" > "${ARTIFACT_DIR}/sip-status.txt"
 printf '%s\n' "${SOURCE_SHA}" > "${ARTIFACT_DIR}/requested-source-sha.txt"
+{
+  sw_vers
+  printf 'console_user:\t%s\n' "${CONSOLE_USER}"
+  printf 'rustc:\t%s\n' "$(rustc --version)"
+  printf 'node:\t%s\n' "$(node --version)"
+  printf 'xcode_select:\t%s\n' "$(xcode-select -p)"
+} > "${ARTIFACT_DIR}/golden-environment.txt"
+
+# CUA_DRIVER_SOURCE_SHA is consumed by option_env! in platform-macos. Cargo
+# does not treat arbitrary compile-time environment variables as an input when
+# deciding whether an otherwise unchanged crate is fresh. Force that crate and
+# its dependent driver binary to rebuild so a doc-only commit cannot inherit a
+# stale embedded source SHA from the seed or a previous worker run.
+echo "[BUILD IDENTITY] Invalidating the macOS backend for ${SOURCE_SHA}"
+cargo clean --manifest-path "${RUST_ROOT}/Cargo.toml" -p platform-macos
 
 echo "[INSTALL] Building and installing ${SOURCE_SHA} with the golden signing identity"
 bash "${DRIVER_ROOT}/scripts/install-local.sh" --release --autostart \

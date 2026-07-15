@@ -4,14 +4,14 @@
 //! (tabs), each mappable to a CDP window via `Browser.getWindowForTarget`
 //! + `Browser.getWindowBounds`. Correlation is unique-or-refuse:
 //!
-//! 1. Filter candidates whose CDP window bounds match the native bounds
+//! 1. Collapse page targets to one representative per proven CDP window;
+//!    tabs are not independent native-window candidates.
+//! 2. Filter candidates whose CDP window bounds match the native bounds
 //!    within `tolerance` device pixels.
-//! 2. Exactly one bounds match → **Exact** binding.
-//! 3. Multiple bounds matches are eligible for a title tie-break only
-//!    when every candidate belongs to the same CDP window. Tabs of one
-//!    window share bounds; distinct maximized windows can also share
-//!    bounds and must remain ambiguous.
-//! 4. No bounds match → a unique title match degrades to **Heuristic**
+//! 3. Exactly one bounds match → **Exact** binding.
+//! 4. Multiple distinct CDP windows remain ambiguous. Maximized windows
+//!    can share bounds, so titles are not strong enough to choose one.
+//! 5. No bounds match → a unique title match degrades to **Heuristic**
 //!    (read-only); otherwise **None**.
 
 use super::types::{BindingQuality, NativeWindowInfo, Rect};
@@ -65,6 +65,39 @@ fn title_matches(native_title: &str, candidate_title: &str) -> bool {
     !candidate_title.is_empty() && native_title.contains(candidate_title)
 }
 
+/// Reduce page targets to one representative per proven CDP window.
+/// The representative prefers a tab title displayed by the native
+/// window, but its target id is only a handle for the selected window;
+/// the engine retains every original page target as a tab capability.
+/// Candidates without a CDP window id remain independent because they
+/// cannot prove they share a native surface.
+fn window_representatives(
+    native_title: &str,
+    candidates: &[CdpWindowCandidate],
+) -> Vec<CdpWindowCandidate> {
+    let mut representatives: Vec<CdpWindowCandidate> = Vec::new();
+    for candidate in candidates {
+        let Some(window_id) = candidate.cdp_window_id else {
+            representatives.push(candidate.clone());
+            continue;
+        };
+        match representatives
+            .iter_mut()
+            .find(|existing| existing.cdp_window_id == Some(window_id))
+        {
+            Some(existing)
+                if !title_matches(native_title, &existing.title)
+                    && title_matches(native_title, &candidate.title) =>
+            {
+                *existing = candidate.clone();
+            }
+            Some(_) => {}
+            None => representatives.push(candidate.clone()),
+        }
+    }
+    representatives
+}
+
 /// Correlate `native` against `candidates` with unique-or-refuse
 /// semantics. `tolerance` is in device pixels (see [`Rect::approx_eq`]).
 pub fn correlate(
@@ -72,6 +105,7 @@ pub fn correlate(
     candidates: &[CdpWindowCandidate],
     tolerance: f64,
 ) -> BindingOutcome {
+    let candidates = window_representatives(&native.title, candidates);
     let bounds_matches: Vec<&CdpWindowCandidate> = if native.geometry_exact {
         candidates
             .iter()
@@ -105,32 +139,7 @@ pub fn correlate(
                 _ => BindingOutcome::None,
             }
         }
-        _ => {
-            let cdp_window_id = bounds_matches[0].cdp_window_id;
-            if cdp_window_id.is_none()
-                || bounds_matches
-                    .iter()
-                    .any(|candidate| candidate.cdp_window_id != cdp_window_id)
-            {
-                return BindingOutcome::Ambiguous(bounds_matches.len());
-            }
-
-            // Same-window tabs share bounds; the active tab's title is what
-            // the native window shows. A unique title hit is exact only after
-            // the shared CDP-window identity above has been proven.
-            let title_hits: Vec<&&CdpWindowCandidate> = bounds_matches
-                .iter()
-                .filter(|c| title_matches(&native.title, &c.title))
-                .collect();
-            if title_hits.len() == 1 {
-                BindingOutcome::Bound {
-                    candidate: (*title_hits[0]).clone(),
-                    quality: BindingQuality::Exact,
-                }
-            } else {
-                BindingOutcome::Ambiguous(bounds_matches.len())
-            }
-        }
+        _ => BindingOutcome::Ambiguous(bounds_matches.len()),
     }
 }
 
@@ -228,9 +237,8 @@ mod tests {
     }
 
     #[test]
-    fn shared_bounds_tie_break_on_title_is_exact() {
-        // Two tabs of the same window share bounds; native title shows
-        // the active tab.
+    fn multiple_tabs_in_one_window_are_one_exact_candidate() {
+        // Multiple page targets are tabs, not competing native windows.
         let n = native("Checkout — Shop - Chrome", B);
         let cands = [cand("t1", "Checkout — Shop", B), cand("t2", "Cart", B)];
         match correlate(&n, &cands, 4.0) {
@@ -243,15 +251,16 @@ mod tests {
     }
 
     #[test]
-    fn shared_bounds_and_indistinguishable_titles_are_ambiguous() {
+    fn same_title_tabs_in_one_window_are_still_one_exact_candidate() {
         let n = native("Checkout - Chrome", B);
         let cands = [cand("t1", "Checkout", B), cand("t2", "Checkout", B)];
-        match correlate(&n, &cands, 4.0) {
-            BindingOutcome::Ambiguous(count) => {
-                assert_eq!(count, 2);
+        assert!(matches!(
+            correlate(&n, &cands, 4.0),
+            BindingOutcome::Bound {
+                quality: BindingQuality::Exact,
+                ..
             }
-            other => panic!("expected ambiguous, got {other:?}"),
-        }
+        ));
     }
 
     #[test]

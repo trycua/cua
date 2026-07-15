@@ -11,14 +11,73 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use cua_driver_testkit::e2e::{
-    execute_case, recording_evidence, CaseSpec, Delivery, DriverRoute, Evidence, Observation,
-    OracleKind, RefusalCode, Scope, Targeting,
+    execute_case, recording_evidence, write_environment_from_env, CaseSpec, Delivery, DriverRoute,
+    EnvironmentRecord, Evidence, Observation, OracleKind, RefusalCode, Scope, Targeting,
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::ForegroundSentinel;
 use cua_driver_testkit::{spawn_in_job, BrowserFixtureServer, Driver, McpDriver, ToolResponse};
 
 const FIXTURE_HTML: &str = include_str!("../../../../tests/fixtures/shared/web/index.html");
+
+fn standalone_fixture_html() -> String {
+    FIXTURE_HTML.replace(
+        "</body>",
+        r#"<a id="standalone-new-tab" data-cua-id="standalone-new-tab" href="/fixture?tab=second" target="_blank" onclick="document.getElementById('standalone-tab-state').textContent='new_tab=open'">Open standalone tab</a>
+<span id="standalone-tab-state" data-cua-id="standalone-tab-state">new_tab=closed</span>
+<script>
+  if (new URLSearchParams(window.location.search).get('tab') === 'second') {
+    document.getElementById('standalone-tab-state').textContent = 'new_tab=open';
+  }
+</script>
+</body>"#,
+    )
+}
+
+fn standalone_frame_fixture_html(oopif_url: &str) -> String {
+    let oopif_url = serde_json::to_string(oopif_url).expect("serialize OOPIF fixture URL");
+    FIXTURE_HTML.replace(
+        "</body>",
+        &format!(
+            r#"<fieldset>
+  <legend>browser frame routes</legend>
+  <div id="standalone-shadow-host"></div>
+  <span id="standalone-shadow-state" data-cua-id="standalone-shadow-state">shadow=loading</span>
+  <iframe id="standalone-same-frame" title="standalone same-process frame"></iframe>
+  <span id="standalone-frame-state" data-cua-id="standalone-frame-state">iframe=loading</span>
+  <iframe id="standalone-oopif" title="standalone out-of-process frame" src={oopif_url}></iframe>
+</fieldset>
+<script>
+  const shadowState = document.getElementById('standalone-shadow-state');
+  const shadow = document.getElementById('standalone-shadow-host').attachShadow({{ mode: 'open' }});
+  shadow.innerHTML = `<button id="standalone-shadow-button" aria-label="standalone-shadow-button">Shadow button</button>
+    <input id="standalone-shadow-input" aria-label="standalone-shadow-input">`;
+  shadow.getElementById('standalone-shadow-button').addEventListener('click', () => {{
+    shadowState.textContent = 'shadow=clicked';
+  }});
+  shadow.getElementById('standalone-shadow-input').addEventListener('input', event => {{
+    shadowState.textContent = `shadow=typed:${{event.target.value}}`;
+  }});
+
+  const frameState = document.getElementById('standalone-frame-state');
+  const sameFrame = document.getElementById('standalone-same-frame');
+  sameFrame.addEventListener('load', () => {{ frameState.textContent = 'iframe=ready'; }});
+  sameFrame.srcdoc = `<!doctype html><button id="standalone-frame-button" aria-label="standalone-frame-button">Frame button</button>
+    <input id="standalone-frame-input" aria-label="standalone-frame-input">
+    <script>
+      document.getElementById('standalone-frame-button').addEventListener('click', () => {{
+        parent.document.getElementById('standalone-frame-state').textContent = 'iframe=clicked';
+      }});
+      document.getElementById('standalone-frame-input').addEventListener('input', event => {{
+        parent.document.getElementById('standalone-frame-state').textContent = 'iframe=typed:' + event.target.value;
+      }});
+    <\/script>`;
+  shadowState.textContent = 'shadow=ready';
+</script>
+</body>"#
+        ),
+    )
+}
 
 #[derive(Clone, Debug)]
 struct BrowserSpec {
@@ -153,6 +212,7 @@ fn command_for_browser(
         .arg("--no-default-browser-check")
         .arg("--disable-background-networking")
         .arg("--disable-component-update")
+        .arg("--site-per-process")
         .arg("--new-window")
         .arg(format!("--window-position={},{}", position.0, position.1))
         .arg("--window-size=980,760")
@@ -178,7 +238,7 @@ fn wait_for_fixture_window(
     before: &HashSet<u64>,
     server: &BrowserFixtureServer,
 ) -> Option<(u32, u64)> {
-    let deadline = Instant::now() + Duration::from_secs(8);
+    let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let windows = driver.call("list_windows", serde_json::json!({}));
         if let Some(window) = windows.structured()["windows"]
@@ -227,9 +287,35 @@ fn spawn_browser_command(
     driver.reaper().push(child);
 }
 
+fn spawn_additional_tab(fixture: &mut BrowserFixture, spec: &BrowserSpec) {
+    let output = if std::env::var_os("CUA_E2E_BROWSER_STDERR").is_some() {
+        Stdio::inherit()
+    } else {
+        Stdio::null()
+    };
+    let mut command = Command::new(&spec.executable);
+    command
+        .arg(format!("--remote-debugging-port={}", fixture.cdp_port))
+        .arg(format!(
+            "--user-data-dir={}",
+            fixture._profile.path().display()
+        ))
+        .arg("--no-first-run")
+        .arg("--no-default-browser-check")
+        .arg(format!("{}?tab=second", fixture.server.page_url()))
+        .stdout(Stdio::null())
+        .stderr(output);
+    let child = spawn_in_job(&mut command).expect("open an additional standalone browser tab");
+    fixture.driver.reaper().push(child);
+}
+
 fn launch_browser(spec: &BrowserSpec, label: &str) -> BrowserFixture {
+    launch_browser_with_html(spec, label, standalone_fixture_html())
+}
+
+fn launch_browser_with_html(spec: &BrowserSpec, label: &str, html: String) -> BrowserFixture {
     let mut driver = spawn_driver(label);
-    let server = BrowserFixtureServer::start(FIXTURE_HTML);
+    let server = BrowserFixtureServer::start(&html);
     let profile = tempfile::Builder::new()
         .prefix("cua-e2e-browser-")
         .tempdir()
@@ -244,21 +330,7 @@ fn launch_browser(spec: &BrowserSpec, label: &str) -> BrowserFixture {
         server.page_url(),
         (80, 80),
     );
-    let window = wait_for_fixture_window(&mut driver, &before, &server).or_else(|| {
-        eprintln!(
-            "[standalone-browser] retrying bounded URL handoff for {}",
-            spec.name
-        );
-        spawn_browser_command(
-            &mut driver,
-            spec,
-            profile.path(),
-            cdp_port,
-            server.page_url(),
-            (80, 80),
-        );
-        wait_for_fixture_window(&mut driver, &before, &server)
-    });
+    let window = wait_for_fixture_window(&mut driver, &before, &server);
     let (pid, window_id) = window.unwrap_or_else(|| {
         panic!(
             "standalone browser fixture did not become visible after bounded URL handoff; journal={}",
@@ -280,7 +352,8 @@ fn launch_additional_window(
     fixture: &mut BrowserFixture,
     spec: &BrowserSpec,
 ) -> (BrowserFixtureServer, u32, u64) {
-    let server = BrowserFixtureServer::start(FIXTURE_HTML);
+    let html = standalone_fixture_html();
+    let server = BrowserFixtureServer::start(&html);
     let before = window_ids(&mut fixture.driver);
     spawn_browser_command(
         &mut fixture.driver,
@@ -322,6 +395,18 @@ fn wait_for_value(server: &BrowserFixtureServer, id: &str, expected: &str) {
     assert_eq!(server.value(id).as_deref(), Some(expected));
 }
 
+fn wait_for_observed(server: &BrowserFixtureServer, marker: &str) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !server.has_observed(marker) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        server.has_observed(marker),
+        "fixture never observed {marker:?}: {}",
+        server.snapshot()
+    );
+}
+
 fn ref_by_label(snapshot: &ToolResponse, fragment: &str) -> String {
     snapshot.structured()["refs"]
         .as_array()
@@ -334,6 +419,22 @@ fn ref_by_label(snapshot: &ToolResponse, fragment: &str) -> String {
         })
         .and_then(|entry| entry["ref"].as_str())
         .unwrap_or_else(|| panic!("missing browser ref {fragment:?}: {}", snapshot.raw))
+        .to_owned()
+}
+
+fn ref_by_frame_label(snapshot: &ToolResponse, frame: &str, fragment: &str) -> String {
+    snapshot.structured()["refs"]
+        .as_array()
+        .and_then(|refs| {
+            refs.iter().find(|entry| {
+                entry["frame"] == frame
+                    && entry["label"]
+                        .as_str()
+                        .is_some_and(|label| label.contains(fragment))
+            })
+        })
+        .and_then(|entry| entry["ref"].as_str())
+        .unwrap_or_else(|| panic!("missing {frame} browser ref {fragment:?}: {}", snapshot.raw))
         .to_owned()
 }
 
@@ -530,6 +631,134 @@ fn run_stale_ref(spec: &BrowserSpec) {
     });
 }
 
+fn run_frame_roundtrip(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-frame-roundtrip",
+        std::env::consts::OS,
+        spec.name
+    );
+    let child_server = BrowserFixtureServer::start(FIXTURE_HTML);
+    let child_url = child_server.page_url_on_host("localhost");
+    execute_case(case(&spec.name, "browser_frame_roundtrip"), |evidence| {
+        let html = standalone_frame_fixture_html(&child_url);
+        let mut fixture = launch_browser_with_html(spec, &scenario, html);
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        wait_for_text(&fixture.server, "standalone-shadow-state", "shadow=ready");
+        wait_for_text(&fixture.server, "standalone-frame-state", "iframe=ready");
+        wait_for_observed(&child_server, "WEB_HARNESS_MARKER_v1");
+
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let session = format!("standalone-frame-roundtrip-{}", fixture.pid);
+            let (target, tab, snapshot) = bind(fixture, &session);
+            assert_eq!(
+                snapshot.structured()["oopif"]["status"],
+                "attached",
+                "real Chromium did not expose a capability-tested OOPIF: {}",
+                snapshot.raw
+            );
+
+            let shadow_button = ref_by_frame_label(&snapshot, "main", "standalone-shadow-button");
+            let shadow_input = ref_by_frame_label(&snapshot, "main", "standalone-shadow-input");
+            let frame_button = ref_by_frame_label(&snapshot, "iframe", "standalone-frame-button");
+            let frame_input = ref_by_frame_label(&snapshot, "iframe", "standalone-frame-input");
+            let oopif_button = ref_by_frame_label(&snapshot, "oopif", "id=btn-increment");
+            let oopif_input = ref_by_frame_label(&snapshot, "oopif", "id=txt-input");
+
+            for reference in [&shadow_button, &frame_button, &oopif_button] {
+                let clicked = fixture.driver.call(
+                    "browser_click",
+                    serde_json::json!({
+                        "target_id": target,
+                        "tab_id": tab,
+                        "ref": reference,
+                        "session": session,
+                    }),
+                );
+                assert_eq!(clicked.structured()["status"], "ok", "{}", clicked.raw);
+            }
+            wait_for_text(&fixture.server, "standalone-shadow-state", "shadow=clicked");
+            wait_for_text(&fixture.server, "standalone-frame-state", "iframe=clicked");
+            wait_for_text(&child_server, "lbl-counter", "counter=1");
+
+            for (reference, text) in [
+                (&shadow_input, "shadow-route"),
+                (&frame_input, "iframe-route"),
+                (&oopif_input, "oopif-route"),
+            ] {
+                let typed = fixture.driver.call(
+                    "browser_type",
+                    serde_json::json!({
+                        "target_id": target,
+                        "tab_id": tab,
+                        "ref": reference,
+                        "text": text,
+                        "session": session,
+                    }),
+                );
+                assert_eq!(typed.structured()["status"], "ok", "{}", typed.raw);
+            }
+            wait_for_text(
+                &fixture.server,
+                "standalone-shadow-state",
+                "shadow=typed:shadow-route",
+            );
+            wait_for_text(
+                &fixture.server,
+                "standalone-frame-state",
+                "iframe=typed:iframe-route",
+            );
+            wait_for_value(&child_server, "txt-input", "oopif-route");
+
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
+fn run_multi_tab(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-multi-tab",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(case(&spec.name, "multi_tab_exact_binding"), |evidence| {
+        let mut fixture = launch_browser(spec, &scenario);
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        let session = format!("standalone-multi-tab-{}", fixture.pid);
+        let _ = bind(&mut fixture, &session);
+        spawn_additional_tab(&mut fixture, spec);
+        wait_for_observed(&fixture.server, "new_tab=open");
+
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let rebound = loop {
+                let state = fixture.driver.call(
+                    "get_browser_state",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64,
+                        "window_id": fixture.window_id,
+                        "session": session,
+                    }),
+                );
+                if state.structured()["status"] == "ok"
+                    && state.structured()["tabs"]
+                        .as_array()
+                        .is_some_and(|tabs| tabs.len() >= 2)
+                {
+                    break state;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "multi-tab bind did not enumerate both tabs: {}",
+                    state.raw
+                );
+                thread::sleep(Duration::from_millis(100));
+            };
+            assert_eq!(rebound.structured()["binding_quality"], "exact");
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
 fn run_two_window_collision(spec: &BrowserSpec) {
     let scenario = format!(
         "{}-{}-standalone-two-window",
@@ -593,6 +822,8 @@ fn run_two_window_collision(spec: &BrowserSpec) {
 #[test]
 #[ignore = "requires an installed standalone Chromium browser and an interactive desktop"]
 fn standalone_browser_matrix() {
+    write_environment_from_env(&EnvironmentRecord::ready(Duration::ZERO))
+        .expect("write standalone-browser environment evidence");
     let specs = browser_specs();
     if specs.is_empty() {
         if std::env::var_os("CUA_TEST_REQUIRE_EXTERNAL_BROWSERS").is_some() {
@@ -609,6 +840,8 @@ fn standalone_browser_matrix() {
         );
         run_roundtrip(&spec);
         run_stale_ref(&spec);
+        run_frame_roundtrip(&spec);
+        run_multi_tab(&spec);
         run_two_window_collision(&spec);
     }
 }

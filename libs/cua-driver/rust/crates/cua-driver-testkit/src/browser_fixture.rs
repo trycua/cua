@@ -14,6 +14,7 @@ pub struct BrowserFixtureServer {
     page_url: String,
     journal_url: String,
     latest: Arc<Mutex<serde_json::Value>>,
+    observed: Arc<Mutex<Vec<serde_json::Value>>>,
     stop: Arc<AtomicBool>,
     worker: Option<thread::JoinHandle<()>>,
 }
@@ -46,8 +47,10 @@ impl BrowserFixtureServer {
         }
         .into_bytes();
         let latest = Arc::new(Mutex::new(serde_json::json!({})));
+        let observed = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
         let latest_for_worker = Arc::clone(&latest);
+        let observed_for_worker = Arc::clone(&observed);
         let stop_for_worker = Arc::clone(&stop);
         let worker = thread::spawn(move || {
             while !stop_for_worker.load(Ordering::Relaxed) {
@@ -122,9 +125,15 @@ impl BrowserFixtureServer {
                                 if let Some(body) =
                                     request.get(body_start..body_start + content_len)
                                 {
-                                    if let Ok(state) = serde_json::from_slice(body) {
+                                    if let Ok(state) =
+                                        serde_json::from_slice::<serde_json::Value>(body)
+                                    {
                                         *latest_for_worker.lock().expect("lock browser fixture") =
-                                            state;
+                                            state.clone();
+                                        observed_for_worker
+                                            .lock()
+                                            .expect("lock browser fixture history")
+                                            .push(state);
                                     }
                                 }
                             }
@@ -149,6 +158,7 @@ impl BrowserFixtureServer {
             page_url,
             journal_url,
             latest,
+            observed,
             stop,
             worker: Some(worker),
         }
@@ -156,6 +166,18 @@ impl BrowserFixtureServer {
 
     pub fn page_url(&self) -> &str {
         &self.page_url
+    }
+
+    /// Return the fixture URL through another loopback hostname.
+    ///
+    /// This is used by browser E2E rows that require Chromium to place an
+    /// iframe in a distinct site while retaining a repo-owned loopback oracle.
+    pub fn page_url_on_host(&self, host: &str) -> String {
+        assert!(
+            matches!(host, "localhost" | "127.0.0.1"),
+            "fixture host must remain on loopback"
+        );
+        self.page_url.replacen("127.0.0.1", host, 1)
     }
 
     pub fn journal_url(&self) -> &str {
@@ -192,6 +214,14 @@ impl BrowserFixtureServer {
 
     pub fn snapshot(&self) -> serde_json::Value {
         self.latest.lock().expect("lock browser fixture").clone()
+    }
+
+    pub fn has_observed(&self, marker: &str) -> bool {
+        self.observed
+            .lock()
+            .expect("lock browser fixture history")
+            .iter()
+            .any(|state| state.to_string().contains(marker))
     }
 }
 

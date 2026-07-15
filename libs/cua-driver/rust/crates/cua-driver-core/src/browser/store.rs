@@ -7,9 +7,13 @@
 //! process-global counter so they never collide across sessions — a
 //! capability leaked into another session simply fails to resolve.
 //!
-//! Refs map internally to CDP `backendNodeId`s. Navigation invalidates
+//! Refs map internally to CDP `backendNodeId`s plus a [`FrameRef`]
+//! recording which frame (main, same-process iframe, or OOPIF child
+//! target) minted the node and that frame's document identity
+//! (`frame_id` + `loader_id`) at snapshot time. Navigation invalidates
 //! every snapshot of the navigated tab; stale refs refuse with
-//! `browser_ref_stale`.
+//! `browser_ref_stale`, and frame identity is re-proven against the
+//! live frame tree before any mutation.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,15 +25,83 @@ use uuid::Uuid;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::types::{BindingQuality, ProcessFingerprint, Rect};
 
+/// Which frame kind a ref was minted in. Exposed on the wire as a
+/// stable string via [`FrameKind::as_str`]; everything else about the
+/// frame stays internal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameKind {
+    /// The tab's main frame (including composed shadow DOM inside it).
+    Main,
+    /// A same-process iframe walked via `contentDocument`.
+    Iframe,
+    /// An out-of-process iframe reached through a capability-tested
+    /// child session beneath the tab's target.
+    Oopif,
+}
+
+impl FrameKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Main => "main",
+            Self::Iframe => "iframe",
+            Self::Oopif => "oopif",
+        }
+    }
+}
+
+/// CDP frame/document identity captured at snapshot time. The
+/// `loader_id` changes on every document load, so equality against the
+/// live frame tree proves the ref's document is still the one that was
+/// snapshotted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrameIdentity {
+    pub frame_id: String,
+    pub loader_id: String,
+}
+
+/// The frame a ref belongs to, with everything needed to re-prove that
+/// frame before mutation. Invariants enforced at mint time:
+/// - `kind != Main` ⇒ `identity` is `Some` (unprovable frames are
+///   omitted from snapshots, never guessed).
+/// - `kind == Oopif` ⇔ `oopif_target_id` is `Some`.
+#[derive(Debug, Clone)]
+pub struct FrameRef {
+    pub kind: FrameKind,
+    /// CDP target id of the OOPIF child target (contained beneath the
+    /// bound tab), present only for `Oopif` refs.
+    pub oopif_target_id: Option<String>,
+    /// Document identity at snapshot time. `None` only on the
+    /// v1-compat main-frame path where the endpoint cannot report a
+    /// frame tree; node liveness checks remain the backstop there.
+    pub identity: Option<FrameIdentity>,
+}
+
+impl FrameRef {
+    /// The v1-compat main-frame ref: no frame tree available, identity
+    /// unproven, mutation falls back to node-liveness checks only.
+    pub fn main_unproven() -> Self {
+        Self {
+            kind: FrameKind::Main,
+            oopif_target_id: None,
+            identity: None,
+        }
+    }
+}
+
 /// One interactive element captured in a page snapshot.
 #[derive(Debug, Clone, Serialize)]
 pub struct RefEntry {
     /// CDP backendNodeId — internal only, never exposed to callers.
+    /// Valid in the tab's own session, or in the OOPIF child session
+    /// named by `frame.oopif_target_id`.
     #[serde(skip_serializing)]
     pub backend_node_id: i64,
     pub node_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Frame identity — internal; only the kind string is surfaced.
+    #[serde(skip_serializing)]
+    pub frame: FrameRef,
 }
 
 #[derive(Debug, Clone)]
@@ -285,6 +357,14 @@ mod tests {
                     backend_node_id: 555,
                     node_name: "button".into(),
                     label: Some("Submit".into()),
+                    frame: FrameRef {
+                        kind: FrameKind::Main,
+                        oopif_target_id: None,
+                        identity: Some(FrameIdentity {
+                            frame_id: "F_MAIN".into(),
+                            loader_id: "L1".into(),
+                        }),
+                    },
                 },
             );
             rec.tabs.insert(
@@ -323,6 +403,20 @@ mod tests {
         let entry = store.resolve_ref("sess-a", &tid, &tab, &ext).unwrap();
         assert_eq!(entry.backend_node_id, 555);
         assert_eq!(entry.node_name, "button");
+        assert_eq!(entry.frame.kind, FrameKind::Main);
+        assert_eq!(
+            entry.frame.identity.as_ref().map(|i| i.loader_id.as_str()),
+            Some("L1")
+        );
+    }
+
+    #[test]
+    fn ref_entry_serialization_hides_internal_identifiers() {
+        let (store, tid, tab, ext) = store_with_ref();
+        let entry = store.resolve_ref("sess-a", &tid, &tab, &ext).unwrap();
+        let v = serde_json::to_value(&entry).unwrap();
+        assert!(v.get("backend_node_id").is_none(), "{v}");
+        assert!(v.get("frame").is_none(), "frame identity is internal: {v}");
     }
 
     #[test]

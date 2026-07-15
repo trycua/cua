@@ -25,16 +25,28 @@
 //!
 //! The legacy `crate::cdp` / `crate::page` helpers are untouched; this
 //! module speaks CDP over its own pooled, loopback-validated
-//! WebSocket ([`cdp_ws`]).
+//! WebSocket ([`cdp_ws`]) with an event-capable demultiplexer.
+//!
+//! v2 DOM-ref slice: snapshots compose shadow DOM (piercing, minus
+//! user-agent roots), same-process iframes (via `contentDocument`),
+//! and — only when the capability is proven live — OOPIF child targets
+//! auto-attached beneath the bound tab's own session. Every ref
+//! carries its frame's document identity (frame id + loader id), which
+//! is re-proven before any mutation; frames whose identity or
+//! capability cannot be proven are omitted or refused, never guessed.
 
 pub mod binding;
 pub mod cdp_ws;
 pub mod engine;
+#[cfg(test)]
+pub(crate) mod mock_cdp;
 pub mod platform;
 pub mod refusal;
 pub mod store;
 pub mod tools;
 pub mod types;
+#[cfg(test)]
+mod v2_tests;
 
 pub use engine::BrowserEngine;
 pub use platform::{BrowserPlatform, PrepareAction, PrepareOutcome, PrepareRequest};

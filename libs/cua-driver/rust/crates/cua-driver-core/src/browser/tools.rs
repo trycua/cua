@@ -99,8 +99,10 @@ impl GetBrowserStateTool {
                 window_id of a native browser window to classify it, correlate it to \
                 a CDP target (exact-or-refuse), and mint a session-scoped target id \
                 plus tab ids. Mode 2 (snapshot): pass target_id + tab_id to snapshot \
-                the tab's main frame and mint p<snapshot>:<index> element refs for \
-                browser_click / browser_type. Never performs setup — a missing \
+                the tab's composed DOM (main frame, shadow DOM, same-process iframes, \
+                and capability-tested out-of-process iframes) and mint \
+                p<snapshot>:<index> element refs for browser_click / browser_type; \
+                each ref reports its frame kind. Never performs setup — a missing \
                 endpoint is a structured browser_requires_setup refusal pointing at \
                 browser_prepare."
                 .into(),
@@ -152,19 +154,23 @@ impl Tool for GetBrowserStateTool {
                 .snapshot_tab(&session, &target_id, &tab_id)
                 .await
             {
-                Ok((snapshot_id, url, refs)) => {
-                    let ref_list: Vec<Value> = refs
+                Ok(outcome) => {
+                    let ref_list: Vec<Value> = outcome
+                        .refs
                         .iter()
                         .map(|(ext, entry)| {
                             json!({
                                 "ref": ext,
                                 "node": entry.node_name,
                                 "label": entry.label,
+                                "frame": entry.frame.kind.as_str(),
                             })
                         })
                         .collect();
                     ToolResult::text(format!(
-                        "snapshot p{snapshot_id} of {url}: {} interactive element(s)",
+                        "snapshot p{} of {}: {} interactive element(s)",
+                        outcome.snapshot_id,
+                        outcome.url,
                         ref_list.len()
                     ))
                     .with_structured(json!({
@@ -172,9 +178,14 @@ impl Tool for GetBrowserStateTool {
                         "mode": "snapshot",
                         "target_id": target_id,
                         "tab_id": tab_id,
-                        "snapshot_id": format!("p{snapshot_id}"),
-                        "url": url,
+                        "snapshot_id": format!("p{}", outcome.snapshot_id),
+                        "url": outcome.url,
                         "refs": ref_list,
+                        "truncated": outcome.truncated,
+                        "oopif": {
+                            "status": outcome.oopif.as_str(),
+                            "frames": outcome.oopif.frames(),
+                        },
                     }))
                 }
                 Err(refusal) => refusal.to_tool_result(),
@@ -517,22 +528,43 @@ impl Tool for BrowserClickTool {
             Err(refusal) => return refusal.to_tool_result(),
         };
 
-        let backend_node_id = match &ext_ref {
+        // Ref path: re-prove the ref's frame/document identity and get
+        // the session (tab or contained OOPIF child) its node lives in.
+        let (backend_node_id, frame_kind, cdp_session) = match &ext_ref {
             Some(r) => {
-                match self
+                let entry = match self
                     .engine
                     .store
                     .resolve_ref(&session, &target_id, &tab_id, r)
                 {
-                    Ok(entry) => Some(entry.backend_node_id),
+                    Ok(entry) => entry,
                     Err(refusal) => return refusal.to_tool_result(),
-                }
+                };
+                let frame_session = match self
+                    .engine
+                    .frame_session_for_mutation(
+                        &session,
+                        &target_id,
+                        &tab_id,
+                        &validated,
+                        &entry.frame,
+                    )
+                    .await
+                {
+                    Ok(s) => s,
+                    Err(refusal) => return refusal.to_tool_result(),
+                };
+                (
+                    Some(entry.backend_node_id),
+                    Some(entry.frame.kind.as_str()),
+                    frame_session,
+                )
             }
-            None => None,
+            None => (None, None, validated.cdp_session.clone()),
         };
 
         let conn = &validated.conn;
-        let cdp = validated.cdp_session.as_str();
+        let cdp = cdp_session.as_str();
 
         // dom_event route: explicit opt-in only.
         if route == "dom_event" {
@@ -589,6 +621,7 @@ impl Tool for BrowserClickTool {
                     "target_id": target_id,
                     "tab_id": tab_id,
                     "ref": ext_ref,
+                    "frame": frame_kind,
                 })),
                 Err(e) => ToolResult::error(format!("DOM click failed: {e}")),
             };
@@ -670,6 +703,7 @@ impl Tool for BrowserClickTool {
             "target_id": target_id,
             "tab_id": tab_id,
             "ref": ext_ref,
+            "frame": frame_kind,
             "x": x,
             "y": y,
         }))
@@ -692,6 +726,22 @@ fn quad_center(box_model: &Value) -> Option<(f64, f64)> {
 }
 
 // ── browser_type ─────────────────────────────────────────────────────────────
+
+/// Editability check evaluated ON the ref's node (`this`), so focus is
+/// verified against the node's own root — Document or ShadowRoot — and
+/// behaves the same in the main frame, composed shadow DOM,
+/// same-process iframes, and OOPIF child documents.
+const EDITABLE_AND_FOCUSED_CHECK: &str = "function() { \
+    const root = this.getRootNode(); \
+    const active = ('activeElement' in root) ? root.activeElement : null; \
+    if (active !== this) return false; \
+    if (this.isContentEditable) return true; \
+    if (this.tagName === 'TEXTAREA') return !this.disabled && !this.readOnly; \
+    if (this.tagName !== 'INPUT') return false; \
+    return !this.disabled && !this.readOnly && \
+        !['button','checkbox','color','file','hidden','image','radio','range','reset','submit']\
+        .includes((this.type || 'text').toLowerCase()); \
+}";
 
 pub struct BrowserTypeTool {
     def: ToolDef,
@@ -769,8 +819,6 @@ impl Tool for BrowserTypeTool {
             Ok(v) => v,
             Err(refusal) => return refusal.to_tool_result(),
         };
-        let conn = &validated.conn;
-        let cdp = validated.cdp_session.as_str();
 
         let ext_ref = match args.require_str("ref") {
             Ok(value) => value,
@@ -784,6 +832,19 @@ impl Tool for BrowserTypeTool {
             Ok(e) => e,
             Err(refusal) => return refusal.to_tool_result(),
         };
+        // Re-prove the ref's frame identity; typing routes to the frame's
+        // own session (tab, or the contained OOPIF child session).
+        let cdp_session = match self
+            .engine
+            .frame_session_for_mutation(&session, &target_id, &tab_id, &validated, &entry.frame)
+            .await
+        {
+            Ok(s) => s,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+        let conn = &validated.conn;
+        let cdp = cdp_session.as_str();
+
         if let Err(_e) = conn
             .call(
                 Some(cdp),
@@ -798,12 +859,41 @@ impl Tool for BrowserTypeTool {
             )
             .to_tool_result();
         }
+        // Frame- and shadow-aware editability check: evaluated on the
+        // ref's own node so it works identically for the main document,
+        // shadow roots (getRootNode().activeElement), same-process
+        // iframes, and OOPIF child documents.
+        let object_id = match conn
+            .call(
+                Some(cdp),
+                "DOM.resolveNode",
+                json!({ "backendNodeId": entry.backend_node_id }),
+            )
+            .await
+            .ok()
+            .and_then(|resolved| {
+                resolved
+                    .get("object")
+                    .and_then(|o| o.get("objectId"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            }) {
+            Some(o) => o,
+            None => {
+                return BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRefStale,
+                    "the ref's node no longer resolves in the live page",
+                )
+                .to_tool_result()
+            }
+        };
         let editable = conn
             .call(
                 Some(cdp),
-                "Runtime.evaluate",
+                "Runtime.callFunctionOn",
                 json!({
-                    "expression": "(() => { const e = document.activeElement; if (!e) return false; if (e.isContentEditable) return true; if (e.tagName === 'TEXTAREA') return !e.disabled && !e.readOnly; if (e.tagName !== 'INPUT') return false; return !e.disabled && !e.readOnly && !['button','checkbox','color','file','hidden','image','radio','range','reset','submit'].includes((e.type || 'text').toLowerCase()); })()",
+                    "objectId": object_id,
+                    "functionDeclaration": EDITABLE_AND_FOCUSED_CHECK,
                     "returnByValue": true,
                 }),
             )
@@ -863,6 +953,7 @@ impl Tool for BrowserTypeTool {
                 "target_id": target_id,
                 "tab_id": tab_id,
                 "ref": ext_ref,
+                "frame": entry.frame.kind.as_str(),
                 "mode": mode,
                 "chars": text.chars().count(),
             })),

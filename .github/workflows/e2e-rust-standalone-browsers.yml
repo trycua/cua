@@ -1,0 +1,160 @@
+name: "E2E: Rust standalone browsers"
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Optional full 40-character commit SHA; defaults to dispatch SHA"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  source:
+    name: "Resolve exact source"
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - id: resolve
+        name: Validate source SHA
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+        run: |
+          sha="${REQUESTED_SHA:-$DISPATCH_SHA}"
+          if [[ ! "$sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "ref must be a full 40-character commit SHA" >&2
+            exit 2
+          fi
+          echo "sha=${sha,,}" >> "$GITHUB_OUTPUT"
+
+  browser:
+    name: "${{ matrix.label }} / Chrome and Edge"
+    needs: source
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows
+            os: windows-latest
+            shell: pwsh
+            artifact: rust-browser-windows
+          - label: Linux X11
+            os: ubuntu-latest
+            shell: bash
+            artifact: rust-browser-linux-x11
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+      CUA_TEST_REQUIRE_EXTERNAL_BROWSERS: "1"
+      CUA_E2E_FORBID_SKIPS: "1"
+      CUA_TEST_DRIVER_STDERR: "1"
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Windows video tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg -y --no-progress
+          }
+          ffmpeg -version
+          ffprobe -version
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb dbus-x11 at-spi2-core openbox libgtk-3-dev clang pkg-config \
+            libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev \
+            libx11-dev libxi-dev libxtst-dev libxext-dev libssl-dev \
+            libxdo-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev ffmpeg
+          google-chrome --version
+      - name: Build source driver
+        shell: ${{ matrix.shell }}
+        run: cargo build --release -p cua-driver --manifest-path libs/cua-driver/rust/Cargo.toml
+      - name: Run standalone browsers on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $artifact = Join-Path $PWD "artifacts\cua-driver\standalone-browser"
+          $recordings = Join-Path $artifact "recordings"
+          New-Item -ItemType Directory -Force $recordings | Out-Null
+          $env:CUA_TEST_DRIVER_BIN = Join-Path $PWD "libs\cua-driver\rust\target\release\cua-driver.exe"
+          $env:CUA_E2E_DECLARATIONS_FILE = Join-Path $artifact "cases.jsonl"
+          $env:CUA_E2E_ENVIRONMENT_FILE = Join-Path $artifact "environment.jsonl"
+          $env:CUA_E2E_RESULTS_FILE = Join-Path $artifact "results.jsonl"
+          $env:CUA_E2E_RECORDINGS_ROOT = $recordings
+          foreach ($path in @($env:CUA_E2E_DECLARATIONS_FILE, $env:CUA_E2E_ENVIRONMENT_FILE, $env:CUA_E2E_RESULTS_FILE)) {
+            New-Item -ItemType File -Force $path | Out-Null
+            Clear-Content $path
+          }
+          Push-Location libs\cua-driver\rust
+          try {
+            cargo test --release -p cua-driver --test standalone_browser_behavior_test -- --ignored --nocapture --test-threads=1
+            if ($LASTEXITCODE -ne 0) { throw "standalone browser matrix failed" }
+            cargo run --release -p cua-driver-testkit --bin cua-e2e-report -- `
+              --declarations $env:CUA_E2E_DECLARATIONS_FILE `
+              --environment $env:CUA_E2E_ENVIRONMENT_FILE `
+              --results $env:CUA_E2E_RESULTS_FILE `
+              --artifact-root $artifact `
+              --require-video `
+              --output (Join-Path $artifact "summary.md")
+            if ($LASTEXITCODE -ne 0) { throw "standalone browser report failed" }
+          } finally {
+            Pop-Location
+          }
+      - name: Run standalone browsers on Linux X11
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          artifact="$PWD/artifacts/cua-driver/standalone-browser"
+          mkdir -p "$artifact/recordings"
+          : > "$artifact/cases.jsonl"
+          : > "$artifact/environment.jsonl"
+          : > "$artifact/results.jsonl"
+          export CUA_TEST_DRIVER_BIN="$PWD/libs/cua-driver/rust/target/release/cua-driver"
+          export CUA_E2E_DECLARATIONS_FILE="$artifact/cases.jsonl"
+          export CUA_E2E_ENVIRONMENT_FILE="$artifact/environment.jsonl"
+          export CUA_E2E_RESULTS_FILE="$artifact/results.jsonl"
+          export CUA_E2E_RECORDINGS_ROOT="$artifact/recordings"
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            dbus-run-session -- bash -lc \
+            "openbox >/tmp/cua-browser-openbox.log 2>&1 & sleep 2; cd libs/cua-driver/rust; cargo test --release -p cua-driver --test standalone_browser_behavior_test -- --ignored --nocapture --test-threads=1"
+          cargo run --release -p cua-driver-testkit --manifest-path libs/cua-driver/rust/Cargo.toml --bin cua-e2e-report -- \
+            --declarations "$artifact/cases.jsonl" \
+            --environment "$artifact/environment.jsonl" \
+            --results "$artifact/results.jsonl" \
+            --artifact-root "$artifact" \
+            --require-video \
+            --output "$artifact/summary.md"
+      - name: Publish job summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f artifacts/cua-driver/standalone-browser/summary.md ]]; then
+            cat artifacts/cua-driver/standalone-browser/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Standalone browser summary was not produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: artifacts/cua-driver/standalone-browser
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

@@ -103,6 +103,11 @@ Keep autologin, sleep prevention, and screen-lock prevention enabled. Add only
 the maintainer host's public SSH key to `~/.ssh/authorized_keys`; never copy a
 private key or registry credential into the guest.
 
+The public base must already have the Command Line Tools agreement accepted.
+If macOS presents that agreement while installing the tools, accept it in the
+VM display, then rerun the four base-property checks above. Do not freeze a
+builder while `xcrun` or `swiftc` still requests an agreement.
+
 From another host terminal, get the builder address and sync a clean committed
 checkout. The sync intentionally omits `.git` and writes the exact commit to
 `.cua-e2e-source-sha`. It also excludes ignored credential files such as
@@ -169,9 +174,17 @@ osascript -e \
 # The installed app owns driver-side app enumeration.
 ~/.local/bin/cua-driver list_apps '{}'
 
-# Recording triggers Tahoe's direct-capture/private-window prompt.
-~/.local/bin/cua-driver recording start
-~/.local/bin/cua-driver recording stop
+# A desktop screenshot triggers Tahoe's direct-capture/private-window prompt.
+~/.local/bin/cua-driver call set_config '{"capture_scope":"desktop"}'
+~/.local/bin/cua-driver call get_desktop_state '{}' \
+  > /tmp/cua-driver-seed-desktop-state.json
+~/.local/bin/cua-driver call set_config '{"capture_scope":"window"}'
+jq -e '
+  .screenshot_mime_type == "image/png"
+  and .screenshot_width > 0
+  and .screenshot_height > 0
+  and (.screenshot_png_b64 | length) > 0
+' /tmp/cua-driver-seed-desktop-state.json >/dev/null
 ```
 
 Choose Allow for both `Terminal` -> `System Events` and `CuaDriver` ->
@@ -192,18 +205,32 @@ csrutil status
 ```
 
 All three commands must succeed, and `csrutil status` must report disabled.
-Stop the builder and clone it to a date/version-named private seed:
+Stop the builder and clone it to a date/version-named private seed plus two
+stopped backups:
 
 ```bash
 SEED=cua-driver-macos-e2e-seed-26.5.2-YYYYMMDD
+BACKUP_A="${SEED}-backup-a"
+BACKUP_B="${SEED}-backup-b"
 lume stop "$BUILDER"
 lume clone "$BUILDER" "$SEED"
+lume clone "$SEED" "$BACKUP_A"
+lume clone "$SEED" "$BACKUP_B"
+lume ls
 ```
 
-Treat the seed as immutable and local-only. Record its name, public base tag,
-macOS build (`sw_vers`), Lume version, CLT version, Rust version, Node version,
-and signing-certificate hash in the maintainer log. Build a new seed instead of
-updating this one in place.
+Require the seed and both backups to show `stopped`. Treat them as immutable and
+local-only. Record their names, the public base tag, macOS build (`sw_vers`),
+Lume version, CLT version, Rust version, Node version, and signing-certificate
+hash in the maintainer log. Also record that the following consent paths were
+granted and then rerun without prompts:
+
+- `CuaDriver.app`: Accessibility and Screen Recording
+- Terminal controlling System Events
+- CuaDriver controlling System Events
+- CuaDriver direct screen and audio capture without the system picker
+
+Build a new seed instead of updating one in place.
 
 ## Run the acceptance gate
 

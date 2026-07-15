@@ -758,6 +758,7 @@ dependencies = [
  "async-trait",
  "futures-util",
  "image",
+ "libc",
  "regex",
  "regorus",
  "serde",

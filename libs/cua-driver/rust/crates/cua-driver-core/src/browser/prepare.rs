@@ -48,6 +48,13 @@ pub(crate) struct ManagedBrowser {
 
 impl Drop for ManagedBrowser {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        unsafe {
+            // The isolated browser is spawned as its own process group. Chrome
+            // fans out into renderer/utility descendants, so killing only the
+            // root Child can leave profile writers alive after cleanup.
+            libc::kill(-(self.child.id() as i32), libc::SIGKILL);
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
         if self.delete_profile && profile_matches_marker(&self.profile, &self.marker) {
@@ -121,6 +128,11 @@ fn cleanup_created_profile(profile: &PreparedProfile) {
 
 fn isolated_browser_command(executable: &str, profile: &Path) -> Command {
     let mut command = Command::new(executable);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     command
         .arg("--remote-debugging-port=0")
         .arg(format!("--user-data-dir={}", profile.display()))

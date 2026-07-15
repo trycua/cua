@@ -31,6 +31,9 @@ tokio-tungstenite = "0.24"
 futures-util = "0.3"
 uuid = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # Used by `cursor_sampler::sample_cursor` to poll the OS mouse position
 # during video recording. Same version as platform-windows uses to avoid
 # a duplicate crate version.

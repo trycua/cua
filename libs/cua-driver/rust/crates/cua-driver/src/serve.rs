@@ -269,6 +269,13 @@ pub fn default_pid_file_path() -> String {
 
 // ── Protocol types ────────────────────────────────────────────────────────────
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolObservationOrigin {
+    McpProxy,
+    Direct,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DaemonRequest {
     pub method: String,
@@ -286,6 +293,12 @@ pub struct DaemonRequest {
     /// serde defaults a missing field to `None` on deserialize.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// Bounded internal routing metadata for exactly-once completion
+    /// observation. New proxies set `mcp_proxy` only after the daemon
+    /// advertises ownership; direct protocol clients may set `direct`.
+    /// Older peers ignore the additive field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_origin: Option<ToolObservationOrigin>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -306,6 +319,130 @@ impl DaemonResponse {
     pub fn err(msg: impl Into<String>, code: i32) -> Self {
         Self { ok: false, result: None, error: Some(msg.into()), exit_code: Some(code) }
     }
+}
+
+fn daemon_observation_transport(req: &DaemonRequest) -> Option<crate::telemetry::Transport> {
+    match req.observation_origin {
+        Some(ToolObservationOrigin::McpProxy) => Some(crate::telemetry::Transport::McpStdio),
+        Some(ToolObservationOrigin::Direct) => Some(crate::telemetry::Transport::Daemon),
+        // Legacy callers did not declare ownership. Leaving them unobserved
+        // preserves the legacy proxy as the single emitter during rollout;
+        // current direct callers explicitly select `Direct` above.
+        None => None,
+    }
+}
+
+fn observe_daemon_result(
+    observation: Option<(
+        cua_driver_core::server::ToolObservationTimer,
+        crate::telemetry::Transport,
+    )>,
+    result: serde_json::Value,
+) -> serde_json::Value {
+    let Some((timer, transport)) = observation else {
+        return result;
+    };
+    let response = cua_driver_core::protocol::Response::ok(serde_json::Value::Null, result);
+    crate::telemetry::capture_tool_completed(timer.finish(&response), transport);
+    match response.body {
+        cua_driver_core::protocol::ResponseBody::Result { result } => result,
+        cua_driver_core::protocol::ResponseBody::Error { .. } => unreachable!("constructed ok response"),
+    }
+}
+
+fn observe_daemon_error(
+    observation: Option<(
+        cua_driver_core::server::ToolObservationTimer,
+        crate::telemetry::Transport,
+    )>,
+    exit_code: i32,
+) {
+    let Some((timer, transport)) = observation else {
+        return;
+    };
+    let response = cua_driver_core::protocol::Response::ok(
+        serde_json::Value::Null,
+        serde_json::json!({
+            "content": [],
+            "isError": true,
+            "structuredContent": { "exit_code": exit_code },
+        }),
+    );
+    crate::telemetry::capture_tool_completed(timer.finish(&response), transport);
+}
+
+async fn invoke_daemon_tool(
+    registry: &std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
+    req: DaemonRequest,
+) -> DaemonResponse {
+    let observation_transport = daemon_observation_transport(&req);
+    let raw_name = req.name.as_deref().unwrap_or("").to_owned();
+    let tool_name = if raw_name == "type_text_chars" {
+        eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");
+        "type_text".to_owned()
+    } else {
+        raw_name
+    };
+    let known_tool = registry.get_def(&tool_name).is_some();
+    let observation = observation_transport.map(|transport| {
+        (
+            cua_driver_core::server::ToolObservationTimer::start(
+                tool_name.clone(),
+                known_tool,
+                true,
+                cua_driver_core::server::StdioExecutionPath::InProcess,
+            ),
+            transport,
+        )
+    });
+    let mut args = req
+        .args
+        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+    let effective_session = apply_session_identity(&mut args, &req.session_id);
+
+    if let Some(sid) = &effective_session {
+        if !is_session_lifecycle_tool(&tool_name)
+            && cua_driver_core::session::is_session_ended(sid)
+        {
+            observe_daemon_error(observation, 1);
+            return DaemonResponse::err(
+                format!(
+                    "session '{sid}' has ended; tool call '{tool_name}' was rejected. \
+                     Call start_session with this id to revive it before issuing further \
+                     actions, or use a new session id."
+                ),
+                1,
+            );
+        }
+    }
+
+    if !known_tool {
+        observe_daemon_error(observation, 64);
+        return DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);
+    }
+
+    let result = registry.invoke(&tool_name, args).await;
+    let is_error = result.is_error.unwrap_or(false);
+    let content: Vec<serde_json::Value> = result
+        .content
+        .iter()
+        .map(|item| match item {
+            cua_driver_core::protocol::Content::Text { text, .. } => {
+                serde_json::json!({"type":"text","text":text})
+            }
+            cua_driver_core::protocol::Content::Image {
+                data, mime_type, ..
+            } => serde_json::json!({"type":"image","data":data,"mimeType":mime_type}),
+        })
+        .collect();
+    let mut result_value = serde_json::json!({
+        "content": content,
+        "isError": is_error,
+    });
+    if let Some(structured) = result.structured_content {
+        result_value["structuredContent"] = structured;
+    }
+    DaemonResponse::ok(observe_daemon_result(observation, result_value))
 }
 
 // ── Client ────────────────────────────────────────────────────────────────────
@@ -350,7 +487,13 @@ pub fn is_daemon_listening(socket_path: &str) -> bool {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let req = DaemonRequest { method: "list".into(), name: None, args: None, session_id: None };
+        let req = DaemonRequest {
+            method: "list".into(),
+            name: None,
+            args: None,
+            session_id: None,
+            observation_origin: None,
+        };
         send_request(socket_path, &req)
             .ok()
             .map(|r| r.ok)
@@ -622,6 +765,7 @@ pub async fn run_serve(
                                     "tools": tools,
                                     "capability_version": cua_driver_core::tool::CAPABILITY_VERSION,
                                     "schema_version": "1",
+                                    "tool_observation_owner": "daemon",
                                 }));
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
@@ -657,82 +801,7 @@ pub async fn run_serve(
                                     now_unix_secs(),
                                     std::sync::atomic::Ordering::Relaxed,
                                 );
-                                let raw_name = req.name.as_deref().unwrap_or("").to_owned();
-                                // Deprecated alias: `type_text_chars` → `type_text`.
-                                // Mirrors Swift's `ToolRegistry.call` aliasing.
-                                let tool_name = if raw_name == "type_text_chars" {
-                                    eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");
-                                    "type_text".to_owned()
-                                } else { raw_name.clone() };
-                                let mut args = req.args.unwrap_or(serde_json::Value::Object(
-                                    serde_json::Map::new()
-                                ));
-                                // Apply the caller-declared session identity
-                                // (explicit `session` → `_session_id`; minted id
-                                // as the recording/config fallback only). See
-                                // `apply_session_identity` for the full rationale
-                                // and the cursor's explicit-required contract.
-                                let effective_session =
-                                    apply_session_identity(&mut args, &req.session_id);
-                                // Resurrection guard: a call whose effective
-                                // session has already ended (end_session / idle
-                                // TTL / control-connection EOF) must NOT run — it
-                                // would re-create session-owned state (cursor,
-                                // config override, recording) the reaper already
-                                // passed. Reject it LOUDLY (isError) so a stray
-                                // late action is visibly a failure, not a phantom
-                                // success a caller silently trusts. The session-
-                                // lifecycle tools are EXEMPT: `start_session`
-                                // revives an ended id (explicit, intentional reuse)
-                                // and `end_session` stays idempotent. Live and
-                                // anonymous calls pass through unchanged.
-                                if let Some(sid) = &effective_session {
-                                    if !is_session_lifecycle_tool(&tool_name)
-                                        && cua_driver_core::session::is_session_ended(sid)
-                                    {
-                                        let resp = DaemonResponse::err(
-                                            format!(
-                                                "session '{sid}' has ended; tool call '{tool_name}' was \
-                                                 rejected. Call start_session with this id to revive it \
-                                                 before issuing further actions, or use a new session id."
-                                            ),
-                                            1,
-                                        );
-                                        let _ = writer.write_all(
-                                            (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
-                                        ).await;
-                                        continue;
-                                    }
-                                }
-                                if reg.get_def(&tool_name).is_none() {
-                                    let resp = DaemonResponse::err(
-                                        format!("Unknown tool: {tool_name}"), 64
-                                    );
-                                    let _ = writer.write_all(
-                                        (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
-                                    ).await;
-                                    continue;
-                                }
-                                let result = reg.invoke(&tool_name, args).await;
-                                let is_err = result.is_error.unwrap_or(false);
-                                let content: Vec<serde_json::Value> = result.content.iter().map(|c| {
-                                    match c {
-                                        cua_driver_core::protocol::Content::Text { text, .. } =>
-                                            serde_json::json!({"type":"text","text":text}),
-                                        cua_driver_core::protocol::Content::Image { data, mime_type, .. } =>
-                                            serde_json::json!({"type":"image","data":data,"mimeType":mime_type}),
-                                    }
-                                }).collect();
-                                let mut result_obj = serde_json::json!({
-                                    "content": content,
-                                    "isError": is_err
-                                });
-                                if let Some(sc) = result.structured_content {
-                                    result_obj["structuredContent"] = sc;
-                                }
-                                // Preserve tool-level `isError` and structured
-                                // content inside a successful daemon transport.
-                                let resp = DaemonResponse::ok(result_obj);
+                                let resp = invoke_daemon_tool(&reg, req).await;
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -1172,6 +1241,7 @@ pub async fn run_serve(
                                     "tools": tools,
                                     "capability_version": cua_driver_core::tool::CAPABILITY_VERSION,
                                     "schema_version": "1",
+                                    "tool_observation_owner": "daemon",
                                 }));
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
@@ -1196,61 +1266,7 @@ pub async fn run_serve(
                                     now_unix_secs(),
                                     std::sync::atomic::Ordering::Relaxed,
                                 );
-                                let raw_name = req.name.as_deref().unwrap_or("").to_owned();
-                                let tool_name = if raw_name == "type_text_chars" {
-                                    eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");
-                                    "type_text".to_owned()
-                                } else { raw_name.clone() };
-                                let mut args = req.args.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                                // Apply the caller-declared session identity
-                                // (see the unix branch + apply_session_identity).
-                                let effective_session =
-                                    apply_session_identity(&mut args, &req.session_id);
-                                // Resurrection guard on the effective session
-                                // (see the unix branch for the full rationale):
-                                // reject a stray late action on a dead id LOUDLY,
-                                // but exempt the lifecycle tools so start_session
-                                // can revive and end_session stays idempotent.
-                                if let Some(sid) = &effective_session {
-                                    if !is_session_lifecycle_tool(&tool_name)
-                                        && cua_driver_core::session::is_session_ended(sid)
-                                    {
-                                        let resp = DaemonResponse::err(
-                                            format!(
-                                                "session '{sid}' has ended; tool call '{tool_name}' was \
-                                                 rejected. Call start_session with this id to revive it \
-                                                 before issuing further actions, or use a new session id."
-                                            ),
-                                            1,
-                                        );
-                                        let _ = writer.write_all(
-                                            (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
-                                        ).await;
-                                        continue;
-                                    }
-                                }
-                                if reg.get_def(&tool_name).is_none() {
-                                    let resp = DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);
-                                    let _ = writer.write_all(
-                                        (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
-                                    ).await;
-                                    continue;
-                                }
-                                let result = reg.invoke(&tool_name, args).await;
-                                let is_err = result.is_error.unwrap_or(false);
-                                let content: Vec<serde_json::Value> = result.content.iter().map(|c| match c {
-                                    cua_driver_core::protocol::Content::Text { text, .. } =>
-                                        serde_json::json!({"type":"text","text":text}),
-                                    cua_driver_core::protocol::Content::Image { data, mime_type, .. } =>
-                                        serde_json::json!({"type":"image","data":data,"mimeType":mime_type}),
-                                }).collect();
-                                let mut result_obj = serde_json::json!({"content": content, "isError": is_err});
-                                if let Some(sc) = result.structured_content {
-                                    result_obj["structuredContent"] = sc;
-                                }
-                                // Preserve tool-level `isError` and structured
-                                // content inside a successful daemon transport.
-                                let resp = DaemonResponse::ok(result_obj);
+                                let resp = invoke_daemon_tool(&reg, req).await;
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -1426,7 +1442,13 @@ pub fn run_stop_cmd(socket_path: &str) {
         std::process::exit(1);
     }
 
-    let req = DaemonRequest { method: "shutdown".into(), name: None, args: None, session_id: None };
+    let req = DaemonRequest {
+        method: "shutdown".into(),
+        name: None,
+        args: None,
+        session_id: None,
+        observation_origin: None,
+    };
     match send_request(socket_path, &req) {
         Ok(_) => {
             // Poll until daemon stops responding (up to 2 seconds).
@@ -1536,6 +1558,7 @@ mod gate_tests {
             name: Some("probe".into()),
             args: Some(serde_json::json!({})),
             session_id: sid.map(|s| s.to_owned()),
+            observation_origin: None,
         }
     }
 
@@ -1596,6 +1619,7 @@ mod gate_tests {
             name: None,
             args: None,
             session_id: Some(sid.to_owned()),
+            observation_origin: None,
         };
         let resp = tokio::task::spawn_blocking(move || send_request(&socket2, &end))
             .await
@@ -1632,6 +1656,7 @@ mod gate_tests {
             name: Some("start_session".into()),
             args: Some(serde_json::json!({})),
             session_id: Some(s3b),
+            observation_origin: None,
         };
         let resp = tokio::task::spawn_blocking(move || send_request(&socket3b, &start))
             .await
@@ -1673,10 +1698,55 @@ mod gate_tests {
             name: None,
             args: None,
             session_id: None,
+            observation_origin: None,
         };
         let _ = tokio::task::spawn_blocking(move || send_request(&socket5, &shutdown)).await;
         let _ = server.await;
         let _ = std::fs::remove_file(&socket);
+    }
+}
+
+#[cfg(test)]
+mod telemetry_routing_tests {
+    use super::*;
+
+    fn request(origin: Option<ToolObservationOrigin>) -> DaemonRequest {
+        DaemonRequest {
+            method: "call".into(),
+            name: Some("click".into()),
+            args: Some(serde_json::json!({})),
+            session_id: Some("bounded-session".into()),
+            observation_origin: origin,
+        }
+    }
+
+    #[test]
+    fn observation_origin_selects_exactly_one_transport() {
+        assert_eq!(
+            daemon_observation_transport(&request(Some(ToolObservationOrigin::McpProxy))),
+            Some(crate::telemetry::Transport::McpStdio)
+        );
+        assert_eq!(
+            daemon_observation_transport(&request(Some(ToolObservationOrigin::Direct))),
+            Some(crate::telemetry::Transport::Daemon)
+        );
+        assert_eq!(daemon_observation_transport(&request(None)), None);
+    }
+
+    #[test]
+    fn observation_origin_is_additive_and_backward_compatible() {
+        let legacy: DaemonRequest = serde_json::from_value(serde_json::json!({
+            "method": "call",
+            "name": "click",
+            "args": {},
+            "session_id": "bounded-session"
+        }))
+        .unwrap();
+        assert_eq!(legacy.observation_origin, None);
+
+        let current = serde_json::to_value(request(Some(ToolObservationOrigin::McpProxy)))
+            .unwrap();
+        assert_eq!(current["observation_origin"], "mcp_proxy");
     }
 }
 

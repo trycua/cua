@@ -13,11 +13,12 @@
 
 use serde::Serialize;
 use serde_json::{Map, Value};
+use std::collections::HashSet;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -235,6 +236,7 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("reported_model", Value::String("unknown".into())),
             ("reported_agent", Value::String("unknown".into())),
             ("reported_agent_version_major", Value::String("unknown".into())),
+            ("execution_mode", Value::String(execution_mode().into())),
         ]),
         event::MCP_TOOL_COMPLETED => bounded_properties(&[
             ("tool_name", Value::String("other".into())),
@@ -243,12 +245,14 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("duration_bucket", Value::String("lt_10ms".into())),
             ("output_type", Value::String("empty".into())),
             ("output_size_bucket", Value::String("0".into())),
+            ("execution_mode", Value::String(execution_mode().into())),
         ]),
         event::MCP_STARTUP_COMPLETED => bounded_properties(&[
             ("path", Value::String("in_process".into())),
             ("daemon", Value::String("not_applicable".into())),
             ("success", Value::Bool(true)),
             ("duration_bucket", Value::String("lt_100ms".into())),
+            ("execution_mode", Value::String(execution_mode().into())),
         ]),
         event::PERMISSIONS_GATE_STARTED => bounded_properties(&[
             ("missing_accessibility", Value::Bool(true)),
@@ -294,35 +298,19 @@ pub fn register_stdio_observer() {
     let _ = cua_driver_core::server::set_stdio_observer(Arc::new(TelemetryObserver));
 }
 
+fn execution_mode() -> &'static str {
+    if cua_driver_core::embedded_mode() {
+        "embedded"
+    } else {
+        "standalone"
+    }
+}
+
 struct TelemetryObserver;
 
 impl cua_driver_core::server::StdioObserver for TelemetryObserver {
     fn on_session_started(&self, metadata: cua_driver_core::protocol::InitializeMetadata) {
-        static OBSERVED: AtomicBool = AtomicBool::new(false);
-        if OBSERVED.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        let context = metadata.reported_agent_context.unwrap_or_default();
-        let capabilities = metadata.capability_flags;
-        capture_bounded(
-            event::MCP_SESSION_STARTED,
-            bounded_properties(&[
-                ("mcp_client", Value::String(normalize_client(metadata.client_name.as_deref()))),
-                ("mcp_client_version_major", Value::String(version_major(metadata.client_version.as_deref()))),
-                ("protocol_version", Value::String(normalize_protocol(metadata.protocol_version.as_deref()))),
-                ("capability_tools", Value::Bool(capabilities.tools)),
-                ("capability_roots", Value::Bool(capabilities.roots)),
-                ("capability_sampling", Value::Bool(capabilities.sampling)),
-                ("capability_experimental", Value::Bool(capabilities.experimental)),
-                ("capability_elicitation_form", Value::Bool(capabilities.elicitation_form)),
-                ("capability_elicitation_url", Value::Bool(capabilities.elicitation_url)),
-                ("reported_provider", Value::String(normalize_provider(context.provider.as_deref()))),
-                ("reported_model", Value::String(normalize_model(context.model.as_deref()))),
-                ("reported_agent", Value::String(normalize_client(context.agent_name.as_deref()))),
-                ("reported_agent_version_major", Value::String(version_major(context.agent_version.as_deref()))),
-            ]),
-            Transport::McpStdio,
-        );
+        capture_mcp_session_started(metadata, Transport::McpStdio);
     }
 
     fn on_tool_completed(&self, outcome: cua_driver_core::server::ToolCompletionObservation) {
@@ -330,13 +318,65 @@ impl cua_driver_core::server::StdioObserver for TelemetryObserver {
     }
 }
 
+static MCP_SESSION_OBSERVED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn mcp_session_observation_key(transport: Transport, mcp_client: &str) -> String {
+    match transport {
+        Transport::McpHttp => format!("mcp_http:{mcp_client}"),
+        _ => transport.as_str().to_owned(),
+    }
+}
+
+pub(crate) fn capture_mcp_session_started(
+    metadata: cua_driver_core::protocol::InitializeMetadata,
+    transport: Transport,
+) {
+    if !is_enabled() {
+        return;
+    }
+    let mcp_client = normalize_client(metadata.client_name.as_deref());
+    let observation_key = mcp_session_observation_key(transport, &mcp_client);
+    let observed = MCP_SESSION_OBSERVED.get_or_init(|| Mutex::new(HashSet::new()));
+    if !observed.lock().unwrap().insert(observation_key) {
+        return;
+    }
+
+    let context = metadata.reported_agent_context.unwrap_or_default();
+    let capabilities = metadata.capability_flags;
+    capture_bounded(
+        event::MCP_SESSION_STARTED,
+        bounded_properties(&[
+            ("mcp_client", Value::String(mcp_client)),
+            ("mcp_client_version_major", Value::String(version_major(metadata.client_version.as_deref()))),
+            ("protocol_version", Value::String(normalize_protocol(metadata.protocol_version.as_deref()))),
+            ("capability_tools", Value::Bool(capabilities.tools)),
+            ("capability_roots", Value::Bool(capabilities.roots)),
+            ("capability_sampling", Value::Bool(capabilities.sampling)),
+            ("capability_experimental", Value::Bool(capabilities.experimental)),
+            ("capability_elicitation_form", Value::Bool(capabilities.elicitation_form)),
+            ("capability_elicitation_url", Value::Bool(capabilities.elicitation_url)),
+            ("reported_provider", Value::String(normalize_provider(context.provider.as_deref()))),
+            ("reported_model", Value::String(normalize_model(context.model.as_deref()))),
+            ("reported_agent", Value::String(normalize_client(context.agent_name.as_deref()))),
+            ("reported_agent_version_major", Value::String(version_major(context.agent_version.as_deref()))),
+            ("execution_mode", Value::String(execution_mode().into())),
+        ]),
+        transport,
+    );
+}
+
 pub(crate) fn capture_tool_completed(
     outcome: cua_driver_core::server::ToolCompletionObservation,
     transport: Transport,
 ) {
+    let mut properties = tool_completion_properties(outcome);
+    properties.insert(
+        "execution_mode".into(),
+        Value::String(execution_mode().into()),
+    );
     capture_bounded(
         event::MCP_TOOL_COMPLETED,
-        tool_completion_properties(outcome),
+        properties,
         transport,
     );
 }
@@ -425,6 +465,7 @@ pub(crate) fn capture_mcp_startup_completed(
             ("daemon", Value::String(daemon.into())),
             ("success", Value::Bool(success)),
             ("duration_bucket", Value::String(duration_bucket(elapsed).into())),
+            ("execution_mode", Value::String(execution_mode().into())),
         ]),
         Transport::McpStdio,
     );
@@ -1843,16 +1884,24 @@ mod tests {
             "capability_tools", "capability_roots", "capability_sampling",
             "capability_experimental", "capability_elicitation_form",
             "capability_elicitation_url", "reported_provider", "reported_model",
-            "reported_agent", "reported_agent_version_major",
+            "reported_agent", "reported_agent_version_major", "execution_mode",
         ] {
             assert!(session_properties.contains_key(field), "missing {field}");
         }
 
         let tool = inspect_event(event::MCP_TOOL_COMPLETED).unwrap();
         assert_eq!(tool["properties"]["duration_bucket"], "lt_10ms");
+        assert!(matches!(
+            tool["properties"]["execution_mode"].as_str(),
+            Some("embedded" | "standalone")
+        ));
         let mcp_start = inspect_event(event::MCP_STARTUP_COMPLETED).unwrap();
         assert_eq!(mcp_start["properties"]["transport"], "mcp_stdio");
         assert_eq!(mcp_start["properties"]["path"], "in_process");
+        assert_eq!(
+            mcp_start["properties"]["execution_mode"],
+            tool["properties"]["execution_mode"]
+        );
         let permissions_started = inspect_event(event::PERMISSIONS_GATE_STARTED).unwrap();
         assert_eq!(permissions_started["properties"]["transport"], "daemon");
         assert_eq!(
@@ -1904,6 +1953,22 @@ mod tests {
         }
         let serve_start = inspect_event(event::SERVE_START_LEGACY).unwrap();
         assert_eq!(serve_start["properties"]["transport"], "daemon");
+    }
+
+    #[test]
+    fn session_observation_keys_are_bounded_by_transport_and_client_category() {
+        assert_eq!(
+            mcp_session_observation_key(Transport::McpStdio, "claude_code"),
+            "mcp_stdio"
+        );
+        assert_eq!(
+            mcp_session_observation_key(Transport::McpHttp, "claude_code"),
+            "mcp_http:claude_code"
+        );
+        assert_eq!(
+            mcp_session_observation_key(Transport::McpHttp, "other"),
+            "mcp_http:other"
+        );
     }
 
     #[test]

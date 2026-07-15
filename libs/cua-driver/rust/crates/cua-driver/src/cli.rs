@@ -1446,6 +1446,7 @@ pub fn run_call(
             args: Some(args_for_daemon),
             // CLI one-shot is its own ephemeral, anonymous/global session.
             session_id: None,
+            observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
         };
         match crate::serve::send_request(&socket_path, &req) {
             Ok(resp) => {
@@ -1689,6 +1690,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 // CLI `recording start` is anonymous — the recording is owned by
                 // nobody, so only an unconditional stop (CLI / manual) reaps it.
                 session_id: None,
+                observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => {
@@ -1699,6 +1701,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                         name: Some("get_recording_state".into()),
                         args: Some(serde_json::json!({})),
                         session_id: None,
+                        observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
                     };
                     if let Ok(sr) = crate::serve::send_request(&socket_path, &state_req) {
                         if let Some(result) = sr.result {
@@ -1724,6 +1727,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 name: Some("stop_recording".into()),
                 args: Some(serde_json::json!({})),
                 session_id: None,
+                observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => println!("Recording stopped."),
@@ -1741,6 +1745,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 name: Some("get_recording_state".into()),
                 args: Some(serde_json::json!({})),
                 session_id: None,
+                observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => {
@@ -1982,6 +1987,7 @@ fn run_permissions_status(json: bool) {
             name: Some("check_permissions".into()),
             args: Some(serde_json::json!({ "prompt": false })),
             session_id: None,
+            observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
         };
         crate::serve::send_request(&socket, &req)
             .ok()
@@ -2109,6 +2115,7 @@ fn run_permissions_grant() {
             name: Some("check_permissions".into()),
             args: Some(serde_json::json!({ "prompt": false })),
             session_id: None,
+            observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
         };
         let poll_deadline =
             std::time::Instant::now() + std::time::Duration::from_secs(180);
@@ -2824,6 +2831,7 @@ pub fn run_config_cmd(
                     args: Some(serde_json::json!({})),
                     // CLI `config get` reads the persisted global (anonymous).
                     session_id: None,
+                    observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
                 };
                 if let Ok(resp) = crate::serve::send_request(&socket_path, &req) {
                     if resp.ok {
@@ -2905,6 +2913,7 @@ pub fn run_config_cmd(
                     // CLI `config set` is anonymous → writes the persisted
                     // global default (the only writer of the on-disk config).
                     session_id: None,
+                    observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
                 };
                 if let Ok(resp) = crate::serve::send_request(&socket_path, &req) {
                     if resp.ok {
@@ -2915,6 +2924,7 @@ pub fn run_config_cmd(
                             name: Some("get_config".into()),
                             args: Some(serde_json::json!({})),
                             session_id: None,
+                            observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
                         };
                         if let Ok(r2) = crate::serve::send_request(&socket_path, &req2) {
                             if let Some(result) = r2.result {

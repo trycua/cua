@@ -245,6 +245,18 @@ impl TokenRegistry {
         if binding.pid != pid {
             return Err(STALE_TOKEN_ERROR.to_string());
         }
+        let current_generation = state
+            .by_pid
+            .get(&pid)
+            .and_then(|lane| {
+                lane.iter()
+                    .rev()
+                    .find(|snapshot| snapshot.window_id == binding.window_id)
+            })
+            .map(|snapshot| snapshot.generation);
+        if current_generation != Some(binding.generation) {
+            return Err(STALE_TOKEN_ERROR.to_string());
+        }
         Ok((binding.window_id, binding.element_index))
     }
 
@@ -536,6 +548,11 @@ mod tests {
                 .unwrap_err()
                 .code,
             TOKEN_STALE_GENERATION_CODE
+        );
+        assert_eq!(
+            registry.resolve(10, &stale).unwrap_err(),
+            STALE_TOKEN_ERROR,
+            "generic token consumers must not resolve an index from a superseded snapshot"
         );
     }
 

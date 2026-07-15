@@ -1,6 +1,6 @@
 [project]
 name = "cua-fleet"
-version = "0.0.1"
+version = "0.0.2"
 description = "Reserved for Cua Fleet — fleet orchestration for computer-use agents and sandboxes"
 readme = "README.md"
 license = "MIT"

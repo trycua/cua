@@ -240,7 +240,7 @@ fn command_for_browser(
     url: &str,
     position: (i32, i32),
 ) -> Command {
-    let mut command = browser_launch_command(spec);
+    let mut command = Command::new(&spec.executable);
     let output = if std::env::var_os("CUA_E2E_BROWSER_STDERR").is_some() {
         Stdio::inherit()
     } else {
@@ -258,7 +258,10 @@ fn command_for_browser(
         .arg("--site-per-process")
         .arg("--new-window")
         .arg(format!("--window-position={},{}", position.0, position.1))
-        .arg("--window-size=980,760")
+        .arg("--window-size=980,760");
+    #[cfg(target_os = "linux")]
+    command.arg("--password-store=basic");
+    command
         .arg(url)
         .stdout(Stdio::null())
         .stderr(output);
@@ -271,7 +274,7 @@ fn command_for_unprepared_browser(
     url: &str,
     position: (i32, i32),
 ) -> Command {
-    let mut command = browser_launch_command(spec);
+    let mut command = Command::new(&spec.executable);
     command
         .arg(format!("--user-data-dir={}", profile.display()))
         .arg("--no-first-run")
@@ -282,34 +285,15 @@ fn command_for_unprepared_browser(
         .arg("--disable-default-apps")
         .arg("--new-window")
         .arg(format!("--window-position={},{}", position.0, position.1))
-        .arg("--window-size=980,760")
+        .arg("--window-size=980,760");
+    #[cfg(target_os = "linux")]
+    command.arg("--password-store=basic");
+    command
         .arg(url)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     command
-}
-
-#[cfg(target_os = "macos")]
-fn browser_launch_command(spec: &BrowserSpec) -> Command {
-    let app = spec
-        .executable
-        .ancestors()
-        .find(|path| path.extension().is_some_and(|extension| extension == "app"))
-        .unwrap_or_else(|| {
-            panic!(
-                "standalone browser executable is not inside an app bundle: {}",
-                spec.executable.display()
-            )
-        });
-    let mut command = Command::new("/usr/bin/open");
-    command.arg("-n").arg("-a").arg(app).arg("--args");
-    command
-}
-
-#[cfg(not(target_os = "macos"))]
-fn browser_launch_command(spec: &BrowserSpec) -> Command {
-    Command::new(&spec.executable)
 }
 
 fn window_ids(driver: &mut McpDriver) -> HashSet<u64> {

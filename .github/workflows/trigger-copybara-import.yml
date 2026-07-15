@@ -1,23 +1,83 @@
 name: Trigger Copybara Import
 
 on:
-  pull_request:
+  pull_request_target:
     types: [labeled]
     paths:
       - "fleet/**"
 
 permissions:
-  actions: write
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-west-2
+  COPYBARA_GITHUB_APP_SECRET: copybara/github-app
 
 jobs:
   trigger:
-    if: contains(github.event.label.name, 'copybara-import')
+    if: github.event.label.name == 'copybara-import'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c # v4
+        with:
+          role-to-assume: arn:aws:iam::296062593712:role/github-actions-copybara-cua
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Load GitHub App credentials
+        id: github-app
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_json=$(aws secretsmanager get-secret-value \
+            --secret-id "${COPYBARA_GITHUB_APP_SECRET}" \
+            --query SecretString \
+            --output text)
+          app_id=$(jq -er '.app_id | tostring' <<<"${secret_json}")
+          private_key=$(jq -er '.private_key' <<<"${secret_json}")
+          installation_id=$(jq -r '.installation_id // empty | tostring' <<<"${secret_json}")
+
+          mask() {
+            local value=${1//'%'/'%25'}
+            value=${value//$'\r'/'%0D'}
+            value=${value//$'\n'/'%0A'}
+            printf '::add-mask::%s\n' "${value}"
+          }
+          mask "${app_id}"
+          mask "${private_key}"
+          [[ -z "${installation_id}" ]] || mask "${installation_id}"
+
+          delimiter="COPYBARA_KEY_$(openssl rand -hex 16)"
+          {
+            printf 'app_id=%s\n' "${app_id}"
+            printf 'private_key<<%s\n%s\n%s\n' "${delimiter}" "${private_key}" "${delimiter}"
+            printf 'installation_id=%s\n' "${installation_id}"
+          } >> "${GITHUB_OUTPUT}"
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ steps.github-app.outputs.app_id }}
+          private-key: ${{ steps.github-app.outputs.private_key }}
+          owner: trycua
+          repositories: cloud
+          permission-actions: write
+      - name: Verify GitHub App installation
+        if: steps.github-app.outputs.installation_id != ''
+        env:
+          ACTUAL_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}
+          EXPECTED_INSTALLATION_ID: ${{ steps.github-app.outputs.installation_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${ACTUAL_INSTALLATION_ID}" == "${EXPECTED_INSTALLATION_ID}" ]] || {
+            echo "GitHub App installation ID does not match copybara/github-app" >&2
+            exit 1
+          }
       - name: Trigger cloud reverse sync
         env:
-          GH_TOKEN: ${{ secrets.COPYBARA_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           gh workflow run copybara-reverse-sync.yml \

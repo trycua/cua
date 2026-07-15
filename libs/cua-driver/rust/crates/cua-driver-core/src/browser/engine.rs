@@ -14,7 +14,9 @@ use serde_json::{json, Value};
 
 use crate::session::register_session_end_hook;
 
-use super::binding::{correlate, BindingOutcome, CdpWindowCandidate};
+use super::binding::{
+    correlate, embedded_single_page_candidate, BindingOutcome, CdpWindowCandidate,
+};
 use super::cdp_ws::{CdpConnection, CdpPool};
 use super::platform::BrowserPlatform;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
@@ -160,7 +162,7 @@ impl BrowserEngine {
                 .unwrap_or("")
                 .to_owned();
 
-            let win = match conn
+            let window_geometry = match conn
                 .call(
                     None,
                     "Browser.getWindowForTarget",
@@ -168,38 +170,44 @@ impl BrowserEngine {
                 )
                 .await
             {
-                Ok(w) => w,
-                // A target can vanish between the two calls; skip it.
+                Ok(win) => {
+                    let Some(window_id) = win.get("windowId").and_then(Value::as_i64) else {
+                        continue;
+                    };
+                    let bounds_v = match conn
+                        .call(
+                            None,
+                            "Browser.getWindowBounds",
+                            json!({ "windowId": window_id }),
+                        )
+                        .await
+                    {
+                        Ok(bounds) => bounds,
+                        Err(_) => continue,
+                    };
+                    let b = bounds_v.get("bounds").cloned().unwrap_or(Value::Null);
+                    Some((
+                        window_id,
+                        Rect::new(
+                            b.get("left").and_then(Value::as_f64).unwrap_or(0.0),
+                            b.get("top").and_then(Value::as_f64).unwrap_or(0.0),
+                            b.get("width").and_then(Value::as_f64).unwrap_or(0.0),
+                            b.get("height").and_then(Value::as_f64).unwrap_or(0.0),
+                        ),
+                    ))
+                }
+                // Electron's browser endpoint can omit this Browser-domain
+                // method entirely. Retain only that explicit unsupported
+                // shape; transient errors and vanished targets still skip.
+                Err(error) if error.to_string().contains("(-32601)") => None,
                 Err(_) => continue,
             };
-            let window_id = match win.get("windowId").and_then(Value::as_i64) {
-                Some(w) => w,
-                None => continue,
-            };
-            let bounds_v = match conn
-                .call(
-                    None,
-                    "Browser.getWindowBounds",
-                    json!({ "windowId": window_id }),
-                )
-                .await
-            {
-                Ok(b) => b,
-                Err(_) => continue,
-            };
-            let b = bounds_v.get("bounds").cloned().unwrap_or(Value::Null);
-            let bounds = Rect::new(
-                b.get("left").and_then(Value::as_f64).unwrap_or(0.0),
-                b.get("top").and_then(Value::as_f64).unwrap_or(0.0),
-                b.get("width").and_then(Value::as_f64).unwrap_or(0.0),
-                b.get("height").and_then(Value::as_f64).unwrap_or(0.0),
-            );
             out.push(CdpWindowCandidate {
                 cdp_target_id: target_id,
-                cdp_window_id: window_id,
+                cdp_window_id: window_geometry.map(|(window_id, _)| window_id),
                 title,
                 url,
-                bounds,
+                bounds: window_geometry.map(|(_, bounds)| bounds),
             });
         }
         Ok(out)
@@ -269,33 +277,48 @@ impl BrowserEngine {
         let conn = self.connect(&endpoint.ws_url).await?;
         let candidates = self.window_candidates(&conn).await?;
 
-        let (candidate, quality) = match correlate(&native, &candidates, BOUNDS_TOLERANCE_PX) {
-            BindingOutcome::Bound { candidate, quality } => (candidate, quality),
-            BindingOutcome::Ambiguous(candidate_count) => {
-                return Err(refuse(
-                    BrowserRefusalCode::BrowserBindingAmbiguous,
-                    "multiple CDP targets match the native window and the title \
+        let only_native_window = if candidates.len() == 1
+            && candidates[0].cdp_window_id.is_none()
+            && candidates[0].bounds.is_none()
+        {
+            self.platform
+                .is_only_exact_native_window(pid, window_id)
+                .await?
+        } else {
+            None
+        };
+        let embedded = embedded_single_page_candidate(&candidates, only_native_window);
+        let (candidate, quality) = if let Some(candidate) = embedded {
+            (candidate, BindingQuality::Exact)
+        } else {
+            match correlate(&native, &candidates, BOUNDS_TOLERANCE_PX) {
+                BindingOutcome::Bound { candidate, quality } => (candidate, quality),
+                BindingOutcome::Ambiguous(candidate_count) => {
+                    return Err(refuse(
+                        BrowserRefusalCode::BrowserBindingAmbiguous,
+                        "multiple CDP targets match the native window and the title \
                          tie-break cannot pick a unique one",
-                )
-                .with_detail(json!({ "candidate_count": candidate_count })));
-            }
-            BindingOutcome::None => {
-                return Err(refuse(
-                    BrowserRefusalCode::BrowserWrongTargetRefused,
-                    format!(
-                        "no CDP target correlates with native window {window_id} of \
+                    )
+                    .with_detail(json!({ "candidate_count": candidate_count })));
+                }
+                BindingOutcome::None => {
+                    return Err(refuse(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        format!(
+                            "no CDP target correlates with native window {window_id} of \
                              pid {pid} — refusing rather than guessing"
-                    ),
-                ));
+                        ),
+                    ));
+                }
             }
         };
 
         // Tabs = page targets living in the bound CDP window.
         let mut tabs = HashMap::new();
-        for c in candidates
-            .iter()
-            .filter(|c| c.cdp_window_id == candidate.cdp_window_id)
-        {
+        for c in candidates.iter().filter(|c| match candidate.cdp_window_id {
+            Some(window_id) => c.cdp_window_id == Some(window_id),
+            None => c.cdp_target_id == candidate.cdp_target_id,
+        }) {
             let tab_id = self.store.mint_tab_id();
             tabs.insert(
                 tab_id.clone(),
@@ -420,17 +443,34 @@ impl BrowserEngine {
                     format!("tab {tab_id} no longer has a live CDP page target"),
                 )
             })?;
-        if live.cdp_window_id != record.cdp_window_id {
+        if let Some(bound_window_id) = record.cdp_window_id {
+            if live.cdp_window_id != Some(bound_window_id) {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "the tab moved to a different browser window since binding",
+                ));
+            }
+            if !live
+                .bounds
+                .is_some_and(|bounds| bounds.approx_eq(&native.bounds, BOUNDS_TOLERANCE_PX))
+            {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "CDP window geometry no longer matches the native window — refusing to \
+                     mutate a target that cannot be re-proven",
+                ));
+            }
+        } else if candidates.len() != 1
+            || live.cdp_window_id.is_some()
+            || self
+                .platform
+                .is_only_exact_native_window(record.pid, record.window_id)
+                .await?
+                != Some(true)
+        {
             return Err(refuse(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
-                "the tab moved to a different browser window since binding",
-            ));
-        }
-        if !live.bounds.approx_eq(&native.bounds, BOUNDS_TOLERANCE_PX) {
-            return Err(refuse(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                "CDP window geometry no longer matches the native window — refusing to \
-                 mutate a target that cannot be re-proven",
+                "the embedded browser is no longer provably single-page and single-window",
             ));
         }
 

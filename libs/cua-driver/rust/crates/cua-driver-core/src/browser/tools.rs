@@ -211,6 +211,11 @@ impl Tool for GetBrowserStateTool {
                     BindingQuality::Exact => "exact",
                     BindingQuality::Heuristic => "heuristic",
                 };
+                let binding_route = if record.cdp_window_id.is_some() {
+                    "native_cdp_window"
+                } else {
+                    "embedded_single_page"
+                };
                 ToolResult::text(format!(
                     "bound target {target_id} ({quality}) with {} tab(s)",
                     tabs.len()
@@ -220,6 +225,7 @@ impl Tool for GetBrowserStateTool {
                     "mode": "bind",
                     "target_id": target_id,
                     "binding_quality": quality,
+                    "binding_route": binding_route,
                     "mutation_allowed": record.quality == BindingQuality::Exact,
                     "native_title": record.native_title,
                     "tabs": tabs,
@@ -911,6 +917,14 @@ mod tests {
             })
         }
 
+        async fn is_only_exact_native_window(
+            &self,
+            _pid: i64,
+            _window_id: u64,
+        ) -> Result<Option<bool>, BrowserRefusal> {
+            Ok(Some(true))
+        }
+
         async fn discover_owned_endpoint(
             &self,
             _pid: i64,
@@ -1181,7 +1195,7 @@ mod tests {
                 native_title: "Mock - Chrome".into(),
                 native_bounds: Rect::new(0.0, 0.0, 800.0, 600.0),
                 cdp_target_id: "CDPX".into(),
-                cdp_window_id: 5,
+                cdp_window_id: Some(5),
                 quality: BindingQuality::Heuristic,
                 tabs,
             },
@@ -1233,7 +1247,7 @@ mod tests {
                 native_title: "Mock - Chrome".into(),
                 native_bounds: Rect::new(0.0, 0.0, 800.0, 600.0),
                 cdp_target_id: "CDPX".into(),
-                cdp_window_id: 5,
+                cdp_window_id: Some(5),
                 quality: BindingQuality::Exact,
                 tabs,
             },
@@ -1274,7 +1288,7 @@ mod tests {
                 native_title: "T".into(),
                 native_bounds: Rect::new(0.0, 0.0, 1.0, 1.0),
                 cdp_target_id: "C".into(),
-                cdp_window_id: 1,
+                cdp_window_id: Some(1),
                 quality: BindingQuality::Exact,
                 tabs: HashMap::new(),
             },

@@ -321,6 +321,44 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         })
     }
 
+    async fn is_only_exact_native_window(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Result<Option<bool>, BrowserRefusal> {
+        let pid_u32 = u32::try_from(pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!("pid {pid} is outside the Linux process-id range"),
+            )
+        })?;
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            let Some(windows) = crate::wayland::sway_ipc::list_windows() else {
+                return Ok(None);
+            };
+            let owned = windows
+                .into_iter()
+                .filter(|window| window.pid == pid_u32)
+                .map(|window| window.id)
+                .collect::<Vec<_>>();
+            return Ok(Some(owned.len() == 1 && owned[0] == window_id));
+        }
+        let owned = tokio::task::spawn_blocking(move || {
+            crate::x11::list_windows(Some(pid_u32))
+                .into_iter()
+                .map(|window| u64::from(window.xid))
+                .collect::<Vec<_>>()
+        })
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not enumerate X11 browser windows: {error}"),
+            )
+        })?;
+        Ok(Some(owned.len() == 1 && owned[0] == window_id))
+    }
+
     async fn discover_owned_endpoint(
         &self,
         pid: i64,

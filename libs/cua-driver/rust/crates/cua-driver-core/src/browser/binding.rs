@@ -20,10 +20,13 @@ use super::types::{BindingQuality, NativeWindowInfo, Rect};
 #[derive(Debug, Clone, PartialEq)]
 pub struct CdpWindowCandidate {
     pub cdp_target_id: String,
-    pub cdp_window_id: i64,
+    /// Absent only when an embedded Chromium endpoint does not implement
+    /// Browser.getWindowForTarget. Core may use the bounded single-page /
+    /// single-native-window fallback in that case.
+    pub cdp_window_id: Option<i64>,
     pub title: String,
     pub url: String,
-    pub bounds: Rect,
+    pub bounds: Option<Rect>,
 }
 
 /// Outcome of correlating one native window against the CDP candidates.
@@ -38,6 +41,21 @@ pub enum BindingOutcome {
     Ambiguous(usize),
     /// Nothing correlates at all.
     None,
+}
+
+/// Select the bounded fallback for embedded Chromium endpoints that omit the
+/// Browser window APIs. Exactness comes from two independent cardinality
+/// proofs: one CDP page and exactly one native window for the endpoint owner.
+pub fn embedded_single_page_candidate(
+    candidates: &[CdpWindowCandidate],
+    is_only_exact_native_window: Option<bool>,
+) -> Option<CdpWindowCandidate> {
+    let candidate = candidates.first()?;
+    (candidates.len() == 1
+        && candidate.cdp_window_id.is_none()
+        && candidate.bounds.is_none()
+        && is_only_exact_native_window == Some(true))
+    .then(|| candidate.clone())
 }
 
 /// Whether the native window title plausibly displays this tab's title.
@@ -57,7 +75,10 @@ pub fn correlate(
     let bounds_matches: Vec<&CdpWindowCandidate> = if native.geometry_exact {
         candidates
             .iter()
-            .filter(|c| c.bounds.approx_eq(&native.bounds, tolerance))
+            .filter(|c| {
+                c.bounds
+                    .is_some_and(|bounds| bounds.approx_eq(&native.bounds, tolerance))
+            })
             .collect()
     } else {
         Vec::new()
@@ -125,10 +146,20 @@ mod tests {
     fn cand(id: &str, title: &str, bounds: Rect) -> CdpWindowCandidate {
         CdpWindowCandidate {
             cdp_target_id: id.into(),
-            cdp_window_id: 1,
+            cdp_window_id: Some(1),
             title: title.into(),
             url: format!("https://example.test/{id}"),
-            bounds,
+            bounds: Some(bounds),
+        }
+    }
+
+    fn embedded_cand(id: &str, title: &str) -> CdpWindowCandidate {
+        CdpWindowCandidate {
+            cdp_target_id: id.into(),
+            cdp_window_id: None,
+            title: title.into(),
+            url: format!("file:///fixture/{id}"),
+            bounds: None,
         }
     }
 
@@ -237,6 +268,21 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn embedded_fallback_requires_both_singleton_proofs() {
+        let one = [embedded_cand("t1", "Fixture")];
+        assert_eq!(
+            embedded_single_page_candidate(&one, Some(true))
+                .map(|candidate| candidate.cdp_target_id),
+            Some("t1".to_owned())
+        );
+        assert!(embedded_single_page_candidate(&one, Some(false)).is_none());
+        assert!(embedded_single_page_candidate(&one, None).is_none());
+        let two = [embedded_cand("t1", "Fixture"), embedded_cand("t2", "Other")];
+        assert!(embedded_single_page_candidate(&two, Some(true)).is_none());
+        assert!(embedded_single_page_candidate(&[cand("t1", "Fixture", B)], Some(true)).is_none());
     }
 
     #[test]

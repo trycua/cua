@@ -254,6 +254,33 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         })
     }
 
+    async fn is_only_exact_native_window(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Result<Option<bool>, BrowserRefusal> {
+        let pid_u32 = u32::try_from(pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!("pid {pid} is outside the Windows process-id range"),
+            )
+        })?;
+        let windows = tokio::task::spawn_blocking(move || {
+            crate::win32::list_windows(Some(pid_u32))
+                .into_iter()
+                .map(|window| window.hwnd)
+                .collect::<Vec<_>>()
+        })
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not enumerate Windows browser windows: {error}"),
+            )
+        })?;
+        Ok(Some(windows.len() == 1 && windows[0] == window_id))
+    }
+
     async fn discover_owned_endpoint(
         &self,
         pid: i64,

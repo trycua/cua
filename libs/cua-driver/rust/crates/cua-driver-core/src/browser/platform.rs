@@ -75,6 +75,17 @@ pub trait BrowserPlatform: Send + Sync {
         window_id: u64,
     ) -> Result<NativeWindowInfo, BrowserRefusal>;
 
+    /// Prove whether `window_id` is the only native top-level window owned by
+    /// `pid`. `Some(true)` is an exact platform-attested cardinality proof;
+    /// `Some(false)` means another window exists; `None` means this window
+    /// system cannot prove cardinality. Used only for embedded Chromium
+    /// endpoints that omit Browser.getWindowForTarget.
+    async fn is_only_exact_native_window(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Result<Option<bool>, BrowserRefusal>;
+
     /// Discover a loopback DevTools endpoint owned by `pid`, with an
     /// explicit ownership proof. `Ok(None)` means "no endpoint right
     /// now" (core maps that to `browser_requires_setup`); it must NOT

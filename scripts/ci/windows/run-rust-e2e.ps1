@@ -93,14 +93,27 @@ foreach ($fixture in $requiredFixtures) {
 function Invoke-E2eReport {
     Push-Location $rustRoot
     try {
-        & cargo run -p cua-driver-testkit --bin cua-e2e-report -- `
-            --declarations $casesPath `
-            --environment $environmentPath `
-            --results $resultsPath `
-            --artifact-root $artifactDir `
-            --require-video `
-            --output $summaryPath | Out-Host
-        $exitCode = $LASTEXITCODE
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $reportOutput = @(& cargo run -p cua-driver-testkit --bin cua-e2e-report -- `
+                --declarations $casesPath `
+                --environment $environmentPath `
+                --results $resultsPath `
+                --artifact-root $artifactDir `
+                --require-video `
+                --output $summaryPath 2>&1) | ForEach-Object {
+                    if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                        $_.Exception.Message
+                    } else {
+                        $_.ToString()
+                    }
+                }
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousPreference
+        }
+        $reportOutput | Out-Host
         return $exitCode
     } finally {
         Pop-Location
@@ -120,7 +133,13 @@ try {
     try {
         $preflightOutput = @(& cargo test -p cua-driver --test e2e_environment_preflight_test -- `
             --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1 2>&1) | `
-            ForEach-Object { $_.ToString() }
+            ForEach-Object {
+                if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                    $_.Exception.Message
+                } else {
+                    $_.ToString()
+                }
+            }
         $preflightExit = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousPreference
@@ -143,7 +162,13 @@ function Invoke-CargoTest {
         $previousPreference = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         try {
-            $output = @(& cargo @Arguments 2>&1) | ForEach-Object { $_.ToString() }
+            $output = @(& cargo @Arguments 2>&1) | ForEach-Object {
+                if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                    $_.Exception.Message
+                } else {
+                    $_.ToString()
+                }
+            }
             $exitCode = $LASTEXITCODE
         } finally {
             $ErrorActionPreference = $previousPreference

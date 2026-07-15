@@ -106,10 +106,14 @@ impl CdpConnection {
                     continue; // event or another caller's reply (serialized, so: event)
                 }
                 if let Some(err) = v.get("error") {
+                    let code = err.get("code").and_then(Value::as_i64);
                     let emsg = err
                         .get("message")
                         .and_then(Value::as_str)
                         .unwrap_or("unknown CDP error");
+                    if let Some(code) = code {
+                        anyhow::bail!("CDP {method} failed ({code}): {emsg}");
+                    }
                     anyhow::bail!("CDP {method} failed: {emsg}");
                 }
                 return Ok(v.get("result").cloned().unwrap_or(Value::Null));

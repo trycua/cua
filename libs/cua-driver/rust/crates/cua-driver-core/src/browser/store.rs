@@ -60,7 +60,8 @@ pub struct TargetRecord {
     pub native_title: String,
     pub native_bounds: Rect,
     pub cdp_target_id: String,
-    pub cdp_window_id: i64,
+    /// CDP browser window id, or None for the exact single-page embedded route.
+    pub cdp_window_id: Option<i64>,
     pub quality: BindingQuality,
     pub tabs: HashMap<String, TabRecord>,
 }
@@ -264,7 +265,7 @@ mod tests {
             native_title: "Docs - Chrome".into(),
             native_bounds: Rect::new(0.0, 0.0, 800.0, 600.0),
             cdp_target_id: "CDP1".into(),
-            cdp_window_id: 11,
+            cdp_window_id: Some(11),
             quality: BindingQuality::Exact,
             tabs: HashMap::new(),
         }

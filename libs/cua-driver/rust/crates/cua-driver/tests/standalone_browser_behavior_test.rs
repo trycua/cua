@@ -5,8 +5,10 @@
 //! on interactive desktops where the requested browser is installed.
 
 use std::collections::HashSet;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -19,6 +21,7 @@ use cua_driver_testkit::sentinel::ForegroundSentinel;
 use cua_driver_testkit::{spawn_in_job, BrowserFixtureServer, Driver, McpDriver, ToolResponse};
 
 const FIXTURE_HTML: &str = include_str!("../../../../tests/fixtures/shared/web/index.html");
+static STANDALONE_BROWSER_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn standalone_fixture_html() -> String {
     FIXTURE_HTML.replace(
@@ -700,6 +703,37 @@ fn run_roundtrip(spec: &BrowserSpec) {
             );
             assert_eq!(typed.structured()["status"], "ok", "{}", typed.raw);
             wait_for_value(&fixture.server, "txt-input", "standalone-browser");
+
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
+fn run_background_type(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-background-type",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(case(&spec.name, "background_type"), |evidence| {
+        let mut fixture = launch_browser(spec, &scenario);
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let session = format!("standalone-background-type-{}", fixture.pid);
+            let (target, tab, snapshot) = bind(fixture, &session);
+            let input_ref = ref_by_label(&snapshot, "id=txt-input");
+            let typed = fixture.driver.call(
+                "browser_type",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": input_ref,
+                    "text": "standalone-browser",
+                    "session": session,
+                }),
+            );
+            assert_eq!(typed.structured()["status"], "ok", "{}", typed.raw);
+            wait_for_value(&fixture.server, "txt-input", "standalone-browser");
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
     });
@@ -891,6 +925,7 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
                             "target_id": target,
                             "tab_id": tab,
                             "ref": click_ref,
+                            "input_route": "dom_event",
                             "session": session,
                         }),
                     );
@@ -1168,9 +1203,10 @@ fn settle_between_browser_rows() {
     thread::sleep(Duration::from_secs(2));
 }
 
-#[test]
-#[ignore = "requires an installed standalone Chromium browser and an interactive desktop"]
-fn standalone_browser_matrix() {
+fn run_browser_scenario(run: fn(&BrowserSpec)) {
+    let _guard = STANDALONE_BROWSER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     write_environment_from_env(&EnvironmentRecord::ready(Duration::ZERO))
         .expect("write standalone-browser environment evidence");
     let specs = browser_specs();
@@ -1181,24 +1217,46 @@ fn standalone_browser_matrix() {
         eprintln!("no standalone Chromium browser installed; optional suite skipped");
         return;
     }
+    let mut failed_browsers = Vec::new();
     for spec in specs {
         eprintln!(
             "[standalone-browser] {} at {}",
             spec.name,
             spec.executable.display()
         );
-        run_roundtrip(&spec);
+        if catch_unwind(AssertUnwindSafe(|| run(&spec))).is_err() {
+            failed_browsers.push(spec.name.clone());
+        }
         settle_between_browser_rows();
-        run_trusted_click(&spec);
-        settle_between_browser_rows();
-        run_prepare_isolated_launch(&spec);
-        settle_between_browser_rows();
-        run_stale_ref(&spec);
-        settle_between_browser_rows();
-        run_frame_roundtrip(&spec);
-        settle_between_browser_rows();
-        run_multi_tab(&spec);
-        settle_between_browser_rows();
-        run_two_window_collision(&spec);
     }
+    assert!(
+        failed_browsers.is_empty(),
+        "standalone browser scenario failed for: {}",
+        failed_browsers.join(", ")
+    );
 }
+
+macro_rules! standalone_browser_test {
+    ($name:ident, $run:ident) => {
+        #[test]
+        #[ignore = "requires an installed standalone Chromium browser and an interactive desktop"]
+        fn $name() {
+            run_browser_scenario($run);
+        }
+    };
+}
+
+standalone_browser_test!(standalone_browser_roundtrip, run_roundtrip);
+standalone_browser_test!(standalone_browser_background_type, run_background_type);
+standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
+standalone_browser_test!(
+    standalone_browser_prepare_isolated,
+    run_prepare_isolated_launch
+);
+standalone_browser_test!(standalone_browser_stale_ref, run_stale_ref);
+standalone_browser_test!(standalone_browser_frames, run_frame_roundtrip);
+standalone_browser_test!(standalone_browser_multi_tab, run_multi_tab);
+standalone_browser_test!(
+    standalone_browser_window_collision,
+    run_two_window_collision
+);

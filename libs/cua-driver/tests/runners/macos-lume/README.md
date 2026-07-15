@@ -65,22 +65,26 @@ xcrun swiftc --version
 Require macOS 26.5.2 build 25F84, disabled SIP, and
 `/Library/Developer/CommandLineTools`. Stop if any value differs.
 
-Install Homebrew, the fixture/runtime dependencies, and Rust from Terminal in
-the VM display:
+Install Homebrew from the pinned, checksum-verified upstream installer. Run it
+from Terminal in the VM display so macOS can request the `lume` password when
+needed:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+HOMEBREW_INSTALL_COMMIT=4b0227cf8416504142d23893368c2e1d211d5191
+HOMEBREW_INSTALL_SHA256=99287f194a8b3c9e6b0203a11a5fa54518be57209343e6bb954dec4635796d9d
+HOMEBREW_INSTALLER="/tmp/homebrew-install-${HOMEBREW_INSTALL_COMMIT}.sh"
+curl -fsSL \
+  "https://raw.githubusercontent.com/Homebrew/install/${HOMEBREW_INSTALL_COMMIT}/install.sh" \
+  -o "$HOMEBREW_INSTALLER"
+printf '%s  %s\n' "$HOMEBREW_INSTALL_SHA256" "$HOMEBREW_INSTALLER" \
+  | shasum -a 256 -c -
+/bin/bash "$HOMEBREW_INSTALLER"
+
 eval "$(/opt/homebrew/bin/brew shellenv)"
-brew install node ffmpeg jq
+brew install node ffmpeg jq rust
 
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-  | sh -s -- -y --profile minimal
-source "$HOME/.cargo/env"
-
-{
-  printf '\n%s\n' 'eval "$(/opt/homebrew/bin/brew shellenv)"'
-  printf '%s\n' '[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"'
-} >> "$HOME/.zprofile"
+printf '\n%s\n' 'eval "$(/opt/homebrew/bin/brew shellenv)"' \
+  >> "$HOME/.zprofile"
 ```
 
 Open a new Terminal window and require each command to succeed:

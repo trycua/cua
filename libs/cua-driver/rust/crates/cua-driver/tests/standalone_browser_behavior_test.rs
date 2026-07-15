@@ -240,7 +240,7 @@ fn command_for_browser(
     url: &str,
     position: (i32, i32),
 ) -> Command {
-    let mut command = Command::new(&spec.executable);
+    let mut command = browser_launch_command(spec);
     let output = if std::env::var_os("CUA_E2E_BROWSER_STDERR").is_some() {
         Stdio::inherit()
     } else {
@@ -271,7 +271,7 @@ fn command_for_unprepared_browser(
     url: &str,
     position: (i32, i32),
 ) -> Command {
-    let mut command = Command::new(&spec.executable);
+    let mut command = browser_launch_command(spec);
     command
         .arg(format!("--user-data-dir={}", profile.display()))
         .arg("--no-first-run")
@@ -288,6 +288,28 @@ fn command_for_unprepared_browser(
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     command
+}
+
+#[cfg(target_os = "macos")]
+fn browser_launch_command(spec: &BrowserSpec) -> Command {
+    let app = spec
+        .executable
+        .ancestors()
+        .find(|path| path.extension().is_some_and(|extension| extension == "app"))
+        .unwrap_or_else(|| {
+            panic!(
+                "standalone browser executable is not inside an app bundle: {}",
+                spec.executable.display()
+            )
+        });
+    let mut command = Command::new("/usr/bin/open");
+    command.arg("-n").arg("-a").arg(app).arg("--args");
+    command
+}
+
+#[cfg(not(target_os = "macos"))]
+fn browser_launch_command(spec: &BrowserSpec) -> Command {
+    Command::new(&spec.executable)
 }
 
 fn window_ids(driver: &mut McpDriver) -> HashSet<u64> {
@@ -412,30 +434,6 @@ fn spawn_browser_command(
         profile.display()
     );
     driver.reaper().push(child);
-}
-
-fn spawn_additional_tab(fixture: &mut BrowserFixture, spec: &BrowserSpec) {
-    let output = if std::env::var_os("CUA_E2E_BROWSER_STDERR").is_some() {
-        Stdio::inherit()
-    } else {
-        Stdio::null()
-    };
-    let mut command = Command::new(&spec.executable);
-    command
-        .arg(format!("--remote-debugging-port={}", fixture.cdp_port))
-        .arg(format!(
-            "--user-data-dir={}",
-            fixture._profile.path().display()
-        ))
-        .arg("--no-first-run")
-        .arg("--no-default-browser-check")
-        .arg("--disable-extensions")
-        .arg("--disable-default-apps")
-        .arg(format!("{}?tab=second", fixture.server.page_url()))
-        .stdout(Stdio::null())
-        .stderr(output);
-    let child = spawn_in_job(&mut command).expect("open an additional standalone browser tab");
-    fixture.driver.reaper().push(child);
 }
 
 fn launch_browser(spec: &BrowserSpec, label: &str) -> BrowserFixture {
@@ -995,6 +993,7 @@ fn run_stale_ref(spec: &BrowserSpec) {
                     "target_id": target,
                     "tab_id": tab,
                     "ref": stale_ref,
+                    "input_route": "dom_event",
                     "session": session,
                 }),
             );
@@ -1050,6 +1049,7 @@ fn run_frame_roundtrip(spec: &BrowserSpec) {
                         "target_id": target,
                         "tab_id": tab,
                         "ref": reference,
+                        "input_route": "dom_event",
                         "session": session,
                     }),
                 );
@@ -1103,8 +1103,19 @@ fn run_multi_tab(spec: &BrowserSpec) {
         let mut fixture = launch_browser(spec, &scenario);
         *evidence = recording_evidence(fixture.driver.recording_dir());
         let session = format!("standalone-multi-tab-{}", fixture.pid);
-        let _ = bind(&mut fixture, &session);
-        spawn_additional_tab(&mut fixture, spec);
+        let (target, tab, snapshot) = bind(&mut fixture, &session);
+        let new_tab_ref = ref_by_label(&snapshot, "id=standalone-new-tab");
+        let opened = fixture.driver.call(
+            "browser_click",
+            serde_json::json!({
+                "target_id": target,
+                "tab_id": tab,
+                "ref": new_tab_ref,
+                "input_route": "dom_event",
+                "session": session,
+            }),
+        );
+        assert_eq!(opened.structured()["status"], "ok", "{}", opened.raw);
         wait_for_observed(&fixture.server, "new_tab=open");
 
         run_with_background_oracles(&mut fixture, |fixture| {

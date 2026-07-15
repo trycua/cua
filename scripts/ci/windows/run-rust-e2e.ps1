@@ -241,6 +241,11 @@ if ($suite -in @("shared", "all")) {
         "--ignored", "--exact", "shared_web_action_matrix_is_state_verified",
         "--nocapture", "--test-threads=1"
     )
+    Invoke-CargoTest "embedded browser routes" @(
+        "test", "-p", "cua-driver", "--test", "cross_platform_behavior_test", "--",
+        "--ignored", "--exact", "embedded_browser_routes_are_exact_or_refused",
+        "--nocapture", "--test-threads=1"
+    )
 }
 
 if ($suite -in @("native", "all")) {

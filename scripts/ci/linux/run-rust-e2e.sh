@@ -167,6 +167,10 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
     cargo test -p cua-driver --test cross_platform_behavior_test -- \
       --ignored --exact shared_web_action_matrix_is_state_verified \
       --nocapture --test-threads=1
+  run_test embedded-browser-routes \
+    cargo test -p cua-driver --test cross_platform_behavior_test -- \
+      --ignored --exact embedded_browser_routes_are_exact_or_refused \
+      --nocapture --test-threads=1
 fi
 
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then

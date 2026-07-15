@@ -4,7 +4,20 @@ These scripts are thin entrypoints around the Rust integration tests. They
 build the repo-local fixture applications, run one strict Rust environment
 preflight, set testkit paths, execute Rust targets, invoke the Rust report
 validator, and collect artifacts. They do not define behavioral rows, push
-code, or alter branches.
+code, or alter branches. The shared lane runs both the cross-platform action
+catalog and the embedded-browser exact-or-refused catalog.
+
+Standalone Chrome/Edge adversarial coverage is a separate optional real-browser
+suite because it requires an installed external browser. Run it explicitly:
+
+```bash
+CUA_TEST_REQUIRE_EXTERNAL_BROWSERS=1 cargo test -p cua-driver \
+  --test standalone_browser_behavior_test -- --ignored \
+  --exact standalone_browser_matrix --nocapture --test-threads=1
+```
+
+Release validation sets `CUA_TEST_REQUIRE_EXTERNAL_BROWSERS=1` so a missing
+browser fails instead of silently omitting the suite.
 
 For the test layout and the distinction between unit tests, shared harnesses,
 and native harnesses, see

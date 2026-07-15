@@ -58,8 +58,15 @@ if (($suite -in @("shared", "all")) -and
 }
 
 if (-not $NoBuild) {
-    & cargo build --release -p cua-driver --manifest-path (Join-Path $rustRoot "Cargo.toml")
-    if ($LASTEXITCODE -ne 0) { throw "Rust driver build failed" }
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & cargo build --release -p cua-driver --manifest-path (Join-Path $rustRoot "Cargo.toml")
+        $buildExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($buildExit -ne 0) { throw "Rust driver build failed" }
     $fixtureTargets = switch ($suite) {
         "shared" { @("electron", "tauri", "webview") }
         "native" { @("wpf", "winui3", "webview", "electron") }

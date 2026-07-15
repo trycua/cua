@@ -52,6 +52,22 @@ fn stable_hash(value: &str) -> u64 {
     hasher.finish()
 }
 
+fn exact_browser_surface_ids(
+    windows: impl IntoIterator<Item = crate::windows::WindowInfo>,
+    pid: i64,
+) -> Vec<u64> {
+    windows
+        .into_iter()
+        .filter(|window| {
+            i64::from(window.pid) == pid
+                && !window.title.trim().is_empty()
+                && window.bounds.width > 0.0
+                && window.bounds.height > 0.0
+        })
+        .map(|window| u64::from(window.window_id))
+        .collect()
+}
+
 async fn process_details(pid: i64) -> Result<(String, String), BrowserRefusal> {
     let output = tokio::process::Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", "lstart=", "-o", "comm="])
@@ -263,11 +279,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         window_id: u64,
     ) -> Result<Option<bool>, BrowserRefusal> {
         let windows = tokio::task::spawn_blocking(move || {
-            crate::windows::all_windows()
-                .into_iter()
-                .filter(|window| i64::from(window.pid) == pid)
-                .map(|window| u64::from(window.window_id))
-                .collect::<Vec<_>>()
+            exact_browser_surface_ids(crate::windows::all_windows(), pid)
         })
         .await
         .map_err(|error| {
@@ -340,6 +352,26 @@ impl BrowserPlatform for MacOsBrowserPlatform {
 mod tests {
     use super::*;
 
+    fn window(window_id: u32, pid: i32, title: &str) -> crate::windows::WindowInfo {
+        crate::windows::WindowInfo {
+            window_id,
+            pid,
+            app_name: "Electron".to_owned(),
+            title: title.to_owned(),
+            bounds: crate::windows::WindowBounds {
+                x: 120.0,
+                y: 120.0,
+                width: 940.0,
+                height: 780.0,
+            },
+            layer: 0,
+            z_index: 0,
+            is_on_screen: true,
+            on_current_space: Some(true),
+            space_ids: None,
+        }
+    }
+
     #[test]
     fn lsof_parser_accepts_only_loopback_listeners() {
         let input = "n127.0.0.1:9222\nn*:9333\nn[::1]:9444\nn0.0.0.0:9555\n";
@@ -369,5 +401,25 @@ mod tests {
             loopback_websocket_port("ws://192.0.2.1:9222/devtools"),
             None
         );
+    }
+
+    #[test]
+    fn embedded_window_proof_ignores_untitled_window_server_helpers() {
+        let mut helper = window(8, 42, "");
+        helper.is_on_screen = false;
+        let ids = exact_browser_surface_ids([window(7, 42, "CuaTestHarness Electron"), helper], 42);
+        assert_eq!(ids, vec![7]);
+    }
+
+    #[test]
+    fn embedded_window_proof_retains_multiple_titled_browser_surfaces() {
+        let ids = exact_browser_surface_ids(
+            [
+                window(7, 42, "Primary browser window"),
+                window(8, 42, "Secondary browser window"),
+            ],
+            42,
+        );
+        assert_eq!(ids, vec![7, 8]);
     }
 }

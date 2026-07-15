@@ -327,13 +327,9 @@ impl Tool for GetWindowStateTool {
             "element_count": element_count,
             "tree_markdown": tree_md,
             "elements": elements_json,
-            // Surface 6: an opaque snapshot identifier consumers can log
-            // alongside the per-element tokens for debug correlation.
-            // Same value embedded in every `element_token` emitted in
-            // `elements[]` above. Additive — old consumers ignore it.
-            "snapshot_id": cua_driver_core::element_token::token_for(snapshot_id, 0)
-                .trim_end_matches(":0")
-                .to_string(),
+            // Debug correlation only. Element capabilities do not encode this
+            // generation or any other binding field.
+            "snapshot_id": snapshot_id,
             "generation": snapshot_id,
             "_note": "Prefer `elements` — `tree_markdown` will continue to work \
                 but new fields will only be added to the structured side. \
@@ -404,6 +400,15 @@ pub(crate) fn build_elements_array_with_token(
     nodes: &[crate::ax::tree::AXNode],
     snapshot_id: u32,
 ) -> Vec<serde_json::Value> {
+    build_elements_array_inner(nodes, |idx| {
+        Some(cua_driver_core::element_token::token_for(snapshot_id, idx))
+    })
+}
+
+fn build_elements_array_inner(
+    nodes: &[crate::ax::tree::AXNode],
+    mut token_for_index: impl FnMut(usize) -> Option<String>,
+) -> Vec<serde_json::Value> {
     nodes
         .iter()
         .filter_map(|node| {
@@ -422,15 +427,12 @@ pub(crate) fn build_elements_array_with_token(
                 .map(|[x, y, w, h]| serde_json::json!({ "x": x, "y": y, "w": w, "h": h }));
             let mut entry = serde_json::json!({
                 "element_index": idx,
-                // Surface 6: opaque token paired to the integer index.
-                // Tools accept either; the token has explicit validity
-                // (invalidated when the next snapshot supersedes this
-                // one in the per-pid LRU). See cua-driver-core's
-                // `element_token` module.
-                "element_token": cua_driver_core::element_token::token_for(snapshot_id, idx),
                 "role": node.role,
                 "depth": node.depth,
             });
+            if let Some(token) = token_for_index(idx) {
+                entry["element_token"] = serde_json::Value::String(token);
+            }
             if let Some(label) = label {
                 entry["label"] = serde_json::Value::String(label);
             }
@@ -462,18 +464,7 @@ pub(crate) fn build_elements_array_with_token(
 /// `build_elements_array_with_token`.
 #[allow(dead_code)]
 pub(crate) fn build_elements_array(nodes: &[crate::ax::tree::AXNode]) -> Vec<serde_json::Value> {
-    // Use a snapshot_id of 0 only to satisfy the signature; tokens
-    // built from id=0 are not registered and would fail the registry's
-    // stale check — but since this entry point is only kept for
-    // pre-existing callers (none in production after Surface 6), it
-    // strips the token field after rendering.
-    let mut out = build_elements_array_with_token(nodes, 0);
-    for entry in &mut out {
-        if let Some(obj) = entry.as_object_mut() {
-            obj.remove("element_token");
-        }
-    }
-    out
+    build_elements_array_inner(nodes, |_| None)
 }
 
 #[cfg(test)]
@@ -671,8 +662,14 @@ mod tests {
                 .get("element_token")
                 .and_then(|v| v.as_str())
                 .expect("element_token must be a string");
-            assert!(tok.starts_with('s'), "token must use the 's' prefix: {tok}");
-            assert!(tok.contains(':'), "token must be `s{{hex}}:{{idx}}`: {tok}");
+            assert!(
+                tok.starts_with("e_") && tok.len() == 34,
+                "token must be an opaque UUID v4 capability: {tok}"
+            );
+            assert!(
+                !tok.contains(':'),
+                "token must not expose generation or index fields: {tok}"
+            );
         }
         // Each token must resolve through the registry to the same
         // (window_id, element_index) the integer field reports.

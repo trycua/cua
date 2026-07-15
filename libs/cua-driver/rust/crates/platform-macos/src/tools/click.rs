@@ -67,8 +67,8 @@ fn def() -> &'static ToolDef {
              field is fully back-compat — omit it and you get the legacy left-click behaviour. \
              Pixel path: routes through the CGEvent left/right/middle mouse-button primitives. \
              AX path: \"right\" maps to AXShowMenu (same surface as the dedicated `right_click` \
-             tool); \"middle\" has no AX equivalent and falls back to a pixel middle-click at the \
-             element's center.\n\
+             tool). \"middle\" has no AX equivalent; token-targeted middle clicks fail closed, \
+             while legacy element_index targeting retains its pixel-center fallback.\n\
              action: press (default), show_menu, pick, confirm, cancel, open.\n\
              from_zoom: set true after a zoom call to auto-translate zoom-image pixel \
              coordinates to full-window space."
@@ -93,7 +93,7 @@ fn def() -> &'static ToolDef {
                 "button":        {
                     "type": "string",
                     "enum": ["left", "right", "middle"],
-                    "description": "Mouse button. Default: \"left\" — omit for legacy left-click behaviour. Pixel path uses the matching CGEvent primitive; AX path maps \"right\" to AXShowMenu and falls back to a pixel middle-click at the element's center for \"middle\"."
+                    "description": "Mouse button. Default: \"left\" — omit for legacy left-click behaviour. Pixel path uses the matching CGEvent primitive; AX path maps \"right\" to AXShowMenu. Token-targeted \"middle\" fails closed because AX has no middle-click action; pass x,y explicitly for a pixel middle-click."
                 },
                 "count":         { "type": "integer", "description": "Click count (pixel path only). Default 1." },
                 "modifier": {
@@ -260,6 +260,7 @@ impl Tool for ClickTool {
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
 
         let element_token_arg = args.opt_str("element_token");
+        let token_targeted = element_token_arg.is_some();
         let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
         let (element_index, window_id, token_guard, token_generation) =
@@ -290,9 +291,8 @@ impl Tool for ClickTool {
         let action = args.str_or("action", "press");
         // Surface 5: optional `button` arg, default "left" preserves legacy behaviour.
         // Pixel path: routes to left/right/middle CGEvent primitives.
-        // AX path: "right" delegates to AXShowMenu (same surface as right_click);
-        // "middle" has no AX equivalent and falls back to a pixel middle-click
-        // at the element's screen-space center.
+        // AX path: "right" delegates to AXShowMenu. Token-targeted middle
+        // clicks fail closed; legacy index targeting keeps its pixel fallback.
         let button_str = args.str_or("button", "left").to_lowercase();
         // delivery_mode: per-call ladder rung. Foreground briefly activates the
         // target for both AX and pixel paths, then restores the prior app.
@@ -353,11 +353,12 @@ impl Tool for ClickTool {
             .ok()
             .flatten();
 
-            // Surface 5: button=middle on the AX path has no AX equivalent.
-            // Fall back to a pixel middle-click at the element's screen-space center
-            // so the request still produces a real middle-button event (browser tab
-            // close, autoscroll, etc.). If we can't resolve a center, error rather
-            // than silently degrade to AXPress.
+            if let Some(error) = token_middle_click_error(token_targeted, &button_str) {
+                return error;
+            }
+
+            // Legacy element_index targeting retains the explicit pixel-center
+            // middle-click behavior. Capability targeting never reaches here.
             if button_str == "middle" {
                 let (cx, cy) = match center {
                     Some(c) => c,
@@ -831,6 +832,20 @@ impl Tool for ClickTool {
     }
 }
 
+fn token_middle_click_error(token_targeted: bool, button: &str) -> Option<ToolResult> {
+    (token_targeted && button == "middle").then(|| {
+        ToolResult::error(
+            "click(button=middle) with element_token is unsupported because AX has no \
+             middle-click action; refusing implicit CGEvent/pixel fallback. Pass x and y \
+             explicitly to request a pixel middle-click.",
+        )
+        .with_structured(serde_json::json!({
+            "code": "element_token_middle_click_unsupported",
+            "path": "ax",
+        }))
+    })
+}
+
 // ── AX click implementation (blocking) ───────────────────────────────────────
 
 /// Returns `(summary_text, needs_webkit_delay, suspected_noop)`.
@@ -1036,5 +1051,16 @@ mod tests {
             let s = args.str_or("button", "left").to_lowercase();
             assert_eq!(s, v);
         }
+    }
+
+    #[test]
+    fn token_targeted_middle_click_fails_closed_before_pixel_dispatch() {
+        let result = token_middle_click_error(true, "middle")
+            .expect("token-targeted middle click must be rejected");
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured error");
+        assert_eq!(structured["code"], "element_token_middle_click_unsupported");
+        assert!(token_middle_click_error(false, "middle").is_none());
+        assert!(token_middle_click_error(true, "left").is_none());
     }
 }

@@ -108,6 +108,10 @@ URLs, profile paths, and raw DevTools endpoint identifiers.
 - `browser_type` now requires a current ref and proves that the focused node is
   editable before dispatch. It refuses instead of reporting success against
   unproven page focus.
+- A second, narrow read-only review traced all six remediations through the
+  shared engine and all three adapters and found no remaining completion
+  blocker. Standalone multi-window Chrome/Edge remains a documented release
+  evidence gap rather than an advertised v1 route.
 
 ## Validation log
 

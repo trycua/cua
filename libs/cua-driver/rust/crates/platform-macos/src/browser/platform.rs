@@ -34,6 +34,13 @@ fn is_chromium(name: &str, bundle_id: &str) -> bool {
         .any(|token| products.contains(&token))
 }
 
+fn is_firefox(name: &str, bundle_id: &str) -> bool {
+    format!("{name} {bundle_id}")
+        .to_ascii_lowercase()
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| token == "firefox")
+}
+
 fn loopback_websocket_port(url: &str) -> Option<u16> {
     ["ws://127.0.0.1:", "ws://localhost:", "ws://[::1]:"]
         .iter()
@@ -208,12 +215,15 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             .unwrap_or("");
         let chromium = is_chromium(name, bundle_id);
         let webkit = bundle_id == "com.apple.Safari" || name.eq_ignore_ascii_case("Safari");
+        let gecko = is_firefox(name, bundle_id);
         Ok(BrowserClassification {
-            is_browser: chromium || webkit,
+            is_browser: chromium || webkit || gecko,
             engine: if chromium {
                 BrowserEngineFamily::Chromium
             } else if webkit {
                 BrowserEngineFamily::Webkit
+            } else if gecko {
+                BrowserEngineFamily::Gecko
             } else {
                 BrowserEngineFamily::Unknown
             },
@@ -385,6 +395,14 @@ mod tests {
         assert!(!is_chromium("Safari", "com.apple.Safari"));
         assert!(!is_chromium("Search", "com.example.Search"));
         assert!(!is_chromium("Operator", "com.example.Operator"));
+    }
+
+    #[test]
+    fn firefox_classifier_uses_product_tokens() {
+        assert!(is_firefox("Firefox", "org.mozilla.firefox"));
+        assert!(is_firefox("Mozilla Firefox", "org.mozilla.firefox"));
+        assert!(!is_firefox("FirefoxHelper", "com.example.FirefoxHelper"));
+        assert!(!is_firefox("Waterfox", "net.waterfox.current"));
     }
 
     #[test]

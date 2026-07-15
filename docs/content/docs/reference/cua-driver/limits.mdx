@@ -21,6 +21,19 @@ Electron through an owned Chrome DevTools Protocol endpoint. Safari and Firefox
 may still be inspected through existing accessibility or legacy page routes,
 but they do not receive browser-tool v1 mutation capabilities.
 
+| Surface | Typed browser identity | Typed mutation | Available fallback |
+| --- | --- | --- | --- |
+| Chrome, Edge, Chromium, Electron | Chromium | Exact CDP binding or structured refusal | Native `get_window_state` and AX/PX actions |
+| Firefox | Gecko | `browser_route_unavailable` in the current release | Native accessibility and legacy `page` routes where supported |
+| Safari | WebKit | `browser_route_unavailable` in the current release | Native accessibility and explicit legacy Apple Events routes |
+| WKWebView and WebKitGTK hosts | WebKit where the host can be identified | No CDP mutation route | Native accessibility and pixel actions |
+
+Firefox is classified consistently as a browser on macOS, Windows, and Linux,
+but Cua Driver does not currently advertise a WebDriver BiDi route. Safari
+Apple Events JavaScript is not equivalent to trusted browser input, and mutable
+tab ordinals cannot satisfy exact window targeting. These surfaces therefore
+remain capability-visible but mutation-unavailable instead of being guessed.
+
 Page refs cover the tab's main frame and are capped to the first 300 interactive
 elements. Cross-origin iframe and shadow-root traversal are not included in v1.
 A newer snapshot or navigation invalidates previous refs.

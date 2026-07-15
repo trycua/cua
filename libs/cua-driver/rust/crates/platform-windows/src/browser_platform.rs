@@ -38,6 +38,12 @@ fn is_chromium(name: &str) -> bool {
         .any(|token| products.contains(&token))
 }
 
+fn is_firefox(name: &str) -> bool {
+    name.to_ascii_lowercase()
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| token == "firefox")
+}
+
 fn loopback_websocket_port(url: &str) -> Option<u16> {
     ["ws://127.0.0.1:", "ws://localhost:", "ws://[::1]:"]
         .iter()
@@ -201,7 +207,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             )
         })?;
         let chromium = is_chromium(&name);
-        let gecko = name.to_ascii_lowercase().contains("firefox");
+        let gecko = is_firefox(&name);
         Ok(BrowserClassification {
             is_browser: chromium || gecko,
             engine: if chromium {
@@ -388,6 +394,14 @@ mod tests {
         assert!(!is_chromium("firefox.exe"));
         assert!(!is_chromium("Operator.exe"));
         assert!(!is_chromium("Knowledge.exe"));
+    }
+
+    #[test]
+    fn firefox_classifier_uses_product_tokens() {
+        assert!(is_firefox("firefox.exe"));
+        assert!(is_firefox("Mozilla Firefox.exe"));
+        assert!(!is_firefox("FirefoxHelper.exe"));
+        assert!(!is_firefox("waterfox.exe"));
     }
 
     #[test]

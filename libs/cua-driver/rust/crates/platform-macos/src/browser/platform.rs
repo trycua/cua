@@ -200,18 +200,25 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
 #[async_trait]
 impl BrowserPlatform for MacOsBrowserPlatform {
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
-        let app = tokio::task::spawn_blocking(move || {
-            crate::apps::list_running_apps()
+        let (app, fallback_name, fallback_bundle_id) = tokio::task::spawn_blocking(move || {
+            let app = crate::apps::list_running_apps()
                 .into_iter()
-                .find(|app| i64::from(app.pid) == pid)
+                .find(|app| i64::from(app.pid) == pid);
+            let fallback_name = crate::apps::get_app_name_for_pid(pid as i32);
+            let fallback_bundle_id = crate::apps::bundle_id_for_pid(pid as i32);
+            (app, fallback_name, fallback_bundle_id)
         })
         .await
-        .ok()
-        .flatten();
-        let name = app.as_ref().map(|app| app.name.as_str()).unwrap_or("");
+        .unwrap_or((None, None, None));
+        let name = app
+            .as_ref()
+            .map(|app| app.name.as_str())
+            .or(fallback_name.as_deref())
+            .unwrap_or("");
         let bundle_id = app
             .as_ref()
             .and_then(|app| app.bundle_id.as_deref())
+            .or(fallback_bundle_id.as_deref())
             .unwrap_or("");
         let chromium = is_chromium(name, bundle_id);
         let webkit = bundle_id == "com.apple.Safari" || name.eq_ignore_ascii_case("Safari");

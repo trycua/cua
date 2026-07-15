@@ -104,7 +104,11 @@ impl BrowserFixtureServer {
                             .next()
                             .map(String::from_utf8_lossy)
                             .unwrap_or_default();
+                        if std::env::var_os("CUA_E2E_BROWSER_SERVER_LOG").is_some() {
+                            eprintln!("[browser-fixture] {request_line}");
+                        }
                         if request_line.starts_with("GET /fixture ")
+                            || request_line.starts_with("GET /fixture?")
                             || request_line.starts_with("GET / ")
                         {
                             let headers = format!(

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use cua_driver_testkit::e2e::{
     execute_case, recording_evidence, CaseSpec, Delivery, DriverRoute, Evidence, Observation,
-    OracleKind, Scope, Targeting,
+    OracleKind, RefusalCode, Scope, Targeting,
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::ForegroundSentinel;
@@ -30,6 +30,7 @@ struct BrowserFixture {
     driver: McpDriver,
     server: BrowserFixtureServer,
     _profile: tempfile::TempDir,
+    cdp_port: u16,
     pid: u32,
     window_id: u64,
 }
@@ -140,6 +141,11 @@ fn command_for_browser(
     position: (i32, i32),
 ) -> Command {
     let mut command = Command::new(&spec.executable);
+    let output = if std::env::var_os("CUA_E2E_BROWSER_STDERR").is_some() {
+        Stdio::inherit()
+    } else {
+        Stdio::null()
+    };
     command
         .arg(format!("--remote-debugging-port={cdp_port}"))
         .arg(format!("--user-data-dir={}", profile.display()))
@@ -152,7 +158,7 @@ fn command_for_browser(
         .arg("--window-size=980,760")
         .arg(url)
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(output);
     command
 }
 
@@ -171,8 +177,8 @@ fn wait_for_fixture_window(
     driver: &mut McpDriver,
     before: &HashSet<u64>,
     server: &BrowserFixtureServer,
-) -> (u32, u64) {
-    let deadline = Instant::now() + Duration::from_secs(20);
+) -> Option<(u32, u64)> {
+    let deadline = Instant::now() + Duration::from_secs(8);
     loop {
         let windows = driver.call("list_windows", serde_json::json!({}));
         if let Some(window) = windows.structured()["windows"]
@@ -189,19 +195,36 @@ fn wait_for_fixture_window(
             })
         {
             if server.contains("WEB_HARNESS_MARKER_v1") {
-                return (
+                return Some((
                     window["pid"].as_u64().expect("browser window pid") as u32,
                     window["window_id"].as_u64().expect("browser window id"),
-                );
+                ));
             }
         }
-        assert!(
-            Instant::now() < deadline,
-            "standalone browser fixture did not become visible; journal={}",
-            server.snapshot()
-        );
+        if Instant::now() >= deadline {
+            return None;
+        }
         thread::sleep(Duration::from_millis(100));
     }
+}
+
+fn spawn_browser_command(
+    driver: &mut McpDriver,
+    spec: &BrowserSpec,
+    profile: &Path,
+    cdp_port: u16,
+    url: &str,
+    position: (i32, i32),
+) {
+    let mut command = command_for_browser(spec, profile, cdp_port, url, position);
+    let child = spawn_in_job(&mut command).expect("launch standalone browser");
+    eprintln!(
+        "[standalone-browser] spawned {} pid={} profile={} cdp_port={cdp_port}",
+        spec.name,
+        child.id(),
+        profile.display()
+    );
+    driver.reaper().push(child);
 }
 
 fn launch_browser(spec: &BrowserSpec, label: &str) -> BrowserFixture {
@@ -213,19 +236,74 @@ fn launch_browser(spec: &BrowserSpec, label: &str) -> BrowserFixture {
         .expect("create isolated browser profile");
     let cdp_port = allocate_loopback_port();
     let before = window_ids(&mut driver);
-    let mut command =
-        command_for_browser(spec, profile.path(), cdp_port, server.page_url(), (80, 80));
-    let child = spawn_in_job(&mut command).expect("launch standalone browser");
-    driver.reaper().push(child);
-    let (pid, window_id) = wait_for_fixture_window(&mut driver, &before, &server);
+    spawn_browser_command(
+        &mut driver,
+        spec,
+        profile.path(),
+        cdp_port,
+        server.page_url(),
+        (80, 80),
+    );
+    let window = wait_for_fixture_window(&mut driver, &before, &server).or_else(|| {
+        eprintln!(
+            "[standalone-browser] retrying bounded URL handoff for {}",
+            spec.name
+        );
+        spawn_browser_command(
+            &mut driver,
+            spec,
+            profile.path(),
+            cdp_port,
+            server.page_url(),
+            (80, 80),
+        );
+        wait_for_fixture_window(&mut driver, &before, &server)
+    });
+    let (pid, window_id) = window.unwrap_or_else(|| {
+        panic!(
+            "standalone browser fixture did not become visible after bounded URL handoff; journal={}",
+            server.snapshot()
+        )
+    });
     driver.reaper().track_pid(pid);
     BrowserFixture {
         driver,
         server,
         _profile: profile,
+        cdp_port,
         pid,
         window_id,
     }
+}
+
+fn launch_additional_window(
+    fixture: &mut BrowserFixture,
+    spec: &BrowserSpec,
+) -> (BrowserFixtureServer, u32, u64) {
+    let server = BrowserFixtureServer::start(FIXTURE_HTML);
+    let before = window_ids(&mut fixture.driver);
+    spawn_browser_command(
+        &mut fixture.driver,
+        spec,
+        fixture._profile.path(),
+        fixture.cdp_port,
+        server.page_url(),
+        (520, 120),
+    );
+    let window = wait_for_fixture_window(&mut fixture.driver, &before, &server).or_else(|| {
+        spawn_browser_command(
+            &mut fixture.driver,
+            spec,
+            fixture._profile.path(),
+            fixture.cdp_port,
+            server.page_url(),
+            (520, 120),
+        );
+        wait_for_fixture_window(&mut fixture.driver, &before, &server)
+    });
+    let (pid, window_id) = window.expect("additional standalone browser window did not appear");
+    assert_eq!(pid, fixture.pid, "additional window must share browser pid");
+    (server, pid, window_id)
 }
 
 fn wait_for_text(server: &BrowserFixtureServer, id: &str, expected: &str) {
@@ -329,6 +407,10 @@ fn case(browser: &str, action: &str) -> CaseSpec {
         DriverRoute::Cdp,
         oracles,
     )
+}
+
+fn refusal_case(browser: &str, action: &str, code: RefusalCode) -> CaseSpec {
+    case(browser, action).expecting_refusal(vec![code])
 }
 
 fn run_with_background_oracles(
@@ -448,6 +530,66 @@ fn run_stale_ref(spec: &BrowserSpec) {
     });
 }
 
+fn run_two_window_collision(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-two-window",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(
+        refusal_case(
+            &spec.name,
+            "same_bounds_binding_ambiguous",
+            RefusalCode::BrowserBindingAmbiguous,
+        ),
+        |evidence| {
+            let mut fixture = launch_browser(spec, &scenario);
+            *evidence = recording_evidence(fixture.driver.recording_dir());
+            let (second_server, second_pid, second_window_id) =
+                launch_additional_window(&mut fixture, spec);
+            assert_eq!(second_pid, fixture.pid);
+            assert_ne!(second_window_id, fixture.window_id);
+            run_with_background_oracles(&mut fixture, |fixture| {
+                let session = format!("standalone-two-window-{}", fixture.pid);
+                let started = fixture
+                    .driver
+                    .call("start_session", serde_json::json!({ "session": session }));
+                assert!(!started.is_error(), "start_session failed: {}", started.raw);
+                let prepared = fixture.driver.call(
+                    "browser_prepare",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64,
+                        "session": session,
+                    }),
+                );
+                assert_eq!(prepared.structured()["prepared"], true, "{}", prepared.raw);
+                let refused = fixture.driver.call(
+                    "get_browser_state",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64,
+                        "window_id": fixture.window_id,
+                        "session": session,
+                    }),
+                );
+                assert_eq!(
+                    refused.structured()["refusal"]["code"],
+                    "browser_binding_ambiguous",
+                    "{}",
+                    refused.raw
+                );
+                wait_for_text(&fixture.server, "lbl-counter", "counter=0");
+                wait_for_text(&second_server, "lbl-counter", "counter=0");
+                Observation::refused(
+                    RefusalCode::BrowserBindingAmbiguous,
+                    vec![OracleKind::FixtureState],
+                    refused.text(),
+                    Evidence::default(),
+                )
+            })
+        },
+    );
+}
+
 #[test]
 #[ignore = "requires an installed standalone Chromium browser and an interactive desktop"]
 fn standalone_browser_matrix() {
@@ -467,5 +609,6 @@ fn standalone_browser_matrix() {
         );
         run_roundtrip(&spec);
         run_stale_ref(&spec);
+        run_two_window_collision(&spec);
     }
 }

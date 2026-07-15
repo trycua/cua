@@ -301,6 +301,13 @@ pub enum RefusalCode {
     BackgroundUnavailable,
     BackgroundOccluded,
     BackgroundUipiBlocked,
+    BrowserRouteUnavailable,
+    BrowserRequiresSetup,
+    BrowserBindingAmbiguous,
+    BrowserBindingStale,
+    BrowserWrongTargetRefused,
+    BrowserTabNotFound,
+    BrowserRefStale,
 }
 
 impl RefusalCode {
@@ -309,6 +316,13 @@ impl RefusalCode {
             "background_unavailable" => Some(Self::BackgroundUnavailable),
             "background_occluded" => Some(Self::BackgroundOccluded),
             "background_uipi_blocked" => Some(Self::BackgroundUipiBlocked),
+            "browser_route_unavailable" => Some(Self::BrowserRouteUnavailable),
+            "browser_requires_setup" => Some(Self::BrowserRequiresSetup),
+            "browser_binding_ambiguous" => Some(Self::BrowserBindingAmbiguous),
+            "browser_binding_stale" => Some(Self::BrowserBindingStale),
+            "browser_wrong_target_refused" => Some(Self::BrowserWrongTargetRefused),
+            "browser_tab_not_found" => Some(Self::BrowserTabNotFound),
+            "browser_ref_stale" => Some(Self::BrowserRefStale),
             _ => None,
         }
     }

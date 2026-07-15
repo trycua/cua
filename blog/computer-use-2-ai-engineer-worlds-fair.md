@@ -12,7 +12,7 @@ That shift changes what a desktop session looks like. Several agents can work in
 
 The talk followed that shift through three connected layers: Cua Driver gives agents a consistent way to operate desktop windows, enabling multi-player scenarios; Cua-Bench evaluates how well agents complete desktop tasks; and Cua Fleets provides the infrastructure to provision, manage, and scale computers for agent workloads.
 
-<img alt="The Computer-Use 2.0 talk cover, introducing Cua Driver, Cua-Bench, and Cua Fleets" src="https://github.com/user-attachments/assets/7bacd0fe-dae5-4c65-b6e7-a0e833c23f5c" />
+<img alt="The Computer-Use 2.0 talk cover, introducing Cua Driver, Cua-Bench, and Cua Fleets" src="https://github.com/user-attachments/assets/1c6bac7a-69e7-4fc9-8673-cdda8de66f17" />
 
 _The session followed Cua Driver, Cua-Bench, and Cua Fleets from interaction to evaluation to scale._
 
@@ -22,13 +22,13 @@ These loops ran in the foreground and took over the system pointer and keyboard.
 
 That architecture was useful. Agents could use existing software without a custom API for every app. But the screen contained nearly everything the agent knew about the task, and mouse and keyboard actions were nearly everything it could do. The GUI was the whole loop.
 
-<img alt="The Computer-Use 1.0 loop: observe a screenshot, reason, and click a target" src="https://github.com/user-attachments/assets/0181e87d-9331-41b2-97bd-c11f022789c5" />
+<img alt="The Computer-Use 1.0 loop: observe a screenshot, reason, and click a target" src="https://github.com/user-attachments/assets/75c46a85-a740-4559-92fa-bd683bef59e7" />
 
 _Computer-Use 1.0: look at the screen, choose one action, and repeat in the foreground._
 
 In many of those systems, the model was also the operator: provider APIs accepted a prompt and screenshot, then returned the next computer action. Computer-Use 2.0 reverses that relationship by letting the main agent own the task and call the desktop only when it needs it.
 
-<img alt="A GUI-first operator receiving a screenshot and returning a click action" src="https://github.com/user-attachments/assets/e5dc2d8e-77a3-4bc3-8696-7abfeb66aab9" />
+<img alt="A GUI-first operator receiving a screenshot and returning a click action" src="https://github.com/user-attachments/assets/934cd65a-d285-41bd-a1ee-797fe6b223b5" />
 
 _Computer-Use 1.0 wired the model directly to a screenshot-and-action loop._
 
@@ -54,17 +54,17 @@ Apps accept and refuse input in different ways, so action selection works as a l
 
 On macOS, background clicks become difficult when an app exposes little accessibility state and the agent has to use coordinates. At a high level, Cua Driver uses Apple's undocumented SkyLight framework to make the target window behave as if it were foreground without raising it, then posts the event to that process. Chromium also needs an off-screen primer click before the actual click. We wrote up the [full implementation](https://cua.ai/blog/inside-macos-window-internals) separately.
 
-<img alt="The macOS background input path through SkyLight, targeted events, and accessibility state" src="https://github.com/user-attachments/assets/723cb6db-1882-4da7-bd71-62b91f3cbb7b" />
+<img alt="The macOS background input path through SkyLight, targeted events, and accessibility state" src="https://github.com/user-attachments/assets/80e32316-5b5a-44e1-bea7-0bcb775bea58" />
 
 _Background input on macOS combines window activation, process-targeted events, a primer click for Chromium, and live accessibility state._
 
 Since April, developing in the open has pushed the driver into Linux distributions and desktop stacks we would never have tested first ourselves. Users found the edge cases, and those reports shaped the Windows and Linux backends. With version 0.8, both are stable on the same Rust interface as macOS.
 
-<img alt="Windows and Linux input backends behind a shared Cua Driver interface" src="https://github.com/user-attachments/assets/db0dc82c-bf4a-4045-950a-25a98ec04258" />
+<img alt="Windows and Linux input backends behind a shared Cua Driver interface" src="https://github.com/user-attachments/assets/7af0f857-e727-470c-ad6c-d16a0bd5e85b" />
 
 _Windows and Linux expose different input systems, while Cua Driver keeps the agent-facing commands consistent._
 
-<img alt="Cua Driver returns window pixels and accessibility state, with accessibility, pixel, and foreground action paths" src="https://github.com/user-attachments/assets/e8176711-55bd-4146-9fb1-f424362a79c5" />
+<img alt="Cua Driver returns window pixels and accessibility state, with accessibility, pixel, and foreground action paths" src="https://github.com/user-attachments/assets/55443a38-c6bb-4433-89e8-8b0f7ded8f9c" />
 
 _Cua Driver reads window state once, then lets the agent choose the action path that fits the app._
 
@@ -83,6 +83,7 @@ _The regression matrix checks whether each action changed the target app and whe
 [Clicky](https://clicky-ai.com/) was the first product to adopt Cua Driver in April. [Hermes](https://hermes-agent.nousresearch.com/), [Qwen Code](https://github.com/QwenLM/qwen-code), [H Company](https://hcompany.ai/), and [Factory's Droid](https://factory.ai/product/droids) followed. Several of those teams have also brought their findings and fixes back to the [upstream repository](https://github.com/trycua/cua/tree/main/libs/cua-driver). Thank you for adopting a new interface early and sending back what broke.
 
 <img alt="Cua Driver adopters including Clicky, Hermes, Qwen Code, H Company, and Factory" src="https://github.com/user-attachments/assets/23736162-bc74-4640-a4b5-d5844411ca93" />
+
 
 _Teams use Cua Driver through MCP, the CLI, and the SDK, and several have contributed fixes upstream._
 

@@ -1,6 +1,6 @@
-//! Cross-platform child reaping. Kills every spawned child on drop; on Windows
-//! also assigns them to a kill-on-close Job Object so the OS reaps the whole
-//! tree even on panic / SIGKILL / Ctrl-C.
+//! Cross-platform child reaping. Kills every spawned child tree on drop:
+//! Windows uses a kill-on-close Job Object, while Unix gives each test-owned
+//! child its own process group and terminates that group explicitly.
 
 use std::process::{Child, Command};
 use std::time::Duration;
@@ -58,6 +58,8 @@ impl Drop for ChildReaper {
             tree_kill(pid);
         }
         for c in &mut self.children {
+            #[cfg(unix)]
+            process_group_kill(c.id());
             tree_kill(c.id());
             let _ = c.kill();
             let _ = c.wait();
@@ -70,10 +72,26 @@ impl Drop for ChildReaper {
 /// never outlive the test process. On other platforms a plain spawn (the
 /// [`ChildReaper`] still kills it on drop).
 pub fn spawn_in_job(cmd: &mut Command) -> std::io::Result<Child> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let child = cmd.spawn()?;
     #[cfg(target_os = "windows")]
     win::assign_child(&child);
     Ok(child)
+}
+
+#[cfg(unix)]
+fn process_group_kill(pid: u32) {
+    use std::process::Stdio;
+    let group = format!("-{pid}");
+    let _ = Command::new("kill")
+        .args(["-9", &group])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 #[cfg(target_os = "windows")]

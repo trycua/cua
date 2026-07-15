@@ -299,7 +299,10 @@ fn wait_for_fixture_window(
     before: &HashSet<u64>,
     server: &BrowserFixtureServer,
 ) -> Option<(u32, u64)> {
-    let deadline = Instant::now() + Duration::from_secs(20);
+    // A first temporary-profile launch can take longer than 20 seconds on a
+    // cold macOS host. Waiting is topology-neutral; relaunching is not, since
+    // the first process may eventually map and leave an extra CDP page.
+    let deadline = Instant::now() + Duration::from_secs(40);
     loop {
         let windows = driver.call("list_windows", serde_json::json!({}));
         if let Some(window) = windows.structured()["windows"]
@@ -1108,6 +1111,11 @@ fn run_two_window_collision(spec: &BrowserSpec) {
     );
 }
 
+fn settle_between_browser_rows() {
+    #[cfg(target_os = "macos")]
+    thread::sleep(Duration::from_secs(2));
+}
+
 #[test]
 #[ignore = "requires an installed standalone Chromium browser and an interactive desktop"]
 fn standalone_browser_matrix() {
@@ -1128,10 +1136,15 @@ fn standalone_browser_matrix() {
             spec.executable.display()
         );
         run_roundtrip(&spec);
+        settle_between_browser_rows();
         run_prepare_isolated_launch(&spec);
+        settle_between_browser_rows();
         run_stale_ref(&spec);
+        settle_between_browser_rows();
         run_frame_roundtrip(&spec);
+        settle_between_browser_rows();
         run_multi_tab(&spec);
+        settle_between_browser_rows();
         run_two_window_collision(&spec);
     }
 }

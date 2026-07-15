@@ -2,11 +2,21 @@
 
 ## Status
 
-- **State:** Proposed for review
+- **State:** Browser-tool v1 implemented; later migration and rollout phases remain open
 - **Plan date:** 2026-07-14
 - **Source revision:** `f6aa3dfc24f376c793a0292f15847ee946104231`
 - **Companion audit:** [Agentic Web Browsing with Cua Driver](agentic-web-browsing-audit.md)
 - **Architecture verdict:** Accept with major changes
+
+The first implementation milestone covers the five typed tools, strict endpoint
+ownership, session capabilities, exact-or-refused Chromium mutation, launch
+parity, and the repository-owned Electron E2E row. It deliberately leaves the
+legacy `page` facade on its existing implementation until adoption evidence is
+available, keeps `browser_prepare` to endpoint detection and explicit setup
+refusals rather than profile mutation/restart, and defers the broader
+real-browser and embedded-webview matrix described in Phases 4, 6, and 7. See
+[the implementation journal](browser-tool-implementation-journal.md) for exact
+evidence and remaining work.
 
 ## Objective
 
@@ -525,11 +535,11 @@ Before any CDP or inspector connection, the driver must prove that the local lis
 
 Platform work:
 
-| Platform | Ownership strategy |
-| --- | --- |
-| macOS | Existing PID-to-port discovery via `lsof`, tightened to verify endpoint and process tree |
-| Windows | `GetExtendedTcpTable` plus process-tree validation |
-| Linux | `/proc/net/tcp*` socket inode mapping plus `/proc/<pid>/fd` and process-tree validation |
+| Platform | Ownership strategy                                                                       |
+| -------- | ---------------------------------------------------------------------------------------- |
+| macOS    | Existing PID-to-port discovery via `lsof`, tightened to verify endpoint and process tree |
+| Windows  | `GetExtendedTcpTable` plus process-tree validation                                       |
+| Linux    | `/proc/net/tcp*` socket inode mapping plus `/proc/<pid>/fd` and process-tree validation  |
 
 Security requirements:
 
@@ -567,18 +577,18 @@ Tab drag is a required invalidation scenario: a CDP target may survive while mov
 
 ## Cross-Platform Delivery Scope
 
-| Surface | V1 state | V1 mutation | Required setup | Initial confidence target |
-| --- | --- | --- | --- | --- |
-| Chrome/Edge/Brave macOS | CDP metadata and refs where approved | Navigate, trusted input, explicit DOM input | CDP port/profile or user-approved debugging | Exact or refuse |
-| Electron macOS | CDP metadata and refs | Navigate and input | Inspector exposure through prepare when needed | Exact for single-window fixture |
-| Safari macOS | Identity, capabilities, active page metadata where read-only | Deferred unless exact route is proven | Apple Events/TCC through prepare | Heuristic or none |
-| Chrome/Edge Windows | CDP metadata and refs | Navigate and input | Fix launch CDP support or explicit existing endpoint | Exact or refuse |
-| WebView2 Windows | CDP metadata and refs | Navigate and input where fixture exposes endpoint | Launch-time debugging arguments | Exact for fixture |
-| Firefox Windows | Identity and unavailable routes | Native `get_window_state` only | None in v1 | None |
-| Chromium Linux X11 | CDP metadata and refs | Navigate and input | Add launch CDP support | Exact or refuse |
-| Chromium Linux Wayland | CDP metadata; native correlation when available | Only exact binding | Add launch CDP support and compositor metadata | Exact or refuse |
-| Electron/Tauri Linux | CDP where the host exposes it; native fallback otherwise | Capability-dependent | Inspector exposure through prepare | Exact for supported fixture |
-| Firefox Linux | Identity and unavailable routes | Native `get_window_state` only | None in v1 | None |
+| Surface                 | V1 state                                                     | V1 mutation                                       | Required setup                                       | Initial confidence target       |
+| ----------------------- | ------------------------------------------------------------ | ------------------------------------------------- | ---------------------------------------------------- | ------------------------------- |
+| Chrome/Edge/Brave macOS | CDP metadata and refs where approved                         | Navigate, trusted input, explicit DOM input       | CDP port/profile or user-approved debugging          | Exact or refuse                 |
+| Electron macOS          | CDP metadata and refs                                        | Navigate and input                                | Inspector exposure through prepare when needed       | Exact for single-window fixture |
+| Safari macOS            | Identity, capabilities, active page metadata where read-only | Deferred unless exact route is proven             | Apple Events/TCC through prepare                     | Heuristic or none               |
+| Chrome/Edge Windows     | CDP metadata and refs                                        | Navigate and input                                | Fix launch CDP support or explicit existing endpoint | Exact or refuse                 |
+| WebView2 Windows        | CDP metadata and refs                                        | Navigate and input where fixture exposes endpoint | Launch-time debugging arguments                      | Exact for fixture               |
+| Firefox Windows         | Identity and unavailable routes                              | Native `get_window_state` only                    | None in v1                                           | None                            |
+| Chromium Linux X11      | CDP metadata and refs                                        | Navigate and input                                | Add launch CDP support                               | Exact or refuse                 |
+| Chromium Linux Wayland  | CDP metadata; native correlation when available              | Only exact binding                                | Add launch CDP support and compositor metadata       | Exact or refuse                 |
+| Electron/Tauri Linux    | CDP where the host exposes it; native fallback otherwise     | Capability-dependent                              | Inspector exposure through prepare                   | Exact for supported fixture     |
+| Firefox Linux           | Identity and unavailable routes                              | Native `get_window_state` only                    | None in v1                                           | None                            |
 
 Support documentation must distinguish browser identity, page read, DOM refs, navigation, trusted input, DOM input, native background input, and native foreground input. A single "browser supported" label is insufficient.
 
@@ -761,17 +771,17 @@ Exit gate:
 
 Keep each PR independently reviewable and avoid exposing incomplete public tools.
 
-| PR | Scope | User-visible change | Merge requirement |
-| --- | --- | --- | --- |
-| 1 | Chromium binding spike and real-browser discriminators | None | Kill criterion passes |
-| 2 | Shared CDP transport, endpoint ownership, and launch parity | More truthful/hardened existing CDP behavior | Existing page E2E green |
-| 3 | Session target store, flat-mode routing, refs, and refusals | None or additive structured internals | Concurrency and cleanup tests green |
-| 4 | Read-only `get_browser_state` | New state tool | Cross-platform state matrix accepted |
-| 5 | `browser_prepare` and consent/profile flows | New mutating setup tool | Consent and restart evidence accepted |
-| 6 | `browser_navigate` | New typed navigation | Real-browser navigation lanes green |
-| 7 | `browser_click` and `browser_type` | New typed input tools | Trust/focus/leak oracles green |
-| 8 | Route legacy `page` through BrowserEngine | No intentional behavior change | Compatibility suite green |
-| 9 | Docs, skills, release matrix, and deprecation notice | Public rollout | Exact-SHA evidence linked |
+| PR  | Scope                                                       | User-visible change                          | Merge requirement                     |
+| --- | ----------------------------------------------------------- | -------------------------------------------- | ------------------------------------- |
+| 1   | Chromium binding spike and real-browser discriminators      | None                                         | Kill criterion passes                 |
+| 2   | Shared CDP transport, endpoint ownership, and launch parity | More truthful/hardened existing CDP behavior | Existing page E2E green               |
+| 3   | Session target store, flat-mode routing, refs, and refusals | None or additive structured internals        | Concurrency and cleanup tests green   |
+| 4   | Read-only `get_browser_state`                               | New state tool                               | Cross-platform state matrix accepted  |
+| 5   | `browser_prepare` and consent/profile flows                 | New mutating setup tool                      | Consent and restart evidence accepted |
+| 6   | `browser_navigate`                                          | New typed navigation                         | Real-browser navigation lanes green   |
+| 7   | `browser_click` and `browser_type`                          | New typed input tools                        | Trust/focus/leak oracles green        |
+| 8   | Route legacy `page` through BrowserEngine                   | No intentional behavior change               | Compatibility suite green             |
+| 9   | Docs, skills, release matrix, and deprecation notice        | Public rollout                               | Exact-SHA evidence linked             |
 
 Do not merge PR 4 merely to allow later CI to run unless the state tool's own acceptance gate is complete. Use test-only probes or feature-gated internal code for the feasibility stage.
 
@@ -799,26 +809,26 @@ Run automatically on affected OS paths:
 
 Extend the existing harnesses without weakening their oracles:
 
-| Host | Platforms | Required browser-tool coverage |
-| --- | --- | --- |
-| Electron fixture | macOS, Windows, Linux X11, Linux Wayland | Discovery, exact single-window binding, refs, navigate, click, type, stale refs, concurrent sessions |
-| Tauri fixture | macOS, Windows, Linux X11, Linux Wayland | Capability reporting, exact route where available, native fallback boundaries |
-| WebView2 fixture | Windows | CDP binding, refs, trusted input, navigation |
-| WKWebView fixture | macOS | Identity, capability limitations, native-state handoff |
-| WebKitGTK fixture | Linux | Identity, capability limitations, native-state handoff |
+| Host              | Platforms                                | Required browser-tool coverage                                                                       |
+| ----------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Electron fixture  | macOS, Windows, Linux X11, Linux Wayland | Discovery, exact single-window binding, refs, navigate, click, type, stale refs, concurrent sessions |
+| Tauri fixture     | macOS, Windows, Linux X11, Linux Wayland | Capability reporting, exact route where available, native fallback boundaries                        |
+| WebView2 fixture  | Windows                                  | CDP binding, refs, trusted input, navigation                                                         |
+| WKWebView fixture | macOS                                    | Identity, capability limitations, native-state handoff                                               |
+| WebKitGTK fixture | Linux                                    | Identity, capability limitations, native-state handoff                                               |
 
 Repository fixtures remain the canonical deterministic behavior matrix. They do not replace real-browser evidence.
 
 ### Real-browser release matrix
 
-| Platform | Required v1 browser evidence |
-| --- | --- |
-| Windows interactive | Chrome and Edge; Firefox structured-unavailable/native fallback |
+| Platform              | Required v1 browser evidence                                                                  |
+| --------------------- | --------------------------------------------------------------------------------------------- |
+| Windows interactive   | Chrome and Edge; Firefox structured-unavailable/native fallback                               |
 | macOS authorized host | Chrome; Safari state and limitation reporting; Firefox structured-unavailable/native fallback |
-| Linux X11 | Chromium/Chrome; Firefox structured-unavailable/native fallback |
-| Linux Wayland Sway | Native Ozone Chromium with exact-or-refused binding |
-| Linux Wayland GNOME | Chromium route and compositor limitation evidence |
-| Linux Wayland KDE | Best-effort discovery/binding evidence before claiming support |
+| Linux X11             | Chromium/Chrome; Firefox structured-unavailable/native fallback                               |
+| Linux Wayland Sway    | Native Ozone Chromium with exact-or-refused binding                                           |
+| Linux Wayland GNOME   | Chromium route and compositor limitation evidence                                             |
+| Linux Wayland KDE     | Best-effort discovery/binding evidence before claiming support                                |
 
 Every real-browser lane records:
 
@@ -905,17 +915,17 @@ During coexistence, docs should say:
 
 The implementation should coordinate with these existing issues:
 
-| Issue | Relationship to this plan |
-| --- | --- |
-| [#2200](https://github.com/trycua/cua/issues/2200) | Exact PID/window targeting and ambiguous-target refusal |
-| [#2176](https://github.com/trycua/cua/issues/2176) | Browser/page escalation before native foreground fallback |
-| [#2192](https://github.com/trycua/cua/issues/2192) | Authenticated Chrome profile preparation and consent |
-| [#2084](https://github.com/trycua/cua/issues/2084) | Shared CDP typing and Windows/Linux parity |
+| Issue                                              | Relationship to this plan                                            |
+| -------------------------------------------------- | -------------------------------------------------------------------- |
+| [#2200](https://github.com/trycua/cua/issues/2200) | Exact PID/window targeting and ambiguous-target refusal              |
+| [#2176](https://github.com/trycua/cua/issues/2176) | Browser/page escalation before native foreground fallback            |
+| [#2192](https://github.com/trycua/cua/issues/2192) | Authenticated Chrome profile preparation and consent                 |
+| [#2084](https://github.com/trycua/cua/issues/2084) | Shared CDP typing and Windows/Linux parity                           |
 | [#2201](https://github.com/trycua/cua/issues/2201) | Windows Chrome background native input remains a separate route risk |
 | [#2202](https://github.com/trycua/cua/issues/2202) | macOS Chrome native drag remains separate from browser DOM/CDP input |
-| [#1616](https://github.com/trycua/cua/issues/1616) | Real Chromium accessibility exposure and native fallback |
-| [#2101](https://github.com/trycua/cua/issues/2101) | Firefox capability and minimized/native-state limitations |
-| [#2194](https://github.com/trycua/cua/issues/2194) | Wayland cursor-preservation evidence remains platform-limited |
+| [#1616](https://github.com/trycua/cua/issues/1616) | Real Chromium accessibility exposure and native fallback             |
+| [#2101](https://github.com/trycua/cua/issues/2101) | Firefox capability and minimized/native-state limitations            |
+| [#2194](https://github.com/trycua/cua/issues/2194) | Wayland cursor-preservation evidence remains platform-limited        |
 
 Create one browser-tool umbrella issue before implementation, then link each PR and any newly discovered platform bug to the relevant capability row rather than treating all browser work as one undifferentiated feature.
 
@@ -984,19 +994,19 @@ Do not record URLs, page text, selectors, cookies, profile paths, auth state, en
 
 ## Risks and Mitigations
 
-| Risk | Mitigation |
-| --- | --- |
-| Wrong native window mapped to a tab | Owner proof, exact correlation, per-call revalidation, ambiguity refusal |
-| Consent prompt triggered by read-only state | Hard separation between state and prepare; reuse approved sockets |
-| Cross-session CDP delivery | Flat mode and one CDP session ID per Cua session/tab |
-| Browser tab moved after binding | Re-check browser window relationship before mutation |
-| DOM click mistaken for trusted input | Required `input_trust` result and explicit caller choice |
-| Duplicate native/browser context | Browser state excludes native tree and screenshot by default |
-| Wayland missing identity/geometry | Confidence `none`, structured refusal, native semantic fallback only |
-| Existing profile compromised | Explicit consent, loopback owner proof, TTL, no target replay, secret-safe logs |
-| Public API outruns evidence | Chromium-only v1 mutation and exact-SHA release matrix |
-| `page` migration regresses users | Compatibility facade, retained tests, multi-release deprecation |
-| Tool surface overwhelms MCP context | Five typed v1 tools, compact refs, bounded output, granular registration |
+| Risk                                        | Mitigation                                                                      |
+| ------------------------------------------- | ------------------------------------------------------------------------------- |
+| Wrong native window mapped to a tab         | Owner proof, exact correlation, per-call revalidation, ambiguity refusal        |
+| Consent prompt triggered by read-only state | Hard separation between state and prepare; reuse approved sockets               |
+| Cross-session CDP delivery                  | Flat mode and one CDP session ID per Cua session/tab                            |
+| Browser tab moved after binding             | Re-check browser window relationship before mutation                            |
+| DOM click mistaken for trusted input        | Required `input_trust` result and explicit caller choice                        |
+| Duplicate native/browser context            | Browser state excludes native tree and screenshot by default                    |
+| Wayland missing identity/geometry           | Confidence `none`, structured refusal, native semantic fallback only            |
+| Existing profile compromised                | Explicit consent, loopback owner proof, TTL, no target replay, secret-safe logs |
+| Public API outruns evidence                 | Chromium-only v1 mutation and exact-SHA release matrix                          |
+| `page` migration regresses users            | Compatibility facade, retained tests, multi-release deprecation                 |
+| Tool surface overwhelms MCP context         | Five typed v1 tools, compact refs, bounded output, granular registration        |
 
 ## Open Product Decisions
 

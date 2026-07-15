@@ -14,6 +14,28 @@ operating-system matrix.
 
 ---
 
+## Browser tool v1 targets Chromium main frames
+
+The typed browser mutation tools currently target Chromium-family browsers and
+Electron through an owned Chrome DevTools Protocol endpoint. Safari and Firefox
+may still be inspected through existing accessibility or legacy page routes,
+but they do not receive browser-tool v1 mutation capabilities.
+
+Page refs cover the tab's main frame and are capped to the first 300 interactive
+elements. Cross-origin iframe and shadow-root traversal are not included in v1.
+A newer snapshot or navigation invalidates previous refs.
+
+Chrome may require a dedicated non-default `--user-data-dir` when launched with
+remote debugging. Endpoint ownership must resolve to the requested browser pid;
+wrapper processes or ambiguous process trees are refused.
+
+On generic GNOME or KDE Wayland sessions, browser state may be discoverable
+without enough compositor evidence to correlate native and DevTools geometry
+exactly. That route stays read-only. X11 and Sway can authorize mutation when
+their ownership and geometry proofs agree.
+
+---
+
 ## Chromium coerces synthetic right-clicks on web content
 
 **Symptom:** `right_click({pid, x, y})` on a Chrome, Edge, Brave, or Arc tab's web content fires a left-click instead of opening the context menu.

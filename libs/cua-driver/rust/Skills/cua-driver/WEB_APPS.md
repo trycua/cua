@@ -1,11 +1,39 @@
 # Driving web-rendered apps
 
-> **Platform: macOS-only.** This doc covers AX-tree quirks, AppleScript
+## Prefer the typed browser tools for Chromium page mutation
+
+For Chrome, Edge, Brave, and Electron, use the first-class browser workflow
+before legacy `page`, AX, or pixel mutation when a DevTools endpoint is
+available:
+
+1. Start a named driver session.
+2. Select the exact native `(pid, window_id)` from `launch_app` or
+   `list_windows`. Launch with `cdp_debugging_port` and a dedicated
+   `--user-data-dir` when setup is required.
+3. Bind with `get_browser_state({pid, window_id, session})`. Continue only when
+   `binding_quality` is `exact`.
+4. Snapshot with `get_browser_state({target_id, tab_id, session})`.
+5. Use the returned current ref with `browser_click` or `browser_type`, or use
+   `browser_navigate` for a URL.
+6. Re-snapshot after navigation and whenever a call reports
+   `browser_ref_stale`. End the session when done.
+
+This is the full-background Chromium rung: CDP input reaches the exactly bound
+page without raising its native window. `browser_click` defaults to trusted
+`Input.dispatchMouseEvent`; never opt into `input_route:"dom_event"` unless a
+synthetic DOM click is explicitly acceptable. Target ids, tab ids, and refs are
+opaque session capabilities, not raw CDP ids.
+
+The legacy guidance below remains relevant for Safari, Firefox, browser chrome,
+and surfaces where exact browser binding is unavailable.
+
+> **Most legacy guidance below is macOS-specific.** It covers AX-tree quirks, AppleScript
 > JavaScript bridges, and Chromium / WebKit / Electron / Tauri patterns
 > on macOS. For Windows web-app automation (Edge, Chrome with
 > PostMessage / WebView2), see `WINDOWS.md` → "Web apps on Windows". For
 > Linux: `LINUX.md` (the cross-platform `page` tool below uses AT-SPI
-> + CDP the same way).
+>
+> - CDP the same way).
 >
 > The `page` tool itself is **cross-platform** — Windows + Linux back
 > `get_text` / `query_dom` with UIA / AT-SPI respectively, and
@@ -58,7 +86,7 @@ pixels:
    (often AX-exposed), toolbar buttons in the window chrome.
 2. Use keyboard shortcuts delivered straight to the pid —
    `hotkey({pid, keys: ["cmd", "enter"]})`, `hotkey({pid, keys:
-   ["cmd", "k"]})`, etc. Posted via `CGEvent.postToPid`, reaches the
+["cmd", "k"]})`, etc. Posted via `CGEvent.postToPid`, reaches the
    target regardless of AX state, no activation required.
 3. For typing into web inputs, use `type_text` — it automatically
    falls back to CGEvent synthesis when the input doesn't implement
@@ -117,6 +145,7 @@ itself honors.
 
 Minor caveats for the rare case a `⌘L` flow is still needed
 (last-resort only, with user buy-in on the focus flash):
+
 - Don't drop `delay_ms` below ~25 for keystroked typing on
   Chromium — below that, autocomplete insertions interleave with
   your characters and you get garbage like `"exuample.comn"`
@@ -154,7 +183,7 @@ in a specific tab" (rare).
 tab-strip in the AX tree for `AXTab` / `AXRadioButton` elements
 and read their `AXTitle`s. You can discover which tabs exist and
 what URLs/titles they carry without switching to any of them.
-Only *activating* a specific tab is visible.
+Only _activating_ a specific tab is visible.
 
 ## Keyboard commits on minimized windows
 
@@ -255,14 +284,14 @@ the target is AX-addressable.
 
 ## Enable "Allow JavaScript from Apple Events" — browser support matrix
 
-| Browser | `execute javascript` supported | Setting needed | Programmatic path |
-|---|---|---|---|
-| Chrome | ✅ Full | ✅ Yes | Edit Preferences JSON (see below) |
-| Brave | ✅ Full | ✅ Yes | Edit Preferences JSON (same key, different path) |
-| Edge | ✅ Full | ✅ Yes | Edit Preferences JSON (same key, different path) |
-| Safari | ✅ Full (`do JavaScript`) | ✅ Yes | UI automation only — `defaults write` broken |
-| Arc | ⚠️ No return values | No toggle | No reliable path |
-| Firefox | ❌ Not supported | N/A | N/A |
+| Browser | `execute javascript` supported | Setting needed | Programmatic path                                |
+| ------- | ------------------------------ | -------------- | ------------------------------------------------ |
+| Chrome  | ✅ Full                        | ✅ Yes         | Edit Preferences JSON (see below)                |
+| Brave   | ✅ Full                        | ✅ Yes         | Edit Preferences JSON (same key, different path) |
+| Edge    | ✅ Full                        | ✅ Yes         | Edit Preferences JSON (same key, different path) |
+| Safari  | ✅ Full (`do JavaScript`)      | ✅ Yes         | UI automation only — `defaults write` broken     |
+| Arc     | ⚠️ No return values            | No toggle      | No reliable path                                 |
+| Firefox | ❌ Not supported               | N/A            | N/A                                              |
 
 ### Chrome / Brave / Edge — Preferences JSON
 
@@ -589,6 +618,7 @@ after `insert_text` didn't stick, or the editor needs real keydown
 events.
 
 Preconditions (shared with `insert_text`):
+
 - The target element must already have DOM focus — click it first
   (`page(click_element)` or `execute_javascript` with `el.click()` /
   `el.focus()`).
@@ -600,14 +630,13 @@ Preconditions (shared with `insert_text`):
     when you pass `--user-data-dir` explicitly pointing at that same
     default path; only a genuinely different path satisfies the
     check. So this route needs `additional_arguments:
-    ["--user-data-dir=<some other path>"]` too — a separate profile
+["--user-data-dir=<some other path>"]` too — a separate profile
     without the user's existing logins/session.
   - **The user's real, already-logged-in Chrome** — have them open
     `chrome://inspect/#remote-debugging` and check "Allow remote
-    debugging". Confirmed this opens a CDP port on the *default*
+    debugging". Confirmed this opens a CDP port on the _default_
     profile without relaunching anything, but it doesn't serve the
-    classic `/json` HTTP discovery (confirmed `/json/version` returns
-    404) — `insert_text`/`type_keystrokes` fall back automatically to
+    classic `/json` HTTP discovery (confirmed `/json/version` returns 404) — `insert_text`/`type_keystrokes` fall back automatically to
     connecting straight to the browser-level `ws://host:port/devtools/browser`
     endpoint and `Target.attachToTarget{flatten:true}` in that case,
     but since that path can't be auto-discovered via `pid` + `lsof`
@@ -617,7 +646,7 @@ Preconditions (shared with `insert_text`):
     route above.
     **This can't be made fully unattended, and the popup fires more
     often than you'd think.** Chrome shows a live "Allow remote
-    debugging?" confirmation on every *new* WebSocket connection to the
+    debugging?" confirmation on every _new_ WebSocket connection to the
     browser endpoint — not once per Chrome process, and NOT something a
     saved preference can skip. Confirmed by testing live, twice, with
     different results depending on what actually opened a new socket:
@@ -626,25 +655,25 @@ Preconditions (shared with `insert_text`):
       call, 3 for 3** — worse than "once per session."
     - `CdpSessionCache` (this platform's backend) fixes that: it caches
       one open connection per port and reuses it across calls,
-      re-attaching to a different tab on the *same* connection via
+      re-attaching to a different tab on the _same_ connection via
       `Target.getTargets`/`Target.attachToTarget` when
       `target_url_contains` points somewhere new — flattened-mode
       re-attach doesn't open a new socket, so it doesn't re-prompt.
       Confirmed live: after the first approval, two more calls (typing
       into the same tab) went through silently in well under a second.
-    - The popup *does* come back the moment the cache has to open a
+    - The popup _does_ come back the moment the cache has to open a
       genuinely new connection — confirmed by closing the tab the
       cached session was attached to: the next call took ~2s (evict +
       reconnect) and needed a fresh click. Also expect this after a
       full Chrome restart, or a daemon restart (the cache is in-memory,
       not persisted).
-    Net: one click to start, silent after that for as long as the
-    browser and the daemon both stay up and you're re-attaching rather
-    than reconnecting — but don't promise a caller "no more prompts,
-    ever" for a long session that outlives either of those.
-  If no CDP port is found (and none was given explicitly), both
-  actions fail fast with an actionable error rather than silently
-  no-op'ing.
+      Net: one click to start, silent after that for as long as the
+      browser and the daemon both stay up and you're re-attaching rather
+      than reconnecting — but don't promise a caller "no more prompts,
+      ever" for a long session that outlives either of those.
+      If no CDP port is found (and none was given explicitly), both
+      actions fail fast with an actionable error rather than silently
+      no-op'ing.
 - Multi-tab ambiguity: with more than one tab open, both actions act
   on whichever tab is found first — not necessarily the one you
   mean — unless you pass `target_url_contains` (a substring to match

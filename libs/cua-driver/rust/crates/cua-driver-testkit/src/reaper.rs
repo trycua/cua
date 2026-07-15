@@ -85,13 +85,21 @@ pub fn spawn_in_job(cmd: &mut Command) -> std::io::Result<Child> {
 
 #[cfg(unix)]
 fn process_group_kill(pid: u32) {
-    use std::process::Stdio;
-    let group = format!("-{pid}");
-    let _ = Command::new("kill")
-        .args(["-9", &group])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    let Some(group) = process_group_target(pid) else {
+        return;
+    };
+    // A negative pid targets one process group. Do this directly: some `kill`
+    // utilities parse `kill -9 -<pgid>` as `kill(-1, SIGKILL)` unless the
+    // negative operand is protected with an implementation-specific `--`.
+    unsafe {
+        libc::kill(group, libc::SIGKILL);
+    }
+}
+
+#[cfg(unix)]
+fn process_group_target(pid: u32) -> Option<i32> {
+    let pid = i32::try_from(pid).ok()?;
+    (pid > 1).then_some(-pid)
 }
 
 #[cfg(target_os = "windows")]
@@ -174,5 +182,18 @@ mod win {
                 }
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::process_group_target;
+
+    #[test]
+    fn process_group_target_is_exact_and_never_all_processes() {
+        assert_eq!(process_group_target(42), Some(-42));
+        assert_eq!(process_group_target(0), None);
+        assert_eq!(process_group_target(1), None);
+        assert_eq!(process_group_target(u32::MAX), None);
     }
 }

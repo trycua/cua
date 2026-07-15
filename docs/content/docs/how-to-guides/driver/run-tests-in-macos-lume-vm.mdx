@@ -1,0 +1,387 @@
+---
+title: Run Cua Driver macOS tests in a Lume VM
+description: Build a private Tahoe test seed, run the complete GUI E2E gate from a disposable Lume clone, and retain its evidence.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This guide shows maintainers how to run the canonical Cua Driver macOS GUI E2E
+gate in Lume. Each accepted run installs one committed source revision in a
+disposable clone, executes the complete Rust behavior catalog from the logged-in
+VM display, and pulls the evidence back to the host.
+
+<Callout type="info">
+  This is a maintainer-dispatched gate. It does not run in a GitHub-hosted macOS GUI job. The
+  repository contains the runner and verifier; a private, host-local Lume seed supplies the macOS
+  consent state.
+</Callout>
+
+## Before you start
+
+You need:
+
+- an Apple Silicon Mac with Lume and `jq` installed;
+- enough host space for the 150 GB sparse builder, seed, backups, and worker;
+- a clean, committed checkout of `trycua/cua`; and
+- access to the VM display for Keychain and macOS consent prompts.
+
+Record the host Lume version:
+
+```bash
+lume --version
+```
+
+Use `macos-tahoe-cua:26.5.2` as the public base. It contains macOS 26.5.2
+build 25F84, disabled SIP, Command Line Tools 26.6, autologin, and SSH. It has
+no repository source, TCC grants, or local signing identity.
+
+Keep the private builder and seed on host-local Lume storage. Never push them
+to a registry.
+
+## Build the private seed once
+
+You only need to build a seed when the macOS version, public base, developer
+tools, signing identity, or consent state changes. Every acceptance run starts
+from a clone of the stopped seed.
+
+### Pull and inspect the public base
+
+On the host, run:
+
+```bash
+IMAGE=macos-tahoe-cua:26.5.2
+BUILDER=cua-driver-macos-e2e-builder-26.5.2
+
+lume pull "$IMAGE" "$BUILDER"
+lume run "$BUILDER"
+```
+
+Keep `lume run` open. In Terminal in the VM display, run:
+
+```bash
+sw_vers
+csrutil status
+xcode-select -p
+xcrun swiftc --version
+```
+
+Require macOS 26.5.2 build 25F84, disabled SIP, and
+`/Library/Developer/CommandLineTools`. The Command Line Tools agreement must
+already be accepted. If macOS presents it during installation, accept it in the
+VM display and rerun the checks.
+
+### Install the pinned guest toolchain
+
+Install Homebrew with the pinned upstream installer:
+
+```bash
+HOMEBREW_INSTALL_COMMIT=4b0227cf8416504142d23893368c2e1d211d5191
+HOMEBREW_INSTALL_SHA256=99287f194a8b3c9e6b0203a11a5fa54518be57209343e6bb954dec4635796d9d
+HOMEBREW_INSTALLER="/tmp/homebrew-install-${HOMEBREW_INSTALL_COMMIT}.sh"
+
+curl -fsSL \
+  "https://raw.githubusercontent.com/Homebrew/install/${HOMEBREW_INSTALL_COMMIT}/install.sh" \
+  -o "$HOMEBREW_INSTALLER"
+printf '%s  %s\n' "$HOMEBREW_INSTALL_SHA256" "$HOMEBREW_INSTALLER" \
+  | shasum -a 256 -c -
+/bin/bash "$HOMEBREW_INSTALLER"
+
+eval "$(/opt/homebrew/bin/brew shellenv)"
+brew install node ffmpeg jq rust
+printf '\n%s\n' 'eval "$(/opt/homebrew/bin/brew shellenv)"' \
+  >> ~/.zprofile
+```
+
+Open a new Terminal window and verify the tools:
+
+```bash
+xcrun swiftc --version
+cargo --version
+node --version
+npm --version
+ffmpeg -version | head -1
+ffprobe -version | head -1
+jq --version
+```
+
+Keep autologin, sleep prevention, and screen-lock prevention enabled. Add only
+the maintainer host's public SSH key to `/Users/lume/.ssh/authorized_keys`.
+Never copy a private key, registry credential, or source-control token into the
+VM.
+
+### Sync one committed source revision
+
+From the repository root on the host, get the builder IP and push the checkout:
+
+```bash
+VM_IP="$(lume get "$BUILDER" --format json | jq -r '.[0].ipAddress')"
+libs/cua-driver/scripts/sync-vm-worktree.sh push \
+  "lume@${VM_IP}" '~/cua'
+```
+
+The sync rejects a dirty host checkout. It omits `.git`, local credential
+files, build outputs, and host-side test evidence. It writes the exact commit
+to `/Users/lume/cua/.cua-e2e-source-sha`.
+
+### Create a stable local signing identity
+
+Source builds need a certificate-backed identity so macOS keeps CuaDriver's
+TCC grants after the next install. Tahoe can unlock the login keychain while
+still denying the partition ACL used by noninteractive `codesign`, so create a
+dedicated keychain in the VM:
+
+```bash
+SIGNING_KEYCHAIN="$HOME/Library/Keychains/cua-driver-signing.keychain-db"
+
+security create-keychain "$SIGNING_KEYCHAIN"
+security set-keychain-settings "$SIGNING_KEYCHAIN"
+security list-keychains -d user -s "$SIGNING_KEYCHAIN"
+security unlock-keychain "$SIGNING_KEYCHAIN"
+export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN="$SIGNING_KEYCHAIN"
+```
+
+Use the `lume` account password for this private test keychain. Back in the
+synced checkout, run the first install:
+
+```bash
+cd /Users/lume/cua
+export CUA_DRIVER_SOURCE_SHA="$(cat .cua-e2e-source-sha)"
+bash libs/cua-driver/scripts/install-local.sh --release --autostart
+```
+
+Open Keychain Access in the VM display. Select the `cua-driver-signing`
+keychain, open `CuaDriver Local Signing (cua-driver-rs)`, and set Trust to
+**Always Trust**.
+
+Return to Terminal and allow Apple tooling to use the private key:
+
+```bash
+read -r -s -p 'Keychain password: ' KEYCHAIN_PASSWORD; echo
+security set-key-partition-list \
+  -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" \
+  "$SIGNING_KEYCHAIN"
+unset KEYCHAIN_PASSWORD
+```
+
+Run the installer again:
+
+```bash
+bash libs/cua-driver/scripts/install-local.sh --release --autostart
+```
+
+Require the message `signed staged app with a stable local identity`. Do not
+grant TCC permissions to an ad-hoc build.
+
+### Grant the seed's consent paths
+
+Request Accessibility and Screen Recording through the app:
+
+```bash
+/Users/lume/.local/bin/cua-driver permissions grant
+```
+
+Approve both CuaDriver requests. Then trigger the two Automation paths and
+Tahoe's direct-capture request:
+
+```bash
+# The test sentinel runs this probe from Terminal.
+osascript -e \
+  'tell application "System Events" to get name of first application process whose frontmost is true'
+
+# The installed app enumerates applications through System Events.
+/Users/lume/.local/bin/cua-driver list_apps '{}'
+
+# An actual desktop capture triggers Tahoe's separate direct-capture prompt.
+DRIVER=/Users/lume/.local/bin/cua-driver
+"$DRIVER" call set_config '{"capture_scope":"desktop"}'
+"$DRIVER" call get_desktop_state '{}' \
+  > /tmp/cua-driver-seed-desktop-state.json
+"$DRIVER" call set_config '{"capture_scope":"window"}'
+```
+
+Choose **Allow** for:
+
+- Terminal controlling System Events;
+- CuaDriver controlling System Events; and
+- CuaDriver capturing screen and audio without the system picker.
+
+These are normal macOS consent flows. Do not edit `TCC.db`. Rerun all three
+probes and require them to finish without another prompt.
+
+Verify the app-owned grants, signature, capture result, and SIP state:
+
+```bash
+"$DRIVER" permissions status --json | jq -e '
+  .accessibility == true
+  and .screen_recording == true
+  and .screen_recording_capturable == true
+  and .source.attribution == "driver-daemon"
+'
+
+jq -e '
+  .screenshot_mime_type == "image/png"
+  and .screenshot_width > 0
+  and .screenshot_height > 0
+  and (.screenshot_png_b64 | length) > 0
+' /tmp/cua-driver-seed-desktop-state.json >/dev/null
+
+codesign -d -r- /Applications/CuaDriver.app 2>&1 \
+  | grep 'certificate leaf'
+csrutil status
+```
+
+### Freeze the seed and backups
+
+Before cloning, inspect the builder for credentials, personal files, temporary
+private keys, unrelated source, and old test evidence. Clean only the audited
+paths. Keep the dedicated signing keychain because it is part of the private
+seed contract.
+
+On the host, stop the builder and clone it while stopped:
+
+```bash
+SEED=cua-driver-macos-e2e-seed-26.5.2-YYYYMMDD
+BACKUP_A="${SEED}-backup-a"
+BACKUP_B="${SEED}-backup-b"
+
+lume stop "$BUILDER"
+lume clone "$BUILDER" "$SEED"
+lume clone "$SEED" "$BACKUP_A"
+lume clone "$SEED" "$BACKUP_B"
+lume ls
+```
+
+Require the seed and both backups to show `stopped`. Record their names, the
+public image tag, macOS build, Lume version, Command Line Tools version, Rust
+version, Node version, and signing-certificate hash in the maintainer log.
+Treat these VMs as immutable and local-only.
+
+## Run the acceptance gate from a fresh clone
+
+Create one worker per accepted run. Never run the matrix in the seed itself.
+
+### Clone and boot a worker
+
+On the host:
+
+```bash
+SEED=cua-driver-macos-e2e-seed-26.5.2-YYYYMMDD
+WORKER="cua-driver-macos-e2e-$(date -u +%Y%m%dT%H%M%SZ)"
+
+lume clone "$SEED" "$WORKER"
+lume run "$WORKER"
+```
+
+Keep the display open. In another host terminal, sync the exact clean commit:
+
+```bash
+VM_IP="$(lume get "$WORKER" --format json | jq -r '.[0].ipAddress')"
+libs/cua-driver/scripts/sync-vm-worktree.sh push \
+  "lume@${VM_IP}" '~/cua'
+```
+
+### Run the complete matrix in foreground Terminal
+
+Open Terminal in the VM display and run:
+
+```bash
+cd /Users/lume/cua
+libs/cua-driver/tests/runners/macos-lume/run-all.sh
+```
+
+Enter the dedicated keychain password when asked. Keep Terminal in the logged-in
+Aqua session. Do not run this command over SSH.
+
+The runner verifies the source marker, console user, SIP state, toolchain,
+stable signature, app-owned TCC grants, Terminal Automation, CuaDriver
+Automation, and live capture before it builds the fixtures. It then executes
+the complete macOS catalog and requires typed result rows plus valid trajectory
+videos.
+
+An accepted run ends with:
+
+```text
+macOS Rust E2E suite completed: all
+```
+
+Any setup failure is an environment failure. Do not report a smaller or
+filtered matrix as the canonical result.
+
+### Pull and review the evidence
+
+Pull artifacts before stopping or deleting the worker, including after a
+failure:
+
+```bash
+REMOTE_ARTIFACT_DIR=artifacts/cua-driver/macos \
+  libs/cua-driver/scripts/sync-vm-worktree.sh pull-artifacts \
+  "lume@${VM_IP}" '~/cua'
+```
+
+The command prints a host directory under `artifacts/cua-driver/vm/`. Review:
+
+- `summary.md` for the verified source SHA and pass/fail totals;
+- `cases.jsonl` and `results.jsonl` for the declared and observed rows;
+- `environment.jsonl`, `golden-environment.txt`, and `permissions.json` for the
+  VM contract;
+- `environment-preflight.log` and per-lane logs; and
+- every `recordings/**/recording.mp4` referenced by a result row.
+
+The reporter rejects missing, duplicate, undeclared, skipped, or evidence-free
+rows. A zero exit status proves that the declarations, typed results, source
+identity, and required videos agree.
+
+After the artifacts are safely on the host:
+
+```bash
+lume stop "$WORKER"
+lume delete "$WORKER" --force
+```
+
+Keep the seed and both backups stopped.
+
+## Troubleshooting
+
+### Codesign cannot find the local identity
+
+Unlock the dedicated keychain after each worker boot:
+
+```bash
+security unlock-keychain \
+  "$HOME/Library/Keychains/cua-driver-signing.keychain-db"
+```
+
+If the identity is present but `codesign` still prompts or fails, rerun
+`security set-key-partition-list` in the builder and create a new seed.
+
+### The run opens a System Events prompt
+
+The seed is missing an Automation grant. Stop the worker, repair the builder
+through the normal prompt flow, verify that the probe no longer prompts, and
+create a new seed. Do not add prompt handling to the test matrix.
+
+### Permission status is green but capture blocks
+
+The ordinary Screen Recording toggle and Tahoe's direct-capture consent are
+separate. Run the desktop-capture probe in the builder, choose **Allow**, rerun
+it without a prompt, and create a new seed.
+
+### The preflight works over SSH but the matrix fails
+
+SSH does not own the foreground Aqua session. Run `run-all.sh` from Terminal in
+the VM display so fixtures, focus checks, and macOS prompts use the console
+session.
+
+### The runner rejects the source revision
+
+Commit or clean the host checkout, sync again, and confirm that
+`/Users/lume/cua/.cua-e2e-source-sha` equals `git rev-parse HEAD`. Diagnostic
+dirty syncs cannot produce an accepted result.
+
+## Related documentation
+
+- [Run Cua Driver in a macOS Lume VM](/how-to-guides/driver/run-in-macos-lume-vm)
+- [How Cua Driver is validated](/concepts/how-cua-driver-is-validated)
+- [macOS permissions reference](/reference/cua-driver/macos-permissions)
+- [Change SIP on a macOS VM](/how-to-guides/lume/change-sip)
+- [Runner source and seed reference](https://github.com/trycua/cua/tree/main/libs/cua-driver/tests/runners/macos-lume)

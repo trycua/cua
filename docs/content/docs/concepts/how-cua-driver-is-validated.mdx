@@ -1,6 +1,6 @@
 ---
-title: "How Cua Driver Is Validated"
-description: "Why Cua Driver uses source-built desktop harnesses, independent application oracles, and retained evidence to validate behavior between releases."
+title: 'How Cua Driver Is Validated'
+description: 'Why Cua Driver uses source-built desktop harnesses, independent application oracles, and retained evidence to validate behavior between releases.'
 ---
 
 # How Cua Driver Is Validated
@@ -51,7 +51,7 @@ The Rust catalog records the dimensions that affect delivery:
 | Addressing      | AX element or PX coordinate                                                                            |
 | Delivery        | foreground or background                                                                               |
 | Scope           | target window or full desktop                                                                          |
-| Surface         | shared renderer, native toolkit, embedded web view, or compositor                                    |
+| Surface         | shared renderer, native toolkit, embedded web view, or compositor                                      |
 | Expected result | delivered or one exact structured refusal                                                              |
 
 Foreground and background are dimensions of an action, not separate test
@@ -81,10 +81,10 @@ desktop remains unchanged.
 
 ## Evidence makes a result auditable
 
-Canonical hosted GUI runs retain the typed result for every declared cell, the
-source commit, per-cell desktop video, before and after state, the tool
-trajectory, fixture journals, driver logs, and environment preflight. The
-GitHub Actions summary links each matrix row to its artifacts.
+Canonical GUI runs retain the typed result for every declared cell, the source
+commit, per-cell desktop video, before and after state, the tool trajectory,
+fixture journals, driver logs, and environment preflight. The reporter writes a
+Markdown summary that links each matrix row to its retained evidence.
 
 The reporter rejects missing or duplicate rows, undeclared outcomes,
 contradictory results, and incomplete required evidence. A failed environment
@@ -96,9 +96,11 @@ an observed effect remains a failure.
 Deterministic unit, protocol, compile, and packaging checks run automatically
 where configured. Interactive E2E suites require a real graphical session and
 are maintainer-triggered because they are slower and more environment-sensitive.
-Windows and Linux have dispatchable GitHub Actions workflows; macOS runs the
-same Rust catalog in a logged-in session with Accessibility and Screen
-Recording permissions.
+Windows and Linux have dispatchable GitHub Actions workflows. A maintainer runs
+macOS in a disposable clone of a stopped Lume seed with a logged-in Aqua
+session, stable source-build signature, and inherited macOS consent. See [Run
+Cua Driver macOS tests in a Lume
+VM](/how-to-guides/driver/run-tests-in-macos-lume-vm) for that process.
 
 Each accepted run builds the driver and fixtures from one exact source commit.
 Support claims change only after an unchanged behavior cell produces new
@@ -113,3 +115,6 @@ oracles, and command-return-only checks do not establish support.
   engineering work and hard platform boundaries.
 - [Interface contracts](/reference/cua-driver/contracts) defines public driver
   behavior and refusal semantics.
+- [Run Cua Driver macOS tests in a Lume
+  VM](/how-to-guides/driver/run-tests-in-macos-lume-vm) describes the
+  maintainer-owned macOS acceptance gate.

@@ -83,6 +83,8 @@ base64 = { workspace = true }
 # Isolated HOME / cache directories for `version_check` unit tests so they
 # never touch the developer's real `~/.cua-driver-rs/version_check.json`.
 tempfile = "3"
+futures-util = "0.3"
+tokio-tungstenite = "0.24"
 
 [target.'cfg(target_os = "windows")'.dev-dependencies]
 platform-windows = { path = "../platform-windows" }

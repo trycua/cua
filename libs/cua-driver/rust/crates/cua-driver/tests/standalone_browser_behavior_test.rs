@@ -5,6 +5,8 @@
 //! on interactive desktops where the requested browser is installed.
 
 use std::collections::HashSet;
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -19,6 +21,8 @@ use cua_driver_testkit::e2e::{
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::ForegroundSentinel;
 use cua_driver_testkit::{spawn_in_job, BrowserFixtureServer, Driver, McpDriver, ToolResponse};
+use futures_util::{SinkExt, StreamExt};
+use tokio_tungstenite::tungstenite::Message;
 
 const FIXTURE_HTML: &str = include_str!("../../../../tests/fixtures/shared/web/index.html");
 static STANDALONE_BROWSER_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -185,6 +189,83 @@ fn allocate_loopback_port() -> u16 {
         .and_then(|listener| listener.local_addr())
         .expect("allocate standalone browser CDP port")
         .port()
+}
+
+fn browser_endpoint_url(port: u16) -> String {
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .unwrap_or_else(|error| panic!("connect to harness CDP endpoint {port}: {error}"));
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("set CDP HTTP read timeout");
+    write!(
+        stream,
+        "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+    )
+    .expect("request harness CDP version");
+    let mut response = Vec::new();
+    if let Err(error) = stream.read_to_end(&mut response) {
+        assert!(
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
+            "read harness CDP version: {error}"
+        );
+    }
+    let body_start = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| index + 4)
+        .expect("CDP HTTP response headers");
+    let body: serde_json::Value =
+        serde_json::from_slice(&response[body_start..]).expect("parse CDP version response");
+    body["webSocketDebuggerUrl"]
+        .as_str()
+        .expect("browser websocket URL")
+        .to_owned()
+}
+
+fn harness_cdp_call(port: u16, method: &str, params: serde_json::Value) -> serde_json::Value {
+    let ws_url = browser_endpoint_url(port);
+    tokio::runtime::Runtime::new()
+        .expect("create harness CDP runtime")
+        .block_on(async move {
+            let (mut socket, _) = tokio_tungstenite::connect_async(&ws_url)
+                .await
+                .expect("connect harness browser websocket");
+            socket
+                .send(Message::Text(
+                    serde_json::json!({"id": 1, "method": method, "params": params}).to_string(),
+                ))
+                .await
+                .expect("send harness CDP command");
+            while let Some(frame) = socket.next().await {
+                let frame = frame.expect("read harness CDP frame");
+                let Message::Text(text) = frame else {
+                    continue;
+                };
+                let value: serde_json::Value =
+                    serde_json::from_str(&text).expect("parse harness CDP response");
+                if value["id"] == 1 {
+                    assert!(value.get("error").is_none(), "CDP {method}: {value}");
+                    return value["result"].clone();
+                }
+            }
+            panic!("browser websocket closed before CDP {method} replied")
+        })
+}
+
+fn cdp_target_for_url(port: u16, url: &str) -> String {
+    harness_cdp_call(port, "Target.getTargets", serde_json::json!({}))["targetInfos"]
+        .as_array()
+        .and_then(|targets| {
+            targets
+                .iter()
+                .find(|target| target["type"] == "page" && target["url"] == url)
+        })
+        .and_then(|target| target["targetId"].as_str())
+        .unwrap_or_else(|| panic!("no CDP page target for {url}"))
+        .to_owned()
 }
 
 fn driver_profile_root() -> PathBuf {
@@ -459,21 +540,30 @@ fn launch_browser_with_html(spec: &BrowserSpec, label: &str, html: String) -> Br
     }
 }
 
-fn launch_additional_window(
-    fixture: &mut BrowserFixture,
-    spec: &BrowserSpec,
-) -> (BrowserFixtureServer, u32, u64) {
+fn launch_additional_window(fixture: &mut BrowserFixture) -> (BrowserFixtureServer, u32, u64) {
     let html = standalone_fixture_html();
     let server = BrowserFixtureServer::start(&html);
     let before = window_ids(&mut fixture.driver);
-    spawn_browser_command(
-        &mut fixture.driver,
-        spec,
-        fixture._profile.path(),
+    let first_target = cdp_target_for_url(fixture.cdp_port, fixture.server.page_url());
+    let first_window = harness_cdp_call(
         fixture.cdp_port,
-        server.page_url(),
-        (520, 120),
+        "Browser.getWindowForTarget",
+        serde_json::json!({"targetId": first_target}),
     );
+    let bounds = &first_window["bounds"];
+    let created = harness_cdp_call(
+        fixture.cdp_port,
+        "Target.createTarget",
+        serde_json::json!({
+            "url": server.page_url(),
+            "newWindow": true,
+            "left": bounds["left"],
+            "top": bounds["top"],
+            "width": bounds["width"],
+            "height": bounds["height"],
+        }),
+    );
+    assert!(created["targetId"].is_string(), "{created}");
     let window = wait_for_fixture_window(&mut fixture.driver, &before, &server);
     let (pid, window_id) = window.expect("additional standalone browser window did not appear");
     assert_eq!(pid, fixture.pid, "additional window must share browser pid");
@@ -1087,19 +1177,16 @@ fn run_multi_tab(spec: &BrowserSpec) {
         let mut fixture = launch_browser(spec, &scenario);
         *evidence = recording_evidence(fixture.driver.recording_dir());
         let session = format!("standalone-multi-tab-{}", fixture.pid);
-        let (target, tab, snapshot) = bind(&mut fixture, &session);
-        let new_tab_ref = ref_by_label(&snapshot, "id=standalone-new-tab");
-        let opened = fixture.driver.call(
-            "browser_click",
+        let _ = bind(&mut fixture, &session);
+        let created = harness_cdp_call(
+            fixture.cdp_port,
+            "Target.createTarget",
             serde_json::json!({
-                "target_id": target,
-                "tab_id": tab,
-                "ref": new_tab_ref,
-                "input_route": "dom_event",
-                "session": session,
+                "url": format!("{}?tab=second", fixture.server.page_url()),
+                "newWindow": false,
             }),
         );
-        assert_eq!(opened.structured()["status"], "ok", "{}", opened.raw);
+        assert!(created["targetId"].is_string(), "{created}");
         wait_for_observed(&fixture.server, "new_tab=open");
 
         run_with_background_oracles(&mut fixture, |fixture| {
@@ -1149,7 +1236,7 @@ fn run_two_window_collision(spec: &BrowserSpec) {
             let mut fixture = launch_browser(spec, &scenario);
             *evidence = recording_evidence(fixture.driver.recording_dir());
             let (second_server, second_pid, second_window_id) =
-                launch_additional_window(&mut fixture, spec);
+                launch_additional_window(&mut fixture);
             assert_eq!(second_pid, fixture.pid);
             assert_ne!(second_window_id, fixture.window_id);
             run_with_background_oracles(&mut fixture, |fixture| {

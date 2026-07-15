@@ -37,25 +37,29 @@ impl McpDriver {
     /// Returns `None` (with a skip message) if the binary isn't built — the
     /// caller's test should early-return so an un-built binary skips, not fails.
     pub fn spawn() -> Option<Self> {
-        Self::spawn_internal(&[], None)
+        Self::spawn_internal(&[], &[], None)
     }
 
     /// Spawn the driver with a stable recording label for artifact naming.
     pub fn spawn_named(recording_label: &str) -> Option<Self> {
-        Self::spawn_internal(&[], Some(recording_label))
+        Self::spawn_internal(&[], &[], Some(recording_label))
     }
 
     /// Spawn a named driver with environment variables scoped to this child.
     pub fn spawn_named_with_env(recording_label: &str, env: &[(&str, &str)]) -> Option<Self> {
-        Self::spawn_internal(env, Some(recording_label))
+        Self::spawn_internal(env, &[], Some(recording_label))
     }
 
     /// Spawn the driver with extra environment variables set on the child.
     pub fn spawn_with_env(env: &[(&str, &str)]) -> Option<Self> {
-        Self::spawn_internal(env, None)
+        Self::spawn_internal(env, &[], None)
     }
 
-    fn spawn_internal(env: &[(&str, &str)], recording_label: Option<&str>) -> Option<Self> {
+    fn spawn_internal(
+        env: &[(&str, &str)],
+        args: &[&str],
+        recording_label: Option<&str>,
+    ) -> Option<Self> {
         let bin = driver_binary();
         if !bin.exists() {
             eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
@@ -77,6 +81,7 @@ impl McpDriver {
             // A test that exercises telemetry can explicitly override this
             // through `spawn_with_env` / `spawn_named_with_env` below.
             .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false");
+        cmd.args(args);
         #[cfg(not(target_os = "macos"))]
         cmd.env("CUA_DRIVER_RS_MCP_NO_RELAUNCH", "1");
         for (key, value) in env {
@@ -140,7 +145,8 @@ impl McpDriver {
     #[cfg(target_os = "macos")]
     fn spawn_macos_daemon_proxy_internal(recording_label: Option<&str>) -> Option<Self> {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        let socket = format!("{home}/Library/Caches/cua-driver/cua-driver.sock");
+        let socket = std::env::var("CUA_E2E_MACOS_DAEMON_SOCKET")
+            .unwrap_or_else(|_| format!("{home}/Library/Caches/cua-driver/cua-driver.sock"));
         if std::os::unix::net::UnixStream::connect(&socket).is_err() {
             eprintln!(
                 "[testkit] CuaDriver daemon not listening at {socket} — \
@@ -148,7 +154,11 @@ impl McpDriver {
             );
             return None;
         }
-        Self::spawn_internal(&[("CUA_DRIVER_RS_MCP_FORCE_PROXY", "1")], recording_label)
+        Self::spawn_internal(
+            &[("CUA_DRIVER_RS_MCP_FORCE_PROXY", "1")],
+            &["mcp", "--socket", &socket],
+            recording_label,
+        )
     }
 
     fn initialize(&mut self) {

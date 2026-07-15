@@ -118,19 +118,28 @@ URLs, profile paths, and raw DevTools endpoint identifiers.
 ### Shared and macOS unit/protocol validation
 
 - `cargo test -p cua-driver-core -p platform-macos`: 170 core tests, 3 session
-  lifecycle tests, and 124 platform-macOS tests passed.
+  lifecycle tests, and 126 platform-macOS tests passed at the final revision.
 - `cargo test -p cua-driver --test protocol_schema_test --test
 schema_consistency_test --test protocol_session_test`: 1 schema, 1
   consistency, and 6 session protocol tests passed.
 - `cargo build -p cua-driver` and the release build used by the documentation
   generator passed.
-- Final source revision `a2e792a428308a80bb02a37ed4467ea073a8e8e5` was
-  installed through `install-local.sh` using the stable local signing identity.
-- The installed daemon currently reports Accessibility and Screen Recording
-  as not granted. The focused canonical preflight therefore could enumerate
-  apps but could not discover the fixture window. The macOS row remains
-  permission-gated until the app is reauthorized; unit and protocol results
-  are not presented as a substitute for that E2E row.
+- The initial permission-enabled macOS run failed closed because WindowServer
+  reported several untitled layer-0 helper surfaces for Electron. Those
+  process-owned helpers incorrectly defeated the single-native-browser-window
+  proof even though CDP exposed exactly one page.
+- Revision `0cf2dd9e1372a3b2c11822975752ddd04fe0b931` narrows the macOS
+  fallback cardinality check to titled, non-empty browser surfaces. A second
+  titled surface still defeats the proof, and a second CDP page independently
+  defeats it in shared core. Both shapes have focused regression tests.
+- That exact revision was installed through `install-local.sh` using the stable
+  local signing identity. The daemon reported Accessibility, Screen Recording,
+  and live capture capability as granted after restart.
+- The canonical macOS Electron browser row then passed: 1 delivered, 0
+  refused, 0 failed, 0 skipped. It exercised Page/Background/Window/CDP with
+  fixture-state, focus, z-order, cursor, and no-leaked-input oracles, plus a
+  playable video and trajectory. The generated environment record identifies
+  the exact source revision above.
 
 ### Windows interactive validation
 
@@ -187,9 +196,9 @@ schema_consistency_test --test protocol_session_test`: 1 schema, 1
 | Phase 7: release evidence and rollout | Partially complete. Canonical Electron evidence, generated reference, public Diataxis docs, and bundled skills are present. Standalone Chrome/Edge adversarial lanes and embedded-webview expansion remain deferred. |
 
 The v1 milestone therefore satisfies the accepted local implementation scope,
-but it does not claim the later `page` migration or the broader real-browser
-release matrix. macOS canonical evidence also remains pending the local TCC
-reauthorization recorded above.
+including canonical macOS, Windows, X11, and native Wayland evidence. It does
+not claim the later `page` migration or the broader real-browser release
+matrix.
 
 ## Deferred by design
 

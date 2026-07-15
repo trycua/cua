@@ -61,7 +61,7 @@ if (-not $NoBuild) {
     & cargo build --release -p cua-driver --manifest-path (Join-Path $rustRoot "Cargo.toml")
     if ($LASTEXITCODE -ne 0) { throw "Rust driver build failed" }
     $fixtureTargets = switch ($suite) {
-        "shared" { @("electron", "tauri") }
+        "shared" { @("electron", "tauri", "webview") }
         "native" { @("wpf", "winui3", "webview", "electron") }
         "capture" { @("wpf", "electron") }
         default { @("wpf", "winui3", "webview", "electron", "tauri") }
@@ -80,10 +80,12 @@ if ($suite -in @("shared", "all")) {
 if ($suite -in @("native", "capture", "all")) {
     $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-wpf\CuaTestHarness.Wpf.exe"
 }
+if ($suite -in @("shared", "native", "all")) {
+    $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-webview\CuaTestHarness.WebView.exe"
+}
 if ($suite -in @("native", "all")) {
     $requiredFixtures += @(
-        (Join-Path $env:CUA_TEST_APPS_ROOT "harness-winui3\CuaTestHarness.WinUI3.exe"),
-        (Join-Path $env:CUA_TEST_APPS_ROOT "harness-webview\CuaTestHarness.WebView.exe")
+        (Join-Path $env:CUA_TEST_APPS_ROOT "harness-winui3\CuaTestHarness.WinUI3.exe")
     )
 }
 foreach ($fixture in $requiredFixtures) {

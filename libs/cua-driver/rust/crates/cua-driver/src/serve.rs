@@ -337,13 +337,18 @@ fn observe_daemon_result(
         cua_driver_core::server::ToolObservationTimer,
         crate::telemetry::Transport,
     )>,
+    session_context: Option<cua_driver_core::session::SessionToolContext>,
     result: serde_json::Value,
 ) -> serde_json::Value {
     let Some((timer, transport)) = observation else {
         return result;
     };
     let response = cua_driver_core::protocol::Response::ok(serde_json::Value::Null, result);
-    crate::telemetry::capture_tool_completed(timer.finish(&response), transport);
+    let outcome = timer.finish(&response);
+    if let Some(context) = session_context {
+        context.complete(&outcome);
+    }
+    crate::telemetry::capture_tool_completed(outcome, transport);
     match response.body {
         cua_driver_core::protocol::ResponseBody::Result { result } => result,
         cua_driver_core::protocol::ResponseBody::Error { .. } => unreachable!("constructed ok response"),
@@ -421,6 +426,24 @@ async fn invoke_daemon_tool(
         return DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);
     }
 
+    let session_context = observation_transport.and_then(|transport| {
+        let transport = match transport {
+            crate::telemetry::Transport::McpStdio => {
+                cua_driver_core::session::SessionTransport::McpStdio
+            }
+            crate::telemetry::Transport::McpHttp => {
+                cua_driver_core::session::SessionTransport::McpHttp
+            }
+            crate::telemetry::Transport::Cli => {
+                cua_driver_core::session::SessionTransport::Cli
+            }
+            crate::telemetry::Transport::Daemon => {
+                cua_driver_core::session::SessionTransport::Daemon
+            }
+        };
+        cua_driver_core::session::begin_tool_call(&tool_name, &args, true, transport)
+    });
+
     let result = registry.invoke(&tool_name, args).await;
     let is_error = result.is_error.unwrap_or(false);
     let content: Vec<serde_json::Value> = result
@@ -442,7 +465,7 @@ async fn invoke_daemon_tool(
     if let Some(structured) = result.structured_content {
         result_value["structuredContent"] = structured;
     }
-    DaemonResponse::ok(observe_daemon_result(observation, result_value))
+    DaemonResponse::ok(observe_daemon_result(observation, session_context, result_value))
 }
 
 // ── Client ────────────────────────────────────────────────────────────────────

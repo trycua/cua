@@ -13,7 +13,7 @@
 
 use serde::Serialize;
 use serde_json::{Map, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -61,6 +61,8 @@ pub mod event {
     pub const MCP_SESSION_STARTED: &str = "cua_driver_mcp_session_started";
     pub const MCP_TOOL_COMPLETED: &str = "cua_driver_mcp_tool_completed";
     pub const MCP_STARTUP_COMPLETED: &str = "cua_driver_mcp_startup_completed";
+    pub const AGENT_SESSION_STARTED: &str = "cua_driver_agent_session_started";
+    pub const AGENT_SESSION_ENDED: &str = "cua_driver_agent_session_ended";
     pub const PERMISSIONS_GATE_STARTED: &str = "cua_driver_permissions_gate_started";
     pub const PERMISSIONS_GATE_DISMISSED: &str = "cua_driver_permissions_gate_dismissed";
     pub const PERMISSIONS_GATE_COMPLETED: &str = "cua_driver_permissions_gate_completed";
@@ -74,6 +76,8 @@ const INSPECTABLE_EVENTS: &[&str] = &[
     event::MCP_SESSION_STARTED,
     event::MCP_TOOL_COMPLETED,
     event::MCP_STARTUP_COMPLETED,
+    event::AGENT_SESSION_STARTED,
+    event::AGENT_SESSION_ENDED,
     event::PERMISSIONS_GATE_STARTED,
     event::PERMISSIONS_GATE_DISMISSED,
     event::PERMISSIONS_GATE_COMPLETED,
@@ -254,6 +258,28 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("duration_bucket", Value::String("lt_100ms".into())),
             ("execution_mode", Value::String(execution_mode().into())),
         ]),
+        event::AGENT_SESSION_STARTED => bounded_properties(&[
+            ("declaration", Value::String("start_session".into())),
+            ("revived", Value::Bool(false)),
+            ("concurrent_sessions_bucket", Value::String("1".into())),
+            ("entry_transport", Value::String("mcp_stdio".into())),
+            ("execution_mode", Value::String(execution_mode().into())),
+        ]),
+        event::AGENT_SESSION_ENDED => bounded_properties(&[
+            ("end_reason", Value::String("explicit".into())),
+            ("duration_bucket", Value::String("lt_10s".into())),
+            ("tool_count_bucket", Value::String("1_4".into())),
+            ("computer_action_count_bucket", Value::String("1_4".into())),
+            ("error_count_bucket", Value::String("0".into())),
+            ("had_successful_tool", Value::Bool(true)),
+            ("had_successful_computer_action", Value::Bool(true)),
+            ("used_page", Value::Bool(false)),
+            ("used_cursor_tools", Value::Bool(false)),
+            ("used_recording", Value::Bool(false)),
+            ("used_config_write", Value::Bool(false)),
+            ("observed_multiple_transports", Value::Bool(false)),
+            ("execution_mode", Value::String(execution_mode().into())),
+        ]),
         event::PERMISSIONS_GATE_STARTED => bounded_properties(&[
             ("missing_accessibility", Value::Bool(true)),
             ("missing_screen_recording", Value::Bool(true)),
@@ -274,7 +300,11 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
         _ => Map::new(),
     };
     let transport = match event_name {
-        event::MCP_SESSION_STARTED | event::MCP_TOOL_COMPLETED | event::MCP_STARTUP_COMPLETED => {
+        event::MCP_SESSION_STARTED
+        | event::MCP_TOOL_COMPLETED
+        | event::MCP_STARTUP_COMPLETED
+        | event::AGENT_SESSION_STARTED
+        | event::AGENT_SESSION_ENDED => {
             Transport::McpStdio
         }
         event::SERVE_START_LEGACY
@@ -296,6 +326,7 @@ pub fn capture_start(event_name: &'static str, transport: Transport) {
 
 pub fn register_stdio_observer() {
     let _ = cua_driver_core::server::set_stdio_observer(Arc::new(TelemetryObserver));
+    let _ = cua_driver_core::session::set_session_observer(Arc::new(TelemetryObserver));
 }
 
 fn execution_mode() -> &'static str {
@@ -315,6 +346,244 @@ impl cua_driver_core::server::StdioObserver for TelemetryObserver {
 
     fn on_tool_completed(&self, outcome: cua_driver_core::server::ToolCompletionObservation) {
         capture_tool_completed(outcome, Transport::McpStdio);
+    }
+}
+
+const MAX_TRACKED_AGENT_SESSIONS: usize = 256;
+static AGENT_SESSIONS: OnceLock<Mutex<HashMap<String, AgentSessionState>>> = OnceLock::new();
+
+struct AgentSessionState {
+    started: std::time::Instant,
+    entry_transport: Transport,
+    transport_bits: u8,
+    tool_count: u64,
+    computer_action_count: u64,
+    error_count: u64,
+    had_successful_tool: bool,
+    had_successful_computer_action: bool,
+    used_page: bool,
+    used_cursor_tools: bool,
+    used_recording: bool,
+    used_config_write: bool,
+}
+
+impl AgentSessionState {
+    fn new(entry_transport: Transport) -> Self {
+        Self {
+            started: std::time::Instant::now(),
+            entry_transport,
+            transport_bits: transport_bit(entry_transport),
+            tool_count: 0,
+            computer_action_count: 0,
+            error_count: 0,
+            had_successful_tool: false,
+            had_successful_computer_action: false,
+            used_page: false,
+            used_cursor_tools: false,
+            used_recording: false,
+            used_config_write: false,
+        }
+    }
+
+    fn observe(
+        &mut self,
+        transport: Transport,
+        computer_action: bool,
+        outcome: &cua_driver_core::server::ToolCompletionObservation,
+    ) {
+        self.transport_bits |= transport_bit(transport);
+        let tool_name = outcome.tool_name.as_str();
+        if matches!(tool_name, "start_session" | "end_session") {
+            return;
+        }
+        self.tool_count = self.tool_count.saturating_add(1);
+        self.computer_action_count = self
+            .computer_action_count
+            .saturating_add(u64::from(computer_action));
+        self.error_count = self.error_count.saturating_add(u64::from(!outcome.success));
+        self.had_successful_tool |= outcome.success;
+        self.had_successful_computer_action |= outcome.success && computer_action;
+        self.used_page |= tool_name == "page";
+        self.used_cursor_tools |= matches!(
+            tool_name,
+            "set_agent_cursor_enabled"
+                | "set_agent_cursor_motion"
+                | "set_agent_cursor_style"
+                | "get_agent_cursor_state"
+        );
+        self.used_recording |= matches!(
+            tool_name,
+            "start_recording" | "stop_recording" | "replay_trajectory"
+        );
+        self.used_config_write |= tool_name == "set_config";
+    }
+
+    fn ended_properties(
+        &self,
+        reason: cua_driver_core::session::SessionEndReason,
+    ) -> Map<String, Value> {
+        use cua_driver_core::session::SessionEndReason;
+        let end_reason = match reason {
+            SessionEndReason::Explicit => "explicit",
+            SessionEndReason::IdleTimeout => "idle_timeout",
+            SessionEndReason::ProcessExit => "process_exit",
+            SessionEndReason::Unknown => "unknown",
+        };
+        bounded_properties(&[
+            ("end_reason", Value::String(end_reason.into())),
+            ("duration_bucket", Value::String(agent_session_duration_bucket(self.started.elapsed()).into())),
+            ("tool_count_bucket", Value::String(agent_session_count_bucket(self.tool_count).into())),
+            ("computer_action_count_bucket", Value::String(agent_session_count_bucket(self.computer_action_count).into())),
+            ("error_count_bucket", Value::String(agent_session_error_bucket(self.error_count).into())),
+            ("had_successful_tool", Value::Bool(self.had_successful_tool)),
+            ("had_successful_computer_action", Value::Bool(self.had_successful_computer_action)),
+            ("used_page", Value::Bool(self.used_page)),
+            ("used_cursor_tools", Value::Bool(self.used_cursor_tools)),
+            ("used_recording", Value::Bool(self.used_recording)),
+            ("used_config_write", Value::Bool(self.used_config_write)),
+            ("observed_multiple_transports", Value::Bool(self.transport_bits.count_ones() > 1)),
+            ("execution_mode", Value::String(execution_mode().into())),
+        ])
+    }
+}
+
+fn transport_bit(transport: Transport) -> u8 {
+    match transport {
+        Transport::Cli => 1,
+        Transport::Daemon => 2,
+        Transport::McpStdio => 4,
+        Transport::McpHttp => 8,
+    }
+}
+
+fn session_transport(transport: cua_driver_core::session::SessionTransport) -> Transport {
+    match transport {
+        cua_driver_core::session::SessionTransport::Cli => Transport::Cli,
+        cua_driver_core::session::SessionTransport::Daemon => Transport::Daemon,
+        cua_driver_core::session::SessionTransport::McpStdio => Transport::McpStdio,
+        cua_driver_core::session::SessionTransport::McpHttp => Transport::McpHttp,
+    }
+}
+
+fn concurrent_sessions_bucket(count: usize) -> &'static str {
+    match count {
+        0 | 1 => "1",
+        2 => "2",
+        3..=5 => "3_5",
+        _ => "gte_6",
+    }
+}
+
+fn agent_session_duration_bucket(duration: Duration) -> &'static str {
+    match duration.as_secs() {
+        0..=9 => "lt_10s",
+        10..=59 => "10_59s",
+        60..=299 => "1_4min",
+        300..=1799 => "5_29min",
+        _ => "gte_30min",
+    }
+}
+
+fn agent_session_count_bucket(count: u64) -> &'static str {
+    match count {
+        0 => "0",
+        1..=4 => "1_4",
+        5..=19 => "5_19",
+        20..=99 => "20_99",
+        _ => "gte_100",
+    }
+}
+
+fn agent_session_error_bucket(count: u64) -> &'static str {
+    match count {
+        0 => "0",
+        1 => "1",
+        2..=4 => "2_4",
+        _ => "gte_5",
+    }
+}
+
+impl cua_driver_core::session::SessionObserver for TelemetryObserver {
+    fn on_session_started(
+        &self,
+        session_id: &str,
+        observation: cua_driver_core::session::SessionStartObservation,
+    ) {
+        let sessions = AGENT_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
+        if !is_enabled() {
+            sessions.lock().unwrap().remove(session_id);
+            return;
+        }
+        let transport = session_transport(observation.transport);
+        let concurrent = {
+            let mut sessions = sessions.lock().unwrap();
+            if let Some(existing) = sessions.get_mut(session_id) {
+                existing.transport_bits |= transport_bit(transport);
+                return;
+            }
+            if sessions.len() >= MAX_TRACKED_AGENT_SESSIONS {
+                return;
+            }
+            sessions.insert(session_id.to_owned(), AgentSessionState::new(transport));
+            sessions.len()
+        };
+        let declaration = match observation.declaration {
+            cua_driver_core::session::SessionDeclaration::StartSession => "start_session",
+            cua_driver_core::session::SessionDeclaration::ImplicitFirstAction => {
+                "implicit_first_action"
+            }
+        };
+        capture_bounded(
+            event::AGENT_SESSION_STARTED,
+            bounded_properties(&[
+                ("declaration", Value::String(declaration.into())),
+                ("revived", Value::Bool(observation.revived)),
+                ("concurrent_sessions_bucket", Value::String(concurrent_sessions_bucket(concurrent).into())),
+                ("entry_transport", Value::String(transport.as_str().into())),
+                ("execution_mode", Value::String(execution_mode().into())),
+            ]),
+            transport,
+        );
+    }
+
+    fn on_tool_completed(
+        &self,
+        session_id: &str,
+        transport: cua_driver_core::session::SessionTransport,
+        computer_action: bool,
+        outcome: &cua_driver_core::server::ToolCompletionObservation,
+    ) {
+        let sessions = AGENT_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut sessions = sessions.lock().unwrap();
+        if !is_enabled() {
+            sessions.remove(session_id);
+            return;
+        }
+        if let Some(state) = sessions.get_mut(session_id) {
+            state.observe(session_transport(transport), computer_action, outcome);
+        }
+    }
+
+    fn on_session_ended(
+        &self,
+        session_id: &str,
+        reason: cua_driver_core::session::SessionEndReason,
+    ) {
+        let state = AGENT_SESSIONS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap()
+            .remove(session_id);
+        if !is_enabled() {
+            return;
+        }
+        let Some(state) = state else { return; };
+        let transport = state.entry_transport;
+        capture_bounded(
+            event::AGENT_SESSION_ENDED,
+            state.ended_properties(reason),
+            transport,
+        );
     }
 }
 
@@ -1969,6 +2238,151 @@ mod tests {
             mcp_session_observation_key(Transport::McpHttp, "other"),
             "mcp_http:other"
         );
+    }
+
+    #[test]
+    fn execution_mode_requires_the_exact_embedded_sentinel() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let name = cua_driver_core::EMBEDDED_ENV;
+        let original = std::env::var_os(name);
+        unsafe {
+            std::env::remove_var(name);
+        }
+        assert_eq!(execution_mode(), "standalone");
+        unsafe {
+            std::env::set_var(name, "1");
+        }
+        assert_eq!(execution_mode(), "embedded");
+        unsafe {
+            std::env::set_var(name, "true");
+        }
+        assert_eq!(execution_mode(), "standalone");
+        unsafe {
+            match original {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+    }
+
+    #[test]
+    fn agent_session_aggregate_is_bounded_content_free_and_multi_transport() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
+            ToolErrorClass,
+        };
+
+        let mut state = AgentSessionState::new(Transport::McpStdio);
+        state.started = std::time::Instant::now() - Duration::from_secs(75);
+        state.observe(
+            Transport::McpHttp,
+            true,
+            &ToolCompletionObservation {
+                tool_name: "click".into(),
+                success: true,
+                error_class: ToolErrorClass::None,
+                duration_bucket: DurationBucket::Under10Ms,
+                output_type: OutputType::Text,
+                output_size_bucket: OutputSizeBucket::Under1KiB,
+            },
+        );
+        state.observe(
+            Transport::McpHttp,
+            false,
+            &ToolCompletionObservation {
+                tool_name: "page".into(),
+                success: false,
+                error_class: ToolErrorClass::InternalError,
+                duration_bucket: DurationBucket::Ms50To249,
+                output_type: OutputType::Empty,
+                output_size_bucket: OutputSizeBucket::Empty,
+            },
+        );
+        let properties = state.ended_properties(
+            cua_driver_core::session::SessionEndReason::Explicit,
+        );
+        assert_eq!(properties["duration_bucket"], "1_4min");
+        assert_eq!(properties["tool_count_bucket"], "1_4");
+        assert_eq!(properties["computer_action_count_bucket"], "1_4");
+        assert_eq!(properties["error_count_bucket"], "1");
+        assert_eq!(properties["had_successful_tool"], true);
+        assert_eq!(properties["had_successful_computer_action"], true);
+        assert_eq!(properties["used_page"], true);
+        assert_eq!(properties["observed_multiple_transports"], true);
+
+        let serialized = serde_json::to_string(&properties).unwrap().to_ascii_lowercase();
+        for forbidden in [
+            "private-session-id",
+            "arguments",
+            "selector",
+            "typed_text",
+            "screenshot",
+            "window_title",
+            "file_path",
+            "raw_error",
+        ] {
+            assert!(!serialized.contains(forbidden), "aggregate contains {forbidden}: {serialized}");
+        }
+    }
+
+    #[test]
+    fn agent_session_buckets_have_fixed_boundaries() {
+        for (count, expected) in [
+            (0, "0"), (1, "1_4"), (4, "1_4"), (5, "5_19"),
+            (19, "5_19"), (20, "20_99"), (99, "20_99"), (100, "gte_100"),
+        ] {
+            assert_eq!(agent_session_count_bucket(count), expected);
+        }
+        for (count, expected) in [
+            (0, "0"), (1, "1"), (2, "2_4"), (4, "2_4"), (5, "gte_5"),
+        ] {
+            assert_eq!(agent_session_error_bucket(count), expected);
+        }
+    }
+
+    #[test]
+    fn agent_session_inspect_samples_expose_only_the_contract() {
+        for event_name in [event::AGENT_SESSION_STARTED, event::AGENT_SESSION_ENDED] {
+            let payload = inspect_event(event_name).unwrap();
+            assert_eq!(payload["properties"]["telemetry_schema_version"], 3);
+            let properties = payload["properties"].as_object().unwrap();
+            for forbidden_key in ["session", "session_id", "agent_session_id", "cursor_id"] {
+                assert!(!properties.contains_key(forbidden_key));
+            }
+            let serialized = serde_json::to_string(&payload).unwrap().to_ascii_lowercase();
+            for forbidden in [
+                "arguments", "result_text", "file_path", "socket", "raw_error", "$ip",
+            ] {
+                assert!(!serialized.contains(forbidden), "inspect payload contains {forbidden}: {serialized}");
+            }
+        }
+    }
+
+    #[test]
+    fn disabled_agent_session_observation_creates_no_state_or_identity() {
+        use cua_driver_core::session::{
+            SessionDeclaration, SessionObserver, SessionStartObservation, SessionTransport,
+        };
+
+        let _guard = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|_| {
+            set_enabled(false).unwrap();
+            let session_id = "private-disabled-session-telemetry-test";
+            TelemetryObserver.on_session_started(
+                session_id,
+                SessionStartObservation {
+                    declaration: SessionDeclaration::StartSession,
+                    revived: false,
+                    transport: SessionTransport::McpStdio,
+                },
+            );
+            assert!(!AGENT_SESSIONS
+                .get_or_init(|| Mutex::new(HashMap::new()))
+                .lock()
+                .unwrap()
+                .contains_key(session_id));
+            assert!(read_install_id().is_none());
+        });
     }
 
     #[test]

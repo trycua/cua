@@ -226,6 +226,11 @@ pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
                 let initialize_metadata = (!session_observed)
                     .then(|| req.initialize_metadata())
                     .flatten();
+                let session_context = session_tool_context(
+                    &req,
+                    &registry,
+                    crate::session::SessionTransport::McpStdio,
+                );
                 let tool_timer = tool_observation_timer(
                     &req,
                     |name| name == "type_text_chars" || registry.get_def(name).is_some(),
@@ -241,7 +246,11 @@ pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
                     session_observed = true;
                 }
                 if let Some(timer) = tool_timer {
-                    notify_tool_completed(timer.finish(&response));
+                    let outcome = timer.finish(&response);
+                    if let Some(context) = session_context {
+                        context.complete(&outcome);
+                    }
+                    notify_tool_completed(outcome);
                 }
                 response
             }
@@ -291,6 +300,22 @@ pub fn tool_observation_timer(
         valid_params,
         path,
     ))
+}
+
+/// Build a private aggregate-session context from a valid, known tool call.
+/// Only the public `session` argument is considered; reserved fallback keys
+/// and all other arguments remain outside the observer seam.
+pub fn session_tool_context(
+    req: &Request,
+    registry: &ToolRegistry,
+    transport: crate::session::SessionTransport,
+) -> Option<crate::session::SessionToolContext> {
+    if req.method != "tools/call" {
+        return None;
+    }
+    let call = req.tool_call().ok()?;
+    let known_tool = call.name == "type_text_chars" || registry.get_def(&call.name).is_some();
+    crate::session::begin_tool_call(&call.name, &call.args, known_tool, transport)
 }
 
 fn notify_session_started(metadata: InitializeMetadata) {

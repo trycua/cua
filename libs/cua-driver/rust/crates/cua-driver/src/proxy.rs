@@ -135,6 +135,19 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
                 let initialize_metadata = (!session_observed)
                     .then(|| req.initialize_metadata())
                     .flatten();
+                let session_context = (!daemon_observes_tool_calls)
+                    .then(|| {
+                        req.tool_call().ok().and_then(|call| {
+                            let known_tool = proxy_knows_tool(&cached_tools_list, &call.name);
+                            cua_driver_core::session::begin_tool_call(
+                                &call.name,
+                                &call.args,
+                                known_tool,
+                                cua_driver_core::session::SessionTransport::McpStdio,
+                            )
+                        })
+                    })
+                    .flatten();
                 let tool_timer = (!daemon_observes_tool_calls)
                     .then(|| {
                         tool_observation_timer(
@@ -159,7 +172,11 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
                     session_observed = true;
                 }
                 if let Some(timer) = tool_timer {
-                    observe_proxy_tool_completed(timer.finish(&response));
+                    let outcome = timer.finish(&response);
+                    if let Some(context) = session_context {
+                        context.complete(&outcome);
+                    }
+                    observe_proxy_tool_completed(outcome);
                 }
                 response
             }

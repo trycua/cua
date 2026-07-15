@@ -22,7 +22,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use cua_driver_core::protocol::{Request, Response};
-use cua_driver_core::server::{handle_request, tool_observation_timer, StdioExecutionPath};
+use cua_driver_core::server::{
+    handle_request, session_tool_context, tool_observation_timer, StdioExecutionPath,
+};
 use cua_driver_core::tool::ToolRegistry;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -113,15 +115,21 @@ async fn dispatch(body: &[u8], registry: &Arc<ToolRegistry>) -> Option<String> {
         return None; // notification
     }
     let initialize_metadata = req.initialize_metadata();
+    let session_context = session_tool_context(
+        &req,
+        registry,
+        cua_driver_core::session::SessionTransport::McpHttp,
+    );
     let id = req.id.clone().unwrap_or(serde_json::Value::Null);
     apply_session_identity(&mut req);
     let timer = http_tool_observation_timer(&req, registry);
     let response = handle_request(req, id, registry).await;
     if let Some(timer) = timer {
-        crate::telemetry::capture_tool_completed(
-            timer.finish(&response),
-            crate::telemetry::Transport::McpHttp,
-        );
+        let outcome = timer.finish(&response);
+        if let Some(context) = session_context {
+            context.complete(&outcome);
+        }
+        crate::telemetry::capture_tool_completed(outcome, crate::telemetry::Transport::McpHttp);
     }
     if let Some(metadata) = initialize_metadata {
         crate::telemetry::capture_mcp_session_started(

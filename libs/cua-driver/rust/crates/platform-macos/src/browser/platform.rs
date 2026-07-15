@@ -199,6 +199,10 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
 
 #[async_trait]
 impl BrowserPlatform for MacOsBrowserPlatform {
+    fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
+        Some("Chromium's trusted CDP Input route activates its standalone browser window on macOS")
+    }
+
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
         let (app, fallback_name, fallback_bundle_id) = tokio::task::spawn_blocking(move || {
             let app = crate::apps::list_running_apps()

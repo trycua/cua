@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cua-train"
+version = "0.1.0"
+description = "Python SDK for the CUA training / batch backend API — generated from OpenAPI spec."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "TryCua", email = "gh@trycua.com" }]
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.23.0",
+    "attrs>=22.2.0",
+    "python-dateutil>=2.8.0",
+]
+
+[project.urls]
+Repository = "https://github.com/trycua/cloud"
+"Issue Tracker" = "https://github.com/trycua/cloud/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cua_train"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-httpx>=0.30.0",
+    "ruff>=0.6",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["F", "I", "UP"]

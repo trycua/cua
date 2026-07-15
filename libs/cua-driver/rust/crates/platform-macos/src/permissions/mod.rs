@@ -23,7 +23,9 @@ pub mod status;
 pub mod panel;
 
 pub use status::{PermissionsStatus, current_status};
-pub use gate::{GateOpts, MissingPermission, run_if_needed};
+pub use gate::{
+    GateOpts, GateProgress, MissingPermission, run_if_needed, run_if_needed_with_observer,
+};
 
 /// Crate-wide lock serializing tests that mutate process-global env vars.
 /// Per-module locks are not enough: `gate` and `check_permissions` tests

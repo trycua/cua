@@ -45,6 +45,7 @@ const ENV_TELEMETRY_HOME: &str = "CUA_DRIVER_TELEMETRY_HOME";
 const ENV_CLI_WRAPPED_CHILD: &str = "CUA_DRIVER_CLI_TELEMETRY_CHILD";
 const ENV_CLI_COMPLETION_WORKER: &str = "CUA_DRIVER_CLI_TELEMETRY_WORKER";
 const ENV_CLI_COMPLETION_COMMAND: &str = "CUA_DRIVER_CLI_TELEMETRY_COMMAND";
+const ENV_CLI_COMPLETION_TOOL: &str = "CUA_DRIVER_CLI_TELEMETRY_TOOL";
 const ENV_CLI_COMPLETION_EXIT_CODE: &str = "CUA_DRIVER_CLI_TELEMETRY_EXIT_CODE";
 const ENV_CLI_COMPLETION_DURATION_MS: &str = "CUA_DRIVER_CLI_TELEMETRY_DURATION_MS";
 const ENV_LIFECYCLE_WORKER: &str = "CUA_DRIVER_LIFECYCLE_TELEMETRY_WORKER";
@@ -54,39 +55,44 @@ pub const ENV_RELEASE_VERSION: &str = "CUA_DRIVER_RELEASE_VERSION";
 pub mod event {
     pub const INSTALLATION_REGISTERED: &str = "cua_driver_installation_registered";
     pub const RELEASE_INSTALLED: &str = "cua_driver_release_installed";
-    pub const MCP_START_LEGACY: &str = "cua_driver_mcp";
     pub const SERVE_START_LEGACY: &str = "cua_driver_serve";
     pub const CLI_COMPLETED: &str = "cua_driver_cli_completed";
     pub const MCP_SESSION_STARTED: &str = "cua_driver_mcp_session_started";
     pub const MCP_TOOL_COMPLETED: &str = "cua_driver_mcp_tool_completed";
+    pub const MCP_STARTUP_COMPLETED: &str = "cua_driver_mcp_startup_completed";
+    pub const PERMISSIONS_GATE_STARTED: &str = "cua_driver_permissions_gate_started";
+    pub const PERMISSIONS_GATE_DISMISSED: &str = "cua_driver_permissions_gate_dismissed";
+    pub const PERMISSIONS_GATE_COMPLETED: &str = "cua_driver_permissions_gate_completed";
 }
 
 const INSPECTABLE_EVENTS: &[&str] = &[
     event::INSTALLATION_REGISTERED,
     event::RELEASE_INSTALLED,
-    event::MCP_START_LEGACY,
     event::SERVE_START_LEGACY,
     event::CLI_COMPLETED,
     event::MCP_SESSION_STARTED,
     event::MCP_TOOL_COMPLETED,
+    event::MCP_STARTUP_COMPLETED,
+    event::PERMISSIONS_GATE_STARTED,
+    event::PERMISSIONS_GATE_DISMISSED,
+    event::PERMISSIONS_GATE_COMPLETED,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // HTTP is intentionally deferred until session semantics are defined.
 pub enum Transport {
     Cli,
+    Daemon,
     McpStdio,
     McpHttp,
-    Unknown,
 }
 
 impl Transport {
     fn as_str(self) -> &'static str {
         match self {
             Self::Cli => "cli",
+            Self::Daemon => "daemon",
             Self::McpStdio => "mcp_stdio",
             Self::McpHttp => "mcp_http",
-            Self::Unknown => "unknown",
         }
     }
 }
@@ -210,6 +216,7 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
         }
         event::CLI_COMPLETED => bounded_properties(&[
             ("command", Value::String("other".into())),
+            ("tool_name", Value::String("not_applicable".into())),
             ("success", Value::Bool(true)),
             ("exit_class", Value::String("success".into())),
             ("duration_bucket", Value::String("lt_100ms".into())),
@@ -237,10 +244,39 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("output_type", Value::String("empty".into())),
             ("output_size_bucket", Value::String("0".into())),
         ]),
+        event::MCP_STARTUP_COMPLETED => bounded_properties(&[
+            ("path", Value::String("in_process".into())),
+            ("daemon", Value::String("not_applicable".into())),
+            ("success", Value::Bool(true)),
+            ("duration_bucket", Value::String("lt_100ms".into())),
+        ]),
+        event::PERMISSIONS_GATE_STARTED => bounded_properties(&[
+            ("missing_accessibility", Value::Bool(true)),
+            ("missing_screen_recording", Value::Bool(true)),
+        ]),
+        event::PERMISSIONS_GATE_DISMISSED => bounded_properties(&[
+            ("missing_accessibility", Value::Bool(true)),
+            ("missing_screen_recording", Value::Bool(true)),
+            ("duration_bucket", Value::String("2s_9_999ms".into())),
+        ]),
+        event::PERMISSIONS_GATE_COMPLETED => bounded_properties(&[
+            ("missing_accessibility", Value::Bool(true)),
+            ("missing_screen_recording", Value::Bool(true)),
+            ("panel_shown", Value::Bool(true)),
+            ("dismissed", Value::Bool(false)),
+            ("resolution", Value::String("granted".into())),
+            ("duration_bucket", Value::String("2s_9_999ms".into())),
+        ]),
         _ => Map::new(),
     };
     let transport = match event_name {
-        event::MCP_START_LEGACY | event::MCP_SESSION_STARTED | event::MCP_TOOL_COMPLETED => Transport::McpStdio,
+        event::MCP_SESSION_STARTED | event::MCP_TOOL_COMPLETED | event::MCP_STARTUP_COMPLETED => {
+            Transport::McpStdio
+        }
+        event::SERVE_START_LEGACY
+        | event::PERMISSIONS_GATE_STARTED
+        | event::PERMISSIONS_GATE_DISMISSED
+        | event::PERMISSIONS_GATE_COMPLETED => Transport::Daemon,
         _ => Transport::Cli,
     };
     Ok(build_payload(event_name, &properties, &identity, transport))
@@ -248,7 +284,7 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
 
 /// Transitional fixed start events for long-running processes only.
 pub fn capture_start(event_name: &'static str, transport: Transport) {
-    if !matches!(event_name, event::MCP_START_LEGACY | event::SERVE_START_LEGACY) {
+    if event_name != event::SERVE_START_LEGACY {
         return;
     }
     capture_bounded(event_name, Map::new(), transport);
@@ -290,59 +326,179 @@ impl cua_driver_core::server::StdioObserver for TelemetryObserver {
     }
 
     fn on_tool_completed(&self, outcome: cua_driver_core::server::ToolCompletionObservation) {
-        use cua_driver_core::server::{DurationBucket, OutputSizeBucket, OutputType, ToolErrorClass};
-        let tool_name = if matches!(outcome.error_class, ToolErrorClass::UnknownTool | ToolErrorClass::InvalidParams) {
-            "other".to_owned()
-        } else if outcome.tool_name == "type_text_chars" {
-            "type_text".to_owned()
-        } else {
-            outcome.tool_name
-        };
-        let error_class = match outcome.error_class {
-            ToolErrorClass::None => "none",
-            ToolErrorClass::InvalidParams => "invalid_params",
-            ToolErrorClass::UnknownTool => "unknown_tool",
-            ToolErrorClass::PermissionDenied => "permission_denied",
-            ToolErrorClass::BackgroundUnavailable => "background_unavailable",
-            ToolErrorClass::TransportError => "transport_error",
-            ToolErrorClass::InternalError => "internal_error",
-        };
-        let duration_bucket = match outcome.duration_bucket {
-            DurationBucket::Under10Ms => "lt_10ms",
-            DurationBucket::Ms10To49 => "10_49ms",
-            DurationBucket::Ms50To249 => "50_249ms",
-            DurationBucket::Ms250To999 => "250_999ms",
-            DurationBucket::Ms1000To4999 => "1_4s",
-            DurationBucket::Ms5000OrMore => "gte_5s",
-        };
-        let output_type = match outcome.output_type {
-            OutputType::Empty => "empty",
-            OutputType::Text => "text",
-            OutputType::Image => "image",
-            OutputType::Mixed => "mixed",
-            OutputType::Unknown => "unknown",
-        };
-        let output_size_bucket = match outcome.output_size_bucket {
-            OutputSizeBucket::Empty => "0",
-            OutputSizeBucket::Under1KiB => "lt_1kib",
-            OutputSizeBucket::KiB1To9 => "1_9kib",
-            OutputSizeBucket::KiB10To99 => "10_99kib",
-            OutputSizeBucket::KiB100To1023 => "100_1023kib",
-            OutputSizeBucket::MiB1OrMore => "gte_1mib",
-        };
-        capture_bounded(
-            event::MCP_TOOL_COMPLETED,
-            bounded_properties(&[
-                ("tool_name", Value::String(tool_name)),
-                ("success", Value::Bool(outcome.success)),
-                ("error_class", Value::String(error_class.into())),
-                ("duration_bucket", Value::String(duration_bucket.into())),
-                ("output_type", Value::String(output_type.into())),
-                ("output_size_bucket", Value::String(output_size_bucket.into())),
-            ]),
-            Transport::McpStdio,
-        );
+        capture_tool_completed(outcome, Transport::McpStdio);
     }
+}
+
+pub(crate) fn capture_tool_completed(
+    outcome: cua_driver_core::server::ToolCompletionObservation,
+    transport: Transport,
+) {
+    capture_bounded(
+        event::MCP_TOOL_COMPLETED,
+        tool_completion_properties(outcome),
+        transport,
+    );
+}
+
+fn tool_completion_properties(
+    outcome: cua_driver_core::server::ToolCompletionObservation,
+) -> Map<String, Value> {
+    use cua_driver_core::server::{DurationBucket, OutputSizeBucket, OutputType, ToolErrorClass};
+    let tool_name = if matches!(
+        outcome.error_class,
+        ToolErrorClass::UnknownTool | ToolErrorClass::InvalidParams
+    ) {
+        "other".to_owned()
+    } else if outcome.tool_name == "type_text_chars" {
+        "type_text".to_owned()
+    } else {
+        outcome.tool_name
+    };
+    let error_class = match outcome.error_class {
+        ToolErrorClass::None => "none",
+        ToolErrorClass::InvalidParams => "invalid_params",
+        ToolErrorClass::UnknownTool => "unknown_tool",
+        ToolErrorClass::PermissionDenied => "permission_denied",
+        ToolErrorClass::BackgroundUnavailable => "background_unavailable",
+        ToolErrorClass::TransportError => "transport_error",
+        ToolErrorClass::InternalError => "internal_error",
+    };
+    let duration_bucket = match outcome.duration_bucket {
+        DurationBucket::Under10Ms => "lt_10ms",
+        DurationBucket::Ms10To49 => "10_49ms",
+        DurationBucket::Ms50To249 => "50_249ms",
+        DurationBucket::Ms250To999 => "250_999ms",
+        DurationBucket::Ms1000To4999 => "1_4s",
+        DurationBucket::Ms5000OrMore => "gte_5s",
+    };
+    let output_type = match outcome.output_type {
+        OutputType::Empty => "empty",
+        OutputType::Text => "text",
+        OutputType::Image => "image",
+        OutputType::Mixed => "mixed",
+        OutputType::Unknown => "unknown",
+    };
+    let output_size_bucket = match outcome.output_size_bucket {
+        OutputSizeBucket::Empty => "0",
+        OutputSizeBucket::Under1KiB => "lt_1kib",
+        OutputSizeBucket::KiB1To9 => "1_9kib",
+        OutputSizeBucket::KiB10To99 => "10_99kib",
+        OutputSizeBucket::KiB100To1023 => "100_1023kib",
+        OutputSizeBucket::MiB1OrMore => "gte_1mib",
+    };
+    bounded_properties(&[
+        ("tool_name", Value::String(tool_name)),
+        ("success", Value::Bool(outcome.success)),
+        ("error_class", Value::String(error_class.into())),
+        ("duration_bucket", Value::String(duration_bucket.into())),
+        ("output_type", Value::String(output_type.into())),
+        ("output_size_bucket", Value::String(output_size_bucket.into())),
+    ])
+}
+
+pub(crate) fn capture_mcp_startup_completed(
+    path: &'static str,
+    daemon: &'static str,
+    success: bool,
+    elapsed: Duration,
+) {
+    let path = match path {
+        "in_process" => "in_process",
+        "daemon_proxy" => "daemon_proxy",
+        _ => "unknown",
+    };
+    let daemon = match daemon {
+        "not_applicable" => "not_applicable",
+        "already_running" => "already_running",
+        "launched" => "launched",
+        "launch_failed" => "launch_failed",
+        "launch_timeout" => "launch_timeout",
+        "unreachable" => "unreachable",
+        "unsupported_relaunch" => "unsupported_relaunch",
+        _ => "unknown",
+    };
+    capture_bounded(
+        event::MCP_STARTUP_COMPLETED,
+        bounded_properties(&[
+            ("path", Value::String(path.into())),
+            ("daemon", Value::String(daemon.into())),
+            ("success", Value::Bool(success)),
+            ("duration_bucket", Value::String(duration_bucket(elapsed).into())),
+        ]),
+        Transport::McpStdio,
+    );
+}
+
+pub(crate) fn capture_permissions_gate_completed(
+    missing_accessibility: bool,
+    missing_screen_recording: bool,
+    panel_shown: bool,
+    dismissed: bool,
+    resolution: &'static str,
+    elapsed: Duration,
+) {
+    let resolution = match resolution {
+        "granted" => "granted",
+        "dismissed_then_granted" => "dismissed_then_granted",
+        "timeout" => "timeout",
+        _ => "unknown",
+    };
+    capture_bounded(
+        event::PERMISSIONS_GATE_COMPLETED,
+        bounded_properties(&[
+            ("missing_accessibility", Value::Bool(missing_accessibility)),
+            ("missing_screen_recording", Value::Bool(missing_screen_recording)),
+            ("panel_shown", Value::Bool(panel_shown)),
+            ("dismissed", Value::Bool(dismissed)),
+            ("resolution", Value::String(resolution.into())),
+            ("duration_bucket", Value::String(duration_bucket(elapsed).into())),
+        ]),
+        Transport::Daemon,
+    );
+}
+
+pub(crate) const fn permissions_gate_resolution(
+    gate_failed: bool,
+    dismissed: bool,
+) -> &'static str {
+    if gate_failed {
+        "timeout"
+    } else if dismissed {
+        "dismissed_then_granted"
+    } else {
+        "granted"
+    }
+}
+
+pub(crate) fn capture_permissions_gate_started(
+    missing_accessibility: bool,
+    missing_screen_recording: bool,
+) {
+    capture_bounded(
+        event::PERMISSIONS_GATE_STARTED,
+        bounded_properties(&[
+            ("missing_accessibility", Value::Bool(missing_accessibility)),
+            ("missing_screen_recording", Value::Bool(missing_screen_recording)),
+        ]),
+        Transport::Daemon,
+    );
+}
+
+pub(crate) fn capture_permissions_gate_dismissed(
+    missing_accessibility: bool,
+    missing_screen_recording: bool,
+    elapsed: Duration,
+) {
+    capture_bounded(
+        event::PERMISSIONS_GATE_DISMISSED,
+        bounded_properties(&[
+            ("missing_accessibility", Value::Bool(missing_accessibility)),
+            ("missing_screen_recording", Value::Bool(missing_screen_recording)),
+            ("duration_bucket", Value::String(duration_bucket(elapsed).into())),
+        ]),
+        Transport::Daemon,
+    );
 }
 
 fn normalize_client(value: Option<&str>) -> String {
@@ -621,6 +777,7 @@ pub(crate) fn capture_bounded(
 /// a detached request is delivered.
 pub(crate) fn capture_cli_completed(
     command: &'static str,
+    tool_name: Option<&str>,
     exit_code: i32,
     elapsed: Duration,
 ) {
@@ -648,6 +805,11 @@ pub(crate) fn capture_cli_completed(
         _ => "other",
     };
     let success = exit_code == 0;
+    let tool_name = if command == "call" {
+        fixed_tool_name(tool_name.unwrap_or(""))
+    } else {
+        "not_applicable".into()
+    };
     let exit_class = match exit_code {
         0 => "success",
         1 => "tool_error",
@@ -661,6 +823,7 @@ pub(crate) fn capture_cli_completed(
         event::CLI_COMPLETED,
         &bounded_properties(&[
             ("command", Value::String(command.into())),
+            ("tool_name", Value::String(tool_name.into())),
             ("success", Value::Bool(success)),
             ("exit_class", Value::String(exit_class.into())),
             ("duration_bucket", Value::String(duration_bucket(elapsed).into())),
@@ -699,12 +862,14 @@ pub(crate) fn run_cli_completion_worker_if_requested() -> bool {
         .map(Duration::from_millis)
         .unwrap_or_default();
     let command = fixed_cli_command(&command);
-    capture_cli_completed(command, exit_code, elapsed);
+    let tool_name = std::env::var(ENV_CLI_COMPLETION_TOOL).ok();
+    capture_cli_completed(command, tool_name.as_deref(), exit_code, elapsed);
     true
 }
 
 pub(crate) fn spawn_cli_completion_worker(
     command: &'static str,
+    tool_name: Option<&str>,
     exit_code: i32,
     elapsed: Duration,
 ) {
@@ -712,11 +877,16 @@ pub(crate) fn spawn_cli_completion_worker(
         return;
     }
     let Ok(executable) = std::env::current_exe() else { return; };
-    let _ = std::process::Command::new(executable)
+    let mut worker = std::process::Command::new(executable);
+    worker
         .env(ENV_CLI_COMPLETION_WORKER, "1")
         .env(ENV_CLI_COMPLETION_COMMAND, fixed_cli_command(command))
         .env(ENV_CLI_COMPLETION_EXIT_CODE, exit_code.to_string())
-        .env(ENV_CLI_COMPLETION_DURATION_MS, elapsed.as_millis().to_string())
+        .env(ENV_CLI_COMPLETION_DURATION_MS, elapsed.as_millis().to_string());
+    if let Some(tool_name) = tool_name {
+        worker.env(ENV_CLI_COMPLETION_TOOL, fixed_tool_name(tool_name));
+    }
+    let _ = worker
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -743,6 +913,21 @@ fn fixed_cli_command(command: &str) -> &'static str {
         "skills" => "skills",
         "config" => "config",
         _ => "other",
+    }
+}
+
+fn fixed_tool_name(tool_name: &str) -> String {
+    if tool_name == "type_text_chars" {
+        return "type_text".into();
+    }
+    if cua_driver_core::tool::default_capabilities_for(tool_name).is_empty() {
+        "other".into()
+    } else {
+        // Every canonical tool is asserted by cua-driver-core tests to have a
+        // capability entry. Returning the original value is therefore safe:
+        // arbitrary argv can reach this branch only when it matches that
+        // compile-time registry vocabulary exactly.
+        tool_name.to_owned()
     }
 }
 
@@ -1510,6 +1695,36 @@ mod tests {
     }
 
     #[test]
+    fn disabled_permissions_events_do_not_create_an_installation_id() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|_| {
+            set_enabled(false).unwrap();
+            capture_permissions_gate_started(true, false);
+            capture_permissions_gate_dismissed(true, false, Duration::from_secs(3));
+            capture_permissions_gate_completed(
+                true,
+                false,
+                true,
+                true,
+                "dismissed_then_granted",
+                Duration::from_secs(3),
+            );
+            assert!(read_install_id().is_none());
+        });
+    }
+
+    #[test]
+    fn permissions_resolution_covers_grant_dismissal_recovery_and_timeout() {
+        assert_eq!(permissions_gate_resolution(false, false), "granted");
+        assert_eq!(
+            permissions_gate_resolution(false, true),
+            "dismissed_then_granted"
+        );
+        assert_eq!(permissions_gate_resolution(true, false), "timeout");
+        assert_eq!(permissions_gate_resolution(true, true), "timeout");
+    }
+
+    #[test]
     fn lifecycle_markers_are_written_only_after_each_2xx() {
         let _guard = ENV_LOCK.lock().unwrap();
         with_isolated_home(|root| {
@@ -1635,10 +1850,98 @@ mod tests {
 
         let tool = inspect_event(event::MCP_TOOL_COMPLETED).unwrap();
         assert_eq!(tool["properties"]["duration_bucket"], "lt_10ms");
-        let mcp_start = inspect_event(event::MCP_START_LEGACY).unwrap();
+        let mcp_start = inspect_event(event::MCP_STARTUP_COMPLETED).unwrap();
         assert_eq!(mcp_start["properties"]["transport"], "mcp_stdio");
+        assert_eq!(mcp_start["properties"]["path"], "in_process");
+        let permissions_started = inspect_event(event::PERMISSIONS_GATE_STARTED).unwrap();
+        assert_eq!(permissions_started["properties"]["transport"], "daemon");
+        assert_eq!(
+            permissions_started["properties"]["missing_accessibility"],
+            true
+        );
+        assert_eq!(
+            permissions_started["properties"]["missing_screen_recording"],
+            true
+        );
+        assert!(permissions_started["properties"]
+            .get("duration_bucket")
+            .is_none());
+        let permissions_dismissed = inspect_event(event::PERMISSIONS_GATE_DISMISSED).unwrap();
+        assert_eq!(permissions_dismissed["properties"]["transport"], "daemon");
+        assert_eq!(permissions_dismissed["properties"]["duration_bucket"], "2s_9_999ms");
+        let permissions = inspect_event(event::PERMISSIONS_GATE_COMPLETED).unwrap();
+        assert_eq!(permissions["properties"]["resolution"], "granted");
+        for payload in [
+            permissions_started,
+            permissions_dismissed,
+            permissions,
+        ] {
+            assert_eq!(payload["properties"]["telemetry_schema_version"], 3);
+            assert!(payload.get("timestamp").is_none());
+            let serialized = serde_json::to_string(&payload)
+                .unwrap()
+                .to_ascii_lowercase();
+            for forbidden in [
+                "prompt",
+                "arguments",
+                "result_text",
+                "typed_text",
+                "screenshot",
+                "accessibility_tree",
+                "window_title",
+                "application_name",
+                "file_path",
+                "socket",
+                "raw_error",
+                "stack_trace",
+                "$ip",
+            ] {
+                assert!(
+                    !serialized.contains(forbidden),
+                    "permissions payload contains {forbidden}: {serialized}"
+                );
+            }
+        }
         let serve_start = inspect_event(event::SERVE_START_LEGACY).unwrap();
-        assert_eq!(serve_start["properties"]["transport"], "cli");
+        assert_eq!(serve_start["properties"]["transport"], "daemon");
+    }
+
+    #[test]
+    fn http_tool_completion_reaches_the_final_payload_as_mcp_http() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
+            ToolErrorClass,
+        };
+
+        let properties = tool_completion_properties(ToolCompletionObservation {
+            tool_name: "click".into(),
+            success: true,
+            error_class: ToolErrorClass::None,
+            duration_bucket: DurationBucket::Under10Ms,
+            output_type: OutputType::Text,
+            output_size_bucket: OutputSizeBucket::Under1KiB,
+        });
+        let payload = build_payload(
+            event::MCP_TOOL_COMPLETED,
+            &properties,
+            &InstallationIdentity {
+                id: "test-id".into(),
+                persisted: true,
+            },
+            Transport::McpHttp,
+        );
+
+        assert_eq!(payload["properties"]["transport"], "mcp_http");
+        assert_eq!(payload["properties"]["tool_name"], "click");
+        assert_eq!(payload["properties"]["success"], true);
+    }
+
+    #[test]
+    fn cli_tool_names_are_fixed_and_content_free() {
+        assert_eq!(fixed_tool_name("click"), "click");
+        assert_eq!(fixed_tool_name("type_text_chars"), "type_text");
+        assert_eq!(fixed_tool_name("../../private/secret"), "other");
+        assert_eq!(fixed_tool_name("https://example.com/private"), "other");
     }
 
     #[test]

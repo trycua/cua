@@ -156,9 +156,10 @@ const VALUE_FLAGS: &[&str] = &[
 /// parser exits are still observed as completed failures.
 pub fn finite_command_name_from_argv() -> Option<&'static str> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.iter().any(|arg| matches!(arg.as_str(), "--help" | "-h" | "--version" | "-V")) {
-        return None;
-    }
+    finite_command_name_from_args(&args)
+}
+
+fn positional_args(args: &[String]) -> Vec<&str> {
     let mut positionals = Vec::new();
     let mut index = 0;
     while index < args.len() {
@@ -172,6 +173,14 @@ pub fn finite_command_name_from_argv() -> Option<&'static str> {
             index += 1;
         }
     }
+    positionals
+}
+
+fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
+    if args.iter().any(|arg| matches!(arg.as_str(), "--help" | "-h" | "--version" | "-V")) {
+        return None;
+    }
+    let positionals = positional_args(args);
     match positionals.first().copied() {
         None | Some("mcp" | "serve" | "telemetry") => None,
         Some("list-tools") => Some("list_tools"),
@@ -192,6 +201,25 @@ pub fn finite_command_name_from_argv() -> Option<&'static str> {
         Some("skills") => Some("skills"),
         Some("config") => Some("config"),
         Some(_) => Some("call"),
+    }
+}
+
+/// Return the candidate tool for a finite `call` command. The telemetry layer
+/// maps this through its fixed registry allowlist before anything is emitted.
+pub fn finite_tool_name_from_argv() -> Option<String> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    finite_tool_name_from_args(&args)
+}
+
+fn finite_tool_name_from_args(args: &[String]) -> Option<String> {
+    if finite_command_name_from_args(args) != Some("call") {
+        return None;
+    }
+    let positionals = positional_args(args);
+    match positionals.as_slice() {
+        ["call", tool, ..] => Some((*tool).to_owned()),
+        [tool, ..] => Some((*tool).to_owned()),
+        _ => None,
     }
 }
 
@@ -708,11 +736,35 @@ pub fn should_use_daemon_proxy(no_daemon_relaunch: bool) -> bool {
 /// `waitForDaemon`. Split into one Rust function because we don't
 /// need the post-launch probe separation Swift has.
 #[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchDaemonErrorKind {
+    Failed,
+    Timeout,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug)]
+pub struct LaunchDaemonError {
+    pub kind: LaunchDaemonErrorKind,
+    message: String,
+}
+
+#[cfg(target_os = "macos")]
+impl std::fmt::Display for LaunchDaemonError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl std::error::Error for LaunchDaemonError {}
+
+#[cfg(target_os = "macos")]
 pub fn launch_daemon_and_wait(
     socket_path: &str,
     timeout_secs: u64,
     claude_code_compat: bool,
-) -> anyhow::Result<()> {
+) -> Result<(), LaunchDaemonError> {
     use std::process::{Command as Cmd, Stdio};
     use std::time::{Duration, Instant};
 
@@ -756,20 +808,24 @@ pub fn launch_daemon_and_wait(
         .stderr(Stdio::null())
         .status();
 
-    let status = status.map_err(|e| {
-        anyhow::anyhow!(
-            "failed to exec `/usr/bin/open`: {e}. Pass --no-daemon-relaunch to bypass."
-        )
+    let status = status.map_err(|error| LaunchDaemonError {
+        kind: LaunchDaemonErrorKind::Failed,
+        message: format!(
+            "failed to exec `/usr/bin/open`: {error}. Pass --no-daemon-relaunch to bypass."
+        ),
     })?;
 
     if !status.success() {
-        anyhow::bail!(
-            "`open -n -g -a CuaDriver --args serve{}` exited {:?}. \
+        return Err(LaunchDaemonError {
+            kind: LaunchDaemonErrorKind::Failed,
+            message: format!(
+                "`open -n -g -a CuaDriver --args serve{}` exited {:?}. \
              Check that `/Applications/CuaDriver.app` is installed, or \
              pass --no-daemon-relaunch to bypass.",
-            if pass_socket { format!(" --socket {socket_path}") } else { String::new() },
+                if pass_socket { format!(" --socket {socket_path}") } else { String::new() },
             status.code()
-        );
+            ),
+        });
     }
 
     // Poll the UDS until the daemon answers a probe or we time out.
@@ -782,22 +838,54 @@ pub fn launch_daemon_and_wait(
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    anyhow::bail!(
-        "daemon did not appear on {socket_path} within {timeout_secs}s. If this \
+    Err(LaunchDaemonError {
+        kind: LaunchDaemonErrorKind::Timeout,
+        message: format!(
+            "daemon did not appear on {socket_path} within {timeout_secs}s. If this \
          is the first launch, grant Accessibility + Screen Recording to \
          CuaDriver.app in System Settings and retry. Pass --no-daemon-relaunch \
          to stay in-process."
-    );
+        ),
+    })
 }
 
 /// Run the MCP proxy path: ensure a daemon is up (spawning via
 /// `open` if needed), then `crate::proxy::run_proxy` against its
 /// socket. Builds its own tokio runtime — same shape as the other
 /// `run_*` helpers in this file that own their event loop.
-pub fn run_mcp_via_daemon_proxy(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Some outcomes are platform-specific.
+pub enum McpDaemonStartup {
+    AlreadyRunning,
+    Launched,
+    LaunchFailed,
+    LaunchTimeout,
+    Unreachable,
+    UnsupportedRelaunch,
+}
+
+impl McpDaemonStartup {
+    pub const fn telemetry_value(self) -> &'static str {
+        match self {
+            Self::AlreadyRunning => "already_running",
+            Self::Launched => "launched",
+            Self::LaunchFailed => "launch_failed",
+            Self::LaunchTimeout => "launch_timeout",
+            Self::Unreachable => "unreachable",
+            Self::UnsupportedRelaunch => "unsupported_relaunch",
+        }
+    }
+}
+
+pub fn run_mcp_via_daemon_proxy<F>(
     socket: Option<String>,
     claude_code_compat: bool,
-) -> anyhow::Result<()> {
+    on_startup: F,
+) -> anyhow::Result<()>
+where
+    F: FnOnce(McpDaemonStartup, bool),
+{
+    let mut on_startup = Some(on_startup);
     // Windows: prefer the uiAccess'd worker pipe over the regular daemon pipe
     // when both are running, so MCP tool calls land in a process that can
     // bypass UIPI for UWP apps. The protocol on both pipes is identical so
@@ -820,13 +908,18 @@ pub fn run_mcp_via_daemon_proxy(
         }
     };
 
-    if !crate::serve::is_daemon_listening(&socket_path) {
+    let already_running = crate::serve::is_daemon_listening(&socket_path);
+    let mut daemon = McpDaemonStartup::AlreadyRunning;
+    if !already_running {
         // CUA_DRIVER_RS_MCP_FORCE_PROXY callers (test harness, custom
         // bundle setups) supply their own daemon — skip the auto-
         // launch step, since they don't have an installed
         // CuaDriver.app to relaunch into. Fail fast if no daemon is
         // up at this point.
         if crate::bundle::is_env_truthy("CUA_DRIVER_RS_MCP_FORCE_PROXY") {
+            if let Some(on_startup) = on_startup.take() {
+                on_startup(McpDaemonStartup::Unreachable, false);
+            }
             anyhow::bail!(
                 "CUA_DRIVER_RS_MCP_FORCE_PROXY=1 but no daemon listening on \
                  {socket_path}. Start one with `cua-driver serve --socket {socket_path}` \
@@ -845,7 +938,20 @@ pub fn run_mcp_via_daemon_proxy(
                  auto-launching the daemon via `open -n -g -a CuaDriver --args serve{socket_suffix}` \
                  and proxying MCP requests through it. Pass --no-daemon-relaunch to stay in-process."
             );
-            launch_daemon_and_wait(&socket_path, 10, claude_code_compat)?;
+            if let Err(error) = launch_daemon_and_wait(&socket_path, 10, claude_code_compat) {
+                if let Some(on_startup) = on_startup.take() {
+                    on_startup(
+                        if error.kind == LaunchDaemonErrorKind::Timeout {
+                            McpDaemonStartup::LaunchTimeout
+                        } else {
+                            McpDaemonStartup::LaunchFailed
+                        },
+                        false,
+                    );
+                }
+                return Err(error.into());
+            }
+            daemon = McpDaemonStartup::Launched;
         }
         #[cfg(not(target_os = "macos"))]
         let _ = claude_code_compat;
@@ -859,6 +965,9 @@ pub fn run_mcp_via_daemon_proxy(
         // Session 0 over SSH).
         #[cfg(not(target_os = "macos"))]
         {
+            if let Some(on_startup) = on_startup.take() {
+                on_startup(McpDaemonStartup::UnsupportedRelaunch, false);
+            }
             anyhow::bail!(
                 "no Cua Driver daemon listening on {socket_path}. Start one in \
                  your interactive session — on Windows run \
@@ -869,6 +978,10 @@ pub fn run_mcp_via_daemon_proxy(
                  return empty), pass --no-daemon-relaunch."
             );
         }
+    }
+
+    if let Some(on_startup) = on_startup.take() {
+        on_startup(daemon, true);
     }
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -2983,6 +3096,31 @@ fn sanitize_tool_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn finite_call_tool_extraction_supports_subcommand_and_legacy_forms() {
+        assert_eq!(
+            finite_tool_name_from_args(&args(&["call", "click", r#"{\"x\":1}"#])),
+            Some("click".into())
+        );
+        assert_eq!(
+            finite_tool_name_from_args(&args(&["--socket", "/tmp/test", "click", "{}"])),
+            Some("click".into())
+        );
+    }
+
+    #[test]
+    fn finite_call_tool_extraction_ignores_non_call_commands() {
+        assert_eq!(
+            finite_tool_name_from_args(&args(&["describe", "click"])),
+            None
+        );
+        assert_eq!(finite_tool_name_from_args(&args(&["mcp"])), None);
+    }
 
     #[test]
     fn sanitize_tool_name_passes_through_canonical_names() {

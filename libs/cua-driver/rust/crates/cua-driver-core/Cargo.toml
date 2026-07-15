@@ -23,6 +23,13 @@ regorus = { version = "0.10.1", optional = true }
 # helpers extracted from `platform-{macos,windows,linux}/src/capture.rs` so
 # all three platforms call the same code path.
 image = { workspace = true }
+# Used by the `browser` module's pooled CDP browser-endpoint WebSocket.
+# Same versions platform-macos already depends on, to avoid duplicate
+# crate versions in the workspace graph. No TLS features: the endpoint
+# contract is loopback ws:// only.
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+uuid = { workspace = true }
 
 # Used by `cursor_sampler::sample_cursor` to poll the OS mouse position
 # during video recording. Same version as platform-windows uses to avoid

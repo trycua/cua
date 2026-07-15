@@ -756,6 +756,7 @@ version = "0.8.3"
 dependencies = [
  "anyhow",
  "async-trait",
+ "futures-util",
  "image",
  "regex",
  "regorus",
@@ -765,7 +766,9 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
+ "uuid",
  "windows 0.58.0",
 ]
 

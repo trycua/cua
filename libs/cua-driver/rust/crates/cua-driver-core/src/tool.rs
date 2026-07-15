@@ -103,6 +103,8 @@ impl ToolDef {
 /// - `recording.start`, `recording.stop`, `recording.state`,
 ///   `recording.replay`, `recording.install_dependency`
 /// - `page.action`
+/// - `browser.state`, `browser.prepare`, `browser.navigate`,
+///   `browser.input.click`, `browser.input.type`
 /// - `driver.update_check`, `driver.probe`
 ///
 /// Tools with no entry get `[]` — that's fine, it just means
@@ -265,6 +267,17 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 
         // ── cross-platform page ──────────────────────────────────────
         "page" => &["page.action"],
+
+        // ── browser-tool v1 (exact-or-refused CDP surface) ───────────
+        // Additive tokens; see `crate::browser` for semantics. The
+        // input tools claim distinct browser.* tokens (not the
+        // input.pointer/keyboard families) because they act inside a
+        // page via CDP, not on the OS input layer.
+        "get_browser_state" => &["browser.state"],
+        "browser_prepare" => &["browser.prepare"],
+        "browser_navigate" => &["browser.navigate"],
+        "browser_click" => &["browser.input.click"],
+        "browser_type" => &["browser.input.type"],
 
         // ── driver self-service ──────────────────────────────────────
         "check_for_update" => &["driver.update_check"],
@@ -545,6 +558,9 @@ mod capability_tests {
         "replay_trajectory", "install_ffmpeg",
         // misc
         "page", "check_for_update", "probe",
+        // browser-tool v1
+        "get_browser_state", "browser_prepare", "browser_navigate",
+        "browser_click", "browser_type",
     ];
 
     /// All capability tokens in the canonical vocabulary. Any token
@@ -611,6 +627,12 @@ mod capability_tests {
         "recording.install_dependency",
         // page
         "page.action",
+        // browser-tool v1
+        "browser.state",
+        "browser.prepare",
+        "browser.navigate",
+        "browser.input.click",
+        "browser.input.type",
         // driver self
         "driver.update_check",
         "driver.probe",

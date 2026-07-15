@@ -1,0 +1,354 @@
+//! Windows identity and endpoint evidence for the first-class browser tools.
+
+use std::process::Stdio;
+use std::time::Duration;
+
+use async_trait::async_trait;
+use cua_driver_core::browser::platform::{
+    BrowserPlatform, PrepareAction, PrepareOutcome, PrepareRequest,
+};
+use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
+use cua_driver_core::browser::types::{
+    BrowserClassification, BrowserEngineFamily, EndpointOwnershipMethod, EndpointOwnershipProof,
+    NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint,
+    ProcessFingerprint, Rect,
+};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND};
+use windows::Win32::System::Threading::{
+    GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
+    PROCESS_QUERY_LIMITED_INFORMATION,
+};
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
+
+#[derive(Debug, Default)]
+pub struct WindowsBrowserPlatform;
+
+fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
+    BrowserRefusal::new(code, message)
+}
+
+fn is_chromium(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    [
+        "chrome", "chromium", "electron", "msedge", "brave", "vivaldi", "opera", "arc", "thorium",
+        "iridium", "yandex",
+    ]
+    .iter()
+    .any(|needle| name.contains(needle))
+}
+
+fn process_identity(pid: u32) -> Result<(u64, Option<String>), BrowserRefusal> {
+    let handle =
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserBindingStale,
+                format!("browser process {pid} is no longer available"),
+            )
+        })?;
+    let mut created = FILETIME::default();
+    let mut exited = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    let times =
+        unsafe { GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user) };
+    let mut path_buf = [0u16; 1024];
+    let mut path_len = path_buf.len() as u32;
+    let path = unsafe {
+        QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_FORMAT(0),
+            windows::core::PWSTR(path_buf.as_mut_ptr()),
+            &mut path_len,
+        )
+    }
+    .ok()
+    .filter(|_| path_len > 0)
+    .map(|_| String::from_utf16_lossy(&path_buf[..path_len as usize]));
+    let _ = unsafe { CloseHandle(handle) };
+    times.map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not fingerprint browser process {pid}: {error}"),
+        )
+    })?;
+    let started = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+    Ok((started, path))
+}
+
+fn parse_netstat_loopback_ports(text: &str, pid: u32) -> Vec<u16> {
+    let mut ports = text
+        .lines()
+        .filter_map(|line| {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            if fields.len() < 5
+                || !fields[0].eq_ignore_ascii_case("TCP")
+                || !fields[3].eq_ignore_ascii_case("LISTENING")
+                || fields[4].parse::<u32>().ok() != Some(pid)
+            {
+                return None;
+            }
+            let local = fields[1];
+            let (host, port) = local.rsplit_once(':')?;
+            let host = host.trim_matches(['[', ']']);
+            matches!(host, "127.0.0.1" | "::1" | "localhost")
+                .then(|| port.parse::<u16>().ok())
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    ports.sort_unstable();
+    ports.dedup();
+    ports
+}
+
+async fn loopback_ports_for_pid(pid: u32) -> Result<Vec<u16>, BrowserRefusal> {
+    let output = tokio::process::Command::new("netstat.exe")
+        .args(["-ano", "-p", "tcp"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not inspect browser listeners: {error}"),
+            )
+        })?;
+    Ok(parse_netstat_loopback_ports(
+        &String::from_utf8_lossy(&output.stdout),
+        pid,
+    ))
+}
+
+async fn browser_websocket_url(port: u16) -> Option<String> {
+    tokio::time::timeout(Duration::from_secs(2), async move {
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .ok()?;
+        let request = format!(
+            "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        );
+        stream.write_all(request.as_bytes()).await.ok()?;
+        let mut bytes = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let read = stream.read(&mut chunk).await.ok()?;
+            if read == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..read]);
+            if bytes.len() > 256 * 1024 {
+                return None;
+            }
+            if let Some(header_end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+                let headers = String::from_utf8_lossy(&bytes[..header_end]);
+                if let Some(length) = headers.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                }) {
+                    if bytes.len() >= header_end + 4 + length {
+                        break;
+                    }
+                }
+            }
+        }
+        let body_start = bytes.windows(4).position(|part| part == b"\r\n\r\n")? + 4;
+        let value: serde_json::Value = serde_json::from_slice(&bytes[body_start..]).ok()?;
+        let url = value.get("webSocketDebuggerUrl")?.as_str()?.to_owned();
+        (url.starts_with("ws://127.0.0.1:")
+            || url.starts_with("ws://localhost:")
+            || url.starts_with("ws://[::1]:"))
+        .then_some(url)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[async_trait]
+impl BrowserPlatform for WindowsBrowserPlatform {
+    async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
+        let pid_u32 = u32::try_from(pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!("pid {pid} is outside the Windows process-id range"),
+            )
+        })?;
+        let name = tokio::task::spawn_blocking(move || {
+            crate::win32::list_processes()
+                .into_iter()
+                .find(|process| process.pid == pid_u32)
+                .map(|process| process.name)
+        })
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserBindingStale,
+                format!("browser process {pid} is no longer available"),
+            )
+        })?;
+        let chromium = is_chromium(&name);
+        let gecko = name.to_ascii_lowercase().contains("firefox");
+        Ok(BrowserClassification {
+            is_browser: chromium || gecko,
+            engine: if chromium {
+                BrowserEngineFamily::Chromium
+            } else if gecko {
+                BrowserEngineFamily::Gecko
+            } else {
+                BrowserEngineFamily::Unknown
+            },
+            product: Some(name),
+            channel: None,
+            supports_cdp: chromium,
+        })
+    }
+
+    async fn native_window(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Result<NativeWindowInfo, BrowserRefusal> {
+        let pid_u32 = u32::try_from(pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!("pid {pid} is outside the Windows process-id range"),
+            )
+        })?;
+        let window = tokio::task::spawn_blocking(move || {
+            crate::win32::list_windows(Some(pid_u32))
+                .into_iter()
+                .find(|window| window.hwnd == window_id)
+        })
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserBindingStale,
+                format!("Windows window {window_id} is not owned by pid {pid}"),
+            )
+        })?;
+        let dpi = unsafe { GetDpiForWindow(HWND(window_id as *mut _)) };
+        let scale = if dpi == 0 { 1.0 } else { f64::from(dpi) / 96.0 };
+        Ok(NativeWindowInfo {
+            pid,
+            window_id,
+            title: window.title,
+            bounds: Rect::new(
+                f64::from(window.x) / scale,
+                f64::from(window.y) / scale,
+                f64::from(window.width) / scale,
+                f64::from(window.height) / scale,
+            ),
+            geometry_exact: true,
+            ownership: NativeOwnershipProof {
+                method: NativeOwnershipMethod::WindowServerOwner,
+                owner_pid: pid,
+                detail: Some("GetWindowThreadProcessId".to_owned()),
+            },
+        })
+    }
+
+    async fn discover_owned_endpoint(
+        &self,
+        pid: i64,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let pid_u32 = u32::try_from(pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!("pid {pid} is outside the Windows process-id range"),
+            )
+        })?;
+        for port in loopback_ports_for_pid(pid_u32).await? {
+            if let Some(ws_url) = browser_websocket_url(port).await {
+                return Ok(Some(OwnedEndpoint {
+                    ws_url,
+                    http_port: Some(port),
+                    ownership: EndpointOwnershipProof {
+                        method: EndpointOwnershipMethod::ListeningSocketPid,
+                        owner_pid: pid,
+                        detail: Some("netstat listener owner pid".to_owned()),
+                    },
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
+        let pid_u32 = u32::try_from(pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!("pid {pid} is outside the Windows process-id range"),
+            )
+        })?;
+        let (start_time, executable) =
+            tokio::task::spawn_blocking(move || process_identity(pid_u32))
+                .await
+                .map_err(|error| {
+                    refusal(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        format!("process fingerprint task failed: {error}"),
+                    )
+                })??;
+        Ok(ProcessFingerprint {
+            pid,
+            start_time: Some(start_time),
+            executable,
+        })
+    }
+
+    async fn prepare_endpoint(
+        &self,
+        request: PrepareRequest,
+    ) -> Result<PrepareOutcome, BrowserRefusal> {
+        if let Some(endpoint) = self.discover_owned_endpoint(request.pid).await? {
+            return Ok(PrepareOutcome {
+                action: PrepareAction::AlreadyPrepared,
+                endpoint: Some(endpoint),
+                message: "An owned loopback DevTools endpoint is already available.".to_owned(),
+            });
+        }
+        if !request.consent_granted {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserConsentRequired,
+                "Preparing this browser may require a debug-enabled relaunch; set consent_granted=true after confirming with the user.",
+            ));
+        }
+        Err(refusal(
+            BrowserRefusalCode::BrowserRequiresSetup,
+            if request.allow_restart {
+                "No owned endpoint is available. Relaunch the browser explicitly with launch_app.cdp_debugging_port; browser_prepare does not infer an application profile."
+            } else {
+                "No owned endpoint is available. Enable a DevTools endpoint explicitly or allow a deliberate browser relaunch."
+            },
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn netstat_parser_requires_loopback_listening_and_exact_pid() {
+        let input = "\
+  TCP    127.0.0.1:9222       0.0.0.0:0       LISTENING       42\n\
+  TCP    0.0.0.0:9333         0.0.0.0:0       LISTENING       42\n\
+  TCP    [::1]:9444           [::]:0          LISTENING       42\n\
+  TCP    127.0.0.1:9555       0.0.0.0:0       LISTENING       7\n";
+        assert_eq!(parse_netstat_loopback_ports(input, 42), vec![9222, 9444]);
+    }
+
+    #[test]
+    fn classifier_covers_embedded_and_standalone_chromium() {
+        assert!(is_chromium("CuaTestHarness.Electron.exe"));
+        assert!(is_chromium("msedge.exe"));
+        assert!(!is_chromium("firefox.exe"));
+    }
+}

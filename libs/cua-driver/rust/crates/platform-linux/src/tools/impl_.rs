@@ -838,7 +838,9 @@ impl Tool for LaunchAppTool {
                 "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; spawned directly via the system shell."},
                 "name":{"type":"string","description":"App name or command to launch."},
                 "bundle_id":{"type":"string","description":"Ignored on Linux (macOS/Windows concept)."},
-                "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."}
+                "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."},
+                "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process."},
+                "cdp_debugging_port":{"type":"integer","minimum":1,"maximum":65535,"description":"Open a Chromium DevTools endpoint on this loopback port by appending --remote-debugging-port=N."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: false, open_world: true,
         })
@@ -849,6 +851,20 @@ impl Tool for LaunchAppTool {
         let launch_path_opt = args.opt_str("launch_path");
         let name_opt = args.opt_str("name");
         let urls: Vec<String> = args.str_array("urls");
+        let mut additional_arguments: Vec<String> = args.str_array("additional_arguments");
+        if let Some(raw_port) = args.get("cdp_debugging_port") {
+            let Some(port) = raw_port.as_u64().and_then(|port| u16::try_from(port).ok()) else {
+                return ToolResult::error(
+                    "cdp_debugging_port must be an integer from 1 through 65535",
+                );
+            };
+            if port == 0 {
+                return ToolResult::error(
+                    "cdp_debugging_port must be an integer from 1 through 65535",
+                );
+            }
+            additional_arguments.push(format!("--remote-debugging-port={port}"));
+        }
 
         if launch_path_opt.is_none() && name_opt.is_none() && urls.is_empty() {
             return ToolResult::error("Provide at least one of: launch_path, name, or urls.");
@@ -874,7 +890,8 @@ impl Tool for LaunchAppTool {
                 if let Some(cmd) = command {
                     let mut parts = cmd.split_whitespace();
                     let prog = parts.next().unwrap_or(cmd);
-                    let rest: Vec<&str> = parts.collect();
+                    let mut rest: Vec<String> = parts.map(str::to_owned).collect();
+                    rest.extend(additional_arguments);
                     let mut launch = std::process::Command::new(prog);
                     launch
                         .args(&rest)
@@ -885,7 +902,7 @@ impl Tool for LaunchAppTool {
                         .env("ACCESSIBILITY_ENABLED", "1")
                         .env("NO_AT_BRIDGE", "0");
                     if chromium_family_program(prog)
-                        && !rest.iter().any(|arg| *arg == "--force-renderer-accessibility")
+                        && !rest.iter().any(|arg| arg == "--force-renderer-accessibility")
                     {
                         launch.arg("--force-renderer-accessibility");
                     }
@@ -6920,6 +6937,10 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(cua_driver_core::page::PageTool::new(Arc::new(
         super::page::LinuxPageBackend::new(),
     ))));
+    let browser_engine = cua_driver_core::browser::BrowserEngine::new(Arc::new(
+        crate::browser_platform::LinuxBrowserPlatform,
+    ));
+    cua_driver_core::browser::register_browser_tools(&browser_engine, &mut r);
     r.register_recording_tools();
     r.register_session_tools();
     r

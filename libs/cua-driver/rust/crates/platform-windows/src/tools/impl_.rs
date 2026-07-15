@@ -1558,11 +1558,12 @@ impl Tool for LaunchAppTool {
                 `null` for ShellExecuteEx launches.\n\n\
                 Windows-only field: `path` (Swift uses `bundle_id` since macOS apps resolve via \
                 LaunchServices; Windows has no LaunchServices, so `path` is the canonical form). \
-                The macOS-specific `cdp_debugging_port`, `webkit_inspector_port`, \
+                The cross-platform `cdp_debugging_port` and macOS-specific `webkit_inspector_port`, \
                 `creates_new_application_instance`, and `additional_arguments` fields are \
                 accepted; `additional_arguments` is honored (forwarded as ShellExecuteEx \
-                parameters or as the AUMID activation arguments string), the others currently \
-                no-op on Windows.".into(),
+                parameters or as the AUMID activation arguments string), and \
+                `cdp_debugging_port` appends Chromium's `--remote-debugging-port` argument. \
+                The remaining macOS-only fields currently no-op on Windows.".into(),
             input_schema: json!({"type":"object","properties":{
                 "bundle_id":{"type":"string","description":"App User Model ID (AUMID) for a packaged app — pattern `{PackageFamilyName}!{ApplicationId}`, e.g. `Microsoft.WindowsNotepad_8wekyb3d8bbwe!App`. Falls back to a `name` alias if no `!` is present. Either bundle_id, name, aumid, path, or launch_path must be provided."},
                 "aumid":{"type":"string","description":"Explicit AUMID for a packaged app. Cleaner alternative to overloading `bundle_id`. Takes precedence over `bundle_id` / `name` when present."},
@@ -1571,7 +1572,7 @@ impl Tool for LaunchAppTool {
                 "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps`. Highest precedence — when set, this exact string is handed to ShellExecuteEx unchanged. For Windows desktop apps it's the full `.exe` commandline (path + arguments preserved from the source shortcut); for UWP apps it's `shell:appsFolder\\{PackageFamilyName}!{AppId}`. For precise UWP pid capture, prefer `aumid` over `launch_path`."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open in the default browser via ShellExecuteEx (no activation)."},
                 "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process (or activation arguments for packaged apps)."},
-                "cdp_debugging_port":{"type":"integer","description":"Accepted for cross-platform parity; currently no-op on Windows."},
+                "cdp_debugging_port":{"type":"integer","minimum":1,"maximum":65535,"description":"Open a Chromium DevTools endpoint on this loopback port by appending --remote-debugging-port=N."},
                 "webkit_inspector_port":{"type":"integer","description":"Accepted for cross-platform parity; no-op on Windows."},
                 "creates_new_application_instance":{"type":"boolean","description":"Accepted for parity; no-op on Windows (ShellExecuteEx always creates a new process)."},
                 "start_minimized":{"type":"boolean","description":"When true, launch the app's window minimized to the taskbar instead of restored-but-not-activated. Use this when the agent wants to drive the app entirely in the background — the user's previously-frontmost window (e.g. terminal) stays visually on top. Desktop launches hold the foreground lock through startup and use SW_SHOWMINNOACTIVE; packaged-app activation remains broker-controlled and receives a best-effort SW_SHOWMINNOACTIVE post-pass. UIA / background dispatch still work on a minimized window; only `screenshot` and `delivery_mode:\"foreground\"` need it restored."}
@@ -1678,6 +1679,22 @@ impl Tool for LaunchAppTool {
                     .collect()
             })
             .unwrap_or_default();
+        if let Some(raw_port) = args.get("cdp_debugging_port") {
+            let Some(port) = raw_port.as_u64().and_then(|port| u16::try_from(port).ok()) else {
+                return ToolResult::error(
+                    "cdp_debugging_port must be an integer from 1 through 65535",
+                );
+            };
+            if port == 0 {
+                return ToolResult::error(
+                    "cdp_debugging_port must be an integer from 1 through 65535",
+                );
+            }
+            let flag = format!("--remote-debugging-port={port}");
+            if !extra_args.iter().any(|argument| argument == &flag) {
+                extra_args.push(flag);
+            }
+        }
 
         // Resolve target — launch_path > path > aumid > name > bundle_id
         // (alias of name on Windows). launch_path is highest precedence for
@@ -8523,6 +8540,10 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(cua_driver_core::page::PageTool::new(
         std::sync::Arc::new(super::page::WindowsPageBackend::new()),
     )));
+    let browser_engine = cua_driver_core::browser::BrowserEngine::new(std::sync::Arc::new(
+        crate::browser_platform::WindowsBrowserPlatform,
+    ));
+    cua_driver_core::browser::register_browser_tools(&browser_engine, &mut r);
     r.register_recording_tools();
     r.register_session_tools();
     r

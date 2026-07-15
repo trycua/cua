@@ -653,6 +653,26 @@ fn delivered_observation() -> Observation {
     Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
 }
 
+fn browser_ref_by_label(snapshot: &ToolResponse, label_fragment: &str) -> String {
+    snapshot.structured()["refs"]
+        .as_array()
+        .and_then(|refs| {
+            refs.iter().find(|entry| {
+                entry["label"]
+                    .as_str()
+                    .is_some_and(|label| label.contains(label_fragment))
+            })
+        })
+        .and_then(|entry| entry["ref"].as_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            panic!(
+                "browser snapshot is missing ref label {label_fragment:?}: {}",
+                snapshot.raw
+            )
+        })
+}
+
 fn refused_without_fixture_mutation(
     fixture: &Fixture,
     before: &serde_json::Value,
@@ -1254,5 +1274,138 @@ fn shared_web_action_matrix_is_state_verified() {
         selected > 0,
         "no shared E2E cells were selected; check CUA_E2E_HARNESS_FILTER and CUA_E2E_CELL_FILTER"
     );
+    resume_first_failure(failure);
+}
+
+#[test]
+#[ignore]
+fn browser_tool_electron_roundtrip_is_state_verified() {
+    let spec = host_specs()
+        .into_iter()
+        .find(|spec| spec.name == "electron")
+        .expect("the cross-platform Electron fixture must be declared");
+    let case = CaseSpec::delivered(
+        format!("{}-electron-browser-tool-roundtrip", std::env::consts::OS),
+        "electron",
+        "chromium",
+        "browser_tool_roundtrip",
+        Targeting::Page,
+        Delivery::Background,
+        Scope::Window,
+        cua_driver_testkit::e2e::DriverRoute::Cdp,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+            OracleKind::Cursor,
+        ],
+    );
+    let failure = run_host_case_with_outcome(case, &spec, |fixture| {
+        let bind = fixture.driver.call(
+            "get_browser_state",
+            serde_json::json!({
+                "pid": fixture.pid as i64,
+                "window_id": fixture.wid,
+            }),
+        );
+        assert_eq!(
+            bind.structured()["status"].as_str(),
+            Some("ok"),
+            "Electron browser binding failed: {}; raw={}",
+            bind.text(),
+            bind.raw
+        );
+        assert_eq!(
+            bind.structured()["binding_quality"].as_str(),
+            Some("exact"),
+            "Electron browser binding must be exact: {}",
+            bind.raw
+        );
+        let target_id = bind.structured()["target_id"]
+            .as_str()
+            .expect("bind target_id")
+            .to_owned();
+        let tab_id = bind.structured()["tabs"]
+            .as_array()
+            .and_then(|tabs| tabs.iter().find(|tab| tab["active"] == true))
+            .and_then(|tab| tab["tab_id"].as_str())
+            .expect("active tab_id")
+            .to_owned();
+
+        let first_snapshot = fixture.driver.call(
+            "get_browser_state",
+            serde_json::json!({
+                "target_id": target_id,
+                "tab_id": tab_id,
+            }),
+        );
+        assert_eq!(
+            first_snapshot.structured()["status"].as_str(),
+            Some("ok"),
+            "Electron browser snapshot failed: {}",
+            first_snapshot.raw
+        );
+        let increment_ref = browser_ref_by_label(&first_snapshot, "id=btn-increment");
+        let click = fixture.driver.call(
+            "browser_click",
+            serde_json::json!({
+                "target_id": target_id,
+                "tab_id": tab_id,
+                "ref": increment_ref,
+            }),
+        );
+        assert_eq!(
+            click.structured()["status"].as_str(),
+            Some("ok"),
+            "trusted browser click failed: {}",
+            click.raw
+        );
+        assert_eq!(click.structured()["route"].as_str(), Some("trusted"));
+        assert_fixture_text(fixture, "lbl-counter", "counter=1");
+
+        let second_snapshot = fixture.driver.call(
+            "get_browser_state",
+            serde_json::json!({
+                "target_id": target_id,
+                "tab_id": tab_id,
+            }),
+        );
+        let input_ref = browser_ref_by_label(&second_snapshot, "id=txt-input");
+        let typed = fixture.driver.call(
+            "browser_type",
+            serde_json::json!({
+                "target_id": target_id,
+                "tab_id": tab_id,
+                "ref": input_ref,
+                "text": "browser-v1",
+            }),
+        );
+        assert_eq!(
+            typed.structured()["status"].as_str(),
+            Some("ok"),
+            "browser type failed: {}",
+            typed.raw
+        );
+        assert_fixture_value(fixture, "txt-input", "browser-v1");
+        assert_fixture_text(fixture, "lbl-input-mirror", "mirror=browser-v1");
+
+        let stale = fixture.driver.call(
+            "browser_click",
+            serde_json::json!({
+                "target_id": target_id,
+                "tab_id": tab_id,
+                "ref": increment_ref,
+            }),
+        );
+        assert_eq!(
+            stale.structured()["refusal"]["code"].as_str(),
+            Some("browser_ref_stale"),
+            "older snapshot ref should fail closed: {}",
+            stale.raw
+        );
+        assert_fixture_text(fixture, "lbl-counter", "counter=1");
+        delivered_observation()
+    });
     resume_first_failure(failure);
 }

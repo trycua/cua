@@ -118,8 +118,9 @@ try {
     $previousPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $preflightOutput = & cargo test -p cua-driver --test e2e_environment_preflight_test -- `
-            --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1 2>&1
+        $preflightOutput = @(& cargo test -p cua-driver --test e2e_environment_preflight_test -- `
+            --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1 2>&1) | `
+            ForEach-Object { $_.ToString() }
         $preflightExit = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousPreference
@@ -142,7 +143,7 @@ function Invoke-CargoTest {
         $previousPreference = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         try {
-            $output = & cargo @Arguments 2>&1
+            $output = @(& cargo @Arguments 2>&1) | ForEach-Object { $_.ToString() }
             $exitCode = $LASTEXITCODE
         } finally {
             $ErrorActionPreference = $previousPreference
@@ -188,7 +189,14 @@ function Test-E2eRecordings {
         }
     }
     foreach ($video in $videos) {
-        $relative = [System.IO.Path]::GetRelativePath($artifactDir, $video.FullName).Replace("\", "/")
+        $artifactPrefix = ([System.IO.Path]::GetFullPath($artifactDir)).TrimEnd("\") + "\"
+        $videoPath = [System.IO.Path]::GetFullPath($video.FullName)
+        if (-not $videoPath.StartsWith($artifactPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-Host "[VIDEO FAIL] Trajectory escaped artifact root: $videoPath" -ForegroundColor Red
+            $failureCount++
+            continue
+        }
+        $relative = $videoPath.Substring($artifactPrefix.Length).Replace("\", "/")
         if ($relative -like "recordings/environment-preflight-*/recording.mp4") {
             continue
         }

@@ -33,9 +33,10 @@ pub fn register_browser_tools(engine: &Arc<BrowserEngine>, registry: &mut ToolRe
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
-/// The internal caller session id injected by the daemon boundary.
+/// The public caller session id, falling back to the daemon's internal mirror.
 fn session_of(args: &Value) -> String {
-    args.opt_str("_session_id")
+    args.opt_str("session")
+        .or_else(|| args.opt_str("_session_id"))
         .unwrap_or_else(|| "default".into())
 }
 
@@ -76,6 +77,13 @@ fn schema_ref() -> Value {
     })
 }
 
+fn schema_session() -> Value {
+    json!({
+        "type": "string",
+        "description": "Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session."
+    })
+}
+
 // ── get_browser_state ────────────────────────────────────────────────────────
 
 pub struct GetBrowserStateTool {
@@ -103,6 +111,7 @@ impl GetBrowserStateTool {
                     "window_id": { "type": "integer", "description": "Native window id owned by pid (bind mode)." },
                     "target_id": schema_target_id(),
                     "tab_id": schema_tab_id(),
+                    "session": schema_session(),
                 },
                 "additionalProperties": true
             }),
@@ -250,6 +259,7 @@ impl BrowserPrepareTool {
                         "type": "boolean",
                         "description": "Allow the adapter to restart the browser to enable the endpoint (default false)."
                     },
+                    "session": schema_session(),
                 },
                 "required": ["pid"],
                 "additionalProperties": true
@@ -326,6 +336,7 @@ impl BrowserNavigateTool {
                     "target_id": schema_target_id(),
                     "tab_id": schema_tab_id(),
                     "url": { "type": "string", "description": "Destination URL (http:, https:, or about:)." },
+                    "session": schema_session(),
                 },
                 "required": ["target_id", "tab_id", "url"],
                 "additionalProperties": true
@@ -429,6 +440,7 @@ impl BrowserClickTool {
                 "properties": {
                     "target_id": schema_target_id(),
                     "tab_id": schema_tab_id(),
+                    "session": schema_session(),
                     "ref": schema_ref(),
                     "x": { "type": "number", "description": "Viewport x (CSS px) — alternative to ref." },
                     "y": { "type": "number", "description": "Viewport y (CSS px) — alternative to ref." },
@@ -694,6 +706,7 @@ impl BrowserTypeTool {
                 "properties": {
                     "target_id": schema_target_id(),
                     "tab_id": schema_tab_id(),
+                    "session": schema_session(),
                     "text": { "type": "string", "description": "Text to type." },
                     "ref": schema_ref(),
                     "mode": {
@@ -1011,6 +1024,23 @@ mod tests {
             let result = tool.invoke(args).await;
             assert_eq!(result.is_error, Some(true));
         }
+    }
+
+    #[tokio::test]
+    async fn public_session_field_is_the_primary_capability_namespace() {
+        let tool = GetBrowserStateTool::new(engine());
+        let result = tool
+            .invoke(json!({ "pid": 2, "window_id": 7, "session": "public-run" }))
+            .await;
+        assert_eq!(
+            structured(&result)["refusal"]["code"],
+            "browser_route_unavailable"
+        );
+        assert_ne!(
+            result.is_error,
+            Some(true),
+            "public session must pass capability-namespace validation"
+        );
     }
 
     #[tokio::test]

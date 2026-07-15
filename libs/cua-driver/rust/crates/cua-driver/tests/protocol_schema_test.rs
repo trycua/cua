@@ -70,7 +70,7 @@ fn tools_list_schema_shape() {
         browser_state["annotations"]["readOnlyHint"], true,
         "get_browser_state must remain side-effect free"
     );
-    for field in ["pid", "window_id", "target_id", "tab_id"] {
+    for field in ["pid", "window_id", "target_id", "tab_id", "session"] {
         assert!(
             browser_state["inputSchema"]["properties"][field].is_object(),
             "get_browser_state schema missing {field}"
@@ -89,6 +89,10 @@ fn tools_list_schema_shape() {
         assert_eq!(
             tool["annotations"]["readOnlyHint"], false,
             "{name} must remain a mutation"
+        );
+        assert!(
+            tool["inputSchema"]["properties"]["session"].is_object(),
+            "{name} schema must expose the public session field"
         );
         let advertised = tool["inputSchema"]["required"]
             .as_array()

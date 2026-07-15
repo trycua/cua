@@ -1176,11 +1176,21 @@ fn cell_selected(case: &CaseSpec) -> bool {
 }
 
 fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
+    let session = format!("browser-v1-e2e-{}", fixture.pid);
+    let started = fixture
+        .driver
+        .call("start_session", serde_json::json!({ "session": session }));
+    assert!(
+        !started.is_error(),
+        "browser E2E session did not start: {}",
+        started.raw
+    );
     let bind = fixture.driver.call(
         "get_browser_state",
         serde_json::json!({
             "pid": fixture.pid as i64,
             "window_id": fixture.wid,
+            "session": session,
         }),
     );
     assert_eq!(
@@ -1212,6 +1222,7 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
         serde_json::json!({
             "target_id": target_id,
             "tab_id": tab_id,
+            "session": session,
         }),
     );
     assert_eq!(
@@ -1227,6 +1238,7 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
             "target_id": target_id,
             "tab_id": tab_id,
             "ref": increment_ref,
+            "session": session,
         }),
     );
     assert_eq!(
@@ -1243,6 +1255,7 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
         serde_json::json!({
             "target_id": target_id,
             "tab_id": tab_id,
+            "session": session,
         }),
     );
     let input_ref = browser_ref_by_label(&second_snapshot, "id=txt-input");
@@ -1253,6 +1266,7 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
             "tab_id": tab_id,
             "ref": input_ref,
             "text": "browser-v1",
+            "session": session,
         }),
     );
     assert_eq!(
@@ -1270,6 +1284,7 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
             "target_id": target_id,
             "tab_id": tab_id,
             "ref": increment_ref,
+            "session": session,
         }),
     );
     assert_eq!(
@@ -1279,6 +1294,14 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
         stale.raw
     );
     assert_fixture_text(fixture, "lbl-counter", "counter=1");
+    let ended = fixture
+        .driver
+        .call("end_session", serde_json::json!({ "session": session }));
+    assert!(
+        !ended.is_error(),
+        "browser E2E session did not end: {}",
+        ended.raw
+    );
     delivered_observation()
 }
 

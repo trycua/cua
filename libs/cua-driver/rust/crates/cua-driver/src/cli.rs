@@ -211,6 +211,93 @@ pub fn finite_tool_name_from_argv() -> Option<String> {
     finite_tool_name_from_args(&args)
 }
 
+/// Return the bounded sub-operation for a finite command. This classifier
+/// reads only the command verb, a reviewed subcommand, and the presence of
+/// `--apply`; arbitrary values never leave this function.
+pub fn finite_operation_from_argv() -> &'static str {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    finite_operation_from_args(&args)
+}
+
+fn finite_operation_from_args(args: &[String]) -> &'static str {
+    let command = finite_command_name_from_args(args);
+    let positionals = positional_args(args);
+    let subcommand = positionals.get(1).copied();
+    match command {
+        Some("recording") => match subcommand.unwrap_or("status") {
+            "start" => "start",
+            "stop" => "stop",
+            "status" => "status",
+            "render" => "render",
+            _ => "other",
+        },
+        Some("permissions") => match subcommand.unwrap_or("status") {
+            "status" => "status",
+            "grant" => "grant",
+            _ => "other",
+        },
+        Some("config") => match subcommand.unwrap_or("show") {
+            "show" => "show",
+            "get" => "get",
+            "set" => "set",
+            "reset" => "reset",
+            _ => "other",
+        },
+        Some("autostart") => match subcommand.unwrap_or("") {
+            "enable" => "enable",
+            "disable" => "disable",
+            "status" => "status",
+            "kick" => "kick",
+            _ => "other",
+        },
+        Some("skills") => match subcommand.unwrap_or("status") {
+            "install" => "install",
+            "update" => "update",
+            "uninstall" => "uninstall",
+            "status" => "status",
+            "path" => "path",
+            _ => "other",
+        },
+        Some("update") if args.iter().any(|arg| arg == "--apply") => "apply",
+        Some("update") => "check_only",
+        _ => "not_applicable",
+    }
+}
+
+/// Return the configured MCP client as a closed category. Raw `--client`
+/// values are mapped to `other` before the detached worker is spawned.
+pub fn finite_client_kind_from_argv() -> &'static str {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    finite_client_kind_from_args(&args)
+}
+
+fn finite_client_kind_from_args(args: &[String]) -> &'static str {
+    if finite_command_name_from_args(args) != Some("mcp_config") {
+        return "not_applicable";
+    }
+    let value = args
+        .iter()
+        .position(|arg| arg == "--client")
+        .and_then(|index| args.get(index + 1))
+        .map(String::as_str)
+        .unwrap_or("");
+    match value {
+        "" => "generic",
+        "claude" | "claude-code" => "claude_code",
+        "codex" => "codex",
+        "cursor" => "cursor",
+        "openclaw" => "openclaw",
+        "opencode" => "opencode",
+        "hermes" => "hermes",
+        "pi" => "pi",
+        "antigravity" | "gemini" => "antigravity",
+        "qwen" | "qwen-code" => "qwen_code",
+        "droid" | "factory" => "factory_droid",
+        "zcode" => "zcode",
+        _ => "other",
+    }
+}
+
 fn finite_tool_name_from_args(args: &[String]) -> Option<String> {
     if finite_command_name_from_args(args) != Some("call") {
         return None;
@@ -1559,8 +1646,10 @@ pub fn run_call(
         true,
         cua_driver_core::session::SessionTransport::Cli,
     );
-    let observation_timer = cua_driver_core::server::ToolObservationTimer::start(
+    let operation = cua_driver_core::server::tool_operation(tool, Some(&args));
+    let observation_timer = cua_driver_core::server::ToolObservationTimer::start_with_operation(
         tool.to_owned(),
+        operation,
         true,
         true,
         cua_driver_core::server::StdioExecutionPath::InProcess,
@@ -3150,6 +3239,26 @@ mod tests {
             None
         );
         assert_eq!(finite_tool_name_from_args(&args(&["mcp"])), None);
+    }
+
+    #[test]
+    fn finite_operations_are_closed_and_ignore_values() {
+        assert_eq!(finite_operation_from_args(&args(&["recording", "start", "/private/path"])), "start");
+        assert_eq!(finite_operation_from_args(&args(&["config", "set", "private.key", "private-value"])), "set");
+        assert_eq!(finite_operation_from_args(&args(&["skills"])), "status");
+        assert_eq!(finite_operation_from_args(&args(&["update", "--apply"])), "apply");
+        assert_eq!(finite_operation_from_args(&args(&["update"])), "check_only");
+        assert_eq!(finite_operation_from_args(&args(&["doctor", "private-value"])), "not_applicable");
+        assert_eq!(finite_operation_from_args(&args(&["recording", "private-value"])), "other");
+    }
+
+    #[test]
+    fn finite_mcp_config_clients_are_closed_before_worker_handoff() {
+        assert_eq!(finite_client_kind_from_args(&args(&["mcp-config"])), "generic");
+        assert_eq!(finite_client_kind_from_args(&args(&["mcp-config", "--client", "claude-code"])), "claude_code");
+        assert_eq!(finite_client_kind_from_args(&args(&["mcp-config", "--client", "antigravity"])), "antigravity");
+        assert_eq!(finite_client_kind_from_args(&args(&["mcp-config", "--client", "/private/client"])), "other");
+        assert_eq!(finite_client_kind_from_args(&args(&["doctor", "--client", "claude"])), "not_applicable");
     }
 
     #[test]

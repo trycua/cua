@@ -222,6 +222,11 @@ impl CursorRegistry {
         }).clone()
     }
 
+    /// Read one cursor without materializing a new registry entry.
+    pub fn get(&self, cursor_id: &str) -> Option<CursorInstanceState> {
+        self.inner.lock().unwrap().get(cursor_id).cloned()
+    }
+
     pub fn update_position(&self, cursor_id: &str, x: f64, y: f64) {
         let mut inner = self.inner.lock().unwrap();
         let state = inner.entry(cursor_id.to_owned()).or_insert_with(|| CursorInstanceState {

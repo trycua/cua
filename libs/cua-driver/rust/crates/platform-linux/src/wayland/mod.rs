@@ -924,18 +924,26 @@ fn crop_png_to_rect(
 }
 
 /// Display-level capture dispatcher. Cascade:
-/// 1. Native Wayland on wlroots: zwlr_screencopy_manager_v1 (fast, zero
+/// 1. Opt-in GNOME compositor helper. If available, capture failure is
+///    terminal rather than cascading into GNOME's portal implementation.
+/// 2. Native Wayland on wlroots: zwlr_screencopy_manager_v1 (fast, zero
 ///    consent).
-/// 2. Wayland but no wlroots screencopy globals (GNOME/KDE/COSMIC):
-///    xdg-desktop-portal Screenshot via ashpd. Triggers consent prompt
-///    on first use per session.
-/// 3. X11: existing root-window path.
+/// 3. ext-image-copy-capture-v1 on supported compositors.
+/// 4. xdg-desktop-portal Screenshot via ashpd. Triggers a consent prompt on
+///    first use per session.
+/// 5. X11: existing root-window path.
 pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
     if is_wayland() {
         // Tier 1: the opt-in GNOME compositor helper. It avoids probing
         // wlroots-only protocols and captures the Shell stage without consent.
-        if let Some(bytes) = shell_helper::screenshot_display() {
-            return Ok(bytes);
+        // If the helper is present but capture fails, do not fall through to
+        // GNOME's portal implementation: on GNOME 50 a malformed 0x0 cursor
+        // sprite can crash Shell in GNOME's unsafe stage-content capture path.
+        if let Some(result) = checked_shell_helper_capture(
+            shell_helper::available(),
+            shell_helper::screenshot_display,
+        ) {
+            return result;
         }
         // Tier 2: native wlroots screencopy (fast, zero consent).
         match screenshot_bytes() {
@@ -970,6 +978,14 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
     // so we don't re-enter screenshot_display_bytes (which routes back here
     // on Wayland — would loop forever).
     crate::capture::screenshot_display_bytes_x11()
+}
+
+fn checked_shell_helper_capture(
+    available: bool,
+    capture: impl FnOnce() -> Option<Vec<u8>>,
+) -> Option<anyhow::Result<Vec<u8>>> {
+    available
+        .then(|| capture().ok_or_else(|| anyhow::anyhow!("GNOME compositor helper capture failed")))
 }
 
 /// Per-window capture dispatcher. On X11 forwards to the existing window
@@ -3243,6 +3259,27 @@ mod tests {
             crop_png_to_rect(encoded.get_ref(), 2, 1, 3, 4, "fixture").expect("crop fixture PNG");
         let decoded = image::load_from_memory(&cropped).expect("decode cropped PNG");
         assert_eq!((decoded.width(), decoded.height()), (3, 4));
+    }
+
+    #[test]
+    fn shell_helper_capture_failure_is_terminal() {
+        let result = checked_shell_helper_capture(true, || None)
+            .expect("available helper must produce a terminal result");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "GNOME compositor helper capture failed"
+        );
+    }
+
+    #[test]
+    fn unavailable_shell_helper_does_not_attempt_capture() {
+        let called = std::cell::Cell::new(false);
+        let result = checked_shell_helper_capture(false, || {
+            called.set(true);
+            Some(vec![1, 2, 3])
+        });
+        assert!(result.is_none());
+        assert!(!called.get());
     }
 
     #[test]

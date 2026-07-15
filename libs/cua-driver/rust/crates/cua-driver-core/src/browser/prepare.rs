@@ -119,6 +119,27 @@ fn cleanup_created_profile(profile: &PreparedProfile) {
     }
 }
 
+fn isolated_browser_command(executable: &str, profile: &Path) -> Command {
+    let mut command = Command::new(executable);
+    command
+        .arg("--remote-debugging-port=0")
+        .arg(format!("--user-data-dir={}", profile.display()))
+        .arg("--no-first-run")
+        .arg("--no-default-browser-check")
+        .arg("--disable-background-networking")
+        .arg("--disable-component-update")
+        .arg("--disable-default-apps")
+        .arg("--disable-extensions");
+    #[cfg(target_os = "linux")]
+    command.arg("--password-store=basic");
+    command
+        .arg("about:blank")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command
+}
+
 fn write_profile_marker(path: &Path, marker: &ProfileMarker) -> Result<(), BrowserRefusal> {
     let marker_path = path.join(PROFILE_MARKER);
     let mut options = OpenOptions::new();
@@ -400,19 +421,7 @@ impl BrowserEngine {
             )
         })?;
         let prepared_profile = prepare_profile(profile_request)?;
-        let mut command = Command::new(executable);
-        command
-            .arg("--remote-debugging-port=0")
-            .arg(format!(
-                "--user-data-dir={}",
-                prepared_profile.path.display()
-            ))
-            .arg("--no-first-run")
-            .arg("--no-default-browser-check")
-            .arg("about:blank")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        let mut command = isolated_browser_command(&executable, &prepared_profile.path);
         let mut child = command.spawn().map_err(|error| {
             cleanup_created_profile(&prepared_profile);
             refusal(
@@ -503,5 +512,31 @@ mod tests {
         ));
         assert!(write_profile_marker(&path, &expected).is_err());
         fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn isolated_launch_uses_a_deterministic_clean_profile() {
+        let profile = Path::new("profile-under-test");
+        let command = isolated_browser_command("chromium-under-test", profile);
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        for required in [
+            "--remote-debugging-port=0",
+            "--user-data-dir=profile-under-test",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-default-apps",
+            "--disable-extensions",
+            "about:blank",
+        ] {
+            assert!(args.iter().any(|arg| arg == required), "missing {required}");
+        }
+        #[cfg(target_os = "linux")]
+        assert!(args.iter().any(|arg| arg == "--password-store=basic"));
     }
 }

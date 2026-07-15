@@ -1691,7 +1691,7 @@ impl Tool for LaunchAppTool {
             .into_iter()
             .chain(path_opt.as_deref())
             .chain(name_opt.as_deref())
-            .chain(additional_arguments.iter().map(String::as_str))
+            .chain(extra_args.iter().map(String::as_str))
             .any(contains_remote_debugging_flag)
         {
             return ToolResult::error(

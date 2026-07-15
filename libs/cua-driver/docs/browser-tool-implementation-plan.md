@@ -2,21 +2,21 @@
 
 ## Status
 
-- **State:** Browser-tool v1 implemented; later migration and rollout phases remain open
+- **State:** Browser-tool v2 roadmap implemented locally; cross-platform release evidence in final validation
 - **Plan date:** 2026-07-14
-- **Source revision:** `f6aa3dfc24f376c793a0292f15847ee946104231`
+- **Implementation branch:** `codex/browser-tool-v1` (local only)
 - **Companion audit:** [Agentic Web Browsing with Cua Driver](agentic-web-browsing-audit.md)
 - **Architecture verdict:** Accept with major changes
 
-The first implementation milestone covers the five typed tools, strict endpoint
-ownership, session capabilities, exact-or-refused Chromium mutation, launch
-parity, and the repository-owned Electron E2E row. It deliberately leaves the
-legacy `page` facade on its existing implementation until adoption evidence is
-available, keeps `browser_prepare` to endpoint detection and explicit setup
-refusals rather than profile mutation/restart, and defers the broader
-real-browser and embedded-webview matrix described in Phases 4, 6, and 7. See
-[the implementation journal](browser-tool-implementation-journal.md) for exact
-evidence and remaining work.
+The accepted roadmap now covers the five typed tools, strict endpoint ownership,
+session capabilities, exact-or-refused Chromium mutation, standalone Chromium
+adversarial coverage, isolated `browser_prepare`, composed-frame refs,
+event-capable CDP transport, embedded-webview positive/refusal rows, and the
+legacy `page` transport migration. The body below preserves the reviewed design
+and phase gates; [the implementation journal](browser-tool-implementation-journal.md)
+records what actually shipped and the retained evidence. Safari/WebKit mutation,
+Firefox BiDi, split-process WebView2 binding, and mutation on generic Wayland
+without exact compositor geometry remain explicit limitations.
 
 ## Objective
 
@@ -124,7 +124,12 @@ This is required for truthful MCP `readOnlyHint`, host approval behavior, and tr
 
 ### 3. Setup and consent are explicit
 
-`browser_prepare` owns all setup that can mutate state or require user consent. It is idempotent and statically marked mutating. When restart is possible, the tool must be marked destructive for approval purposes even if a particular call does not restart.
+`browser_prepare` owns all setup that can mutate state or require user consent.
+It is statically marked mutating, destructive, and non-idempotent. Acting setup
+requires either MCP-host approval or a short-lived single-use token minted by
+the interactive `browser-approve` command. It launches a separate browser with
+a driver-owned isolated profile and never copies, modifies, restarts, or
+terminates the selected user profile.
 
 ### 4. Native and browser state remain separate
 
@@ -196,7 +201,7 @@ The driver must not represent a DOM event as a trusted pointer or keyboard event
 
 Purpose: discover a browser route, bind an exact page when possible, return compact page state, and refresh existing bindings without side effects.
 
-Proposed request:
+Implemented request:
 
 ```json
 {
@@ -287,28 +292,33 @@ Proposed request:
 {
   "session": "research-1",
   "pid": 1234,
-  "window_id": 5678,
-  "enable": ["cdp"],
+  "allow_launch": true,
   "profile": {
-    "mode": "existing"
-  },
-  "allow_restart": false,
-  "user_confirmed": true
+    "mode": "isolated_new"
+  }
 }
 ```
 
-Supported setup operations are platform-specific and capability-gated:
+Supported setup operations are deliberately narrow:
 
-- connect to a user-enabled Chromium debugging endpoint after explicit consent;
-- launch or relaunch a driver-owned Chromium process with a debugging port;
-- create or select an isolated automation profile;
-- enable macOS JavaScript from Apple Events;
-- coax an Electron inspector only through this mutating tool;
-- report manual setup instructions when the driver cannot safely automate the step.
+- recognize an existing endpoint after proving listener ownership;
+- create a temporary `isolated_new` or persistent driver-owned
+  `isolated_named` profile;
+- launch a separate Chromium process with a private DevTools endpoint;
+- prove the endpoint through the private profile's `DevToolsActivePort` and
+  operating-system socket ownership;
+- report a structured refusal when approval, an isolated profile, an exact
+  browser executable, or endpoint proof is unavailable.
 
-The result returns a refreshed browser target or a structured refusal. It must report whether it restarted an application, changed preferences, copied profile data, or displayed a consent prompt.
+The result returns `prepared_pid`, endpoint-ownership metadata, and explicit
+side effects, or a structured refusal. The caller discovers that new process's
+window and binds it normally. Ending the owning session terminates the managed
+process and removes an `isolated_new` profile.
 
-`user_confirmed` is illustrative, not a sufficient security mechanism by itself. A model can populate a Boolean. Phase 4 must bind confirmation to an MCP-host approval event, an existing Cua approval mechanism, or a short-lived token minted only after explicit user action. The implementation must not treat an unverified request field as proof of consent.
+Public Boolean consent fields are intentionally absent because a model can
+forge them. MCP approval is transported through a private host-to-driver marker;
+direct and raw callers must present a five-minute, pid/profile-bound, single-use
+approval token minted in an interactive terminal.
 
 ### `browser_navigate`
 
@@ -529,7 +539,11 @@ For Chromium, generate refs from the browser accessibility tree and DOM identity
 5. Refresh the box model and perform an element-at-point coverage check before trusted pointer input.
 6. Refuse when the node is detached, covered, outside the viewport without a supported scroll route, or moved into an unsupported frame context.
 
-Page refs must carry `frame_id`. Main-frame support is required for v1. Same-process and out-of-process iframe support must be capability-tested separately; unsupported frame routes are omitted with a limitation rather than flattened into an incorrect main-frame target.
+Page refs must carry `frame_id`. Main-frame support is required. Open shadow
+roots and same-process iframes are implemented; out-of-process iframes are
+included only after a capability-tested flattened CDP attachment. Unsupported
+frame routes are omitted with a limitation rather than flattened into an
+incorrect main-frame target.
 
 ## Endpoint Ownership and Security
 
@@ -579,17 +593,17 @@ Tab drag is a required invalidation scenario: a CDP target may survive while mov
 
 ## Cross-Platform Delivery Scope
 
-| Surface                 | V1 state                                                     | V1 mutation                                       | Required setup                                       | Initial confidence target       |
+| Surface                 | Implemented state                                             | Mutation                                           | Setup / limitation                                   | Confidence                      |
 | ----------------------- | ------------------------------------------------------------ | ------------------------------------------------- | ---------------------------------------------------- | ------------------------------- |
 | Chrome/Edge/Brave macOS | CDP metadata and refs where approved                         | Navigate, trusted input, explicit DOM input       | CDP port/profile or user-approved debugging          | Exact or refuse                 |
 | Electron macOS          | CDP metadata and refs                                        | Navigate and input                                | Inspector exposure through prepare when needed       | Exact for single-window fixture |
-| Safari macOS            | Identity, capabilities, active page metadata where read-only | Deferred unless exact route is proven             | Apple Events/TCC through prepare                     | Heuristic or none               |
+| Safari macOS            | Classified; native/legacy read routes remain                 | Typed mutation deferred                           | No exact WebKit route                                | None for typed mutation         |
 | Chrome/Edge Windows     | CDP metadata and refs                                        | Navigate and input                                | Fix launch CDP support or explicit existing endpoint | Exact or refuse                 |
-| WebView2 Windows        | CDP metadata and refs                                        | Navigate and input where fixture exposes endpoint | Launch-time debugging arguments                      | Exact for fixture               |
+| WebView2 Windows        | Native host and renderer split are detected                  | Structured refusal                                | Exact cross-process correlation deferred             | None for typed mutation         |
 | Firefox Windows         | Identity and unavailable routes                              | Native `get_window_state` only                    | None in v1                                           | None                            |
 | Chromium Linux X11      | CDP metadata and refs                                        | Navigate and input                                | Add launch CDP support                               | Exact or refuse                 |
 | Chromium Linux Wayland  | CDP metadata; native correlation when available              | Only exact binding                                | Add launch CDP support and compositor metadata       | Exact or refuse                 |
-| Electron/Tauri Linux    | CDP where the host exposes it; native fallback otherwise     | Capability-dependent                              | Inspector exposure through prepare                   | Exact for supported fixture     |
+| Electron/Tauri Linux    | Electron exact where bounded; Tauri classified               | Electron typed mutation; Tauri structured refusal | Tauri/WebKit inspector correlation deferred          | Exact or refuse                 |
 | Firefox Linux           | Identity and unavailable routes                              | Native `get_window_state` only                    | None in v1                                           | None                            |
 
 Support documentation must distinguish browser identity, page read, DOM refs, navigation, trusted input, DOM input, native background input, and native foreground input. A single "browser supported" label is insufficient.
@@ -632,7 +646,7 @@ Kill criterion:
 
 If multi-window Chromium cannot be deterministically bound or honestly refused on all three OS families, stop the window-bound API implementation. Pivot to tab-first targeting, with native-window correlation exposed only as advisory metadata.
 
-### Phase 1: Shared CDP foundation and launch parity
+### Phase 1: Shared CDP foundation and safe preparation
 
 Work:
 
@@ -641,9 +655,8 @@ Work:
 - implement PID-owned endpoint discovery for each OS;
 - enforce loopback and owner verification;
 - implement flat-mode session routing and response correlation;
-- fix Windows `launch_app.cdp_debugging_port` so it is no longer a no-op;
-- add equivalent Linux launch arguments and debugging-port support;
-- preserve existing macOS launch behavior;
+- reject remote-debugging flags through `launch_app` on every platform;
+- put driver-owned isolated launch behind approved `browser_prepare`;
 - add unit tests for endpoint discovery, ownership, target selection, and connection pooling.
 
 Exit gate:
@@ -693,22 +706,26 @@ Exit gate:
 
 ### Phase 4: Explicit `browser_prepare`
 
+**Implementation status:** Complete for safe isolated Chromium launch.
+
 Work:
 
 - define structured setup requirements and confirmation semantics;
 - support driver-owned isolated Chromium profiles;
-- support user-approved existing-profile debugging without silently copying or modifying profile data;
-- move Electron inspector signaling behind prepare;
-- move Apple Events preference changes and browser restart behind prepare;
+- refuse automated existing-profile mutation, copying, and restart;
+- bind acting setup to MCP-host approval or a direct interactive approval artifact;
 - return exact side-effect evidence;
-- make prepare idempotent and safe to retry after interruption.
+- make temporary profile/process cleanup session-owned and fail closed after
+  interruption.
 
 Exit gate:
 
-- every consent prompt or restart is attributable to a mutating recorded call;
+- every isolated launch is attributable to a destructive recorded call;
 - declining setup leaves browser and profile unchanged;
-- accepted setup produces a refreshed target or a structured residual limitation;
-- two sessions reuse an approved endpoint without duplicate consent prompts.
+- accepted setup produces a separately discoverable prepared pid or a structured
+  residual limitation;
+- approval artifacts are short-lived, single-use, and bound to the requested
+  pid and profile.
 
 ### Phase 5: Navigation and typed browser input
 
@@ -733,23 +750,30 @@ Exit gate:
 
 ### Phase 6: `page` compatibility facade
 
+**Implementation status:** Complete at the transport boundary. Legacy public
+selection, arguments, result formatting, and native fallbacks remain unchanged.
+
 Work:
 
-- route all seven existing `page` actions through the shared BrowserEngine;
-- preserve legacy argument behavior and first-page fallback only for legacy calls;
-- add optional `session` and `browser_target_id` inputs additively;
-- make read results identify DOM versus AX/UIA/AT-SPI approximation;
-- remove duplicate macOS-only CDP state after parity is proven;
+- route legacy CDP calls through the shared pooled, event-aware `CdpConnection`;
+- preserve legacy argument behavior, first-page/URL-hint selection, output
+  formatting, and timeout behavior;
+- preserve AppleScript, UIA, and AT-SPI fallbacks outside CDP;
+- remove duplicate hand-written WebSocket framing and request/reply loops;
 - document deprecation without removing the tool.
 
 Exit gate:
 
 - existing `page` tests and downstream schema tests pass;
-- browser tools and legacy `page` calls share one underlying target and CDP implementation;
+- browser tools and legacy `page` calls share the CDP transport and event demux
+  without pretending their target-selection semantics are identical;
 - no supported `page` behavior regresses;
 - deprecation begins only after accepted browser-tool evidence exists.
 
 ### Phase 7: Release evidence, documentation, and rollout
+
+**Implementation status:** Documentation and local macOS evidence complete;
+Windows and Linux exact-branch release evidence is the remaining final gate.
 
 Work:
 
@@ -1010,19 +1034,21 @@ Do not record URLs, page text, selectors, cookies, profile paths, auth state, en
 | `page` migration regresses users            | Compatibility facade, retained tests, multi-release deprecation                 |
 | Tool surface overwhelms MCP context         | Five typed v1 tools, compact refs, bounded output, granular registration        |
 
-## Open Product Decisions
+## Retained Product Decisions
 
-These decisions are intentionally deferred until the feasibility and state phases produce evidence:
+These decisions remain intentionally deferred after implementation evidence:
 
 1. Whether Safari should gain deeper Apple Events tab enumeration or a WebDriver route.
 2. Whether Firefox demand justifies a WebDriver BiDi engine.
-3. Whether v1 should ship trusted CDP pointer input immediately or initially expose read/navigation plus explicit DOM input.
+3. Trusted CDP pointer input shipped as the default; DOM click remains an
+   explicit caller-selected trust class.
 4. Whether browser tab open, close, and activate belong in v1.1 or later.
 5. Whether a CDP-event-backed `browser_wait` is valuable enough to become a separate typed tool.
 6. Whether `state_revision` should exist only for event-backed targets or remain omitted in favor of snapshot staleness.
 7. Whether AX-only embedded surfaces should ever expose browser-prefixed refs.
 8. Whether domain/content policy belongs in Cua Driver, the MCP host, or a separate policy layer.
-9. The exact `page` deprecation timeline after adoption data exists.
+9. The exact `page` deprecation timeline after adoption data exists. Transport
+   duplication is removed, but the compatibility facade is not deprecated yet.
 
 ## Definition of Done
 
@@ -1042,13 +1068,14 @@ The browser tool project is complete when:
 - public docs, bundled skills, schemas, diagnostics, and release evidence agree;
 - no known wrong-target or silent-success browser issue remains in an advertised route.
 
-## First Review Decision
+## Review Decision Record
 
-Before implementation begins, reviewers should approve or reject these four points:
+Reviewers approved these four points before implementation:
 
 1. `get_browser_state` is strictly read-only, with all setup delegated to `browser_prepare`.
 2. Browser mutation requires an exact binding; heuristic binding is informational only.
 3. V1 exposes five typed tools rather than a multiplexed browser command surface.
 4. The Phase 0 kill criterion is binding: failure to prove exact-or-refused Chromium correlation causes a tab-first design pivot.
 
-Once those are approved, Phase 0 is the only authorized implementation work. The remaining phases are contingent on its evidence.
+Phase 0 proved the window-anchored design. The later phases proceeded only after
+the exact-or-refused binding and ambiguity tests passed.

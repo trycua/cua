@@ -14,19 +14,20 @@ operating-system matrix.
 
 ---
 
-## Browser tool v1 targets Chromium main frames
+## Browser tools target exactly bound Chromium pages
 
 The typed browser mutation tools currently target Chromium-family browsers and
 Electron through an owned Chrome DevTools Protocol endpoint. Safari and Firefox
 may still be inspected through existing accessibility or legacy page routes,
-but they do not receive browser-tool v1 mutation capabilities.
+but they do not receive typed browser mutation capabilities.
 
 | Surface | Typed browser identity | Typed mutation | Available fallback |
 | --- | --- | --- | --- |
 | Chrome, Edge, Chromium, Electron | Chromium | Exact CDP binding or structured refusal | Native `get_window_state` and AX/PX actions |
 | Firefox | Gecko | `browser_route_unavailable` in the current release | Native accessibility and legacy `page` routes where supported |
 | Safari | WebKit | `browser_route_unavailable` in the current release | Native accessibility and explicit legacy Apple Events routes |
-| WKWebView and WebKitGTK hosts | WebKit where the host can be identified | No CDP mutation route | Native accessibility and pixel actions |
+| Tauri, WKWebView, and WebKitGTK hosts | WebKit where the host can be identified | Structured refusal until an exact engine/native-window binding exists | Native accessibility and pixel actions |
+| WebView2 hosts | Chromium renderer in a separate process | Structured refusal for the common split-process shape | Native UIA and pixel actions |
 
 Firefox is classified consistently as a browser on macOS, Windows, and Linux,
 but Cua Driver does not currently advertise a WebDriver BiDi route. Safari
@@ -34,18 +35,23 @@ Apple Events JavaScript is not equivalent to trusted browser input, and mutable
 tab ordinals cannot satisfy exact window targeting. These surfaces therefore
 remain capability-visible but mutation-unavailable instead of being guessed.
 
-Page refs cover the tab's main frame and are capped to the first 300 interactive
-elements. Cross-origin iframe and shadow-root traversal are not included in v1.
-A newer snapshot or navigation invalidates previous refs.
+Page refs traverse open shadow roots and same-process frames and are capped to
+the first 300 interactive elements. Out-of-process frames are included only
+when the runtime exposes a capability-tested CDP session for that frame;
+otherwise the omitted frame is reported as a limitation instead of being
+flattened into the main document. A newer snapshot or navigation invalidates
+previous refs.
 
-Chrome may require a dedicated non-default `--user-data-dir` when launched with
-remote debugging. Endpoint ownership must resolve to the requested browser pid;
+Chrome remote debugging is prepared only in a separate driver-owned isolated
+profile. `browser_prepare` never enables it on, copies, or restarts the selected
+user profile. Endpoint ownership must resolve to the requested browser pid;
 wrapper processes or ambiguous process trees are refused.
 
 On generic GNOME or KDE Wayland sessions, browser state may be discoverable
 without enough compositor evidence to correlate native and DevTools geometry
-exactly. That route stays read-only. X11 and Sway can authorize mutation when
-their ownership and geometry proofs agree.
+exactly. That route stays read-only. X11 and the validated Sway configuration
+can authorize mutation when their ownership and geometry proofs agree. This
+does not imply arbitrary raw background PX delivery on Wayland.
 
 ---
 

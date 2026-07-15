@@ -1,5 +1,13 @@
 # Natural-language tests for `cua-driver`
 
+These prompts are exploratory skill checks, not the release-support source of
+truth. Canonical browser claims come from the typed Rust harness catalog in
+`crates/cua-driver/tests`: standalone Chromium adversarial rows and the shared
+embedded-browser route rows. Those tests assert fixture-owned state plus
+cross-cutting focus, z-order, cursor, leaked-input, and video evidence. They
+cover exact Chromium/Electron delivery and structured refusals for embedded
+surfaces whose native host cannot yet be bound exactly to its renderer.
+
 > **Platform: macOS-focused.** The prompts and success criteria below
 > reference AppKit, `NSWorkspace.frontmostApplication`, macOS keyboard
 > modifiers (`cmd`), and macOS-only apps (Finder, Numbers, TextEdit,

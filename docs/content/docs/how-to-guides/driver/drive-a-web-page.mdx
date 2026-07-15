@@ -10,31 +10,51 @@ page without raising the native window. The tools bind the `(pid, window_id)`
 you selected to a DevTools target, then issue page input through that exact
 binding.
 
-## Start the browser with DevTools enabled
+## Inspect the selected browser first
 
-First use `list_apps` and `list_windows` as usual. If the browser is not already
-listening on an owned loopback DevTools endpoint, launch it with
-`cdp_debugging_port`:
+First use `list_apps` and `list_windows` as usual, then call
+`get_browser_state` with the selected native `(pid, window_id)`. If that browser
+already exposes an owned loopback DevTools endpoint, the driver binds it without
+changing the browser.
+
+Do not pass remote-debugging flags or a user-data directory through
+`launch_app`. Cua Driver rejects those flags because they could expose a
+person's normal profile to DevTools.
+
+## Prepare an isolated browser when required
+
+If inspection returns `browser_requires_setup`, call `browser_prepare` as a
+separate approved operation. It starts another Chromium process with a
+driver-owned profile; it never copies, modifies, restarts, or terminates the
+selected user profile.
+
+In an MCP client, approve the destructive tool call through the client's normal
+approval UI:
 
 ```jsonc
-launch_app({
-  "bundle_id": "com.google.Chrome",
-  "cdp_debugging_port": 9222,
-  "additional_arguments": [
-    "--user-data-dir=/path/to/a/dedicated-cua-profile"
-  ]
+browser_prepare({
+  "pid": 844,
+  "session": "research-1",
+  "allow_launch": true,
+  "profile": {"mode": "isolated_new"}
 })
 ```
 
-Use the platform's app identifier fields instead of `bundle_id` on Windows or
-Linux. Current Chrome versions may require a non-default `--user-data-dir` when
-remote debugging is enabled. Use a dedicated automation profile rather than a
-person's normal browser profile.
+The response includes `prepared_pid`. Call `list_windows` for that new process,
+then bind its window with `get_browser_state`. An `isolated_new` profile is
+removed when its owning session ends. Use
+`profile: {"mode":"isolated_named","name":"research"}` only when the
+automation profile must survive across sessions.
 
-`browser_prepare({pid})` is the explicit setup probe. It reports whether an
-owned endpoint is already available and returns a structured refusal when
-setup needs consent or a relaunch. It never makes `get_browser_state` perform a
-hidden restart.
+For direct CLI or raw-socket use, mint a five-minute, single-use token from an
+interactive terminal first:
+
+```bash
+cua-driver browser-approve --pid 844 --profile-mode isolated_new
+```
+
+Pass the returned token as `approval_token` in the otherwise identical
+`browser_prepare` call. `get_browser_state` never performs this setup itself.
 
 ## Bind the native window
 
@@ -126,12 +146,22 @@ end_session({"session": "research-1"})
 
 Ending the session revokes its target, tab, and element capabilities.
 
+## Embedded webviews
+
+Electron has an exact route only while one proven native window maps to one CDP
+page. Adding another page or window invalidates that route. Tauri, WKWebView,
+WebKitGTK, and the split-process WebView2 shape currently return
+`browser_route_unavailable` unless the driver can independently prove the
+native-host-to-engine relationship. Continue with native `get_window_state`
+and AX/PX actions for those surfaces.
+
 ## Legacy page actions
 
 The older `page` tool remains available for compatibility and for its read
-actions. New browser mutation workflows should use the typed browser tools so
-window correlation, endpoint ownership, capability lifetime, and refusal
-reasons remain explicit.
+actions. It preserves its first-page and URL-hint behavior, but now shares the
+event-aware CDP transport used by the typed browser tools. New browser mutation
+workflows should use the typed browser tools so window correlation, endpoint
+ownership, capability lifetime, and refusal reasons remain explicit.
 
 ## Related
 

@@ -146,7 +146,7 @@ Provide either `bundle_id` (preferred — unambiguous, e.g. `com.apple.calculato
 
 Optional `urls` are handed to the app as open targets — for Finder, pass a folder path to open a backgrounded Finder window there.
 
-Optional `cdp_debugging_port`: opens a Chrome DevTools Protocol (CDP) server on the specified port (appends --remote-debugging-port=N to the app's argv). Use this to automate Electron/VS Code/Cursor, or Chrome/Brave/Edge, via CDP.
+Browser DevTools setup belongs to `browser_prepare`, which can prove that a separate isolated profile is driver-owned before enabling CDP.
 
 Optional `webkit_inspector_port`: opens a WebKit inspector server on the specified port (sets WEBKIT_INSPECTOR_SERVER=127.0.0.1:N + TAURI_WEBVIEW_AUTOMATION=1). Use this for Tauri/WebKit-based apps.
 
@@ -160,7 +160,6 @@ Returns the launched app's pid, bundle_id, name, and a `windows` array (same sha
 
 - `additional_arguments` (array of string, optional): Extra arguments appended after --args when launching.
 - `bundle_id` (string, optional): App bundle identifier, e.g. com.apple.calculator. Preferred over name.
-- `cdp_debugging_port` (integer, optional): Open a Chrome DevTools Protocol server on this port (appends --remote-debugging-port=N).
 - `creates_new_application_instance` (boolean, optional): When true, force a new app instance even if already running (open -n). Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one — on single-instance apps (e.g. Calculator) every caller otherwise gets the same window and the sessions clobber each other.
 - `name` (string, optional): App display name. Used only when bundle_id is absent.
 - `urls` (array of string, optional): Optional file paths or URLs to open with the app (e.g. a folder path for Finder).
@@ -747,7 +746,7 @@ Install the ffmpeg binary used by start_recording's video capture (Linux/Windows
 
 ### `get_browser_state`
 
-Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id to snapshot the tab's main frame and mint p&lt;snapshot&gt;:&lt;index&gt; element refs for browser_click / browser_type. Never performs setup — a missing endpoint is a structured browser_requires_setup refusal pointing at browser_prepare.
+Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id to snapshot the tab's composed DOM (main frame, shadow DOM, same-process iframes, and capability-tested out-of-process iframes) and mint p&lt;snapshot&gt;:&lt;index&gt; element refs for browser_click / browser_type; each ref reports its frame kind. Never performs setup — a missing endpoint is a structured browser_requires_setup refusal pointing at browser_prepare.
 
 **Arguments:**
 
@@ -759,13 +758,14 @@ Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native br
 
 ### `browser_prepare`
 
-Explicitly prepare an owned DevTools endpoint for a browser pid. Minimal and never implicit: get_browser_state refuses with browser_requires_setup instead of calling this for you. Pass consent=true to authorize consent-gated setup and allow_restart=true only if the platform may restart the browser.
+Explicitly prepare an owned DevTools endpoint for a browser pid. Existing endpoints are detected without side effects. Acting setup requires MCP-host approval or a short-lived token from the interactive browser-approve command, allow_launch=true, and a driver-owned isolated profile. It launches a separate browser and never copies, modifies, or terminates the requested user profile.
 
 **Arguments:**
 
-- `allow_restart` (boolean, optional): Allow the adapter to restart the browser to enable the endpoint (default false).
-- `consent` (boolean, optional): Explicit caller consent for consent-gated setup (default false).
+- `allow_launch` (boolean, optional): Allow a separate driver-owned isolated Chromium process to be launched (default false).
+- `approval_token` (string, optional): Single-use token minted by `cua-driver browser-approve` for direct CLI/raw use. Omit for an MCP-host-approved call.
 - `pid` (integer, required): Browser process id to prepare.
+- `profile` (object, optional)
 - `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.
 
 ```json

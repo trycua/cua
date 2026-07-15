@@ -8,8 +8,7 @@ available:
 
 1. Start a named driver session.
 2. Select the exact native `(pid, window_id)` from `launch_app` or
-   `list_windows`. Launch with `cdp_debugging_port` and a dedicated
-   `--user-data-dir` when setup is required.
+   `list_windows`.
 3. Bind with `get_browser_state({pid, window_id, session})`. Continue only when
    `binding_quality` is `exact`.
 4. Snapshot with `get_browser_state({target_id, tab_id, session})`.
@@ -18,14 +17,26 @@ available:
 6. Re-snapshot after navigation and whenever a call reports
    `browser_ref_stale`. End the session when done.
 
+If binding reports `browser_requires_setup`, use the separately approved
+`browser_prepare` tool with `allow_launch:true` and
+`profile:{mode:"isolated_new"}`. It returns a new `prepared_pid`; select that
+process's window and bind again. Do not pass remote-debugging flags through
+`launch_app`: the driver rejects that route so an agent cannot expose a user's
+normal profile accidentally. MCP hosts approve the destructive prepare call;
+direct/raw clients first mint a single-use token with the interactive
+`cua-driver browser-approve` command.
+
 This is the full-background Chromium rung: CDP input reaches the exactly bound
 page without raising its native window. `browser_click` defaults to trusted
 `Input.dispatchMouseEvent`; never opt into `input_route:"dom_event"` unless a
 synthetic DOM click is explicitly acceptable. Target ids, tab ids, and refs are
 opaque session capabilities, not raw CDP ids.
 
-The legacy guidance below remains relevant for Safari, Firefox, browser chrome,
-and surfaces where exact browser binding is unavailable.
+Refs traverse open shadow roots and same-process frames. Out-of-process frames
+are included only when the runtime exposes an independently attached CDP
+session; otherwise the frame is reported as a limitation. The legacy guidance
+below remains relevant for Safari, Firefox, browser chrome, and surfaces where
+exact browser binding is unavailable.
 
 > **Most legacy guidance below is macOS-specific.** It covers AX-tree quirks, AppleScript
 > JavaScript bridges, and Chromium / WebKit / Electron / Tauri patterns
@@ -37,9 +48,10 @@ and surfaces where exact browser binding is unavailable.
 >
 > The `page` tool itself is **cross-platform** — Windows + Linux back
 > `get_text` / `query_dom` with UIA / AT-SPI respectively, and
-> `execute_javascript` on those platforms uses CDP (browser must be
-> launched with `--remote-debugging-port=N`, with the port exposed via
-> the `CUA_DRIVER_CDP_PORT` env var). macOS routing (this doc) remains
+> `execute_javascript` on those platforms uses CDP (the endpoint may be
+> supplied by a test-owned fixture or a driver-owned browser prepared through
+> `browser_prepare`; legacy callers can expose its port via
+> `CUA_DRIVER_CDP_PORT`). macOS routing (this doc) remains
 > Apple Events → CDP → AX-tree fallback.
 
 Covers apps whose UI is rendered in a web runtime inside a native
@@ -622,16 +634,12 @@ Preconditions (shared with `insert_text`):
 - The target element must already have DOM focus — click it first
   (`page(click_element)` or `execute_javascript` with `el.click()` /
   `el.focus()`).
-- The browser needs a live CDP port. Two ways to get one:
-  - **Dedicated automation profile** — `launch_app`'s
-    `cdp_debugging_port` appends `--remote-debugging-port=N`, but
-    Chrome refuses to open that port on what it considers its
-    default data directory — confirmed this refusal happens even
-    when you pass `--user-data-dir` explicitly pointing at that same
-    default path; only a genuinely different path satisfies the
-    check. So this route needs `additional_arguments:
-["--user-data-dir=<some other path>"]` too — a separate profile
-    without the user's existing logins/session.
+- The browser needs a live CDP port. Two supported sources are:
+  - **Driver-owned automation profile** — call the approved
+    `browser_prepare` operation with `allow_launch:true` and an
+    `isolated_new` or `isolated_named` profile. It launches a separate
+    process and returns `prepared_pid`. It never copies or modifies the
+    user's normal profile.
   - **The user's real, already-logged-in Chrome** — have them open
     `chrome://inspect/#remote-debugging` and check "Allow remote
     debugging". Confirmed this opens a CDP port on the _default_
@@ -641,7 +649,7 @@ Preconditions (shared with `insert_text`):
     endpoint and `Target.attachToTarget{flatten:true}` in that case,
     but since that path can't be auto-discovered via `pid` + `lsof`
     (no working `/json` to validate against), pass the port explicitly
-    via `cdp_port` (commonly 9222, but whatever the chrome://inspect
+    via the legacy `cdp_port` argument (commonly 9222, but whatever the chrome://inspect
     page shows) — auto-discovery only works for the dedicated-profile
     route above.
     **This can't be made fully unattended, and the popup fires more

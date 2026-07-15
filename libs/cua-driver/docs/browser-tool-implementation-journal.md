@@ -1,4 +1,4 @@
-# Browser Tool v1 Implementation Journal
+# Browser Tool Implementation Journal
 
 This journal records implementation and validation evidence for the first-class
 browser tools. It intentionally omits machine identities, credentials, private
@@ -182,7 +182,7 @@ schema_consistency_test --test protocol_session_test`: 1 schema, 1
   tool remains available and is not presented as the preferred new mutation
   route.
 
-## Plan-to-implementation audit
+## Initial v1 milestone audit
 
 | Plan phase | Browser-tool v1 result |
 | --- | --- |
@@ -200,15 +200,99 @@ including canonical macOS, Windows, X11, and native Wayland evidence. It does
 not claim the later `page` migration or the broader real-browser release
 matrix.
 
-## Deferred by design
+## Deferred at the v1 milestone
+
+The v2 entries below supersede the completed items in this historical list.
 
 - Legacy `page` facade migration.
 - Firefox and Safari mutation through this CDP-first API.
 - Cross-origin iframe references and browser tab lifecycle tools.
 - Mutation on a compositor that cannot prove the requested native window maps
   to the selected browser window.
-- Profile creation, browser restart, and preference changes inside
-  `browser_prepare`; callers currently use explicit `launch_app` arguments.
+- Isolated profile creation and acting `browser_prepare` launch.
 - Full Chrome/Edge multi-window adversarial release lanes and Tauri, WebView2,
   WKWebView, and WebKitGTK browser-tool rows. Existing native harness coverage
   for those surfaces remains unchanged.
+
+## 2026-07-15: v2 truthfulness and standalone Chromium coverage
+
+- `26c177d9` made browser-engine classification and route limitations
+  consistent across platforms. Unsupported engines remain discoverable but do
+  not advertise mutation.
+- `0295b881` added repository-owned standalone Chromium harness coverage.
+- `3287b44e` added adversarial multi-tab and same-bounds multi-window cases.
+  The driver refuses ambiguity instead of selecting the first page or using a
+  title tie-break across different CDP window ids.
+- The complete macOS standalone suite passed in one uninterrupted run: exact
+  roundtrip, isolated preparation, stale refs, composed frames, multi-tab, and
+  same-bounds multi-window refusal.
+
+## 2026-07-15: composed documents and event-aware CDP
+
+- `c8fb38ef` added refs through open shadow roots and same-process iframes.
+  Out-of-process iframes are attached only when the runtime exposes a proven
+  CDP session; event messages are demultiplexed from command responses.
+- Snapshot refs retain frame identity. A missing frame route is reported as a
+  limitation and never flattened into the main document.
+- The standalone composed-document row passed against real Chromium, including
+  shadow DOM, same-process iframe, and capability-tested OOPIF behavior.
+
+## 2026-07-15: approved isolated browser preparation
+
+- `ca31f017` removed public consent/restart fields and marked
+  `browser_prepare` destructive and non-idempotent.
+- MCP calls require a live host-mediated approval marker. Direct CLI/raw calls
+  require a five-minute, single-use token minted by the interactive
+  `browser-approve` command and bound to pid plus profile request.
+- Acting prepare launches a separate Chromium process with a driver-owned
+  `isolated_new` or `isolated_named` profile. It never copies, modifies,
+  restarts, or terminates the selected user profile.
+- The endpoint is proved from the private profile's `DevToolsActivePort` and
+  socket ownership. Temporary profiles and their processes are reaped when the
+  owning session ends.
+- Remote-debugging arguments passed through `launch_app` are rejected on all
+  platforms so setup cannot bypass this boundary.
+
+## 2026-07-15: embedded routes and legacy compatibility
+
+- `1c4e3539` separated exact browser-route evidence from the broad shared
+  action matrix. Electron proves an exact CDP mutation roundtrip on each
+  supported OS. Tauri, WKWebView, WebKitGTK, and the common split-process
+  WebView2 shape prove side-effect-free `browser_route_unavailable` refusals
+  until their engine/native-host relationship can be bound exactly.
+- `5b484098` migrated the legacy `page` CDP path to the shared pooled,
+  event-aware transport without changing its first-page/URL-hint semantics,
+  output format, timeouts, or AppleScript/UIA/AT-SPI fallbacks.
+- A compatibility test injects an unsolicited CDP event before an evaluate
+  reply and proves the legacy result still arrives in its historical format.
+- The macOS embedded matrix passed against the locally installed source build:
+  Electron mutation delivered; Tauri and WKWebView refused with focus, z-order,
+  cursor, no-leaked-input, and fixture-state sentinels intact.
+
+## 2026-07-15: harness process isolation
+
+- `a6e4c6b8` places every Unix test-owned browser in its own process group and
+  reaps the complete tree after each row. This removed late Chrome children
+  that could contaminate the next exact-binding test.
+- No product action is retried. A longer readiness budget and a macOS launch
+  settle occur only between independently owned harness processes.
+- `cua-driver-testkit` passed 41 tests. The full six-row standalone Chromium
+  suite then passed in 66 seconds with no lingering harness browser process.
+
+## Current explicit limitations
+
+- Safari/WKWebView/WebKitGTK typed mutation is deferred until an exact WebKit
+  engine-to-native-window route exists. Legacy/native reads remain available.
+- Firefox is classified but has no WebDriver BiDi engine or typed mutation.
+- Generic Wayland without compositor-provided exact pid and geometry cannot
+  authorize browser mutation. Validated X11 and Sway configurations may do so;
+  this does not imply arbitrary raw background PX delivery.
+- Common WebView2 hosts split the native WPF window and Edge renderer across
+  processes. The typed route refuses until that correlation can be proved.
+- `browser_prepare` deliberately does not attach DevTools to, copy, or restart
+  a person's existing profile. Authenticated-profile automation remains a
+  product/security decision rather than an implicit setup shortcut.
+- MCP approval proves that the request traversed the host approval path; it is
+  not a same-user operating-system security boundary against another local
+  process. Direct approval tokens remain terminal-only, short-lived,
+  single-use, and request-bound.

@@ -67,10 +67,16 @@ now belongs to another document.
 ## Why setup is explicit
 
 Browser inspection never enables remote debugging or restarts a browser as a
-side effect. `browser_prepare` is a separate setup and consent boundary, while
-`launch_app(cdp_debugging_port)` is the deterministic driver-owned launch path.
-The separation keeps read calls read-only and makes profile or restart impact
-visible to the caller.
+side effect. `browser_prepare` is a separate destructive approval boundary. It
+may launch another browser with a driver-owned `isolated_new` or
+`isolated_named` profile, but it never copies, modifies, restarts, or terminates
+the selected user profile. Remote-debugging arguments passed through
+`launch_app` are refused.
+
+An MCP host supplies approval through its destructive-tool approval path.
+Direct CLI and raw-socket callers use a short-lived, single-use token minted by
+the interactive `browser-approve` command. A Boolean supplied by the model is
+not treated as user consent.
 
 ## Platform meaning
 
@@ -79,9 +85,15 @@ platform capability:
 
 - macOS uses process ownership and native window geometry.
 - Windows uses HWND ownership and DPI-aware geometry.
-- Linux X11 and Sway expose sufficient ownership and geometry for exact routes.
+- Linux X11 and Sway expose sufficient ownership and geometry for exact routes
+  in the validated configurations.
 - generic Wayland discovery without compositor-provided exact geometry remains
   read-only; it cannot authorize mutation.
+
+The same rule applies to embedded webviews. Electron's bounded single-page,
+single-window shape can be exact. A native host and renderer split across
+different processes, as in common WebView2 deployments, is refused until the
+driver can prove that relationship independently.
 
 See [Drive a web page](/how-to-guides/driver/drive-a-web-page) for the workflow
 and [Known limits](/reference/cua-driver/limits) for current scope.

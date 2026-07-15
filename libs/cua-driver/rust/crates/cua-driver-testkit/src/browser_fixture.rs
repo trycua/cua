@@ -1,5 +1,5 @@
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -46,6 +46,7 @@ impl BrowserFixtureServer {
             format!("{journal_script}{html}")
         }
         .into_bytes();
+        let page = Arc::new(page);
         let latest = Arc::new(Mutex::new(serde_json::json!({})));
         let observed = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
@@ -55,96 +56,11 @@ impl BrowserFixtureServer {
         let worker = thread::spawn(move || {
             while !stop_for_worker.load(Ordering::Relaxed) {
                 match listener.accept() {
-                    Ok((mut stream, _)) => {
-                        let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
-                        let mut request = Vec::new();
-                        let mut chunk = [0u8; 8192];
-                        let mut body_range = None;
-                        loop {
-                            match stream.read(&mut chunk) {
-                                Ok(0) => break,
-                                Ok(n) => request.extend_from_slice(&chunk[..n]),
-                                Err(error)
-                                    if matches!(
-                                        error.kind(),
-                                        std::io::ErrorKind::WouldBlock
-                                            | std::io::ErrorKind::TimedOut
-                                    ) =>
-                                {
-                                    break;
-                                }
-                                Err(_) => break,
-                            }
-                            if body_range.is_none() {
-                                body_range = request
-                                    .windows(4)
-                                    .position(|window| window == b"\r\n\r\n")
-                                    .map(|header_end| {
-                                        let headers =
-                                            String::from_utf8_lossy(&request[..header_end]);
-                                        let content_len = headers
-                                            .lines()
-                                            .find_map(|line| {
-                                                line.split_once(':').and_then(|(name, value)| {
-                                                    name.eq_ignore_ascii_case("content-length")
-                                                        .then_some(value)
-                                                })
-                                            })
-                                            .and_then(|value| value.trim().parse::<usize>().ok())
-                                            .unwrap_or(0);
-                                        (header_end + 4, content_len)
-                                    });
-                            }
-                            if let Some((body_start, content_len)) = body_range {
-                                if request.len() >= body_start + content_len {
-                                    break;
-                                }
-                            }
-                        }
-
-                        let request_line = request
-                            .split(|byte| *byte == b'\n')
-                            .next()
-                            .map(String::from_utf8_lossy)
-                            .unwrap_or_default();
-                        if std::env::var_os("CUA_E2E_BROWSER_SERVER_LOG").is_some() {
-                            eprintln!("[browser-fixture] {request_line}");
-                        }
-                        if request_line.starts_with("GET /fixture ")
-                            || request_line.starts_with("GET /fixture?")
-                            || request_line.starts_with("GET / ")
-                        {
-                            let headers = format!(
-                                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
-                                page.len()
-                            );
-                            let _ = stream.write_all(headers.as_bytes());
-                            let _ = stream.write_all(&page);
-                        } else if request_line.starts_with("POST /state ") {
-                            if let Some((body_start, content_len)) = body_range {
-                                if let Some(body) =
-                                    request.get(body_start..body_start + content_len)
-                                {
-                                    if let Ok(state) =
-                                        serde_json::from_slice::<serde_json::Value>(body)
-                                    {
-                                        *latest_for_worker.lock().expect("lock browser fixture") =
-                                            state.clone();
-                                        observed_for_worker
-                                            .lock()
-                                            .expect("lock browser fixture history")
-                                            .push(state);
-                                    }
-                                }
-                            }
-                            let _ = stream.write_all(
-                                b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
-                            );
-                        } else {
-                            let _ = stream.write_all(
-                                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                            );
-                        }
+                    Ok((stream, _)) => {
+                        let page = Arc::clone(&page);
+                        let latest = Arc::clone(&latest_for_worker);
+                        let observed = Arc::clone(&observed_for_worker);
+                        thread::spawn(move || handle_connection(stream, &page, &latest, &observed));
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(10));
@@ -225,6 +141,94 @@ impl BrowserFixtureServer {
     }
 }
 
+fn handle_connection(
+    mut stream: TcpStream,
+    page: &[u8],
+    latest: &Arc<Mutex<serde_json::Value>>,
+    observed: &Arc<Mutex<Vec<serde_json::Value>>>,
+) {
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+    let mut request = Vec::new();
+    let mut chunk = [0u8; 8192];
+    let mut body_range = None;
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => request.extend_from_slice(&chunk[..n]),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                break;
+            }
+            Err(_) => break,
+        }
+        if body_range.is_none() {
+            body_range = request
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|header_end| {
+                    let headers = String::from_utf8_lossy(&request[..header_end]);
+                    let content_len = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.split_once(':').and_then(|(name, value)| {
+                                name.eq_ignore_ascii_case("content-length").then_some(value)
+                            })
+                        })
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    (header_end + 4, content_len)
+                });
+        }
+        if let Some((body_start, content_len)) = body_range {
+            if request.len() >= body_start + content_len {
+                break;
+            }
+        }
+    }
+
+    let request_line = request
+        .split(|byte| *byte == b'\n')
+        .next()
+        .map(String::from_utf8_lossy)
+        .unwrap_or_default();
+    if std::env::var_os("CUA_E2E_BROWSER_SERVER_LOG").is_some() {
+        eprintln!("[browser-fixture] {request_line}");
+    }
+    if request_line.starts_with("GET /fixture ")
+        || request_line.starts_with("GET /fixture?")
+        || request_line.starts_with("GET / ")
+    {
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+            page.len()
+        );
+        let _ = stream.write_all(headers.as_bytes());
+        let _ = stream.write_all(page);
+    } else if request_line.starts_with("POST /state ") {
+        if let Some((body_start, content_len)) = body_range {
+            if let Some(body) = request.get(body_start..body_start + content_len) {
+                if let Ok(state) = serde_json::from_slice::<serde_json::Value>(body) {
+                    *latest.lock().expect("lock browser fixture") = state.clone();
+                    observed
+                        .lock()
+                        .expect("lock browser fixture history")
+                        .push(state);
+                }
+            }
+        }
+        let _ = stream.write_all(
+            b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+        );
+    } else {
+        let _ = stream
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    }
+}
+
 impl Drop for BrowserFixtureServer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
@@ -282,5 +286,27 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(server.contains("last_action=left_click"));
+    }
+
+    #[test]
+    fn idle_preconnection_does_not_block_fixture_requests() {
+        let server = BrowserFixtureServer::start("<html><body>concurrent-marker</body></html>");
+        let address = address(server.page_url(), "/fixture");
+        let _idle = TcpStream::connect(&address).expect("open idle browser preconnection");
+
+        let mut stream = TcpStream::connect(&address).expect("connect active browser request");
+        stream
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .expect("bound active response wait");
+        stream
+            .write_all(format!("GET /fixture HTTP/1.1\r\nHost: {address}\r\n\r\n").as_bytes())
+            .expect("request fixture behind idle connection");
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("active request must not wait for idle preconnection");
+
+        assert!(response.contains("200 OK"));
+        assert!(response.contains("concurrent-marker"));
     }
 }

@@ -112,6 +112,7 @@ async fn dispatch(body: &[u8], registry: &Arc<ToolRegistry>) -> Option<String> {
     if req.id.is_none() {
         return None; // notification
     }
+    let initialize_metadata = req.initialize_metadata();
     let id = req.id.clone().unwrap_or(serde_json::Value::Null);
     apply_session_identity(&mut req);
     let timer = http_tool_observation_timer(&req, registry);
@@ -119,6 +120,12 @@ async fn dispatch(body: &[u8], registry: &Arc<ToolRegistry>) -> Option<String> {
     if let Some(timer) = timer {
         crate::telemetry::capture_tool_completed(
             timer.finish(&response),
+            crate::telemetry::Transport::McpHttp,
+        );
+    }
+    if let Some(metadata) = initialize_metadata {
+        crate::telemetry::capture_mcp_session_started(
+            metadata,
             crate::telemetry::Transport::McpHttp,
         );
     }

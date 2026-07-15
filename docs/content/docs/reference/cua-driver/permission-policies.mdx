@@ -1,0 +1,279 @@
+---
+title: Permission policies
+description: YAML and Rego permission policy schema, environment variable, evaluation rules, and Rego input interface for Cua Driver.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Cua Driver evaluates a permission policy for every MCP tool call when `CUA_DRIVER_POLICY_FILE` is set. The policy is loaded once at process startup and applies to both in-process MCP dispatch and daemon-proxy dispatch. This page is the reference for the file format, evaluation rules, and Rego interface.
+
+---
+
+## Environment variable
+
+| Variable | Type | Default |
+|---|---|---|
+| `CUA_DRIVER_POLICY_FILE` | path to a `.yaml`, `.yml`, `.rego` file, or a directory | not set (policy disabled) |
+
+When the variable is absent the policy engine is disabled and every call is allowed.
+
+When the path does not exist the engine starts and logs a warning; all calls are allowed (missing file is treated as no policy).
+
+When the path exists but cannot be parsed, the engine fails to start and the daemon exits with an error.
+
+---
+
+## YAML policy format
+
+### Top-level structure
+
+```yaml
+allow:            # what to permit (default: nothing allowed)
+  tools: []       # tool names allowed unconditionally
+  rules: []       # rules with argument constraints
+deny:             # hard overrides (checked first)
+  tools: []       # tool names always blocked
+```
+
+Both `allow` and `deny` are optional and default to empty lists. A policy with neither section blocks every call.
+
+`deny.tools` is checked before `allow.tools` and `allow.rules`. A tool in `deny.tools` is rejected even if it also appears in an allow section.
+
+### Shorthand forms
+
+The `allow` and `deny` fields also accept a flat list of strings as a shorthand for the `tools` sub-key:
+
+```yaml
+allow:
+  - screenshot
+  - wait
+deny:
+  - shell_execute
+```
+
+### `allow.tools`
+
+A list of tool names that are permitted for any argument values. Order does not matter.
+
+```yaml
+allow:
+  tools:
+    - screenshot
+    - get_window_state
+    - list_apps
+```
+
+### `allow.rules`
+
+A list of tool rules. Each rule names a tool and an optional set of argument constraints. A call matches a rule when all constraints for that rule pass. If the same tool appears in multiple rules, the call is allowed when **any** rule matches.
+
+```yaml
+allow:
+  rules:
+    - tool: type_text
+      constraints:
+        text:
+          max_length: 200
+    - tool: scroll
+      constraints:
+        amount:
+          min: -10
+          max: 10
+```
+
+The `constraints` map keys are JSON argument names (snake_case, matching the names in [MCP tools](/reference/cua-driver/mcp-tools)).
+
+### Constraint fields
+
+Each constraint object may include one or more of the following checks. At least one check is required.
+
+| Field | Type | Applies to | Meaning |
+|---|---|---|---|
+| `min` | number | numeric argument | argument value must be ≥ this |
+| `max` | number | numeric argument | argument value must be ≤ this |
+| `max_length` | integer | string argument | Unicode codepoint count must not exceed this |
+| `pattern` | string (regex) | string argument | argument must match this regular expression |
+| `allowed` | list of JSON values | any | argument must equal one of the listed values |
+
+When both `min` and `max` are set, `min` must be ≤ `max` or the policy fails to load.
+
+The `pattern` field uses the [Rust regex crate](https://docs.rs/regex) syntax (RE2-compatible; no backtracking, no lookahead).
+
+### `deny.tools`
+
+A list of tool names that are unconditionally blocked, regardless of allow rules.
+
+```yaml
+deny:
+  tools:
+    - shell_execute
+    - run_javascript
+```
+
+### Full YAML example
+
+```yaml
+allow:
+  tools:
+    - screenshot
+    - get_window_state
+    - list_apps
+    - list_windows
+    - click
+    - press_key
+    - scroll
+    - hotkey
+    - wait
+  rules:
+    - tool: type_text
+      constraints:
+        text:
+          max_length: 500
+          pattern: "^[\\x20-\\x7E\\n\\t]*$"
+    - tool: launch_app
+      constraints:
+        bundle_id:
+          allowed:
+            - "com.apple.Safari"
+            - "com.google.Chrome"
+            - "com.microsoft.VSCode"
+    - tool: scroll
+      constraints:
+        amount:
+          min: -20
+          max: 20
+deny:
+  tools:
+    - shell_execute
+    - run_javascript
+```
+
+---
+
+## Rego policy format
+
+Rego policies must define a rule named `data.cua.policy.allow`. The engine uses [Regorus](https://github.com/microsoft/regorus) 0.10.x, which implements the OPA policy language.
+
+### Package declaration
+
+```rego
+package cua.policy
+```
+
+### `allow` rule
+
+The rule must evaluate to a `boolean`. `undefined` is treated as `false` (deny).
+
+```rego
+package cua.policy
+
+import rego.v1
+
+allow if {
+    # rule body
+}
+```
+
+### Input object
+
+The engine sets `input` to the following object for each call:
+
+| Field | Type | Description |
+|---|---|---|
+| `input.server` | string | Always `"cua-driver"` |
+| `input.tool` | string | Canonical tool name (e.g. `"type_text"`) |
+| `input.arguments` | object | Tool arguments with `_session_id` removed |
+
+`input.tool` is normalized before evaluation: `type_text_chars` is mapped to `type_text`.
+
+### Minimal Rego example
+
+```rego
+package cua.policy
+
+import rego.v1
+
+safe_tools := {
+    "screenshot",
+    "get_window_state",
+    "list_apps",
+    "list_windows",
+    "click",
+    "press_key",
+    "scroll",
+    "wait",
+}
+
+allow if {
+    input.tool in safe_tools
+}
+
+allow if {
+    input.tool == "type_text"
+    count(input.arguments.text) <= 500
+}
+```
+
+### Loading multiple Rego files
+
+Point `CUA_DRIVER_POLICY_FILE` at a directory to load all `.rego` files in that directory. Files are loaded in lexicographic order (sort by filename), which controls rule merge order across files.
+
+```
+~/.cua-driver/policies/
+  00_base.rego
+  10_type_text.rego
+  20_launch_app.rego
+```
+
+```bash
+export CUA_DRIVER_POLICY_FILE=~/.cua-driver/policies
+```
+
+---
+
+## Evaluation order
+
+For YAML policies:
+
+1. Check `deny.tools` — if the tool is listed, **deny** immediately.
+2. Check `allow.tools` — if the tool is listed, **allow** immediately.
+3. Evaluate `allow.rules` for matching rules — if any rule's constraints pass, **allow**.
+4. No match — **deny** with `"tool 'X' is not allowed by the YAML policy"`.
+
+For Rego policies:
+
+1. Evaluate `data.cua.policy.allow` with the call's input.
+2. `true` → **allow**; `false` or `undefined` → **deny**; evaluation error → **error** (the call is blocked with the engine error message).
+
+---
+
+## Tool name normalization
+
+Before any policy evaluation the driver canonicalizes deprecated aliases:
+
+| Alias | Canonical name |
+|---|---|
+| `type_text_chars` | `type_text` |
+
+Write policies against the canonical name; the alias is accepted automatically.
+
+---
+
+## Denial response
+
+When a call is blocked, the MCP response is a tool error with a human-readable message:
+
+```
+tool 'shell_execute' is explicitly denied
+tool 'launch_app' is not allowed by the YAML policy
+tool 'type_text' argument constraints were not satisfied: argument 'text' must be at most 500 characters
+tool 'launch_app' is not allowed by the Rego policy
+```
+
+---
+
+## Related
+
+- [Restrict tool access with permission policies](/how-to-guides/driver/restrict-tool-access): step-by-step setup guide
+- [How permission policies work](/concepts/how-permission-policies-work): evaluation engine internals and trust model
+- [MCP tools](/reference/cua-driver/mcp-tools): tool names and argument schemas

@@ -8,6 +8,8 @@ import os
 import sys
 from typing import List, Optional
 
+from .network_security import InsecureBindError, resolve_bind_host
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,7 +34,10 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--host",
         default="127.0.0.1",
-        help="Host to bind the server to (default: 127.0.0.1; use 0.0.0.0 for external access)",
+        help=(
+            "Host to bind the server to (default: 127.0.0.1). Unauthenticated "
+            "non-loopback binds are refused unless explicitly acknowledged."
+        ),
     )
     parser.add_argument(
         "--port", type=int, default=8000, help="Port to bind the server to (default: 8000)"
@@ -111,8 +116,14 @@ def main() -> None:
         vnc_host = args.vnc_host or os.environ.get("CUA_VNC_HOST")
         logger.info(f"VNC backend enabled → {vnc_host}:{args.vnc_port}")
 
+    try:
+        bind_host = resolve_bind_host(args.host)
+    except InsecureBindError as exc:
+        logger.error(str(exc))
+        sys.exit(2)
+
     # Create and start the server
-    logger.info(f"Starting Cua Computer API server on {args.host}:{args.port}...")
+    logger.info(f"Starting Cua Computer API server on {bind_host}:{args.port}...")
     logger.info("HTTP API available at /ws, /cmd, /status endpoints")
     logger.info("MCP server available at /mcp endpoint (if fastmcp installed)")
 
@@ -135,7 +146,7 @@ def main() -> None:
     # the module-level handler factory runs in main.py.
     from .server import Server
 
-    server = Server(host=args.host, port=args.port, log_level=args.log_level, **ssl_args)
+    server = Server(host=bind_host, port=args.port, log_level=args.log_level, **ssl_args)
 
     try:
         server.start()

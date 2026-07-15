@@ -11,6 +11,7 @@ import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from typing import Any, Dict, List, Literal, Optional, Union, cast
+from urllib.parse import urlsplit
 
 import aiohttp
 import uvicorn
@@ -28,6 +29,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .browser import get_browser_manager
 from .handlers.factory import OS_TYPE, HandlerFactory
+from .network_security import is_loopback_host
 
 # Try to import MCP server for SSE integration
 try:
@@ -177,6 +179,59 @@ class UnavailableWithoutContainerMiddleware:
 
 
 app.add_middleware(UnavailableWithoutContainerMiddleware)
+
+
+class LocalOriginGuard:
+    """Block web pages from driving an unauthenticated local server."""
+
+    _DETAIL = "Cross-site browser access to the local computer server is not allowed"
+
+    def __init__(self, app):
+        self.app = app
+
+    @classmethod
+    def _origin_allowed(cls, origin: str) -> bool:
+        try:
+            hostname = urlsplit(origin).hostname
+        except ValueError:
+            return False
+        return bool(hostname and is_loopback_host(hostname))
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") not in ("http", "websocket") or os.environ.get("CONTAINER_NAME"):
+            await self.app(scope, receive, send)
+            return
+
+        origins = [
+            value.decode("latin-1")
+            for key, value in scope.get("headers", [])
+            if key.lower() == b"origin"
+        ]
+        if not origins or all(self._origin_allowed(origin) for origin in origins):
+            await self.app(scope, receive, send)
+            return
+
+        if scope["type"] == "http":
+            body = json.dumps({"detail": self._DETAIL}).encode()
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 403,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(body)).encode()),
+                    ],
+                }
+            )
+            await send({"type": "http.response.body", "body": body})
+            return
+
+        event = await receive()
+        if event.get("type") == "websocket.connect":
+            await send({"type": "websocket.close", "code": 1008})
+
+
+app.add_middleware(LocalOriginGuard)
 
 # CORS configuration
 origins = ["*"]
@@ -1430,4 +1485,4 @@ async def playwright_exec_endpoint(
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)

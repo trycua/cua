@@ -237,6 +237,37 @@ mod tests {
     }
 
     #[test]
+    fn outer_window_rect_restores_exact_match_when_visible_frame_is_inset() {
+        let outer = B;
+        let visible_frame = Rect {
+            x: B.x + 8.0,
+            y: B.y,
+            width: B.width - 16.0,
+            height: B.height - 8.0,
+        };
+        let candidate = cand("t1", "Docs", outer);
+
+        assert!(matches!(
+            correlate(
+                &native("Docs - Chrome", visible_frame),
+                &[candidate.clone()],
+                8.0
+            ),
+            BindingOutcome::Bound {
+                quality: BindingQuality::Heuristic,
+                ..
+            }
+        ));
+        assert!(matches!(
+            correlate(&native("Docs - Chrome", outer), &[candidate], 8.0),
+            BindingOutcome::Bound {
+                quality: BindingQuality::Exact,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn multiple_tabs_in_one_window_are_one_exact_candidate() {
         // Multiple page targets are tabs, not competing native windows.
         let n = native("Checkout — Shop - Chrome", B);

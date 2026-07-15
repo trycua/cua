@@ -308,6 +308,7 @@ pub enum RefusalCode {
     BrowserWrongTargetRefused,
     BrowserTabNotFound,
     BrowserRefStale,
+    BrowserInputTrustUnavailable,
 }
 
 impl RefusalCode {
@@ -323,6 +324,7 @@ impl RefusalCode {
             "browser_wrong_target_refused" => Some(Self::BrowserWrongTargetRefused),
             "browser_tab_not_found" => Some(Self::BrowserTabNotFound),
             "browser_ref_stale" => Some(Self::BrowserRefStale),
+            "browser_input_trust_unavailable" => Some(Self::BrowserInputTrustUnavailable),
             _ => None,
         }
     }

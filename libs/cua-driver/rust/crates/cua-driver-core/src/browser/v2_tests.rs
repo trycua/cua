@@ -320,10 +320,16 @@ fn fixture_handler(state: SharedState) -> MockHandler {
 /// Chromium browser owning native window 7 at (0,0,800,600).
 struct FixturePlatform {
     ws_url: String,
+    trusted_input_limited: bool,
 }
 
 #[async_trait]
 impl BrowserPlatform for FixturePlatform {
+    fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
+        self.trusted_input_limited
+            .then_some("fixture trusted input raises the standalone window")
+    }
+
     async fn classify_browser(&self, _pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
         Ok(BrowserClassification {
             is_browser: true,
@@ -408,12 +414,20 @@ struct Fixture {
 }
 
 async fn fixture_with(configure: impl FnOnce(&mut FixtureState)) -> Fixture {
+    fixture_with_platform(configure, false).await
+}
+
+async fn fixture_with_platform(
+    configure: impl FnOnce(&mut FixtureState),
+    trusted_input_limited: bool,
+) -> Fixture {
     let mut initial = FixtureState::default();
     configure(&mut initial);
     let state = Arc::new(StdMutex::new(initial));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
     let engine = BrowserEngine::new(Arc::new(FixturePlatform {
         ws_url: server.ws_url(),
+        trusted_input_limited,
     }));
     Fixture {
         state,
@@ -644,6 +658,35 @@ async fn click_validates_same_process_iframe_loader_and_uses_the_tab_session() {
         !recorded_calls(&f, "Page.getFrameTree").is_empty(),
         "frame identity must have been re-proven"
     );
+}
+
+#[tokio::test]
+async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable() {
+    let f = fixture_with_platform(|_| {}, true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let trusted = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "input_route": "trusted", "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        structured(&trusted)["refusal"]["code"],
+        "browser_input_trust_unavailable"
+    );
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+
+    let synthetic = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "input_route": "dom_event", "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&synthetic)["status"], "ok");
+    assert!(!recorded_calls(&f, "Runtime.callFunctionOn").is_empty());
 }
 
 #[tokio::test]

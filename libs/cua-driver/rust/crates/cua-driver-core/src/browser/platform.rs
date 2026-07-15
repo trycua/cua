@@ -101,6 +101,13 @@ pub struct PrepareSideEffects {
 /// `browser_route_unavailable`).
 #[async_trait]
 pub trait BrowserPlatform: Send + Sync {
+    /// Explain why a trusted CDP Input route cannot preserve background
+    /// posture for a standalone browser on this platform. Embedded Chromium
+    /// routes are independently proven and do not consult this capability.
+    fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Classify `pid`: is it a browser, which engine family, can it do
     /// CDP at all. Must not have side effects.
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal>;

@@ -14,12 +14,13 @@ use cua_driver_core::browser::types::{
     ProcessFingerprint, Rect,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND};
+use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND, RECT};
 use windows::Win32::System::Threading::{
     GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
 #[derive(Debug, Default)]
 pub struct WindowsBrowserPlatform;
@@ -92,6 +93,25 @@ fn process_identity(pid: u32) -> Result<(u64, Option<String>), BrowserRefusal> {
     })?;
     let started = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
     Ok((started, path))
+}
+
+fn cdp_comparable_window_bounds(window_id: u64) -> Result<Rect, BrowserRefusal> {
+    let hwnd = HWND(window_id as *mut _);
+    let mut outer = RECT::default();
+    unsafe { GetWindowRect(hwnd, &mut outer) }.map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("could not read Windows outer bounds for window {window_id}: {error}"),
+        )
+    })?;
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    let scale = if dpi == 0 { 1.0 } else { f64::from(dpi) / 96.0 };
+    Ok(Rect::new(
+        f64::from(outer.left) / scale,
+        f64::from(outer.top) / scale,
+        f64::from(outer.right - outer.left) / scale,
+        f64::from(outer.bottom - outer.top) / scale,
+    ))
 }
 
 fn parse_netstat_loopback_ports(text: &str, pid: u32) -> Vec<u16> {
@@ -248,18 +268,16 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("Windows window {window_id} is not owned by pid {pid}"),
             )
         })?;
-        let dpi = unsafe { GetDpiForWindow(HWND(window_id as *mut _)) };
-        let scale = if dpi == 0 { 1.0 } else { f64::from(dpi) / 96.0 };
+        // CDP Browser.getWindowBounds reports Chromium's outer Win32 rect,
+        // including the invisible resize border. General window enumeration
+        // intentionally uses DWM's visible frame instead, so obtain the
+        // correlation geometry directly from GetWindowRect here.
+        let bounds = cdp_comparable_window_bounds(window_id)?;
         Ok(NativeWindowInfo {
             pid,
             window_id,
             title: window.title,
-            bounds: Rect::new(
-                f64::from(window.x) / scale,
-                f64::from(window.y) / scale,
-                f64::from(window.width) / scale,
-                f64::from(window.height) / scale,
-            ),
+            bounds,
             geometry_exact: true,
             ownership: NativeOwnershipProof {
                 method: NativeOwnershipMethod::WindowServerOwner,

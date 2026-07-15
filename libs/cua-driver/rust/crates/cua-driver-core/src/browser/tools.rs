@@ -487,7 +487,9 @@ impl BrowserClickTool {
             name: "browser_click".into(),
             description: "Click a page element (by ref) or viewport coordinates in an \
                 exactly-bound tab. Default route is trusted hardware-like input \
-                (Input.dispatchMouseEvent); input_route=\"dom_event\" (synthetic \
+                (Input.dispatchMouseEvent), and refuses where that route cannot \
+                preserve standalone-browser background posture. \
+                input_route=\"dom_event\" (synthetic \
                 el.click(), ref required) is used only when explicitly requested. \
                 Refused for heuristic bindings."
                 .into(),
@@ -504,7 +506,9 @@ impl BrowserClickTool {
                         "type": "string",
                         "enum": ["trusted", "dom_event"],
                         "description": "\"trusted\" (default): Input.dispatchMouseEvent. \
-                            \"dom_event\": synthetic DOM click, only when explicitly requested."
+                            It refuses rather than foregrounding a standalone browser. \
+                            \"dom_event\": synthetic full-background DOM click, only \
+                            when explicitly requested."
                     },
                 },
                 "required": ["target_id", "tab_id"],
@@ -566,6 +570,21 @@ impl Tool for BrowserClickTool {
             Ok(v) => v,
             Err(refusal) => return refusal.to_tool_result(),
         };
+        if route == "trusted" && validated.record.cdp_window_id.is_some() {
+            if let Some(limitation) = self
+                .engine
+                .platform
+                .standalone_trusted_input_background_limitation()
+            {
+                return BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserInputTrustUnavailable,
+                    format!(
+                        "{limitation}; use input_route=\"dom_event\" with a ref for a synthetic full-background click"
+                    ),
+                )
+                .to_tool_result();
+            }
+        }
 
         // Ref path: re-prove the ref's frame/document identity and get
         // the session (tab or contained OOPIF child) its node lives in.

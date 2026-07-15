@@ -672,6 +672,7 @@ fn run_roundtrip(spec: &BrowserSpec) {
                     "target_id": target,
                     "tab_id": tab,
                     "ref": click_ref,
+                    "input_route": "dom_event",
                     "session": session,
                 }),
             );
@@ -700,6 +701,61 @@ fn run_roundtrip(spec: &BrowserSpec) {
             assert_eq!(typed.structured()["status"], "ok", "{}", typed.raw);
             wait_for_value(&fixture.server, "txt-input", "standalone-browser");
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
+fn run_trusted_click(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-trusted-click",
+        std::env::consts::OS,
+        spec.name
+    );
+    let case = if cfg!(target_os = "linux") {
+        refusal_case(
+            &spec.name,
+            "trusted_click",
+            RefusalCode::BrowserInputTrustUnavailable,
+        )
+    } else {
+        case(&spec.name, "trusted_click")
+    };
+    execute_case(case, |evidence| {
+        let mut fixture = launch_browser(spec, &scenario);
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let session = format!("standalone-trusted-click-{}", fixture.pid);
+            let (target, tab, snapshot) = bind(fixture, &session);
+            let click_ref = ref_by_label(&snapshot, "id=btn-increment");
+            let click = fixture.driver.call(
+                "browser_click",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": click_ref,
+                    "input_route": "trusted",
+                    "session": session,
+                }),
+            );
+            if cfg!(target_os = "linux") {
+                assert_eq!(
+                    click.structured()["refusal"]["code"],
+                    "browser_input_trust_unavailable",
+                    "{}",
+                    click.raw
+                );
+                wait_for_text(&fixture.server, "lbl-counter", "counter=0");
+                Observation::refused(
+                    RefusalCode::BrowserInputTrustUnavailable,
+                    vec![OracleKind::FixtureState],
+                    click.text(),
+                    Evidence::default(),
+                )
+            } else {
+                assert_eq!(click.structured()["status"], "ok", "{}", click.raw);
+                wait_for_text(&fixture.server, "lbl-counter", "counter=1");
+                Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+            }
         })
     });
 }
@@ -1132,6 +1188,8 @@ fn standalone_browser_matrix() {
             spec.executable.display()
         );
         run_roundtrip(&spec);
+        settle_between_browser_rows();
+        run_trusted_click(&spec);
         settle_between_browser_rows();
         run_prepare_isolated_launch(&spec);
         settle_between_browser_rows();

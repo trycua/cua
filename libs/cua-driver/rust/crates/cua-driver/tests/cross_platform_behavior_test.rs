@@ -2,10 +2,12 @@
 //!
 //! These are source-owned Rust tests, not a copy of a partner test runner. The
 //! shared web fixture is loaded by Electron and Tauri on every supported OS;
-//! Windows also has WebView2 coverage in `harness_web_test.rs`. Assertions read
-//! mutated application state from a fixture-owned loopback journal, independently
-//! of the driver's accessibility snapshot. A successful response alone is never
-//! sufficient.
+//! Windows also has WebView2 coverage. The embedded-browser rows require an
+//! exact CDP round trip for Electron and a structured, side-effect-free refusal
+//! for hosts whose engine-to-native-window relationship cannot be proven.
+//! Assertions read mutated application state from a fixture-owned loopback
+//! journal, independently of the driver's accessibility snapshot. A successful
+//! response alone is never sufficient.
 //!
 //! Run after building the shared fixtures:
 //!
@@ -116,6 +118,11 @@ fn host_specs() -> Vec<HostSpec> {
         });
     }
 
+    retain_selected_hosts(&mut hosts);
+    hosts
+}
+
+fn retain_selected_hosts(hosts: &mut Vec<HostSpec>) {
     if let Ok(filter) = std::env::var("CUA_E2E_HARNESS_FILTER") {
         let selected = filter
             .split(',')
@@ -126,7 +133,18 @@ fn host_specs() -> Vec<HostSpec> {
             hosts.retain(|host| selected.contains(host.name));
         }
     }
+}
 
+fn embedded_browser_specs() -> Vec<HostSpec> {
+    let mut hosts = host_specs();
+    #[cfg(target_os = "windows")]
+    hosts.push(HostSpec {
+        name: "webview2",
+        path: harness_app("harness-webview", "CuaTestHarness.WebView.exe"),
+        args: Vec::new(),
+        title: "CuaTestHarness WebView",
+    });
+    retain_selected_hosts(&mut hosts);
     hosts
 }
 
@@ -283,11 +301,20 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
         .env("CUA_E2E_FIXTURE_JOURNAL_URL", journal.url())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-    if spec.name == "electron" {
-        command.env(
-            "CUA_ELECTRON_CDP_PORT",
-            allocate_loopback_port().to_string(),
-        );
+    match spec.name {
+        "electron" => {
+            command.env(
+                "CUA_ELECTRON_CDP_PORT",
+                allocate_loopback_port().to_string(),
+            );
+        }
+        "webview2" => {
+            command.env(
+                "CUA_WEBVIEW_CDP_PORT",
+                allocate_loopback_port().to_string(),
+            );
+        }
+        _ => {}
     }
     let before_windows = driver
         .call("list_windows", serde_json::json!({}))
@@ -1375,6 +1402,121 @@ fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
     delivered_observation()
 }
 
+fn run_browser_tool_refusal(fixture: &mut Fixture) -> Observation {
+    let session = format!("browser-embedded-refusal-{}", fixture.pid);
+    let started = fixture
+        .driver
+        .call("start_session", serde_json::json!({ "session": session }));
+    assert!(
+        !started.is_error(),
+        "browser refusal session did not start: {}",
+        started.raw
+    );
+    let journal_before = fixture.journal.snapshot();
+    let response = fixture.driver.call(
+        "get_browser_state",
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "window_id": fixture.wid,
+            "session": session,
+        }),
+    );
+    let code = response.structured()["refusal"]["code"]
+        .as_str()
+        .and_then(RefusalCode::from_driver_code)
+        .unwrap_or_else(|| panic!("embedded browser did not refuse structurally: {}", response.raw));
+    assert_eq!(
+        code,
+        RefusalCode::BrowserRouteUnavailable,
+        "embedded browser returned the wrong refusal: {}",
+        response.raw
+    );
+    assert_eq!(
+        fixture.journal.snapshot(),
+        journal_before,
+        "browser refusal mutated the fixture journal"
+    );
+    let ended = fixture
+        .driver
+        .call("end_session", serde_json::json!({ "session": session }));
+    assert!(
+        !ended.is_error(),
+        "browser refusal session did not end: {}",
+        ended.raw
+    );
+    Observation::refused(
+        code,
+        vec![OracleKind::FixtureState],
+        response.text(),
+        Evidence::default(),
+    )
+}
+
+fn embedded_browser_case(spec: &HostSpec) -> CaseSpec {
+    let mut oracles = vec![
+        OracleKind::FixtureState,
+        OracleKind::Focus,
+        OracleKind::ZOrder,
+        OracleKind::NoLeakedInput,
+    ];
+    if cua_driver_testkit::e2e::DisplayServer::current()
+        != cua_driver_testkit::e2e::DisplayServer::Wayland
+    {
+        oracles.push(OracleKind::Cursor);
+    }
+    let case = CaseSpec::delivered(
+        format!(
+            "{}-{}-browser-tool-roundtrip",
+            std::env::consts::OS,
+            spec.name
+        ),
+        spec.name,
+        if spec.name == "electron" {
+            "chromium"
+        } else {
+            "platform-webview"
+        },
+        "browser_tool_roundtrip",
+        Targeting::Page,
+        Delivery::Background,
+        Scope::Window,
+        cua_driver_testkit::e2e::DriverRoute::Cdp,
+        oracles,
+    );
+    if spec.name == "electron" {
+        case
+    } else {
+        case.expecting_refusal(vec![RefusalCode::BrowserRouteUnavailable])
+    }
+}
+
+#[test]
+#[ignore]
+fn embedded_browser_routes_are_exact_or_refused() {
+    let mut failure = None;
+    let mut selected = 0usize;
+    for spec in embedded_browser_specs() {
+        let case = embedded_browser_case(&spec);
+        if !cell_selected(&case) {
+            continue;
+        }
+        selected += 1;
+        let result = if spec.name == "electron" {
+            run_host_case_with_outcome(case, &spec, run_browser_tool_roundtrip)
+        } else {
+            run_host_case_with_outcome(case, &spec, run_browser_tool_refusal)
+        };
+        if failure.is_none() {
+            failure = result;
+        }
+    }
+    assert!(
+        selected > 0,
+        "no embedded-browser cells were selected; check CUA_E2E_HARNESS_FILTER and CUA_E2E_CELL_FILTER"
+    );
+    resume_first_failure(failure);
+}
+
 #[test]
 #[ignore]
 fn shared_web_action_matrix_is_state_verified() {
@@ -1464,37 +1606,6 @@ fn shared_web_action_matrix_is_state_verified() {
                 let result = run_host_case_with_outcome(case, &spec, |fixture| {
                     run_editor_save_action(fixture, delivery)
                 });
-                if failure.is_none() {
-                    failure = result;
-                }
-            }
-        }
-        if spec.name == "electron" {
-            let mut oracles = vec![
-                OracleKind::FixtureState,
-                OracleKind::Focus,
-                OracleKind::ZOrder,
-                OracleKind::NoLeakedInput,
-            ];
-            if cua_driver_testkit::e2e::DisplayServer::current()
-                != cua_driver_testkit::e2e::DisplayServer::Wayland
-            {
-                oracles.push(OracleKind::Cursor);
-            }
-            let case = CaseSpec::delivered(
-                format!("{}-electron-browser-tool-roundtrip", std::env::consts::OS),
-                "electron",
-                "chromium",
-                "browser_tool_roundtrip",
-                Targeting::Page,
-                Delivery::Background,
-                Scope::Window,
-                cua_driver_testkit::e2e::DriverRoute::Cdp,
-                oracles,
-            );
-            if cell_selected(&case) {
-                selected += 1;
-                let result = run_host_case_with_outcome(case, &spec, run_browser_tool_roundtrip);
                 if failure.is_none() {
                     failure = result;
                 }

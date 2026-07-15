@@ -71,6 +71,8 @@ fn maybe_wrap_finite_command() {
     }
     let Some(command_name) = cli::finite_command_name_from_argv() else { return; };
     let tool_name = cli::finite_tool_name_from_argv();
+    let operation = cli::finite_operation_from_argv();
+    let client_kind = cli::finite_client_kind_from_argv();
     telemetry::spawn_first_run_registration_worker();
     let Ok(executable) = std::env::current_exe() else { return; };
     let started_at = std::time::Instant::now();
@@ -83,6 +85,8 @@ fn maybe_wrap_finite_command() {
     telemetry::spawn_cli_completion_worker(
         command_name,
         tool_name.as_deref(),
+        operation,
+        client_kind,
         exit_code,
         started_at.elapsed(),
     );

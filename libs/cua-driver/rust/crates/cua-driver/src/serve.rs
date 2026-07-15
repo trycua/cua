@@ -389,10 +389,16 @@ async fn invoke_daemon_tool(
         raw_name
     };
     let known_tool = registry.get_def(&tool_name).is_some();
+    let mut args = req
+        .args
+        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+    let effective_session = apply_session_identity(&mut args, &req.session_id);
+    let operation = cua_driver_core::server::tool_operation(&tool_name, Some(&args));
     let observation = observation_transport.map(|transport| {
         (
-            cua_driver_core::server::ToolObservationTimer::start(
+            cua_driver_core::server::ToolObservationTimer::start_with_operation(
                 tool_name.clone(),
+                operation,
                 known_tool,
                 true,
                 cua_driver_core::server::StdioExecutionPath::InProcess,
@@ -400,10 +406,6 @@ async fn invoke_daemon_tool(
             transport,
         )
     });
-    let mut args = req
-        .args
-        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
-    let effective_session = apply_session_identity(&mut args, &req.session_id);
 
     if let Some(sid) = &effective_session {
         if !is_session_lifecycle_tool(&tool_name)

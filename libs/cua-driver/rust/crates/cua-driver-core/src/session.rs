@@ -53,6 +53,79 @@ pub struct SessionStartObservation {
     pub transport: SessionTransport,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorStyleCategory {
+    Default,
+    BuiltinArrow,
+    BuiltinTeardrop,
+    CustomIcon,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorColorSource {
+    AutomaticPalette,
+    Custom,
+    Unknown,
+}
+
+/// Platform-neutral, content-free cursor state captured immediately before a
+/// session's platform cleanup hooks remove the underlying cursor entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CursorOutcomeObservation {
+    pub observed: bool,
+    pub enabled: bool,
+    pub style: CursorStyleCategory,
+    pub color_source: CursorColorSource,
+    pub label_set: bool,
+    pub motion_customized: bool,
+    pub active_cursor_count: usize,
+}
+
+/// Convert platform cursor fields to fixed categories without retaining any
+/// raw icon, color, label, identifier, or motion value.
+pub fn bounded_cursor_outcome(
+    observed: bool,
+    enabled: bool,
+    icon: Option<&str>,
+    color: Option<&str>,
+    label: Option<&str>,
+    motion_customized: bool,
+    active_cursor_count: usize,
+) -> CursorOutcomeObservation {
+    let style = if !observed {
+        CursorStyleCategory::Unknown
+    } else {
+        match icon.map(str::trim).filter(|value| !value.is_empty()) {
+            None => CursorStyleCategory::Default,
+            Some(value) if value.eq_ignore_ascii_case("arrow") => {
+                CursorStyleCategory::BuiltinArrow
+            }
+            Some(value) if value.eq_ignore_ascii_case("teardrop") => {
+                CursorStyleCategory::BuiltinTeardrop
+            }
+            Some(_) => CursorStyleCategory::CustomIcon,
+        }
+    };
+    let color_source = if !observed {
+        CursorColorSource::Unknown
+    } else {
+        match color.map(str::trim).filter(|value| !value.is_empty()) {
+            None | Some("#00FFFF") | Some("#00ffff") => CursorColorSource::AutomaticPalette,
+            Some(_) => CursorColorSource::Custom,
+        }
+    };
+    CursorOutcomeObservation {
+        observed,
+        enabled: observed && enabled,
+        style,
+        color_source,
+        label_set: observed && label.is_some_and(|value| !value.trim().is_empty()),
+        motion_customized: observed && motion_customized,
+        active_cursor_count,
+    }
+}
+
 /// Process-local sink for bounded session telemetry.
 ///
 /// `session_id` is supplied only so an observer can update private in-memory
@@ -68,13 +141,31 @@ pub trait SessionObserver: Send + Sync + 'static {
         computer_action: bool,
         outcome: &crate::server::ToolCompletionObservation,
     );
-    fn on_session_ended(&self, session_id: &str, reason: SessionEndReason);
+    fn on_session_ended(
+        &self,
+        session_id: &str,
+        reason: SessionEndReason,
+        cursor: Option<CursorOutcomeObservation>,
+    );
 }
 
 static SESSION_OBSERVER: OnceLock<Arc<dyn SessionObserver>> = OnceLock::new();
+type CursorOutcomeReader = Arc<dyn Fn(&str) -> CursorOutcomeObservation + Send + Sync>;
+static CURSOR_OUTCOME_READER: OnceLock<Mutex<Option<CursorOutcomeReader>>> = OnceLock::new();
 
 pub fn set_session_observer(observer: Arc<dyn SessionObserver>) -> bool {
     SESSION_OBSERVER.set(observer).is_ok()
+}
+
+/// Register the platform's bounded cursor-state reader. The raw session key is
+/// used only for the synchronous process-local lookup; the callback returns a
+/// struct that cannot contain raw cursor values.
+pub fn set_cursor_outcome_reader(reader: CursorOutcomeReader) -> bool {
+    *CURSOR_OUTCOME_READER
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap() = Some(reader);
+    true
 }
 
 /// Private per-call context. The raw caller session id never crosses into a
@@ -294,9 +385,13 @@ fn end_session_with_reason(session_id: &str, reason: SessionEndReason) {
         return;
     }
     activity().lock().unwrap().remove(session_id);
+    let cursor_reader = CURSOR_OUTCOME_READER
+        .get()
+        .and_then(|reader| reader.lock().unwrap().clone());
+    let cursor = cursor_reader.map(|reader| reader(session_id));
     if fire_session_end(session_id) {
         if let Some(observer) = SESSION_OBSERVER.get() {
-            observer.on_session_ended(session_id, reason);
+            observer.on_session_ended(session_id, reason, cursor);
         }
     }
 }
@@ -336,7 +431,7 @@ mod tests {
     #[derive(Default)]
     struct ProbeObserver {
         starts: Mutex<Vec<(String, SessionStartObservation)>>,
-        ends: Mutex<Vec<(String, SessionEndReason)>>,
+        ends: Mutex<Vec<(String, SessionEndReason, Option<CursorOutcomeObservation>)>>,
     }
 
     impl SessionObserver for ProbeObserver {
@@ -351,8 +446,16 @@ mod tests {
             _: &crate::server::ToolCompletionObservation,
         ) {
         }
-        fn on_session_ended(&self, id: &str, reason: SessionEndReason) {
-            self.ends.lock().unwrap().push((id.to_owned(), reason));
+        fn on_session_ended(
+            &self,
+            id: &str,
+            reason: SessionEndReason,
+            cursor: Option<CursorOutcomeObservation>,
+        ) {
+            self.ends
+                .lock()
+                .unwrap()
+                .push((id.to_owned(), reason, cursor));
         }
     }
 
@@ -413,6 +516,43 @@ mod tests {
         // Neither shows up under a zero-TTL sweep (they were never inserted).
         let evicted = evict_idle(Duration::ZERO);
         assert!(!evicted.iter().any(|s| s == "default" || s.is_empty()));
+    }
+
+    #[test]
+    fn cursor_outcomes_are_fixed_categories_without_raw_values() {
+        let custom = bounded_cursor_outcome(
+            true,
+            true,
+            Some("/private/customer/cursor.svg"),
+            Some("private-brand-color"),
+            Some("private agent label"),
+            true,
+            7,
+        );
+        assert_eq!(custom.style, CursorStyleCategory::CustomIcon);
+        assert_eq!(custom.color_source, CursorColorSource::Custom);
+        assert!(custom.label_set);
+        assert!(custom.motion_customized);
+        assert_eq!(custom.active_cursor_count, 7);
+        let debug = format!("{custom:?}");
+        for forbidden in ["/private/customer", "private-brand", "private agent"] {
+            assert!(!debug.contains(forbidden), "cursor outcome leaked {forbidden}: {debug}");
+        }
+
+        let unknown = bounded_cursor_outcome(
+            false,
+            true,
+            Some("arrow"),
+            Some("#00FFFF"),
+            Some("label"),
+            true,
+            0,
+        );
+        assert_eq!(unknown.style, CursorStyleCategory::Unknown);
+        assert_eq!(unknown.color_source, CursorColorSource::Unknown);
+        assert!(!unknown.enabled);
+        assert!(!unknown.label_set);
+        assert!(!unknown.motion_customized);
     }
 
     #[test]
@@ -515,6 +655,9 @@ mod tests {
     #[test]
     fn observer_distinguishes_explicit_idle_revival_and_control_cleanup() {
         let probe = probe_observer();
+        let _ = set_cursor_outcome_reader(Arc::new(|_| {
+            bounded_cursor_outcome(true, true, Some("arrow"), None, None, false, 2)
+        }));
         let explicit = "test-observer-explicit-IJ90";
         begin_tool_call(
             "start_session",
@@ -571,12 +714,16 @@ mod tests {
         drop(starts);
 
         let ends = probe.ends.lock().unwrap();
-        assert!(ends.iter().any(|(id, reason)| {
+        assert!(ends.iter().any(|(id, reason, cursor)| {
             id == explicit && *reason == SessionEndReason::Explicit
+                && cursor.is_some_and(|value| {
+                    value.style == CursorStyleCategory::BuiltinArrow
+                        && value.active_cursor_count == 2
+                })
         }));
-        assert!(ends.iter().any(|(id, reason)| {
+        assert!(ends.iter().any(|(id, reason, _)| {
             id == idle && *reason == SessionEndReason::IdleTimeout
         }));
-        assert!(!ends.iter().any(|(id, _)| id == control));
+        assert!(!ends.iter().any(|(id, _, _)| id == control));
     }
 }

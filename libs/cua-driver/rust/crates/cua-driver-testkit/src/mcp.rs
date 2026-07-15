@@ -71,7 +71,12 @@ impl McpDriver {
         };
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(stderr);
+            .stderr(stderr)
+            // Product telemetry is default-on, but behavior harnesses should
+            // remain deterministic and must not send CI traffic to PostHog.
+            // A test that exercises telemetry can explicitly override this
+            // through `spawn_with_env` / `spawn_named_with_env` below.
+            .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false");
         for (key, value) in env {
             cmd.env(key, value);
         }

@@ -19,10 +19,16 @@ export CUA_CLIENT_SECRET=...
 export CUA_TOKEN_URL='YOUR_FLEET_OAUTH_TOKEN_ENDPOINT'
 export CUA_BASE_URL='YOUR_FLEET_BASE_URL'
 export FLEET_POOL=my-pool
+export FLEET_CLAIM_COLLECTION_URL='YOUR_ENVIRONMENT_CLAIM_COLLECTION_URL'
+export FLEET_CLAIM_API_VERSION='YOUR_ENVIRONMENT_CLAIM_API_VERSION'
+export FLEET_CLAIM_KIND='YOUR_ENVIRONMENT_CLAIM_KIND'
 ```
 
 Set `CUA_TOKEN_URL` to the OAuth token endpoint supplied by your Fleet environment or dashboard,
-then set `CUA_BASE_URL` to that environment's API base URL.
+then set `CUA_BASE_URL` to that environment's API base URL. Your Fleet environment or
+administrator also supplies `FLEET_CLAIM_COLLECTION_URL`, `FLEET_CLAIM_API_VERSION`, and
+`FLEET_CLAIM_KIND`; these deployment-specific control-plane identifiers are not a stable
+public API and must not be hardcoded.
 
 ## Select a pool and manage a claim
 
@@ -39,9 +45,9 @@ import uuid
 
 from cua_train import TrainClient
 
-CLAIM_GROUP = "osgym.cua.ai"
-CLAIM_VERSION = "v1alpha1"
-CLAIM_PLURAL = "osgymsandboxclaims"
+CLAIM_COLLECTION_URL = os.environ["FLEET_CLAIM_COLLECTION_URL"].rstrip("/")
+CLAIM_API_VERSION = os.environ["FLEET_CLAIM_API_VERSION"]
+CLAIM_KIND = os.environ["FLEET_CLAIM_KIND"]
 POOL_PLURAL = "osgymworkspacepools"
 BIND_TIMEOUT_SECONDS = float(os.getenv("CUA_BIND_TIMEOUT_SECONDS", "600"))
 BIND_DEADLINE_SECONDS = int(
@@ -74,10 +80,7 @@ def pool_url(name=None):
 
 
 def claim_url(name=None):
-    base = (
-        f"/api/k8s/apis/{CLAIM_GROUP}/{CLAIM_VERSION}/namespaces/"
-        f"{requested_pool}/{CLAIM_PLURAL}"
-    )
+    base = CLAIM_COLLECTION_URL
     return f"{base}/{name}" if name else base
 
 
@@ -119,8 +122,8 @@ try:
     response = http().post(
         claim_url(),
         json={
-            "apiVersion": f"{CLAIM_GROUP}/{CLAIM_VERSION}",
-            "kind": "OSGymSandboxClaim",
+            "apiVersion": CLAIM_API_VERSION,
+            "kind": CLAIM_KIND,
             "metadata": {"name": claim_name},
             "spec": {
                 "sandboxTemplateRef": {"name": f"{requested_pool}-template"},

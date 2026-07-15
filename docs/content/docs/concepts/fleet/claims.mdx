@@ -1,9 +1,9 @@
 ---
 title: 'Fleet claims'
-description: 'How an OSGymSandboxClaim leases one compatible Fleet sandbox to one workload.'
+description: 'How a Fleet claim leases one compatible sandbox to one workload.'
 ---
 
-An `OSGymSandboxClaim` is a workload's request and lease for one sandbox from Fleet capacity. Its
+A Fleet claim is a workload's request and lease for one sandbox from Fleet capacity. Its
 `sandboxTemplateRef` identifies the compatible sandbox template that the claim needs. In the
 current pool convention, a pool supplies a template named `<pool>-template`, and the claim refers
 to that name. This directs the claim to the capacity maintained for that pool.

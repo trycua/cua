@@ -89,7 +89,7 @@ Define a pool as a named group of compatible sandbox replicas created from one t
 
 - [ ] **Step 3: Write Claims**
 
-Describe `OSGymSandboxClaim` as the workload's lease on one sandbox from a pool. Explain Pending, Bound, and Failed phases; `sandboxTemplateRef`; binding to a warm replica; exclusive use; deletion as release; guest reset before reuse; and why per-user credentials are required for claim creation. Do not include a procedural claim script on this concept page.
+Describe a Fleet claim as the workload's lease on one sandbox from a pool. Explain Pending, Bound, and Failed phases; `sandboxTemplateRef`; binding to a warm replica; exclusive use; deletion as release; guest reset before reuse; and why per-user credentials are required for claim creation. Do not include a procedural claim script on this concept page.
 
 - [ ] **Step 4: Write Auto Scaling**
 

@@ -326,6 +326,12 @@ fn configure_linux_browser_command(command: &mut Command) {
     }
 }
 
+fn configure_test_browser_sandbox(command: &mut Command) {
+    if std::env::var("CUA_E2E_BROWSER_NO_SANDBOX").as_deref() == Ok("1") {
+        command.arg("--no-sandbox");
+    }
+}
+
 fn command_for_browser(
     spec: &BrowserSpec,
     profile: &Path,
@@ -352,12 +358,10 @@ fn command_for_browser(
         .arg("--new-window")
         .arg(format!("--window-position={},{}", position.0, position.1))
         .arg("--window-size=980,760");
+    configure_test_browser_sandbox(&mut command);
     #[cfg(target_os = "linux")]
     configure_linux_browser_command(&mut command);
-    command
-        .arg(url)
-        .stdout(Stdio::null())
-        .stderr(output);
+    command.arg(url).stdout(Stdio::null()).stderr(output);
     command
 }
 
@@ -379,6 +383,7 @@ fn command_for_unprepared_browser(
         .arg("--new-window")
         .arg(format!("--window-position={},{}", position.0, position.1))
         .arg("--window-size=980,760");
+    configure_test_browser_sandbox(&mut command);
     #[cfg(target_os = "linux")]
     configure_linux_browser_command(&mut command);
     command

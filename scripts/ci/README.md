@@ -23,6 +23,11 @@ CUA_E2E_WAYLAND_RUNNER="$PWD/scripts/ci/linux/run-rust-standalone-browser-e2e.sh
   scripts/ci/linux/run-rust-e2e-wayland.sh
 ```
 
+When a Nix-store Chromium is used on a non-NixOS VM, its SUID sandbox helper
+cannot carry the required root ownership. Set `CUA_E2E_BROWSER_NO_SANDBOX=1`
+only for that isolated test VM; ordinary installed-browser runs keep Chromium's
+sandbox enabled.
+
 Release validation sets `CUA_TEST_REQUIRE_EXTERNAL_BROWSERS=1` so a missing
 browser fails instead of silently omitting the suite.
 

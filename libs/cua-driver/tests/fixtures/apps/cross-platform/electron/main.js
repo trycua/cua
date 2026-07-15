@@ -8,6 +8,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const sentinelMode = process.env.CUA_E2E_SENTINEL === '1';
+const nativeWayland = process.platform === 'linux' && Boolean(process.env.WAYLAND_DISPLAY);
 const fixtureJournalUrl = process.env.CUA_E2E_FIXTURE_JOURNAL_URL || '';
 const sentinelJournalPath = process.env.CUA_E2E_SENTINEL_JOURNAL || '';
 if (process.env.CUA_E2E_USER_DATA_DIR) {
@@ -80,7 +81,7 @@ function createWindow() {
     // A floating-level macOS window is omitted by cua-driver's deliberate
     // layer-0 top-level window contract. Foreground + maximized is sufficient
     // for occlusion there and lets an unexpected target raise remain visible.
-    alwaysOnTop: sentinelMode && process.platform !== 'darwin',
+    alwaysOnTop: sentinelMode && process.platform !== 'darwin' && !nativeWayland,
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
@@ -121,7 +122,7 @@ function createWindow() {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setTitle(fixedTitle);
         if (sentinelMode) {
-          if (process.platform !== 'darwin') {
+          if (process.platform !== 'darwin' && !nativeWayland) {
             mainWindow.setAlwaysOnTop(true);
           }
           if (process.platform === 'linux' && process.env.WAYLAND_DISPLAY) {

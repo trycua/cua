@@ -111,9 +111,19 @@ Write-Host "[PREFLIGHT] Windows desktop, fixture, UIA, capture, and video" -Fore
 Push-Location $rustRoot
 try {
     $preflightLog = Join-Path $artifactDir "environment-preflight.log"
-    $preflightOutput = & cargo test -p cua-driver --test e2e_environment_preflight_test -- `
-        --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1 2>&1
-    $preflightExit = $LASTEXITCODE
+    # Windows PowerShell 5.1 wraps native stderr as ErrorRecord objects. With
+    # the script-wide Stop preference, normal Cargo progress would terminate
+    # the lane before LASTEXITCODE can be inspected. Relax only around the
+    # captured native process; the real exit code remains authoritative.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $preflightOutput = & cargo test -p cua-driver --test e2e_environment_preflight_test -- `
+            --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1 2>&1
+        $preflightExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
     $preflightOutput | Tee-Object -FilePath $preflightLog
 } finally {
     Pop-Location
@@ -129,8 +139,14 @@ function Invoke-CargoTest {
     Push-Location $rustRoot
     try {
         $logPath = Join-Path $artifactDir ("$($Name -replace '[^A-Za-z0-9_.-]', '-').log")
-        $output = & cargo @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $output = & cargo @Arguments 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousPreference
+        }
         $output | Tee-Object -FilePath $logPath
         if ($exitCode -ne 0) {
             $script:FailureCount++

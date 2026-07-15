@@ -50,6 +50,15 @@ rsync_ssh="${RSYNC_SSH:-ssh}"
 transport="${SYNC_TRANSPORT:-rsync}"
 remote_os="${REMOTE_OS:-posix}"
 
+# RSYNC_SSH follows rsync's familiar command-string convention, so callers can
+# include options such as `ssh -o BatchMode=yes`. Direct preparatory SSH calls
+# need an argv array instead of treating the full string as one executable.
+read -r -a rsync_ssh_argv <<< "$rsync_ssh"
+if [[ ${#rsync_ssh_argv[@]} -eq 0 ]]; then
+  echo "RSYNC_SSH must not be empty." >&2
+  exit 2
+fi
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../../.." && pwd)"
 source_sha="$(git -C "$repo_root" rev-parse HEAD)"
@@ -127,11 +136,11 @@ tar_exclude_args=(
 remote_mkdir() {
   case "$remote_os" in
     windows)
-      "$rsync_ssh" "$target" \
+      "${rsync_ssh_argv[@]}" "$target" \
         "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force '$remote_dir' | Out-Null\""
       ;;
     posix)
-      "$rsync_ssh" "$target" "mkdir -p $remote_dir"
+      "${rsync_ssh_argv[@]}" "$target" "mkdir -p $remote_dir"
       ;;
     *)
       echo "REMOTE_OS must be posix or windows, got: $remote_os" >&2
@@ -142,7 +151,7 @@ remote_mkdir() {
 
 push_rsync() {
   ssh_cmd=${remote_dir/#\~/"\$HOME"}
-  "$rsync_ssh" "$target" "mkdir -p $ssh_cmd"
+  "${rsync_ssh_argv[@]}" "$target" "mkdir -p $ssh_cmd"
   rsync -az --delete -e "$rsync_ssh" "${exclude_args[@]}" "$repo_root/" "$target:$remote_dir/"
 }
 
@@ -150,19 +159,19 @@ push_tar() {
   remote_mkdir
   remote_path=${remote_dir/#\~/'$HOME'}
   COPYFILE_DISABLE=1 tar --no-xattrs "${tar_exclude_args[@]}" -czf - -C "$repo_root" . \
-    | "$rsync_ssh" "$target" "tar -xzf - -C \"$remote_path\""
+    | "${rsync_ssh_argv[@]}" "$target" "tar -xzf - -C \"$remote_path\""
 }
 
 write_source_marker() {
   case "$remote_os" in
     windows)
-      "$rsync_ssh" "$target" \
+      "${rsync_ssh_argv[@]}" "$target" \
         "powershell -NoProfile -Command \"Set-Content -NoNewline -Path '$remote_dir/.cua-e2e-source-sha' -Value '$source_sha'\""
       ;;
     posix)
       marker_dir=${remote_dir/#\~/"\$HOME"}
       printf '%s\n' "$source_sha" \
-        | "$rsync_ssh" "$target" "mkdir -p $marker_dir && tee $marker_dir/.cua-e2e-source-sha >/dev/null"
+        | "${rsync_ssh_argv[@]}" "$target" "mkdir -p $marker_dir && tee $marker_dir/.cua-e2e-source-sha >/dev/null"
       ;;
   esac
 }
@@ -170,12 +179,12 @@ write_source_marker() {
 ensure_remote_runtime_dirs() {
   case "$remote_os" in
     windows)
-      "$rsync_ssh" "$target" \
+      "${rsync_ssh_argv[@]}" "$target" \
         "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force '$remote_dir/libs/cua-driver/rust/test-apps' | Out-Null\""
       ;;
     posix)
       remote_path=${remote_dir/#\~/'$HOME'}
-      "$rsync_ssh" "$target" \
+      "${rsync_ssh_argv[@]}" "$target" \
         "mkdir -p \"$remote_path/libs/cua-driver/rust/test-apps\""
       ;;
   esac
@@ -187,7 +196,7 @@ pull_artifacts_rsync() {
 
 pull_artifacts_tar() {
   remote_path=${remote_dir/#\~/'$HOME'}
-  "$rsync_ssh" "$target" "tar -czf - -C \"$remote_path/$remote_artifact_dir\" ." \
+  "${rsync_ssh_argv[@]}" "$target" "tar -czf - -C \"$remote_path/$remote_artifact_dir\" ." \
     | tar -xzf - -C "$dest"
 }
 
@@ -198,7 +207,7 @@ pull_code_rsync() {
 
 pull_code_tar() {
   remote_path=${remote_dir/#\~/'$HOME'}
-  "$rsync_ssh" "$target" "tar -czf - -C \"$remote_path\" ." \
+  "${rsync_ssh_argv[@]}" "$target" "tar -czf - -C \"$remote_path\" ." \
     | COPYFILE_DISABLE=1 tar --no-xattrs "${tar_exclude_args[@]}" -xzf - -C "$repo_root"
 }
 

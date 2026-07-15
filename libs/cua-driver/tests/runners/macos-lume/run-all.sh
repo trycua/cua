@@ -8,6 +8,8 @@ DRIVER_ROOT="${REPO_ROOT}/libs/cua-driver"
 RUST_ROOT="${DRIVER_ROOT}/rust"
 ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos"
 SOURCE_MARKER="${CUA_E2E_SOURCE_MARKER:-${REPO_ROOT}/.cua-e2e-source-sha}"
+SIGNING_KEYCHAIN="${CUA_E2E_SIGNING_KEYCHAIN:-${HOME}/Library/Keychains/cua-driver-signing.keychain-db}"
+SIGNING_CN="CuaDriver Local Signing (cua-driver-rs)"
 
 usage() {
   cat <<'EOF'
@@ -54,12 +56,31 @@ if ! printf '%s\n' "${SIP_STATUS}" | grep -Fq "System Integrity Protection statu
   exit 2
 fi
 
-for command_name in cargo codesign ffmpeg ffprobe jq node npm xcrun; do
+for command_name in cargo codesign ffmpeg ffprobe jq node npm security xcrun; do
   command -v "${command_name}" >/dev/null 2>&1 || {
     echo "Missing golden-image dependency: ${command_name}" >&2
     exit 2
   }
 done
+
+if [[ ! -f "${SIGNING_KEYCHAIN}" ]]; then
+  echo "Missing golden-image signing keychain: ${SIGNING_KEYCHAIN}" >&2
+  echo "Create the private seed according to tests/runners/macos-lume/README.md" >&2
+  exit 2
+fi
+echo "[SIGNING] Unlocking the golden image's dedicated signing keychain"
+if [[ -n "${CUA_E2E_SIGNING_KEYCHAIN_PASSWORD:-}" ]]; then
+  security unlock-keychain -p "${CUA_E2E_SIGNING_KEYCHAIN_PASSWORD}" "${SIGNING_KEYCHAIN}"
+  unset CUA_E2E_SIGNING_KEYCHAIN_PASSWORD
+else
+  security unlock-keychain "${SIGNING_KEYCHAIN}"
+fi
+if ! security find-identity -v -p codesigning "${SIGNING_KEYCHAIN}" 2>/dev/null \
+    | grep -Fq "\"${SIGNING_CN}\""; then
+  echo "The dedicated keychain has no valid ${SIGNING_CN} identity" >&2
+  exit 2
+fi
+export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN="${SIGNING_KEYCHAIN}"
 
 if git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   if [[ -n "$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=normal)" ]]; then

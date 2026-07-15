@@ -115,11 +115,44 @@ libs/cua-driver/scripts/sync-vm-worktree.sh push "lume@${VM_IP}" '~/cua'
 ```
 
 Back in Terminal in the VM display, install the app with the commit embedded
-in the daemon, then grant permissions through the app-owned flow:
+in the daemon. Tahoe Lume images can unlock their login keychain while still
+rejecting the partition ACL that non-interactive `codesign` needs, so keep the
+golden identity in a dedicated keychain. Create it with the same password as
+the VM account so maintainers have only one local credential to enter:
+
+```bash
+SIGNING_KEYCHAIN="$HOME/Library/Keychains/cua-driver-signing.keychain-db"
+security create-keychain "$SIGNING_KEYCHAIN"
+security set-keychain-settings "$SIGNING_KEYCHAIN"
+security list-keychains -d user -s "$SIGNING_KEYCHAIN"
+security unlock-keychain "$SIGNING_KEYCHAIN"
+export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN="$SIGNING_KEYCHAIN"
+```
+
+The first local install creates and imports the self-signed identity. It may
+fall back to an ad-hoc signature until the new certificate is trusted; this is
+safe only because TCC has not been granted yet. Run it once, then open Keychain
+Access in the VM display, select the `cua-driver-signing` keychain, open
+`CuaDriver Local Signing (cua-driver-rs)`, and set Trust to Always Trust. Back
+in Terminal, give Apple tooling access to the private key without storing the
+keychain password in the image or repository:
 
 ```bash
 cd ~/cua
 export CUA_DRIVER_SOURCE_SHA="$(cat .cua-e2e-source-sha)"
+bash libs/cua-driver/scripts/install-local.sh --release --autostart
+
+read -r -s -p 'Keychain password: ' KEYCHAIN_PASSWORD; echo
+security set-key-partition-list \
+  -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" \
+  "$SIGNING_KEYCHAIN"
+unset KEYCHAIN_PASSWORD
+```
+
+Rerun the installer and require its `signed staged app with a stable local
+identity` message before granting permissions through the app-owned flow:
+
+```bash
 bash libs/cua-driver/scripts/install-local.sh --release --autostart
 ~/.local/bin/cua-driver permissions grant
 ```
@@ -175,7 +208,9 @@ libs/cua-driver/scripts/sync-vm-worktree.sh push "lume@${VM_IP}" '~/cua'
 ```
 
 Open Terminal in the VM display and run the single guest entrypoint. Do not run
-it over SSH: GUI fixtures must inherit the logged-in console session.
+it over SSH: GUI fixtures must inherit the logged-in console session. The
+runner asks once for the dedicated keychain password after each worker boot;
+do not put that password in the repository or VM image.
 
 ```bash
 cd ~/cua

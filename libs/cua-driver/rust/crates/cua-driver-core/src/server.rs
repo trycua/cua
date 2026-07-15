@@ -11,9 +11,9 @@ use crate::tool::ToolRegistry;
 /// Receives privacy-bounded observations from the stdio MCP transport.
 ///
 /// The observer never receives tool arguments, text/image content, response
-/// bodies, arbitrary MCP metadata, or raw errors. HTTP dispatch deliberately
-/// bypasses this seam and remains unobserved until HTTP session semantics are
-/// defined.
+/// bodies, arbitrary MCP metadata, or raw errors. HTTP dispatch reuses the
+/// bounded tool timer directly; HTTP session-start telemetry remains deferred
+/// until the transport has explicit session semantics.
 pub trait StdioObserver: Send + Sync + 'static {
     fn on_session_started(&self, metadata: InitializeMetadata);
     fn on_tool_completed(&self, outcome: ToolCompletionObservation);

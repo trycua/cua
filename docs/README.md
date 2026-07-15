@@ -16,7 +16,6 @@ Open http://localhost:8090 with your browser to see the result.
 
 Public docs live in `content/docs/` and follow the Diátaxis modes:
 
-- `tutorials/` teach a guided first success.
 - `how-to-guides/` give steps for a specific goal.
 - `explanation/` explains concepts, constraints, and tradeoffs.
 - `reference/` is dry lookup: commands, APIs, contracts, limits.

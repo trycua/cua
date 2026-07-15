@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Publish complete Fleet concepts, how-to guides, and tutorials within the existing CUA documentation information architecture.
+**Goal:** Publish complete Fleet concepts and how-to guides within the existing CUA documentation information architecture.
 
-**Architecture:** Add a `fleet` subgroup beneath each existing Diátaxis mode: concepts, how-to guides, and tutorials. Ground Fleet resource semantics and service connection examples in `trycua/cloud/cyclops-cs`, and ground agent, benchmark, and reinforcement-learning workflows in the corresponding `trycua/cua` packages. Keep every page focused on one documentation mode and link across modes instead of duplicating explanations.
+**Architecture:** Add a `fleet` subgroup beneath the existing concepts and how-to guide modes. Ground Fleet resource semantics and service connection examples in `trycua/cloud/cyclops-cs`. Keep every page focused on one documentation mode and link across modes instead of duplicating explanations.
 
 **Tech Stack:** MDX, Fumadocs `meta.json` navigation, Python examples, Kubernetes-style Fleet resources, Cua Driver, Cua Bench, pnpm documentation checks.
 
@@ -24,11 +24,8 @@
 - Create: `docs/content/docs/concepts/fleet/meta.json`
 - Create: `docs/content/docs/how-to-guides/fleet/index.mdx`
 - Create: `docs/content/docs/how-to-guides/fleet/meta.json`
-- Create: `docs/content/docs/tutorials/fleet/index.mdx`
-- Create: `docs/content/docs/tutorials/fleet/meta.json`
 - Modify: `docs/content/docs/concepts/meta.json`
 - Modify: `docs/content/docs/how-to-guides/meta.json`
-- Modify: `docs/content/docs/tutorials/meta.json`
 
 - [ ] **Step 1: Add ordered navigation metadata**
 
@@ -42,25 +39,17 @@ Create these exact page orders:
 { "title": "Fleet", "pages": ["index", "build-a-linux-image", "build-a-windows-image", "connect-to-a-service", "use-the-sdk"] }
 ```
 
-```json
-{ "title": "Fleet", "pages": ["index", "hermes-and-cua-driver", "surf-the-web", "computer-use-sub-agent-with-mcp-sampling", "benchmark-codex-and-claude-code-with-cua-bench", "reinforcement-learning-for-computer-use"] }
-```
-
 Insert `fleet` into each parent `meta.json` after the closest existing Sandbox entry, without reordering unrelated pages.
 
 - [ ] **Step 2: Write the Concepts landing page**
 
-Use frontmatter title `Fleet concepts` and a description that names managed cloud sandboxes. Explain the five-resource mental model in one paragraph and provide direct links to Images, Pools, Claims, Auto Scaling, and Services. Link task-oriented readers to `/how-to-guides/fleet` and guided learners to `/tutorials/fleet`.
+Use frontmatter title `Fleet concepts` and a description that names managed cloud sandboxes. Explain the five-resource mental model in one paragraph and provide direct links to Images, Pools, Claims, Auto Scaling, and Services. Link task-oriented readers to `/how-to-guides/fleet`.
 
 - [ ] **Step 3: Write the How-to landing page**
 
 Use frontmatter title `Fleet how-to guides`. State that these pages assume the reader already understands Fleet concepts. Link to all four requested tasks and to `/concepts/fleet` for the resource model.
 
-- [ ] **Step 4: Write the Tutorials landing page**
-
-Use frontmatter title `Fleet tutorials`. Present the tutorials in increasing complexity: web surfing, Hermes with Cua Driver, MCP Sampling sub-agent, Codex versus Claude Code benchmarking, then reinforcement learning. Include prerequisites shared by the tutorials: Fleet access, a user API credential, Python 3.12 or 3.13, and workload-specific model credentials.
-
-- [ ] **Step 5: Verify navigation parses**
+- [ ] **Step 4: Verify navigation parses**
 
 Run:
 
@@ -112,7 +101,7 @@ Explain declared pool services, service labels/names, ports, health paths, MCP p
 
 - [ ] **Step 6: Check documentation mode**
 
-Read the five pages together and remove command sequences, installation walkthroughs, and tutorial narrative. Each page must answer what the resource is, how it relates to other resources, its lifecycle boundaries, and its principal tradeoffs.
+Read the five pages together and remove command sequences and installation walkthroughs. Each page must answer what the resource is, how it relates to other resources, its lifecycle boundaries, and its principal tradeoffs.
 
 ---
 
@@ -190,78 +179,14 @@ Expected: exit code 0 and no output.
 
 ---
 
-### Task 5: Add introductory Fleet tutorials
 
-**Files:**
-- Create: `docs/content/docs/tutorials/fleet/hermes-and-cua-driver.mdx`
-- Create: `docs/content/docs/tutorials/fleet/surf-the-web.mdx`
-- Create: `docs/content/docs/tutorials/fleet/computer-use-sub-agent-with-mcp-sampling.mdx`
-
-**Primary sources:**
-- `docs/content/docs/tutorials/drive-your-first-app.mdx`
-- `docs/content/docs/how-to-guides/driver/connect-your-agent.mdx`
-- `docs/content/docs/reference/cua-driver/mcp-tools.mdx`
-- `/home/node/.codex/worktrees/f61f/cloud/cyclops-cs/python-sdk/examples/claim_and_connect.py`
-- `/home/node/.codex/worktrees/f61f/cloud/cyclops-cs/python-sdk/examples/linux-mini-swe.yaml`
-- The published Model Context Protocol Sampling specification, used only for protocol fields not defined in these repositories.
-
-- [ ] **Step 1: Write Hermes and Cua Driver**
-
-Guide the reader through selecting a Fleet pool that exposes Cua Driver, claiming a sandbox, connecting Hermes to the proxied MCP endpoint, reloading Hermes MCP servers, asking Hermes to complete one desktop task, verifying the result through a screenshot or visible state, and releasing the claim. Reuse the current Hermes configuration shape from `drive-your-first-app.mdx`; replace local Cua Driver transport with the authenticated Fleet service URL.
-
-- [ ] **Step 2: Write Surf the web**
-
-Create a beginner tutorial that claims a Linux browser sandbox, verifies browser and Cua Driver readiness, asks an agent to navigate to a harmless public site and report visible information, verifies the final URL or page state, and releases the claim. Include a warning not to place credentials into untrusted sites or prompts.
-
-- [ ] **Step 3: Write MCP Sampling sub-agent**
-
-Explain the architecture: host MCP client owns model access, the Fleet-connected computer-use MCP server requests `sampling/createMessage`, and the host approves and returns model output. Provide a minimal host-side example with explicit capability negotiation, request handling, bounded iterations, tool result forwarding, and claim cleanup. State that MCP Sampling availability depends on the host client; do not claim that all clients support it.
-
-- [ ] **Step 4: Verify cross-page progression**
-
-Ensure the web tutorial can be completed before the Hermes tutorial, and the Hermes tutorial introduces enough Fleet and MCP vocabulary for the Sampling tutorial. Link concepts instead of duplicating resource definitions.
-
----
-
-### Task 6: Add benchmarking and RL tutorials
-
-**Files:**
-- Create: `docs/content/docs/tutorials/fleet/benchmark-codex-and-claude-code-with-cua-bench.mdx`
-- Create: `docs/content/docs/tutorials/fleet/reinforcement-learning-for-computer-use.mdx`
-
-**Primary sources:**
-- `libs/cua-bench/README.md`
-- `libs/cua-bench/cua_bench/cli/commands/run.py`
-- `libs/cua-bench/cua_bench/config/schema.py`
-- `libs/cua-bench/cua_bench/runners.py`
-- `libs/cua-bench/cua_bench/workers/worker_server.py`
-- `libs/cua-bench/cua_bench/workers/dataloader.py`
-- `libs/cua-bench/cua_bench/trainer/off_policy/tinker/rl_loop.py`
-- `libs/cua-bench/cua_bench/trainer/off_policy/tinker/grpo.py`
-
-- [ ] **Step 1: Write the Codex versus Claude Code benchmark tutorial**
-
-Define one deterministic computer-use task with an evaluator, pin the same Fleet image and resource shape for both agents, run multiple trials per agent, retain trajectories and rewards, and compare success rate, average reward, latency, and token/cost data only where the harness emits it. Separate agent configuration from environment configuration so the comparison changes one variable. State that small samples are illustrative rather than statistically conclusive.
-
-- [ ] **Step 2: Write the reinforcement-learning tutorial**
-
-Guide the reader through defining a Cua Bench task, implementing reset/setup and reward evaluation, provisioning parallel Fleet workers, collecting trajectories, loading episodes through the replay/dataloader layer, running the repository's supported off-policy GRPO/Tinker loop, evaluating a held-out split, and cleaning up workers. Explain reward leakage, environment determinism, train/eval separation, checkpointing, and cost controls.
-
-- [ ] **Step 3: Verify CLI and Python names**
-
-Check every named command, decorator, class, and module against the current Cua Bench source with `rg`. Remove or clearly label pseudocode where no stable public CLI exists. Do not present an internal module invocation as a supported public command unless `libs/cua-bench/README.md` or the CLI exposes it.
-
----
-
-### Task 7: Cross-link and validate the complete documentation set
+### Task 5: Cross-link and validate the complete documentation set
 
 **Files:**
 - Modify only as needed: `docs/content/docs/concepts/how-sandboxes-work.mdx`
-- Modify only as needed: `docs/content/docs/tutorials/your-first-cloud-sandbox.mdx`
 - Modify only as needed: `docs/content/docs/reference/sandbox-sdk/index.mdx`
 - Review: all files under `docs/content/docs/concepts/fleet/`
 - Review: all files under `docs/content/docs/how-to-guides/fleet/`
-- Review: all files under `docs/content/docs/tutorials/fleet/`
 
 - [ ] **Step 1: Add minimal entry links from existing Sandbox docs**
 
@@ -272,7 +197,7 @@ Add one short Fleet link where readers naturally move from a single sandbox to m
 Run:
 
 ```bash
-rg -n "\bSBX\b|FIXME|REGISTRY/IMAGE:TAG" docs/content/docs/{concepts,how-to-guides,tutorials}/fleet
+rg -n "\bSBX\b|FIXME|REGISTRY/IMAGE:TAG" docs/content/docs/{concepts,how-to-guides}/fleet
 ```
 
 Expected: no `SBX`, planning placeholders, or unexplained registry placeholders. A registry placeholder is acceptable only on lines whose surrounding text explicitly tells the reader how to replace it.

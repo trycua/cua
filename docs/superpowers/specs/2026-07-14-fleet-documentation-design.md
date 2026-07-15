@@ -39,31 +39,18 @@ Create `docs/content/docs/how-to-guides/fleet/` with:
 
 Add `fleet` to `docs/content/docs/how-to-guides/meta.json`.
 
-### Tutorials
-
-Create `docs/content/docs/tutorials/fleet/` with:
-
-- `index.mdx`: Fleet tutorial learning path.
-- `hermes-and-cua-driver.mdx`: Create a computer-use sandbox for Hermes with Cua Driver.
-- `surf-the-web.mdx`: Create a browser-capable sandbox and complete a web navigation task.
-- `computer-use-sub-agent-with-mcp-sampling.mdx`: Build a computer-use sub-agent whose host uses MCP Sampling.
-- `benchmark-codex-and-claude-code-with-cua-bench.mdx`: Run the same computer-use task with Codex and Claude Code through Cua Bench and compare results.
-- `reinforcement-learning-for-computer-use.mdx`: Prepare Fleet environments, collect trajectories, define rewards, and run an RL training loop for computer-use tasks.
-- `meta.json`: Ordered Fleet tutorial navigation.
-
-Add `fleet` to `docs/content/docs/tutorials/meta.json`.
 
 ## Page Conventions
 
 Every page uses MDX frontmatter with a concise `title` and `description`. Public product terminology uses “Fleet” and “sandbox”; “SBX” does not appear as a product name.
 
-Concept pages explain relationships, boundaries, lifecycle, and tradeoffs without becoming procedural guides. How-to guides start with prerequisites, solve one concrete task, include verification, and stop after the desired result. Tutorials teach an end-to-end outcome, explain important decisions, verify success, clean up resources, and link to relevant concepts and references.
+Concept pages explain relationships, boundaries, lifecycle, and tradeoffs without becoming procedural guides. How-to guides start with prerequisites, solve one concrete task, include verification, and stop after the desired result.
 
 Code examples use the actual Fleet interfaces available in `trycua/cloud/cyclops-cs` and the current CUA repositories. If a requested workflow has no stable public API, the page states the supported boundary and uses only verified commands or configuration rather than inventing an interface.
 
 ## Cross-Linking
 
-The Fleet index pages link between the three Diátaxis modes. Individual pages link to prerequisite concepts, related tasks, and existing Sandbox SDK reference pages where appropriate. Existing pages are changed only when a Fleet link materially improves navigation.
+The Fleet index pages link between concepts and how-to guides. Individual pages link to prerequisite concepts, related tasks, and existing Sandbox SDK reference pages where appropriate. Existing pages are changed only when a Fleet link materially improves navigation.
 
 ## Validation
 

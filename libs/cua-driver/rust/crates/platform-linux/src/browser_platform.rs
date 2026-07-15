@@ -1,7 +1,6 @@
 //! Linux identity and endpoint evidence for the first-class browser tools.
 
 use std::collections::HashSet;
-use std::path::Path;
 use std::time::Duration;
 
 use async_trait::async_trait;

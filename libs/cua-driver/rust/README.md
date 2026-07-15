@@ -55,3 +55,40 @@ See `crates/cua-driver/tests/README.md` for the test matrix.
 - `target/`: Cargo output, ignored.
 - `test-apps/harness-*/`: staged harness apps, ignored.
 - `test-apps/README.md`: explains how staged harness outputs are produced.
+
+## Permission Policies
+
+Set `CUA_DRIVER_POLICY_FILE` to enforce a deny-by-default policy on MCP
+`tools/call` requests. If the variable is unset, or points to a path that does
+not exist, the driver keeps its backward-compatible behavior with no policy
+enforcement. Supported paths are:
+
+- `.yaml` / `.yml`: a single YAML policy file.
+- `.rego`: a single Rego policy file.
+- A directory: all top-level `.rego` files are loaded in sorted order.
+
+YAML policies allow unconstrained tools through `allow.tools`, constrained
+calls through `allow.rules`, and explicit overrides through `deny.tools`:
+
+```yaml
+allow:
+  tools: [screenshot, scroll, wait]
+  rules:
+    - tool: click
+      constraints:
+        x: { min: 0, max: 1920 }
+        y: { min: 0, max: 1080 }
+    - tool: type_text
+      constraints:
+        text: { max_length: 1000, pattern: "^[a-zA-Z0-9\\s]+$" }
+    - tool: launch_app
+      constraints:
+        app:
+          allowed: [Calculator, TextEdit, Safari]
+deny:
+  tools: [shell_execute, file_delete]
+```
+
+Rego policies must expose a boolean rule at `data.cua.policy.allow`. The input
+shape is `{ "server": "cua-driver", "tool": <name>, "arguments": <object> }`.
+Regorus evaluates policies in-process; no OPA service is required.

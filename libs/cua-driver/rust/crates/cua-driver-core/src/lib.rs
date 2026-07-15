@@ -41,6 +41,7 @@ pub mod health_report;
 pub mod image_utils;
 pub mod page;
 pub mod pip_hook;
+pub mod policy;
 pub mod protocol;
 pub mod cursor_sampler;
 pub mod recording;

@@ -1,0 +1,90 @@
+---
+title: How permission policies work
+description: How the Cua Driver permission policy engine evaluates YAML and Rego policies, the trust model, and the guarantees the engine makes.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Cua Driver's permission policy engine sits between an MCP client and the tool implementation. Before the driver executes any tool call it asks the policy engine whether the call is allowed. This page explains how the engine is structured, when it is active, and what guarantees it provides.
+
+## The enforcement point
+
+Every MCP tool call passes through one of two dispatch paths:
+
+- **In-process dispatch.** The MCP server receives the call directly, normalizes arguments, and executes the tool in the same process.
+- **Daemon-proxy dispatch.** A thin `cua-driver mcp` process proxies the call to a running `cua-driver serve` daemon over a Unix socket.
+
+The policy engine is invoked at the in-process MCP handler and at the proxy layer: once in the proxy before it forwards the call, and once in the daemon before it executes it. A policy denial at either point returns an error to the client; the tool implementation is never reached.
+
+## Deny-by-default
+
+The engine is deny-by-default. A tool that is not explicitly mentioned in the policy is blocked. This means adding a new tool to the driver does not automatically expose it to agents; each tool must be explicitly permitted.
+
+The deny-by-default behavior applies only when a policy is active. When `CUA_DRIVER_POLICY_FILE` is not set, the engine is disabled and every call is allowed, preserving the driver's original behavior for users who do not need access control.
+
+## Process-lifetime snapshot
+
+The policy file is loaded once when the daemon or in-process server starts. All subsequent calls share the same immutable policy object for the lifetime of that process. There is no reload endpoint and no hot-swap path. Changing the policy takes effect only after the process restarts.
+
+This makes the policy a reliable static contract: the same rule that was in effect when the daemon started will still be in effect when the last tool call of the session runs.
+
+## YAML evaluation
+
+A YAML policy encodes three data structures at load time:
+
+- A set of denied tool names (`deny.tools`). These are checked first, before allow rules.
+- A set of unconditionally allowed tool names (`allow.tools`).
+- A list of compiled rules (`allow.rules`), each pairing a tool name with a set of compiled constraints.
+
+At evaluation time, for a given `(tool, arguments)` pair:
+
+1. If the tool name is in the deny set, return **Deny**.
+2. If the tool name is in the allow set, return **Allow**.
+3. Find all rules whose `tool` field matches. If there are none, return **Deny**.
+4. For each matching rule, test all constraints against the argument object. If all pass, return **Allow**. If any fail, collect the failure reason and try the next rule.
+5. If no rule passed, return **Deny** with the collected reasons.
+
+Regular expression patterns in YAML constraints are compiled once at load time using the RE2-compatible Rust regex engine. There is no backtracking and no lookahead, which bounds evaluation time regardless of input length.
+
+## Rego evaluation
+
+Rego policies are loaded into a [Regorus](https://github.com/microsoft/regorus) engine — a Rust-native OPA evaluator — at process startup. The engine validates that `data.cua.policy.allow` exists and evaluates to a boolean on a synthetic input before accepting the policy. A policy whose rule returns the wrong type is rejected at load time, not at call time.
+
+At evaluation time, the driver:
+
+1. Constructs the input object: `{ "server": "cua-driver", "tool": "<canonical name>", "arguments": { … } }`.
+2. Clones the engine (the clone carries the compiled policy but gets a fresh input).
+3. Sets the input and evaluates `data.cua.policy.allow`.
+4. Maps the result: `true` → Allow, `false` or `undefined` → Deny, error → Error.
+
+Because Regorus runs fully in-process and does not spawn a subprocess, there is no IPC overhead for each call.
+
+## Argument sanitization before evaluation
+
+Two transformations happen before the arguments reach the policy engine:
+
+- **`_session_id` removal.** The daemon injects a `_session_id` field for session tracking. This is an internal implementation detail that is not relevant to policy decisions, so it is stripped before evaluation.
+- **Tool name canonicalization.** The deprecated `type_text_chars` alias is normalized to `type_text` before any rule is consulted, so policies written against the canonical name cover both forms automatically.
+
+## What the engine does not cover
+
+The policy engine controls **which tool calls are executed**. It does not:
+
+- Inspect or modify tool responses.
+- Limit screenshot output, file paths read, or network traffic.
+- Enforce rate limits or per-session quotas.
+- Authenticate or identify the caller.
+
+A policy that allows `screenshot` permits an agent to take an unlimited number of screenshots. A policy that allows `type_text` with a length constraint still permits the agent to call `type_text` up to the character limit on each call. Use the policy to define an allowed set of operations; combine it with OS-level sandboxing and process isolation if you need stronger guarantees.
+
+## Trust model
+
+The policy is evaluated in the same process as the tool implementation. An agent that has arbitrary code execution on the host can bypass the policy by calling the tool implementation directly. The engine is designed for use with agents that interact over the MCP protocol, not as a security boundary against code running locally.
+
+For remote agents connecting through the daemon's network socket, the policy provides a meaningful boundary: the daemon will not execute a tool that the policy blocks, regardless of what the agent sends.
+
+## Related
+
+- [Restrict tool access with permission policies](/how-to-guides/driver/restrict-tool-access): step-by-step setup guide
+- [Permission policies](/reference/cua-driver/permission-policies): YAML schema and Rego input interface
+- [Process model](/reference/cua-driver/process-model): how the daemon and in-process MCP server relate

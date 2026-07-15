@@ -128,6 +128,14 @@
               inherit pkgs;
               src = rustSrc;
             };
+            cua-driver-policy-yaml = import ./nix/cua-driver/tests/policy-yaml.nix {
+              inherit pkgs;
+              cuaDriver = cuaDriverPackage;
+            };
+            cua-driver-policy-rego = import ./nix/cua-driver/tests/policy-rego.nix {
+              inherit pkgs;
+              cuaDriver = cuaDriverPackage;
+            };
           };
 
           devShells.cua-driver-wayland-e2e = waylandE2eShell [ ];

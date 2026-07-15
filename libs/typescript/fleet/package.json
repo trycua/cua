@@ -1,6 +1,6 @@
 {
   "name": "@trycua/fleet",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "packageManager": "pnpm@10.12.3",
   "description": "Reserved for Cua Fleet — fleet orchestration for computer-use agents and sandboxes. Placeholder release.",
   "type": "module",

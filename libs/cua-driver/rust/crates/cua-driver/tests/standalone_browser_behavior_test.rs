@@ -250,6 +250,8 @@ fn command_for_browser(
         .arg("--no-default-browser-check")
         .arg("--disable-background-networking")
         .arg("--disable-component-update")
+        .arg("--disable-extensions")
+        .arg("--disable-default-apps")
         .arg("--site-per-process")
         .arg("--new-window")
         .arg(format!("--window-position={},{}", position.0, position.1))
@@ -273,6 +275,8 @@ fn command_for_unprepared_browser(
         .arg("--no-default-browser-check")
         .arg("--disable-background-networking")
         .arg("--disable-component-update")
+        .arg("--disable-extensions")
+        .arg("--disable-default-apps")
         .arg("--new-window")
         .arg(format!("--window-position={},{}", position.0, position.1))
         .arg("--window-size=980,760")
@@ -422,6 +426,8 @@ fn spawn_additional_tab(fixture: &mut BrowserFixture, spec: &BrowserSpec) {
         ))
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
+        .arg("--disable-extensions")
+        .arg("--disable-default-apps")
         .arg(format!("{}?tab=second", fixture.server.page_url()))
         .stdout(Stdio::null())
         .stderr(output);
@@ -483,17 +489,7 @@ fn launch_additional_window(
         server.page_url(),
         (520, 120),
     );
-    let window = wait_for_fixture_window(&mut fixture.driver, &before, &server).or_else(|| {
-        spawn_browser_command(
-            &mut fixture.driver,
-            spec,
-            fixture._profile.path(),
-            fixture.cdp_port,
-            server.page_url(),
-            (520, 120),
-        );
-        wait_for_fixture_window(&mut fixture.driver, &before, &server)
-    });
+    let window = wait_for_fixture_window(&mut fixture.driver, &before, &server);
     let (pid, window_id) = window.expect("additional standalone browser window did not appear");
     assert_eq!(pid, fixture.pid, "additional window must share browser pid");
     (server, pid, window_id)

@@ -93,7 +93,7 @@ snapshot after navigation or whenever a call returns `browser_ref_stale`.
 
 ## Click and type
 
-The default click route uses Chromium's trusted input domain:
+The default click route requests Chromium's trusted input domain:
 
 ```jsonc
 browser_click({
@@ -105,9 +105,26 @@ browser_click({
 ```
 
 Use viewport `x` and `y` instead of `ref` when the page snapshot cannot name
-the rendered target. To request a synthetic DOM click deliberately, pass
-`input_route: "dom_event"` with a ref. The driver never silently falls back
-from trusted input to a DOM event.
+the rendered target. Standalone Chrome and Edge on Windows have passing
+full-background evidence for this route. Standalone Chromium on macOS and Linux
+returns `browser_input_trust_unavailable` because dispatching the trusted
+pointer event activates the native browser window.
+
+To request a synthetic full-background DOM click deliberately, pass
+`input_route: "dom_event"` with a ref:
+
+```jsonc
+browser_click({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "ref": "p1:7",
+  "input_route": "dom_event",
+  "session": "research-1"
+})
+```
+
+Use this only when the page's DOM click semantics are acceptable. The driver
+never silently falls back from trusted input to a DOM event.
 
 Snapshot again, then type into the fresh input ref:
 

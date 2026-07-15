@@ -26,11 +26,16 @@ normal profile accidentally. MCP hosts approve the destructive prepare call;
 direct/raw clients first mint a single-use token with the interactive
 `cua-driver browser-approve` command.
 
-This is the full-background Chromium rung: CDP input reaches the exactly bound
-page without raising its native window. `browser_click` defaults to trusted
-`Input.dispatchMouseEvent`; never opt into `input_route:"dom_event"` unless a
-synthetic DOM click is explicitly acceptable. Target ids, tab ids, and refs are
-opaque session capabilities, not raw CDP ids.
+This is the page-aware Chromium rung. Navigation, default ref-bound text
+insertion, and an explicit DOM click can run against an exactly bound page
+without raising its native window. `browser_click` defaults to trusted
+`Input.dispatchMouseEvent`: standalone Windows has passing background evidence,
+while standalone macOS and Linux return `browser_input_trust_unavailable`
+before dispatch because Chromium activates its window on that route. Embedded
+Electron has a separately proven bounded route. Use
+`input_route:"dom_event"` only when a synthetic DOM click is explicitly
+acceptable. Target ids, tab ids, and refs are opaque session capabilities, not
+raw CDP ids.
 
 Refs traverse open shadow roots and same-process frames. Out-of-process frames
 are included only when the runtime exposes an independently attached CDP

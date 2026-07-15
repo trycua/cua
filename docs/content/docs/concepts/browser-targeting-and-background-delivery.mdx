@@ -44,15 +44,22 @@ application surface accept. Chromium can reject some background keyboard or
 pointer routes even when the operating system delivered them correctly.
 
 The browser tools add a higher, page-aware rung through the Chrome DevTools
-Protocol. `browser_click` and `browser_type` can address an occluded tab without
-raising its native window, moving the real cursor, or borrowing keyboard focus.
-This is full-background delivery for an exactly bound Chromium page, rather
-than best-effort OS input.
+Protocol. Page navigation, the default ref-bound text insertion route, and an
+explicit synthetic DOM click can address an occluded tab without moving the
+real cursor or borrowing keyboard focus. This is a full-background route for
+an exactly bound Chromium page, rather than best-effort OS input.
 
-Trusted CDP input remains distinct from synthetic DOM events. The default
-click uses `Input.dispatchMouseEvent`. A caller must explicitly request
-`input_route: "dom_event"` to invoke an element's DOM click behavior. The
-driver does not silently change trust models to make a call appear successful.
+Trusted CDP pointer input remains distinct from synthetic DOM events. The
+default click uses `Input.dispatchMouseEvent`, but Chromium's standalone window
+is known to activate on that route on macOS and Linux. Cua Driver returns
+`browser_input_trust_unavailable` there before dispatch. Standalone Chrome and
+Edge on Windows, and the bounded embedded Electron route, have passing trusted
+background evidence.
+
+A caller must explicitly request `input_route: "dom_event"` to invoke an
+element's DOM click behavior. That route is synthetic even when it preserves
+full-background posture. The driver does not silently change trust models to
+make a call appear successful.
 
 ## Capabilities have a lifetime
 
@@ -80,8 +87,8 @@ not treated as user consent.
 
 ## Platform meaning
 
-The page input route is cross-platform, but exact native correlation remains a
-platform capability:
+Page-aware routes are cross-platform, but exact native correlation and input
+trust remain platform and surface capabilities:
 
 - macOS uses process ownership and native window geometry.
 - Windows uses HWND ownership and DPI-aware geometry.

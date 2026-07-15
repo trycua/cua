@@ -296,3 +296,82 @@ The v2 entries below supersede the completed items in this historical list.
   not a same-user operating-system security boundary against another local
   process. Direct approval tokens remain terminal-only, short-lived,
   single-use, and request-bound.
+
+## 2026-07-15: final v2 hardening and exact-head release evidence
+
+- `ee8b75f3` split the standalone browser matrix into independent scenario
+  processes. A failed launch or contaminated desktop can no longer prevent the
+  remaining declared rows from producing evidence.
+- `083859f3`, `5f3fca7a`, and `3336b343` made temporary Chromium startup and
+  teardown deterministic. Every harness browser receives a clean profile and,
+  on Unix, an owned process group whose descendants are reaped when the row
+  ends.
+- `33c8d533` made the harness route explicit in every result instead of
+  inferring it from the expected outcome.
+- `c70f5986` creates additional tabs and same-bounds windows through the
+  harness-only CDP connection. This removes command-line handoff ambiguity
+  while leaving the public driver path unchanged. It also lets macOS E2E use a
+  dedicated daemon socket so another driver client cannot end the test
+  session.
+- `edc26080` made the loopback fixture server concurrent. Chromium idle
+  preconnections can no longer hold the only server worker and starve the real
+  page or journal request. A regression test opens an idle connection while a
+  second client completes a fixture request.
+- `418fb972` made the reporter deduplicate identical environment records from
+  independently executed rows while continuing to reject conflicting records.
+- `4fc4e00b` fixed a critical Unix harness teardown bug. Passing `-1` to the
+  external `kill` utility had been parsed as the broad `kill(-1, SIGKILL)`
+  syscall, which could terminate every process signalable by the test user.
+  Teardown now calls guarded `libc::kill(-pgid, SIGKILL)` directly and refuses
+  process ids 0, 1, or values outside the platform range.
+
+### Exact standalone Chromium evidence
+
+- Windows interactive evidence at `edc2608061360dadc258724045438922487753e2`:
+  16 declared Chrome and Edge rows, 14 delivered, 2 exact
+  `browser_binding_ambiguous` refusals, 0 failed, and 0 skipped. The matrix
+  covers background typing, composed frames and capability-tested OOPIFs,
+  multi-tab exact binding, isolated preparation, stale refs, full roundtrip,
+  trusted background click, and same-bounds ambiguity. Every row includes a
+  fixture-state oracle, focus and z-order guards, no-leaked-input and cursor
+  checks, and a playable video.
+- Linux X11 evidence at `4fc4e00b0630f5889e17e91ebe31b3508dc3818f`:
+  8 declared Chrome rows, 6 delivered, 2 refused, 0 failed, and 0 skipped.
+  Trusted pointer input refused with
+  `browser_input_trust_unavailable` before dispatch because standalone
+  Chromium activates its native window on that route. Same-bounds ambiguity
+  refused with `browser_binding_ambiguous`. Explicit DOM click, ref-bound
+  typing, navigation, composed frames, multi-tab binding, stale refs, and
+  isolated preparation passed with the complete background oracle set and
+  videos.
+- macOS standalone rows passed through a dedicated source-installed daemon
+  before final documentation. A later replacement of the local app invalidated
+  its TCC grants; runs after that point are environment-inconclusive because
+  WindowServer redacts browser titles without Screen Recording permission.
+  Final exact-head macOS release evidence must therefore be regenerated after
+  the installed app again reports Accessibility, Screen Recording, and live
+  capture as granted. Shared-host focus changes are not attributed to browser
+  mutation unless they reproduce in that permission-complete, uncontended
+  setup.
+
+### Embedded route evidence retained
+
+- macOS: Electron delivered; Tauri and WKWebView returned the expected
+  side-effect-free route refusal.
+- Windows: Electron delivered; Tauri and the split-process WebView2 host
+  returned the expected route refusal.
+- Linux X11: Electron delivered; Tauri returned the expected route refusal.
+- Native Sway: Electron delivered and Tauri refused. Global cursor preservation
+  remains omitted because standard Wayland cannot read the global pointer
+  position.
+
+### Final trust model
+
+- Standalone Chrome and Edge on Windows have passing trusted background pointer
+  evidence.
+- Standalone Chromium on macOS and Linux refuses trusted CDP pointer input
+  before dispatch because that route activates the native browser window.
+- `input_route: "dom_event"` is the explicit synthetic full-background click
+  route. The driver never changes from trusted input to a DOM event silently.
+- Electron's trusted route is a separately bounded proof and does not authorize
+  a generic embedded-webview fallback.

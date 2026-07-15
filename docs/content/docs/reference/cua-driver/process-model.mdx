@@ -23,6 +23,15 @@ The **daemon-proxy pattern** separates the process that speaks to the caller fro
 
 On macOS, the root issue is **TCC**, Transparency Consent and Control. Accessibility and Screen Recording grants are attached to a specific app identity, represented by a bundle ID. Grants to `CuaDriver.app` do not automatically cover every subprocess named `cua-driver`.
 
+## Supported macOS launch modes
+
+Use one of two supported identities:
+
+- **Standalone:** grant permissions to the installed `CuaDriver.app` and launch its daemon through LaunchServices. See [macOS permissions](/reference/cua-driver/macos-permissions).
+- **Embedded:** have the macOS app that owns the grants spawn `cua-driver` directly with `CUA_DRIVER_EMBEDDED=1` or `--embedded`. See [Embedding](/reference/cua-driver/embedding).
+
+A raw `cua-driver` binary launched outside `CuaDriver.app` without embedded mode has no stable TCC identity and is unsupported. Do not grant permissions to arbitrary binary paths or use that configuration in production.
+
 If an IDE terminal starts `cua-driver` directly, macOS attributes that subprocess to the terminal app's bundle, not to `CuaDriver.app`. The binary is right, but the privacy identity is wrong.
 
 The daemon path fixes the attribution. The daemon is launched through LaunchServices with `open -n -g -a CuaDriver`, so macOS treats it as part of `CuaDriver.app`. The MCP stdio process remains where the assistant spawned it, but becomes a thin proxy: it forwards tool calls to the daemon over a Unix socket and returns the daemon's responses. There are two processes, but one tool surface.

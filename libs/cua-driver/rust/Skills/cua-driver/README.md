@@ -79,6 +79,21 @@ forbidden-list / launch / click details.
    relevant panes of System Settings after first use; toggle it on
    there.
 
+   There are exactly two supported macOS identity models:
+   - **Standalone:** launch the installed app daemon with
+     `open -n -g -a CuaDriver --args serve`; grants belong to
+     `CuaDriver.app` (`com.trycua.driver`). The installed CLI may
+     auto-launch and proxy through this daemon.
+   - **Embedded:** the app that owns the grants must spawn
+     `cua-driver mcp` directly with `CUA_DRIVER_EMBEDDED=1` (or
+     `--embedded`), so the child remains in that app's TCC
+     responsibility chain. See `EMBEDDING.md`.
+
+   A raw binary launched outside `CuaDriver.app` without embedded mode
+   is unsupported because it has no stable bundle identity for TCC
+   attribution. Do not grant permissions to arbitrary binary paths or
+   use that configuration in production.
+
 ### Windows
 
 1. **Windows 10/11** (any edition with PowerShell 5.1+).

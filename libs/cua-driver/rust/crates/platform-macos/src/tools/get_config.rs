@@ -60,6 +60,11 @@ impl Tool for GetConfigTool {
         ToolResult::text("cua-driver-rs configuration")
             .with_structured(serde_json::json!({
                 "version": env!("CARGO_PKG_VERSION"),
+                // Maintainer E2E builds set this at compile time so the
+                // preflight can prove that the installed, TCC-authorized
+                // daemon came from the requested commit rather than merely
+                // sharing its package version.
+                "source_sha": option_env!("CUA_DRIVER_SOURCE_SHA"),
                 "platform": "macos",
                 // capture_mode is a per-call param; capture_scope is a global
                 // setting that gates get_desktop_state.

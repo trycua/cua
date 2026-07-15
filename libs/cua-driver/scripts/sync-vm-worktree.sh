@@ -26,6 +26,8 @@ Modes:
     checkout that should commit or push.
 
 Environment:
+  ALLOW_DIRTY_SYNC      Set to 1 only for diagnostic, non-acceptance pushes.
+                        The source marker becomes noncanonical so E2E rejects it.
   REMOTE_ARTIFACT_DIR  Remote artifact directory, relative to remote-dir.
                        Default: vm-out
   RSYNC_SSH           SSH command for rsync. Default: ssh
@@ -51,6 +53,14 @@ remote_os="${REMOTE_OS:-posix}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../../.." && pwd)"
 source_sha="$(git -C "$repo_root" rev-parse HEAD)"
+if [[ "$mode" == push ]] && [[ -n "$(git -C "$repo_root" status --porcelain --untracked-files=normal)" ]]; then
+  if [[ "${ALLOW_DIRTY_SYNC:-}" != 1 ]]; then
+    echo "Refusing to label a dirty host worktree as commit $source_sha." >&2
+    echo "Commit or clean the source before an acceptance run; use ALLOW_DIRTY_SYNC=1 only for diagnostics." >&2
+    exit 2
+  fi
+  source_sha="${source_sha}-dirty"
+fi
 artifact_root="$repo_root/libs/cua-driver/docs/vm-artifacts"
 target_slug="$(printf '%s' "$target" | tr -c 'A-Za-z0-9_.-' '_')"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"

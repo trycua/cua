@@ -77,9 +77,12 @@ URLs, profile paths, and raw DevTools endpoint identifiers.
 - Added `<platform>-electron-browser-tool-roundtrip` to the established shared
   web behavior matrix instead of creating a separate test framework.
 - The row starts a named session, binds the exact native Electron window,
-  snapshots the page, performs a trusted ref click, verifies the external
-  fixture journal, snapshots again, types through the new ref, and proves the
-  older ref returns `browser_ref_stale` without changing state.
+  proves `browser_prepare` recognizes the owned endpoint, asserts the bounded
+  `embedded_single_page` route, snapshots the page, performs a trusted ref
+  click, verifies the external fixture journal, snapshots again, types through
+  the new editable ref, and proves the older ref returns `browser_ref_stale`
+  without changing state. It then navigates to `about:blank`, verifies the new
+  URL, and proves navigation invalidates the latest page ref.
 - The required evidence is fixture state, foreground focus, z-order, no leaked
   input, cursor preservation where observable, and a playable video.
 - Fixed the native Sway preflight rather than bypassing it. Manual VM runs now
@@ -88,45 +91,65 @@ URLs, profile paths, and raw DevTools endpoint identifiers.
   restore the sentinel before product rows execute. Unit coverage distinguishes
   a view's own fullscreen state from Sway's inherited workspace metadata.
 
+## 2026-07-15: independent review hardening
+
+- An independent read-only implementation review found two trust-chain
+  blockers: a verified HTTP listener could return a WebSocket URL on another
+  loopback port, and two maximized browser windows with identical bounds could
+  be title-tie-broken across different CDP window ids.
+- Every platform adapter now requires the returned WebSocket URL to use the
+  exact operating-system-attested listener port. Regression tests also pin
+  loopback-only parsing and token-based browser product classification.
+- Bounds tie-breaking is now legal only within one proven CDP window id.
+  Distinct same-bounds windows remain ambiguous, and geometry without a CDP
+  window id cannot mint an exact binding.
+- Transient or malformed CDP window-enumeration responses now fail the whole
+  proof instead of shrinking the candidate set into a false unique match.
+- `browser_type` now requires a current ref and proves that the focused node is
+  editable before dispatch. It refuses instead of reporting success against
+  unproven page focus.
+
 ## Validation log
 
 ### Shared and macOS unit/protocol validation
 
-- `cargo test -p cua-driver-core -p platform-macos`: 168 core tests, 3 session
-  lifecycle tests, and 123 platform-macOS tests passed.
+- `cargo test -p cua-driver-core -p platform-macos`: 170 core tests, 3 session
+  lifecycle tests, and 124 platform-macOS tests passed.
 - `cargo test -p cua-driver --test protocol_schema_test --test
 schema_consistency_test --test protocol_session_test`: 1 schema, 1
   consistency, and 6 session protocol tests passed.
 - `cargo build -p cua-driver` and the release build used by the documentation
   generator passed.
-- The installed app currently reports Accessibility and Screen Recording as
-  not granted after its local signing identity changed. The final macOS harness
-  row therefore remains permission-gated until the app is reauthorized; unit
-  and protocol results are not presented as a substitute for that E2E row.
+- Final source revision `a2e792a428308a80bb02a37ed4467ea073a8e8e5` was
+  installed through `install-local.sh` using the stable local signing identity.
+- The installed daemon currently reports Accessibility and Screen Recording
+  as not granted. The focused canonical preflight therefore could enumerate
+  apps but could not discover the fixture window. The macOS row remains
+  permission-gated until the app is reauthorized; unit and protocol results
+  are not presented as a substitute for that E2E row.
 
 ### Windows interactive validation
 
-- Source revision: `650ad376471fd423803d95e10271d1539ea84352`.
-- `cargo check -p platform-windows -p cua-driver --tests` passed in an
-  interactive Windows desktop.
+- Source revision: `a2e792a428308a80bb02a37ed4467ea073a8e8e5`.
+- The three focused Windows browser-platform parser, classifier, and endpoint
+  attestation tests passed.
 - The canonical focused Electron browser row passed: 1 delivered, 0 refused,
   0 failed, 0 skipped. Fixture state, focus, z-order, cursor, no-leaked-input,
-  and video evidence all passed.
-- Later commits touch only Linux/Sway test setup and documentation, so they do
-  not change the validated Windows product route.
+  and playable-video evidence all passed in an interactive user desktop.
 
 ### Linux X11 validation
 
-- Final implementation revision: `7744993829ee8eeb28da733d536dd74949d8a7fd`.
-- `cargo check -p platform-linux -p cua-driver --tests` passed.
-- All 53 Linux testkit tests passed.
+- Final implementation revision: `a2e792a428308a80bb02a37ed4467ea073a8e8e5`.
+- The three focused Linux browser-platform parser, classifier, and endpoint
+  attestation tests passed. Earlier full validation also passed platform checks
+  and all 53 Linux testkit tests.
 - The canonical focused Electron row passed under X11/Openbox: 1 delivered, 0
   refused, 0 failed, 0 skipped, with fixture-state, focus, z-order, cursor,
   no-leaked-input, and playable-video evidence.
 
 ### Linux native Wayland validation
 
-- Final implementation revision: `7744993829ee8eeb28da733d536dd74949d8a7fd`.
+- Final implementation revision: `a2e792a428308a80bb02a37ed4467ea073a8e8e5`.
 - Six focused Sway sentinel regression tests passed.
 - The native Sway preflight passed its deliberate focus-loss and fullscreen
   restoration canary.

@@ -157,9 +157,28 @@ bash libs/cua-driver/scripts/install-local.sh --release --autostart
 ~/.local/bin/cua-driver permissions grant
 ```
 
-Complete the Accessibility and Screen Recording prompts. Then verify the
-daemon's own identity, live capture permission, stable signature, and SIP
-state:
+Complete the Accessibility and Screen Recording prompts. Tahoe 26 also asks
+separately for Automation and direct ScreenCaptureKit access. Trigger all
+remaining consent paths before freezing the seed:
+
+```bash
+# Terminal owns the test sentinel's read-only frontmost-state probes.
+osascript -e \
+  'tell application "System Events" to get name of first application process whose frontmost is true'
+
+# The installed app owns driver-side app enumeration.
+~/.local/bin/cua-driver list_apps '{}'
+
+# Recording triggers Tahoe's direct-capture/private-window prompt.
+~/.local/bin/cua-driver recording start
+~/.local/bin/cua-driver recording stop
+```
+
+Choose Allow for both `Terminal` -> `System Events` and `CuaDriver` ->
+`System Events`, and choose Allow on the CuaDriver direct-capture prompt. These
+are normal macOS consent flows; do not edit `TCC.db`. Rerun the commands and
+require them to finish without another prompt. Then verify the daemon's own
+identity, live capture permission, stable signature, and SIP state:
 
 ```bash
 ~/.local/bin/cua-driver permissions status --json | jq -e '
@@ -219,8 +238,8 @@ libs/cua-driver/tests/runners/macos-lume/run-all.sh
 
 The entrypoint refuses the wrong OS, user session, SIP state, dirty or
 unidentified source, missing dependencies, ad-hoc signature, stale installed
-daemon, or unusable TCC grants. It reinstalls the exact source commit and then
-runs the canonical macOS matrix.
+daemon, unusable TCC grants, or missing Terminal/CuaDriver Automation grants.
+It reinstalls the exact source commit and then runs the canonical macOS matrix.
 
 Pull evidence before deleting the worker, even after a failed run:
 

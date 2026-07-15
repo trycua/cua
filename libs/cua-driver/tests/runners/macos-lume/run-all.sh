@@ -56,7 +56,7 @@ if ! printf '%s\n' "${SIP_STATUS}" | grep -Fq "System Integrity Protection statu
   exit 2
 fi
 
-for command_name in cargo codesign ffmpeg ffprobe jq node npm security xcrun; do
+for command_name in cargo codesign ffmpeg ffprobe jq node npm osascript security xcrun; do
   command -v "${command_name}" >/dev/null 2>&1 || {
     echo "Missing golden-image dependency: ${command_name}" >&2
     exit 2
@@ -113,6 +113,14 @@ printf '%s\n' "${SOURCE_SHA}" > "${ARTIFACT_DIR}/requested-source-sha.txt"
   printf 'xcode_select:\t%s\n' "$(xcode-select -p)"
 } > "${ARTIFACT_DIR}/golden-environment.txt"
 
+echo "[AUTOMATION] Verifying Terminal can read frontmost state through System Events"
+if ! osascript -e \
+    'tell application "System Events" to get name of first application process whose frontmost is true' \
+    > "${ARTIFACT_DIR}/terminal-system-events.txt"; then
+  echo "Terminal cannot control System Events; rebuild the seed and grant the Automation prompt" >&2
+  exit 2
+fi
+
 # CUA_DRIVER_SOURCE_SHA is consumed by option_env! in platform-macos. Cargo
 # does not treat arbitrary compile-time environment variables as an input when
 # deciding whether an otherwise unchanged crate is fresh. Force that crate and
@@ -152,6 +160,12 @@ if [[ "${PERMISSIONS_READY}" != 1 ]]; then
   cat "${PERMISSIONS_FILE}" >&2 || true
   echo "The cloned golden image does not have usable Accessibility and Screen Recording grants" >&2
   exit 1
+fi
+
+echo "[AUTOMATION] Verifying the installed CuaDriver can query System Events"
+if ! "${INSTALLED_BIN}" list_apps '{}' > "${ARTIFACT_DIR}/driver-list-apps.json"; then
+  echo "CuaDriver cannot control System Events; rebuild the seed and grant the Automation prompt" >&2
+  exit 2
 fi
 
 echo "[E2E] Running the canonical macOS matrix"

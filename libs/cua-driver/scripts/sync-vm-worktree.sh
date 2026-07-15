@@ -99,6 +99,9 @@ exclude_args=(
   --exclude=__pycache__/
   --exclude='*.pyc'
   --exclude=dist/
+  # Host-side VM evidence is intentionally ignored by Git and can be large.
+  # Never send pulled evidence back into a guest on the next source sync.
+  --exclude=artifacts/
   --exclude=vm-out/
 )
 
@@ -130,6 +133,7 @@ tar_exclude_args=(
   --exclude '*/__pycache__'
   --exclude '*.pyc'
   --exclude ./dist
+  --exclude ./artifacts
   --exclude ./vm-out
 )
 

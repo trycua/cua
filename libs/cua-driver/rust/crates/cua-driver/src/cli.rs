@@ -1553,11 +1553,31 @@ pub fn run_call(
         .expect("tokio runtime");
 
     let args = json_args.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+    let session_context = cua_driver_core::session::begin_tool_call(
+        tool,
+        &args,
+        true,
+        cua_driver_core::session::SessionTransport::Cli,
+    );
+    let observation_timer = cua_driver_core::server::ToolObservationTimer::start(
+        tool.to_owned(),
+        true,
+        true,
+        cua_driver_core::server::StdioExecutionPath::InProcess,
+    );
     let tool_name = tool.to_string();
     let out_path = screenshot_out_file;
     let is_error = rt.block_on(async move {
         let result = registry.invoke(&tool_name, args).await;
         let is_err = result.is_error.unwrap_or(false);
+        if let Ok(value) = serde_json::to_value(&result) {
+            let response = cua_driver_core::protocol::Response::ok(serde_json::Value::Null, value);
+            let outcome = observation_timer.finish(&response);
+            if let Some(context) = session_context {
+                context.complete(&outcome);
+            }
+            crate::telemetry::capture_tool_completed(outcome, crate::telemetry::Transport::Cli);
+        }
 
         // Emit content.
         let mut has_printed = false;

@@ -48,6 +48,8 @@ Set the same environment variable in your MCP server configuration to keep the u
 ```bash
 cua-driver telemetry inspect cua_driver_mcp_session_started --json
 cua-driver telemetry inspect cua_driver_mcp_tool_completed --json
+cua-driver telemetry inspect cua_driver_agent_session_started --json
+cua-driver telemetry inspect cua_driver_agent_session_ended --json
 ```
 
 ## Common client event properties
@@ -62,7 +64,7 @@ Every schema-v3 client event has this fixed envelope:
 | `os_major`                 | Major operating-system version only                       |
 | `arch`                     | Bounded CPU architecture                                  |
 | `is_ci`                    | Whether a recognized CI environment is present            |
-| `transport`                | `cli`, `mcp_stdio`, `mcp_http`, or `unknown`              |
+| `transport`                | `cli`, `daemon`, `mcp_stdio`, `mcp_http`, or `unknown`    |
 | `process_session_id`       | Random ID created once per process and never persisted    |
 | `id_persisted`             | Whether the installation ID came from durable local state |
 
@@ -72,17 +74,22 @@ The client does not send an IP address as an event property. PostHog derives a c
 
 ## Fixed events
 
-| Event                                | Additional bounded properties                                                                                                   |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `cua_driver_installation_registered` | `install_channel`                                                                                                               |
-| `cua_driver_release_installed`       | `install_channel`, `product_version`                                                                                            |
-| `cua_driver_mcp`                     | None. Transitional process-start event emitted when `cua-driver mcp` starts; `transport` is `mcp_stdio` in the common envelope. |
-| `cua_driver_serve`                   | None. Transitional process-start event emitted when `cua-driver serve` starts; `transport` is `cli` in the common envelope.     |
-| `cua_driver_cli_completed`           | Completed finite CLI outcomes: fixed `command`, `success`, `exit_class`, and `duration_bucket`                                  |
-| `cua_driver_mcp_session_started`     | normalized MCP client and protocol, capability booleans, optional reported agent context                                        |
-| `cua_driver_mcp_tool_completed`      | allowlisted tool, success, error class, duration bucket, output type, output-size bucket                                        |
+| Event                                    | Additional bounded properties                                                                                                                               |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cua_driver_installation_registered`     | `install_channel`                                                                                                                                           |
+| `cua_driver_release_installed`           | `install_channel`, `product_version`                                                                                                                        |
+| `cua_driver_serve`                       | None. Transitional process-start event for `cua-driver serve`; `transport` is `daemon`                                                                      |
+| `cua_driver_cli_completed`               | Fixed `command`, allowlisted tool for `call`, `success`, `exit_class`, and `duration_bucket`                                                                |
+| `cua_driver_mcp_startup_completed`       | execution path, bounded daemon state, success, duration bucket, and `execution_mode`                                                                         |
+| `cua_driver_mcp_session_started`         | normalized MCP client and protocol, capability booleans, optional reported agent context, and `execution_mode`                                              |
+| `cua_driver_mcp_tool_completed`          | allowlisted tool, success, error class, duration bucket, output type, output-size bucket, and `execution_mode`                                               |
+| `cua_driver_agent_session_started`       | declaration kind, revival flag, concurrent-session bucket, entry transport, and `execution_mode`                                                            |
+| `cua_driver_agent_session_ended`         | end reason, duration and count buckets, success flags, feature-family flags, multi-transport flag, and `execution_mode`                                      |
+| `cua_driver_permissions_gate_started`    | missing-permission booleans                                                                                                                                  |
+| `cua_driver_permissions_gate_dismissed`  | missing-permission booleans and duration bucket                                                                                                              |
+| `cua_driver_permissions_gate_completed`  | missing-permission booleans, panel and dismissal flags, fixed resolution, and duration bucket                                                               |
 
-The transitional `cua_driver_mcp` and `cua_driver_serve` events carry the common event properties above and no additional properties. They do not contain MCP initialize data, command arguments, or process output.
+The transitional `cua_driver_serve` event carries the common event properties and no additional properties. It does not contain command arguments or process output.
 
 The legacy `cua_driver_install` event remains part of lifetime registration dashboards so existing installations are not registered a second time.
 
@@ -105,13 +112,23 @@ An MCP host can explicitly report agent context in the initialize request:
 }
 ```
 
-These values are self-reported and normalized through allowlists. Unknown values become `custom` or `unknown`. Cua Driver does not infer a model from the MCP client name, does not use MCP Sampling to identify the parent model, and does not collect the complete initialize payload. This session event currently covers stdio MCP only; HTTP session telemetry remains disabled until Cua Driver implements explicit HTTP session semantics.
+These values are self-reported and normalized through allowlists. Unknown values become `custom` or `unknown`. Cua Driver does not infer a model from the MCP client name, does not use MCP Sampling to identify the parent model, and does not collect the complete initialize payload. Stdio emits once per process. A long-lived HTTP process emits once per normalized client category, so the event measures HTTP client-category adoption rather than every connection.
+
+## Cua agent sessions
+
+A Cua agent session is a non-empty caller-declared `session` value. The value `default`, internal connection identities, and reserved fallback keys do not create agent-session events.
+
+The start event is emitted for a successful `start_session` declaration or the first known tool call that carries an explicit session. Repeated calls in the same live episode do not emit another start. Reusing an ID after explicit end or idle eviction creates a new episode with `revived=true`.
+
+The end event is emitted for `end_session` and idle eviction. It contains aggregate counters and booleans. Cua Driver uses the caller session string only as a process-local map key. The string, a hash of it, and a replacement join token are absent from telemetry payloads.
+
+Computer-action success covers fixed pointer and keyboard capabilities, app launch and kill, window activation, and state-changing `page` operations. State reads, screenshots, health checks, update checks, and session lifecycle tools do not count as computer actions.
 
 ## Data that is never collected
 
 Routine telemetry excludes task text, prompts, tool arguments, tool response bodies, typed text, screenshots, accessibility trees, window titles, application names, file paths, URLs, arbitrary MCP metadata, and raw error messages.
 
-Tool-completion events retain only coarse result shape: text, image, mixed, empty, or unknown; a size bucket; a duration bucket; and a fixed error class. The content itself never crosses the telemetry observer boundary.
+Tool-completion events retain only coarse result shape: text, image, mixed, empty, or unknown; a size bucket; a duration bucket; and a fixed error class. The content itself never crosses the telemetry observer boundary. A proxy and daemon negotiate one completion-event owner. Mixed-version pairs retain proxy ownership, which prevents duplicate events during upgrades.
 
 ## Region and deletion controls
 

@@ -19,10 +19,85 @@
 //! reverse coupling from core into the platform crates.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 type SessionEndHook = Box<dyn Fn(&str) + Send + Sync>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionDeclaration {
+    StartSession,
+    ImplicitFirstAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionEndReason {
+    Explicit,
+    IdleTimeout,
+    ProcessExit,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionTransport {
+    Cli,
+    Daemon,
+    McpStdio,
+    McpHttp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionStartObservation {
+    pub declaration: SessionDeclaration,
+    pub revived: bool,
+    pub transport: SessionTransport,
+}
+
+/// Process-local sink for bounded session telemetry.
+///
+/// `session_id` is supplied only so an observer can update private in-memory
+/// state. Implementations must never serialize, hash, log, or otherwise export
+/// it. The observation structs and completion outcome contain the complete
+/// allowlisted telemetry boundary.
+pub trait SessionObserver: Send + Sync + 'static {
+    fn on_session_started(&self, session_id: &str, observation: SessionStartObservation);
+    fn on_tool_completed(
+        &self,
+        session_id: &str,
+        transport: SessionTransport,
+        computer_action: bool,
+        outcome: &crate::server::ToolCompletionObservation,
+    );
+    fn on_session_ended(&self, session_id: &str, reason: SessionEndReason);
+}
+
+static SESSION_OBSERVER: OnceLock<Arc<dyn SessionObserver>> = OnceLock::new();
+
+pub fn set_session_observer(observer: Arc<dyn SessionObserver>) -> bool {
+    SESSION_OBSERVER.set(observer).is_ok()
+}
+
+/// Private per-call context. The raw caller session id never crosses into a
+/// serialized observation; it is retained only until the bounded completion
+/// callback updates the process-local aggregate.
+pub struct SessionToolContext {
+    session_id: String,
+    transport: SessionTransport,
+    computer_action: bool,
+}
+
+impl SessionToolContext {
+    pub fn complete(self, outcome: &crate::server::ToolCompletionObservation) {
+        if let Some(observer) = SESSION_OBSERVER.get() {
+            observer.on_tool_completed(
+                &self.session_id,
+                self.transport,
+                self.computer_action,
+                outcome,
+            );
+        }
+    }
+}
 
 static SESSION_END_HOOKS: OnceLock<Mutex<Vec<SessionEndHook>>> = OnceLock::new();
 
@@ -42,6 +117,78 @@ fn activity() -> &'static Mutex<HashMap<String, Instant>> {
 /// Whether `id` is a real, trackable session id (not the anonymous fallback).
 fn is_trackable(id: &str) -> bool {
     !id.is_empty() && id != "default"
+}
+
+fn is_computer_action(tool_name: &str, args: &serde_json::Value) -> bool {
+    if tool_name == "page" {
+        return matches!(
+            args.get("action").and_then(serde_json::Value::as_str),
+            Some(
+                "click_element"
+                    | "insert_text"
+                    | "type_keystrokes"
+                    | "enable_javascript_apple_events"
+            )
+        );
+    }
+    crate::tool::default_capabilities_for(tool_name)
+        .iter()
+        .any(|capability| {
+            capability.starts_with("input.pointer.")
+                || capability.starts_with("input.keyboard.")
+                || matches!(
+                    capability.as_str(),
+                    "app.launch" | "app.kill" | "window.activate"
+                )
+        })
+}
+
+/// Begin bounded observation for a known tool call carrying a public,
+/// caller-declared `session`. Reserved `_session_id` fallbacks and anonymous
+/// identities are deliberately ignored.
+pub fn begin_tool_call(
+    tool_name: &str,
+    args: &serde_json::Value,
+    known_tool: bool,
+    transport: SessionTransport,
+) -> Option<SessionToolContext> {
+    if !known_tool {
+        return None;
+    }
+    let session_id = args
+        .get("session")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| is_trackable(id))?;
+    let is_start = tool_name == "start_session";
+    let is_end = tool_name == "end_session";
+    let revived = is_start && is_session_ended(session_id);
+    if is_session_ended(session_id) && !is_start {
+        return None;
+    }
+
+    touch_session(session_id);
+    if !is_end {
+        if let Some(observer) = SESSION_OBSERVER.get() {
+            observer.on_session_started(
+                session_id,
+                SessionStartObservation {
+                    declaration: if is_start {
+                        SessionDeclaration::StartSession
+                    } else {
+                        SessionDeclaration::ImplicitFirstAction
+                    },
+                    revived,
+                    transport,
+                },
+            );
+        }
+    }
+
+    SESSION_OBSERVER.get().map(|_| SessionToolContext {
+        session_id: session_id.to_owned(),
+        transport,
+        computer_action: is_computer_action(tool_name, args),
+    })
 }
 
 /// Session ids that have already had their `session_end` fired. Dedupes the
@@ -76,20 +223,23 @@ pub fn register_session_end_hook(hook: impl Fn(&str) + Send + Sync + 'static) {
 /// arm. Idempotent: the FIRST fire for a given `session_id` runs every hook; any
 /// later fire for the same id is a no-op. This dedupes the EOF path against a
 /// stray legacy `session_end` (mixed-version rollout) so cursor-remove +
-/// recording-stop run exactly once. No-op when no hooks are registered.
-pub fn fire_session_end(session_id: &str) {
+/// recording-stop run exactly once. Returns `true` only for that first fire;
+/// later calls return `false`. The first fire still returns `true` when no
+/// hooks are registered.
+pub fn fire_session_end(session_id: &str) -> bool {
     // Mark-then-fan-out under a short critical section, releasing the lock
     // before running hooks (hooks may be slow / re-entrant and must not hold
     // the dedupe lock).
     {
         let mut ended = ended_sessions().lock().unwrap();
         if !ended.insert(session_id.to_owned()) {
-            return; // already ended — idempotent no-op.
+            return false; // already ended — idempotent no-op.
         }
     }
     for hook in hooks().lock().unwrap().iter() {
         hook(session_id);
     }
+    true
 }
 
 /// Whether `fire_session_end` has already run for this `session_id`. The
@@ -136,11 +286,19 @@ pub fn touch_session(session_id: &str) {
 /// (overlay remove, recording stop, config-override clear). Idempotent via
 /// `fire_session_end`'s dedupe. No-op for the anonymous fallback.
 pub fn end_session(session_id: &str) {
+    end_session_with_reason(session_id, SessionEndReason::Explicit);
+}
+
+fn end_session_with_reason(session_id: &str, reason: SessionEndReason) {
     if !is_trackable(session_id) {
         return;
     }
     activity().lock().unwrap().remove(session_id);
-    fire_session_end(session_id);
+    if fire_session_end(session_id) {
+        if let Some(observer) = SESSION_OBSERVER.get() {
+            observer.on_session_ended(session_id, reason);
+        }
+    }
 }
 
 /// End every session whose last activity is older than `ttl`, returning the ids
@@ -159,7 +317,7 @@ pub fn evict_idle(ttl: Duration) -> Vec<String> {
             .collect()
     };
     for id in &stale {
-        end_session(id);
+        end_session_with_reason(id, SessionEndReason::IdleTimeout);
     }
     stale
 }
@@ -174,6 +332,40 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    #[derive(Default)]
+    struct ProbeObserver {
+        starts: Mutex<Vec<(String, SessionStartObservation)>>,
+        ends: Mutex<Vec<(String, SessionEndReason)>>,
+    }
+
+    impl SessionObserver for ProbeObserver {
+        fn on_session_started(&self, id: &str, observation: SessionStartObservation) {
+            self.starts.lock().unwrap().push((id.to_owned(), observation));
+        }
+        fn on_tool_completed(
+            &self,
+            _: &str,
+            _: SessionTransport,
+            _: bool,
+            _: &crate::server::ToolCompletionObservation,
+        ) {
+        }
+        fn on_session_ended(&self, id: &str, reason: SessionEndReason) {
+            self.ends.lock().unwrap().push((id.to_owned(), reason));
+        }
+    }
+
+    fn probe_observer() -> Arc<ProbeObserver> {
+        static PROBE: OnceLock<Arc<ProbeObserver>> = OnceLock::new();
+        PROBE
+            .get_or_init(|| {
+                let probe = Arc::new(ProbeObserver::default());
+                let _ = set_session_observer(probe.clone());
+                probe
+            })
+            .clone()
+    }
 
     #[test]
     fn fire_session_end_is_idempotent_per_id() {
@@ -254,5 +446,137 @@ mod tests {
         // The anonymous fallback is never tracked, so there is nothing to revive.
         assert!(!revive_session("default"));
         assert!(!revive_session(""));
+    }
+
+    #[test]
+    fn tool_context_requires_a_public_session_and_uses_fixed_action_classes() {
+        let _ = probe_observer();
+        assert!(begin_tool_call(
+            "click",
+            &serde_json::json!({"_session_id": "private-fallback"}),
+            true,
+            SessionTransport::McpStdio,
+        )
+        .is_none());
+        assert!(begin_tool_call(
+            "click",
+            &serde_json::json!({"session": "default"}),
+            true,
+            SessionTransport::McpStdio,
+        )
+        .is_none());
+
+        let pointer = begin_tool_call(
+            "click",
+            &serde_json::json!({"session": "test-action-pointer-AB12"}),
+            true,
+            SessionTransport::McpStdio,
+        )
+        .unwrap();
+        assert!(pointer.computer_action);
+
+        let page_write = begin_tool_call(
+            "page",
+            &serde_json::json!({
+                "session": "test-action-page-write-CD34",
+                "action": "insert_text",
+                "text": "not retained"
+            }),
+            true,
+            SessionTransport::McpHttp,
+        )
+        .unwrap();
+        assert!(page_write.computer_action);
+        assert!(!format!("{}", page_write.computer_action).contains("not retained"));
+
+        let page_read = begin_tool_call(
+            "page",
+            &serde_json::json!({
+                "session": "test-action-page-read-EF56",
+                "action": "query_dom",
+                "selector": "private selector"
+            }),
+            true,
+            SessionTransport::McpHttp,
+        )
+        .unwrap();
+        assert!(!page_read.computer_action);
+
+        let state_read = begin_tool_call(
+            "get_window_state",
+            &serde_json::json!({"session": "test-action-read-GH78"}),
+            true,
+            SessionTransport::Daemon,
+        )
+        .unwrap();
+        assert!(!state_read.computer_action);
+    }
+
+    #[test]
+    fn observer_distinguishes_explicit_idle_revival_and_control_cleanup() {
+        let probe = probe_observer();
+        let explicit = "test-observer-explicit-IJ90";
+        begin_tool_call(
+            "start_session",
+            &serde_json::json!({"session": explicit}),
+            true,
+            SessionTransport::McpStdio,
+        )
+        .unwrap();
+        end_session(explicit);
+
+        let idle = "test-observer-idle-KL12";
+        begin_tool_call(
+            "click",
+            &serde_json::json!({"session": idle}),
+            true,
+            SessionTransport::McpHttp,
+        )
+        .unwrap();
+        end_session_with_reason(idle, SessionEndReason::IdleTimeout);
+
+        let revived = "test-observer-revived-MN34";
+        touch_session(revived);
+        end_session(revived);
+        begin_tool_call(
+            "start_session",
+            &serde_json::json!({"session": revived}),
+            true,
+            SessionTransport::Daemon,
+        )
+        .unwrap();
+
+        let control = "test-observer-control-OP56";
+        begin_tool_call(
+            "click",
+            &serde_json::json!({"session": control}),
+            true,
+            SessionTransport::McpStdio,
+        )
+        .unwrap();
+        fire_session_end(control);
+
+        let starts = probe.starts.lock().unwrap();
+        assert!(starts.iter().any(|(id, observation)| {
+            id == explicit
+                && observation.declaration == SessionDeclaration::StartSession
+                && !observation.revived
+        }));
+        assert!(starts.iter().any(|(id, observation)| {
+            id == idle
+                && observation.declaration == SessionDeclaration::ImplicitFirstAction
+                && observation.transport == SessionTransport::McpHttp
+        }));
+        assert!(starts.iter().any(|(id, observation)| id == revived && observation.revived));
+        drop(starts);
+
+        let ends = probe.ends.lock().unwrap();
+        assert!(ends.iter().any(|(id, reason)| {
+            id == explicit && *reason == SessionEndReason::Explicit
+        }));
+        assert!(ends.iter().any(|(id, reason)| {
+            id == idle && *reason == SessionEndReason::IdleTimeout
+        }));
+        assert!(!ends.iter().any(|(id, _)| id == control));
     }
 }

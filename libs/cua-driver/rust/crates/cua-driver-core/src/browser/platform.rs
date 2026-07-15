@@ -124,8 +124,9 @@ pub trait BrowserPlatform: Send + Sync {
     /// Prove whether `window_id` is the only native top-level window owned by
     /// `pid`. `Some(true)` is an exact platform-attested cardinality proof;
     /// `Some(false)` means another window exists; `None` means this window
-    /// system cannot prove cardinality. Used only for embedded Chromium
-    /// endpoints that omit Browser.getWindowForTarget.
+    /// system cannot prove cardinality. Used for embedded Chromium endpoints
+    /// that omit Browser.getWindowForTarget and standalone browsers whose
+    /// bounds were overridden by a tiling compositor.
     async fn is_only_exact_native_window(
         &self,
         pid: i64,

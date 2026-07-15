@@ -30,9 +30,7 @@ use serde_json::{json, Value};
 
 use crate::session::register_session_end_hook;
 
-use super::binding::{
-    correlate, embedded_single_page_candidate, BindingOutcome, CdpWindowCandidate,
-};
+use super::binding::{cardinality_exact_candidate, correlate, BindingOutcome, CdpWindowCandidate};
 use super::cdp_ws::{CdpConnection, CdpPool};
 use super::platform::BrowserPlatform;
 use super::prepare::ManagedBrowsers;
@@ -456,38 +454,49 @@ impl BrowserEngine {
         let conn = self.connect(&endpoint.ws_url).await?;
         let candidates = self.window_candidates(&conn).await?;
 
-        let only_native_window = if candidates.len() == 1
-            && candidates[0].cdp_window_id.is_none()
-            && candidates[0].bounds.is_none()
-        {
-            self.platform
-                .is_only_exact_native_window(pid, window_id)
-                .await?
-        } else {
-            None
-        };
-        let embedded = embedded_single_page_candidate(&candidates, only_native_window);
-        let (candidate, quality) = if let Some(candidate) = embedded {
-            (candidate, BindingQuality::Exact)
-        } else {
-            match correlate(&native, &candidates, BOUNDS_TOLERANCE_PX) {
-                BindingOutcome::Bound { candidate, quality } => (candidate, quality),
-                BindingOutcome::Ambiguous(candidate_count) => {
-                    return Err(refuse(
-                        BrowserRefusalCode::BrowserBindingAmbiguous,
-                        "multiple CDP targets match the native window and the title \
-                         tie-break cannot pick a unique one",
-                    )
-                    .with_detail(json!({ "candidate_count": candidate_count })));
+        let correlation = correlate(&native, &candidates, BOUNDS_TOLERANCE_PX);
+        let (candidate, quality) = match correlation {
+            BindingOutcome::Bound {
+                candidate,
+                quality: BindingQuality::Exact,
+            } => (candidate, BindingQuality::Exact),
+            BindingOutcome::Bound {
+                candidate,
+                quality: BindingQuality::Heuristic,
+            } => {
+                let only_native_window = self
+                    .platform
+                    .is_only_exact_native_window(pid, window_id)
+                    .await?;
+                match cardinality_exact_candidate(&native.title, &candidates, only_native_window) {
+                    Some(exact) => (exact, BindingQuality::Exact),
+                    None => (candidate, BindingQuality::Heuristic),
                 }
-                BindingOutcome::None => {
-                    return Err(refuse(
-                        BrowserRefusalCode::BrowserWrongTargetRefused,
-                        format!(
-                            "no CDP target correlates with native window {window_id} of \
-                             pid {pid} — refusing rather than guessing"
-                        ),
-                    ));
+            }
+            BindingOutcome::Ambiguous(candidate_count) => {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserBindingAmbiguous,
+                    "multiple CDP targets match the native window and the title \
+                     tie-break cannot pick a unique one",
+                )
+                .with_detail(json!({ "candidate_count": candidate_count })));
+            }
+            BindingOutcome::None => {
+                let only_native_window = self
+                    .platform
+                    .is_only_exact_native_window(pid, window_id)
+                    .await?;
+                match cardinality_exact_candidate(&native.title, &candidates, only_native_window) {
+                    Some(exact) => (exact, BindingQuality::Exact),
+                    None => {
+                        return Err(refuse(
+                            BrowserRefusalCode::BrowserWrongTargetRefused,
+                            format!(
+                                "no CDP target correlates with native window {window_id} of \
+                                 pid {pid} — refusing rather than guessing"
+                            ),
+                        ));
+                    }
                 }
             }
         };
@@ -564,7 +573,7 @@ impl BrowserEngine {
             return Err(refuse(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "this binding is heuristic (title-only) — mutations require an exact \
-                 bounds-correlated binding",
+                 bounds- or cardinality-correlated binding",
             ));
         }
 
@@ -609,8 +618,8 @@ impl BrowserEngine {
             ));
         }
 
-        // 4. CDP target still a page in the bound CDP window, with
-        //    geometry that still matches the native window.
+        // 4. CDP target still a page in the bound CDP window, with either
+        //    matching geometry or the same singleton cardinality proof.
         let conn = self.connect(&record.ws_url).await?;
         let candidates = self.window_candidates(&conn).await?;
         let live = candidates
@@ -629,14 +638,24 @@ impl BrowserEngine {
                     "the tab moved to a different browser window since binding",
                 ));
             }
-            if !live
+            let geometry_matches = live
                 .bounds
-                .is_some_and(|bounds| bounds.approx_eq(&native.bounds, BOUNDS_TOLERANCE_PX))
-            {
+                .is_some_and(|bounds| bounds.approx_eq(&native.bounds, BOUNDS_TOLERANCE_PX));
+            let correlation_still_exact = if geometry_matches {
+                true
+            } else {
+                let only_native_window = self
+                    .platform
+                    .is_only_exact_native_window(record.pid, record.window_id)
+                    .await?;
+                cardinality_exact_candidate(&native.title, &candidates, only_native_window)
+                    .is_some_and(|candidate| candidate.cdp_window_id == Some(bound_window_id))
+            };
+            if !correlation_still_exact {
                 return Err(refuse(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
-                    "CDP window geometry no longer matches the native window — refusing to \
-                     mutate a target that cannot be re-proven",
+                    "CDP window no longer has an exact geometry or singleton-cardinality \
+                     correlation with the native window — refusing to mutate it",
                 ));
             }
         } else if candidates.len() != 1

@@ -185,8 +185,8 @@ impl ProcessFingerprint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BindingQuality {
-    /// Unique bounds correlation (optionally title-tie-broken). The only
-    /// quality that permits mutation.
+    /// Unique bounds correlation or an independently attested one-native /
+    /// one-CDP-window cardinality proof. The only quality that permits mutation.
     Exact,
     /// Title-only correlation. Read-only: mutations are refused.
     Heuristic,

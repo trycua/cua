@@ -58,6 +58,26 @@ pub fn embedded_single_page_candidate(
     .then(|| candidate.clone())
 }
 
+/// Select the only CDP window when the platform independently attests that the
+/// endpoint owner has exactly one native window. This remains exact when a
+/// tiling compositor overrides Chromium's requested bounds: one owned native
+/// window and one owned CDP window form a proven one-to-one mapping.
+pub fn cardinality_exact_candidate(
+    native_title: &str,
+    candidates: &[CdpWindowCandidate],
+    is_only_exact_native_window: Option<bool>,
+) -> Option<CdpWindowCandidate> {
+    if is_only_exact_native_window != Some(true) {
+        return None;
+    }
+    if let Some(candidate) = embedded_single_page_candidate(candidates, Some(true)) {
+        return Some(candidate);
+    }
+    let representatives = window_representatives(native_title, candidates);
+    (representatives.len() == 1 && representatives[0].cdp_window_id.is_some())
+        .then(|| representatives[0].clone())
+}
+
 /// Whether the native window title plausibly displays this tab's title.
 /// Browsers render "<tab title> - <product>", so containment (not
 /// equality) is the tie-break; empty tab titles never match.
@@ -136,6 +156,7 @@ pub fn correlate(
                     candidate: title_hits[0].clone(),
                     quality: BindingQuality::Heuristic,
                 },
+                count if count > 1 => BindingOutcome::Ambiguous(count),
                 _ => BindingOutcome::None,
             }
         }
@@ -322,6 +343,39 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn singleton_native_and_cdp_windows_are_exact_by_cardinality() {
+        let candidates = [cand("t1", "Docs", B), cand("t2", "Mail", B)];
+        let selected = cardinality_exact_candidate("Docs - Chrome", &candidates, Some(true))
+            .expect("one native window and one CDP window must correlate");
+        assert_eq!(selected.cdp_window_id, Some(1));
+        assert_eq!(selected.cdp_target_id, "t1");
+        assert!(cardinality_exact_candidate("Docs - Chrome", &candidates, Some(false)).is_none());
+    }
+
+    #[test]
+    fn cardinality_never_picks_between_multiple_cdp_windows() {
+        let mut second = cand("t2", "Docs", B);
+        second.cdp_window_id = Some(2);
+        assert!(cardinality_exact_candidate(
+            "Docs - Chrome",
+            &[cand("t1", "Docs", B), second],
+            Some(true)
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn duplicate_title_only_matches_are_ambiguous() {
+        let n = native("Docs - Chrome", B);
+        let mut second = cand("t2", "Docs", OTHER);
+        second.cdp_window_id = Some(2);
+        assert_eq!(
+            correlate(&n, &[cand("t1", "Docs", OTHER), second], 4.0),
+            BindingOutcome::Ambiguous(2)
+        );
     }
 
     #[test]

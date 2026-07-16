@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run the canonical Rust desktop matrix in a logged-in macOS user session.
 # macOS harness tests use the installed, TCC-authorized cua-driver daemon path.
+# The install must embed CUA_DRIVER_SOURCE_SHA; the Lume wrapper owns that step.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,6 +17,8 @@ Usage: run-rust-e2e.sh [--no-build]
 
 Run from a logged-in macOS desktop after install-local and TCC authorization.
 The testkit proxies MCP calls through the installed CuaDriver daemon.
+The installed daemon must embed the same CUA_DRIVER_SOURCE_SHA as this source.
+Maintainers should use libs/cua-driver/tests/runners/macos-lume/run-all.sh.
 The contributor-facing command always runs the complete matrix.
 EOF
 }
@@ -34,18 +37,35 @@ case "$SUITE" in
   *) echo "unsupported internal lane: $SUITE" >&2; exit 2 ;;
 esac
 
-if ! git -C "${REPO_ROOT}" diff --quiet || ! git -C "${REPO_ROOT}" diff --cached --quiet; then
-  echo "macOS canonical E2E requires a clean tracked working tree" >&2
+SOURCE_MARKER="${CUA_E2E_SOURCE_MARKER:-${REPO_ROOT}/.cua-e2e-source-sha}"
+if git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if [[ -n "$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=normal)" ]]; then
+    echo "macOS canonical E2E requires a clean working tree" >&2
+    exit 2
+  fi
+  RESOLVED_SOURCE_SHA="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+elif [[ -f "${SOURCE_MARKER}" ]]; then
+  RESOLVED_SOURCE_SHA="$(tr -d '[:space:]' < "${SOURCE_MARKER}")"
+  export CUA_E2E_SOURCE_MARKER="${SOURCE_MARKER}"
+else
+  echo "macOS canonical E2E requires git metadata or ${SOURCE_MARKER}" >&2
   exit 2
 fi
 if [[ -z "${CUA_E2E_SOURCE_SHA:-}" ]]; then
-  CUA_E2E_SOURCE_SHA="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+  CUA_E2E_SOURCE_SHA="${RESOLVED_SOURCE_SHA}"
 fi
 if [[ ! "${CUA_E2E_SOURCE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
   echo "CUA_E2E_SOURCE_SHA must be a full 40-character commit SHA" >&2
   exit 2
 fi
+EXPECTED_SOURCE_SHA_LOWER="$(printf '%s' "${CUA_E2E_SOURCE_SHA}" | tr '[:upper:]' '[:lower:]')"
+RESOLVED_SOURCE_SHA_LOWER="$(printf '%s' "${RESOLVED_SOURCE_SHA}" | tr '[:upper:]' '[:lower:]')"
+if [[ "${EXPECTED_SOURCE_SHA_LOWER}" != "${RESOLVED_SOURCE_SHA_LOWER}" ]]; then
+  echo "macOS E2E source ${RESOLVED_SOURCE_SHA} does not match requested SHA ${CUA_E2E_SOURCE_SHA}" >&2
+  exit 2
+fi
 export CUA_E2E_SOURCE_SHA
+export CUA_DRIVER_SOURCE_SHA="${CUA_E2E_SOURCE_SHA}"
 
 ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos"
 RECORDING_ROOT="${ARTIFACT_DIR}/recordings"

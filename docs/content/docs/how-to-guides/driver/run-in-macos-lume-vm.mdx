@@ -1,0 +1,256 @@
+---
+title: Run Cua Driver in a macOS Lume VM
+description: Pull the published Tahoe image, install Cua Driver, grant macOS consent, and connect an agent to the VM desktop.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This guide shows you how to run Cua Driver in a local macOS Tahoe VM on an
+Apple Silicon host. It uses the published `macos-tahoe-cua:26.5.2` Lume image
+so the operating system, Command Line Tools, login session, and SSH setup match
+the maintainer test environment.
+
+<Callout type="info">
+  The published image has SIP disabled, but SIP does not grant Accessibility, Screen Recording,
+  Automation, or direct-capture consent. Approve those requests through macOS in your private VM.
+  Cua Driver also works with SIP enabled; this guide uses the SIP-disabled image to match the
+  maintainer test base.
+</Callout>
+
+## Before you start
+
+You need:
+
+- an Apple Silicon Mac with [Lume installed](/how-to-guides/lume/install-lume)
+  and `jq` available on the host;
+- enough host space for a 150 GB sparse VM disk; and
+- access to the VM display for the first-run macOS prompts.
+
+Use the versioned image tag for repeatable work. Reserve `latest` for
+experimentation.
+
+## Pull and boot the VM
+
+On the host, run:
+
+```bash
+IMAGE=macos-tahoe-cua:26.5.2
+VM=cua-driver-dev-26.5.2
+
+lume pull "$IMAGE" "$VM"
+lume run "$VM"
+```
+
+Keep `lume run` open. The VM display should log in as `lume`; the initial
+username and password are both `lume`.
+
+Open Terminal in the VM and inspect the base:
+
+```bash
+sw_vers
+csrutil status
+xcode-select -p
+xcrun swiftc --version
+```
+
+The published `26.5.2` image reports:
+
+- macOS 26.5.2, build 25F84;
+- `System Integrity Protection status: disabled.`; and
+- `/Library/Developer/CommandLineTools` as the selected developer directory.
+
+Stop if those values differ. Pull the versioned image again instead of
+repairing an unknown base.
+
+## Install Cua Driver in the VM
+
+Run the release installer from Terminal in the VM display:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
+```
+
+Verify the installed app and CLI:
+
+```bash
+/Users/lume/.local/bin/cua-driver --version
+/Users/lume/.local/bin/cua-driver doctor
+```
+
+The installer puts the app at `/Applications/CuaDriver.app` and the CLI at
+`/Users/lume/.local/bin/cua-driver`.
+
+## Grant every macOS consent path
+
+Request the app-owned Accessibility and Screen Recording grants:
+
+```bash
+/Users/lume/.local/bin/cua-driver permissions grant
+```
+
+Approve both requests for CuaDriver. Then trigger app enumeration:
+
+```bash
+/Users/lume/.local/bin/cua-driver list_apps '{}'
+```
+
+When macOS asks whether CuaDriver may control System Events, choose **Allow**.
+
+Tahoe also asks separately whether CuaDriver may capture the screen and audio
+without the system picker. Trigger that request with an actual desktop capture:
+
+```bash
+DRIVER=/Users/lume/.local/bin/cua-driver
+
+"$DRIVER" call set_config '{"capture_scope":"desktop"}'
+"$DRIVER" call get_desktop_state '{}' \
+  > /tmp/cua-driver-desktop-state.json
+"$DRIVER" call set_config '{"capture_scope":"window"}'
+```
+
+Choose **Allow** on the direct-capture prompt. Check that the command returned
+a PNG:
+
+```bash
+/usr/bin/python3 - <<'PY'
+import json
+
+with open('/tmp/cua-driver-desktop-state.json') as source:
+    state = json.load(source)
+
+assert state['screenshot_mime_type'] == 'image/png'
+assert state['screenshot_width'] > 0
+assert state['screenshot_height'] > 0
+assert state['screenshot_png_b64']
+PY
+```
+
+Rerun `list_apps` and the capture commands. They must finish without another
+prompt.
+
+## Verify the driver-owned grants
+
+Query the running daemon rather than Terminal's permission state:
+
+```bash
+/Users/lume/.local/bin/cua-driver permissions status --json \
+  > /tmp/cua-driver-permissions.json
+
+/usr/bin/python3 - <<'PY'
+import json
+
+with open('/tmp/cua-driver-permissions.json') as source:
+    status = json.load(source)
+
+assert status['accessibility'] is True
+assert status['screen_recording'] is True
+assert status['screen_recording_capturable'] is True
+assert status['source']['attribution'] == 'driver-daemon'
+PY
+```
+
+Exercise both the accessibility and capture paths:
+
+```bash
+/Users/lume/.local/bin/cua-driver call get_accessibility_tree '{}'
+/Users/lume/.local/bin/cua-driver call set_config '{"capture_scope":"desktop"}'
+/Users/lume/.local/bin/cua-driver call get_desktop_state '{}' \
+  > /tmp/cua-driver-desktop-state-second.json
+/Users/lume/.local/bin/cua-driver call set_config '{"capture_scope":"window"}'
+```
+
+The commands must succeed without opening System Settings or another consent
+dialog.
+
+## Connect an agent
+
+### Run the agent inside the VM
+
+Run the agent inside the VM when it needs to operate the VM desktop. Generate
+the current registration command for your client:
+
+```bash
+/Users/lume/.local/bin/cua-driver mcp-config --client codex
+/Users/lume/.local/bin/cua-driver mcp-config --client claude
+```
+
+Follow the printed command, then restart the client. See [Connect your agent to
+Cua Driver](/how-to-guides/driver/connect-your-agent) for other supported
+clients.
+
+### Run the agent on the host
+
+The host can expose the guest's MCP process over SSH. First, copy only your host
+public key into the guest:
+
+```bash
+VM_IP="$(lume get "$VM" --format json | jq -r '.[0].ipAddress')"
+cat ~/.ssh/id_ed25519.pub | \
+  ssh "lume@${VM_IP}" \
+    'umask 077; mkdir -p ~/.ssh; cat >> ~/.ssh/authorized_keys'
+```
+
+Enter the initial `lume` password when asked. Verify that noninteractive SSH
+reaches the app-owned daemon:
+
+```bash
+ssh -T -o BatchMode=yes "lume@${VM_IP}" \
+  /Users/lume/.local/bin/cua-driver permissions status --json
+```
+
+Register that SSH command as a stdio MCP server in Codex:
+
+```bash
+codex mcp add cua-driver-vm -- \
+  ssh -T -o BatchMode=yes "lume@${VM_IP}" \
+  /Users/lume/.local/bin/cua-driver mcp
+```
+
+The remote CLI proxies to the CuaDriver daemon in the logged-in guest session,
+so the daemon retains the app's macOS permission identity.
+
+## Save a reusable private VM
+
+Close applications, stop the VM, and clone it while stopped:
+
+```bash
+lume stop "$VM"
+lume clone "$VM" "${VM}-backup"
+lume ls
+```
+
+Keep private VMs local. Do not add registry tokens, source-control credentials,
+maintainer SSH private keys, or personal files before cloning.
+
+## Troubleshooting
+
+### A permission is `unknown`
+
+Start CuaDriver through LaunchServices and query it again:
+
+```bash
+open -n -g -a CuaDriver --args serve
+cua-driver permissions status --json
+```
+
+`unknown` means no app-owned daemon answered the status request.
+
+### A clone asks for permissions again
+
+Confirm that `/Applications/CuaDriver.app` has the release signature. A source
+build with an ad-hoc or changing signature gets a different TCC identity. Use
+the release installer for ordinary VM use. Maintainers testing source builds
+should follow [Run Cua Driver macOS tests in a Lume VM](/how-to-guides/driver/run-tests-in-macos-lume-vm),
+which creates a stable local signing identity.
+
+### Commands work over SSH but GUI behavior differs
+
+Use Terminal in the VM display for initial consent and GUI tests. SSH is useful
+for source sync and artifact retrieval, but it is not the foreground Aqua
+session that owns the visible desktop.
+
+## Related guides
+
+- [Manage local Lume VMs](/how-to-guides/lume/manage-vms)
+- [macOS permissions reference](/reference/cua-driver/macos-permissions)
+- [Run Cua Driver macOS tests in a Lume VM](/how-to-guides/driver/run-tests-in-macos-lume-vm)

@@ -115,7 +115,7 @@ jobs:
             BODY+="\n\n### cua-driver desktop release validation\n\n"
             BODY+="Before adding the release label, a maintainer records green runs on the exact release SHA:\n"
             BODY+="- [ ] [Windows canonical matrix](https://github.com/${REPO}/actions/workflows/e2e-rust-windows.yml)\n"
-            BODY+="- [ ] macOS logged-in host: \`scripts/ci/macos/run-rust-e2e.sh\`, with the typed summary attached to the PR\n"
+            BODY+="- [ ] macOS Lume maintainer gate: \`libs/cua-driver/tests/runners/macos-lume/run-all.sh\`, with the typed summary attached to the PR\n"
             BODY+="- [ ] [Linux X11 canonical matrix](https://github.com/${REPO}/actions/workflows/e2e-rust-linux.yml)\n"
             BODY+="- [ ] [Linux Sway canonical matrix](https://github.com/${REPO}/actions/workflows/e2e-rust-linux-wayland.yml) with environment \`sway\`\n"
             BODY+="- [ ] Result links and remaining experimental environment gaps are recorded in the PR\n"

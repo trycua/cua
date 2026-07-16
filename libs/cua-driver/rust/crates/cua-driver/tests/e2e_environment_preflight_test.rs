@@ -151,7 +151,8 @@ fn preflight_state_ready(response: &cua_driver_testkit::ToolResponse, ax_marker:
 }
 
 fn run_preflight() {
-    if let Ok(expected_sha) = std::env::var("CUA_E2E_SOURCE_SHA") {
+    let expected_sha = std::env::var("CUA_E2E_SOURCE_SHA").ok();
+    if let Some(expected_sha) = expected_sha.as_deref() {
         assert!(
             expected_sha.len() == 40 && expected_sha.chars().all(|ch| ch.is_ascii_hexdigit()),
             "CUA_E2E_SOURCE_SHA must be a full commit SHA"
@@ -218,6 +219,13 @@ fn run_preflight() {
         Some(env!("CARGO_PKG_VERSION")),
         "connected driver version does not match the source build"
     );
+    if let Some(expected_sha) = expected_sha.as_deref() {
+        assert_eq!(
+            config.structured()["source_sha"].as_str(),
+            Some(expected_sha),
+            "connected macOS daemon was not built from the requested source SHA"
+        );
+    }
     let recording_dir = driver
         .recording_dir()
         .expect("preflight evidence directory was not prepared")

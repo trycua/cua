@@ -16,6 +16,17 @@ cua-driver permissions grant    # launch CuaDriver via LaunchServices so the pro
 
 **Flags:**
 
-| Flag | Description |
-| ---- | ----------- |
+| Flag     | Description                     |
+| -------- | ------------------------------- |
 | `--json` | Machine-readable status output. |
+
+The JSON status also includes `screen_recording_capturable`, a live capture
+probe attributed to the CuaDriver daemon. macOS Tahoe can present separate
+consent dialogs when CuaDriver controls System Events or requests direct screen
+and audio capture without the system picker. The Automation grant is outside
+the `permissions status` payload.
+
+For the complete prompt sequence in a Lume guest, see [Run Cua Driver in a
+macOS Lume VM](/how-to-guides/driver/run-in-macos-lume-vm). Source-built test
+seeds also need a stable certificate identity; follow [Run Cua Driver macOS
+tests in a Lume VM](/how-to-guides/driver/run-tests-in-macos-lume-vm).

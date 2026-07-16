@@ -12,12 +12,14 @@ takes no suite selector:
 ```text
 Windows: scripts/ci/windows/run-rust-e2e.ps1 -RequireGui
 Linux:   scripts/ci/linux/run-rust-e2e.sh
-macOS:   scripts/ci/macos/run-rust-e2e.sh
+macOS:   libs/cua-driver/tests/runners/macos-lume/run-all.sh
 ```
 
-Workflows set a private lane value to fan that matrix into shared, native, and
-capture jobs so one failure does not hide another lane. These are execution
-partitions, not public suite choices or separate behavioral sources of truth.
+Automated workflows may set a private lane value to fan that matrix into
+shared, native, and capture jobs so one failure does not hide another lane.
+The maintainer-run macOS Lume gate runs the complete matrix by default. These
+are execution partitions, not public suite choices or separate behavioral
+sources of truth.
 
 ## Execution Order
 
@@ -26,12 +28,13 @@ Each runner follows the same sequence:
 1. Resolve one immutable source SHA and check out that SHA in every lane.
 2. Build the Rust driver and required repo-local fixtures.
 3. Run `e2e_environment_preflight_test` once; it verifies `git rev-parse HEAD`
-   against the workflow's resolved SHA.
+   or the VM source marker against the resolved SHA. On macOS it also verifies
+   that the installed, TCC-authorized daemon embeds that exact SHA.
 4. Abort before behavioral cells if the desktop, permissions, fixture, capture,
    or video lifecycle is unavailable.
 5. Run the selected Rust integration targets.
 6. Validate declarations, results, and evidence with `cua-e2e-report`.
-7. Upload the report, logs, and recordings.
+7. Upload or retrieve the report, logs, and recordings.
 
 The preflight prevents a single TCC or desktop-session problem from appearing
 as the same failure on every behavioral cell.

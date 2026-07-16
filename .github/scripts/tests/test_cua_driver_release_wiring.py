@@ -57,7 +57,9 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('["libs/cua-driver/rust/"]="cua-driver-rs"', workflow)
         self.assertIn("cua-driver desktop release validation", workflow)
         self.assertIn("e2e-rust-windows.yml", workflow)
-        self.assertIn("scripts/ci/macos/run-rust-e2e.sh", workflow)
+        self.assertIn(
+            "libs/cua-driver/tests/runners/macos-lume/run-all.sh", workflow
+        )
         self.assertIn("e2e-rust-linux.yml", workflow)
         self.assertIn("e2e-rust-linux-wayland.yml", workflow)
 

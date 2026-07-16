@@ -1,0 +1,110 @@
+---
+title: Record and render a Cua Driver trajectory
+description: Capture an agent's Cua Driver actions and turn the trajectory into a zoom-on-click MP4.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+Record an agent-driven task when you need both the action evidence and a short product demo. Cua Driver saves each action with before-and-after state, screenshots, and arguments. With video enabled, it also captures the display so you can render the trajectory with zoom effects around each action.
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/df6076f5-b95f-4f34-a5ca-8cfd37140cbc"
+  poster="https://github.com/user-attachments/assets/60330293-9684-4541-b311-15ab833b3451"
+  title="Turn an agent trajectory into a zoom-on-click demo"
+  sourceUrl="https://x.com/trycua/status/2047383207612645426"
+>
+  The agent clicks cells in a numbered grid, then Cua Driver renders the recorded actions as a
+  focused product demo.
+</VideoDemo>
+
+<Callout type="info">
+  This guide records an agent's Cua Driver actions. To record a task you perform by hand over VNC
+  and turn it into a reusable skill, see [Record a demonstration as a
+  skill](/how-to-guides/skills/record-a-demonstration).
+</Callout>
+
+## Before you start
+
+- [Install Cua Driver](/how-to-guides/driver/install) and [connect your agent](/how-to-guides/driver/connect-your-agent).
+- Install `ffmpeg`. Rendering requires it on every platform. Video capture also requires it on Windows and Linux. macOS 15 and later use ScreenCaptureKit for capture.
+
+```bash tab="macOS"
+brew install ffmpeg
+```
+
+```powershell tab="Windows"
+winget install Gyan.FFmpeg
+```
+
+```bash tab="Linux"
+sudo apt install ffmpeg
+```
+
+<Steps>
+  <Step>
+    ### Start recording with video enabled
+
+    Ask your MCP client to call `start_recording` before the agent begins the task:
+
+    ```json
+    {
+      "output_dir": "~/cua-trajectories/calendar-demo",
+      "record_video": true
+    }
+    ```
+
+    The recording directory will contain one `turn-NNNNN` folder for each action and a display capture named `recording.mp4`.
+
+    <Callout type="warn">
+      `cua-driver recording start` records per-action evidence but does not enable display video. Use the MCP tool with `record_video: true` when you plan to render an MP4.
+    </Callout>
+
+  </Step>
+
+  <Step>
+    ### Let the agent complete the task
+
+    Continue with the usual Cua Driver tools. Actions such as `click`, `type_text`, `press_key`, and `scroll` are added to the trajectory automatically.
+
+    Keep the task focused. A short trajectory produces a clearer demo and makes the evidence easier to inspect.
+
+  </Step>
+
+  <Step>
+    ### Stop and finalize the recording
+
+    Ask the MCP client to call `stop_recording` with no arguments:
+
+    ```json
+    {}
+    ```
+
+    Wait for this call to finish before opening or rendering `recording.mp4`. It finalizes the video file and returns its path.
+
+  </Step>
+
+  <Step>
+    ### Render the demo
+
+    Render the trajectory from the command line:
+
+    ```bash
+    cua-driver recording render \
+      ~/cua-trajectories/calendar-demo \
+      ~/cua-trajectories/calendar-demo.mp4
+    ```
+
+    The renderer uses the recorded action coordinates to add zoom effects around each interaction. Use `--scale` to adjust their strength, or `--no-zoom` for a plain render:
+
+    ```bash
+    cua-driver recording render \
+      ~/cua-trajectories/calendar-demo \
+      ~/cua-trajectories/calendar-demo.mp4 \
+      --scale 2.5
+    ```
+
+  </Step>
+</Steps>
+
+For the complete recording schemas and render options, see [MCP recording tools](/reference/cua-driver/mcp-tools#recording-tools) and the [`cua-driver recording` CLI reference](/reference/cua-driver/cli-reference#trajectory-recording).

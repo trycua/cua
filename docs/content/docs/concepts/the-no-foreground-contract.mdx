@@ -41,6 +41,28 @@ The remaining Linux gap is raw keyboard injection into native Wayland apps. Typi
 
 Cua Driver does not move the user's real pointer to show agent activity. It renders a synthetic cursor overlay for supervision. The user can see where the agent is acting while their own cursor and active app stay untouched.
 
+The Linux recordings below make that separation visible. Synthetic pointers act on background windows while the foreground window remains untouched.
+
+<div className="not-prose my-8 grid gap-5 md:grid-cols-2">
+  <VideoDemo
+    src="https://github.com/user-attachments/assets/13ab4c27-246b-4370-ab48-0082e5449830"
+    poster="https://github.com/user-attachments/assets/d91bb946-700a-4a48-8e05-c08f5c103ea4"
+    title="Four pointers across two XFCE windows"
+    sourceUrl="https://x.com/trycua/status/2067639340738761015"
+  >
+    Four synthetic pointers draw in two paint windows while a small text window stays in front.
+  </VideoDemo>
+
+  <VideoDemo
+    src="https://github.com/user-attachments/assets/6ecc0826-4ecf-41d9-a8ae-6705a6af5e26"
+    poster="https://github.com/user-attachments/assets/4d84b685-3cba-488a-87e0-3a5b048ea4a8"
+    title="Sixteen background windows on Wayland"
+    sourceUrl="https://x.com/trycua/status/2067639344698179789"
+  >
+    Sixteen pointers draw in separate windows around a foreground window that Cua Driver does not operate.
+  </VideoDemo>
+</div>
+
 ## How fallback works
 
 The safest ladder is:

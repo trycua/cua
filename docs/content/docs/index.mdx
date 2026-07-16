@@ -8,19 +8,59 @@ Cua is an open-source MIT-licensed platform ([github.com/trycua/cua](https://git
 import { Card, Cards } from 'fumadocs-ui/components/card';
 
 <Cards>
-  <Card
-    title="Drive a real app — Cua Driver"
-    href="/tutorials/drive-your-first-app"
-  >
-    Run a background driver on macOS, Windows, or Linux so an agent can operate native GUI apps you already have without bringing them to the foreground or moving the real mouse. It speaks MCP over stdio and is also a plain CLI.
+  <Card title="Drive a real app — Cua Driver" href="/tutorials/drive-your-first-app">
+    Run a background driver on macOS, Windows, or Linux so an agent can operate native GUI apps you
+    already have without bringing them to the foreground or moving the real mouse. It speaks MCP
+    over stdio and is also a plain CLI.
   </Card>
-  <Card
-    title="Spin up a cloud desktop — Cua Sandbox"
-    href="/tutorials/your-first-cloud-sandbox"
-  >
-    Start disposable full Linux, Windows, or macOS VMs with a GUI for an agent to drive when you want a fresh, isolated computer in the cloud instead of your own machine.
+  <Card title="Spin up a cloud desktop — Cua Sandbox" href="/tutorials/your-first-cloud-sandbox">
+    Start disposable full Linux, Windows, or macOS VMs with a GUI for an agent to drive when you
+    want a fresh, isolated computer in the cloud instead of your own machine.
   </Card>
 </Cards>
+
+## Cua Driver in action
+
+These recordings show agents operating desktop apps while the user's active window stays in place. Each demo was recorded by the Cua team on the named platform.
+
+<div className="not-prose my-8 grid gap-5 md:grid-cols-2">
+  <VideoDemo
+    src="https://github.com/user-attachments/assets/e4208b4a-704a-4949-8660-4e25f3ed4db4"
+    poster="https://github.com/user-attachments/assets/92c71c18-76f6-4d1c-984d-6bc85c9fe0ac"
+    title="Play media in a background Chrome window on macOS"
+    sourceUrl="https://x.com/trycua/status/2047383209244287350"
+  >
+    Claude Code starts playback in Chrome while its terminal remains in front.
+  </VideoDemo>
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/0a094ad7-9c06-4b6f-9f44-f9ca7582ff73"
+  poster="https://github.com/user-attachments/assets/4b5f7c59-5973-4c34-966e-8aed24e3bde0"
+  title="Build and check a WPF app on Windows"
+  sourceUrl="https://x.com/trycua/status/2059688966085853245"
+>
+  Claude Code builds a WPF CRM, runs it, patches the code, and checks the app again.
+</VideoDemo>
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/9217a8c0-8e5f-449d-939a-d8b245d27142"
+  poster="https://github.com/user-attachments/assets/5ff7a103-dc48-4781-ab37-c979a0c54d1a"
+  title="Check a calculator app on Linux"
+  sourceUrl="https://x.com/trycua/status/2067639342944985586"
+>
+  Claude Code builds a calculator, drives it to 42, and reads the result while the terminal stays in
+  front.
+</VideoDemo>
+
+  <VideoDemo
+    src="https://github.com/user-attachments/assets/e10c0534-f0f7-45f6-91f7-3b28fd751e7c"
+    poster="https://github.com/user-attachments/assets/52cfc4a4-1e5a-4cb7-873b-734ebb857958"
+    title="Fill a Linux spreadsheet over SSH"
+    sourceUrl="https://x.com/trycua/status/2067639346719826213"
+  >
+    An agent enters a monthly budget in Gnumeric on a remote machine with no attached display or GPU.
+  </VideoDemo>
+</div>
 
 ## How these docs are organised
 

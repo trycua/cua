@@ -89,33 +89,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $artifact = Join-Path $PWD "artifacts\cua-driver\standalone-browser"
-          $recordings = Join-Path $artifact "recordings"
-          New-Item -ItemType Directory -Force $recordings | Out-Null
-          $env:CUA_TEST_DRIVER_BIN = Join-Path $PWD "libs\cua-driver\rust\target\release\cua-driver.exe"
-          $env:CUA_E2E_DECLARATIONS_FILE = Join-Path $artifact "cases.jsonl"
-          $env:CUA_E2E_ENVIRONMENT_FILE = Join-Path $artifact "environment.jsonl"
-          $env:CUA_E2E_RESULTS_FILE = Join-Path $artifact "results.jsonl"
-          $env:CUA_E2E_RECORDINGS_ROOT = $recordings
-          foreach ($path in @($env:CUA_E2E_DECLARATIONS_FILE, $env:CUA_E2E_ENVIRONMENT_FILE, $env:CUA_E2E_RESULTS_FILE)) {
-            New-Item -ItemType File -Force $path | Out-Null
-            Clear-Content $path
-          }
-          Push-Location libs\cua-driver\rust
-          try {
-            cargo test --release -p cua-driver --test standalone_browser_behavior_test -- --ignored --nocapture --test-threads=1
-            if ($LASTEXITCODE -ne 0) { throw "standalone browser matrix failed" }
-            cargo run --release -p cua-driver-testkit --bin cua-e2e-report -- `
-              --declarations $env:CUA_E2E_DECLARATIONS_FILE `
-              --environment $env:CUA_E2E_ENVIRONMENT_FILE `
-              --results $env:CUA_E2E_RESULTS_FILE `
-              --artifact-root $artifact `
-              --require-video `
-              --output (Join-Path $artifact "summary.md")
-            if ($LASTEXITCODE -ne 0) { throw "standalone browser report failed" }
-          } finally {
-            Pop-Location
-          }
+          $env:CUA_E2E_ARTIFACT_DIR = Join-Path $PWD "artifacts\cua-driver\standalone-browser"
+          scripts\ci\windows\run-rust-standalone-browser-e2e.ps1 -NoBuild
       - name: Run standalone browsers on Linux X11
         if: runner.os == 'Linux'
         shell: bash

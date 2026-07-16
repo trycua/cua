@@ -47,8 +47,7 @@ impl ScreenshotCapture {
     }
 }
 
-type ScreenshotFnBox =
-    Box<dyn Fn(Option<u64>, Option<i64>) -> ScreenshotCapture + Send + Sync>;
+type ScreenshotFnBox = Box<dyn Fn(Option<u64>, Option<i64>) -> ScreenshotCapture + Send + Sync>;
 static SCREENSHOT_FN: OnceLock<ScreenshotFnBox> = OnceLock::new();
 
 /// Register the platform-specific screenshot callback. Call once at startup
@@ -147,6 +146,7 @@ pub struct PendingTurn {
     window_id: Option<u64>,
     pid: Option<i64>,
     click_point: Option<(f64, f64)>,
+    capture_visual_state: bool,
     before: TurnCapture,
 }
 
@@ -477,6 +477,29 @@ impl RecordingSession {
     /// Reserve a turn and capture its target immediately before tool dispatch.
     /// No-op when recording is disabled.
     pub fn begin_turn(&self, tool_name: &str, args: &Value, start_ms: u64) -> Option<PendingTurn> {
+        self.begin_turn_with_capture(tool_name, args, start_ms, true)
+    }
+
+    /// Reserve a turn while deliberately suppressing visual and accessibility
+    /// capture. Used for consent-bearing operations where the target may be an
+    /// authenticated browser profile: action metadata and the structured result
+    /// remain auditable without persisting page or dialog contents.
+    pub fn begin_private_turn(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        start_ms: u64,
+    ) -> Option<PendingTurn> {
+        self.begin_turn_with_capture(tool_name, args, start_ms, false)
+    }
+
+    fn begin_turn_with_capture(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        start_ms: u64,
+        capture_visual_state: bool,
+    ) -> Option<PendingTurn> {
         let (turn_dir, session_start_ms, generation) = {
             let mut inner = self.inner.lock().unwrap();
             if !inner.enabled {
@@ -514,7 +537,15 @@ impl RecordingSession {
             }
         }
         let click_point = resolve_click_point(tool_name, &args, window_id, pid, element_index);
-        let before = capture_turn(window_id, pid);
+        let before = if capture_visual_state {
+            capture_turn(window_id, pid)
+        } else {
+            TurnCapture {
+                state: None,
+                screenshot: None,
+                screenshot_classification: Some("privacy_suppressed"),
+            }
+        };
 
         let mut inner = self.inner.lock().unwrap();
         if !inner.enabled || inner.generation != generation {
@@ -535,6 +566,7 @@ impl RecordingSession {
             window_id,
             pid,
             click_point,
+            capture_visual_state,
             before,
         })
     }
@@ -624,11 +656,7 @@ fn write_phase_artifacts(
     Ok(())
 }
 
-fn capture_status(
-    captured: bool,
-    expected: bool,
-    classification: Option<&'static str>,
-) -> Value {
+fn capture_status(captured: bool, expected: bool, classification: Option<&'static str>) -> Value {
     if captured {
         serde_json::json!({ "status": "captured" })
     } else if expected {
@@ -704,15 +732,21 @@ fn write_turn(pending: PendingTurn, result_text: &str) -> anyhow::Result<()> {
         window_id,
         pid,
         click_point,
+        capture_visual_state,
         before,
     } = pending;
     std::fs::create_dir_all(&turn_dir)?;
     let now = now_ms();
-    let after = capture_turn(window_id, pid);
-    let click_expected = matches!(
-        tool_name.as_str(),
-        "click" | "double_click" | "right_click"
-    );
+    let after = if capture_visual_state {
+        capture_turn(window_id, pid)
+    } else {
+        TurnCapture {
+            state: None,
+            screenshot: None,
+            screenshot_classification: Some("privacy_suppressed"),
+        }
+    };
+    let click_expected = matches!(tool_name.as_str(), "click" | "double_click" | "right_click");
 
     let mut payload = serde_json::json!({
         "tool": tool_name,
@@ -754,7 +788,7 @@ fn write_turn(pending: PendingTurn, result_text: &str) -> anyhow::Result<()> {
         &turn_dir,
         &before,
         &after,
-        pid.is_some(),
+        pid.is_some() && capture_visual_state,
         click_expected,
         click_captured,
     )?;
@@ -983,6 +1017,62 @@ mod tests {
         }
         std::fs::remove_dir(&turn).expect("remove partial turn");
         std::fs::remove_dir(&output_dir).expect("remove recording directory");
+    }
+
+    #[test]
+    fn private_turn_records_metadata_without_visual_or_ax_artifacts() {
+        let output_dir = std::env::temp_dir().join(format!(
+            "cua-recording-private-turn-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let session = RecordingSession::new();
+        {
+            let mut inner = session.inner.lock().expect("recording lock");
+            inner.enabled = true;
+            inner.output_dir = Some(output_dir.clone());
+            inner.session_start_ms = now_ms();
+        }
+        let pending = session
+            .begin_private_turn(
+                "browser_prepare",
+                &serde_json::json!({"pid": 1, "window_id": 2}),
+                now_ms(),
+            )
+            .expect("reserve private consent turn");
+        session.finish_turn(pending, "attached");
+
+        let turn = output_dir.join("turn-00001");
+        assert!(turn.join("action.json").exists());
+        assert!(turn.join("evidence.json").exists());
+        for private_artifact in [
+            "before.png",
+            "after.png",
+            "screenshot.png",
+            "before_state.json",
+            "after_state.json",
+            "app_state.json",
+        ] {
+            assert!(!turn.join(private_artifact).exists(), "{private_artifact}");
+        }
+        let evidence: Value = serde_json::from_slice(
+            &std::fs::read(turn.join("evidence.json")).expect("read private evidence"),
+        )
+        .expect("parse private evidence");
+        assert_eq!(
+            evidence["before"]["screenshot"]["classification"],
+            "privacy_suppressed"
+        );
+        assert_eq!(
+            evidence["after"]["screenshot"]["classification"],
+            "privacy_suppressed"
+        );
+
+        for file in ["action.json", "evidence.json"] {
+            std::fs::remove_file(turn.join(file)).expect("remove private turn artifact");
+        }
+        std::fs::remove_dir(&turn).expect("remove private turn directory");
+        std::fs::remove_dir(&output_dir).expect("remove private recording directory");
     }
 
     #[test]

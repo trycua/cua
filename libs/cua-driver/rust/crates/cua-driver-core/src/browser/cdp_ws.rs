@@ -12,9 +12,9 @@
 //! Only loopback `ws://` URLs are accepted: the endpoint is a local
 //! browser the platform adapter proved we own, never a remote service.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 
 use futures_util::stream::{SplitSink, SplitStream};
@@ -246,9 +246,36 @@ impl CdpConnection {
     }
 }
 
-/// One pooled connection per endpoint URL.
+#[derive(Clone)]
+struct PoolEntry {
+    conn: Arc<CdpConnection>,
+    generation: Option<u64>,
+}
+
+fn claimed_ports() -> &'static StdMutex<HashSet<u16>> {
+    static CLAIMED: OnceLock<StdMutex<HashSet<u16>>> = OnceLock::new();
+    CLAIMED.get_or_init(|| StdMutex::new(HashSet::new()))
+}
+
+fn loopback_port(url: &str) -> Option<u16> {
+    let rest = url.strip_prefix("ws://")?;
+    let authority = rest.split('/').next()?;
+    if let Some(bracketed) = authority.strip_prefix('[') {
+        return bracketed.split_once("]:")?.1.parse().ok();
+    }
+    authority.rsplit_once(':')?.1.parse().ok()
+}
+
+/// Whether an existing-profile grant owns the DevTools listener used by this
+/// URL. The legacy page route consults this before opening its own page socket.
+pub fn endpoint_port_is_grant_owned(url: &str) -> bool {
+    loopback_port(url).is_some_and(|port| claimed_ports().lock().unwrap().contains(&port))
+}
+
+/// One pooled browser-level connection per endpoint URL. Existing-profile
+/// entries are additionally owned by one explicit connection generation.
 pub struct CdpPool {
-    conns: Mutex<HashMap<String, Arc<CdpConnection>>>,
+    conns: Mutex<HashMap<String, PoolEntry>>,
 }
 
 impl CdpPool {
@@ -261,21 +288,130 @@ impl CdpPool {
     /// Get the pooled connection for `ws_url`, dialing if needed.
     /// A connection whose socket closed is replaced transparently.
     pub async fn get(&self, ws_url: &str) -> anyhow::Result<Arc<CdpConnection>> {
+        if endpoint_port_is_grant_owned(ws_url) {
+            anyhow::bail!(
+                "this DevTools endpoint is owned by a first-class existing-profile attachment"
+            );
+        }
         let mut conns = self.conns.lock().await;
         if let Some(existing) = conns.get(ws_url) {
-            if !existing.is_closed() {
-                return Ok(existing.clone());
+            if existing.generation.is_some() {
+                anyhow::bail!("this DevTools endpoint is owned by an attachment generation");
+            }
+            if !existing.conn.is_closed() {
+                return Ok(existing.conn.clone());
             }
             conns.remove(ws_url);
         }
         let conn = Arc::new(CdpConnection::connect(ws_url).await?);
-        conns.insert(ws_url.to_owned(), conn.clone());
+        conns.insert(
+            ws_url.to_owned(),
+            PoolEntry {
+                conn: conn.clone(),
+                generation: None,
+            },
+        );
+        Ok(conn)
+    }
+
+    /// Convert the one live browser-level socket into grant-owned state. This
+    /// does not redial and therefore cannot create a second consent prompt.
+    pub async fn claim_existing(
+        &self,
+        ws_url: &str,
+        generation: u64,
+    ) -> anyhow::Result<Arc<CdpConnection>> {
+        let port = loopback_port(ws_url)
+            .ok_or_else(|| anyhow::anyhow!("existing-profile endpoint has no loopback port"))?;
+        let mut conns = self.conns.lock().await;
+        let conn = match conns.get(ws_url) {
+            Some(entry) if !entry.conn.is_closed() => entry.conn.clone(),
+            Some(_) => anyhow::bail!("the approved browser socket closed before it was claimed"),
+            None => Arc::new(CdpConnection::connect(ws_url).await?),
+        };
+        conns.insert(
+            ws_url.to_owned(),
+            PoolEntry {
+                conn: conn.clone(),
+                generation: Some(generation),
+            },
+        );
+        claimed_ports().lock().unwrap().insert(port);
+        Ok(conn)
+    }
+
+    /// Reuse only the socket belonging to the exact live grant generation.
+    /// Closed sockets are not replaced here; reconnect is an explicit state
+    /// transition owned by the browser engine.
+    pub async fn get_existing(
+        &self,
+        ws_url: &str,
+        generation: u64,
+    ) -> anyhow::Result<Arc<CdpConnection>> {
+        let conns = self.conns.lock().await;
+        let entry = conns
+            .get(ws_url)
+            .ok_or_else(|| anyhow::anyhow!("the grant-owned browser socket is missing"))?;
+        if entry.generation != Some(generation) {
+            anyhow::bail!("the browser socket belongs to a different connection generation");
+        }
+        if entry.conn.is_closed() {
+            anyhow::bail!("the grant-owned browser socket is closed");
+        }
+        Ok(entry.conn.clone())
+    }
+
+    /// Replace one dead grant-owned socket with exactly one new generation.
+    pub async fn reconnect_existing(
+        &self,
+        ws_url: &str,
+        old_generation: u64,
+        new_generation: u64,
+    ) -> anyhow::Result<Arc<CdpConnection>> {
+        let mut conns = self.conns.lock().await;
+        if let Some(entry) = conns.get(ws_url) {
+            if entry
+                .generation
+                .is_some_and(|generation| generation > old_generation)
+            {
+                anyhow::bail!("the reconnect source generation is no longer current");
+            }
+            if entry.generation == Some(old_generation) && !entry.conn.is_closed() {
+                return Ok(entry.conn.clone());
+            }
+        }
+        let conn = Arc::new(CdpConnection::connect(ws_url).await?);
+        conns.insert(
+            ws_url.to_owned(),
+            PoolEntry {
+                conn: conn.clone(),
+                generation: Some(new_generation),
+            },
+        );
         Ok(conn)
     }
 
     /// Drop a (likely dead) connection so the next call redials.
     pub async fn evict(&self, ws_url: &str) {
         self.conns.lock().await.remove(ws_url);
+    }
+
+    pub fn release_claim_marker(&self, ws_url: &str) {
+        if let Some(port) = loopback_port(ws_url) {
+            claimed_ports().lock().unwrap().remove(&port);
+        }
+    }
+
+    pub async fn release_existing(&self, ws_url: &str, generation: u64) {
+        let mut conns = self.conns.lock().await;
+        if conns
+            .get(ws_url)
+            .is_some_and(|entry| entry.generation == Some(generation))
+        {
+            conns.remove(ws_url);
+        }
+        drop(conns);
+        self.release_claim_marker(ws_url);
     }
 }
 
@@ -332,6 +468,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result["echoed"]["x"], 7);
+    }
+
+    #[tokio::test]
+    async fn claimed_existing_profile_socket_is_generation_owned() {
+        let server = MockCdpServer::start(StdArc::new(|_| MockReply::ok(json!({})))).await;
+        let url = server.ws_url();
+        let pool = CdpPool::new();
+        let initial = pool.get(&url).await.unwrap();
+        let claimed = pool.claim_existing(&url, 1).await.unwrap();
+        assert!(Arc::ptr_eq(&initial, &claimed), "claim must not redial");
+        assert!(pool.get(&url).await.is_err(), "legacy access must refuse");
+        assert!(pool.get_existing(&url, 2).await.is_err());
+        let reused = pool.get_existing(&url, 1).await.unwrap();
+        assert!(Arc::ptr_eq(&claimed, &reused));
+        pool.release_existing(&url, 1).await;
+        assert!(
+            pool.get(&url).await.is_ok(),
+            "session cleanup releases ownership"
+        );
     }
 
     #[tokio::test]

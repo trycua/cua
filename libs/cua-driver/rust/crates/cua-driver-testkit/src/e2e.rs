@@ -309,6 +309,10 @@ pub enum RefusalCode {
     BrowserTabNotFound,
     BrowserRefStale,
     BrowserInputTrustUnavailable,
+    BrowserConsentRequired,
+    BrowserConsentRevoked,
+    BrowserReconnectExhausted,
+    BrowserInputIncomplete,
 }
 
 impl RefusalCode {
@@ -325,6 +329,10 @@ impl RefusalCode {
             "browser_tab_not_found" => Some(Self::BrowserTabNotFound),
             "browser_ref_stale" => Some(Self::BrowserRefStale),
             "browser_input_trust_unavailable" => Some(Self::BrowserInputTrustUnavailable),
+            "browser_consent_required" => Some(Self::BrowserConsentRequired),
+            "browser_consent_revoked" => Some(Self::BrowserConsentRevoked),
+            "browser_reconnect_exhausted" => Some(Self::BrowserReconnectExhausted),
+            "browser_input_incomplete" => Some(Self::BrowserInputIncomplete),
             _ => None,
         }
     }

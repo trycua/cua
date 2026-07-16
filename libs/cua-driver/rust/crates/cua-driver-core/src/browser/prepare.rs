@@ -9,10 +9,14 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use super::approval::{consume_prepare_approval, validate_profile};
+use super::approval::{
+    consume_existing_profile_approval, consume_prepare_approval, validate_profile,
+    ExistingProfileApprovalScope,
+};
 use super::platform::{
-    PrepareAction, PrepareAuthorization, PrepareOutcome, PrepareProfile, PrepareProfileMode,
-    PrepareRequest, PrepareSideEffects,
+    BrowserConsentOutcome, BrowserConsentRequest, PrepareAction, PrepareAttachment,
+    PrepareAttachmentKind, PrepareAuthorization, PrepareOutcome, PrepareProfile,
+    PrepareProfileMode, PrepareRequest, PrepareSideEffects, PrepareStrategy,
 };
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::types::{
@@ -407,6 +411,16 @@ impl BrowserEngine {
         &self,
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
+        if request.strategy == Some(PrepareStrategy::ExistingProfile) {
+            return self.attach_existing_profile(request).await;
+        }
+        if request.strategy.is_some() {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "the requested browser preparation strategy is unsupported",
+            ));
+        }
+
         match self.platform.prepare_endpoint(request.clone()).await {
             Ok(mut outcome) => {
                 if outcome.prepared_pid.is_none() {
@@ -516,6 +530,162 @@ impl BrowserEngine {
                 reused_driver_profile: !prepared_profile.created,
                 ..PrepareSideEffects::default()
             },
+            attachment: None,
+        })
+    }
+
+    async fn attach_existing_profile(
+        &self,
+        request: PrepareRequest,
+    ) -> Result<PrepareOutcome, BrowserRefusal> {
+        let window_id = request.window_id.ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserConsentRequired,
+                "strategy=existing_profile requires an exact window_id approval anchor",
+            )
+        })?;
+        let scope = ExistingProfileApprovalScope {
+            pid: request.pid,
+            window_id,
+            session: request.session.clone(),
+        };
+        match request.authorization.as_ref() {
+            Some(PrepareAuthorization::ApprovalArtifact(token)) => {
+                consume_existing_profile_approval(token, &scope)?;
+            }
+            // The ordinary MCP destructive-tool marker proves transport
+            // provenance, not a person's approval of their authenticated
+            // profile. It is deliberately insufficient here.
+            Some(PrepareAuthorization::McpHost) | None => {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    "existing-profile attachment requires a fresh operation-bound browser-approve artifact",
+                )
+                .with_detail(serde_json::json!({
+                    "approval_request_id": uuid::Uuid::new_v4().to_string(),
+                    "approval_command": "cua-driver browser-approve --strategy existing_profile --pid <pid> --window-id <window_id> --session <session>",
+                })));
+            }
+        }
+        if request.profile.is_some() || request.allow_launch {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserConsentRequired,
+                "strategy=existing_profile cannot be combined with profile or allow_launch",
+            ));
+        }
+
+        let classification = self.platform.classify_browser(request.pid).await?;
+        if !classification.supports_cdp || classification.engine != BrowserEngineFamily::Chromium {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "existing-profile attachment is currently limited to Chromium browsers",
+            ));
+        }
+        self.native_window_checked(request.pid, window_id).await?;
+        let fingerprint = self.platform.process_fingerprint(request.pid).await?;
+        let endpoint = self
+            .platform
+            .discover_existing_profile_endpoint(request.pid)
+            .await?
+            .ok_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserRequiresSetup,
+                    "the existing browser has no uniquely proven DevTools endpoint; enable remote debugging without restarting or modifying the profile, then retry",
+                )
+            })?;
+        if endpoint.ownership.owner_pid != request.pid {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                "the existing-profile endpoint is not owned by the approved browser process",
+            ));
+        }
+
+        let previous_grant = self
+            .existing_profile_grant(
+                &request.session,
+                request.transport_session.as_deref(),
+                request.pid,
+            )
+            .await?;
+        let previous_generation = previous_grant.as_ref().map_or(0, |grant| grant.generation);
+        let grant = self.existing_profile_grants.mint(
+            &request.session,
+            request.transport_session.as_deref(),
+            request.pid,
+            window_id,
+            fingerprint,
+            "chromium".to_owned(),
+            endpoint.ws_url.clone(),
+        );
+        if let Some(previous) = previous_grant {
+            self.pool
+                .release_existing(&previous.endpoint_ws_url, previous.generation)
+                .await;
+            if previous.endpoint_ws_url != endpoint.ws_url {
+                self.pool.release_claim_marker(&previous.endpoint_ws_url);
+            }
+        }
+        let (claimed, displayed_consent_prompt) = {
+            let ws_url = endpoint.ws_url.clone();
+            let claim = self.pool.claim_existing(&ws_url, grant.generation);
+            tokio::pin!(claim);
+            let mut displayed = false;
+            let result = tokio::select! {
+                result = &mut claim => result,
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {
+                    match self.platform.handle_existing_profile_consent(BrowserConsentRequest {
+                        pid: request.pid,
+                        window_id,
+                        attempt: 1,
+                    }).await {
+                        Ok(BrowserConsentOutcome::Accepted) => {
+                            displayed = true;
+                            claim.await
+                        }
+                        Ok(BrowserConsentOutcome::NotPresent) => claim.await,
+                        Err(error) => {
+                            self.revoke_existing_profile_grant(
+                                &request.session,
+                                request.transport_session.as_deref(),
+                                request.pid,
+                            ).await;
+                            return Err(error);
+                        }
+                    }
+                }
+            };
+            (result, displayed)
+        };
+        if let Err(_error) = claimed {
+            self.revoke_existing_profile_grant(
+                &request.session,
+                request.transport_session.as_deref(),
+                request.pid,
+            )
+            .await;
+            return Err(refusal(
+                BrowserRefusalCode::BrowserReconnectExhausted,
+                "the approved browser socket could not be claimed",
+            ));
+        }
+        self.store
+            .invalidate_endpoint_generation(request.pid, previous_generation);
+
+        Ok(PrepareOutcome {
+            action: PrepareAction::AttachedExistingProfile,
+            endpoint: Some(endpoint),
+            message: "Attached to the approved existing Chromium profile. Bind the native window again before using browser capabilities.".to_owned(),
+            prepared_pid: Some(request.pid),
+            side_effects: PrepareSideEffects {
+                displayed_consent_prompt,
+                ..PrepareSideEffects::default()
+            },
+            attachment: Some(PrepareAttachment {
+                kind: PrepareAttachmentKind::ExistingProfile,
+                browser: "chromium".to_owned(),
+                capabilities_invalidated: true,
+                next_action: "get_browser_state".to_owned(),
+            }),
         })
     }
 }

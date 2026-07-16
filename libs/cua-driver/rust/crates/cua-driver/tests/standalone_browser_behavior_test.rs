@@ -24,6 +24,10 @@ use cua_driver_testkit::{spawn_in_job, BrowserFixtureServer, Driver, McpDriver, 
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
+use cua_driver_core::browser::approval::{
+    mint_existing_profile_approval, ExistingProfileApprovalScope,
+};
+
 const FIXTURE_HTML: &str = include_str!("../../../../tests/fixtures/shared/web/index.html");
 static STANDALONE_BROWSER_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1202,6 +1206,174 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
     );
 }
 
+fn run_existing_profile_attach(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-existing-profile",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(
+        case(&spec.name, "browser_prepare_existing_profile"),
+        |evidence| {
+            let mut fixture = launch_browser(spec, &scenario);
+            *evidence = recording_evidence(fixture.driver.recording_dir());
+            run_with_background_oracles(&mut fixture, |fixture| {
+                let session = format!("standalone-existing-profile-{}", fixture.pid);
+                let started = fixture
+                    .driver
+                    .call("start_session", serde_json::json!({ "session": session }));
+                assert!(!started.is_error(), "start_session failed: {}", started.raw);
+
+                // A live MCP proxy proves transport provenance, not a person's
+                // approval to attach an authenticated profile.
+                let unapproved = fixture.driver.call(
+                    "browser_prepare",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64,
+                        "window_id": fixture.window_id,
+                        "session": session,
+                        "strategy": {"kind": "existing_profile"},
+                    }),
+                );
+                assert_eq!(
+                    unapproved.structured()["refusal"]["code"],
+                    "browser_consent_required",
+                    "{}",
+                    unapproved.raw
+                );
+
+                let approval_token = mint_existing_profile_approval(ExistingProfileApprovalScope {
+                    pid: fixture.pid as i64,
+                    window_id: fixture.window_id,
+                    session: session.clone(),
+                })
+                .expect("mint exact existing-profile approval");
+                fixture.driver.start_behavior_recording();
+                let prepared = fixture.driver.call(
+                    "browser_prepare",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64,
+                        "window_id": fixture.window_id,
+                        "session": session,
+                        "strategy": {"kind": "existing_profile"},
+                        "approval_token": approval_token,
+                    }),
+                );
+                assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
+                assert_eq!(
+                    prepared.structured()["action"],
+                    "attached_existing_profile",
+                    "{}",
+                    prepared.raw
+                );
+                assert_eq!(
+                    prepared.structured()["attachment"]["kind"],
+                    "existing_profile"
+                );
+                assert_eq!(
+                    prepared.structured()["attachment"]["capabilities_invalidated"],
+                    true
+                );
+                assert_eq!(
+                    prepared.structured()["attachment"]["next_action"],
+                    "get_browser_state"
+                );
+                assert_eq!(
+                    prepared.structured()["side_effects"]["launched_browser"],
+                    false
+                );
+                assert_eq!(
+                    prepared.structured()["side_effects"]["created_profile"],
+                    false
+                );
+                assert_eq!(
+                    prepared.structured()["side_effects"]["copied_profile_data"],
+                    false
+                );
+
+                let public_result = prepared.raw.to_string();
+                assert!(!public_result.contains("ws://"), "{}", prepared.raw);
+                assert!(
+                    !public_result.contains("webSocketDebuggerUrl"),
+                    "{}",
+                    prepared.raw
+                );
+                assert!(!public_result.contains(&approval_token), "{}", prepared.raw);
+                assert!(
+                    !public_result.contains(&fixture._profile.path().display().to_string()),
+                    "{}",
+                    prepared.raw
+                );
+
+                let state = fixture.driver.call(
+                    "get_browser_state",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64,
+                        "window_id": fixture.window_id,
+                        "session": session,
+                    }),
+                );
+                assert_eq!(
+                    state.structured()["binding_quality"],
+                    "exact",
+                    "{}",
+                    state.raw
+                );
+                let target = state.structured()["target_id"]
+                    .as_str()
+                    .expect("existing-profile target")
+                    .to_owned();
+                let tab = state.structured()["tabs"]
+                    .as_array()
+                    .and_then(|tabs| tabs.iter().find(|tab| tab["active"] == true))
+                    .and_then(|tab| tab["tab_id"].as_str())
+                    .expect("existing-profile active tab")
+                    .to_owned();
+                let snapshot = fixture.driver.call(
+                    "get_browser_state",
+                    serde_json::json!({
+                        "target_id": target,
+                        "tab_id": tab,
+                        "session": session,
+                    }),
+                );
+                let click_ref = ref_by_label(&snapshot, "id=btn-increment");
+                let clicked = fixture.driver.call(
+                    "browser_click",
+                    serde_json::json!({
+                        "target_id": target,
+                        "tab_id": tab,
+                        "ref": click_ref,
+                        "input_route": "dom_event",
+                        "session": session,
+                    }),
+                );
+                assert_eq!(clicked.structured()["status"], "ok", "{}", clicked.raw);
+                wait_for_text(&fixture.server, "lbl-counter", "counter=1");
+
+                let ended = fixture
+                    .driver
+                    .call("end_session", serde_json::json!({ "session": session }));
+                assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
+                let windows = fixture
+                    .driver
+                    .call("list_windows", serde_json::json!({"pid": fixture.pid}));
+                assert!(
+                    windows.structured()["windows"]
+                        .as_array()
+                        .is_some_and(|windows| windows.iter().any(|window| {
+                            window["window_id"].as_u64() == Some(fixture.window_id)
+                        })),
+                    "ending an attachment grant must not close the user-owned browser: {}",
+                    windows.raw
+                );
+
+                Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+            })
+        },
+    );
+}
+
 fn run_stale_ref(spec: &BrowserSpec) {
     let scenario = format!(
         "{}-{}-standalone-stale-ref",
@@ -1497,6 +1669,10 @@ standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
 standalone_browser_test!(
     standalone_browser_prepare_isolated,
     run_prepare_isolated_launch
+);
+standalone_browser_test!(
+    standalone_browser_existing_profile,
+    run_existing_profile_attach
 );
 standalone_browser_test!(standalone_browser_stale_ref, run_stale_ref);
 standalone_browser_test!(standalone_browser_frames, run_frame_roundtrip);

@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use cua_driver_core::browser::platform::{
-    BrowserPlatform, PrepareAction, PrepareOutcome, PrepareRequest,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, PrepareAction, PrepareOutcome,
+    PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -332,6 +333,66 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         Ok(None)
     }
 
+    async fn discover_existing_profile_endpoint(
+        &self,
+        pid: i64,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let ports = loopback_ports_for_pid(pid).await?;
+        let mut discovered = Vec::new();
+        for port in &ports {
+            if let Some(ws_url) = browser_websocket_url(*port).await {
+                discovered.push((*port, ws_url));
+            }
+        }
+        if discovered.len() == 1 {
+            let (port, ws_url) = discovered.pop().expect("one discovered endpoint");
+            return Ok(Some(OwnedEndpoint {
+                ws_url,
+                http_port: Some(port),
+                ownership: EndpointOwnershipProof {
+                    method: EndpointOwnershipMethod::ListeningSocketPid,
+                    owner_pid: pid,
+                    detail: Some("lsof loopback listener owner plus /json/version".to_owned()),
+                },
+            }));
+        }
+        if discovered.len() > 1 {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserBindingAmbiguous,
+                "multiple browser-level DevTools endpoints are owned by the approved process",
+            ));
+        }
+        if ports.len() == 1 {
+            let port = ports[0];
+            return Ok(Some(OwnedEndpoint {
+                // Chrome's in-browser existing-profile toggle exposes this
+                // browser-level route without the classic HTTP /json surface.
+                // Opening it is deferred until after exact user approval.
+                ws_url: format!("ws://127.0.0.1:{port}/devtools/browser"),
+                http_port: Some(port),
+                ownership: EndpointOwnershipProof {
+                    method: EndpointOwnershipMethod::ListeningSocketPid,
+                    owner_pid: pid,
+                    detail: Some("unique lsof loopback listener owned by browser pid".to_owned()),
+                },
+            }));
+        }
+        if ports.len() > 1 {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserBindingAmbiguous,
+                "the approved browser owns multiple non-discoverable loopback listeners; refusing to guess which one is DevTools",
+            ));
+        }
+        Ok(None)
+    }
+
+    async fn handle_existing_profile_consent(
+        &self,
+        request: BrowserConsentRequest,
+    ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
+        super::consent_ui::handle(request).await
+    }
+
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
         let (started, executable) = process_details(pid).await?;
         Ok(ProcessFingerprint {
@@ -352,6 +413,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 endpoint: Some(endpoint),
                 message: "An owned loopback DevTools endpoint is already available.".to_owned(),
                 side_effects: Default::default(),
+                attachment: None,
             });
         }
         Err(refusal(

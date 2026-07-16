@@ -436,6 +436,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 endpoint: Some(endpoint),
                 message: "An owned loopback DevTools endpoint is already available.".to_owned(),
                 side_effects: Default::default(),
+                attachment: None,
             });
         }
         Err(refusal(

@@ -28,6 +28,14 @@ pub struct PrepareProfile {
     pub name: Option<String>,
 }
 
+/// Acting strategy for browser preparation that is not a driver-owned profile
+/// lifecycle operation. Existing profiles remain owned by the user/browser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PrepareStrategy {
+    ExistingProfile,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrepareAuthorization {
     McpHost,
@@ -39,12 +47,17 @@ pub enum PrepareAuthorization {
 #[derive(Debug, Clone)]
 pub struct PrepareRequest {
     pub pid: i64,
+    /// Exact native window used as the visible approval and ownership anchor
+    /// for existing-profile attachment.
+    pub window_id: Option<u64>,
     pub session: String,
     /// Private transport lifecycle owner. A daemon-backed MCP proxy supplies
     /// this independently from the public capability session so either proxy
     /// disconnect or explicit `end_session` can reap a spawned browser.
     pub transport_session: Option<String>,
     pub authorization: Option<PrepareAuthorization>,
+    /// Omitted for the legacy isolated-profile compatibility form.
+    pub strategy: Option<PrepareStrategy>,
     pub profile: Option<PrepareProfile>,
     /// Allows launching a separate driver-owned isolated browser process.
     /// It never authorizes terminating or modifying the requested process.
@@ -63,6 +76,8 @@ pub enum PrepareAction {
     RelaunchedBrowser,
     /// The driver launched a separate isolated browser process.
     LaunchedIsolatedBrowser,
+    /// Attached to a user-owned, already-running profile under a live grant.
+    AttachedExistingProfile,
     /// Nothing was done — see `message` on the outcome.
     NoOp,
 }
@@ -78,6 +93,37 @@ pub struct PrepareOutcome {
     pub prepared_pid: Option<i64>,
     #[serde(default)]
     pub side_effects: PrepareSideEffects,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<PrepareAttachment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrepareAttachment {
+    pub kind: PrepareAttachmentKind,
+    pub browser: String,
+    pub capabilities_invalidated: bool,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrepareAttachmentKind {
+    ExistingProfile,
+}
+
+#[derive(Debug, Clone)]
+pub struct BrowserConsentRequest {
+    pub pid: i64,
+    pub window_id: u64,
+    pub attempt: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowserConsentOutcome {
+    /// One exact browser-owned consent action was semantically pressed.
+    Accepted,
+    /// The adapter proved no consent prompt was present in the approved scope.
+    NotPresent,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -141,6 +187,31 @@ pub trait BrowserPlatform: Send + Sync {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal>;
+
+    /// Discover an endpoint while handling an explicitly approved
+    /// existing-profile request. The default is the ordinary side-effect-free
+    /// discovery path. Platforms may additionally return a uniquely proven
+    /// browser-level route that does not expose HTTP discovery, but must not
+    /// open its WebSocket or interact with consent UI here.
+    async fn discover_existing_profile_endpoint(
+        &self,
+        pid: i64,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        self.discover_owned_endpoint(pid).await
+    }
+
+    /// Handle one pending browser-owned connection prompt. Implementations
+    /// must use exact native semantics and may perform at most one declared
+    /// consent action for this request. Generic dialog automation is forbidden.
+    async fn handle_existing_profile_consent(
+        &self,
+        _request: BrowserConsentRequest,
+    ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
+        Err(BrowserRefusal::new(
+            super::refusal::BrowserRefusalCode::BrowserRouteUnavailable,
+            "prompt-assisted existing-profile attachment is not proven on this platform",
+        ))
+    }
 
     /// Current identity fingerprint for `pid`. Used to detect pid reuse
     /// between binding and mutation.

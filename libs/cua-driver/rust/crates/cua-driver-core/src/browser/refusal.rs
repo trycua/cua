@@ -52,6 +52,12 @@ pub enum BrowserRefusalCode {
     /// The platform adapter requires explicit user/caller consent
     /// before it will prepare an endpoint.
     BrowserConsentRequired,
+    /// A person explicitly dismissed or denied the browser-owned consent UI.
+    BrowserConsentRevoked,
+    /// The fixed reconnect attempt/deadline policy was exhausted.
+    BrowserReconnectExhausted,
+    /// A typing operation delivered only a proven prefix of the request.
+    BrowserInputIncomplete,
 }
 
 impl BrowserRefusalCode {
@@ -69,6 +75,9 @@ impl BrowserRefusalCode {
             Self::BrowserInputTrustUnavailable => "browser_input_trust_unavailable",
             Self::BrowserEndpointOwnerMismatch => "browser_endpoint_owner_mismatch",
             Self::BrowserConsentRequired => "browser_consent_required",
+            Self::BrowserConsentRevoked => "browser_consent_revoked",
+            Self::BrowserReconnectExhausted => "browser_reconnect_exhausted",
+            Self::BrowserInputIncomplete => "browser_input_incomplete",
         }
     }
 }
@@ -156,6 +165,18 @@ mod tests {
             (
                 BrowserRefusalCode::BrowserConsentRequired,
                 "browser_consent_required",
+            ),
+            (
+                BrowserRefusalCode::BrowserConsentRevoked,
+                "browser_consent_revoked",
+            ),
+            (
+                BrowserRefusalCode::BrowserReconnectExhausted,
+                "browser_reconnect_exhausted",
+            ),
+            (
+                BrowserRefusalCode::BrowserInputIncomplete,
+                "browser_input_incomplete",
             ),
         ];
         for (code, wire) in all {

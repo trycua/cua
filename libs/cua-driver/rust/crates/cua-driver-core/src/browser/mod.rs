@@ -40,10 +40,13 @@ pub mod approval;
 pub mod binding;
 pub mod cdp_ws;
 pub mod engine;
+mod grant;
 #[cfg(test)]
 pub(crate) mod mock_cdp;
+mod mutation;
 pub mod platform;
 mod prepare;
+mod reconnect;
 pub mod refusal;
 pub mod store;
 pub mod tools;
@@ -53,8 +56,9 @@ mod v2_tests;
 
 pub use engine::BrowserEngine;
 pub use platform::{
-    BrowserPlatform, PrepareAction, PrepareAuthorization, PrepareOutcome, PrepareProfile,
-    PrepareProfileMode, PrepareRequest, PrepareSideEffects,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, PrepareAction,
+    PrepareAttachment, PrepareAttachmentKind, PrepareAuthorization, PrepareOutcome, PrepareProfile,
+    PrepareProfileMode, PrepareRequest, PrepareSideEffects, PrepareStrategy,
 };
 pub use refusal::{BrowserRefusal, BrowserRefusalCode};
 pub use tools::register_browser_tools;

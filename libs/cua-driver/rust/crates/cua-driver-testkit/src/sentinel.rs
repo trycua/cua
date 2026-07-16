@@ -259,15 +259,23 @@ impl ForegroundSentinel {
     /// Confirm the target is fully behind the ready foreground sentinel before
     /// the behavioral video boundary is crossed.
     pub fn assert_background_posture(&self, target: TargetWindow) -> Result<(), String> {
-        let observer = DesktopObserver::new(NativeObserver::new(), target);
-        let before = observer.snapshot().map_err(|error| error.to_string())?;
-        if before.target_z == crate::observer::TargetZ::BackgroundOccluded {
-            Ok(())
-        } else {
-            Err(format!(
-                "background target was not fully occluded before recording: {:?}",
-                before.target_z
-            ))
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let observer = DesktopObserver::new(NativeObserver::new(), target);
+            let before = observer.snapshot().map_err(|error| error.to_string())?;
+            if before.target_z == crate::observer::TargetZ::BackgroundOccluded {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "background target was not fully occluded before recording: {:?}",
+                    before.target_z
+                ));
+            }
+            // Native maximize/fullscreen transitions can report focus before
+            // their final geometry. This wait is outside the action boundary;
+            // dispatch-time occlusion remains an immediate strict assertion.
+            std::thread::sleep(Duration::from_millis(50));
         }
     }
 

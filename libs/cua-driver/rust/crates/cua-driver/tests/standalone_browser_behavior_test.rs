@@ -168,6 +168,10 @@ fn browser_specs() -> Vec<BrowserSpec> {
         return candidates
             .into_iter()
             .filter(|(_, executable)| executable.is_file())
+            .map(|(name, executable)| {
+                let executable = std::fs::canonicalize(&executable).unwrap_or(executable);
+                (name, executable)
+            })
             .fold(Vec::new(), |mut specs, (name, executable)| {
                 if !specs
                     .iter()

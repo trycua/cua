@@ -406,10 +406,9 @@ WebKitGTK pointer and scroll failures. Those rows do not use the browser CDP
 transport, and this branch does not change their injection paths. They remain
 separate platform-action gaps and are not counted as browser-tool acceptance.
 
-The final gate is to merge the reusable macOS VM work, rerun this branch at
-the resulting exact head inside that VM, and record the standalone Chromium
-and embedded Electron/Tauri/WKWebView outcomes without relying on host TCC
-state.
+The reusable macOS VM work was merged before the final replay. The retained
+Lume evidence below therefore validates the installed source in a disposable,
+permission-complete guest rather than relying on host TCC state.
 
 ## 2026-07-16: final runner convergence
 
@@ -439,19 +438,26 @@ state.
   assertion is retried.
 
 The cold native-Sway replay after that setup correction passed all 8 standalone
-Chromium rows: 6 delivered, 2 expected refusals, 0 failed, and 0 skipped. The
-final release replay uses the subsequent documentation commit as the exact
-source head on every platform; each retained `environment.jsonl` is the
-authoritative source identity ledger.
+Chromium rows: 6 delivered, 2 expected refusals, 0 failed, and 0 skipped. Each
+retained `environment.jsonl` is the authoritative source identity ledger; the
+documentation-only completion commit is replayed separately so the final
+branch identity is not inferred from predecessor evidence.
 
 ### Final browser acceptance matrix
 
-| Environment | Standalone rows | Embedded rows | Expected outcome |
+| Environment | Standalone rows | Embedded rows | Accepted outcome |
 | --- | ---: | ---: | --- |
-| Windows interactive RDP | 16 | 3 | Chrome and Edge deliver 14 rows and refuse 2 ambiguous bindings; Electron delivers; Tauri and split-process WebView2 refuse |
-| Linux X11 | 8 per installed Chromium product | 2 | Chrome/Chromium each deliver 6 rows and refuse trusted background input plus ambiguous binding; Electron delivers; Tauri refuses |
-| Linux native Wayland/Sway | 8 | 2 | Same browser contract as X11; Electron delivers; Tauri refuses; cursor oracle is omitted because Wayland cannot read global pointer state |
-| macOS Lume | 8 | 3 | Chrome delivers 6 rows and refuses trusted background input plus ambiguous binding; Electron delivers; Tauri and WKWebView refuse |
+| Windows interactive RDP | 16 | 3 | 19 passed: 15 delivered and 4 expected refusals; 19 playable videos |
+| Linux X11 | 16 | 2 | 18 passed across Chrome, Snap Chromium, Electron, and Tauri; 18 playable videos |
+| Linux native Wayland/Sway | 8 | 2 | 10 passed: 7 delivered and 3 expected refusals; 10 playable videos |
+| macOS Lume | 8 | 3 | 11 browser rows passed; the complete canonical matrix also passed 148/148 with 149 playable videos including preflight |
+
+The implementation candidate `19f1e09d55e2a595ccb17f1fcc48d65ceb5d181f`
+produced those accepted counts with zero skipped rows. One earlier macOS
+canonical attempt missed the Electron foreground drag while the fixture stayed
+idle; a fresh, uninterrupted worker replay passed that row and all 147 others
+without retrying any action inside a result cell. The final documentation-only
+branch head is validated again after this record is committed.
 
 Safari/WKWebView/WebKitGTK mutation, Firefox BiDi mutation, split-process
 WebView2 mutation, and mutation on Wayland compositors without exact pid and

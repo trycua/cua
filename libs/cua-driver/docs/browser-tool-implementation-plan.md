@@ -2,7 +2,7 @@
 
 ## Status
 
-- **State:** Browser-tool v2 roadmap implemented locally; final exact-head release replay in progress
+- **State:** Browser-tool v2 roadmap implemented locally; acceptance evidence recorded in the implementation journal
 - **Plan date:** 2026-07-14
 - **Implementation branch:** `codex/browser-tool-v1` (local only)
 - **Companion audit:** [Agentic Web Browsing with Cua Driver](agentic-web-browsing-audit.md)

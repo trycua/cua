@@ -772,8 +772,9 @@ Exit gate:
 
 ### Phase 7: Release evidence, documentation, and rollout
 
-**Implementation status:** Documentation and local macOS evidence complete;
-Windows and Linux exact-branch release evidence is the remaining final gate.
+**Implementation status:** Windows, Linux X11, and native Wayland exact-branch
+release evidence is complete at `32c77f775bd16d50507fbedb54a9682b9ab5599d`.
+Final post-merge macOS VM evidence is the remaining release gate.
 
 Work:
 

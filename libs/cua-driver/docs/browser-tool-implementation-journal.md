@@ -375,3 +375,38 @@ The v2 entries below supersede the completed items in this historical list.
   route. The driver never changes from trusted input to a DOM event silently.
 - Electron's trusted route is a separately bounded proof and does not authorize
   a generic embedded-webview fallback.
+
+## 2026-07-15: exact Windows and Linux browser release checkpoint
+
+Revision `32c77f775bd16d50507fbedb54a9682b9ab5599d` passed the complete
+browser-specific release matrix on the three available interactive cloud
+desktops. Every declared result includes fixture-state and desktop-side-effect
+oracles plus a playable video.
+
+- Windows Win32, in a real RDP user session: 19 declared rows, 15 delivered,
+  4 exact refusals, 0 failed, and 0 skipped. Chrome and Edge each passed all
+  eight standalone scenarios. Electron delivered through its bounded CDP
+  route; Tauri and split-process WebView2 refused with
+  `browser_route_unavailable`.
+- Linux X11/Openbox: 10 declared rows, 7 delivered, 3 exact refusals, 0
+  failed, and 0 skipped. Standalone trusted pointer input refused before
+  dispatch with `browser_input_trust_unavailable`; the explicit DOM event
+  route remained available for synthetic full-background clicks. Electron
+  delivered and Tauri refused exactly.
+- Linux native Wayland/Sway with Xwayland disabled: 8 standalone rows, 6
+  delivered, 2 exact refusals, 0 failed, and 0 skipped. The matrix proved
+  isolated preparation, composed frames, exact multi-tab binding, stale refs,
+  background typing, roundtrip mutation, trusted-input refusal, and
+  same-bounds ambiguity refusal. A separate embedded run proved Electron
+  delivery and Tauri's exact refusal. Global cursor preservation remains
+  omitted because standard Wayland cannot read the global pointer position.
+
+The broader native-Wayland shared-action diagnostic also found existing Tauri
+WebKitGTK pointer and scroll failures. Those rows do not use the browser CDP
+transport, and this branch does not change their injection paths. They remain
+separate platform-action gaps and are not counted as browser-tool acceptance.
+
+The final gate is to merge the reusable macOS VM work, rerun this branch at
+the resulting exact head inside that VM, and record the standalone Chromium
+and embedded Electron/Tauri/WKWebView outcomes without relying on host TCC
+state.

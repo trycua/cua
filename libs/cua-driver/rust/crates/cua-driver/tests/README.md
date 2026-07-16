@@ -140,5 +140,7 @@ desktop state outside the repo-local fixtures:
   harness owns a fresh browser profile and creates adversarial tabs and windows
   through the browser endpoint instead of relying on browser command-line
   handoff behavior. Run it through the cross-platform
-  `scripts/ci/run-rust-standalone-browser-e2e.sh`; macOS Lume maintainers can
-  add it to the VM acceptance run with `run-all.sh --standalone-browser`.
+  `scripts/ci/run-rust-standalone-browser-e2e.sh`, which stages the Electron
+  foreground sentinel when needed and opts pure Wayland runs into the native
+  backend. macOS Lume maintainers can add it to the VM acceptance run with
+  `run-all.sh --standalone-browser`.

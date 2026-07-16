@@ -15,8 +15,11 @@ scripts/ci/run-rust-standalone-browser-e2e.sh
 ```
 
 The runner requires an existing X11 or Wayland user session and a fresh
-artifact directory. To exercise the same matrix in the repo-owned native Sway
-session, run:
+artifact directory. It stages the repo-owned Electron foreground sentinel when
+the fixture is absent. In a pure native Wayland session it also enables the
+driver's native Wayland backend and launches the sentinel through Wayland, so
+the result cannot silently fall back to X11. To exercise the same matrix in the
+repo-owned native Sway session, run:
 
 ```bash
 CUA_E2E_WAYLAND_RUNNER="$PWD/scripts/ci/run-rust-standalone-browser-e2e.sh" \

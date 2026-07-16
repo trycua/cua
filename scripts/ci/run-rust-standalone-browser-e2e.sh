@@ -26,6 +26,48 @@ export CUA_E2E_FORBID_SKIPS=1
 export CUA_TEST_DRIVER_STDERR=1
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 
+HOST_OS="$(uname -s)"
+if [[ "${HOST_OS}" == Linux ]] \
+    && [[ "${XDG_SESSION_TYPE:-}" == wayland ]] \
+    && [[ -n "${WAYLAND_DISPLAY:-}" ]] \
+    && [[ -z "${DISPLAY:-}" ]]; then
+  # This lane promises native Wayland behavior. Opt into the driver's native
+  # backend explicitly so a missing caller variable cannot silently exercise
+  # the X11 fallback and time out during native-window correlation.
+  export CUA_DRIVER_RS_ENABLE_WAYLAND=1
+  export ELECTRON_OZONE_PLATFORM_HINT=wayland
+fi
+
+case "${HOST_OS}" in
+  Darwin)
+    SENTINEL_FIXTURE="${RUST_ROOT}/test-apps/harness-electron/CuaTestHarness.Electron.app"
+    ;;
+  Linux)
+    SENTINEL_FIXTURE="${RUST_ROOT}/test-apps/harness-electron/CuaTestHarness.Electron"
+    ;;
+  MINGW*|MSYS*|CYGWIN*)
+    SENTINEL_FIXTURE="${RUST_ROOT}/test-apps/harness-electron/CuaTestHarness.Electron.exe"
+    ;;
+  *)
+    echo "Unsupported standalone-browser host: ${HOST_OS}" >&2
+    exit 2
+    ;;
+esac
+
+if [[ ! -e "${SENTINEL_FIXTURE}" ]]; then
+  echo "[FIXTURE] Staging the Electron foreground sentinel"
+  if [[ "${HOST_OS}" == MINGW* || "${HOST_OS}" == MSYS* || "${HOST_OS}" == CYGWIN* ]]; then
+    powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File \
+      "${REPO_ROOT}/libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.ps1"
+  else
+    "${REPO_ROOT}/libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh"
+  fi
+fi
+if [[ ! -e "${SENTINEL_FIXTURE}" ]]; then
+  echo "Electron foreground sentinel was not staged: ${SENTINEL_FIXTURE}" >&2
+  exit 1
+fi
+
 : > "${CUA_E2E_DECLARATIONS_FILE}"
 : > "${CUA_E2E_ENVIRONMENT_FILE}"
 : > "${CUA_E2E_RESULTS_FILE}"

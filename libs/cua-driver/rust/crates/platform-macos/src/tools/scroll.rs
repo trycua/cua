@@ -47,7 +47,7 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "scroll".into(),
-        description: "Scroll the target pid. Two paths, picked by how you address the scroll:\n\n\
+        description: "Scroll a target window or the visible desktop. Paths are picked by how you address the scroll:\n\n\
             • **Targeted wheel path** — when you pass a target, either \
             `element_index`/`element_token` (preferred) or window-local `x, y` pixels: \
             the driver synthesizes a real mouse-wheel event (CGEventCreateScrollWheelEvent, \
@@ -88,10 +88,15 @@ fn def() -> &'static ToolDef {
                     "description": "Pixel-wheel path: number of wheel notches. Keystroke path: number of keystroke repetitions. Default: 3."
                 },
                 "window_id": { "type": "integer" },
+                "scope": {
+                    "type": "string",
+                    "enum": ["window", "desktop"],
+                    "description": "Coordinate frame (default window). Pass desktop with x,y and no pid/window_id for screen-absolute foreground scrolling."
+                },
                 "element_index": { "type": "integer", "description": "Element from last get_window_state. Routes through the pixel-wheel path AT this element's center — use it to scroll a nested overflow region you located in the AX tree." },
                 "element_token": { "type": "string", "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded. Routes through the pixel-wheel path at the element's center." },
-                "x": { "type": "number", "description": "Window-local screenshot X (top-left origin of the PNG from get_window_state). With `y`, routes through the pixel-wheel path at this point — use for a scrollable surface that isn't in the AX tree. Requires window_id to anchor the window→screen conversion." },
-                "y": { "type": "number", "description": "Window-local screenshot Y. See `x`." },
+                "x": { "type": "number", "description": "Screenshot X coordinate. Window scope uses window-local pixels from get_window_state and requires window_id; desktop scope uses native display pixels from get_desktop_state." },
+                "y": { "type": "number", "description": "Screenshot Y coordinate; see x." },
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false
@@ -111,6 +116,75 @@ impl Tool for ScrollTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let direction = match args.require_str("direction") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let by = args.str_or("by", "line");
+        let amount = args.u64_or("amount", 3) as usize;
+
+        match desktop_scroll_request(&args) {
+            Ok(Some((screenshot_x, screenshot_y))) => {
+                let step = if by == "page" {
+                    WHEEL_STEP_PAGE_PX
+                } else {
+                    WHEEL_STEP_LINE_PX
+                };
+                let (delta_y, delta_x): (i32, i32) = match direction.as_str() {
+                    "down" => (-step, 0),
+                    "up" => (step, 0),
+                    "right" => (0, -step),
+                    "left" => (0, step),
+                    _ => {
+                        return ToolResult::error(format!("Unknown scroll direction: {direction}"))
+                    }
+                };
+                let desktop_ratio = tokio::task::spawn_blocking(|| {
+                    let logical_w =
+                        super::get_screen_size::main_screen_size().map(|(w, _, _)| w as f64);
+                    let shot_w = crate::capture::screenshot_display_bytes()
+                        .ok()
+                        .and_then(|png| crate::capture::png_dimensions(&png).ok())
+                        .map(|(w, _)| w as f64);
+                    match (shot_w, logical_w) {
+                        (Some(sw), Some(lw)) if lw > 0.0 && sw > lw => sw / lw,
+                        _ => 1.0,
+                    }
+                })
+                .await
+                .unwrap_or(1.0);
+                let screen_x = screenshot_x / desktop_ratio;
+                let screen_y = screenshot_y / desktop_ratio;
+                let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
+                crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y)
+                    .await;
+                self.state
+                    .cursor_registry
+                    .update_position(&cursor_key, screen_x, screen_y);
+                let result = tokio::task::spawn_blocking(move || {
+                    crate::input::mouse::scroll_wheel_at_xy_desktop(
+                        screen_x, screen_y, delta_y, delta_x, amount,
+                    )
+                })
+                .await;
+                return match result {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Sent {direction} scroll by {by} × {amount} via desktop wheel at ({screen_x:.0}, {screen_y:.0})."
+                    ))
+                    .with_structured(serde_json::json!({
+                        "path": "cgevent_desktop",
+                        "scope": "desktop",
+                        "verified": false,
+                        "effect": "unverifiable"
+                    })),
+                    Ok(Err(error)) => ToolResult::error(format!("Desktop wheel scroll failed: {error}")),
+                    Err(error) => ToolResult::error(format!("Desktop wheel scroll task failed: {error}")),
+                };
+            }
+            Ok(None) => {}
+            Err(error) => return ToolResult::error(error),
+        }
+
         let pid = match args.require_i32("pid") {
             Ok(v) => v,
             Err(e) => return e,
@@ -127,12 +201,6 @@ impl Tool for ScrollTool {
             )
             .with_structured(serde_json::json!({ "code": "background_unavailable" }));
         }
-        let direction = match args.require_str("direction") {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        let by = args.str_or("by", "line");
-        let amount = args.u64_or("amount", 3) as usize;
         // Surface 6: element_token / element_index precedence.
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
@@ -538,6 +606,44 @@ impl Tool for ScrollTool {
     }
 }
 
+fn desktop_scroll_request(args: &Value) -> Result<Option<(f64, f64)>, String> {
+    use cua_driver_core::tool_args::ArgsExt;
+
+    let scope = args.str_or("scope", "window");
+    if scope == "window" {
+        return Ok(None);
+    }
+    if scope != "desktop" {
+        return Err(format!(
+            "scroll: unknown scope \"{scope}\"; expected window or desktop."
+        ));
+    }
+    if args.get("pid").is_some_and(|value| !value.is_null())
+        || args.get("window_id").is_some_and(|value| !value.is_null())
+        || args
+            .get("element_index")
+            .is_some_and(|value| !value.is_null())
+        || args
+            .get("element_token")
+            .is_some_and(|value| !value.is_null())
+    {
+        return Err(
+            "scroll: desktop scope cannot be combined with pid, window_id, element_index, or element_token."
+                .to_string(),
+        );
+    }
+    let x = args
+        .opt_f64("x")
+        .or_else(|| args.opt_i64("x").map(|value| value as f64));
+    let y = args
+        .opt_f64("y")
+        .or_else(|| args.opt_i64("y").map(|value| value as f64));
+    match (x, y) {
+        (Some(x), Some(y)) => Ok(Some((x, y))),
+        _ => Err("scroll: desktop scope requires numeric x and y coordinates.".to_string()),
+    }
+}
+
 unsafe fn scroll_native_text_area(
     element: AXUIElementRef,
     direction: &str,
@@ -601,5 +707,44 @@ unsafe fn collect_ax_buttons(
             collect_ax_buttons(child, depth + 1, buttons);
             CFRelease(child as CFTypeRef);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_supports_per_call_desktop_scope() {
+        let props = def().input_schema["properties"].as_object().unwrap();
+        assert_eq!(
+            props["scope"]["enum"],
+            serde_json::json!(["window", "desktop"])
+        );
+        assert!(!def().input_schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "pid"));
+    }
+
+    #[test]
+    fn desktop_scroll_requires_coordinates_and_no_window_target() {
+        assert!(desktop_scroll_request(&serde_json::json!({
+            "scope": "desktop", "x": 100, "y": 200
+        }))
+        .is_ok());
+        assert!(desktop_scroll_request(&serde_json::json!({
+            "scope": "desktop", "x": 100
+        }))
+        .is_err());
+        assert!(desktop_scroll_request(&serde_json::json!({
+            "scope": "desktop", "x": 100, "y": 200, "pid": 123
+        }))
+        .is_err());
+        assert!(desktop_scroll_request(&serde_json::json!({
+            "scope": "desktop", "x": 100, "y": 200, "element_index": 4
+        }))
+        .is_err());
     }
 }

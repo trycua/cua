@@ -929,15 +929,9 @@ pub fn scroll_wheel_at_xy(
         // into a bounded line delta for the event API.
         let wheel_y = (delta_y_per_tick / 120).clamp(-10, 10);
         let wheel_x = (delta_x_per_tick / 120).clamp(-10, 10);
-        let event = CGEvent::new_scroll_event(
-            source,
-            ScrollEventUnit::LINE,
-            2,
-            wheel_y,
-            wheel_x,
-            0,
-        )
-        .map_err(|_| anyhow::anyhow!("CGEvent::new_scroll_event failed"))?;
+        let event =
+            CGEvent::new_scroll_event(source, ScrollEventUnit::LINE, 2, wheel_y, wheel_x, 0)
+                .map_err(|_| anyhow::anyhow!("CGEvent::new_scroll_event failed"))?;
 
         let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
 
@@ -966,6 +960,48 @@ pub fn scroll_wheel_at_xy(
         crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
         event.post_to_pid(pid as libc::pid_t);
 
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    }
+    Ok(())
+}
+
+/// Synthesize a screen-absolute wheel gesture at the global HID tap.
+///
+/// Unlike [`scroll_wheel_at_xy`], this is intentionally not routed or stamped
+/// to a pid/window: WindowServer delivers it to the visually topmost surface at
+/// the point, matching desktop-scope screenshot and click semantics.
+pub fn scroll_wheel_at_xy_desktop(
+    screen_x: f64,
+    screen_y: f64,
+    delta_y_per_tick: i32,
+    delta_x_per_tick: i32,
+    ticks: usize,
+) -> anyhow::Result<()> {
+    use core_graphics::{
+        display::CGDisplay,
+        event::{CGEventTapLocation, ScrollEventUnit},
+    };
+
+    let point = CGPoint::new(screen_x, screen_y);
+    let _ = CGDisplay::warp_mouse_cursor_position(point);
+    unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
+    std::thread::sleep(std::time::Duration::from_millis(40));
+
+    for _ in 0..ticks.max(1) {
+        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+            .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+        let event = CGEvent::new_scroll_event(
+            source,
+            ScrollEventUnit::LINE,
+            2,
+            (delta_y_per_tick / 120).clamp(-10, 10),
+            (delta_x_per_tick / 120).clamp(-10, 10),
+            0,
+        )
+        .map_err(|_| anyhow::anyhow!("CGEvent::new_scroll_event failed"))?;
+        let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
+        unsafe { CGEventSetLocation(event_ptr, screen_x, screen_y) };
+        event.post(CGEventTapLocation::HID);
         std::thread::sleep(std::time::Duration::from_millis(30));
     }
     Ok(())

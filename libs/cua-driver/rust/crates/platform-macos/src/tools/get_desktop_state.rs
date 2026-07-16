@@ -3,7 +3,7 @@
 //! Vision-only desktop capture: grabs the ENTIRE main display at native
 //! pixel size (no downscale) so screen-absolute pixel picks land exactly,
 //! then reports the true screen size + backing scale. No AX walk, no
-//! pid/window_id — this is the capture surface for `capture_scope="desktop"`
+//! pid/window_id — this is the capture surface for per-call `scope="desktop"`
 //! GUI loops where the agent drives `click(x,y)` / `scroll(x,y)` against
 //! screen-absolute coordinates.
 //!
@@ -12,7 +12,10 @@
 //! `structuredContent` object.
 
 use async_trait::async_trait;
-use cua_driver_core::{protocol::{ToolResult, Content}, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::{Content, ToolResult},
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 
 use super::get_screen_size::main_screen_size;
@@ -34,6 +37,11 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "properties": {
                 "session": { "type": "string", "description": "Optional session id." },
+                "scope": {
+                    "type": "string",
+                    "enum": ["desktop"],
+                    "description": "Per-call capture scope. Pass \"desktop\" for a full-display capture; when omitted, the legacy global capture_scope setting is used for backward compatibility."
+                },
                 "screenshot_out_file": { "type": "string", "description": "Write PNG here instead of base64." }
             },
             "additionalProperties": false
@@ -47,27 +55,28 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for GetDesktopStateTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
 
-        // Gate on the global capture_scope (re-read from the persisted config,
-        // the same value set_config writes): a full-display capture is a
-        // desktop-scope operation, available only under capture_scope="desktop".
-        let scope = super::load_driver_config().capture_scope;
+        // Prefer a call-scoped declaration so callers do not have to mutate the
+        // host-global persisted driver configuration. The global value remains
+        // a compatibility fallback for older clients that omit `scope`.
+        let scope = effective_scope(&args);
         if scope != "desktop" {
             return ToolResult::error(format!(
-                "get_desktop_state requires capture_scope=\"desktop\" (current scope is \
-                 \"{scope}\"). Full-display capture is a desktop-scope operation; call \
-                 set_config with capture_scope=desktop first (it also enables window-less \
-                 screen-absolute click/scroll). For a single window, use \
+                "get_desktop_state requires scope=\"desktop\" (effective scope is \
+                 \"{scope}\"). Full-display capture is a desktop-scope operation; pass \
+                 scope=desktop on this call. For a single window, use \
                  get_window_state(pid, window_id) instead."
             ))
             .with_structured(serde_json::json!({
                 "code": "desktop_scope_disabled",
-                "capture_scope": scope,
-                "suggestion": "set_config capture_scope=desktop",
+                "scope": scope,
+                "suggestion": "pass scope=desktop",
             }));
         }
 
@@ -134,8 +143,18 @@ impl Tool for GetDesktopStateTool {
             structured["screenshot_file_path"] = serde_json::json!(fp);
         }
 
-        ToolResult { content, is_error: None, structured_content: Some(structured) }
+        ToolResult {
+            content,
+            is_error: None,
+            structured_content: Some(structured),
+        }
     }
+}
+
+fn effective_scope(args: &Value) -> String {
+    use cua_driver_core::tool_args::ArgsExt;
+    args.opt_str("scope")
+        .unwrap_or_else(|| super::load_driver_config().capture_scope)
 }
 
 #[cfg(test)]
@@ -152,11 +171,30 @@ mod tests {
 
         let props = d.input_schema["properties"].as_object().unwrap();
         assert!(!props.contains_key("pid"), "must not accept pid");
-        assert!(!props.contains_key("window_id"), "must not accept window_id");
-        assert!(!props.contains_key("capture_mode"), "must not accept capture_mode");
+        assert!(
+            !props.contains_key("window_id"),
+            "must not accept window_id"
+        );
+        assert!(
+            !props.contains_key("capture_mode"),
+            "must not accept capture_mode"
+        );
         assert!(props.contains_key("session"));
         assert!(props.contains_key("screenshot_out_file"));
-        assert_eq!(d.input_schema["additionalProperties"], serde_json::json!(false));
+        assert_eq!(props["scope"]["enum"], serde_json::json!(["desktop"]));
+        assert_eq!(
+            d.input_schema["additionalProperties"],
+            serde_json::json!(false)
+        );
+    }
+
+    #[test]
+    fn desktop_scope_is_per_call() {
+        assert_eq!(
+            effective_scope(&serde_json::json!({"scope": "desktop"})),
+            "desktop"
+        );
+        assert_eq!(effective_scope(&serde_json::json!({})), "window");
     }
 
     #[test]

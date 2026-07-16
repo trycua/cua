@@ -16,7 +16,7 @@ The Cua Driver agent skill teaches an agent how to choose tools, address windows
 Run the command from your OpenClaw workspace:
 
 ```bash
-clawhub install @cua/cua-driver
+clawhub install @cua/driver
 ```
 
 ClawHub installs the skill under the workspace's `skills` directory. The bundle contains the shared instructions and the macOS, Windows, and Linux guides, so the agent can read the guide for its current host.
@@ -49,13 +49,13 @@ cua-driver permissions status
 Update the installed skill:
 
 ```bash
-clawhub update cua-driver
+clawhub update driver
 ```
 
 Remove it from the current workspace:
 
 ```bash
-clawhub uninstall cua-driver
+clawhub uninstall driver
 ```
 
 These commands change the agent instructions only. Use [`cua-driver update --apply`](/how-to-guides/driver/update) to update the executable.

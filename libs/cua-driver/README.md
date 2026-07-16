@@ -56,7 +56,7 @@ Directly spawning a raw `cua-driver` binary outside `CuaDriver.app` without embe
 ## Publishing the agent skill to ClawHub
 
 The canonical skill source is `rust/Skills/cua-driver`. It is published as one
-cross-platform ClawHub skill at `@cua/cua-driver`; the bundle includes the
+cross-platform ClawHub skill at `@cua/driver`; the bundle includes the
 macOS, Windows, and Linux documents. Direct installs through `cua-driver skills
 install` still keep only the host OS document unless `--all-platforms` is used.
 
@@ -65,8 +65,8 @@ under MIT, while every skill copy published through ClawHub is distributed
 under MIT-0. Before a release, retain an internal record that Cua AI has the
 right to distribute every bundled file under MIT-0.
 
-Pull requests that change the skill run a publish dry-run through ClawHub's
-pinned reusable workflow. A real release is available only through the
+Pull requests that change the skill run a publish dry-run with the pinned
+ClawHub CLI. A real release is available only through the
 `ClawHub: cua-driver skill` workflow's manual dispatch. The publish job requires
 all of the following:
 
@@ -78,19 +78,16 @@ all of the following:
    that can release under the selected owner. The default owner is `cua`.
 
 The workflow pins the ClawHub CLI, records the source repository, commit, ref,
-and path, and uploads the JSON publish result as an Actions artifact. When a
-`trycua` organization publisher becomes available, transfer the existing skill
-instead of creating a second listing, then change the workflow and this section
-in the same pull request.
+and path, and uploads the JSON publish result as an Actions artifact.
 
 After publishing, inspect and scan the exact version, then install it into an
 empty work directory:
 
 ```bash
-npx --yes clawhub@0.23.1 inspect @cua/cua-driver --version 0.8.3 --files
-npx --yes clawhub@0.23.1 scan --slug cua-driver --version 0.8.3 --update
+npx --yes clawhub@0.23.1 inspect @cua/driver --version 0.8.3 --files
+npx --yes clawhub@0.23.1 scan --slug driver --version 0.8.3 --update
 npx --yes clawhub@0.23.1 --workdir /tmp/cua-driver-clawhub-smoke \
-  install @cua/cua-driver
+  install @cua/driver
 ```
 
 Confirm that `MACOS.md`, `WINDOWS.md`, and `LINUX.md` are present, run

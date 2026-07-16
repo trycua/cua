@@ -1,11 +1,12 @@
 """Daytona harness for cua-bench.
 
-Manages a single Daytona sandbox that runs both the env (KiCad desktop) and
-the solver.  Computer-use traffic stays on localhost:8000 inside the sandbox,
-so no base64-exec calls are needed during the agent loop.
+Manages a Daytona desktop sandbox with either a co-located Linux solver or a
+local solver for Windows. Computer-use traffic uses cua-computer-server on
+port 8000.
 """
 
 import os
+import subprocess
 import threading
 import time
 import urllib.request
@@ -272,6 +273,37 @@ class DaytonaHarness:
             if exit_code is not None:
                 logs = getattr(result, "output", "") or ""
                 return exit_code, logs
+
+    def run_solver_locally(
+        self,
+        command: List[str],
+        env_vars: Dict[str, str],
+        timeout: Optional[int] = None,
+    ) -> tuple[int, str]:
+        """Run a local solver subprocess and return its exit code and output."""
+        print(
+            f"    [harness] Launching solver locally: {' '.join(command)}",
+            flush=True,
+        )
+        process = subprocess.Popen(
+            command,
+            env={**os.environ, **env_vars},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        if timeout == 0:
+            timeout = None
+        try:
+            output, _ = process.communicate(timeout=timeout)
+            return process.returncode, output or ""
+        except subprocess.TimeoutExpired:
+            process.kill()
+            output, _ = process.communicate()
+            timeout_note = "[harness] Solver timed out.\n"
+            if output and not output.endswith("\n"):
+                output += "\n"
+            return -1, (output or "") + timeout_note
 
     async def cleanup(self) -> None:
         """Delete the sandbox."""

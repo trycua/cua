@@ -157,6 +157,10 @@ fn isolated_browser_command(executable: &str, profile: &Path) -> Command {
         .arg("--disable-component-update")
         .arg("--disable-default-apps")
         .arg("--disable-extensions");
+    #[cfg(target_os = "windows")]
+    command
+        .arg("--window-position=40,40")
+        .arg("--window-size=900,640");
     #[cfg(target_os = "linux")]
     {
         let native_wayland = std::env::var("XDG_SESSION_TYPE")
@@ -573,6 +577,10 @@ mod tests {
             "--disable-extensions",
             "about:blank",
         ] {
+            assert!(args.iter().any(|arg| arg == required), "missing {required}");
+        }
+        #[cfg(target_os = "windows")]
+        for required in ["--window-position=40,40", "--window-size=900,640"] {
             assert!(args.iter().any(|arg| arg == required), "missing {required}");
         }
         #[cfg(target_os = "linux")]

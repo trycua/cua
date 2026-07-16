@@ -169,8 +169,8 @@ fn browser_specs() -> Vec<BrowserSpec> {
             .into_iter()
             .filter(|(_, executable)| executable.is_file())
             .map(|(name, executable)| {
-                let identity = std::fs::canonicalize(&executable)
-                    .unwrap_or_else(|_| executable.clone());
+                let identity =
+                    std::fs::canonicalize(&executable).unwrap_or_else(|_| executable.clone());
                 (name, executable, identity)
             })
             .fold(Vec::new(), |mut entries, (name, executable, identity)| {
@@ -244,42 +244,67 @@ fn allocate_loopback_port() -> u16 {
         .port()
 }
 
-fn browser_endpoint_url(port: u16) -> String {
+fn browser_http_json(port: u16, path: &str) -> Result<serde_json::Value, String> {
     let mut stream = TcpStream::connect(("127.0.0.1", port))
-        .unwrap_or_else(|error| panic!("connect to harness CDP endpoint {port}: {error}"));
+        .map_err(|error| format!("connect to harness CDP endpoint {port}: {error}"))?;
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("set CDP HTTP read timeout");
+        .map_err(|error| format!("set CDP HTTP read timeout: {error}"))?;
     write!(
         stream,
-        "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
     )
-    .expect("request harness CDP version");
+    .map_err(|error| format!("request harness CDP endpoint {path}: {error}"))?;
     let mut response = Vec::new();
     if let Err(error) = stream.read_to_end(&mut response) {
-        assert!(
-            matches!(
-                error.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-            ),
-            "read harness CDP version: {error}"
-        );
+        if !matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ) {
+            return Err(format!("read harness CDP endpoint {path}: {error}"));
+        }
     }
     let body_start = response
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
         .map(|index| index + 4)
-        .expect("CDP HTTP response headers");
-    let body: serde_json::Value =
-        serde_json::from_slice(&response[body_start..]).expect("parse CDP version response");
+        .ok_or_else(|| format!("CDP endpoint {path} returned no HTTP headers"))?;
+    serde_json::from_slice(&response[body_start..])
+        .map_err(|error| format!("parse CDP endpoint {path}: {error}"))
+}
+
+fn browser_endpoint_url(port: u16) -> String {
+    let body = browser_http_json(port, "/json/version")
+        .unwrap_or_else(|error| panic!("read harness CDP version: {error}"));
     body["webSocketDebuggerUrl"]
         .as_str()
         .expect("browser websocket URL")
         .to_owned()
 }
 
-fn harness_cdp_call(port: u16, method: &str, params: serde_json::Value) -> serde_json::Value {
-    let ws_url = browser_endpoint_url(port);
+fn wait_for_browser_endpoint(port: u16) {
+    let deadline = Instant::now() + Duration::from_secs(90);
+    loop {
+        let error = match browser_http_json(port, "/json/version") {
+            Ok(body) if body["webSocketDebuggerUrl"].is_string() => return,
+            Ok(body) => format!("missing browser websocket URL: {body}"),
+            Err(error) => error,
+        };
+        assert!(
+            Instant::now() < deadline,
+            "standalone browser never exposed its harness CDP endpoint: {error}"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn harness_cdp_call_at_url(
+    ws_url: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> serde_json::Value {
+    let ws_url = ws_url.to_owned();
+    let method = method.to_owned();
     tokio::runtime::Runtime::new()
         .expect("create harness CDP runtime")
         .block_on(async move {
@@ -306,6 +331,59 @@ fn harness_cdp_call(port: u16, method: &str, params: serde_json::Value) -> serde
             }
             panic!("browser websocket closed before CDP {method} replied")
         })
+}
+
+fn harness_cdp_call(port: u16, method: &str, params: serde_json::Value) -> serde_json::Value {
+    harness_cdp_call_at_url(&browser_endpoint_url(port), method, params)
+}
+
+fn navigate_initial_page(port: u16, url: &str) {
+    wait_for_browser_endpoint(port);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut last_error = None;
+    let mut last_navigate = None;
+    loop {
+        let targets = browser_http_json(port, "/json/list")
+            .unwrap_or_else(|error| panic!("read harness CDP targets: {error}"));
+        let pages = targets
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|target| target["type"] == "page")
+            .collect::<Vec<_>>();
+        assert!(
+            pages.len() <= 1,
+            "fresh standalone browser exposed multiple page targets before fixture setup: {targets}"
+        );
+        if pages.first().is_some_and(|target| target["url"] == url) {
+            return;
+        }
+        if let Some(ws_url) = pages
+            .first()
+            .and_then(|target| target["webSocketDebuggerUrl"].as_str())
+            .filter(|_| {
+                last_navigate
+                    .is_none_or(|issued: Instant| issued.elapsed() >= Duration::from_secs(2))
+            })
+        {
+            let navigated =
+                harness_cdp_call_at_url(ws_url, "Page.navigate", serde_json::json!({"url": url}));
+            last_navigate = Some(Instant::now());
+            last_error = Some(if navigated.get("errorText").is_some() {
+                navigated
+            } else {
+                serde_json::json!({"status": "acknowledged; waiting for target URL commit"})
+            });
+        }
+        assert!(
+            Instant::now() < deadline,
+            "initial fixture navigation did not commit on the fresh page target: {}; targets={targets}",
+            last_error
+                .as_ref()
+                .map_or_else(|| "no page target".to_owned(), serde_json::Value::to_string)
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn cdp_target_for_url(port: u16, url: &str) -> String {
@@ -385,6 +463,16 @@ fn configure_test_browser_sandbox(command: &mut Command) {
     }
 }
 
+#[cfg(target_os = "windows")]
+const TEST_BROWSER_WINDOW_SIZE: &str = "900,640";
+#[cfg(not(target_os = "windows"))]
+const TEST_BROWSER_WINDOW_SIZE: &str = "980,760";
+
+#[cfg(target_os = "windows")]
+const TEST_BROWSER_INITIAL_POSITION: (i32, i32) = (40, 40);
+#[cfg(not(target_os = "windows"))]
+const TEST_BROWSER_INITIAL_POSITION: (i32, i32) = (80, 80);
+
 fn command_for_browser(
     spec: &BrowserSpec,
     profile: &Path,
@@ -410,7 +498,7 @@ fn command_for_browser(
         .arg("--site-per-process")
         .arg("--new-window")
         .arg(format!("--window-position={},{}", position.0, position.1))
-        .arg("--window-size=980,760");
+        .arg(format!("--window-size={TEST_BROWSER_WINDOW_SIZE}"));
     configure_test_browser_sandbox(&mut command);
     #[cfg(target_os = "linux")]
     configure_linux_browser_command(&mut command);
@@ -435,7 +523,7 @@ fn command_for_unprepared_browser(
         .arg("--disable-default-apps")
         .arg("--new-window")
         .arg(format!("--window-position={},{}", position.0, position.1))
-        .arg("--window-size=980,760");
+        .arg(format!("--window-size={TEST_BROWSER_WINDOW_SIZE}"));
     configure_test_browser_sandbox(&mut command);
     #[cfg(target_os = "linux")]
     configure_linux_browser_command(&mut command);
@@ -463,9 +551,9 @@ fn wait_for_fixture_window(
     before: &HashSet<u64>,
     server: &BrowserFixtureServer,
 ) -> Option<(u32, u64)> {
-    // A first temporary-profile launch can take longer than 20 seconds on a
-    // cold macOS host. Waiting is topology-neutral; relaunching is not, since
-    // the first process may eventually map and leave an extra CDP page.
+    // Fixture navigation is complete before this wait starts. Waiting is
+    // topology-neutral; relaunching is not, since the first process may
+    // eventually map and leave an extra CDP page.
     let deadline = Instant::now() + Duration::from_secs(40);
     loop {
         let windows = driver.call("list_windows", serde_json::json!({}));
@@ -589,9 +677,10 @@ fn launch_browser_with_html(spec: &BrowserSpec, label: &str, html: String) -> Br
         spec,
         profile.path(),
         cdp_port,
-        server.page_url(),
-        (80, 80),
+        "about:blank",
+        TEST_BROWSER_INITIAL_POSITION,
     );
+    navigate_initial_page(cdp_port, server.page_url());
     let window = wait_for_fixture_window(&mut driver, &before, &server);
     let (pid, window_id) = window.unwrap_or_else(|| {
         panic!(
@@ -657,7 +746,7 @@ fn wait_for_value(server: &BrowserFixtureServer, id: &str, expected: &str) {
 }
 
 fn wait_for_observed(server: &BrowserFixtureServer, marker: &str) {
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + Duration::from_secs(15);
     while !server.has_observed(marker) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(50));
     }
@@ -955,7 +1044,7 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
                 spec,
                 source_profile.path(),
                 source_server.page_url(),
-                (80, 80),
+                TEST_BROWSER_INITIAL_POSITION,
             );
             let source_child = spawn_in_job(&mut source_command).expect("launch ordinary browser");
             driver.reaper().push(source_child);

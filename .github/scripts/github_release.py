@@ -9,8 +9,9 @@ import mimetypes
 import os
 from pathlib import Path
 import sys
+import time
 from typing import Any, Mapping, Sequence
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
@@ -20,11 +21,34 @@ class ReleaseError(RuntimeError):
 
 
 class GitHubApi:
-    def __init__(self, token: str, api_url: str = "https://api.github.com") -> None:
+    RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+    def __init__(
+        self,
+        token: str,
+        api_url: str = "https://api.github.com",
+        *,
+        max_attempts: int = 4,
+        retry_base_seconds: float = 1.0,
+    ) -> None:
         if not token:
             raise ReleaseError("GH_TOKEN is required")
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1")
         self.token = token
         self.api_url = api_url.rstrip("/")
+        self.max_attempts = max_attempts
+        self.retry_base_seconds = retry_base_seconds
+
+    def _retry_delay(self, error: HTTPError | None, attempt: int) -> float:
+        if error is not None:
+            retry_after = error.headers.get("Retry-After")
+            if retry_after:
+                try:
+                    return max(0.0, float(retry_after))
+                except ValueError:
+                    pass
+        return self.retry_base_seconds * (2 ** (attempt - 1))
 
     def request(
         self,
@@ -49,16 +73,42 @@ class GitHubApi:
         elif content_type:
             headers["Content-Type"] = content_type
         request = Request(url, data=body, headers=headers, method=method)
-        try:
-            with urlopen(request, timeout=120) as response:
-                if response.status == 204:
-                    return None
-                return json.load(response)
-        except HTTPError as error:
-            detail = error.read().decode("utf-8", errors="replace")
-            raise ReleaseError(
-                f"GitHub API {method} {path} failed: {error.code} {detail}"
-            ) from error
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                with urlopen(request, timeout=120) as response:
+                    if response.status == 204:
+                        return None
+                    return json.load(response)
+            except HTTPError as error:
+                detail = error.read().decode("utf-8", errors="replace")
+                retryable = error.code in self.RETRYABLE_STATUS_CODES
+                if retryable and attempt < self.max_attempts:
+                    delay = self._retry_delay(error, attempt)
+                    print(
+                        f"GitHub API {method} {path} returned {error.code}; "
+                        f"retrying in {delay:g}s ({attempt}/{self.max_attempts})",
+                        file=sys.stderr,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise ReleaseError(
+                    f"GitHub API {method} {path} failed: {error.code} {detail}"
+                ) from error
+            except (URLError, TimeoutError) as error:
+                if attempt < self.max_attempts:
+                    delay = self._retry_delay(None, attempt)
+                    print(
+                        f"GitHub API {method} {path} failed temporarily; "
+                        f"retrying in {delay:g}s ({attempt}/{self.max_attempts}): {error}",
+                        file=sys.stderr,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise ReleaseError(
+                    f"GitHub API {method} {path} failed after "
+                    f"{self.max_attempts} attempts: {error}"
+                ) from error
+        raise AssertionError("GitHub API retry loop exited unexpectedly")
 
     def get(self, path: str) -> Any:
         return self.request("GET", path)

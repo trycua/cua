@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+from io import BytesIO
+import json
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 
-from github_release import ReleaseError, finalize_release, tag_commit_sha, unique_release
+import github_release
+from github_release import (
+    GitHubApi,
+    ReleaseError,
+    finalize_release,
+    tag_commit_sha,
+    unique_release,
+)
 
 
 class FakeApi:
@@ -123,3 +133,41 @@ def test_published_release_is_verified_without_mutation(tmp_path: Path):
     assert api.uploaded == []
     assert api.deleted == []
     assert api.patches == []
+
+
+def test_github_api_retries_transient_server_error(monkeypatch: pytest.MonkeyPatch):
+    class Response(BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    responses = iter(
+        [
+            HTTPError(
+                "https://api.github.com/repos/trycua/cua/releases",
+                503,
+                "Service Unavailable",
+                {"Retry-After": "0.25"},
+                BytesIO(b"temporary GitHub error"),
+            ),
+            Response(json.dumps({"ok": True}).encode()),
+        ]
+    )
+    sleeps: list[float] = []
+
+    def fake_urlopen(*_args, **_kwargs):
+        response = next(responses)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr(github_release, "urlopen", fake_urlopen)
+    monkeypatch.setattr(github_release.time, "sleep", sleeps.append)
+
+    api = GitHubApi("token", max_attempts=3, retry_base_seconds=0.1)
+    assert api.get("repos/trycua/cua/releases") == {"ok": True}
+    assert sleeps == [0.25]

@@ -483,6 +483,19 @@ const TEST_BROWSER_INITIAL_POSITION: (i32, i32) = (40, 40);
 #[cfg(not(target_os = "windows"))]
 const TEST_BROWSER_INITIAL_POSITION: (i32, i32) = (80, 80);
 
+fn browser_stderr() -> Stdio {
+    // Direct Chrome launches on macOS must retain their interactive stderr
+    // attachment; redirecting it can prevent the initial fixture from loading.
+    #[cfg(target_os = "macos")]
+    return Stdio::inherit();
+    #[cfg(not(target_os = "macos"))]
+    if std::env::var_os("CUA_E2E_BROWSER_STDERR").is_some() {
+        Stdio::inherit()
+    } else {
+        Stdio::null()
+    }
+}
+
 fn command_for_browser(
     spec: &BrowserSpec,
     profile: &Path,
@@ -491,16 +504,6 @@ fn command_for_browser(
     position: (i32, i32),
 ) -> Command {
     let mut command = Command::new(&spec.executable);
-    // Direct Chrome launches on macOS must retain their interactive stderr
-    // attachment; redirecting it can prevent the initial fixture from loading.
-    #[cfg(target_os = "macos")]
-    let output = Stdio::inherit();
-    #[cfg(not(target_os = "macos"))]
-    let output = if std::env::var_os("CUA_E2E_BROWSER_STDERR").is_some() {
-        Stdio::inherit()
-    } else {
-        Stdio::null()
-    };
     command
         .arg(format!("--remote-debugging-port={cdp_port}"))
         .arg(format!("--user-data-dir={}", profile.display()))
@@ -517,7 +520,10 @@ fn command_for_browser(
     configure_test_browser_sandbox(&mut command);
     #[cfg(target_os = "linux")]
     configure_linux_browser_command(&mut command);
-    command.arg(url).stdout(Stdio::null()).stderr(output);
+    command
+        .arg(url)
+        .stdout(Stdio::null())
+        .stderr(browser_stderr());
     command
 }
 
@@ -546,7 +552,7 @@ fn command_for_unprepared_browser(
         .arg(url)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(browser_stderr());
     command
 }
 

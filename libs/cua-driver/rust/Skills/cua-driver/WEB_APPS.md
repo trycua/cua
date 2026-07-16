@@ -26,6 +26,25 @@ normal profile accidentally. MCP hosts approve the destructive prepare call;
 direct/raw clients first mint a single-use token with the interactive
 `cua-driver browser-approve` command.
 
+### Existing authenticated Chrome profiles (experimental macOS route)
+
+Do not treat ordinary MCP approval as permission to attach to a person's live
+profile. The user must first enable Chrome's per-instance remote-debugging
+toggle, then mint an exact one-use artifact interactively:
+
+```bash
+cua-driver browser-approve --strategy existing_profile \
+  --pid <pid> --window-id <window_id> --session <session>
+```
+
+Pass the token to `browser_prepare` with
+`strategy:{kind:"existing_profile"}` and the same pid, window, and session.
+After `attached_existing_profile`, bind again with `get_browser_state`; every
+older target, tab, and ref is stale. Rebind again after any successful bounded
+reconnect. Never retry a consent dismissal, invent an approval token, click a
+similar-looking dialog yourself, or pass the profile's path. End the named
+session when finished to revoke the in-memory grant.
+
 This is the page-aware Chromium rung. Navigation, default ref-bound text
 insertion, and an explicit DOM click can run against an exactly bound page
 without raising its native window. `browser_click` defaults to trusted

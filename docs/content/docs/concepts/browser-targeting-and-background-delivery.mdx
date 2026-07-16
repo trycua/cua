@@ -85,6 +85,22 @@ Direct CLI and raw-socket callers use a short-lived, single-use token minted by
 the interactive `browser-approve` command. A Boolean supplied by the model is
 not treated as user consent.
 
+An existing authenticated profile has a stronger boundary than a
+driver-created isolated profile. Attaching exposes the profile's live pages,
+cookies, and storage to the browser protocol, so ordinary MCP transport
+approval is not enough. The initial existing-profile route requires a separate
+interactive artifact bound to one process, native window, and named driver
+session.
+
+Chrome can ask for consent whenever a genuinely new browser-level socket is
+opened. Cua Driver therefore keeps one socket for each approved connection
+generation and multiplexes tabs over it. If the socket drops, one reconnect
+leader re-proves process, endpoint, and native-window identity before it may
+press the exact browser-owned consent action. A successful reconnect changes
+the generation and makes every old target, tab, snapshot, and ref stale. This
+is deliberate: silently remapping an old capability could act on a different
+tab after a browser lifecycle change.
+
 ## Platform meaning
 
 Page-aware routes are cross-platform, but exact native correlation and input

@@ -2,12 +2,12 @@
 
 ## Status
 
-- **State:** Proposed for review
+- **State:** Implemented locally; macOS Chrome evidence accepted, broader prompt adapters remain strict refusals
 - **Plan date:** 2026-07-16
 - **Base:** `main` at `0835daa6` (`feat(cua-driver): add capability-aware browser tools`)
 - **Primary tracker:** [#2192](https://github.com/trycua/cua/issues/2192)
 - **Scope:** First-class, user-approved attachment to an existing Chromium profile, followed by bounded autonomous reconnection
-- **Delivery:** Multiple independently reviewable pull requests in one implementation stack, not one large pull request
+- **Delivery:** One local implementation branch, not pushed; can be split into independently reviewable pull requests before publication
 
 This plan is based on a read-only audit of the merged browser tools, platform
 adapters, approval path, CDP transport, legacy macOS page implementation,

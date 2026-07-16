@@ -534,3 +534,59 @@ page pass on the physical host, so this result is an environment limitation in
 that VM image rather than a browser-tool or fixture regression. The matrix
 keeps its readiness assertion; it does not convert the blank surface into a
 pass or an expected product refusal.
+
+## 2026-07-16: existing-profile attachment and bounded reconnect
+
+Implemented the reviewed existing-profile strategy without changing the
+driver-owned isolated profile contract:
+
+- `browser_prepare` accepts the tagged
+  `strategy:{kind:"existing_profile"}` request only with an exact pid,
+  native window, named session, and five-minute single-use artifact minted by
+  the interactive `browser-approve` CLI. The ordinary MCP host marker cannot
+  authorize this route.
+- Grants live only in daemon memory and are scoped to public and transport
+  session, process fingerprint, native window, browser product, endpoint, and
+  connection generation. Idle/absolute expiry, consent dismissal, identity
+  change, reconnect exhaustion, session end, and daemon restart revoke the
+  grant and release its claimed socket.
+- One browser-level CDP connection is owned per generation. Reconnect is
+  single-flight per approved browser, has three attempts under one bounded
+  deadline, re-proves endpoint/process identity, and invalidates every older
+  target, tab, snapshot, frame, and ref capability.
+- Browser mutations serialize by process fingerprint plus real CDP target, so
+  two sessions cannot interleave actions in the same tab while independent
+  tabs remain parallel. Keystroke typing reports exact requested and delivered
+  character counts and returns `browser_input_incomplete` for a partial prefix.
+- Consent-bearing recording turns persist redacted metadata and result only.
+  Browser screenshots, AX snapshots, approval tokens, endpoint addresses,
+  ports, profile data, and authenticated page content are suppressed.
+
+The macOS Chrome adapter discovers a unique PID-owned loopback listener and
+uses a bounded native AX adapter. It acts only on one browser-owned modal sheet
+with remote-debugging corroboration and one semantic Allow button advertising
+AXPress. During physical-host validation, Chrome exposed the same top-level
+window through both AXChildren and AXWindows with different proxy pointers;
+top-level deduplication now uses Core Foundation object equality so a single
+sheet cannot become a false ambiguous match.
+
+A fresh disposable Chrome profile provided the real acceptance evidence. The
+user-facing remote-debugging toggle exposed one PID-owned listener; the exact
+CLI artifact authorized one call; Cua Driver pressed Chrome's consent action;
+`browser_prepare` returned `attached_existing_profile`; and the following
+`get_browser_state(pid, window_id, session)` produced an exact
+`native_cdp_window` binding without launching, restarting, copying, or changing
+the profile. A separate disposable-profile standalone harness proves the same
+public contract and a DOM mutation against an independent fixture oracle.
+
+Final local verification passed 236 core tests, 134 macOS platform tests, 102
+CLI tests, the protocol and session integration suites, and the ignored
+source-built `standalone_browser_existing_profile` real-browser row. The shared
+Windows/Linux/testkit packages compile with the additive contract. The exact
+branch build was installed locally as Cua Driver 0.8.3; its stable app identity
+retained both Accessibility and Screen Recording grants.
+
+Windows and Linux compile the same contract, grant, generation, mutation, and
+refusal model. Their native consent adapters remain strict refusals until an
+interactive UIA or AT-SPI harness proves stable browser-owned prompt semantics;
+no unsupported prompt route is advertised as working.

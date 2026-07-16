@@ -48,7 +48,15 @@ harnesses; an unlisted trust class or host shape is not implied.
 `browser_prepare` may launch a separate driver-owned Chromium profile after an
 approved destructive call. `isolated_new` processes and their complete child
 trees are reaped and the marked profile is removed when the owning session
-ends. The selected user's existing browser process and profile are not changed.
+ends.
+
+Existing-profile attachment is experimental for Chrome on macOS. A real-browser
+test proves a manually enabled per-instance endpoint, exact interactive
+approval, the browser-owned AX consent action, PID-owned endpoint discovery,
+and an exact native/CDP rebind without launching, restarting, copying, or
+modifying the profile. Windows, Linux, Edge, and other Chromium products return
+a structured refusal unless their endpoint already satisfies the independently
+proven route; prompt automation is not advertised for them yet.
 
 ## Linux window systems
 

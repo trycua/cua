@@ -494,6 +494,13 @@ the production `custom-protocol` feature, so the native window opened but its
 embedded frontend was not served. The shared Tauri feature now maps to
 `tauri/custom-protocol`, and both Unix and Windows fixture builders enable it.
 
+The Tauri package also did not declare its copied `../web` frontend directory
+as a Cargo build input. A cached target could therefore retain an older page
+after the shared fixture changed or a clean source snapshot was synced with
+preserved mtimes. Its build script now emits `rerun-if-changed` for that
+directory, making frontend embedding deterministic without deleting build
+caches.
+
 An official custom-protocol bundle exposed the second issue: starting the
 first loopback fixture-state request before custom-scheme navigation finished
 could keep the WKWebView load open. The shared web fixture now starts journal

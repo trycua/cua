@@ -36,6 +36,7 @@ def _make_cloud_transport(*, name: str = "test-vm") -> CloudTransport:
     t._memory_mb = None
     t._disk_gb = None
     t._region = "us-east-1"
+    t._created_by_connect = True
     t._inner = None
     t._api_client = None
     return t
@@ -132,6 +133,30 @@ class TestCreateCleansUpOnConnectFailure:
                 await Sandbox._create(
                     image=Image.linux("ubuntu", "24.04"),
                     api_key="sk-fake",
+                    telemetry_enabled=False,
+                )
+
+        transport.delete_vm.assert_not_awaited()
+
+    async def test_named_create_failure_before_creation_does_not_delete(self):
+        """A caller-supplied name is not proof that this request created the VM."""
+        transport = _make_cloud_transport(name="existing-name")
+        transport._created_by_connect = False
+        transport.connect = AsyncMock(
+            side_effect=httpx.HTTPStatusError(
+                "conflict",
+                request=httpx.Request("POST", "https://run.cua.ai/api/sbx"),
+                response=httpx.Response(409),
+            )
+        )
+        transport.delete_vm = AsyncMock()
+
+        with patch("cua_sandbox.sandbox.CloudTransport", return_value=transport):
+            with pytest.raises(httpx.HTTPStatusError):
+                await Sandbox._create(
+                    image=Image.linux("ubuntu", "24.04"),
+                    name="existing-name",
+                    api_key="jwt",
                     telemetry_enabled=False,
                 )
 

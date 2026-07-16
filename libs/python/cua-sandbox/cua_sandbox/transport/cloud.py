@@ -1,8 +1,8 @@
-"""CloudTransport — connects to a CUA cloud VM via the platform API.
+"""CloudTransport — connects to a CUA cloud sandbox via the platform API.
 
-Resolves VM connection info from the API, optionally creates a new VM,
+Resolves sandbox connection info from the API, optionally creates a new sandbox,
 then delegates all computer control to an inner HTTPTransport pointed at
-the VM's computer-server endpoint.
+the sandbox's computer-server endpoint.
 """
 
 from __future__ import annotations
@@ -12,7 +12,13 @@ import logging
 from typing import Any, Dict, Optional
 
 import httpx
-from cua_sandbox._config import get_api_key, get_base_url
+from cua_sandbox._config import (
+    get_api_key,
+    get_base_url,
+    get_sandbox_base_url,
+    get_sandbox_client_credentials,
+    get_sandbox_token_url,
+)
 from cua_sandbox.transport.base import Transport
 from cua_sandbox.transport.http import HTTPTransport
 
@@ -20,8 +26,36 @@ logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL = 0.5  # seconds between status polls
 _POLL_TIMEOUT = 600.0  # max seconds to wait for VM to be running
-_CREATE_MAX_RETRIES = 5  # retry POST /v1/vms on 503 (no capacity)
+_CREATE_MAX_RETRIES = 5  # retry sandbox creation on transient capacity failures
 _CREATE_RETRY_BASE_S = 2.0  # exponential backoff base (2, 4, 8, 16, 32s)
+
+
+async def _resolve_cloud_token(override: Optional[str]) -> str:
+    if override:
+        return override
+    client_id, client_secret = get_sandbox_client_credentials()
+    if client_id and client_secret:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                get_sandbox_token_url(),
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()["access_token"]
+    api_key = get_api_key()
+    if api_key and not api_key.startswith("sk-"):
+        return api_key
+    raise ValueError(
+        "Fleet-backed cloud sandboxes require a cyclops-cs bearer token or per-user "
+        "client credentials. Pass api_key='<bearer-token>', or configure "
+        "sandbox_client_id='ukey-...' and sandbox_client_secret='...' (environment: "
+        "CUA_CLIENT_ID / CUA_CLIENT_SECRET). Legacy sk- API keys cannot authenticate "
+        "to the sandbox control plane."
+    )
 
 
 class CloudTransport(Transport):
@@ -48,12 +82,15 @@ class CloudTransport(Transport):
     ):
         self._name = name
         self._api_key_override = api_key
-        self._base_url = base_url or get_base_url()
+        self._base_url = base_url or get_sandbox_base_url()
         self._image = image
         self._cpu = cpu
         self._memory_mb = memory_mb
         self._disk_gb = disk_gb
         self._region = region
+        self._legacy_vm = bool(image and getattr(image, "_snapshot_source", None))
+        self._legacy_base_url = base_url if self._legacy_vm and base_url else get_base_url()
+        self._created_by_connect = False
         self._time_to_start = time_to_start if time_to_start is not None else _POLL_TIMEOUT
         self._request_timeout = request_timeout if request_timeout is not None else 30.0
         self._inner: Optional[HTTPTransport] = None
@@ -62,33 +99,31 @@ class CloudTransport(Transport):
     # ── Connection lifecycle ────────────────────────────────────────────
 
     async def connect(self) -> None:
-        api_key = get_api_key(self._api_key_override)
-        if not api_key:
-            raise ValueError(
-                "No CUA API key found. Cloud sandboxes are the default — to use one, provide an API key via:\n"
-                "  1. cua.configure(api_key='sk-...')\n"
-                "  2. Set the CUA_API_KEY environment variable\n"
-                "  3. Run cua.login() to authenticate via browser\n"
-                "  4. Pass api_key='sk-...' directly to sandbox()\n"
-                "\n"
-                "For local-only usage (no cloud), use sandbox(local=True) instead."
-            )
+        if self._legacy_vm:
+            api_key = get_api_key(self._api_key_override)
+            if not api_key:
+                raise ValueError("No CUA API key. Set CUA_API_KEY or run cua.login().")
+            client_base_url = self._legacy_base_url
+        else:
+            api_key = await _resolve_cloud_token(self._api_key_override)
+            client_base_url = self._base_url
 
         self._api_client = httpx.AsyncClient(
-            base_url=self._base_url,
+            base_url=client_base_url,
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=30.0,
         )
 
-        if self._name:
-            logger.debug("[cloud] getting VM info for %r", self._name)
+        if self._name and self._image is None:
+            logger.debug("[cloud] getting sandbox info for %r", self._name)
             vm_info = await self._get_vm(self._name)
-            logger.debug("[cloud] VM info: status=%r", vm_info.get("status"))
+            logger.debug("[cloud] sandbox info: status=%r", vm_info.get("status"))
         else:
-            logger.debug("[cloud] creating new VM")
+            logger.debug("[cloud] creating new sandbox")
             vm_info = await self._create_vm()
             self._name = vm_info["name"]
-            logger.debug("[cloud] created VM %r", self._name)
+            self._created_by_connect = True
+            logger.debug("[cloud] created sandbox %r", self._name)
 
         _is_local_dev = not self._base_url.rstrip("/").endswith("cua.sh") and (
             "localhost" in self._base_url
@@ -216,10 +251,29 @@ class CloudTransport(Transport):
             await self._api_client.aclose()
             self._api_client = None
 
+    async def _legacy_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Optional[dict] = None,
+        timeout: float = 30.0,
+    ) -> httpx.Response:
+        api_key = get_api_key(self._api_key_override)
+        if not api_key:
+            raise ValueError("No CUA API key. Set CUA_API_KEY or run cua.login().")
+        async with httpx.AsyncClient(
+            base_url=self._legacy_base_url,
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=timeout,
+        ) as client:
+            return await client.request(method, path, json=json, timeout=timeout)
+
     async def create_snapshot(self, name: str | None = None, stateful: bool = False) -> dict:
         """Create a snapshot of this VM. Returns an image descriptor dict."""
         assert self._api_client and self._name
-        resp = await self._api_client.post(
+        resp = await self._legacy_request(
+            "POST",
             f"/v1/vms/{self._name}/snapshot",
             json={"name": name or "", "stateful": stateful},
             timeout=600.0,  # snapshot can take minutes on dir storage
@@ -243,37 +297,42 @@ class CloudTransport(Transport):
         return
 
     async def delete_vm(self) -> None:
-        """Delete the cloud VM via the platform API."""
-        api_key = get_api_key(self._api_key_override)
-        if not api_key or not self._name:
+        """Delete the cloud sandbox via its owning lifecycle API."""
+        if not self._name:
             return
+        if self._legacy_vm:
+            resp = await self._legacy_request("DELETE", f"/v1/vms/{self._name}")
+            resp.raise_for_status()
+            return
+        api_key = await _resolve_cloud_token(self._api_key_override)
         async with httpx.AsyncClient(
             base_url=self._base_url,
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=30.0,
         ) as client:
-            await client.delete(f"/v1/vms/{self._name}")
+            resp = await client.delete(f"/api/sbx/{self._name}")
+            resp.raise_for_status()
 
     async def suspend_vm(self) -> None:
         """Stop (suspend) the cloud VM."""
         if not self._name:
             return
-        assert self._api_client
-        await self._api_client.post(f"/v1/vms/{self._name}/stop")
+        resp = await self._legacy_request("POST", f"/v1/vms/{self._name}/stop")
+        resp.raise_for_status()
 
     async def resume_vm(self) -> None:
         """Start (resume) the cloud VM."""
         if not self._name:
             return
-        assert self._api_client
-        await self._api_client.post(f"/v1/vms/{self._name}/run")
+        resp = await self._legacy_request("POST", f"/v1/vms/{self._name}/run")
+        resp.raise_for_status()
 
     async def restart_vm(self) -> None:
         """Restart the cloud VM."""
         if not self._name:
             return
-        assert self._api_client
-        await self._api_client.post(f"/v1/vms/{self._name}/restart")
+        resp = await self._legacy_request("POST", f"/v1/vms/{self._name}/restart")
+        resp.raise_for_status()
 
     # ── Delegated methods ───────────────────────────────────────────────
 
@@ -332,7 +391,8 @@ class CloudTransport(Transport):
 
     async def _get_vm(self, name: str) -> dict:
         assert self._api_client
-        resp = await self._api_client.get(f"/v1/vms/{name}")
+        path = f"/v1/vms/{name}" if self._legacy_vm else f"/api/sbx/{name}"
+        resp = await self._api_client.get(path)
         resp.raise_for_status()
         return resp.json()
 
@@ -345,7 +405,8 @@ class CloudTransport(Transport):
                 "Or connect to an existing VM by name: Sandbox.connect(name='my-vm')"
             )
 
-        # Fork path: image came from sb.snapshot() — create VM from snapshot
+        # Snapshot forks remain on the legacy VM API until fleet-backed
+        # snapshot semantics exist server-side.
         snap_source = getattr(self._image, "_snapshot_source", None)
         if snap_source:
             body = {
@@ -354,7 +415,7 @@ class CloudTransport(Transport):
                 "snapshot": snap_source["snapshot"],
                 "instanceType": snap_source.get("instanceType", "vm"),
             }
-            resp = await self._api_client.post("/v1/vms", json=body)
+            resp = await self._legacy_request("POST", "/v1/vms", json=body)
             resp.raise_for_status()
             return resp.json()
 
@@ -363,19 +424,18 @@ class CloudTransport(Transport):
             raise ValueError(
                 "Image must have an os_type. Use Image.linux(), Image.windows(), or Image.macos()."
             )
-        body: Dict[str, Any] = {
-            "os": os_type,
-            "region": self._region,
-        }
-        # If any resource spec is provided, send explicit specs (defaulting missing to small).
-        # Otherwise, send configuration="small" for backwards compat with legacy API.
-        if any(v is not None for v in (self._cpu, self._memory_mb, self._disk_gb)):
-            body["cpu"] = self._cpu or self._DEFAULT_CPU
-            body["memoryMb"] = self._memory_mb or self._DEFAULT_MEMORY_MB
-            body["diskGb"] = self._disk_gb or self._DEFAULT_DISK_GB
-        else:
-            body["configuration"] = "small"
-        resp = await self._post_with_retry("/v1/vms", body)
+        if self._disk_gb is not None:
+            raise ValueError("disk_gb is not supported by fleet-backed cloud sandboxes")
+        if self._region != "us-east-1":
+            raise ValueError("region is not supported by fleet-backed cloud sandboxes")
+        body: Dict[str, Any] = {"os": os_type}
+        if self._name:
+            body["name"] = self._name
+        if self._cpu is not None:
+            body["cpu"] = self._cpu
+        if self._memory_mb is not None:
+            body["memoryMb"] = self._memory_mb
+        resp = await self._post_with_retry("/api/sbx", body)
         resp.raise_for_status()
         return resp.json()
 
@@ -383,7 +443,8 @@ class CloudTransport(Transport):
         """POST with exponential backoff retry on 503 (no capacity)."""
         assert self._api_client
         for attempt in range(_CREATE_MAX_RETRIES):
-            resp = await self._api_client.post(path, json=body)
+            timeout = self._time_to_start if path == "/api/sbx" else None
+            resp = await self._api_client.post(path, json=body, timeout=timeout)
             if resp.status_code != 503:
                 return resp
             if attempt == _CREATE_MAX_RETRIES - 1:
@@ -734,9 +795,11 @@ class CloudTransport(Transport):
 
         return output_apk, fingerprint
 
-    @staticmethod
-    def _resolve_endpoint(vm_info: dict) -> str:
-        """Build the computer-server HTTP URL from VM info."""
+    def _resolve_endpoint(self, vm_info: dict) -> str:
+        """Build the computer-server HTTP URL from sandbox info."""
+        api_url = vm_info.get("apiUrl")
+        if api_url:
+            return str(httpx.URL(self._base_url).join(api_url))
         # Prefer explicit endpoints array
         for ep in vm_info.get("endpoints", []):
             if ep.get("name") in ("computer-server", "api"):
@@ -749,47 +812,45 @@ class CloudTransport(Transport):
         # Fallback: legacy host-based URL
         host = vm_info.get("host")
         if not host:
-            raise ValueError(f"Cannot resolve computer-server endpoint from VM info: {vm_info}")
+            raise ValueError(
+                f"Cannot resolve computer-server endpoint from sandbox info: {vm_info}"
+            )
         return f"http://{host}:8000"
 
 
 async def cloud_list_vms(
     *, api_key: Optional[str] = None, base_url: Optional[str] = None
 ) -> list[dict]:
-    """List all cloud VMs. Returns raw VM dicts from the API."""
-    from cua_sandbox._config import get_api_key, get_base_url
+    """List all cloud sandboxes. Returns raw aggregate API objects."""
+    from cua_sandbox._config import get_sandbox_base_url
 
-    key = get_api_key(api_key)
-    if not key:
-        raise ValueError("No CUA API key. Set CUA_API_KEY or run cua.login().")
-    url = base_url or get_base_url()
+    key = await _resolve_cloud_token(api_key)
+    url = base_url or get_sandbox_base_url()
     async with httpx.AsyncClient(
         base_url=url,
         headers={"Authorization": f"Bearer {key}"},
         timeout=30.0,
     ) as client:
-        resp = await client.get("/v1/vms")
+        resp = await client.get("/api/sbx")
         resp.raise_for_status()
         data = resp.json()
-        return data if isinstance(data, list) else data.get("vms", [])
+        return data if isinstance(data, list) else data.get("sandboxes", [])
 
 
 async def cloud_get_vm(
     name: str, *, api_key: Optional[str] = None, base_url: Optional[str] = None
 ) -> dict:
-    """Get info for a single cloud VM by name."""
-    from cua_sandbox._config import get_api_key, get_base_url
+    """Get info for a single cloud sandbox by name."""
+    from cua_sandbox._config import get_sandbox_base_url
 
-    key = get_api_key(api_key)
-    if not key:
-        raise ValueError("No CUA API key. Set CUA_API_KEY or run cua.login().")
-    url = base_url or get_base_url()
+    key = await _resolve_cloud_token(api_key)
+    url = base_url or get_sandbox_base_url()
     async with httpx.AsyncClient(
         base_url=url,
         headers={"Authorization": f"Bearer {key}"},
         timeout=30.0,
     ) as client:
-        resp = await client.get(f"/v1/vms/{name}")
+        resp = await client.get(f"/api/sbx/{name}")
         resp.raise_for_status()
         return resp.json()
 
@@ -801,19 +862,24 @@ async def cloud_vm_action(
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
 ) -> None:
-    """POST /v1/vms/{name}/{action}. action is 'stop', 'run', 'restart', or 'delete'."""
-    from cua_sandbox._config import get_api_key, get_base_url
+    """Run a cloud action; delete uses the aggregate sbx lifecycle."""
+    from cua_sandbox._config import get_sandbox_base_url
 
-    key = get_api_key(api_key)
-    if not key:
-        raise ValueError("No CUA API key. Set CUA_API_KEY or run cua.login().")
-    url = base_url or get_base_url()
+    if action == "delete":
+        key = await _resolve_cloud_token(api_key)
+        url = base_url or get_sandbox_base_url()
+    else:
+        key = get_api_key(api_key)
+        if not key:
+            raise ValueError("No CUA API key. Set CUA_API_KEY or run cua.login().")
+        url = base_url or get_base_url()
     async with httpx.AsyncClient(
         base_url=url,
         headers={"Authorization": f"Bearer {key}"},
         timeout=30.0,
     ) as client:
         if action == "delete":
-            await client.delete(f"/v1/vms/{name}")
+            resp = await client.delete(f"/api/sbx/{name}")
         else:
-            await client.post(f"/v1/vms/{name}/{action}")
+            resp = await client.post(f"/v1/vms/{name}/{action}")
+        resp.raise_for_status()

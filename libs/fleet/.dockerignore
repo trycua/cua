@@ -3,4 +3,4 @@ dist
 .git
 *.log
 README.md
-# copybara reverse-sync e2e test 2026-07-15
+# copybara mirror e2e verified 2026-07-15 (libs/fleet layout)

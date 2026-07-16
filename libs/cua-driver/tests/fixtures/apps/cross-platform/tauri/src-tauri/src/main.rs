@@ -38,15 +38,18 @@ fn main() {
             #[cfg(not(target_os = "windows"))]
             let height = 760.0;
 
-            tauri::WebviewWindowBuilder::new(
+            let window = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
                 tauri::WebviewUrl::External(fixture_url()),
             )
             .title("CuaTestHarness Tauri")
             .inner_size(900.0, height)
-            .resizable(true)
-            .build()?;
+            .resizable(true);
+            #[cfg(target_os = "windows")]
+            let window = window.position(40.0, 40.0);
+
+            window.build()?;
             Ok(())
         })
         .run(tauri::generate_context!())

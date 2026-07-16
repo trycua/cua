@@ -590,3 +590,13 @@ Windows and Linux compile the same contract, grant, generation, mutation, and
 refusal model. Their native consent adapters remain strict refusals until an
 interactive UIA or AT-SPI harness proves stable browser-owned prompt semantics;
 no unsupported prompt route is advertised as working.
+
+The committed source snapshot was also replayed natively on isolated Azure VM
+staging paths. The interactive Windows VM passed all 236 shared-core tests and
+96 Windows platform tests, with the two pre-existing cache UAF repro cases
+remaining ignored. The Wayland VM passed all 237 Linux shared-core tests and
+all 100 Linux platform tests. These are native contract and platform-crate
+results, not evidence of UIA or AT-SPI consent-dialog automation. An additional
+X11 VM attempt reached dependency compilation but its root filesystem had only
+4 MB free and returned `No space left on device`; it produced no behavioral
+verdict and was not counted as product evidence.

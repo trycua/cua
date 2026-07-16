@@ -139,4 +139,6 @@ desktop state outside the repo-local fixtures:
   targeting, mutation, frame, tab, ambiguity, and isolated-profile rows. The
   harness owns a fresh browser profile and creates adversarial tabs and windows
   through the browser endpoint instead of relying on browser command-line
-  handoff behavior.
+  handoff behavior. Run it through the cross-platform
+  `scripts/ci/run-rust-standalone-browser-e2e.sh`; macOS Lume maintainers can
+  add it to the VM acceptance run with `run-all.sh --standalone-browser`.

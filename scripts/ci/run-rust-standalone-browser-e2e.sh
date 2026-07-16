@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Run the external Chromium browser matrix in the caller's desktop session.
+# Run the cross-platform external Chromium browser matrix in the caller's desktop session.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 RUST_ROOT="${REPO_ROOT}/libs/cua-driver/rust"
 ARTIFACT_DIR="${CUA_E2E_ARTIFACT_DIR:-${REPO_ROOT}/artifacts/cua-driver/standalone-browser}"
 

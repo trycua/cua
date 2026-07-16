@@ -11,7 +11,7 @@ Standalone Chrome/Edge adversarial coverage is a separate optional real-browser
 suite because it requires an installed external browser. Run it explicitly:
 
 ```bash
-scripts/ci/linux/run-rust-standalone-browser-e2e.sh
+scripts/ci/run-rust-standalone-browser-e2e.sh
 ```
 
 The runner requires an existing X11 or Wayland user session and a fresh
@@ -19,7 +19,7 @@ artifact directory. To exercise the same matrix in the repo-owned native Sway
 session, run:
 
 ```bash
-CUA_E2E_WAYLAND_RUNNER="$PWD/scripts/ci/linux/run-rust-standalone-browser-e2e.sh" \
+CUA_E2E_WAYLAND_RUNNER="$PWD/scripts/ci/run-rust-standalone-browser-e2e.sh" \
   scripts/ci/linux/run-rust-e2e-wayland.sh
 ```
 
@@ -53,7 +53,8 @@ The maintainer-facing macOS command is
 `libs/cua-driver/tests/runners/macos-lume/run-all.sh`. It verifies the private
 Lume seed, installs the exact committed source, and then delegates to the thin
 `macos/run-rust-e2e.sh` matrix runner above. There is no GitHub-hosted macOS GUI
-job.
+job. Pass `--standalone-browser` to run the optional installed Chrome/Edge
+browser matrix after the canonical repo-local harness matrix.
 
 Run the Wayland wrapper through `nix develop .#cua-driver-wayland-e2e`. It
 creates a pure Wayland session with Xwayland disabled and delegates every

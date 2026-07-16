@@ -147,6 +147,12 @@ fn handle_connection(
     latest: &Arc<Mutex<serde_json::Value>>,
     observed: &Arc<Mutex<Vec<serde_json::Value>>>,
 ) {
+    // BSD accept can preserve the listener's nonblocking flag. The fixture
+    // handler needs a bounded blocking read so it does not close before the
+    // browser has written its request bytes.
+    if stream.set_nonblocking(false).is_err() {
+        return;
+    }
     let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
     let mut request = Vec::new();
     let mut chunk = [0u8; 8192];
@@ -308,5 +314,24 @@ mod tests {
 
         assert!(response.contains("200 OK"));
         assert!(response.contains("concurrent-marker"));
+    }
+
+    #[test]
+    fn accepts_request_bytes_after_a_short_client_delay() {
+        let server = BrowserFixtureServer::start("<html><body>delayed-marker</body></html>");
+        let address = address(server.page_url(), "/fixture");
+        let mut stream = TcpStream::connect(&address).expect("connect delayed browser request");
+
+        std::thread::sleep(Duration::from_millis(50));
+        stream
+            .write_all(format!("GET /fixture HTTP/1.1\r\nHost: {address}\r\n\r\n").as_bytes())
+            .expect("send delayed browser request");
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("read delayed browser response");
+
+        assert!(response.contains("200 OK"));
+        assert!(response.contains("delayed-marker"));
     }
 }

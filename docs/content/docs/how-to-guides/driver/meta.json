@@ -6,6 +6,7 @@
     "run-tests-in-macos-lume-vm",
     "connect-your-agent",
     "drive-a-web-page",
+    "record-and-render-a-trajectory",
     "keep-running",
     "restrict-tool-access",
     "personalize-cursor",

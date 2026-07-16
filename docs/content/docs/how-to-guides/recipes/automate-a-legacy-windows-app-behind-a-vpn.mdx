@@ -8,8 +8,21 @@ import { Steps, Step } from 'fumadocs-ui/components/steps';
 
 When a desktop app has **no API** and only runs **behind the corporate VPN**, drive it where it already runs, on the Windows box inside the network. **Cua Driver** runs on that machine and exposes the app through MCP stdio tools, so the desktop session, app traffic, and staged files stay inside the VPN boundary. **No data leaves the VPN boundary.**
 
+<VideoDemo
+  src="https://github.com/user-attachments/assets/77dbfdb2-2b02-4a9d-8f7e-4710f59de803"
+  poster="https://github.com/user-attachments/assets/462a7309-87b4-4d50-b1fc-295314912861"
+  title="Drive a legacy postal app while the terminal stays in front"
+  sourceUrl="https://x.com/trycua/status/2059693301276565841"
+>
+  Claude Code fills shipment details and prints receipts in a Windows desktop app with no API. The
+  [original launch thread](https://x.com/trycua/status/2059688960838828391) explains the use case.
+</VideoDemo>
+
 <Callout type="info">
-  Before you start: [install Cua Driver](/how-to-guides/driver/install), [connect your agent](/how-to-guides/driver/connect-your-agent), and configure [Keep Cua Driver running](/how-to-guides/driver/keep-running). If you connect over SSH, also read [Drive a Windows app over SSH](/how-to-guides/driver/windows-ssh).
+  Before you start: [install Cua Driver](/how-to-guides/driver/install), [connect your
+  agent](/how-to-guides/driver/connect-your-agent), and configure [Keep Cua Driver
+  running](/how-to-guides/driver/keep-running). If you connect over SSH, also read [Drive a Windows
+  app over SSH](/how-to-guides/driver/windows-ssh).
 </Callout>
 
 <Steps>
@@ -25,6 +38,7 @@ When a desktop app has **no API** and only runs **behind the corporate VPN**, dr
     ```
 
     Confirm the app is installed or reachable from that desktop session before you install anything. For this recipe, assume the payroll client opens normally when you launch it by hand.
+
   </Step>
 
   <Step>
@@ -44,6 +58,7 @@ When a desktop app has **no API** and only runs **behind the corporate VPN**, dr
     ```
 
     Empty output usually means the command is running outside the interactive desktop. Recheck `cua-driver status`, `query session`, and the autostart task.
+
   </Step>
 
   <Step>
@@ -58,6 +73,7 @@ When a desktop app has **no API** and only runs **behind the corporate VPN**, dr
     ```
 
     The agent should use `launch_app` to open the client, `list_apps` and `list_windows` to find the running process and target window, `get_window_state` to inspect the UI (it returns the accessibility tree and a screenshot), then `click` and `type_text` to complete the workflow.
+
   </Step>
 </Steps>
 

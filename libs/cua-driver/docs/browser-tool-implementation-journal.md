@@ -591,7 +591,7 @@ refusal model. Their native consent adapters remain strict refusals until an
 interactive UIA or AT-SPI harness proves stable browser-owned prompt semantics;
 no unsupported prompt route is advertised as working.
 
-The committed source snapshot was also replayed natively on isolated Azure VM
+The committed source snapshot was also replayed natively on isolated remote VM
 staging paths. The interactive Windows VM passed all 236 shared-core tests and
 96 Windows platform tests, with the two pre-existing cache UAF repro cases
 remaining ignored. The Wayland VM passed all 237 Linux shared-core tests and

@@ -102,7 +102,7 @@ jobs:
           export CUA_E2E_SKIP_BUILD=1
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
-            'openbox >/tmp/cua-browser-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-browser-picom.log 2>&1 & sleep 2; exec scripts/ci/linux/run-rust-standalone-browser-e2e.sh'
+            'openbox >/tmp/cua-browser-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-browser-picom.log 2>&1 & sleep 2; exec scripts/ci/run-rust-standalone-browser-e2e.sh'
       - name: Publish job summary
         if: always()
         shell: bash

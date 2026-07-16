@@ -45,6 +45,14 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("5c625bfb5d1ff62eadeeb3772007f7f66fdcf071", workflow)
         self.assertIn('-p cua-driver --precise "$DRIVER_VERSION"', workflow)
 
+    def test_required_release_metadata_check_runs_for_every_pull_request(self) -> None:
+        workflow = self.read(".github/workflows/ci-release-metadata.yml")
+
+        trigger = workflow.split("permissions:", 1)[0]
+        self.assertNotIn("    paths:", trigger)
+        self.assertIn("Determine product release scope", workflow)
+        self.assertIn("if: steps.scope.outputs.product_changed == 'true'", workflow)
+
     def test_legacy_release_routes_exclude_driver_and_lume(self) -> None:
         workflow = self.read(".github/workflows/release-bump-version.yml")
         self.assertNotIn("          - cua-driver-rs\n", workflow)

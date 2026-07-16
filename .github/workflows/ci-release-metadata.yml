@@ -3,20 +3,6 @@ name: "CI: Release metadata"
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
-    paths:
-      - "libs/cua-driver/**"
-      - "libs/lume/**"
-      - ".github/release-attribution-config.json"
-      - ".github/release-manifest.schema.json"
-      - ".github/release-notes/**"
-      - ".github/scripts/release_attribution.py"
-      - ".github/scripts/github_release.py"
-      - ".github/scripts/validate_release_versions.py"
-      - ".github/workflows/cd-rust-cua-driver.yml"
-      - ".github/workflows/cd-swift-lume.yml"
-      - ".github/workflows/release-please.yml"
-      - ".release-please-manifest.json"
-      - "release-please-config.json"
 
 permissions:
   contents: read
@@ -36,7 +22,30 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Determine product release scope
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          PRODUCT_CHANGED=false
+          while IFS= read -r path; do
+            case "$path" in
+              libs/lume/*)
+                PRODUCT_CHANGED=true
+                ;;
+              libs/cua-driver/docs/*|libs/cua-driver/python/*|libs/cua-driver/tests/*)
+                ;;
+              libs/cua-driver/*)
+                PRODUCT_CHANGED=true
+                ;;
+            esac
+          done < <(git diff --name-only "$BASE_SHA...$HEAD_SHA")
+          echo "product_changed=$PRODUCT_CHANGED" >> "$GITHUB_OUTPUT"
+
       - name: Validate squash-release title
+        if: steps.scope.outputs.product_changed == 'true'
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
@@ -48,6 +57,7 @@ jobs:
 
       - name: Preflight trusted Release Please attribution
         if: >-
+          steps.scope.outputs.product_changed == 'true' &&
           github.event.pull_request.head.repo.full_name == github.repository &&
           startsWith(github.event.pull_request.head.ref, 'release-please--branches--')
         env:

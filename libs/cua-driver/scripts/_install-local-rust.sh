@@ -336,16 +336,26 @@ ensure_local_signing_identity() {
 codesign_bounded() {
     local timeout_seconds="$1"
     shift
-    local keychain_args=()
-    if [ -n "${CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN:-}" ]; then
-        keychain_args=(--keychain "$CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN")
-    fi
     if command -v gtimeout >/dev/null 2>&1; then
-        gtimeout "$timeout_seconds" codesign "${keychain_args[@]}" "$@"
+        if [ -n "${CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN:-}" ]; then
+            gtimeout "$timeout_seconds" codesign \
+                --keychain "$CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN" "$@"
+        else
+            gtimeout "$timeout_seconds" codesign "$@"
+        fi
     elif command -v perl >/dev/null 2>&1; then
-        perl -e 'alarm shift; exec @ARGV' "$timeout_seconds" codesign "${keychain_args[@]}" "$@"
+        if [ -n "${CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN:-}" ]; then
+            perl -e 'alarm shift; exec @ARGV' "$timeout_seconds" codesign \
+                --keychain "$CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN" "$@"
+        else
+            perl -e 'alarm shift; exec @ARGV' "$timeout_seconds" codesign "$@"
+        fi
     else
-        codesign "${keychain_args[@]}" "$@"
+        if [ -n "${CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN:-}" ]; then
+            codesign --keychain "$CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN" "$@"
+        else
+            codesign "$@"
+        fi
     fi
 }
 

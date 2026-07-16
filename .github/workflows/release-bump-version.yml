@@ -30,8 +30,6 @@ on:
           - npm/fleet
           - npm/playground
           - npm/cuabot
-          - lume
-          - cua-driver-rs
           - docker/cuabot
           - docker/kasm
           - docker/xfce
@@ -152,14 +150,6 @@ jobs:
               echo "directory=libs/cuabot" >> $GITHUB_OUTPUT
               echo "type=npm" >> $GITHUB_OUTPUT
               ;;
-            "lume")
-              echo "directory=libs/lume" >> $GITHUB_OUTPUT
-              echo "type=lume" >> $GITHUB_OUTPUT
-              ;;
-            "cua-driver-rs")
-              echo "directory=libs/cua-driver/rust" >> $GITHUB_OUTPUT
-              echo "type=cua-driver-rs" >> $GITHUB_OUTPUT
-              ;;
             "docker/cuabot")
               echo "directory=libs/cuabot" >> $GITHUB_OUTPUT
               echo "type=docker" >> $GITHUB_OUTPUT
@@ -215,52 +205,24 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Reconcile cua-driver-rs bump base with Cargo.toml (drift guard)
-        if: ${{ inputs.service == 'cua-driver-rs' }}
+      - name: Reject an existing release tag
         run: |
-          # Cargo.toml is the single source of truth for the cua-driver-rs
-          # version. bump2version keeps a duplicate current_version in
-          # .bumpversion.cfg, and that copy has silently drifted before and cut
-          # a release at the wrong version (binary reported a stale version,
-          # tag could downgrade). Reconcile the cfg to Cargo.toml here, before
-          # the dry-run tag-clean and the real bump both read it, so a bump can
-          # never start from a stale base again no matter what the committed
-          # cfg says.
-          cd "${{ steps.package.outputs.directory }}"
-          CARGO_VERSION=$(grep -m1 '^version[[:space:]]*=' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
-          CFG_VERSION=$(grep -m1 '^current_version[[:space:]]*=' .bumpversion.cfg | sed -E 's/.*=[[:space:]]*//')
-          if [ -z "$CARGO_VERSION" ]; then
-            echo "::error::could not read version from libs/cua-driver/rust/Cargo.toml"
-            exit 1
-          fi
-          if [ "$CARGO_VERSION" != "$CFG_VERSION" ]; then
-            echo "::warning::.bumpversion.cfg current_version ($CFG_VERSION) drifted from Cargo.toml ($CARGO_VERSION); reconciling to Cargo.toml before bump."
-            sed -i.bak -E "s/^current_version[[:space:]]*=.*/current_version = ${CARGO_VERSION}/" .bumpversion.cfg
-            rm -f .bumpversion.cfg.bak
-          fi
-          echo "cua-driver-rs bump base: $(grep -m1 '^current_version' .bumpversion.cfg)"
-
-      - name: Clean existing tags if present
-        run: |
-          # Function to clean a tag for a given package directory
-          clean_tag() {
+          reject_existing_tag() {
             local dir=$1
             local config_file=${2:-.bumpversion.cfg}
             cd "$dir"
             NEW_VERSION=$(bump2version --config-file "$config_file" --dry-run --list ${{ inputs.bump_type }} 2>/dev/null | grep -m1 '^new_version=' | sed 's/new_version=//')
             TAG_NAME=$(grep -m1 '^tag_name' "$config_file" | sed 's/tag_name *= *//' | sed "s|{new_version}|$NEW_VERSION|")
-            echo "Checking for existing tag: $TAG_NAME"
-            git tag -d "$TAG_NAME" 2>/dev/null || true
-            git push origin ":refs/tags/$TAG_NAME" 2>/dev/null || true
+            if git show-ref --verify --quiet "refs/tags/$TAG_NAME" || \
+              git ls-remote --exit-code --tags origin "refs/tags/$TAG_NAME" >/dev/null 2>&1; then
+              echo "::error::release tag $TAG_NAME already exists; release tags are immutable"
+              exit 1
+            fi
             cd - > /dev/null
           }
 
-          # Clean tag for the primary package
           BUMPVERSION_CONFIG="${{ steps.package.outputs.bumpversion_config }}"
-          clean_tag "${{ steps.package.outputs.directory }}" "${BUMPVERSION_CONFIG:-.bumpversion.cfg}"
-
-          # No cascade tag cleaning — each package is bumped independently.
-          # Dependent packages use version ranges and resolve deps at publish time.
+          reject_existing_tag "${{ steps.package.outputs.directory }}" "${BUMPVERSION_CONFIG:-.bumpversion.cfg}"
 
       - name: Run bump2version
         run: |
@@ -270,31 +232,6 @@ jobs:
             CONFIG_FLAG="--config-file ${{ steps.package.outputs.bumpversion_config }}"
           fi
           bump2version $CONFIG_FLAG ${{ inputs.bump_type }}
-
-      - name: Sync Cargo.lock into the cua-driver-rs bump commit
-        # bump2version edits only `[workspace.package] version` in Cargo.toml,
-        # leaving Cargo.lock's workspace-member versions stale. The next plain
-        # `cargo build` anyone runs then re-locks them and diverges from the
-        # committed lockfile — which used to break the nix build's cargoHash.
-        # Re-lock the members now and fold the change into the bump commit so the
-        # lockfile never ships out of sync with the manifest. (cargo is
-        # preinstalled on ubuntu runners; `--workspace` touches members only, not
-        # registry deps, so this never silently bumps dependencies.)
-        if: ${{ inputs.service == 'cua-driver-rs' }}
-        run: |
-          cd ${{ steps.package.outputs.directory }}
-          cargo update --workspace
-          if ! git diff --quiet Cargo.lock; then
-            TAG=$(git tag --points-at HEAD | head -1)
-            git add Cargo.lock
-            git commit --amend --no-edit
-            # bump2version tagged the pre-amend commit; move the tag onto the
-            # amended commit so the release pipeline builds the synced lockfile.
-            [ -n "$TAG" ] && git tag -f "$TAG" HEAD
-            echo "Re-locked Cargo.lock and moved tag ${TAG:-<none>} to the amended bump commit."
-          else
-            echo "Cargo.lock already in sync; nothing to fold in."
-          fi
 
       - name: Collect created tag
         id: collect_tags
@@ -471,22 +408,6 @@ jobs:
           echo "npm/playground version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Capture bumped lume version
-        if: ${{ inputs.service == 'lume' }}
-        id: lume_version
-        run: |
-          VERSION=$(grep -oP 'static let current: String = "\K[^"]+' libs/lume/src/Main.swift)
-          echo "lume version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Capture bumped cua-driver-rs version
-        if: ${{ inputs.service == 'cua-driver-rs' }}
-        id: cua_driver_rs_version
-        run: |
-          VERSION=$(grep -m1 -oP '^version = "\K[^"]+' libs/cua-driver/rust/Cargo.toml)
-          echo "cua-driver-rs version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Capture bumped cuabot version
         if: ${{ inputs.service == 'npm/cuabot' }}
         id: cuabot_version
@@ -571,7 +492,6 @@ jobs:
               echo "Creating tag via API..."
               for tag in $ALL_TAGS; do
                 echo "Creating tag: $tag"
-                gh api -X DELETE /repos/${{ github.repository }}/git/refs/tags/${tag} 2>/dev/null || true
                 gh api /repos/${{ github.repository }}/git/refs \
                   -f ref="refs/tags/${tag}" \
                   -f sha="${COMMIT_SHA}"

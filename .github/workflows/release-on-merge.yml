@@ -24,15 +24,12 @@ jobs:
       - name: Detect packages, release labeled, notify unlabeled
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          REPO: ${{ github.repository }}
         run: |
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          PR_TITLE="${{ github.event.pull_request.title }}"
-          PR_URL="${{ github.event.pull_request.html_url }}"
-          REPO="${{ github.repository }}"
-
-          # Get labels
-          LABELS='${{ toJSON(github.event.pull_request.labels.*.name) }}'
-
           # Skip everything if no-release
           if echo "$LABELS" | grep -q '"no-release"'; then
             echo "no-release label found, skipping."
@@ -83,8 +80,6 @@ jobs:
             ["libs/qemu-docker/android/"]="docker/qemu-android"
             ["libs/qemu-docker/linux/"]="docker/qemu-linux"
             ["libs/qemu-docker/windows/"]="docker/qemu-windows"
-            ["libs/lume/"]="lume"
-            ["libs/cua-driver/rust/"]="cua-driver-rs"
           )
 
           # Find all affected services from changed files

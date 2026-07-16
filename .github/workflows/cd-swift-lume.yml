@@ -33,13 +33,15 @@ on:
         required: true
       PROVISIONING_PROFILE_BASE64:
         required: true
-      RELEASE_APP_ID:
-        required: false
-      RELEASE_APP_PRIVATE_KEY:
-        required: false
 
 permissions:
   contents: write
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: cd-lume-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
@@ -50,14 +52,11 @@ env:
   APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
   DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
   PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
-  RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
-  RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
 jobs:
   notarize:
     runs-on: macos-15
     outputs:
-      sha256_checksums: ${{ steps.generate_checksums.outputs.checksums }}
       version: ${{ steps.set_version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
@@ -84,17 +83,17 @@ jobs:
           elif [[ -n "${{ inputs.version }}" ]]; then
             VERSION="${{ inputs.version }}"
             echo "Using version from input: $VERSION"
-          elif [[ -n "${{ inputs.version }}" ]]; then
-            VERSION="${{ inputs.version }}"
-            echo "Using version from workflow_call input: $VERSION"
           else
             echo "Error: No version found in tag or input"
             exit 1
           fi
 
-          # Update version in Main.swift
-          echo "Updating version in Main.swift to $VERSION"
-          sed -i '' "s/static let current: String = \".*\"/static let current: String = \"$VERSION\"/" libs/lume/src/Main.swift
+          SOURCE_VERSION=$(tr -d '[:space:]' < libs/lume/VERSION)
+          if [[ "$SOURCE_VERSION" != "$VERSION" ]]; then
+            echo "Tag/input version $VERSION does not match libs/lume/VERSION ($SOURCE_VERSION)"
+            exit 1
+          fi
+          python3 .github/scripts/validate_release_versions.py --product lume
 
           # Set output for later steps
           echo "version=$VERSION" >> $GITHUB_OUTPUT
@@ -208,30 +207,6 @@ jobs:
           path: ./libs/lume/build.log
           retention-days: 7
 
-      - name: Generate SHA256 Checksums
-        id: generate_checksums
-        working-directory: ./libs/lume/.release
-        run: |
-          # Use existing checksums file if it exists, otherwise generate one
-          if [ -f "checksums.txt" ]; then
-            echo "Using existing checksums file"
-            cat checksums.txt
-          else
-            echo "## SHA256 Checksums" > checksums.txt
-            echo '```' >> checksums.txt
-            shasum -a 256 lume-*.tar.gz >> checksums.txt
-            echo '```' >> checksums.txt
-          fi
-
-          checksums=$(cat checksums.txt)
-          echo "checksums<<EOF" >> $GITHUB_OUTPUT
-          echo "$checksums" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-          # Debug: Show all files in the release directory
-          echo "All files in release directory:"
-          ls -la
-
       - name: Create Standard Version Releases
         working-directory: ./libs/lume/.release
         run: |
@@ -251,106 +226,93 @@ jobs:
           echo "Files with symlinks in release directory:"
           ls -la
 
-      - name: Upload Notarized Package (Tarball)
-        uses: actions/upload-artifact@v4
-        with:
-          name: lume-notarized-tarball
-          path: ./libs/lume/${{ steps.build_notarize.outputs.tarball_path }}
-          if-no-files-found: error
-
-      - name: Upload Notarized Package (Installer)
-        uses: actions/upload-artifact@v4
-        with:
-          name: lume-notarized-installer
-          path: ./libs/lume/${{ steps.build_notarize.outputs.pkg_path }}
-          if-no-files-found: error
-
-      - name: Generate path-filtered release notes
-        if: startsWith(github.ref, 'refs/tags/lume-v')
-        id: release-notes
+      - name: Stage notarized release assets
+        working-directory: ./libs/lume/.release
         run: |
-          # Find previous lume tag
-          PREV_TAG=$(git tag -l "lume-v*" --sort=-v:refname | grep -v "^${{ github.ref_name }}$" | head -n 1 || echo "")
+          mkdir -p release-upload
+          for asset in lume-*.tar.gz lume-darwin.tar.gz lume-darwin.pkg.tar.gz lume.tar.gz lume.pkg.tar.gz; do
+            [ -e "$asset" ] || continue
+            cp -L "$asset" "release-upload/$asset"
+          done
+          ls -lh release-upload
 
-          echo "Current tag: ${{ github.ref_name }}"
-          echo "Previous tag: $PREV_TAG"
-
-          # Generate release notes filtered by libs/lume path
-          if [ -n "$PREV_TAG" ]; then
-            echo "Generating notes for commits between $PREV_TAG and HEAD in libs/lume"
-            NOTES=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h) by @%an" -- "libs/lume" | head -50)
-          else
-            echo "No previous tag found, generating notes for recent commits in libs/lume"
-            NOTES=$(git log --pretty=format:"* %s (%h) by @%an" -- "libs/lume" | head -50)
-          fi
-
-          if [ -z "$NOTES" ]; then
-            NOTES="* Initial release or no path-specific changes found"
-          fi
-
-          # Store notes in output
-          echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
-          echo "## What's Changed" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "$NOTES" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/lume-v')
-        uses: softprops/action-gh-release@v1
+      - name: Upload notarized release assets
+        uses: actions/upload-artifact@v4
         with:
-          files: |
-            ./libs/lume/${{ steps.build_notarize.outputs.tarball_path }}
-            ./libs/lume/${{ steps.build_notarize.outputs.pkg_path }}
-            ./libs/lume/.release/lume-darwin.tar.gz
-            ./libs/lume/.release/lume-darwin.pkg.tar.gz
-            ./libs/lume/.release/lume.tar.gz
-            ./libs/lume/.release/lume.pkg.tar.gz
-          body: |
-            ${{ steps.release-notes.outputs.RELEASE_NOTES }}
+          name: lume-release-assets
+          path: ./libs/lume/.release/release-upload/
+          if-no-files-found: error
 
-            ${{ steps.generate_checksums.outputs.checksums }}
-
-            ### Installation with script
-
-            ```bash
-            /bin/bash -c "$(curl -fsSL https://cua.ai/lume/install.sh)"
-            ```
-          generate_release_notes: false
-          make_latest: true
-
-      - name: Generate GitHub App token (for bake-version push)
-        id: app-token
-        if: startsWith(github.ref, 'refs/tags/lume-v')
-        uses: actions/create-github-app-token@v1
+  release:
+    needs: notarize
+    if: startsWith(github.ref, 'refs/tags/lume-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
         with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
+          fetch-depth: 0
 
-      - name: Bake version into install script (commit + push)
-        if: startsWith(github.ref, 'refs/tags/lume-v')
+      - name: Download notarized release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: lume-release-assets
+          path: release-upload
+
+      - name: Verify checked-in release versions
+        run: python3 .github/scripts/validate_release_versions.py --product lume
+
+      - name: Collect PR-first release attribution
         env:
-          VERSION: ${{ steps.set_version.outputs.version }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git config --unset-all "http.https://github.com/.extraheader" || true
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-          git fetch origin main
-          git checkout -B bake-lume-version origin/main
+          mkdir -p release-metadata
+          python3 .github/scripts/release_attribution.py collect \
+            --repository "${{ github.repository }}" \
+            --product lume \
+            --display-name Lume \
+            --version "${{ needs.notarize.outputs.version }}" \
+            --tag "${{ github.ref_name }}" \
+            --tag-prefix lume-v \
+            --sha "${{ github.sha }}" \
+            --path libs/lume \
+            --changelog libs/lume/CHANGELOG.md \
+            --asset-dir release-upload \
+            --output release-metadata/release-manifest.json
 
-          sed -i '' \
-            "s/^LUME_BAKED_VERSION=.*/LUME_BAKED_VERSION=\"${VERSION}\"/" \
-            libs/lume/scripts/install.sh
-
-          if git diff --quiet -- libs/lume/scripts/install.sh; then
-            echo "LUME_BAKED_VERSION already ${VERSION}; nothing to commit."
-            exit 0
+      - name: Render release body and announcement draft
+        run: |
+          python3 .github/scripts/release_attribution.py render \
+            --manifest release-metadata/release-manifest.json \
+            --body release-metadata/release-body.md \
+            --social release-metadata/release-social.txt \
+            --card release-metadata/release-card.svg \
+            --alt release-metadata/release-card-alt.txt \
+            --footer .github/release-notes/lume.md
+          cp release-metadata/release-manifest.json release-upload/
+          if [ -f release-metadata/release-card.svg ]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends librsvg2-bin
+            rsvg-convert release-metadata/release-card.svg \
+              --output release-metadata/release-card.png
+            cp release-metadata/release-card.png release-upload/
           fi
 
-          git config user.name "trycua-release[bot]"
-          git config user.email "trycua-release[bot]@users.noreply.github.com"
-          git add libs/lume/scripts/install.sh
-          git commit -m "chore(lume): bake version ${VERSION} into install script [skip ci]"
-          git push origin bake-lume-version:main
+      - name: Preserve release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: lume-release-metadata-${{ needs.notarize.outputs.version }}
+          path: release-metadata/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish the verified Release Please draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/github_release.py \
+            --repository "${{ github.repository }}" \
+            --tag "${{ github.ref_name }}" \
+            --sha "${{ github.sha }}" \
+            --body release-metadata/release-body.md \
+            --asset-dir release-upload \
+            --make-latest

@@ -1,0 +1,85 @@
+name: "Release: Prepare component releases"
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please-main
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate release GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      # release-please-action v4.4.1, embedding release-please ^17.3.0.
+      - name: Open or update release pull requests
+        id: release
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Synchronize Cua Driver Cargo.lock on its release pull request
+        if: steps.release.outputs.prs_created == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RELEASE_PRS: ${{ steps.release.outputs.prs }}
+        run: |
+          set -euo pipefail
+          echo "$RELEASE_PRS" | jq -e 'type == "array"' >/dev/null
+          while read -r number; do
+            PR=$(gh pr view "$number" --json headRefName,headRepositoryOwner,files)
+            if ! echo "$PR" | jq -e \
+              '.files | any(.path == "libs/cua-driver/rust/VERSION")' >/dev/null; then
+              continue
+            fi
+
+            OWNER=$(echo "$PR" | jq -r '.headRepositoryOwner.login')
+            BRANCH=$(echo "$PR" | jq -r '.headRefName')
+            if [[ "$OWNER" != "${GITHUB_REPOSITORY%/*}" || "$BRANCH" != release-please--branches--* ]]; then
+              echo "Refusing to run release-branch code from $OWNER:$BRANCH"
+              exit 1
+            fi
+
+            git fetch origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+            DRIVER_VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/VERSION)
+            cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \
+              -p cua-driver --precise "$DRIVER_VERSION"
+            python3 .github/scripts/validate_release_versions.py --product driver
+            git add libs/cua-driver/rust/Cargo.lock
+            if git diff --cached --quiet; then
+              echo "Cargo.lock already matches release PR #$number"
+              continue
+            fi
+            git config user.name "trycua-release[bot]"
+            git config user.email "trycua-release[bot]@users.noreply.github.com"
+            git commit -m "chore(cua-driver-rs): synchronize release lockfile"
+            git push origin "HEAD:$BRANCH"
+          done < <(echo "$RELEASE_PRS" | jq -r '.[].number')
+
+      - name: Verify repository release versions
+        if: steps.release.outputs.prs_created != 'true'
+        run: python3 .github/scripts/validate_release_versions.py --product all

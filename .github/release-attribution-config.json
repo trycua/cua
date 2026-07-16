@@ -1,0 +1,31 @@
+{
+  "bots": [
+    "dependabot[bot]",
+    "github-actions[bot]",
+    "copilot",
+    "release-please[bot]",
+    "renovate[bot]",
+    "trycua-release[bot]"
+  ],
+  "ignoredCoauthorEmails": [
+    "claude@anthropic.com",
+    "codex@openai.com",
+    "cua@cua.localdomain",
+    "noreply@anthropic.com"
+  ],
+  "coauthorOverrides": {
+    "hippoley <noreply@github.com>": "hippoley"
+  },
+  "identityOverrides": {
+    "ddupont@mit.edu": "ddupont808",
+    "f@trycua.com": "f-trycua",
+    "klymenko@adobe.com": "pavelklymenko",
+    "robert@trycua.com": "enchanted-koala",
+    "sarinajin.li@gmail.com": "sarinali"
+  },
+  "internalHandles": [
+    "enchanted-koala",
+    "f-trycua"
+  ],
+  "optOutHandles": []
+}

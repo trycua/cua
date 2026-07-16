@@ -18,7 +18,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
 
         self.assertIn('workflows: ["CD: Cua Driver (cross-platform)"]', workflow)
         self.assertNotIn("branches:\n      - main", workflow)
-        self.assertIn('github.event.workflow_run.conclusion != \'cancelled\'', workflow)
+        self.assertIn("github.event.workflow_run.conclusion != 'cancelled'", workflow)
         self.assertIn('gh release view "$TAG" --repo "$GITHUB_REPOSITORY"', workflow)
 
     def test_python_publish_defaults_to_current_rust_version(self) -> None:
@@ -34,42 +34,32 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("os: ubuntu-24.04-arm", workflow)
         self.assertIn("arch: arm64", workflow)
 
-    def test_release_on_merge_tracks_rust_driver(self) -> None:
-        workflow = self.read(".github/workflows/release-on-merge.yml")
+    def test_release_please_owns_driver_and_lume(self) -> None:
+        config = self.read("release-please-config.json")
+        workflow = self.read(".github/workflows/release-please.yml")
 
-        self.assertIn('["libs/cua-driver/rust/"]="cua-driver-rs"', workflow)
+        self.assertIn('"libs/cua-driver"', config)
+        self.assertIn('"libs/lume"', config)
+        self.assertIn('"component": "cua-driver-rs"', config)
+        self.assertIn('"component": "lume"', config)
+        self.assertIn("5c625bfb5d1ff62eadeeb3772007f7f66fdcf071", workflow)
+        self.assertIn('-p cua-driver --precise "$DRIVER_VERSION"', workflow)
 
-    def test_release_bump_version_only_exposes_rust_driver(self) -> None:
+    def test_legacy_release_routes_exclude_driver_and_lume(self) -> None:
         workflow = self.read(".github/workflows/release-bump-version.yml")
+        self.assertNotIn("          - cua-driver-rs\n", workflow)
+        self.assertNotIn("          - lume\n", workflow)
+        self.assertNotIn("gh api -X DELETE", workflow)
+        self.assertIn("release tags are immutable", workflow)
 
-        self.assertIn("          - cua-driver-rs\n", workflow)
-        self.assertIn('            "cua-driver-rs")\n', workflow)
-        self.assertIn(
-            'echo "directory=libs/cua-driver/rust" >> $GITHUB_OUTPUT', workflow
-        )
-        self.assertNotIn("          - cua-driver\n", workflow)
-        self.assertNotIn('            "cua-driver")\n', workflow)
-        self.assertNotIn("inputs.service == 'cua-driver'", workflow)
-
-    def test_release_reminder_tracks_rust_driver(self) -> None:
-        workflow = self.read(".github/workflows/ci-release-reminder.yml")
-
-        self.assertIn('["libs/cua-driver/rust/"]="cua-driver-rs"', workflow)
-        self.assertIn("cua-driver desktop release validation", workflow)
-        self.assertIn("e2e-rust-windows.yml", workflow)
-        self.assertIn(
-            "libs/cua-driver/tests/runners/macos-lume/run-all.sh", workflow
-        )
-        self.assertIn("e2e-rust-linux.yml", workflow)
-        self.assertIn("e2e-rust-linux-wayland.yml", workflow)
-
-    def test_unreleased_digest_tracks_rust_driver(self) -> None:
-        workflow = self.read(".github/workflows/release-unreleased-digest.yml")
-
-        self.assertIn(
-            'SERVICE_TAG_DIR["cua-driver-rs"]="cua-driver-rs-v|libs/cua-driver/rust/"',
-            workflow,
-        )
+        for path in (
+            ".github/workflows/release-on-merge.yml",
+            ".github/workflows/ci-release-reminder.yml",
+            ".github/workflows/release-unreleased-digest.yml",
+        ):
+            legacy = self.read(path)
+            self.assertNotIn('="cua-driver-rs"', legacy, path)
+            self.assertNotIn('SERVICE_TAG_DIR["lume"]', legacy, path)
 
     def test_distro_compat_downloads_release_asset_once_per_run(self) -> None:
         workflow = self.read(".github/workflows/ci-distro-compat-cua-driver.yml")
@@ -81,11 +71,14 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"', workflow)
         self.assertIn('CUA_TELEMETRY_ENABLED: "false"', workflow)
 
-    def test_rust_driver_bump_keeps_python_wrapper_version_synced(self) -> None:
-        config = self.read("libs/cua-driver/rust/.bumpversion.cfg")
+    def test_release_please_keeps_driver_version_sources_synced(self) -> None:
+        config = self.read("release-please-config.json")
 
-        self.assertIn("[bumpversion:file:../python/pyproject.toml]", config)
-        self.assertIn("[bumpversion:file:../python/src/cua_driver/__init__.py]", config)
+        self.assertIn('"path": "rust/Cargo.toml"', config)
+        self.assertIn('"path": "python/pyproject.toml"', config)
+        self.assertIn('"path": "python/src/cua_driver/__init__.py"', config)
+        self.assertIn('"path": "scripts/_install-rust.sh"', config)
+        self.assertIn('"path": "scripts/install.ps1"', config)
 
     def test_installers_preserve_legacy_telemetry_state_before_cleanup(self) -> None:
         for relative_path in (
@@ -106,11 +99,11 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             )
 
         powershell = self.read("libs/cua-driver/scripts/install.ps1")
-        cleanup = powershell.index(
-            "Remove-Item -LiteralPath $LegacyHomeDir -Recurse -Force"
-        )
+        cleanup = powershell.index("Remove-Item -LiteralPath $LegacyHomeDir -Recurse -Force")
         self.assertLess(
-            powershell.index("foreach ($telemetryFile in @('.telemetry_id', '.installation_recorded'))"),
+            powershell.index(
+                "foreach ($telemetryFile in @('.telemetry_id', '.installation_recorded'))"
+            ),
             cleanup,
         )
         self.assertLess(
@@ -130,7 +123,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             'codesign_bounded 20 --force --deep --sign "$SIGN_ID" "$APP_STAGE"',
             installer,
         )
-        self.assertNotIn('printf \'%s\' "$CUA_LOCAL_SIGN_CN"; return', installer)
+        self.assertNotIn("printf '%s' \"$CUA_LOCAL_SIGN_CN\"; return", installer)
 
     def test_release_installers_persist_channel_before_binary_swap(self) -> None:
         shell = self.read("libs/cua-driver/scripts/_install-rust.sh")
@@ -162,44 +155,41 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
 
     def test_release_and_skill_installers_do_not_depend_on_github_latest(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
-        self.assertIn("prerelease: true", workflow)
-        self.assertIn("make_latest: false", workflow)
+        self.assertIn("--prerelease", workflow)
+        self.assertNotIn("softprops/action-gh-release", workflow)
+        self.assertNotIn("bake version into install scripts", workflow.lower())
 
-        windows_skill = self.read(
-            "libs/cua-driver/rust/Skills/cua-driver/WINDOWS.md"
-        )
+        windows_skill = self.read("libs/cua-driver/rust/Skills/cua-driver/WINDOWS.md")
         self.assertIn("https://cua.ai/driver/install.ps1", windows_skill)
         self.assertNotIn("/releases/latest/download/install.ps1", windows_skill)
 
+    def test_lume_uses_the_same_draft_finalizer(self) -> None:
+        workflow = self.read(".github/workflows/cd-swift-lume.yml")
+
+        self.assertIn("--make-latest", workflow)
+        self.assertIn("github_release.py", workflow)
+        self.assertNotIn("softprops/action-gh-release", workflow)
+        self.assertNotIn("bake-lume-version", workflow)
+
     def test_lifecycle_telemetry_runs_outside_foreground_command(self) -> None:
         main = self.read("libs/cua-driver/rust/crates/cua-driver/src/main.rs")
-        telemetry = self.read(
-            "libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs"
-        )
+        telemetry = self.read("libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs")
 
         self.assertNotIn("telemetry::ensure_first_run_registration();", main)
-        self.assertGreaterEqual(
-            main.count("telemetry::run_lifecycle_worker_if_requested()"), 2
-        )
-        self.assertGreaterEqual(
-            main.count("telemetry::spawn_first_run_registration_worker()"), 3
-        )
+        self.assertGreaterEqual(main.count("telemetry::run_lifecycle_worker_if_requested()"), 2)
+        self.assertGreaterEqual(main.count("telemetry::spawn_first_run_registration_worker()"), 3)
         self.assertIn("CUA_DRIVER_LIFECYCLE_TELEMETRY_WORKER", telemetry)
         self.assertIn(".stdin(Stdio::null())", telemetry)
         self.assertIn(".stdout(Stdio::null())", telemetry)
         self.assertIn(".stderr(Stdio::null())", telemetry)
 
     def test_released_linux_smoke_waits_for_assets_and_installs_xkbcommon(self) -> None:
-        workflow = self.read(
-            ".github/workflows/ci-distro-compat-cua-driver.yml"
-        )
+        workflow = self.read(".github/workflows/ci-distro-compat-cua-driver.yml")
 
         self.assertIn("for attempt in $(seq 1 90)", workflow)
-        self.assertIn(
-            "release asset was still unavailable after 15 minutes", workflow
-        )
+        self.assertIn("release asset was still unavailable after 15 minutes", workflow)
         self.assertEqual(workflow.count("libxkbcommon0"), 4)
-        self.assertEqual(workflow.count("libxkbcommon\""), 2)
+        self.assertEqual(workflow.count('libxkbcommon"'), 2)
 
 
 if __name__ == "__main__":

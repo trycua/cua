@@ -700,21 +700,15 @@ fn bind(fixture: &mut BrowserFixture, session: &str) -> (String, String, ToolRes
         serde_json::json!({ "pid": fixture.pid as i64, "session": session }),
     );
     assert_eq!(prepared.structured()["prepared"], true, "{}", prepared.raw);
-    let state = fixture.driver.call(
-        "get_browser_state",
-        serde_json::json!({
-            "pid": fixture.pid as i64,
-            "window_id": fixture.window_id,
-            "session": session,
-        }),
-    );
-    assert_eq!(state.structured()["status"], "ok", "{}", state.raw);
-    assert_eq!(
-        state.structured()["binding_quality"],
-        "exact",
-        "{}",
-        state.raw
-    );
+    // A newly mapped Wayland toplevel can briefly appear with a protocol-local
+    // id before the compositor publishes its stable pid/geometry identity.
+    // Model the real client preamble: re-list windows and bind only the id the
+    // driver can prove exactly. Refusals remain strict; fixture setup merely
+    // waits for the launched browser to finish registering with the desktop.
+    let (window_id, state) =
+        wait_for_exact_browser_binding(&mut fixture.driver, fixture.pid, session)
+            .expect("standalone browser did not expose an exactly bindable window");
+    fixture.window_id = window_id;
     let target = state.structured()["target_id"]
         .as_str()
         .expect("target_id")

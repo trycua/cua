@@ -183,6 +183,13 @@ fi
 
 if [[ "${RUN_STANDALONE_BROWSER}" == 1 ]]; then
   echo "[E2E] Running the optional standalone browser matrix"
-  CUA_E2E_ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos-standalone-browser" \
+  BROWSER_ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos-standalone-browser"
+  if [[ -d "${BROWSER_ARTIFACT_DIR}" ]] \
+      && [[ -n "$(find "${BROWSER_ARTIFACT_DIR}" -mindepth 1 -print -quit)" ]]; then
+    BROWSER_ARTIFACT_ARCHIVE="$(mktemp -d "${TMPDIR:-/tmp}/cua-macos-browser-e2e.XXXXXX")"
+    mv "${BROWSER_ARTIFACT_DIR}" "${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
+    echo "Previous standalone-browser evidence preserved at ${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
+  fi
+  CUA_E2E_ARTIFACT_DIR="${BROWSER_ARTIFACT_DIR}" \
     "${REPO_ROOT}/scripts/ci/run-rust-standalone-browser-e2e.sh"
 fi

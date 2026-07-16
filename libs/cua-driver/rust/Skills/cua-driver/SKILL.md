@@ -1,9 +1,35 @@
 ---
-name: cua-driver-rs
-description: Drive a native GUI app (macOS, Windows, Linux) via the cua-driver CLI (default) or MCP server — snapshot its accessibility tree, click/type/scroll by element_index or pixel coords, verify via re-snapshot, all without bringing the target to the foreground. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real application on the host.
+name: cua-driver
+description: Drive a native GUI app (macOS, Windows, Linux) via the cua-driver CLI (default) or MCP server; snapshot its accessibility tree, click/type/scroll by element_index or pixel coordinates, and verify via re-snapshot without bringing the target to the foreground. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real application on the host.
+version: 0.8.3
+metadata:
+  openclaw:
+    requires:
+      bins:
+        - cua-driver
+    envVars:
+      - name: CUA_DRIVER_CDP_PORT
+        required: false
+        description: Optional Chromium DevTools Protocol port for browser automation.
+      - name: CUA_DRIVER_EMBEDDED
+        required: false
+        description: Set to 1 when a macOS host app launches the driver in embedded mode.
+      - name: CUA_DRIVER_HOST_BUNDLE_ID
+        required: false
+        description: Bundle identifier of the macOS host app in embedded mode.
+      - name: CUA_DRIVER_PATH
+        required: false
+        description: Optional path to a cua-driver binary used by an embedding host.
+      - name: CUA_DRIVER_RS_ENABLE_WAYLAND
+        required: false
+        description: Set to 1 to enable the preview native Wayland backend.
+      - name: CUA_DRIVER_RS_MCP_HTTP_PORT
+        required: false
+        description: Optional port for the local MCP HTTP endpoint.
+    homepage: https://cua.ai/docs/cua-driver
 ---
 
-# cua-driver-rs
+# cua-driver
 
 Orchestrates cross-platform app automation via `cua-driver`. Whenever
 a user asks to drive a native app, follow the loop in this skill
@@ -34,7 +60,8 @@ Cross-cutting topics also have their own files:
   browser / Electron / Tauri fallbacks (sparse AX trees, omnibox navigation,
   minimized windows, and tabs-vs-windows guidance).
 - `RECORDING.md` — session recording + `replay_trajectory`.
-- `TESTS.md` — internal test surface.
+- `TESTS.md` in the source repository contains the internal test surface. It is
+  intentionally excluded from ClawHub release bundles.
 
 Use whichever combination matches the host. When in doubt, run
 `cua-driver doctor` — it reports the platform and the right entry

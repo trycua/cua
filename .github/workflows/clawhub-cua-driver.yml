@@ -1,0 +1,143 @@
+name: "ClawHub: cua-driver skill"
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/clawhub-cua-driver.yml"
+      - "libs/cua-driver/rust/Cargo.toml"
+      - "libs/cua-driver/rust/Skills/cua-driver/**"
+      - "libs/cua-driver/rust/crates/cua-driver/src/skills.rs"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "ClawHub version; must match Cargo.toml and SKILL.md"
+        required: true
+        type: string
+      owner:
+        description: "ClawHub publisher handle"
+        required: true
+        default: "f-trycua"
+        type: string
+      confirm_mit0:
+        description: "Cua AI has authority to publish every bundled file under MIT-0"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  CLAWHUB_CLI_VERSION: "0.23.1"
+  SKILL_PATH: "libs/cua-driver/rust/Skills/cua-driver"
+
+jobs:
+  dry-run:
+    name: Validate publish bundle
+    if: github.event_name == 'pull_request'
+    uses: openclaw/clawhub/.github/workflows/skill-publish.yml@b2f06028cff845974cfc9e528317ef879663935b
+    with:
+      skill_path: "libs/cua-driver/rust/Skills/cua-driver"
+      owner: "f-trycua"
+      dry_run: true
+      ref: ${{ github.event.pull_request.head.sha }}
+
+  publish:
+    name: Publish ${{ inputs.version }} as @${{ inputs.owner }}/cua-driver
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate release inputs
+        env:
+          CONFIRM_MIT0: ${{ inputs.confirm_mit0 }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          if os.environ["CONFIRM_MIT0"] != "true":
+              raise SystemExit("confirm_mit0 must be checked before a public release")
+          if os.environ["GITHUB_REF"] != "refs/heads/main":
+              raise SystemExit("ClawHub releases must be dispatched from the main branch")
+
+          requested = os.environ["REQUESTED_VERSION"].strip()
+          cargo = tomllib.loads(Path("libs/cua-driver/rust/Cargo.toml").read_text())
+          cargo_version = cargo["workspace"]["package"]["version"]
+          skill_text = Path(os.environ["SKILL_PATH"], "SKILL.md").read_text()
+          frontmatter = skill_text.split("---", 2)[1]
+          match = re.search(r"^version:\s*([^\s#]+)", frontmatter, re.MULTILINE)
+          if not match:
+              raise SystemExit("SKILL.md frontmatter has no version")
+          skill_version = match.group(1)
+
+          if len({requested, cargo_version, skill_version}) != 1:
+              raise SystemExit(
+                  "version mismatch: "
+                  f"requested={requested}, Cargo.toml={cargo_version}, SKILL.md={skill_version}"
+              )
+          PY
+
+      - name: Configure ClawHub authentication
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          token = os.environ.get("CLAWHUB_TOKEN", "").strip()
+          if not token:
+              raise SystemExit("CLAWHUB_TOKEN is not configured")
+          path = Path(os.environ["RUNNER_TEMP"]) / "clawhub-config.json"
+          path.write_text(json.dumps({"registry": "https://clawhub.ai", "token": token}))
+          path.chmod(0o600)
+          with Path(os.environ["GITHUB_ENV"]).open("a") as env_file:
+              env_file.write(f"CLAWHUB_CONFIG_PATH={path}\n")
+          PY
+
+      - name: Publish cua-driver skill
+        env:
+          OWNER: ${{ inputs.owner }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          npx --yes "clawhub@${CLAWHUB_CLI_VERSION}" skill publish "${SKILL_PATH}" \
+            --slug cua-driver \
+            --name "CUA Driver" \
+            --owner "${OWNER}" \
+            --version "${VERSION}" \
+            --changelog "cua-driver ${VERSION}" \
+            --tags latest \
+            --source-repo "${GITHUB_REPOSITORY}" \
+            --source-commit "${GITHUB_SHA}" \
+            --source-ref "${GITHUB_REF}" \
+            --source-path "${SKILL_PATH}" \
+            --json | tee "${RUNNER_TEMP}/clawhub-publish.json"
+
+      - name: Summarize release
+        if: always()
+        run: |
+          if [[ -f "${RUNNER_TEMP}/clawhub-publish.json" ]]; then
+            {
+              echo '## ClawHub publish result'
+              echo '```json'
+              cat "${RUNNER_TEMP}/clawhub-publish.json"
+              echo '```'
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload publish result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clawhub-cua-driver-publish-${{ inputs.version }}
+          path: ${{ runner.temp }}/clawhub-publish.json
+          if-no-files-found: ignore

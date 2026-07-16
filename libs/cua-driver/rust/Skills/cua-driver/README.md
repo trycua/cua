@@ -1,9 +1,9 @@
-# cua-driver-rs — Claude Code skill
+# cua-driver agent skill
 
-A [Claude Code](https://code.claude.com) skill that teaches Claude to
-drive native GUI apps on **macOS, Windows, and Linux** via the
+A cross-agent skill that teaches AI agents to drive native GUI apps on
+**macOS, Windows, and Linux** via the
 [`cua-driver`](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust)
-CLI — snapshot an app's accessibility tree (AX on macOS, UIA on
+CLI. It covers how to snapshot an app's accessibility tree (AX on macOS, UIA on
 Windows, AT-SPI on Linux), click/type/scroll by `element_index` or
 pixel coords, and verify via re-snapshot. Backgrounded-first on every
 platform: no focus steal, no cursor warp.
@@ -72,9 +72,11 @@ forbidden-list / launch / click details.
 3. **TCC grants on `CuaDriver.app`** — **Accessibility** and
    **Screen Recording** in System Settings → Privacy & Security.
    Verify with:
+
    ```bash
    cua-driver check_permissions
    ```
+
    Both fields must be `true`. If not, the app appears in the
    relevant panes of System Settings after first use; toggle it on
    there.
@@ -109,9 +111,9 @@ forbidden-list / launch / click details.
 
 ### Linux
 
-The full tool surface is supported on X11 (background input via AT-SPI
-+ XSendEvent, screenshots, recording); native Wayland input/capture is
-opt-in and still preview. See `LINUX.md`. Install:
+The full tool surface is supported on X11 (background input through AT-SPI and
+XSendEvent, screenshots, and recording); native Wayland input/capture is opt-in
+and still preview. See `LINUX.md`. Install:
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
@@ -123,6 +125,33 @@ installs the Rust port — no flag needed.)
 ## Install
 
 The skill is a drop-in directory. Same shape on every platform.
+
+**OpenClaw via ClawHub:**
+
+```bash
+clawhub install @f-trycua/cua-driver
+```
+
+ClawHub installs the complete cross-platform bundle. The agent reads the shared
+core and the document for the current host OS. Install `cua-driver` separately
+before using the skill:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"  # macOS or Linux
+```
+
+```powershell
+irm https://cua.ai/driver/install.ps1 | iex  # Windows
+```
+
+**Direct installation for supported agents:**
+
+```bash
+cua-driver skills install
+```
+
+This detects installed agent skill directories and keeps only the current host
+OS document by default. Pass `--all-platforms` to retain all three OS documents.
 
 **Personal scope** (all Claude Code sessions on your machine):
 
@@ -144,13 +173,6 @@ mkdir -p .claude/skills
 cp -R /path/to/cua/libs/cua-driver/rust/Skills/cua-driver .claude/skills/
 ```
 
-Or run the verb that does this automatically + fetches the matching
-release version from GitHub:
-
-```bash
-cua-driver skills install
-```
-
 See `cua-driver skills --help` for the full subcommand list
 (`install` / `update` / `uninstall` / `status` / `path`).
 
@@ -162,7 +184,7 @@ Numbers", "open Calculator and compute 17×23", "navigate to
 trycua.com in Edge". You can also invoke it explicitly:
 
 ```
-/cua-driver-rs
+/cua-driver
 ```
 
 ## Claude Code MCP compatibility mode
@@ -195,7 +217,8 @@ Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots sti
   coverage lives in `WINDOWS.md`'s "Web apps on Windows" section.
 - `RECORDING.md` — trajectory recording / replay (macOS and Linux
   X11 today; Wayland video capture not yet supported).
-- `TESTS.md` — manual test scripts for end-to-end skill verification.
+- `TESTS.md` — manual end-to-end verification scripts for repository
+  contributors. ClawHub release bundles intentionally exclude this file.
 
 ## Troubleshooting
 
@@ -210,7 +233,7 @@ Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots sti
   — `get_window_state` always walks the tree now. Act by pixel off the
   screenshot already in the same response (an element px action).
   Tiny screenshot → likely a stale window capture. See the perception
-  + element ax/px action notes in SKILL.md.
+  and element ax/px action notes in SKILL.md.
 - System-alert beep when pressing Return on a minimized Chrome
   omnibox → the keyboard-commit-on-minimized limitation. Use
   `set_value` on the field instead, or AX-click a Go/Submit button.
@@ -233,4 +256,7 @@ cp -R libs/cua-driver/rust/Skills/cua-driver ~/.claude/skills/
 
 ## License
 
-MIT. Same license as the parent `trycua/cua` repo.
+The source files in the `trycua/cua` repository remain licensed under MIT.
+Copies published through ClawHub are distributed under MIT-0, as required for
+all ClawHub skills. MIT-0 permits use, modification, and redistribution without
+an attribution requirement.

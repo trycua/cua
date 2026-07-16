@@ -83,6 +83,7 @@ const SKILL_FILES: &[&str] = &[
     "WEB_APPS.md",
     "RECORDING.md",
     "TESTS.md",
+    "EMBEDDING.md",
 ];
 
 /// Per-host filter: returns the platform-specific docs that should NOT
@@ -698,7 +699,8 @@ fn print_path() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_tar_gz;
+    use super::{extract_tar_gz, SKILL_FILES};
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     /// Build a gzipped tarball with the entries given as
@@ -718,6 +720,27 @@ mod tests {
             tar.finish().unwrap();
         }
         gz_buf
+    }
+
+    #[test]
+    fn from_main_manifest_matches_canonical_markdown_files() {
+        let skill_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../Skills/cua-driver");
+        let mut canonical = std::fs::read_dir(&skill_dir)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", skill_dir.display()))
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("md"))
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        canonical.sort();
+
+        let mut manifest = SKILL_FILES.iter()
+            .map(|file| (*file).to_owned())
+            .collect::<Vec<_>>();
+        manifest.sort();
+
+        assert_eq!(manifest, canonical,
+            "SKILL_FILES must include every canonical Markdown file");
     }
 
     #[test]
@@ -804,11 +827,12 @@ mod tests {
             ("cua-driver-rs-v0.2.20-skills/RECORDING.md",b"R"),
             ("cua-driver-rs-v0.2.20-skills/WEB_APPS.md", b"W"),
             ("cua-driver-rs-v0.2.20-skills/TESTS.md",    b"T"),
+            ("cua-driver-rs-v0.2.20-skills/EMBEDDING.md",b"E"),
         ]);
         let dest = tempdir().unwrap();
         extract_tar_gz(&bytes, dest.path(), /*all_platforms=*/ false).unwrap();
         // README + SKILL + cross-platform docs ALWAYS present.
-        for f in ["README.md", "SKILL.md", "RECORDING.md", "WEB_APPS.md", "TESTS.md"] {
+        for f in ["README.md", "SKILL.md", "RECORDING.md", "WEB_APPS.md", "TESTS.md", "EMBEDDING.md"] {
             assert!(dest.path().join(f).exists(),
                 "{f} should be present after per-host extraction");
         }

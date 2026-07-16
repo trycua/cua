@@ -6,6 +6,7 @@ port 8000.
 """
 
 import os
+import signal
 import subprocess
 import threading
 import time
@@ -291,14 +292,16 @@ class DaytonaHarness:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            start_new_session=True,
         )
-        if timeout == 0:
-            timeout = None
         try:
             output, _ = process.communicate(timeout=timeout)
             return process.returncode, output or ""
         except subprocess.TimeoutExpired:
-            process.kill()
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                process.kill()
             output, _ = process.communicate()
             timeout_note = "[harness] Solver timed out.\n"
             if output and not output.endswith("\n"):

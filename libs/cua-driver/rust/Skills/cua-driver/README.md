@@ -129,7 +129,7 @@ The skill is a drop-in directory. Same shape on every platform.
 **OpenClaw via ClawHub:**
 
 ```bash
-clawhub install @cua/cua-driver
+clawhub install @cua/driver
 ```
 
 ClawHub installs the complete cross-platform bundle. The agent reads the shared

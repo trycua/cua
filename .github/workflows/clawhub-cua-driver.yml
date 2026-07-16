@@ -30,21 +30,61 @@ permissions:
 
 env:
   CLAWHUB_CLI_VERSION: "0.23.1"
+  CLAWHUB_SKILL_SLUG: "driver"
   SKILL_PATH: "libs/cua-driver/rust/Skills/cua-driver"
 
 jobs:
   dry-run:
-    name: Validate publish bundle
+    name: Validate @cua/driver publish bundle
     if: github.event_name == 'pull_request'
-    uses: openclaw/clawhub/.github/workflows/skill-publish.yml@b2f06028cff845974cfc9e528317ef879663935b
-    with:
-      skill_path: "libs/cua-driver/rust/Skills/cua-driver"
-      owner: "cua"
-      dry_run: true
-      ref: ${{ github.event.pull_request.head.sha }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Validate @cua/driver bundle
+        env:
+          SOURCE_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          VERSION="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          skill_text = Path("libs/cua-driver/rust/Skills/cua-driver/SKILL.md").read_text()
+          frontmatter = skill_text.split("---", 2)[1]
+          match = re.search(r"^version:\s*([^\s#]+)", frontmatter, re.MULTILINE)
+          if not match:
+              raise SystemExit("SKILL.md frontmatter has no version")
+          print(match.group(1))
+          PY
+          )"
+          npx --yes "clawhub@${CLAWHUB_CLI_VERSION}" skill publish "${SKILL_PATH}" \
+            --slug "${CLAWHUB_SKILL_SLUG}" \
+            --name "Cua Driver" \
+            --owner cua \
+            --version "${VERSION}" \
+            --changelog "Cua Driver ${VERSION}" \
+            --tags latest \
+            --source-repo "${GITHUB_REPOSITORY}" \
+            --source-commit "$(git rev-parse HEAD)" \
+            --source-ref "${SOURCE_REF}" \
+            --source-path "${SKILL_PATH}" \
+            --dry-run \
+            --json | tee "${RUNNER_TEMP}/clawhub-dry-run.json"
+
+      - name: Upload dry-run result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clawhub-driver-dry-run
+          path: ${{ runner.temp }}/clawhub-dry-run.json
+          if-no-files-found: ignore
 
   publish:
-    name: Publish ${{ inputs.version }} as @${{ inputs.owner }}/cua-driver
+    name: Publish ${{ inputs.version }} as @${{ inputs.owner }}/driver
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
@@ -104,17 +144,17 @@ jobs:
               env_file.write(f"CLAWHUB_CONFIG_PATH={path}\n")
           PY
 
-      - name: Publish cua-driver skill
+      - name: Publish @${{ inputs.owner }}/driver
         env:
           OWNER: ${{ inputs.owner }}
           VERSION: ${{ inputs.version }}
         run: |
           npx --yes "clawhub@${CLAWHUB_CLI_VERSION}" skill publish "${SKILL_PATH}" \
-            --slug cua-driver \
-            --name "CUA Driver" \
+            --slug "${CLAWHUB_SKILL_SLUG}" \
+            --name "Cua Driver" \
             --owner "${OWNER}" \
             --version "${VERSION}" \
-            --changelog "cua-driver ${VERSION}" \
+            --changelog "Cua Driver ${VERSION}" \
             --tags latest \
             --source-repo "${GITHUB_REPOSITORY}" \
             --source-commit "${GITHUB_SHA}" \
@@ -138,6 +178,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: clawhub-cua-driver-publish-${{ inputs.version }}
+          name: clawhub-driver-publish-${{ inputs.version }}
           path: ${{ runner.temp }}/clawhub-publish.json
           if-no-files-found: ignore

@@ -79,8 +79,10 @@ only for focused diagnosis. Optional
 external-app suites remain separate.
 
 The canonical macOS E2E entrypoint is
-`scripts/ci/macos/run-rust-e2e.sh`. It requires a logged-in user session and an
-installed driver with Accessibility and Screen Recording grants.
+`libs/cua-driver/tests/runners/macos-lume/run-all.sh`. It runs in a disposable
+clone of the private maintainer seed, requires a logged-in user session, and
+verifies the installed driver's Accessibility and Screen Recording grants
+before delegating to `scripts/ci/macos/run-rust-e2e.sh`.
 
 Legacy Windows Sandbox runs use
 `../../../../tests/runners/windows-sandbox/run-tests-in-sandbox.ps1`, which

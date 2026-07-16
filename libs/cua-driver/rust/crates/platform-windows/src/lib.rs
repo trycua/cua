@@ -44,6 +44,9 @@ pub mod lparam;
 pub mod win32;
 
 #[cfg(target_os = "windows")]
+pub mod browser_platform;
+
+#[cfg(target_os = "windows")]
 pub mod uia;
 
 #[cfg(target_os = "windows")]

@@ -13,17 +13,23 @@ SIGNING_CN="CuaDriver Local Signing (cua-driver-rs)"
 
 usage() {
   cat <<'EOF'
-Usage: run-all.sh [--no-build]
+Usage: run-all.sh [--no-build] [--standalone-browser]
 
 Run the canonical cua-driver macOS GUI E2E matrix in a disposable clone of
 the maintainer Lume golden image. Start this command from Terminal in the VM's
 logged-in desktop session, not over SSH.
+
+--standalone-browser also runs the optional installed Chrome/Edge browser-tool
+matrix after the canonical repo-local harness matrix.
 EOF
 }
 
+RUN_STANDALONE_BROWSER=0
+NO_BUILD=0
 for arg in "$@"; do
   case "${arg}" in
-    --no-build) ;;
+    --no-build) NO_BUILD=1 ;;
+    --standalone-browser) RUN_STANDALONE_BROWSER=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: ${arg}" >&2; usage >&2; exit 2 ;;
   esac
@@ -169,4 +175,21 @@ if ! "${INSTALLED_BIN}" list_apps '{}' > "${ARTIFACT_DIR}/driver-list-apps.json"
 fi
 
 echo "[E2E] Running the canonical macOS matrix"
-exec "${REPO_ROOT}/scripts/ci/macos/run-rust-e2e.sh" "$@"
+if [[ "${NO_BUILD}" == 1 ]]; then
+  "${REPO_ROOT}/scripts/ci/macos/run-rust-e2e.sh" --no-build
+else
+  "${REPO_ROOT}/scripts/ci/macos/run-rust-e2e.sh"
+fi
+
+if [[ "${RUN_STANDALONE_BROWSER}" == 1 ]]; then
+  echo "[E2E] Running the optional standalone browser matrix"
+  BROWSER_ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos-standalone-browser"
+  if [[ -d "${BROWSER_ARTIFACT_DIR}" ]] \
+      && [[ -n "$(find "${BROWSER_ARTIFACT_DIR}" -mindepth 1 -print -quit)" ]]; then
+    BROWSER_ARTIFACT_ARCHIVE="$(mktemp -d "${TMPDIR:-/tmp}/cua-macos-browser-e2e.XXXXXX")"
+    mv "${BROWSER_ARTIFACT_DIR}" "${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
+    echo "Previous standalone-browser evidence preserved at ${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
+  fi
+  CUA_E2E_ARTIFACT_DIR="${BROWSER_ARTIFACT_DIR}" \
+    "${REPO_ROOT}/scripts/ci/run-rust-standalone-browser-e2e.sh"
+fi

@@ -65,9 +65,8 @@ fn resolve_onscreen_point_with_scroll(
     // visible control covering the stale point (for example a bottom toolbar).
     if let Some(retained) = element_cache.get_element_retained(pid, hwnd, idx) {
         if retained.is_uia() {
-            let is_offscreen = unsafe {
-                crate::uia::scroll::element_is_offscreen(retained.as_ptr())
-            };
+            let is_offscreen =
+                unsafe { crate::uia::scroll::element_is_offscreen(retained.as_ptr()) };
             if cached_center_in_window && is_offscreen != Some(true) {
                 return Ok((cx, cy));
             }
@@ -1523,6 +1522,11 @@ async fn restore_foreground_polling_best_effort(prior_foreground_addr: usize, sp
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+fn contains_remote_debugging_flag(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains("--remote-debugging-port") || lower.contains("--remote-debugging-pipe")
+}
+
 #[async_trait]
 impl Tool for LaunchAppTool {
     fn def(&self) -> &ToolDef {
@@ -1558,11 +1562,11 @@ impl Tool for LaunchAppTool {
                 `null` for ShellExecuteEx launches.\n\n\
                 Windows-only field: `path` (Swift uses `bundle_id` since macOS apps resolve via \
                 LaunchServices; Windows has no LaunchServices, so `path` is the canonical form). \
-                The macOS-specific `cdp_debugging_port`, `webkit_inspector_port`, \
+                The macOS-specific `webkit_inspector_port`, \
                 `creates_new_application_instance`, and `additional_arguments` fields are \
                 accepted; `additional_arguments` is honored (forwarded as ShellExecuteEx \
-                parameters or as the AUMID activation arguments string), the others currently \
-                no-op on Windows.".into(),
+                parameters or as the AUMID activation arguments string). \
+                The remaining macOS-only fields currently no-op on Windows.".into(),
             input_schema: json!({"type":"object","properties":{
                 "bundle_id":{"type":"string","description":"App User Model ID (AUMID) for a packaged app — pattern `{PackageFamilyName}!{ApplicationId}`, e.g. `Microsoft.WindowsNotepad_8wekyb3d8bbwe!App`. Falls back to a `name` alias if no `!` is present. Either bundle_id, name, aumid, path, or launch_path must be provided."},
                 "aumid":{"type":"string","description":"Explicit AUMID for a packaged app. Cleaner alternative to overloading `bundle_id`. Takes precedence over `bundle_id` / `name` when present."},
@@ -1571,7 +1575,6 @@ impl Tool for LaunchAppTool {
                 "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps`. Highest precedence — when set, this exact string is handed to ShellExecuteEx unchanged. For Windows desktop apps it's the full `.exe` commandline (path + arguments preserved from the source shortcut); for UWP apps it's `shell:appsFolder\\{PackageFamilyName}!{AppId}`. For precise UWP pid capture, prefer `aumid` over `launch_path`."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open in the default browser via ShellExecuteEx (no activation)."},
                 "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process (or activation arguments for packaged apps)."},
-                "cdp_debugging_port":{"type":"integer","description":"Accepted for cross-platform parity; currently no-op on Windows."},
                 "webkit_inspector_port":{"type":"integer","description":"Accepted for cross-platform parity; no-op on Windows."},
                 "creates_new_application_instance":{"type":"boolean","description":"Accepted for parity; no-op on Windows (ShellExecuteEx always creates a new process)."},
                 "start_minimized":{"type":"boolean","description":"When true, launch the app's window minimized to the taskbar instead of restored-but-not-activated. Use this when the agent wants to drive the app entirely in the background — the user's previously-frontmost window (e.g. terminal) stays visually on top. Desktop launches hold the foreground lock through startup and use SW_SHOWMINNOACTIVE; packaged-app activation remains broker-controlled and receives a best-effort SW_SHOWMINNOACTIVE post-pass. UIA / background dispatch still work on a minimized window; only `screenshot` and `delivery_mode:\"foreground\"` need it restored."}
@@ -1678,6 +1681,23 @@ impl Tool for LaunchAppTool {
                     .collect()
             })
             .unwrap_or_default();
+        if args.get("cdp_debugging_port").is_some() {
+            return ToolResult::error(
+                "cdp_debugging_port moved to browser_prepare so DevTools is never enabled on an unproven user profile",
+            );
+        }
+        if launch_path_opt
+            .as_deref()
+            .into_iter()
+            .chain(path_opt.as_deref())
+            .chain(name_opt.as_deref())
+            .chain(extra_args.iter().map(String::as_str))
+            .any(contains_remote_debugging_flag)
+        {
+            return ToolResult::error(
+                "Chromium remote-debugging flags moved to browser_prepare so DevTools is never enabled on an unproven user profile",
+            );
+        }
 
         // Resolve target — launch_path > path > aumid > name > bundle_id
         // (alias of name on Windows). launch_path is highest precedence for
@@ -1891,7 +1911,9 @@ impl Tool for LaunchAppTool {
                 let args_w = to_wide(&extra_for_shell);
 
                 let pid = if direct_minimized_exe {
-                    let target = target_for_shell.as_deref().expect("checked executable path");
+                    let target = target_for_shell
+                        .as_deref()
+                        .expect("checked executable path");
                     let mut command_line = to_wide(&if extra_for_shell.is_empty() {
                         format!(r#""{target}""#)
                     } else {
@@ -2284,7 +2306,7 @@ impl Tool for LaunchAppTool {
                 use std::collections::HashSet;
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::UI::WindowsAndMessaging::{
-                    IsIconic, SW_SHOWMINNOACTIVE, ShowWindow,
+                    IsIconic, ShowWindow, SW_SHOWMINNOACTIVE,
                 };
                 let _foreground_lock = launch_foreground_lock;
                 let mut minimized: HashSet<u64> = immediate_hwnds_for_poll.into_iter().collect();
@@ -2532,12 +2554,14 @@ impl Tool for ClickTool {
                 };
                 let target = WindowFromPoint(POINT { x: sx, y: sy });
                 if target.0.is_null() {
-                    return ToolResult::error(format!(
-                        "No window under screen point ({sx},{sy})."
-                    ));
+                    return ToolResult::error(format!("No window under screen point ({sx},{sy})."));
                 }
                 let root = GetAncestor(target, GA_ROOT);
-                if root.0.is_null() { target } else { root }
+                if root.0.is_null() {
+                    target
+                } else {
+                    root
+                }
             };
             let hwnd_u = root.0 as u64;
 
@@ -4228,10 +4252,10 @@ impl Tool for PressKeyTool {
             None
         };
         if let Some(idx) = elem_idx.filter(|_| background_webview_focus) {
-            let Some((cx, cy)) = self
-                .state
-                .element_cache
-                .get_element_center(pid, hwnd, idx as usize)
+            let Some((cx, cy)) =
+                self.state
+                    .element_cache
+                    .get_element_center(pid, hwnd, idx as usize)
             else {
                 return ToolResult::error(format!(
                     "Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first."
@@ -7273,7 +7297,8 @@ impl Tool for GetConfigTool {
                 same fallback the daemon uses at startup. Sibling to `set_config`.\n\n\
                 Current schema (Windows):\n\n  \
                 {\n    \"schema_version\": 1,\n    \"version\": \"<crate version>\",\n    \
-                \"platform\": \"windows\",\n    \"capture_mode\": \"ax\" | \"vision\" (DEPRECATED, ignored),\n    \
+                \"source_sha\": \"<maintainer build commit or null>\",\n    \"platform\": \"windows\",\n    \
+                \"capture_mode\": \"ax\" | \"vision\" (DEPRECATED, ignored),\n    \
                 \"max_image_dimension\": 0\n  }\n\n\
                 `capture_mode` is deprecated and no longer affects behavior — \
                 `get_window_state` always returns both the UIA tree and a screenshot.".into(),
@@ -7294,6 +7319,7 @@ impl Tool for GetConfigTool {
         let payload = json!({
             "schema_version":      1,
             "version":             env!("CARGO_PKG_VERSION"),
+            "source_sha":          option_env!("CUA_DRIVER_SOURCE_SHA"),
             "platform":            "windows",
             "capture_mode":        cfg.capture_mode,
             "capture_scope":       cfg.capture_scope,
@@ -7492,6 +7518,7 @@ impl Tool for SetConfigTool {
         let payload = json!({
             "schema_version":      1,
             "version":             env!("CARGO_PKG_VERSION"),
+            "source_sha":          option_env!("CUA_DRIVER_SOURCE_SHA"),
             "platform":            "windows",
             "capture_mode":        cfg.capture_mode,
             "capture_scope":       cfg.capture_scope,
@@ -7867,100 +7894,100 @@ impl Tool for BringToFrontTool {
         // Edge launch focus-steal recovery case.
         let outcome =
             tokio::task::spawn_blocking(move || -> Result<(u64, u64, bool, bool), String> {
-            use windows::Win32::Foundation::HWND;
-            use windows::Win32::Graphics::Dwm::DwmFlush;
-            use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
-            use windows::Win32::UI::WindowsAndMessaging::{
-                GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow,
-                SetForegroundWindow, SetWindowPos, ShowWindowAsync, HWND_NOTOPMOST, HWND_TOPMOST,
-                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_RESTORE,
-            };
+                use windows::Win32::Foundation::HWND;
+                use windows::Win32::Graphics::Dwm::DwmFlush;
+                use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow,
+                    SetForegroundWindow, SetWindowPos, ShowWindowAsync, HWND_NOTOPMOST,
+                    HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_RESTORE,
+                };
 
-            let target = HWND(hwnd as *mut _);
-            if !unsafe { IsWindow(target) }.as_bool() {
-                return Err(format!("hwnd 0x{hwnd:x} is not a valid window"));
-            }
+                let target = HWND(hwnd as *mut _);
+                if !unsafe { IsWindow(target) }.as_bool() {
+                    return Err(format!("hwnd 0x{hwnd:x} is not a valid window"));
+                }
 
-            let prev_fg = unsafe { GetForegroundWindow() };
-            let prev_fg_addr = prev_fg.0 as u64;
+                let prev_fg = unsafe { GetForegroundWindow() };
+                let prev_fg_addr = prev_fg.0 as u64;
 
-            // Iconic windows have no rendered pixels and live at the sentinel
-            // (-32000, -32000) position. Restore before changing z-order so
-            // bring_to_front is also the advertised recovery path for capture.
-            let was_minimized = unsafe { IsIconic(target) }.as_bool();
-            if was_minimized {
-                let _ = unsafe { ShowWindowAsync(target, SW_RESTORE) };
-                for _ in 0..20 {
-                    if !unsafe { IsIconic(target) }.as_bool() {
-                        break;
+                // Iconic windows have no rendered pixels and live at the sentinel
+                // (-32000, -32000) position. Restore before changing z-order so
+                // bring_to_front is also the advertised recovery path for capture.
+                let was_minimized = unsafe { IsIconic(target) }.as_bool();
+                if was_minimized {
+                    let _ = unsafe { ShowWindowAsync(target, SW_RESTORE) };
+                    for _ in 0..20 {
+                        if !unsafe { IsIconic(target) }.as_bool() {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(25));
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(25));
+                    if unsafe { IsIconic(target) }.as_bool() {
+                        return Err(format!(
+                            "restore request did not complete for minimized hwnd 0x{hwnd:x}"
+                        ));
+                    }
                 }
-                if unsafe { IsIconic(target) }.as_bool() {
-                    return Err(format!(
-                        "restore request did not complete for minimized hwnd 0x{hwnd:x}"
-                    ));
+
+                // Lock-free z-order raise FIRST: bring the window to the top of the
+                // normal band (the HWND_TOPMOST→HWND_NOTOPMOST force-to-front trick)
+                // so it's brought to the VISIBLE front even when the foreground-lock
+                // denies focus. SWP_NOACTIVATE → no focus steal; SetWindowPos z-order
+                // is not gated by the foreground-lock / UIAccess. This is the same
+                // technique the delivery_mode:"foreground" pointer path uses.
+                let raised = unsafe {
+                    let a = SetWindowPos(
+                        target,
+                        HWND_TOPMOST,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+                    )
+                    .is_ok();
+                    let b = SetWindowPos(
+                        target,
+                        HWND_NOTOPMOST,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+                    )
+                    .is_ok();
+                    a && b
+                };
+
+                // Then best-effort focus/activation (needed for keyboard) via the
+                // AttachThreadInput trick — inherits the current FG thread's FG-lock
+                // token so SetForegroundWindow can succeed at Medium IL. Still denied
+                // on a maxed lock without UIAccess; the z-raise already made the
+                // window visible regardless.
+                let my_tid = unsafe { GetCurrentThreadId() };
+                let mut fg_pid = 0u32;
+                let fg_tid = unsafe { GetWindowThreadProcessId(prev_fg, Some(&mut fg_pid)) };
+                let attached = fg_tid != 0 && fg_tid != my_tid;
+                if attached {
+                    let _ = unsafe { AttachThreadInput(my_tid, fg_tid, true) };
                 }
-            }
+                let _ = unsafe { SetForegroundWindow(target) };
+                if attached {
+                    let _ = unsafe { AttachThreadInput(my_tid, fg_tid, false) };
+                }
+                let now_fg = unsafe { GetForegroundWindow() };
 
-            // Lock-free z-order raise FIRST: bring the window to the top of the
-            // normal band (the HWND_TOPMOST→HWND_NOTOPMOST force-to-front trick)
-            // so it's brought to the VISIBLE front even when the foreground-lock
-            // denies focus. SWP_NOACTIVATE → no focus steal; SetWindowPos z-order
-            // is not gated by the foreground-lock / UIAccess. This is the same
-            // technique the delivery_mode:"foreground" pointer path uses.
-            let raised = unsafe {
-                let a = SetWindowPos(
-                    target,
-                    HWND_TOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-                )
-                .is_ok();
-                let b = SetWindowPos(
-                    target,
-                    HWND_NOTOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-                )
-                .is_ok();
-                a && b
-            };
-
-            // Then best-effort focus/activation (needed for keyboard) via the
-            // AttachThreadInput trick — inherits the current FG thread's FG-lock
-            // token so SetForegroundWindow can succeed at Medium IL. Still denied
-            // on a maxed lock without UIAccess; the z-raise already made the
-            // window visible regardless.
-            let my_tid = unsafe { GetCurrentThreadId() };
-            let mut fg_pid = 0u32;
-            let fg_tid = unsafe { GetWindowThreadProcessId(prev_fg, Some(&mut fg_pid)) };
-            let attached = fg_tid != 0 && fg_tid != my_tid;
-            if attached {
-                let _ = unsafe { AttachThreadInput(my_tid, fg_tid, true) };
-            }
-            let _ = unsafe { SetForegroundWindow(target) };
-            if attached {
-                let _ = unsafe { AttachThreadInput(my_tid, fg_tid, false) };
-            }
-            let now_fg = unsafe { GetForegroundWindow() };
-
-            // A restored HWND can stop reporting iconic before its compositor
-            // surface is painted. Flush DWM before returning, but do not make
-            // the restore operation depend on any particular capture backend.
-            // Capture has its own WGC fallback for freshly restored surfaces.
-            if was_minimized {
-                let _ = unsafe { DwmFlush() };
-            }
-            Ok((prev_fg_addr, now_fg.0 as u64, raised, was_minimized))
-        })
-        .await;
+                // A restored HWND can stop reporting iconic before its compositor
+                // surface is painted. Flush DWM before returning, but do not make
+                // the restore operation depend on any particular capture backend.
+                // Capture has its own WGC fallback for freshly restored surfaces.
+                if was_minimized {
+                    let _ = unsafe { DwmFlush() };
+                }
+                Ok((prev_fg_addr, now_fg.0 as u64, raised, was_minimized))
+            })
+            .await;
 
         match outcome {
             Ok(Ok((prev, now, raised, restored))) => {
@@ -8523,6 +8550,10 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(cua_driver_core::page::PageTool::new(
         std::sync::Arc::new(super::page::WindowsPageBackend::new()),
     )));
+    let browser_engine = cua_driver_core::browser::BrowserEngine::new(std::sync::Arc::new(
+        crate::browser_platform::WindowsBrowserPlatform,
+    ));
+    cua_driver_core::browser::register_browser_tools(&browser_engine, &mut r);
     r.register_recording_tools();
     r.register_session_tools();
     r
@@ -8939,5 +8970,22 @@ mod desktop_scope_tests {
         assert!(props.contains_key("session"));
         assert!(props.contains_key("screenshot_out_file"));
         assert_eq!(d.input_schema["additionalProperties"], json!(false));
+    }
+}
+
+#[cfg(test)]
+mod browser_launch_guard_tests {
+    use super::contains_remote_debugging_flag;
+
+    #[test]
+    fn rejects_all_chromium_remote_debugging_spellings() {
+        assert!(contains_remote_debugging_flag("--remote-debugging-port=0"));
+        assert!(contains_remote_debugging_flag("--REMOTE-DEBUGGING-PIPE"));
+        assert!(contains_remote_debugging_flag(
+            r#"C:\Program Files\Chrome\chrome.exe --remote-debugging-port 9222"#
+        ));
+        assert!(!contains_remote_debugging_flag(
+            r#"--user-data-dir=C:\Temp\profile"#
+        ));
     }
 }

@@ -64,9 +64,15 @@ if [[ ("${SUITE}" == shared || "${SUITE}" == all) \
   export CUA_E2E_EXPECTED_MIN_CELLS=80
 fi
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
-if [[ -z "${CUA_E2E_SOURCE_SHA:-}" && -f "${REPO_ROOT}/.cua-e2e-source-sha" ]]; then
-  export CUA_E2E_SOURCE_SHA="$(tr -d '[:space:]' < "${REPO_ROOT}/.cua-e2e-source-sha")"
-  export CUA_E2E_SOURCE_MARKER="${REPO_ROOT}/.cua-e2e-source-sha"
+SOURCE_MARKER="${REPO_ROOT}/.cua-e2e-source-sha"
+if [[ -f "${SOURCE_MARKER}" ]]; then
+  export CUA_E2E_SOURCE_MARKER="${CUA_E2E_SOURCE_MARKER:-${SOURCE_MARKER}}"
+  if [[ -z "${CUA_E2E_SOURCE_SHA:-}" ]]; then
+    export CUA_E2E_SOURCE_SHA="$(tr -d '[:space:]' < "${SOURCE_MARKER}")"
+  fi
+fi
+if [[ -n "${CUA_E2E_SOURCE_SHA:-}" ]]; then
+  export CUA_DRIVER_SOURCE_SHA="${CUA_E2E_SOURCE_SHA}"
 fi
 if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
   export GDK_BACKEND="${GDK_BACKEND:-wayland}"
@@ -166,6 +172,10 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
   run_test shared-behavior-matrix \
     cargo test -p cua-driver --test cross_platform_behavior_test -- \
       --ignored --exact shared_web_action_matrix_is_state_verified \
+      --nocapture --test-threads=1
+  run_test embedded-browser-routes \
+    cargo test -p cua-driver --test cross_platform_behavior_test -- \
+      --ignored --exact embedded_browser_routes_are_exact_or_refused \
       --nocapture --test-threads=1
 fi
 

@@ -1,70 +1,188 @@
 ---
 title: 'Drive a Web Page'
-description: 'Read and act on the page already loaded in a browser or Electron app with the page tool: get text, query the DOM, click, insert text, type keystrokes, run JavaScript.'
+description: 'Bind an exact browser window, inspect its active tab, and navigate, click, or type without foregrounding it.'
 ---
 
 # Drive a Web Page
 
-Use the `page` tool on the page already loaded in a running browser or Electron app. Open the URL first, either through `launch_app` or by having the user open it. This is the DOM/CDP path. Honest-verification `escalation.recommended: 'page'` points here when AX typing echoes but the DOM does not observe it. For the agent-side escalation behavior, see [Agent action policy](/reference/cua-driver/action-selection-policy) and [Capture and delivery modalities](/concepts/capture-and-delivery-modalities).
+Use the browser tools when an agent must act inside Chromium or an Electron
+page without raising the native window. The tools bind the `(pid, window_id)`
+you selected to a DevTools target, then issue page input through that exact
+binding.
 
-## When to use it
+## Inspect the selected browser first
 
-Use `page` when the target is browser-tab content and the accessibility layer cannot prove the result. It is especially useful after `type_text` returns `effect: "unverifiable"` with `escalation.recommended: "page"`.
+First use `list_apps` and `list_windows` as usual, then call
+`get_browser_state` with the selected native `(pid, window_id)`. If that browser
+already exposes an owned loopback DevTools endpoint, the driver binds it without
+changing the browser.
 
-Read actions (`get_text`, `query_dom`) work broadly, and `execute_javascript` works cross-platform given a CDP endpoint. `insert_text` and `type_keystrokes` are macOS-only for now; Windows and Linux return a clear "not implemented" error rather than a silent no-op. See the [`page` tool reference](/reference/cua-driver/mcp-tools#page) for the full action list, parameters, and platform notes.
+Do not pass remote-debugging flags or a user-data directory through
+`launch_app`. Cua Driver rejects those flags because they could expose a
+person's normal profile to DevTools.
 
-## insert_text vs type_keystrokes
+## Prepare an isolated browser when required
 
-`insert_text` does a bulk CDP DOM-level insert. It is fast and does not fire JS key events. `type_keystrokes` sends per-character keydown/keyup events through CDP. It is slower and fires JS handlers. Use `type_keystrokes` for React/Vue inputs and other frameworks that listen for key events.
+If inspection returns `browser_requires_setup`, call `browser_prepare` as a
+separate approved operation. It starts another Chromium process with a
+driver-owned profile; it never copies, modifies, restarts, or terminates the
+selected user profile.
 
-## Examples
-
-Read all visible text from an open page:
+In an MCP client, approve the destructive tool call through the client's normal
+approval UI:
 
 ```jsonc
-page({
-  pid,
-  window_id,
-  action: "get_text"
+browser_prepare({
+  "pid": 844,
+  "session": "research-1",
+  "allow_launch": true,
+  "profile": {"mode": "isolated_new"}
 })
 ```
 
-Query a CSS selector and return its `href` attribute:
+The response includes `prepared_pid`. Call `list_windows` for that new process,
+then bind its window with `get_browser_state`. An `isolated_new` profile is
+removed when its owning session ends. Use
+`profile: {"mode":"isolated_named","name":"research"}` only when the
+automation profile must survive across sessions.
+
+For direct CLI or raw-socket use, mint a five-minute, single-use token from an
+interactive terminal first:
+
+```bash
+cua-driver browser-approve --pid 844 --profile-mode isolated_new
+```
+
+Pass the returned token as `approval_token` in the otherwise identical
+`browser_prepare` call. `get_browser_state` never performs this setup itself.
+
+## Bind the native window
+
+Browser capabilities are scoped to a driver session. Start one and pass the
+same session value to every browser call:
 
 ```jsonc
-page({
-  pid,
-  window_id,
-  action: "query_dom",
-  css_selector: "a.docs-link",
-  attributes: ["href"]
+start_session({"session": "research-1"})
+
+get_browser_state({
+  "pid": 844,
+  "window_id": 10725,
+  "session": "research-1"
 })
 ```
 
-Type into the focused input field with real key events:
+Keep the returned opaque `target_id` and the `tab_id` whose `active` field is
+`true`. Mutation is available only when `binding_quality` is `exact`. A
+heuristic or ambiguous match is refused.
+
+## Snapshot the tab
+
+Snapshot the selected tab before using an element ref:
 
 ```jsonc
-page({
-  action: "type_keystrokes",
-  text: "status: ready",
-  cdp_port: 9222,
-  target_url_contains: "localhost"
+get_browser_state({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "session": "research-1"
 })
 ```
 
-Run JavaScript to read a value from the page:
+The response contains interactive elements with refs such as `p1:7`. Refs are
+valid only for that session, target, tab, and latest snapshot. Take a fresh
+snapshot after navigation or whenever a call returns `browser_ref_stale`.
+
+## Click and type
+
+The default click route requests Chromium's trusted input domain:
 
 ```jsonc
-page({
-  pid,
-  window_id,
-  action: "execute_javascript",
-  javascript: "document.querySelector('#total')?.textContent"
+browser_click({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "ref": "p1:7",
+  "session": "research-1"
 })
 ```
+
+Use viewport `x` and `y` instead of `ref` when the page snapshot cannot name
+the rendered target. Standalone Chrome and Edge on Windows have passing
+full-background evidence for this route. Standalone Chromium on macOS and Linux
+returns `browser_input_trust_unavailable` because dispatching the trusted
+pointer event activates the native browser window.
+
+To request a synthetic full-background DOM click deliberately, pass
+`input_route: "dom_event"` with a ref:
+
+```jsonc
+browser_click({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "ref": "p1:7",
+  "input_route": "dom_event",
+  "session": "research-1"
+})
+```
+
+Use this only when the page's DOM click semantics are acceptable. The driver
+never silently falls back from trusted input to a DOM event.
+
+Snapshot again, then type into the fresh input ref:
+
+```jsonc
+browser_type({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "ref": "p2:3",
+  "text": "status: ready",
+  "session": "research-1"
+})
+```
+
+The default `insert_text` mode is efficient for ordinary text. Use
+`mode: "keystrokes"` when the page depends on per-character keyboard events.
+
+## Navigate
+
+```jsonc
+browser_navigate({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "url": "https://example.com",
+  "session": "research-1"
+})
+```
+
+Navigation invalidates every prior ref for the tab. Wait for the destination,
+then call `get_browser_state` in snapshot mode again.
+
+## End the session
+
+```jsonc
+end_session({"session": "research-1"})
+```
+
+Ending the session revokes its target, tab, and element capabilities.
+
+## Embedded webviews
+
+Electron has an exact route only while one proven native window maps to one CDP
+page. Adding another page or window invalidates that route. Tauri, WKWebView,
+WebKitGTK, and the split-process WebView2 shape currently return
+`browser_route_unavailable` unless the driver can independently prove the
+native-host-to-engine relationship. Continue with native `get_window_state`
+and AX/PX actions for those surfaces.
+
+## Legacy page actions
+
+The older `page` tool remains available for compatibility and for its read
+actions. It preserves its first-page and URL-hint behavior, but now shares the
+event-aware CDP transport used by the typed browser tools. New browser mutation
+workflows should use the typed browser tools so window correlation, endpoint
+ownership, capability lifetime, and refusal reasons remain explicit.
 
 ## Related
 
-- [page tool reference](/reference/cua-driver/mcp-tools#page)
-- [Agent action policy](/reference/cua-driver/action-selection-policy)
+- [Browser targeting and background delivery](/concepts/browser-targeting-and-background-delivery)
+- [Browser tool reference](/reference/cua-driver/mcp-tools#get_browser_state)
+- [Known limits](/reference/cua-driver/limits)
 - [Capture and delivery modalities](/concepts/capture-and-delivery-modalities)

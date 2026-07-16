@@ -28,6 +28,18 @@ Options:\n  --artifact-root <dir>  Resolve and validate linked evidence artifact
     );
 }
 
+fn canonical_environment(records: Vec<EnvironmentRecord>) -> EnvironmentRecord {
+    let mut records = records.into_iter();
+    let first = records.next().expect("expected an environment record");
+    for record in records {
+        assert_eq!(
+            record, first,
+            "conflicting environment records in one E2E report"
+        );
+    }
+    first
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -64,25 +76,27 @@ fn main() {
     if let Some(path) = environment {
         let records: Vec<EnvironmentRecord> = read_json_lines(&path)
             .unwrap_or_else(|errors| panic!("invalid environment:\n{}", errors.join("\n")));
-        assert_eq!(records.len(), 1, "expected one environment record");
-        assert!(
-            environment_schema_supported(&records[0].schema),
-            "unsupported environment schema: {}",
-            records[0].schema,
-        );
-        source_sha = records[0].source_sha.clone();
-        if records[0].status == EnvironmentStatus::Error {
+        for record in &records {
+            assert!(
+                environment_schema_supported(&record.schema),
+                "unsupported environment schema: {}",
+                record.schema,
+            );
+        }
+        let record = canonical_environment(records);
+        source_sha = record.source_sha.clone();
+        if record.status == EnvironmentStatus::Error {
             emit(
                 format!(
                     "# CUA Driver E2E\n\n**Environment:** ERROR\n\n{}\n",
-                    records[0].message
+                    record.message
                 ),
                 output.as_ref(),
             );
-            eprintln!("E2E environment is not ready: {}", records[0].message);
+            eprintln!("E2E environment is not ready: {}", record.message);
             std::process::exit(2);
         }
-        environment_record = records.into_iter().next();
+        environment_record = Some(record);
     }
     let summary = validate_catalog(
         &declarations,
@@ -98,4 +112,28 @@ fn main() {
         environment_record.as_ref(),
     );
     emit(markdown, output.as_ref());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonical_environment;
+    use cua_driver_testkit::e2e::EnvironmentRecord;
+    use std::time::Duration;
+
+    #[test]
+    fn identical_environment_records_collapse_to_one() {
+        let record = EnvironmentRecord::ready(Duration::ZERO);
+        assert_eq!(
+            canonical_environment(vec![record.clone(), record.clone()]),
+            record
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "conflicting environment records")]
+    fn conflicting_environment_records_are_rejected() {
+        let ready = EnvironmentRecord::ready(Duration::ZERO);
+        let error = EnvironmentRecord::error(Duration::ZERO, "desktop unavailable");
+        let _ = canonical_environment(vec![ready, error]);
+    }
 }

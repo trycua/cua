@@ -65,7 +65,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox python3-gi gir1.2-gtk-3.0 \
+            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 \
             libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
             libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
             libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
@@ -76,7 +76,7 @@ jobs:
         run: |
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
-            "openbox >/tmp/cua-openbox.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh"
+            "openbox >/tmp/cua-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-picom.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh"
       - name: Upload shared results
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
@@ -104,7 +104,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox python3-gi gir1.2-gtk-3.0 \
+            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 \
             libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
             libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
             libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
@@ -115,7 +115,7 @@ jobs:
         run: |
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
-            "openbox >/tmp/cua-openbox.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh"
+            "openbox >/tmp/cua-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-picom.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh"
       - name: Upload native results
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
@@ -143,7 +143,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox python3-gi gir1.2-gtk-3.0 \
+            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 \
             libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
             libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
             libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
@@ -154,7 +154,7 @@ jobs:
         run: |
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
-            "openbox >/tmp/cua-openbox.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh"
+            "openbox >/tmp/cua-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-picom.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh"
       - name: Upload capture results
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4

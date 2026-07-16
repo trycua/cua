@@ -42,6 +42,16 @@ pub const DEFAULT_MAX_ELEMENTS: usize = 2_000;
 /// `enabled_pids`.
 const CHROMIUM_SETTLE_SECONDS: f64 = 0.5;
 
+/// Bound each native AX request. Tokio cannot cancel a blocked
+/// `AXUIElementCopyAttributeValue` after `spawn_blocking` starts, so the native
+/// messaging timeout is what keeps an unresponsive app from retaining a worker
+/// indefinitely.
+const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
+
+unsafe fn set_messaging_timeout(element: AXUIElementRef) {
+    let _ = AXUIElementSetMessagingTimeout(element, AX_MESSAGING_TIMEOUT_SECONDS);
+}
+
 /// Pids for which we have already flipped on accessibility and paid the
 /// one-time settle delay. Repeat snapshots of the same app skip the settle:
 /// the tree is already built and stays built for the life of the process.
@@ -135,6 +145,7 @@ pub fn walk_tree_bounded(
         if app_elem.is_null() {
             return TreeWalkResult { tree_markdown: String::new(), nodes, truncated: false };
         }
+        set_messaging_timeout(app_elem);
 
         // Chromium/Electron apps (Arc, VS Code, Electron shells) ship their
         // web-content AX tree OFF and only build it once an assistive client
@@ -173,6 +184,7 @@ pub fn walk_tree_bounded(
         // Filter: keep non-window children (menu bar) + the target window.
         let walk_these: Vec<AXUIElementRef> = if let Some(wid) = window_id {
             top_level.iter().copied().filter(|&child| {
+                set_messaging_timeout(child);
                 let role = copy_string_attr(child, "AXRole").unwrap_or_default();
                 if role != "AXWindow" {
                     return true; // always keep menu bar and other non-window items
@@ -249,6 +261,10 @@ unsafe fn walk_element(
         return;
     }
     *visited_count += 1;
+
+    // Messaging timeouts are per AX object, not inherited from the application
+    // element, so every descendant must be bounded before any attribute read.
+    set_messaging_timeout(element);
 
     let role = copy_string_attr(element, "AXRole")
         .unwrap_or_else(|| "AXUnknown".into());

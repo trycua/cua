@@ -9,6 +9,7 @@ on:
       - "flake.lock"
       - "nix/cua-driver/**"
       - "libs/cua-driver/rust/**"
+      - "libs/cua-driver/tests/fixtures/shared/web/index.html"
       - ".github/workflows/ci-nix-linux.yml"
   push:
     branches: [main]
@@ -17,6 +18,7 @@ on:
       - "flake.lock"
       - "nix/cua-driver/**"
       - "libs/cua-driver/rust/**"
+      - "libs/cua-driver/tests/fixtures/shared/web/index.html"
       - ".github/workflows/ci-nix-linux.yml"
   workflow_dispatch:
 

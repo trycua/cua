@@ -84,18 +84,21 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
     // alive-but-idle session — one issuing zero tool calls — is never reaped:
     // its control connection stays parked open.
     //
-    // Detached + fire-and-forget. If the connect races daemon startup and
-    // fails, we log and continue — the per-call `send_request` has its own
-    // retry/timeout, and a restarted daemon loses session state anyway, so a
-    // missing control connection only degrades to no-reaper (the recording
-    // idle-TTL still backstops a leaked recording). It must NOT bail the proxy.
+    // The daemon must acknowledge `session_begin` before the proxy accepts tool
+    // calls. Besides lifecycle cleanup, that registered control channel is the
+    // trust boundary used by destructive `browser_prepare` calls.
+    let (control_ready_tx, control_ready_rx) = tokio::sync::oneshot::channel();
     {
         let socket = socket_path.clone();
         let sid = session_id.clone();
         tokio::spawn(async move {
-            run_control_connection(socket, sid).await;
+            run_control_connection(socket, sid, control_ready_tx).await;
         });
     }
+    tokio::time::timeout(std::time::Duration::from_secs(4), control_ready_rx)
+        .await
+        .map_err(|_| anyhow::anyhow!("daemon did not acknowledge the MCP control session"))?
+        .map_err(|_| anyhow::anyhow!("daemon control session closed before acknowledgement"))?;
 
     // Cache the tool list once at startup. The daemon's registry is
     // static for the lifetime of the daemon, so polling on every
@@ -215,9 +218,9 @@ fn proxy_knows_tool(cached_tools_list: &serde_json::Value, name: &str) -> bool {
         .get("tools")
         .and_then(serde_json::Value::as_array)
         .is_some_and(|tools| {
-            tools.iter().any(|tool| {
-                tool.get("name").and_then(serde_json::Value::as_str) == Some(name)
-            })
+            tools
+                .iter()
+                .any(|tool| tool.get("name").and_then(serde_json::Value::as_str) == Some(name))
         })
 }
 
@@ -233,7 +236,11 @@ fn proxy_knows_tool(cached_tools_list: &serde_json::Value, name: &str) -> bool {
 /// and the task ends; the proxy keeps running on its per-call connections. A
 /// connect failure (racing daemon startup) is logged and swallowed — it must
 /// not bail the proxy.
-async fn run_control_connection(socket_path: String, session_id: String) {
+async fn run_control_connection(
+    socket_path: String,
+    session_id: String,
+    control_ready: tokio::sync::oneshot::Sender<()>,
+) {
     let begin = DaemonRequest {
         method: "session_begin".into(),
         name: None,
@@ -281,6 +288,12 @@ async fn run_control_connection(socket_path: String, session_id: String) {
         // death, when the kernel closes it and the daemon reaps the session.
         let mut reader = BufReader::new(stream);
         let mut buf = String::new();
+        match reader.read_line(&mut buf).await {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {
+                let _ = control_ready.send(());
+            }
+        }
         loop {
             buf.clear();
             match reader.read_line(&mut buf).await {
@@ -322,6 +335,12 @@ async fn run_control_connection(socket_path: String, session_id: String) {
 
         let mut reader = BufReader::new(client);
         let mut buf = String::new();
+        match reader.read_line(&mut buf).await {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {
+                let _ = control_ready.send(());
+            }
+        }
         loop {
             buf.clear();
             match reader.read_line(&mut buf).await {
@@ -334,7 +353,7 @@ async fn run_control_connection(socket_path: String, session_id: String) {
 
     #[cfg(all(not(unix), not(target_os = "windows")))]
     {
-        let _ = (line, session_id, socket_path);
+        let _ = (line, session_id, socket_path, control_ready);
     }
 }
 
@@ -374,15 +393,13 @@ fn fetch_tools_list_from_daemon(
             resp.error.unwrap_or_else(|| "(no error message)".into())
         );
     }
-    let result = resp.result.ok_or_else(|| {
-        anyhow::anyhow!("daemon list response missing `result` field")
-    })?;
+    let result = resp
+        .result
+        .ok_or_else(|| anyhow::anyhow!("daemon list response missing `result` field"))?;
     let tools_array = result
         .get("tools")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| {
-            anyhow::anyhow!("daemon list response missing `tools` array")
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("daemon list response missing `tools` array"))?;
 
     // Reshape the daemon's `{name, description, input_schema, read_only,
     // ..., capabilities}` envelope into MCP's `{name, description,
@@ -402,17 +419,28 @@ fn fetch_tools_list_from_daemon(
                 .get("description")
                 .cloned()
                 .unwrap_or(serde_json::Value::String(String::new()));
-            let input_schema = t.get("input_schema").cloned().unwrap_or_else(
-                || serde_json::json!({"type": "object", "properties": {}}),
-            );
-            let read_only = t.get("read_only").and_then(|v| v.as_bool()).unwrap_or(false);
-            let destructive =
-                t.get("destructive").and_then(|v| v.as_bool()).unwrap_or(false);
-            let idempotent =
-                t.get("idempotent").and_then(|v| v.as_bool()).unwrap_or(false);
-            let open_world =
-                t.get("open_world").and_then(|v| v.as_bool()).unwrap_or(false);
-            let capabilities = t.get("capabilities")
+            let input_schema = t
+                .get("input_schema")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({"type": "object", "properties": {}}));
+            let read_only = t
+                .get("read_only")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let destructive = t
+                .get("destructive")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let idempotent = t
+                .get("idempotent")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let open_world = t
+                .get("open_world")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let capabilities = t
+                .get("capabilities")
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_else(|| {
@@ -448,9 +476,9 @@ fn fetch_tools_list_from_daemon(
     let capability_version = result
         .get("capability_version")
         .cloned()
-        .unwrap_or_else(|| serde_json::Value::String(
-            cua_driver_core::tool::CAPABILITY_VERSION.to_owned()
-        ));
+        .unwrap_or_else(|| {
+            serde_json::Value::String(cua_driver_core::tool::CAPABILITY_VERSION.to_owned())
+        });
     let schema_version = result
         .get("schema_version")
         .cloned()
@@ -562,11 +590,12 @@ async fn handle_proxy_request(
 async fn forward_tool_call(
     id: serde_json::Value,
     name: String,
-    args: serde_json::Value,
+    mut args: serde_json::Value,
     socket_path: &str,
     session_id: &str,
     daemon_observes_tool_calls: bool,
 ) -> Response {
+    cua_driver_core::tool_args::sanitize_reserved_args(&mut args);
     let req = DaemonRequest {
         method: "call".into(),
         name: Some(name.clone()),
@@ -618,7 +647,9 @@ async fn forward_tool_call(
         // it as `Response::ok` with `isError: true`. Mirror that
         // shape here so MCP clients see identical envelopes either
         // way — CodeRabbit #2.
-        let msg = resp.error.unwrap_or_else(|| "daemon reported failure".into());
+        let msg = resp
+            .error
+            .unwrap_or_else(|| "daemon reported failure".into());
         let exit_code = resp.exit_code.unwrap_or(1);
         let result = serde_json::json!({
             "content": [{ "type": "text", "text": msg }],
@@ -654,11 +685,10 @@ mod tests {
     /// Reconstruct the `!resp.ok` branch in isolation so we can assert
     /// on the serialized shape without spinning up a real daemon /
     /// tokio runtime. Keep this in sync with `forward_tool_call`.
-    fn build_tool_error_response(
-        id: serde_json::Value,
-        resp: DaemonResponse,
-    ) -> Response {
-        let msg = resp.error.unwrap_or_else(|| "daemon reported failure".into());
+    fn build_tool_error_response(id: serde_json::Value, resp: DaemonResponse) -> Response {
+        let msg = resp
+            .error
+            .unwrap_or_else(|| "daemon reported failure".into());
         let exit_code = resp.exit_code.unwrap_or(1);
         let result = serde_json::json!({
             "content": [{ "type": "text", "text": msg }],
@@ -682,10 +712,14 @@ mod tests {
         // Top-level JSON-RPC envelope: success (`result`), not error.
         assert_eq!(value["jsonrpc"], "2.0");
         assert_eq!(value["id"], serde_json::json!(7));
-        assert!(value.get("error").is_none(),
-            "tool-level failure must NOT surface as JSON-RPC error: got {value}");
-        assert!(value.get("result").is_some(),
-            "tool-level failure must carry a `result` payload: got {value}");
+        assert!(
+            value.get("error").is_none(),
+            "tool-level failure must NOT surface as JSON-RPC error: got {value}"
+        );
+        assert!(
+            value.get("result").is_some(),
+            "tool-level failure must carry a `result` payload: got {value}"
+        );
 
         // CallTool.Result inside `result`: isError + content text.
         let result = &value["result"];
@@ -706,7 +740,10 @@ mod tests {
         let resp = build_tool_error_response(serde_json::json!("abc"), daemon_resp);
         let value = serde_json::to_value(&resp).expect("serialize");
         assert_eq!(value["result"]["isError"], serde_json::json!(true));
-        assert_eq!(value["result"]["content"][0]["text"], "daemon reported failure");
+        assert_eq!(
+            value["result"]["content"][0]["text"],
+            "daemon reported failure"
+        );
         assert_eq!(value["result"]["structuredContent"]["exit_code"], 1);
     }
 
@@ -719,7 +756,10 @@ mod tests {
             ]
         });
         assert!(proxy_knows_tool(&cached, "click"));
-        assert!(proxy_knows_tool(&cached, "type_text_chars"), "deprecated alias stays bounded/known");
+        assert!(
+            proxy_knows_tool(&cached, "type_text_chars"),
+            "deprecated alias stays bounded/known"
+        );
         assert!(!proxy_knows_tool(&cached, "click/private-user-value"));
         assert!(!proxy_knows_tool(&cached, ""));
     }

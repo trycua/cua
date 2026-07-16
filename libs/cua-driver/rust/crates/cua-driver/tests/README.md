@@ -84,6 +84,12 @@ clone of the private maintainer seed, requires a logged-in user session, and
 verifies the installed driver's Accessibility and Screen Recording grants
 before delegating to `scripts/ci/macos/run-rust-e2e.sh`.
 
+For focused macOS runs on a workstation shared with other driver clients,
+start a TCC-authorized daemon on a dedicated socket and set
+`CUA_E2E_MACOS_DAEMON_SOCKET` to that socket. This prevents an unrelated MCP
+client from changing the shared daemon's session or recording state while a
+row is asserting focus preservation.
+
 Legacy Windows Sandbox runs use
 `../../../../tests/runners/windows-sandbox/run-tests-in-sandbox.ps1`, which
 builds selected Windows harness apps and maps them into the sandbox. The current
@@ -129,3 +135,12 @@ desktop state outside the repo-local fixtures:
   checks. Requires a logged-in GUI session and usable System Events scripting.
 - `installed_app_textedit_macos_test.rs`: real TextEdit background AX write and
   verification. Requires a logged-in GUI session and Accessibility permission.
+- `standalone_browser_behavior_test.rs`: installed Chrome and Edge browser-tool
+  targeting, mutation, frame, tab, ambiguity, and isolated-profile rows. The
+  harness owns a fresh browser profile and creates adversarial tabs and windows
+  through the browser endpoint instead of relying on browser command-line
+  handoff behavior. Run it through the cross-platform
+  `scripts/ci/run-rust-standalone-browser-e2e.sh`, which stages the Electron
+  foreground sentinel when needed and opts pure Wayland runs into the native
+  backend. macOS Lume maintainers can add it to the VM acceptance run with
+  `run-all.sh --standalone-browser`.

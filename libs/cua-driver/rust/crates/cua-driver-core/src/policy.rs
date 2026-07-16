@@ -86,16 +86,9 @@ impl PolicyEngine {
 
     pub fn evaluate(&self, tool: &str, args: &Value) -> PolicyDecision {
         let tool = canonical_tool_name(tool);
-        let mut sanitized_args;
-        let args = if args.get("_session_id").is_some() {
-            sanitized_args = args.clone();
-            if let Some(object) = sanitized_args.as_object_mut() {
-                object.remove("_session_id");
-            }
-            &sanitized_args
-        } else {
-            args
-        };
+        let mut sanitized_args = args.clone();
+        crate::tool_args::sanitize_reserved_args(&mut sanitized_args);
+        let args = &sanitized_args;
 
         #[cfg(not(any(feature = "yaml", feature = "rego")))]
         let _ = (tool, args);
@@ -735,7 +728,7 @@ allow if {
 
     #[cfg(feature = "rego")]
     #[test]
-    fn rego_does_not_receive_internal_session_arguments() {
+    fn rego_does_not_receive_internal_transport_arguments() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("policy.rego");
         fs::write(
@@ -756,7 +749,12 @@ allow if {
         assert_eq!(
             policy.evaluate(
                 "click",
-                &serde_json::json!({"x": 10, "_session_id": "internal"})
+                &serde_json::json!({
+                    "x": 10,
+                    "_session_id": "public-session",
+                    "_transport_session_id": "transport-session",
+                    "_cua_browser_prepare_mcp_host_approved": true,
+                })
             ),
             PolicyDecision::Allow
         );

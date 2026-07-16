@@ -263,6 +263,21 @@ cd ~/cua
 libs/cua-driver/tests/runners/macos-lume/run-all.sh
 ```
 
+When Chrome or Edge is installed in the disposable worker, include the optional
+standalone browser-tool matrix in the same exact-source run:
+
+```bash
+cd ~/cua
+libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser
+```
+
+This adds eight adversarial installed-browser rows and writes their separate
+typed results and MP4 evidence under
+`artifacts/cua-driver/macos-standalone-browser/`. Missing external browsers are
+a hard failure for this option; they never shrink the reported matrix. On a
+repeat run, the entrypoint preserves the previous standalone-browser evidence
+in a temporary archive before creating a fresh artifact directory.
+
 The entrypoint refuses the wrong OS, user session, SIP state, dirty or
 unidentified source, missing dependencies, ad-hoc signature, stale installed
 daemon, unusable TCC grants, or missing Terminal/CuaDriver Automation grants.
@@ -272,6 +287,10 @@ Pull evidence before deleting the worker, even after a failed run:
 
 ```bash
 REMOTE_ARTIFACT_DIR=artifacts/cua-driver/macos \
+  libs/cua-driver/scripts/sync-vm-worktree.sh pull-artifacts \
+  "lume@${VM_IP}" '~/cua'
+# Also retrieve this directory when --standalone-browser was used.
+REMOTE_ARTIFACT_DIR=artifacts/cua-driver/macos-standalone-browser \
   libs/cua-driver/scripts/sync-vm-worktree.sh pull-artifacts \
   "lume@${VM_IP}" '~/cua'
 lume stop "$WORKER"

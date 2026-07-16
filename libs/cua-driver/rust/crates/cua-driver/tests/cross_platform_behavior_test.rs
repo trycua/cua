@@ -2,10 +2,12 @@
 //!
 //! These are source-owned Rust tests, not a copy of a partner test runner. The
 //! shared web fixture is loaded by Electron and Tauri on every supported OS;
-//! Windows also has WebView2 coverage in `harness_web_test.rs`. Assertions read
-//! mutated application state from a fixture-owned loopback journal, independently
-//! of the driver's accessibility snapshot. A successful response alone is never
-//! sufficient.
+//! Windows also has WebView2 coverage. The embedded-browser rows require an
+//! exact CDP round trip for Electron and a structured, side-effect-free refusal
+//! for hosts whose engine-to-native-window relationship cannot be proven.
+//! Assertions read mutated application state from a fixture-owned loopback
+//! journal, independently of the driver's accessibility snapshot. A successful
+//! response alone is never sufficient.
 //!
 //! Run after building the shared fixtures:
 //!
@@ -116,6 +118,11 @@ fn host_specs() -> Vec<HostSpec> {
         });
     }
 
+    retain_selected_hosts(&mut hosts);
+    hosts
+}
+
+fn retain_selected_hosts(hosts: &mut Vec<HostSpec>) {
     if let Ok(filter) = std::env::var("CUA_E2E_HARNESS_FILTER") {
         let selected = filter
             .split(',')
@@ -126,7 +133,18 @@ fn host_specs() -> Vec<HostSpec> {
             hosts.retain(|host| selected.contains(host.name));
         }
     }
+}
 
+fn embedded_browser_specs() -> Vec<HostSpec> {
+    let mut hosts = host_specs();
+    #[cfg(target_os = "windows")]
+    hosts.push(HostSpec {
+        name: "webview2",
+        path: harness_app("harness-webview", "CuaTestHarness.WebView.exe"),
+        args: Vec::new(),
+        title: "CuaTestHarness WebView",
+    });
+    retain_selected_hosts(&mut hosts);
     hosts
 }
 
@@ -229,14 +247,22 @@ fn resume_first_failure(failure: Option<Box<dyn Any + Send>>) {
     }
 }
 
-fn spawn_driver(recording_label: &str) -> Option<McpDriver> {
+fn spawn_driver(recording_label: &str, cdp_port: Option<u16>) -> Option<McpDriver> {
     #[cfg(target_os = "macos")]
     {
+        let _ = cdp_port;
         McpDriver::spawn_macos_daemon_proxy_named(recording_label)
     }
     #[cfg(not(target_os = "macos"))]
     {
-        McpDriver::spawn_named(recording_label)
+        let port = cdp_port.map(|value| value.to_string());
+        match port.as_deref() {
+            Some(port) => McpDriver::spawn_named_with_env(
+                recording_label,
+                &[("CUA_DRIVER_CDP_PORT", port)],
+            ),
+            None => McpDriver::spawn_named(recording_label),
+        }
     }
 }
 
@@ -269,7 +295,9 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
     }
 
     let recording_label = scenario.to_owned();
-    let mut driver = spawn_driver(&recording_label).unwrap_or_else(|| {
+    let cdp_port = matches!(spec.name, "electron" | "webview2")
+        .then(allocate_loopback_port);
+    let mut driver = spawn_driver(&recording_label, cdp_port).unwrap_or_else(|| {
         panic!(
             "cua-driver could not be started for the required {} fixture",
             spec.name
@@ -283,11 +311,20 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
         .env("CUA_E2E_FIXTURE_JOURNAL_URL", journal.url())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-    if spec.name == "electron" {
-        command.env(
-            "CUA_ELECTRON_CDP_PORT",
-            allocate_loopback_port().to_string(),
-        );
+    match spec.name {
+        "electron" => {
+            command.env(
+                "CUA_ELECTRON_CDP_PORT",
+                cdp_port.expect("Electron CDP port").to_string(),
+            );
+        }
+        "webview2" => {
+            command.env(
+                "CUA_WEBVIEW_CDP_PORT",
+                cdp_port.expect("WebView2 CDP port").to_string(),
+            );
+        }
+        _ => {}
     }
     let before_windows = driver
         .call("list_windows", serde_json::json!({}))
@@ -651,6 +688,26 @@ fn run_pointer_action(
 
 fn delivered_observation() -> Observation {
     Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+}
+
+fn browser_ref_by_label(snapshot: &ToolResponse, label_fragment: &str) -> String {
+    snapshot.structured()["refs"]
+        .as_array()
+        .and_then(|refs| {
+            refs.iter().find(|entry| {
+                entry["label"]
+                    .as_str()
+                    .is_some_and(|label| label.contains(label_fragment))
+            })
+        })
+        .and_then(|entry| entry["ref"].as_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            panic!(
+                "browser snapshot is missing ref label {label_fragment:?}: {}",
+                snapshot.raw
+            )
+        })
 }
 
 fn refused_without_fixture_mutation(
@@ -1153,6 +1210,341 @@ fn cell_selected(case: &CaseSpec) -> bool {
         .filter(|part| !part.is_empty())
         .peekable();
     parts.peek().is_none() || parts.any(|part| case.cell_id == part || case.cell_id.contains(part))
+}
+
+fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
+    let legacy = fixture.driver.call(
+        "page",
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "window_id": fixture.wid,
+            "action": "execute_javascript",
+            "javascript": "document.querySelector('[data-cua-id=page-marker]').textContent",
+        }),
+    );
+    assert!(
+        !legacy.is_error() && legacy.text().contains("WEB_HARNESS_MARKER_v1"),
+        "legacy page transport did not read the Electron fixture marker: {}",
+        legacy.raw
+    );
+    let session = format!("browser-v1-e2e-{}", fixture.pid);
+    let started = fixture
+        .driver
+        .call("start_session", serde_json::json!({ "session": session }));
+    assert!(
+        !started.is_error(),
+        "browser E2E session did not start: {}",
+        started.raw
+    );
+    let prepared = fixture.driver.call(
+        "browser_prepare",
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        prepared.structured()["prepared"].as_bool(),
+        Some(true),
+        "browser_prepare did not recognize the fixture's owned endpoint: {}",
+        prepared.raw
+    );
+    let bind = fixture.driver.call(
+        "get_browser_state",
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "window_id": fixture.wid,
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        bind.structured()["status"].as_str(),
+        Some("ok"),
+        "Electron browser binding failed: {}; raw={}",
+        bind.text(),
+        bind.raw
+    );
+    assert_eq!(
+        bind.structured()["binding_quality"].as_str(),
+        Some("exact"),
+        "Electron browser binding must be exact: {}",
+        bind.raw
+    );
+    assert_eq!(
+        bind.structured()["binding_route"].as_str(),
+        Some("embedded_single_page"),
+        "Electron must exercise the bounded embedded-browser route: {}",
+        bind.raw
+    );
+    let target_id = bind.structured()["target_id"]
+        .as_str()
+        .expect("bind target_id")
+        .to_owned();
+    let tab_id = bind.structured()["tabs"]
+        .as_array()
+        .and_then(|tabs| tabs.iter().find(|tab| tab["active"] == true))
+        .and_then(|tab| tab["tab_id"].as_str())
+        .expect("active tab_id")
+        .to_owned();
+
+    let first_snapshot = fixture.driver.call(
+        "get_browser_state",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        first_snapshot.structured()["status"].as_str(),
+        Some("ok"),
+        "Electron browser snapshot failed: {}",
+        first_snapshot.raw
+    );
+    let increment_ref = browser_ref_by_label(&first_snapshot, "id=btn-increment");
+    let click = fixture.driver.call(
+        "browser_click",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "ref": increment_ref,
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        click.structured()["status"].as_str(),
+        Some("ok"),
+        "trusted browser click failed: {}",
+        click.raw
+    );
+    assert_eq!(click.structured()["route"].as_str(), Some("trusted"));
+    assert_fixture_text(fixture, "lbl-counter", "counter=1");
+
+    let second_snapshot = fixture.driver.call(
+        "get_browser_state",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "session": session,
+        }),
+    );
+    let input_ref = browser_ref_by_label(&second_snapshot, "id=txt-input");
+    let typed = fixture.driver.call(
+        "browser_type",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "ref": input_ref,
+            "text": "browser-v1",
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        typed.structured()["status"].as_str(),
+        Some("ok"),
+        "browser type failed: {}",
+        typed.raw
+    );
+    assert_fixture_value(fixture, "txt-input", "browser-v1");
+    assert_fixture_text(fixture, "lbl-input-mirror", "mirror=browser-v1");
+
+    let stale = fixture.driver.call(
+        "browser_click",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "ref": increment_ref,
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        stale.structured()["refusal"]["code"].as_str(),
+        Some("browser_ref_stale"),
+        "older snapshot ref should fail closed: {}",
+        stale.raw
+    );
+    assert_fixture_text(fixture, "lbl-counter", "counter=1");
+
+    let navigated = fixture.driver.call(
+        "browser_navigate",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "url": "about:blank",
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        navigated.structured()["status"].as_str(),
+        Some("ok"),
+        "browser navigation failed: {}",
+        navigated.raw
+    );
+    assert_eq!(
+        navigated.structured()["refs_invalidated"].as_bool(),
+        Some(true),
+        "browser navigation must invalidate page refs: {}",
+        navigated.raw
+    );
+    let blank_snapshot = fixture.driver.call(
+        "get_browser_state",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        blank_snapshot.structured()["url"].as_str(),
+        Some("about:blank"),
+        "browser did not reach the requested page: {}",
+        blank_snapshot.raw
+    );
+    let stale_after_navigation = fixture.driver.call(
+        "browser_click",
+        serde_json::json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "ref": input_ref,
+            "session": session,
+        }),
+    );
+    assert_eq!(
+        stale_after_navigation.structured()["refusal"]["code"].as_str(),
+        Some("browser_ref_stale"),
+        "navigation-invalidated ref should fail closed: {}",
+        stale_after_navigation.raw
+    );
+    let ended = fixture
+        .driver
+        .call("end_session", serde_json::json!({ "session": session }));
+    assert!(
+        !ended.is_error(),
+        "browser E2E session did not end: {}",
+        ended.raw
+    );
+    delivered_observation()
+}
+
+fn run_browser_tool_refusal(fixture: &mut Fixture) -> Observation {
+    let session = format!("browser-embedded-refusal-{}", fixture.pid);
+    let started = fixture
+        .driver
+        .call("start_session", serde_json::json!({ "session": session }));
+    assert!(
+        !started.is_error(),
+        "browser refusal session did not start: {}",
+        started.raw
+    );
+    let journal_before = fixture.journal.snapshot();
+    let response = fixture.driver.call(
+        "get_browser_state",
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "window_id": fixture.wid,
+            "session": session,
+        }),
+    );
+    let code = response.structured()["refusal"]["code"]
+        .as_str()
+        .and_then(RefusalCode::from_driver_code)
+        .unwrap_or_else(|| panic!("embedded browser did not refuse structurally: {}", response.raw));
+    assert_eq!(
+        code,
+        RefusalCode::BrowserRouteUnavailable,
+        "embedded browser returned the wrong refusal: {}",
+        response.raw
+    );
+    assert_eq!(
+        fixture.journal.snapshot(),
+        journal_before,
+        "browser refusal mutated the fixture journal"
+    );
+    let ended = fixture
+        .driver
+        .call("end_session", serde_json::json!({ "session": session }));
+    assert!(
+        !ended.is_error(),
+        "browser refusal session did not end: {}",
+        ended.raw
+    );
+    Observation::refused(
+        code,
+        vec![OracleKind::FixtureState],
+        response.text(),
+        Evidence::default(),
+    )
+}
+
+fn embedded_browser_case(spec: &HostSpec) -> CaseSpec {
+    let mut oracles = vec![
+        OracleKind::FixtureState,
+        OracleKind::Focus,
+        OracleKind::ZOrder,
+        OracleKind::NoLeakedInput,
+    ];
+    if cua_driver_testkit::e2e::DisplayServer::current()
+        != cua_driver_testkit::e2e::DisplayServer::Wayland
+    {
+        oracles.push(OracleKind::Cursor);
+    }
+    let case = CaseSpec::delivered(
+        format!(
+            "{}-{}-browser-tool-roundtrip",
+            std::env::consts::OS,
+            spec.name
+        ),
+        spec.name,
+        if spec.name == "electron" {
+            "chromium"
+        } else {
+            "platform-webview"
+        },
+        "browser_tool_roundtrip",
+        Targeting::Page,
+        Delivery::Background,
+        Scope::Window,
+        cua_driver_testkit::e2e::DriverRoute::Cdp,
+        oracles,
+    );
+    if spec.name == "electron" {
+        case
+    } else {
+        case.expecting_refusal(vec![RefusalCode::BrowserRouteUnavailable])
+    }
+}
+
+#[test]
+#[ignore]
+fn embedded_browser_routes_are_exact_or_refused() {
+    let mut failure = None;
+    let mut selected = 0usize;
+    for spec in embedded_browser_specs() {
+        let case = embedded_browser_case(&spec);
+        if !cell_selected(&case) {
+            continue;
+        }
+        selected += 1;
+        let result = if spec.name == "electron" {
+            run_host_case_with_outcome(case, &spec, run_browser_tool_roundtrip)
+        } else {
+            run_host_case_with_outcome(case, &spec, run_browser_tool_refusal)
+        };
+        if failure.is_none() {
+            failure = result;
+        }
+    }
+    if selected == 0
+        && std::env::var("CUA_E2E_CELL_FILTER").is_ok_and(|filter| !filter.trim().is_empty())
+    {
+        eprintln!("no embedded-browser rows matched CUA_E2E_CELL_FILTER");
+        return;
+    }
+    assert!(
+        selected > 0,
+        "no embedded-browser cells were selected; check CUA_E2E_HARNESS_FILTER"
+    );
+    resume_first_failure(failure);
 }
 
 #[test]

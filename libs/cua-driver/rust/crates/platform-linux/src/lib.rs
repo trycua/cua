@@ -30,6 +30,9 @@ pub mod tty;
 pub mod proc_fs;
 
 #[cfg(target_os = "linux")]
+pub mod browser_platform;
+
+#[cfg(target_os = "linux")]
 pub mod installed_apps;
 
 #[cfg(target_os = "linux")]

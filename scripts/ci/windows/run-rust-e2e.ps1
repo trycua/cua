@@ -50,6 +50,16 @@ $env:CUA_TEST_APPS_ROOT = Join-Path $rustRoot "test-apps"
 $env:CUA_TEST_REQUIRE_FIXTURES = "1"
 $env:CUA_TEST_DRIVER_STDERR = "1"
 $env:CUA_E2E_FORBID_SKIPS = "1"
+$sourceMarker = Join-Path $repoRoot ".cua-e2e-source-sha"
+if (Test-Path $sourceMarker) {
+    $env:CUA_E2E_SOURCE_MARKER = $sourceMarker
+    if ([string]::IsNullOrWhiteSpace($env:CUA_E2E_SOURCE_SHA)) {
+        $env:CUA_E2E_SOURCE_SHA = (Get-Content -Raw $sourceMarker).Trim()
+    }
+}
+if (-not [string]::IsNullOrWhiteSpace($env:CUA_E2E_SOURCE_SHA)) {
+    $env:CUA_DRIVER_SOURCE_SHA = $env:CUA_E2E_SOURCE_SHA
+}
 Remove-Item Env:CUA_E2E_EXPECTED_MIN_CELLS -ErrorAction SilentlyContinue
 if (($suite -in @("shared", "all")) -and
     [string]::IsNullOrWhiteSpace($env:CUA_E2E_CELL_FILTER) -and
@@ -58,10 +68,17 @@ if (($suite -in @("shared", "all")) -and
 }
 
 if (-not $NoBuild) {
-    & cargo build --release -p cua-driver --manifest-path (Join-Path $rustRoot "Cargo.toml")
-    if ($LASTEXITCODE -ne 0) { throw "Rust driver build failed" }
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & cargo build --release -p cua-driver --manifest-path (Join-Path $rustRoot "Cargo.toml")
+        $buildExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($buildExit -ne 0) { throw "Rust driver build failed" }
     $fixtureTargets = switch ($suite) {
-        "shared" { @("electron", "tauri") }
+        "shared" { @("electron", "tauri", "webview") }
         "native" { @("wpf", "winui3", "webview", "electron") }
         "capture" { @("wpf", "electron") }
         default { @("wpf", "winui3", "webview", "electron", "tauri") }
@@ -80,10 +97,12 @@ if ($suite -in @("shared", "all")) {
 if ($suite -in @("native", "capture", "all")) {
     $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-wpf\CuaTestHarness.Wpf.exe"
 }
+if ($suite -in @("shared", "native", "all")) {
+    $requiredFixtures += Join-Path $env:CUA_TEST_APPS_ROOT "harness-webview\CuaTestHarness.WebView.exe"
+}
 if ($suite -in @("native", "all")) {
     $requiredFixtures += @(
-        (Join-Path $env:CUA_TEST_APPS_ROOT "harness-winui3\CuaTestHarness.WinUI3.exe"),
-        (Join-Path $env:CUA_TEST_APPS_ROOT "harness-webview\CuaTestHarness.WebView.exe")
+        (Join-Path $env:CUA_TEST_APPS_ROOT "harness-winui3\CuaTestHarness.WinUI3.exe")
     )
 }
 foreach ($fixture in $requiredFixtures) {
@@ -93,14 +112,27 @@ foreach ($fixture in $requiredFixtures) {
 function Invoke-E2eReport {
     Push-Location $rustRoot
     try {
-        & cargo run -p cua-driver-testkit --bin cua-e2e-report -- `
-            --declarations $casesPath `
-            --environment $environmentPath `
-            --results $resultsPath `
-            --artifact-root $artifactDir `
-            --require-video `
-            --output $summaryPath | Out-Host
-        $exitCode = $LASTEXITCODE
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $reportOutput = @(& cargo run -p cua-driver-testkit --bin cua-e2e-report -- `
+                --declarations $casesPath `
+                --environment $environmentPath `
+                --results $resultsPath `
+                --artifact-root $artifactDir `
+                --require-video `
+                --output $summaryPath 2>&1) | ForEach-Object {
+                    if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                        $_.Exception.Message
+                    } else {
+                        $_.ToString()
+                    }
+                }
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousPreference
+        }
+        $reportOutput | Out-Host
         return $exitCode
     } finally {
         Pop-Location
@@ -111,9 +143,26 @@ Write-Host "[PREFLIGHT] Windows desktop, fixture, UIA, capture, and video" -Fore
 Push-Location $rustRoot
 try {
     $preflightLog = Join-Path $artifactDir "environment-preflight.log"
-    $preflightOutput = & cargo test -p cua-driver --test e2e_environment_preflight_test -- `
-        --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1 2>&1
-    $preflightExit = $LASTEXITCODE
+    # Windows PowerShell 5.1 wraps native stderr as ErrorRecord objects. With
+    # the script-wide Stop preference, normal Cargo progress would terminate
+    # the lane before LASTEXITCODE can be inspected. Relax only around the
+    # captured native process; the real exit code remains authoritative.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $preflightOutput = @(& cargo test -p cua-driver --test e2e_environment_preflight_test -- `
+            --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1 2>&1) | `
+            ForEach-Object {
+                if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                    $_.Exception.Message
+                } else {
+                    $_.ToString()
+                }
+            }
+        $preflightExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
     $preflightOutput | Tee-Object -FilePath $preflightLog
 } finally {
     Pop-Location
@@ -129,8 +178,20 @@ function Invoke-CargoTest {
     Push-Location $rustRoot
     try {
         $logPath = Join-Path $artifactDir ("$($Name -replace '[^A-Za-z0-9_.-]', '-').log")
-        $output = & cargo @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $output = @(& cargo @Arguments 2>&1) | ForEach-Object {
+                if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                    $_.Exception.Message
+                } else {
+                    $_.ToString()
+                }
+            }
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousPreference
+        }
         $output | Tee-Object -FilePath $logPath
         if ($exitCode -ne 0) {
             $script:FailureCount++
@@ -172,7 +233,14 @@ function Test-E2eRecordings {
         }
     }
     foreach ($video in $videos) {
-        $relative = [System.IO.Path]::GetRelativePath($artifactDir, $video.FullName).Replace("\", "/")
+        $artifactPrefix = ([System.IO.Path]::GetFullPath($artifactDir)).TrimEnd("\") + "\"
+        $videoPath = [System.IO.Path]::GetFullPath($video.FullName)
+        if (-not $videoPath.StartsWith($artifactPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-Host "[VIDEO FAIL] Trajectory escaped artifact root: $videoPath" -ForegroundColor Red
+            $failureCount++
+            continue
+        }
+        $relative = $videoPath.Substring($artifactPrefix.Length).Replace("\", "/")
         if ($relative -like "recordings/environment-preflight-*/recording.mp4") {
             continue
         }
@@ -190,6 +258,11 @@ if ($suite -in @("shared", "all")) {
     Invoke-CargoTest "shared behavior matrix" @(
         "test", "-p", "cua-driver", "--test", "cross_platform_behavior_test", "--",
         "--ignored", "--exact", "shared_web_action_matrix_is_state_verified",
+        "--nocapture", "--test-threads=1"
+    )
+    Invoke-CargoTest "embedded browser routes" @(
+        "test", "-p", "cua-driver", "--test", "cross_platform_behavior_test", "--",
+        "--ignored", "--exact", "embedded_browser_routes_are_exact_or_refused",
         "--nocapture", "--test-threads=1"
     )
 }

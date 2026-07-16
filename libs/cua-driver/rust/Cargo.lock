@@ -730,6 +730,7 @@ dependencies = [
  "cursor-overlay",
  "embed-resource",
  "flate2",
+ "futures-util",
  "image",
  "libc",
  "pip-preview",
@@ -742,6 +743,7 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
  "ureq",
@@ -756,7 +758,9 @@ version = "0.8.3"
 dependencies = [
  "anyhow",
  "async-trait",
+ "futures-util",
  "image",
+ "libc",
  "regex",
  "regorus",
  "serde",
@@ -765,7 +769,9 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
+ "uuid",
  "windows 0.58.0",
 ]
 
@@ -774,6 +780,7 @@ name = "cua-driver-testkit"
 version = "0.8.3"
 dependencies = [
  "core-foundation",
+ "libc",
  "objc2-app-kit",
  "serde",
  "serde_json",

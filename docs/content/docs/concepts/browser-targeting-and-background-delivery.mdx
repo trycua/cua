@@ -1,0 +1,106 @@
+---
+title: "Browser Targeting and Background Delivery"
+description: "Why browser automation needs an exact native-window-to-tab binding, and how CDP adds a full-background rung to Cua Driver."
+---
+
+# Browser Targeting and Background Delivery
+
+A browser presents two identities at once. The desktop knows a native process
+and window; the browser runtime knows DevTools targets and tabs. Acting safely
+in the background requires proof that both identities describe the same
+surface.
+
+## The connection point is the native window
+
+Agents still begin with `list_apps` and `list_windows`. They select a concrete
+`(pid, window_id)`, just as they do for accessibility and pixel actions.
+`get_browser_state` correlates that native window with a browser target and
+mints opaque target and tab capabilities. Raw DevTools target identifiers are
+not part of the public contract.
+
+This preserves one targeting model across native and web content. It also
+prevents a browser helper from choosing the first tab, first window, or first
+process match when several candidates exist.
+
+## Exact or refused
+
+Mutation is allowed only after independent evidence agrees:
+
+- the DevTools endpoint is loopback-only and owned by the requested process;
+- the native window belongs to that process;
+- native and DevTools window geometry identify the same surface; and
+- the binding still holds immediately before each mutation.
+
+Electron versions that do not expose a DevTools window identifier have a
+narrow fallback: the process must own exactly one native window and the
+endpoint must expose exactly one page. If either count changes, mutation is
+refused. A heuristic discovery result may be useful for inspection, but it is
+never promoted into an action route.
+
+## A full-background rung
+
+Accessibility actions and targeted pixel injection depend on what the OS and
+application surface accept. Chromium can reject some background keyboard or
+pointer routes even when the operating system delivered them correctly.
+
+The browser tools add a higher, page-aware rung through the Chrome DevTools
+Protocol. Page navigation, the default ref-bound text insertion route, and an
+explicit synthetic DOM click can address an occluded tab without moving the
+real cursor or borrowing keyboard focus. This is a full-background route for
+an exactly bound Chromium page, rather than best-effort OS input.
+
+Trusted CDP pointer input remains distinct from synthetic DOM events. The
+default click uses `Input.dispatchMouseEvent`, but Chromium's standalone window
+is known to activate on that route on macOS and Linux. Cua Driver returns
+`browser_input_trust_unavailable` there before dispatch. Standalone Chrome and
+Edge on Windows, and the bounded embedded Electron route, have passing trusted
+background evidence.
+
+A caller must explicitly request `input_route: "dom_event"` to invoke an
+element's DOM click behavior. That route is synthetic even when it preserves
+full-background posture. The driver does not silently change trust models to
+make a call appear successful.
+
+## Capabilities have a lifetime
+
+Target ids, tab ids, and page refs belong to a named driver session. Page refs
+also belong to one snapshot. A newer snapshot or navigation invalidates older
+refs, and ending the session revokes all of its browser capabilities.
+
+This makes stale state visible. An agent re-snapshots and retries with current
+evidence instead of accidentally acting on a node that moved, disappeared, or
+now belongs to another document.
+
+## Why setup is explicit
+
+Browser inspection never enables remote debugging or restarts a browser as a
+side effect. `browser_prepare` is a separate destructive approval boundary. It
+may launch another browser with a driver-owned `isolated_new` or
+`isolated_named` profile, but it never copies, modifies, restarts, or terminates
+the selected user profile. Remote-debugging arguments passed through
+`launch_app` are refused.
+
+An MCP host supplies approval through its destructive-tool approval path.
+Direct CLI and raw-socket callers use a short-lived, single-use token minted by
+the interactive `browser-approve` command. A Boolean supplied by the model is
+not treated as user consent.
+
+## Platform meaning
+
+Page-aware routes are cross-platform, but exact native correlation and input
+trust remain platform and surface capabilities:
+
+- macOS uses process ownership and native window geometry.
+- Windows uses HWND ownership and DPI-aware geometry.
+- Linux X11 and Sway expose sufficient ownership and geometry for exact routes
+  in the validated configurations.
+- generic Wayland discovery without compositor-provided exact geometry remains
+  read-only; it cannot authorize mutation.
+
+The same rule applies to embedded webviews. Electron's bounded single-page,
+single-window shape can be exact. A native host and renderer split across
+different processes, as in common WebView2 deployments, is refused until the
+driver can prove that relationship independently.
+
+See [Drive a web page](/how-to-guides/driver/drive-a-web-page) for the workflow
+and [Known limits](/reference/cua-driver/limits) for current scope.

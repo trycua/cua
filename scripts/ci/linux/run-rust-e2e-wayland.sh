@@ -7,6 +7,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="$(mktemp -d)"
 SWAY_CONFIG="$(mktemp)"
 SESSION_KIND="${CUA_E2E_WAYLAND_SESSION:-sway}"
+export CUA_E2E_WAYLAND_SESSION="${SESSION_KIND}"
 COMPOSITOR_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/${SESSION_KIND}.log"
 ATSPI_LOG="${REPO_ROOT}/artifacts/cua-driver/linux/at-spi-bus.log"
 COMPOSITOR_PID=""
@@ -209,8 +210,13 @@ else
 fi
 
 echo "Native Wayland E2E session: ${SESSION_KIND} on ${WAYLAND_DISPLAY}"
+SESSION_RUNNER="${CUA_E2E_WAYLAND_RUNNER:-${SCRIPT_DIR}/run-rust-e2e.sh}"
+if [[ ! -x "${SESSION_RUNNER}" ]]; then
+  echo "Wayland session runner is not executable: ${SESSION_RUNNER}" >&2
+  exit 1
+fi
 set +e
-"${SCRIPT_DIR}/run-rust-e2e.sh" "$@"
+"${SESSION_RUNNER}" "$@"
 status=$?
 set -e
 if [[ "${status}" != 0 && "${SESSION_KIND}" == sway ]]; then

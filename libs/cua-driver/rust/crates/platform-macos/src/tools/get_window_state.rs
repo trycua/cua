@@ -144,10 +144,10 @@ impl Tool for GetWindowStateTool {
         // Always walk the AX tree (perception returns both tree + screenshot).
         let tree_result = {
             let q = query.clone();
-            // Wrap the blocking AX walk in a 30-second timeout. Heavy webview apps
-            // (Arc, Safari with many tabs, Electron) can block
-            // AXUIElementCopyAttributeValue indefinitely via XPC — without a
-            // deadline the MCP server hangs forever (issue #1537).
+            // Keep the product deadline below the public client's 25-second
+            // deadline so callers receive a structured driver error. The AX
+            // walker also applies a native per-element messaging timeout because
+            // dropping a spawn_blocking JoinHandle cannot cancel a blocked AX call.
             let walk_future = tokio::task::spawn_blocking(move || {
                 crate::ax::tree::walk_tree_bounded(
                     pid,
@@ -157,12 +157,12 @@ impl Tool for GetWindowStateTool {
                     max_depth,
                 )
             });
-            match tokio::time::timeout(std::time::Duration::from_secs(30), walk_future).await {
+            match tokio::time::timeout(std::time::Duration::from_secs(20), walk_future).await {
                 Ok(Ok(r)) => Some(r),
                 Ok(Err(e)) => return ToolResult::error(format!("AX tree walk failed: {e}")),
                 Err(_elapsed) => {
                     return ToolResult::error(format!(
-                        "AX tree walk for pid={pid} timed out after 30 s. \
+                        "AX tree walk for pid={pid} timed out after 20 s. \
                          The app (likely Arc, Electron, or Safari with many tabs) has a \
                          pathologically large accessibility tree. \
                          Workaround: re-call with a depth-limited scan \

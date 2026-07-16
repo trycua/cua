@@ -34,6 +34,7 @@
 //! tests only; they are never read by the shipped driver.
 
 pub mod ax;
+mod browser_fixture;
 mod driver;
 pub mod e2e;
 mod journal;
@@ -48,6 +49,7 @@ pub mod sentinel;
 mod windows_setup;
 
 pub use driver::{BehaviorRecording, Driver};
+pub use browser_fixture::BrowserFixtureServer;
 pub use journal::FixtureJournal;
 pub use mcp::McpDriver;
 pub use raw::RawDriver;

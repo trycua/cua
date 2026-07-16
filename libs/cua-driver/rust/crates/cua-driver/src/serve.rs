@@ -18,6 +18,33 @@
 //!   Windows — \\.\pipe\cua-driver  (TODO: use named pipe; stubs only for now)
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
+
+static ACTIVE_PROXY_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn active_proxy_sessions() -> &'static Mutex<HashSet<String>> {
+    ACTIVE_PROXY_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn is_active_proxy_session(session: Option<&str>) -> bool {
+    session.is_some_and(|session| active_proxy_sessions().lock().unwrap().contains(session))
+}
+
+fn inject_browser_prepare_approval(
+    tool_name: &str,
+    args: &mut serde_json::Value,
+    session: Option<&str>,
+) {
+    if tool_name == "browser_prepare" && is_active_proxy_session(session) {
+        if let Some(arguments) = args.as_object_mut() {
+            arguments.insert(
+                cua_driver_core::browser::approval::MCP_HOST_APPROVAL_ARG.to_owned(),
+                serde_json::Value::Bool(true),
+            );
+        }
+    }
+}
 
 // ── Recording idle-TTL backstop (#1764) ─────────────────────────────────────────
 
@@ -62,10 +89,16 @@ fn apply_session_identity(
         .filter(|s| !s.is_empty())
         .map(|s| s.to_owned());
     if let Some(obj) = args.as_object_mut() {
-        if !obj.contains_key("_session_id") {
-            if let Some(id) = explicit.clone().or_else(|| minted.clone()) {
-                obj.insert("_session_id".to_owned(), serde_json::Value::String(id));
-            }
+        obj.remove("_session_id");
+        obj.remove("_transport_session_id");
+        if let Some(id) = explicit.clone().or_else(|| minted.clone()) {
+            obj.insert("_session_id".to_owned(), serde_json::Value::String(id));
+        }
+        if let Some(id) = minted.clone() {
+            obj.insert(
+                "_transport_session_id".to_owned(),
+                serde_json::Value::String(id),
+            );
         }
     }
     if let Some(sess) = &explicit {
@@ -392,6 +425,7 @@ async fn invoke_daemon_tool(
     let mut args = req
         .args
         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+    cua_driver_core::tool_args::sanitize_reserved_args(&mut args);
     let effective_session = apply_session_identity(&mut args, &req.session_id);
     let operation = cua_driver_core::server::tool_operation(&tool_name, Some(&args));
     let observation = observation_transport.map(|transport| {
@@ -447,6 +481,8 @@ async fn invoke_daemon_tool(
             return DaemonResponse::err(format!("Policy loading error: {message}"), 1);
         }
     }
+
+    inject_browser_prepare_approval(&tool_name, &mut args, req.session_id.as_deref());
 
     let session_context = observation_transport.and_then(|transport| {
         let transport = match transport {
@@ -860,6 +896,10 @@ pub async fn run_serve(
                                 // per-call connections never send this. ACK ok.
                                 if let Some(sid) = req.session_id.as_deref() {
                                     control_session_id = Some(sid.to_owned());
+                                    active_proxy_sessions()
+                                        .lock()
+                                        .unwrap()
+                                        .insert(sid.to_owned());
                                 }
                                 let resp = DaemonResponse::ok(
                                     serde_json::json!({"session_begin": true})
@@ -925,6 +965,7 @@ pub async fn run_serve(
                     // idempotent, so racing a legacy explicit session_end is
                     // benign.
                     if let Some(sid) = control_session_id {
+                        active_proxy_sessions().lock().unwrap().remove(&sid);
                         // stop_owner can SYNCHRONOUSLY finalize the recording's
                         // mp4 — on macOS it hits SCStream::stop_capture(), which
                         // blocks on disk I/O (video_sckit.rs). Run it on a
@@ -1323,6 +1364,10 @@ pub async fn run_serve(
                                 // session in the post-loop block below. ACK ok.
                                 if let Some(sid) = req.session_id.as_deref() {
                                     control_session_id = Some(sid.to_owned());
+                                    active_proxy_sessions()
+                                        .lock()
+                                        .unwrap()
+                                        .insert(sid.to_owned());
                                 }
                                 let resp = DaemonResponse::ok(
                                     serde_json::json!({"session_begin": true})
@@ -1377,6 +1422,7 @@ pub async fn run_serve(
                     // the full rationale). Per-call connections leave
                     // control_session_id None.
                     if let Some(sid) = control_session_id {
+                        active_proxy_sessions().lock().unwrap().remove(&sid);
                         // Run stop_owner off the reactor (see the unix branch):
                         // recording finalize can be a synchronous blocking call.
                         // fire_session_end stays inline (non-blocking hooks).
@@ -1797,7 +1843,8 @@ mod telemetry_routing_tests {
 
 #[cfg(test)]
 mod session_boundary_tests {
-    use super::apply_session_identity;
+    use super::{active_proxy_sessions, apply_session_identity, inject_browser_prepare_approval};
+    use cua_driver_core::browser::approval::MCP_HOST_APPROVAL_ARG;
     use serde_json::json;
 
     #[test]
@@ -1806,6 +1853,16 @@ mod session_boundary_tests {
         let eff = apply_session_identity(&mut args, &None);
         assert_eq!(eff.as_deref(), Some("research-1"));
         assert_eq!(args["_session_id"], "research-1");
+        assert!(args.get("_transport_session_id").is_none());
+    }
+
+    #[test]
+    fn public_and_transport_sessions_remain_independent() {
+        let mut args = json!({ "session": "capability-session" });
+        let eff = apply_session_identity(&mut args, &Some("proxy-session".to_owned()));
+        assert_eq!(eff.as_deref(), Some("capability-session"));
+        assert_eq!(args["_session_id"], "capability-session");
+        assert_eq!(args["_transport_session_id"], "proxy-session");
     }
 
     #[test]
@@ -1817,6 +1874,7 @@ mod session_boundary_tests {
         let eff = apply_session_identity(&mut args, &Some("mcp-123".to_owned()));
         assert_eq!(args["_session_id"], "mcp-123");
         assert_eq!(eff.as_deref(), Some("mcp-123"));
+        assert_eq!(args["_transport_session_id"], "mcp-123");
         assert!(args.get("session").is_none());
     }
 
@@ -1829,10 +1887,37 @@ mod session_boundary_tests {
     }
 
     #[test]
-    fn caller_set_session_id_is_not_overwritten_by_minted() {
+    fn caller_set_session_id_is_replaced_by_minted() {
         let mut args = json!({ "_session_id": "caller-set" });
         let eff = apply_session_identity(&mut args, &Some("mcp-999".to_owned()));
-        assert_eq!(args["_session_id"], "caller-set");
-        assert_eq!(eff.as_deref(), Some("caller-set"));
+        assert_eq!(args["_session_id"], "mcp-999");
+        assert_eq!(args["_transport_session_id"], "mcp-999");
+        assert_eq!(eff.as_deref(), Some("mcp-999"));
+    }
+
+    #[test]
+    fn browser_prepare_approval_requires_a_live_proxy_session() {
+        let session = "approval-boundary-test";
+        let mut raw_args = json!({"pid": 42});
+        inject_browser_prepare_approval("browser_prepare", &mut raw_args, Some(session));
+        assert!(raw_args.get(MCP_HOST_APPROVAL_ARG).is_none());
+
+        active_proxy_sessions()
+            .lock()
+            .unwrap()
+            .insert(session.to_owned());
+        let mut proxy_args = json!({"pid": 42});
+        inject_browser_prepare_approval("browser_prepare", &mut proxy_args, Some(session));
+        active_proxy_sessions().lock().unwrap().remove(session);
+        assert_eq!(proxy_args[MCP_HOST_APPROVAL_ARG], true);
+
+        let mut other_tool = json!({"pid": 42});
+        active_proxy_sessions()
+            .lock()
+            .unwrap()
+            .insert(session.to_owned());
+        inject_browser_prepare_approval("get_browser_state", &mut other_tool, Some(session));
+        active_proxy_sessions().lock().unwrap().remove(session);
+        assert!(other_tool.get(MCP_HOST_APPROVAL_ARG).is_none());
     }
 }

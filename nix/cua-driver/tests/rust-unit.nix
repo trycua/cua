@@ -6,15 +6,22 @@
 {
   pkgs,
   src,
+  sourceSubdir ? null,
   ...
 }:
 
+let
+  rustSrc = if sourceSubdir == null then src else "${src}/${sourceSubdir}";
+in
 pkgs.rustPlatform.buildRustPackage {
   pname = "cua-driver-rust-unit-tests";
-  version = (pkgs.lib.importTOML "${src}/Cargo.toml").workspace.package.version;
+  version = (pkgs.lib.importTOML "${rustSrc}/Cargo.toml").workspace.package.version;
   inherit src;
 
-  cargoLock.lockFile = "${src}/Cargo.lock";
+  cargoLock.lockFile = "${rustSrc}/Cargo.lock";
+  postUnpack = pkgs.lib.optionalString (sourceSubdir != null) ''
+    sourceRoot="$sourceRoot/${sourceSubdir}"
+  '';
   cargoTestFlags = [
     "-p"
     "cua-driver"

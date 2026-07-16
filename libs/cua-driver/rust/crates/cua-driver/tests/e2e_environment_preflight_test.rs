@@ -223,7 +223,7 @@ fn run_preflight() {
         assert_eq!(
             config.structured()["source_sha"].as_str(),
             Some(expected_sha),
-            "connected macOS daemon was not built from the requested source SHA"
+            "connected driver was not built from the requested source SHA"
         );
     }
     let recording_dir = driver

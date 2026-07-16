@@ -12,7 +12,7 @@ description: Reference for every MCP tool Cua Driver exposes
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`cua-driver` exposes 38 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 43 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -146,7 +146,7 @@ Provide either `bundle_id` (preferred — unambiguous, e.g. `com.apple.calculato
 
 Optional `urls` are handed to the app as open targets — for Finder, pass a folder path to open a backgrounded Finder window there.
 
-Optional `cdp_debugging_port`: opens a Chrome DevTools Protocol (CDP) server on the specified port (appends --remote-debugging-port=N to the app's argv). Use this to automate Electron/VS Code/Cursor, or Chrome/Brave/Edge, via CDP.
+Browser DevTools setup belongs to `browser_prepare`, which can prove that a separate isolated profile is driver-owned before enabling CDP.
 
 Optional `webkit_inspector_port`: opens a WebKit inspector server on the specified port (sets WEBKIT_INSPECTOR_SERVER=127.0.0.1:N + TAURI_WEBVIEW_AUTOMATION=1). Use this for Tauri/WebKit-based apps.
 
@@ -160,7 +160,6 @@ Returns the launched app's pid, bundle_id, name, and a `windows` array (same sha
 
 - `additional_arguments` (array of string, optional): Extra arguments appended after --args when launching.
 - `bundle_id` (string, optional): App bundle identifier, e.g. com.apple.calculator. Preferred over name.
-- `cdp_debugging_port` (integer, optional): Open a Chrome DevTools Protocol server on this port (appends --remote-debugging-port=N).
 - `creates_new_application_instance` (boolean, optional): When true, force a new app instance even if already running (open -n). Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one — on single-instance apps (e.g. Calculator) every caller otherwise gets the same window and the sessions clobber each other.
 - `name` (string, optional): App display name. Used only when bundle_id is absent.
 - `urls` (array of string, optional): Optional file paths or URLs to open with the app (e.g. a folder path for Finder).
@@ -742,3 +741,83 @@ Install the ffmpeg binary used by start_recording's video capture (Linux/Windows
 **Arguments:**
 
 - `confirm` (boolean, optional): Run the install command. Without it, only the planned command is reported.
+
+## Other tools
+
+### `get_browser_state`
+
+Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id to snapshot the tab's composed DOM (main frame, shadow DOM, same-process iframes, and capability-tested out-of-process iframes) and mint p&lt;snapshot&gt;:&lt;index&gt; element refs for browser_click / browser_type; each ref reports its frame kind. Never performs setup — a missing endpoint is a structured browser_requires_setup refusal pointing at browser_prepare.
+
+**Arguments:**
+
+- `pid` (integer, optional): Native browser process id (bind mode).
+- `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.
+- `tab_id` (string, optional): Opaque tab id from get_browser_state (session-scoped).
+- `target_id` (string, optional): Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).
+- `window_id` (integer, optional): Native window id owned by pid (bind mode).
+
+### `browser_prepare`
+
+Explicitly prepare an owned DevTools endpoint for a browser pid. Existing endpoints are detected without side effects. Acting setup requires MCP-host approval or a short-lived token from the interactive browser-approve command, allow_launch=true, and a driver-owned isolated profile. It launches a separate browser and never copies, modifies, or terminates the requested user profile.
+
+**Arguments:**
+
+- `allow_launch` (boolean, optional): Allow a separate driver-owned isolated Chromium process to be launched (default false).
+- `approval_token` (string, optional): Single-use token minted by `cua-driver browser-approve` for direct CLI/raw use. Omit for an MCP-host-approved call.
+- `pid` (integer, required): Browser process id to prepare.
+- `profile` (object, optional)
+- `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.
+
+```json
+{"pid":844}
+```
+
+### `browser_navigate`
+
+Navigate one tab of an exactly-bound browser target to a new URL (http/https/about only). Refused for heuristic bindings. Navigation invalidates all p&lt;snapshot&gt;:&lt;index&gt; refs for the tab.
+
+**Arguments:**
+
+- `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.
+- `tab_id` (string, required): Opaque tab id from get_browser_state (session-scoped).
+- `target_id` (string, required): Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).
+- `url` (string, required): Destination URL (http:, https:, or about:).
+
+```json
+{"tab_id":"example","target_id":"example","url":"example"}
+```
+
+### `browser_click`
+
+Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture. input_route="dom_event" (synthetic el.click(), ref required) is used only when explicitly requested. Refused for heuristic bindings.
+
+**Arguments:**
+
+- `input_route` (string, optional): "trusted" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. "dom_event": synthetic full-background DOM click, only when explicitly requested.
+- `ref` (string, optional): Page element ref in the p&lt;snapshot&gt;:&lt;index&gt; namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.
+- `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.
+- `tab_id` (string, required): Opaque tab id from get_browser_state (session-scoped).
+- `target_id` (string, required): Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).
+- `x` (number, optional): Viewport x (CSS px) — alternative to ref.
+- `y` (number, optional): Viewport y (CSS px) — alternative to ref.
+
+```json
+{"tab_id":"example","target_id":"example"}
+```
+
+### `browser_type`
+
+Type text into an exactly-bound tab via the Input domain. mode="insert_text" (default) uses Input.insertText; mode="keystrokes" dispatches per-character key events. Pass a ref to an editable element from the latest snapshot. A ref is required; heuristic bindings are refused.
+
+**Arguments:**
+
+- `mode` (string, optional): insert_text (default): bulk Input.insertText. keystrokes: per-character Input.dispatchKeyEvent.
+- `ref` (string, required): Page element ref in the p&lt;snapshot&gt;:&lt;index&gt; namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.
+- `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.
+- `tab_id` (string, required): Opaque tab id from get_browser_state (session-scoped).
+- `target_id` (string, required): Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).
+- `text` (string, required): Text to type.
+
+```json
+{"ref":"example","tab_id":"example","target_id":"example","text":"hello"}
+```

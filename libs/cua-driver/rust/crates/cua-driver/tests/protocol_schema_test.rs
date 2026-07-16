@@ -47,6 +47,64 @@ fn tools_list_schema_shape() {
         "type_text_chars should be hidden from tools/list"
     );
 
+    // Browser v1 is a cross-platform source-owned surface. Keep its full
+    // roster, capability inputs, and read-only boundary pinned at the spawned
+    // driver layer so platform registration drift cannot pass core-only tests.
+    for name in [
+        "get_browser_state",
+        "browser_prepare",
+        "browser_navigate",
+        "browser_click",
+        "browser_type",
+    ] {
+        assert!(
+            tools.iter().any(|tool| tool["name"] == name),
+            "browser tool {name} missing from tools/list"
+        );
+    }
+    let browser_state = tools
+        .iter()
+        .find(|tool| tool["name"] == "get_browser_state")
+        .expect("get_browser_state not found in tools/list");
+    assert_eq!(
+        browser_state["annotations"]["readOnlyHint"], true,
+        "get_browser_state must remain side-effect free"
+    );
+    for field in ["pid", "window_id", "target_id", "tab_id", "session"] {
+        assert!(
+            browser_state["inputSchema"]["properties"][field].is_object(),
+            "get_browser_state schema missing {field}"
+        );
+    }
+    for (name, required) in [
+        ("browser_prepare", &["pid"][..]),
+        ("browser_navigate", &["target_id", "tab_id", "url"][..]),
+        ("browser_click", &["target_id", "tab_id"][..]),
+        ("browser_type", &["target_id", "tab_id", "ref", "text"][..]),
+    ] {
+        let tool = tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("{name} not found in tools/list"));
+        assert_eq!(
+            tool["annotations"]["readOnlyHint"], false,
+            "{name} must remain a mutation"
+        );
+        assert!(
+            tool["inputSchema"]["properties"]["session"].is_object(),
+            "{name} schema must expose the public session field"
+        );
+        let advertised = tool["inputSchema"]["required"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{name} required fields missing"));
+        for field in required {
+            assert!(
+                advertised.iter().any(|value| value.as_str() == Some(field)),
+                "{name} schema missing required field {field}: {advertised:?}"
+            );
+        }
+    }
+
     for tool in [
         "click",
         "double_click",

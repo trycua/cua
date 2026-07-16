@@ -22,9 +22,10 @@ fi
 mkdir -p "$tauriDir/web"
 cp -r "$harnessDir/shared/web/." "$tauriDir/web/"
 
-echo "[BUILD] cargo build --release ..."
+echo "[BUILD] cargo build --release --features custom-protocol ..."
 CARGO_TARGET_DIR="$tauriDir/src-tauri/target" \
-  cargo build --release --manifest-path "$tauriDir/src-tauri/Cargo.toml"
+  cargo build --release --features custom-protocol \
+    --manifest-path "$tauriDir/src-tauri/Cargo.toml"
 
 rm -rf "$outDir"
 mkdir -p "$outDir"

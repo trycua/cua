@@ -825,6 +825,11 @@ impl Tool for GetWindowStateTool {
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+fn contains_remote_debugging_flag(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains("--remote-debugging-port") || lower.contains("--remote-debugging-pipe")
+}
+
 #[async_trait]
 impl Tool for LaunchAppTool {
     fn def(&self) -> &ToolDef {
@@ -838,7 +843,8 @@ impl Tool for LaunchAppTool {
                 "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; spawned directly via the system shell."},
                 "name":{"type":"string","description":"App name or command to launch."},
                 "bundle_id":{"type":"string","description":"Ignored on Linux (macOS/Windows concept)."},
-                "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."}
+                "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."},
+                "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: false, open_world: true,
         })
@@ -849,6 +855,23 @@ impl Tool for LaunchAppTool {
         let launch_path_opt = args.opt_str("launch_path");
         let name_opt = args.opt_str("name");
         let urls: Vec<String> = args.str_array("urls");
+        let additional_arguments: Vec<String> = args.str_array("additional_arguments");
+        if args.get("cdp_debugging_port").is_some() {
+            return ToolResult::error(
+                "cdp_debugging_port moved to browser_prepare so DevTools is never enabled on an unproven user profile",
+            );
+        }
+        if launch_path_opt
+            .as_deref()
+            .into_iter()
+            .chain(name_opt.as_deref())
+            .chain(additional_arguments.iter().map(String::as_str))
+            .any(contains_remote_debugging_flag)
+        {
+            return ToolResult::error(
+                "Chromium remote-debugging flags moved to browser_prepare so DevTools is never enabled on an unproven user profile",
+            );
+        }
 
         if launch_path_opt.is_none() && name_opt.is_none() && urls.is_empty() {
             return ToolResult::error("Provide at least one of: launch_path, name, or urls.");
@@ -874,7 +897,8 @@ impl Tool for LaunchAppTool {
                 if let Some(cmd) = command {
                     let mut parts = cmd.split_whitespace();
                     let prog = parts.next().unwrap_or(cmd);
-                    let rest: Vec<&str> = parts.collect();
+                    let mut rest: Vec<String> = parts.map(str::to_owned).collect();
+                    rest.extend(additional_arguments);
                     let mut launch = std::process::Command::new(prog);
                     launch
                         .args(&rest)
@@ -885,7 +909,9 @@ impl Tool for LaunchAppTool {
                         .env("ACCESSIBILITY_ENABLED", "1")
                         .env("NO_AT_BRIDGE", "0");
                     if chromium_family_program(prog)
-                        && !rest.iter().any(|arg| *arg == "--force-renderer-accessibility")
+                        && !rest
+                            .iter()
+                            .any(|arg| arg == "--force-renderer-accessibility")
                     {
                         launch.arg("--force-renderer-accessibility");
                     }
@@ -919,8 +945,8 @@ impl Tool for LaunchAppTool {
             Ok(Ok((message, pid_opt, name))) => {
                 if let Some(pid) = pid_opt {
                     let windows = tokio::task::spawn_blocking(move || {
-                        let deadline = std::time::Instant::now()
-                            + std::time::Duration::from_secs(3);
+                        let deadline =
+                            std::time::Instant::now() + std::time::Duration::from_secs(3);
                         loop {
                             let windows = crate::wayland::list_windows_dispatch(Some(pid));
                             if !windows.is_empty() || std::time::Instant::now() >= deadline {
@@ -1004,7 +1030,7 @@ fn resolve_element_local_coords(
     if crate::wayland::wayland_input_enabled() {
         let (window_x, window_y, window_width, window_height) =
             crate::wayland::window_geometry(xid)
-            .ok_or_else(|| anyhow::anyhow!("No Wayland geometry for window {xid}"))?;
+                .ok_or_else(|| anyhow::anyhow!("No Wayland geometry for window {xid}"))?;
         if window_width == 0 || window_height == 0 {
             anyhow::bail!("Wayland window {xid} has no usable geometry");
         }
@@ -1299,25 +1325,25 @@ fn unavailable_webkit_keyboard_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    (!delivery.is_foreground()
-        && is_webkitgtk_embedder(pid)
-        && !crate::wayland::is_inject_mode())
-    .then(|| {
-        crate::input::delivery::background_unavailable_error(
-            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-        )
-    })
+    (!delivery.is_foreground() && is_webkitgtk_embedder(pid) && !crate::wayland::is_inject_mode())
+        .then(|| {
+            crate::input::delivery::background_unavailable_error(
+                crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+            )
+        })
 }
 
 fn unavailable_gtk_keyboard_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    (!delivery.is_foreground() && is_gtk_process(pid) && !crate::wayland::is_inject_mode()).then(|| {
-        crate::input::delivery::background_unavailable_error(
-            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-        )
-    })
+    (!delivery.is_foreground() && is_gtk_process(pid) && !crate::wayland::is_inject_mode()).then(
+        || {
+            crate::input::delivery::background_unavailable_error(
+                crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+            )
+        },
+    )
 }
 
 fn unavailable_gtk_pointer_background(
@@ -2010,12 +2036,7 @@ impl Tool for ClickTool {
                 // `get_window_state`. Miss → fall through to the injection paths.
                 if !delivery.is_foreground() && button == 1 && count == 1 {
                     if let Ok(Some(_)) =
-                        crate::atspi::perform_action_at_screen_point(
-                            pid,
-                            xid,
-                            output_x,
-                            output_y,
-                        )
+                        crate::atspi::perform_action_at_screen_point(pid, xid, output_x, output_y)
                     {
                         return Ok("wayland_atspi");
                     }
@@ -2158,10 +2179,8 @@ async fn focus_nested_inject_target(
     pixel: Option<(f64, f64)>,
 ) -> Result<(), ToolResult> {
     if let Some(index) = element_index {
-        return match tokio::task::spawn_blocking(move || {
-            crate::atspi::focus_element(pid, index)
-        })
-        .await
+        return match tokio::task::spawn_blocking(move || crate::atspi::focus_element(pid, index))
+            .await
         {
             Ok(Ok(true)) => Ok(()),
             Ok(Ok(false)) => Err(ToolResult::error(format!(
@@ -2312,13 +2331,8 @@ impl Tool for TypeTextTool {
         // directly. Establish widget-local focus first, without changing the
         // compositor's focused toplevel, so keys reach the addressed control.
         if crate::wayland::is_inject_mode() {
-            if let Err(error) = focus_nested_inject_target(
-                pid,
-                xid,
-                resolved_elem_idx,
-                px.zip(py),
-            )
-            .await
+            if let Err(error) =
+                focus_nested_inject_target(pid, xid, resolved_elem_idx, px.zip(py)).await
             {
                 return error;
             }
@@ -2330,7 +2344,11 @@ impl Tool for TypeTextTool {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (focus-free via cua-compositor)."
                 ))
-                .with_structured(type_text_structured("key_events", text_len, false)),
+                .with_structured(type_text_structured(
+                    "key_events",
+                    text_len,
+                    false,
+                )),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -2380,10 +2398,9 @@ impl Tool for TypeTextTool {
             && (is_chromium_embedder(pid) || is_webkitgtk_embedder(pid))
         {
             if let Some(idx) = resolved_elem_idx {
-                let focused = tokio::task::spawn_blocking(move || {
-                    crate::atspi::focus_element(pid, idx)
-                })
-                .await;
+                let focused =
+                    tokio::task::spawn_blocking(move || crate::atspi::focus_element(pid, idx))
+                        .await;
                 match focused {
                     Ok(Ok(true)) => {}
                     Ok(Ok(false)) => {
@@ -2396,10 +2413,9 @@ impl Tool for TypeTextTool {
                 }
 
                 let text_w = text.clone();
-                let result = tokio::task::spawn_blocking(move || {
-                    crate::wayland::type_text(xid, &text_w)
-                })
-                .await;
+                let result =
+                    tokio::task::spawn_blocking(move || crate::wayland::type_text(xid, &text_w))
+                        .await;
                 return match result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "Typed {text_len} character(s) (via Wayland virtual-keyboard)."
@@ -2858,10 +2874,8 @@ impl Tool for PressKeyTool {
             }
             let result = if mods.is_empty() {
                 let key_w = key.clone();
-                tokio::task::spawn_blocking(move || {
-                    crate::wayland::inject_press_key(xid, &key_w)
-                })
-                .await
+                tokio::task::spawn_blocking(move || crate::wayland::inject_press_key(xid, &key_w))
+                    .await
             } else {
                 let mut chord = mods.clone();
                 chord.push(key.clone());
@@ -3045,10 +3059,9 @@ impl Tool for HotkeyTool {
             Err(error) => return error,
         };
         let resolved_element_index = match &resolved {
-            cua_driver_core::element_token::ResolvedElement::Element {
-                element_index,
-                ..
-            } => Some(*element_index),
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
+                Some(*element_index)
+            }
             cua_driver_core::element_token::ResolvedElement::None => None,
         };
         let xid_opt = match &resolved {
@@ -3135,10 +3148,9 @@ impl Tool for HotkeyTool {
             }
             let mut chord = mods.clone();
             chord.push(key.clone());
-            let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::inject_hotkey(xid, &chord)
-            })
-            .await;
+            let result =
+                tokio::task::spawn_blocking(move || crate::wayland::inject_hotkey(xid, &chord))
+                    .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Pressed hotkey '{key_display}' (focus-free via cua-compositor)."
@@ -3502,13 +3514,7 @@ impl Tool for ScrollTool {
             };
             let direction_for_inject = direction.clone();
             let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::inject_scroll(
-                    xid,
-                    x,
-                    y,
-                    &direction_for_inject,
-                    amount as u32,
-                )
+                crate::wayland::inject_scroll(xid, x, y, &direction_for_inject, amount as u32)
             })
             .await;
             return match result {
@@ -3535,8 +3541,7 @@ impl Tool for ScrollTool {
                 (
                     None,
                     cua_driver_core::element_token::ResolvedElement::Element {
-                        element_index,
-                        ..
+                        element_index, ..
                     },
                 ) => {
                     let idx = *element_index;
@@ -3564,12 +3569,7 @@ impl Tool for ScrollTool {
                 crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32)
             });
             let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::scroll_at(
-                    xid,
-                    output_point,
-                    &direction_for_wayland,
-                    amount as u32,
-                )
+                crate::wayland::scroll_at(xid, output_point, &direction_for_wayland, amount as u32)
             })
             .await;
             return match result {
@@ -3789,10 +3789,9 @@ impl Tool for DoubleClickTool {
             cua_driver_core::element_token::ResolvedElement::None => None,
         };
         let window_id_resolved: Option<u64> = match &resolved {
-            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
-                args.opt_u64("window_id")
-                    .or_else(|| window_id.map(|v| v as u64))
-            }
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => args
+                .opt_u64("window_id")
+                .or_else(|| window_id.map(|v| v as u64)),
             cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
         };
         if let Some(idx) = elem_idx_resolved {
@@ -4022,10 +4021,9 @@ impl Tool for RightClickTool {
             cua_driver_core::element_token::ResolvedElement::None => None,
         };
         let window_id_resolved: Option<u64> = match &resolved {
-            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
-                args.opt_u64("window_id")
-                    .or_else(|| window_id.map(|v| v as u64))
-            }
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => args
+                .opt_u64("window_id")
+                .or_else(|| window_id.map(|v| v as u64)),
             cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
         };
         if let Some(idx) = elem_idx_resolved {
@@ -6171,6 +6169,7 @@ impl Tool for GetConfigTool {
         let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         ToolResult::text("cua-driver-rs configuration").with_structured(json!({
             "version": env!("CARGO_PKG_VERSION"),
+            "source_sha": option_env!("CUA_DRIVER_SOURCE_SHA"),
             "platform": "linux",
             "capture_mode": cfg.capture_mode,
             "capture_scope": cfg.capture_scope,
@@ -6723,14 +6722,14 @@ impl Tool for BringToFrontTool {
             })
             .await;
             return match result {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "Brought Wayland window {window_id} to front."
-                ))
-                .with_structured(serde_json::json!({
-                    "window_id": window_id,
-                    "platform": "linux",
-                    "session": "wayland",
-                })),
+                Ok(Ok(())) => {
+                    ToolResult::text(format!("Brought Wayland window {window_id} to front."))
+                        .with_structured(serde_json::json!({
+                            "window_id": window_id,
+                            "platform": "linux",
+                            "session": "wayland",
+                        }))
+                }
                 Ok(Err(error)) => ToolResult::error(error.to_string()),
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             };
@@ -6920,6 +6919,10 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(cua_driver_core::page::PageTool::new(Arc::new(
         super::page::LinuxPageBackend::new(),
     ))));
+    let browser_engine = cua_driver_core::browser::BrowserEngine::new(Arc::new(
+        crate::browser_platform::LinuxBrowserPlatform,
+    ));
+    cua_driver_core::browser::register_browser_tools(&browser_engine, &mut r);
     r.register_recording_tools();
     r.register_session_tools();
     r
@@ -6993,5 +6996,22 @@ mod driver_config_tests {
     #[test]
     fn capture_scope_defaults_to_window() {
         assert_eq!(DriverConfig::default().capture_scope, "window");
+    }
+}
+
+#[cfg(test)]
+mod browser_launch_guard_tests {
+    use super::contains_remote_debugging_flag;
+
+    #[test]
+    fn rejects_all_chromium_remote_debugging_spellings() {
+        assert!(contains_remote_debugging_flag("--remote-debugging-port=0"));
+        assert!(contains_remote_debugging_flag("--REMOTE-DEBUGGING-PIPE"));
+        assert!(contains_remote_debugging_flag(
+            "/usr/bin/chrome --remote-debugging-port 9222"
+        ));
+        assert!(!contains_remote_debugging_flag(
+            "--user-data-dir=/tmp/profile"
+        ));
     }
 }

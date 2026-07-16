@@ -2,6 +2,7 @@
   "title": "Driver",
   "pages": [
     "install",
+    "install-agent-skill",
     "run-in-macos-lume-vm",
     "run-tests-in-macos-lume-vm",
     "connect-your-agent",

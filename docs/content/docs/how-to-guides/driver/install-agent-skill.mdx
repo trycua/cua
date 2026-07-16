@@ -1,0 +1,82 @@
+---
+title: Install the Cua Driver agent skill
+description: Install Cua Driver instructions for OpenClaw from ClawHub, or install them directly for another supported agent.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The Cua Driver agent skill teaches an agent how to choose tools, address windows and elements, preserve focus, and verify each action on macOS, Windows, or Linux.
+
+<Callout type="info">
+  The skill contains agent instructions. It does not install the `cua-driver` executable. [Install Cua Driver](/how-to-guides/driver/install) on the same machine first.
+</Callout>
+
+## Install from ClawHub
+
+Run the command from your OpenClaw workspace:
+
+```bash
+clawhub install @cua/cua-driver
+```
+
+ClawHub installs the skill under the workspace's `skills` directory. The bundle contains the shared instructions and the macOS, Windows, and Linux guides, so the agent can read the guide for its current host.
+
+Confirm that ClawHub tracks the install:
+
+```bash
+clawhub list
+```
+
+Restart OpenClaw or start a new agent session so it discovers the installed skill.
+
+## Verify Cua Driver
+
+Check the executable and host requirements separately:
+
+```bash
+cua-driver --version
+cua-driver doctor
+```
+
+On macOS, also confirm that Cua Driver has Accessibility and Screen Recording permission:
+
+```bash
+cua-driver permissions status
+```
+
+## Update or remove the ClawHub skill
+
+Update the installed skill:
+
+```bash
+clawhub update cua-driver
+```
+
+Remove it from the current workspace:
+
+```bash
+clawhub uninstall cua-driver
+```
+
+These commands change the agent instructions only. Use [`cua-driver update --apply`](/how-to-guides/driver/update) to update the executable.
+
+## Install directly for another agent
+
+Cua Driver can install its bundled skill into supported agent directories without ClawHub:
+
+```bash
+cua-driver skills install
+cua-driver skills status
+```
+
+Direct installation keeps only the current host's OS guide by default. Pass `--all-platforms` when the same skill directory must cover macOS, Windows, and Linux:
+
+```bash
+cua-driver skills install --all-platforms
+```
+
+## Next steps
+
+- [Connect your agent to Cua Driver](/how-to-guides/driver/connect-your-agent): register the MCP server when the agent uses MCP.
+- [Keep Cua Driver running](/how-to-guides/driver/keep-running): configure the daemon to return after restarts.
+- [Agent action policy](/reference/cua-driver/action-selection-policy): review the behavior an agent wrapper should follow.

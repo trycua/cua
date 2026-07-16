@@ -56,7 +56,7 @@ Directly spawning a raw `cua-driver` binary outside `CuaDriver.app` without embe
 ## Publishing the agent skill to ClawHub
 
 The canonical skill source is `rust/Skills/cua-driver`. It is published as one
-cross-platform ClawHub skill at `@f-trycua/cua-driver`; the bundle includes the
+cross-platform ClawHub skill at `@cua/cua-driver`; the bundle includes the
 macOS, Windows, and Linux documents. Direct installs through `cua-driver skills
 install` still keep only the host OS document unless `--all-platforms` is used.
 
@@ -75,7 +75,7 @@ all of the following:
    in `rust/Skills/cua-driver/SKILL.md`.
 3. Confirm the MIT-0 rights check in the workflow form.
 4. Configure a repository Actions secret named `CLAWHUB_TOKEN` for a publisher
-   that can release under the selected owner. The default owner is `f-trycua`.
+   that can release under the selected owner. The default owner is `cua`.
 
 The workflow pins the ClawHub CLI, records the source repository, commit, ref,
 and path, and uploads the JSON publish result as an Actions artifact. When a
@@ -87,10 +87,10 @@ After publishing, inspect and scan the exact version, then install it into an
 empty work directory:
 
 ```bash
-npx --yes clawhub@0.23.1 inspect @f-trycua/cua-driver --version 0.8.3 --files
+npx --yes clawhub@0.23.1 inspect @cua/cua-driver --version 0.8.3 --files
 npx --yes clawhub@0.23.1 scan --slug cua-driver --version 0.8.3 --update
 npx --yes clawhub@0.23.1 --workdir /tmp/cua-driver-clawhub-smoke \
-  install @f-trycua/cua-driver
+  install @cua/cua-driver
 ```
 
 Confirm that `MACOS.md`, `WINDOWS.md`, and `LINUX.md` are present, run

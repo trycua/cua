@@ -16,7 +16,7 @@ on:
       owner:
         description: "ClawHub publisher handle"
         required: true
-        default: "f-trycua"
+        default: "cua"
         type: string
       confirm_mit0:
         description: "Cua AI has authority to publish every bundled file under MIT-0"
@@ -39,7 +39,7 @@ jobs:
     uses: openclaw/clawhub/.github/workflows/skill-publish.yml@b2f06028cff845974cfc9e528317ef879663935b
     with:
       skill_path: "libs/cua-driver/rust/Skills/cua-driver"
-      owner: "f-trycua"
+      owner: "cua"
       dry_run: true
       ref: ${{ github.event.pull_request.head.sha }}
 

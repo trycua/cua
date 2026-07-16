@@ -488,6 +488,11 @@ fn command_for_browser(
     position: (i32, i32),
 ) -> Command {
     let mut command = Command::new(&spec.executable);
+    // Direct Chrome launches on macOS must retain their interactive stderr
+    // attachment; redirecting it can prevent the initial fixture from loading.
+    #[cfg(target_os = "macos")]
+    let output = Stdio::inherit();
+    #[cfg(not(target_os = "macos"))]
     let output = if std::env::var_os("CUA_E2E_BROWSER_STDERR").is_some() {
         Stdio::inherit()
     } else {

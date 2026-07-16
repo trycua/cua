@@ -1,139 +1,132 @@
 ---
-title: Build a Linux Fleet image
-description: Create a bootable Ubuntu disk artifact, publish it as an OCI containerDisk, and configure a Fleet pool.
+title: Build and share a Linux sandbox image
+description: Define a Linux sandbox image locally, publish a portable artifact to an OCI registry, and reuse it with the Sandbox SDK.
 ---
 
-This guide builds a Linux image for a Fleet pool. A Fleet image is a **bootable infrastructure disk
-artifact**; it is not the public SDK `cua.Image` object. See [Fleet images](/concepts/fleet/images)
-and [Fleet pools](/concepts/fleet/pools) for how this artifact fits the resource model.
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This guide defines the intended portable workflow for a Linux sandbox image:
+
+1. Describe and build the image on a local machine with the Sandbox SDK.
+2. Publish the completed image as a flattened artifact in an OCI-compatible registry.
+3. Load that artifact on another local machine with `Image.from_registry()`.
+
+<Callout type="warn" title="Status: target workflow, not an end-to-end supported workflow">
+  The Sandbox SDK does not yet provide a supported public end-to-end workflow that builds a Linux
+  SDK image, publishes the resulting portable artifact to a registry, and boots it locally from that
+  registry reference. `Image.from_registry()` exists, but the matching public publishing and
+  flattening interface is not available yet. Treat the publishing steps and expected results on this
+  page as the contract for future implementation, not as commands you can run today.
+
+`Sandbox.snapshot()` is unavailable in cloud environments. Build and package the image locally
+instead of using a cloud sandbox as the source artifact.
+
+</Callout>
 
 ## Prerequisites
 
-- A registry that your Fleet deployment can pull from.
-- A pinned Ubuntu 24.04 cloud-image download and its published checksum.
-- A build host with QEMU tools, `libguestfs` tools such as `virt-customize`, Docker or another OCI
-  builder, and a registry login.
-- Installation artifacts and service-unit names for the computer-server, Cua Driver, and noVNC
-  stack your image will run.
+For the complete workflow, you will need:
 
-## Build and smoke-test the disk
+- A local machine capable of running Linux sandboxes.
+- The Cua Sandbox SDK and its local virtualization dependencies.
+- An OCI-compatible registry that can store the portable artifact.
+- Credentials with permission to push to and pull from the target repository.
 
-Start with a verified Ubuntu 24.04 cloud image. Keep the source URL and checksum in version control
-so the input remains reproducible.
+The SDK can already describe Linux images and load registry references. The public SDK operation
+that publishes a completed local image is still pending.
 
-```bash
-curl -fLO "$UBUNTU_CLOUD_IMAGE_URL"
-echo "$UBUNTU_CLOUD_IMAGE_SHA256  noble-server-cloudimg-amd64.img" | sha256sum --check
+## 1. Describe the image locally
 
-qemu-img convert -O qcow2 noble-server-cloudimg-amd64.img workspace.qcow2
+Use the public `Image` builder to declare the Linux base, packages, files, environment variables, and
+setup commands that the sandbox needs. Keep the definition reproducible: pin important package or
+artifact versions, avoid embedding secrets, and make setup commands fail when installation fails.
+
+For example, the image definition may use existing builder methods such as `Image.linux()`,
+`.apt_install()`, `.copy()`, `.env()`, and `.run()`. See [Build custom images](/how-to-guides/sandbox/images)
+for the currently available builder API.
+
+**Expected behavior:** the SDK turns the image definition into a bootable local sandbox environment.
+Building the same pinned definition should produce an environment with the same installed tools and
+configuration.
+
+## 2. Verify the local sandbox
+
+Boot the image locally and test the behavior that downstream users will depend on. Verify at least:
+
+- The sandbox reaches a ready state and accepts SDK operations.
+- Required applications, packages, files, and environment variables are present.
+- Setup services start after a clean reboot when the workflow depends on them.
+- No build credentials, temporary files, or sensitive shell history remain in the image.
+
+Fix the image definition and rebuild until these checks pass. The artifact published later should
+represent this tested state, not an unverified intermediate build.
+
+**Expected behavior:** a fresh local sandbox created from the completed image passes the same smoke
+tests without additional manual setup.
+
+## 3. Produce a portable flattened artifact
+
+The intended publishing flow converts the tested local image into one self-contained artifact. The
+artifact must include the complete bootable disk state rather than depend on local backing files,
+build caches, or copy-on-write layers that exist only on the build machine.
+
+The public SDK does not yet expose the command or method that performs this flattening step. Until
+that interface exists, this guide intentionally does not prescribe a command name, method signature,
+file layout, or media type.
+
+**Expected behavior:** the flattened artifact can be copied to another machine and booted without
+access to the original build machine or its image cache.
+
+## 4. Publish the artifact to an OCI registry
+
+Publish the flattened artifact under a normal OCI registry reference. Use a versioned tag while
+iterating, then record the registry digest after publication. Prefer the digest when repeatability
+matters because a tag can move.
+
+The future publishing interface is expected to:
+
+- Authenticate with the selected OCI-compatible registry.
+- Upload the complete flattened artifact and its required metadata.
+- Return or display a pullable reference and immutable digest.
+- Fail clearly when the registry rejects credentials, storage, or artifact metadata.
+
+This behavior is not yet available as a supported public SDK or CLI operation, so no executable
+publishing example is shown here.
+
+## 5. Load the published image locally
+
+`Image.from_registry()` is the existing public constructor for an OCI registry reference:
+
+```python
+from cua import Image
+
+image = Image.from_registry('REGISTRY/ORGANIZATION/IMAGE:TAG')
 ```
 
-Customize a copy of the disk with the packages and artifacts you have pinned. Install the required
-guest services, configure their ports, and enable their **actual** systemd unit names. Do not assume
-unit names from a pool name: they are defined by the components you install.
+Replace the placeholder with the reference produced by the future publishing step. A digest-pinned
+reference is preferred for a reproducible workflow.
 
-```bash
-virt-customize -a workspace.qcow2 \
-  --install qemu-guest-agent \
-  --copy-in ./artifacts:/opt/fleet-artifacts \
-  --run-command '/opt/fleet-artifacts/install-computer-server.sh' \
-  --run-command '/opt/fleet-artifacts/install-cua-driver.sh' \
-  --run-command '/opt/fleet-artifacts/install-novnc.sh' \
-  --run-command 'systemctl enable computer-server.service cua-driver.service novnc.service'
-```
+After registry publication and local boot support are completed, pass this `Image` to the normal
+local sandbox creation flow. The exact sandbox call depends on whether you want a persistent or
+ephemeral sandbox; see [Sandbox lifecycle](/how-to-guides/sandbox/lifecycle) for the supported lifecycle
+methods.
 
-Replace the three installer paths and service-unit names with the versions supplied by your image
-build. Those installers should fail on error and leave the computer-server, Cua Driver, and noVNC
-services configured for the ports declared in the pool.
+**Expected behavior:** the local runtime pulls the artifact, caches it, recognizes it as a Linux
+sandbox image, and boots the same tested environment without requiring the original image definition
+or build directory.
 
-Boot the resulting qcow2 in an isolated test environment and run smoke checks against the guest.
-For example, verify that the readiness port accepts connections, each declared health path responds,
-and the Cua Driver MCP endpoint can complete the operations your workflow needs. Shut down the guest
-cleanly before packaging the disk.
+## Portability contract
 
-## Package and publish the containerDisk
+The completed workflow should preserve these guarantees:
 
-Stage only the tested qcow2 as `disk.img` and wrap it in a scratch OCI image. The path
-`/disk/disk.img` is the containerDisk payload.
+- **Self-contained:** the published artifact has no dependency on build-machine-only disk layers or
+  caches.
+- **Content-addressable:** the registry reports an immutable digest for the published content.
+- **Reproducible consumption:** the same digest resolves to the same sandbox environment.
+- **Local reuse:** `Image.from_registry()` can represent the artifact for local sandbox creation.
+- **Clear compatibility errors:** unsupported artifact formats, operating systems, or host runtimes
+  fail before an unusable sandbox is returned.
 
-```dockerfile title="Dockerfile"
-FROM scratch
-COPY disk.img /disk/disk.img
-```
-
-```bash
-mkdir -p image-context
-cp workspace.qcow2 image-context/disk.img
-cp Dockerfile image-context/Dockerfile
-
-IMAGE_REPOSITORY=REGISTRY/desktop-workspace
-BUILD_TAG=build-IDENTIFIER
-
-docker build -t "$IMAGE_REPOSITORY:$BUILD_TAG" image-context
-docker push "$IMAGE_REPOSITORY:$BUILD_TAG"
-docker buildx imagetools inspect "$IMAGE_REPOSITORY:$BUILD_TAG"
-```
-
-Replace `REGISTRY` with the registry host and repository that Fleet can pull. After the push,
-read the `Digest` reported by `docker buildx imagetools inspect`, then replace `DIGEST` below with
-that complete digest value. Tags are convenient labels, but they are immutable only when registry
-policy enforces that behavior.
-
-## Reference the image from a pool
-
-Use the pool resource shape below as a starting point. The service names and paths are an interface
-contract for this image; keep them aligned with the services installed in the guest. The example uses
-the current pool field names from the Fleet examples.
-
-```yaml
-apiVersion: cua.ai/v1
-kind: OSGymWorkspacePool
-metadata:
-  name: linux-desktop
-spec:
-  replicas: 2
-  autoscaling:
-    minPoolSize: 1
-    initialPoolSize: 2
-    maxPoolSize: 4
-  template:
-    containerDiskImage: REGISTRY/desktop-workspace@sha256:DIGEST
-    cpuCores: 4
-    memory: 4Gi
-    firmware: bios
-    probes:
-      readinessProbe:
-        tcpSocket:
-          port: 8000
-  services:
-    - name: computer-server
-      targetPort: 8000
-      protocol: TCP
-    - name: cua-driver
-      targetPort: 3000
-      protocol: TCP
-    - name: novnc
-      targetPort: 6080
-      protocol: TCP
-```
-
-Replace both `REGISTRY` and `sha256:DIGEST` in `REGISTRY/desktop-workspace@sha256:DIGEST` with the repository and digest resolved from the pushed artifact.
-Choose `spec.template.cpuCores`, `spec.template.memory`, and `spec.replicas` for the workload and
-available infrastructure. The autoscaling values shown are illustrative capacity settings:
-`minPoolSize` keeps one pool replica as the availability floor, `initialPoolSize` starts at the same
-example size as `replicas`, and `maxPoolSize` permits growth to four replicas. They are not limits on
-services or service connections. See [Fleet pools](/concepts/fleet/pools) for the relationship between
-readiness and capacity.
-
-## Verify
-
-1. Inspect the pushed OCI manifest and pull `REGISTRY/desktop-workspace@sha256:DIGEST` from an environment
-   configured like the Fleet nodes.
-2. Confirm the pulled image contains the disk at `/disk/disk.img` and that QEMU recognizes it as a
-   bootable qcow2 artifact.
-3. Apply the pool and verify its replicas reach the configured readiness rule.
-4. Claim a sandbox and check the computer-server, Cua Driver, and noVNC services through the declared
-   service routes. See [Connect to a Fleet service](/how-to-guides/fleet/connect-to-a-service).
-
-If a pool does not become ready, first verify the exact immutable image reference is pullable, then
-check guest boot logs and the process listening on the readiness probe port.
+Until the missing publishing and local boot integration is implemented and documented as supported,
+use this page as the public design promise for the portable workflow rather than an operational
+runbook.

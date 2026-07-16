@@ -463,3 +463,25 @@ Safari/WKWebView/WebKitGTK mutation, Firefox BiDi mutation, split-process
 WebView2 mutation, and mutation on Wayland compositors without exact pid and
 geometry remain deliberate structured limitations. Existing user profiles are
 never copied, restarted, or attached implicitly by `browser_prepare`.
+
+## 2026-07-16: macOS AX deadline correction
+
+A fresh exact-head Lume replay invalidated the earlier macOS completion claim.
+Electron completed all 40 canonical rows, but Tauri snapshots later exceeded
+the testkit's 25-second public call deadline. A second clean replay reached the
+same failure class at a different Tauri row, proving that this was not a single
+action assertion or fixture expectation.
+
+The driver had wrapped the native AX walk in a 30-second Tokio timeout. The
+public client therefore timed out first, and dropping the `spawn_blocking`
+future could not cancel an `AXUIElementCopyAttributeValue` call already blocked
+in ApplicationServices. The AX walker now applies Apple's finite native
+messaging timeout to the application and every descendant AX object. The
+driver-level walk deadline is also 20 seconds, below the public client limit,
+so an unresponsive application returns a structured driver error instead of a
+generic client timeout and cannot retain a worker indefinitely.
+
+All prior Windows, Linux, and macOS artifacts remain diagnostic only until this
+correction is committed and every acceptance environment is replayed from that
+exact source revision. No test oracle, expected outcome, or declared row was
+weakened to accommodate the failure.

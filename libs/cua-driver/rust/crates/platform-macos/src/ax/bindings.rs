@@ -72,6 +72,10 @@ extern "C" {
         attribute: CFStringRef,
         value: CFTypeRef,
     ) -> AXError;
+    pub fn AXUIElementSetMessagingTimeout(
+        element: AXUIElementRef,
+        timeout_in_seconds: f32,
+    ) -> AXError;
     pub fn AXUIElementGetTypeID() -> CFTypeID;
     pub fn AXIsProcessTrusted() -> bool;
     /// `AXIsProcessTrustedWithOptions(options)` — when called with

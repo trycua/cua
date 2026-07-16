@@ -344,7 +344,8 @@ fn harness_cdp_call(port: u16, method: &str, params: serde_json::Value) -> serde
     harness_cdp_call_at_url(&browser_endpoint_url(port), method, params)
 }
 
-fn navigate_initial_page(port: u16, url: &str) {
+fn navigate_initial_page(port: u16, server: &BrowserFixtureServer) {
+    let url = server.page_url();
     wait_for_browser_endpoint(port);
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut last_error = None;
@@ -362,7 +363,9 @@ fn navigate_initial_page(port: u16, url: &str) {
             pages.len() <= 1,
             "fresh standalone browser exposed multiple page targets before fixture setup: {targets}"
         );
-        if pages.first().is_some_and(|target| target["url"] == url) {
+        if pages.first().is_some_and(|target| target["url"] == url)
+            && server.contains("WEB_HARNESS_MARKER_v1")
+        {
             return;
         }
         if let Some(ws_url) = pages
@@ -692,7 +695,7 @@ fn launch_browser_with_html(spec: &BrowserSpec, label: &str, html: String) -> Br
         "about:blank",
         TEST_BROWSER_INITIAL_POSITION,
     );
-    navigate_initial_page(cdp_port, server.page_url());
+    navigate_initial_page(cdp_port, &server);
     let window = wait_for_fixture_window(&mut driver, &before, &server);
     let (pid, window_id) = window.unwrap_or_else(|| {
         panic!(

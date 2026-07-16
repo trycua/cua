@@ -143,12 +143,44 @@ fn browser_specs() -> Vec<BrowserSpec> {
         .collect();
     }
     #[cfg(target_os = "linux")]
-    let candidates = [
-        ("chrome", "/usr/bin/google-chrome"),
-        ("chromium", "/usr/bin/chromium"),
-        ("chromium", "/usr/bin/chromium-browser"),
-        ("edge", "/usr/bin/microsoft-edge"),
-    ];
+    {
+        let mut candidates = vec![
+            ("chrome", PathBuf::from("/usr/bin/google-chrome")),
+            ("chromium", PathBuf::from("/usr/bin/chromium")),
+            ("chromium", PathBuf::from("/usr/bin/chromium-browser")),
+            ("edge", PathBuf::from("/usr/bin/microsoft-edge")),
+        ];
+        if let Some(path) = std::env::var_os("PATH") {
+            for (name, executable_name) in [
+                ("chrome", "google-chrome"),
+                ("chromium", "chromium"),
+                ("chromium", "chromium-browser"),
+                ("edge", "microsoft-edge"),
+            ] {
+                if let Some(executable) = std::env::split_paths(&path)
+                    .map(|directory| directory.join(executable_name))
+                    .find(|candidate| candidate.is_file())
+                {
+                    candidates.push((name, executable));
+                }
+            }
+        }
+        return candidates
+            .into_iter()
+            .filter(|(_, executable)| executable.is_file())
+            .fold(Vec::new(), |mut specs, (name, executable)| {
+                if !specs
+                    .iter()
+                    .any(|spec: &BrowserSpec| spec.executable == executable)
+                {
+                    specs.push(BrowserSpec {
+                        name: name.to_owned(),
+                        executable,
+                    });
+                }
+                specs
+            });
+    }
     #[cfg(target_os = "windows")]
     let candidates = {
         let program_files = std::env::var_os("ProgramFiles")
@@ -190,16 +222,6 @@ fn browser_specs() -> Vec<BrowserSpec> {
         })
         .collect();
     };
-
-    #[cfg(target_os = "linux")]
-    candidates
-        .into_iter()
-        .map(|(name, executable)| BrowserSpec {
-            name: name.to_owned(),
-            executable: PathBuf::from(executable),
-        })
-        .filter(|spec| spec.executable.is_file())
-        .collect()
 }
 
 fn allocate_loopback_port() -> u16 {

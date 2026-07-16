@@ -9,7 +9,7 @@ builds and desktop-session dependencies for the canonical Rust harnesses.
 | `cua-driver-linux-rust-unit` | Compile and run the source-owned headless Rust tests | `ci-nix-linux.yml` |
 | `cua-driver-policy-yaml` | Run YAML permission-policy MCP checks in a NixOS VM | Flake check |
 | `cua-driver-policy-rego` | Run embedded Rego permission-policy MCP checks in a NixOS VM | Flake check |
-| `cua-driver-wayland-e2e` | Provide the Sway, GTK, WebKit, Electron, capture, and Rust toolchain used by native Wayland E2E | `e2e-rust-linux-wayland.yml` |
+| `cua-driver-wayland-e2e` | Provide the Sway, GTK, WebKit, Chromium, Electron, capture, and Rust toolchain used by native Wayland E2E | `e2e-rust-linux-wayland.yml` |
 | `cua-driver-inject-e2e` | Provide the same typed harness toolchain plus the nested `cua-compositor` package | Experimental nested-injection workflow |
 | `cua-compositor-build` | Build the optional compositor-owned injection backend against pinned wlroots | Flake check |
 

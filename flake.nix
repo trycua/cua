@@ -88,6 +88,7 @@
             packages = (with pkgs; [
               cargo
               clang
+              chromium
               dbus
               ffmpeg
               gobject-introspection

@@ -53,6 +53,7 @@ jobs:
       CUA_TEST_REQUIRE_EXTERNAL_BROWSERS: "1"
       CUA_E2E_FORBID_SKIPS: "1"
       CUA_TEST_DRIVER_STDERR: "1"
+      CUA_E2E_BROWSER_STDERR: "1"
       RUST_BACKTRACE: "1"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -100,6 +101,9 @@ jobs:
         run: |
           export CUA_E2E_ARTIFACT_DIR="$PWD/artifacts/cua-driver/standalone-browser"
           export CUA_E2E_SKIP_BUILD=1
+          # Hosted Linux does not provide a browser sandbox suitable for the
+          # isolated test profiles. This affects only disposable test browsers.
+          export CUA_E2E_BROWSER_NO_SANDBOX=1
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
             'openbox >/tmp/cua-browser-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-browser-picom.log 2>&1 & sleep 2; exec scripts/ci/run-rust-standalone-browser-e2e.sh'

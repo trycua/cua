@@ -165,7 +165,7 @@ fn browser_specs() -> Vec<BrowserSpec> {
                 }
             }
         }
-        return candidates
+        let mut browsers = candidates
             .into_iter()
             .filter(|(_, executable)| executable.is_file())
             .map(|(name, executable)| {
@@ -192,7 +192,14 @@ fn browser_specs() -> Vec<BrowserSpec> {
             })
             .into_iter()
             .map(|(spec, _)| spec)
-            .collect();
+            .collect::<Vec<_>>();
+        // Chromium is the open-source fallback for environments without the
+        // Chrome stable channel. Do not expand a Chrome/Edge acceptance lane
+        // merely because the host image also exposes a Chromium package shim.
+        if browsers.iter().any(|spec| spec.name == "chrome") {
+            browsers.retain(|spec| spec.name != "chromium");
+        }
+        return browsers;
     }
     #[cfg(target_os = "windows")]
     let candidates = {

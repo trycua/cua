@@ -9,15 +9,16 @@
 //! Event builders in this module accept only fixed event names and bounded
 //! properties. They never receive prompts, tool arguments/results, typed text,
 //! screenshots, accessibility trees, application/window names, URLs, paths,
-//! or raw errors.
+//! raw cursor identifiers/configuration values, or raw errors.
 
 use serde::Serialize;
 use serde_json::{Map, Value};
+use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -45,6 +46,9 @@ const ENV_TELEMETRY_HOME: &str = "CUA_DRIVER_TELEMETRY_HOME";
 const ENV_CLI_WRAPPED_CHILD: &str = "CUA_DRIVER_CLI_TELEMETRY_CHILD";
 const ENV_CLI_COMPLETION_WORKER: &str = "CUA_DRIVER_CLI_TELEMETRY_WORKER";
 const ENV_CLI_COMPLETION_COMMAND: &str = "CUA_DRIVER_CLI_TELEMETRY_COMMAND";
+const ENV_CLI_COMPLETION_TOOL: &str = "CUA_DRIVER_CLI_TELEMETRY_TOOL";
+const ENV_CLI_COMPLETION_OPERATION: &str = "CUA_DRIVER_CLI_TELEMETRY_OPERATION";
+const ENV_CLI_COMPLETION_CLIENT_KIND: &str = "CUA_DRIVER_CLI_TELEMETRY_CLIENT_KIND";
 const ENV_CLI_COMPLETION_EXIT_CODE: &str = "CUA_DRIVER_CLI_TELEMETRY_EXIT_CODE";
 const ENV_CLI_COMPLETION_DURATION_MS: &str = "CUA_DRIVER_CLI_TELEMETRY_DURATION_MS";
 const ENV_LIFECYCLE_WORKER: &str = "CUA_DRIVER_LIFECYCLE_TELEMETRY_WORKER";
@@ -54,39 +58,48 @@ pub const ENV_RELEASE_VERSION: &str = "CUA_DRIVER_RELEASE_VERSION";
 pub mod event {
     pub const INSTALLATION_REGISTERED: &str = "cua_driver_installation_registered";
     pub const RELEASE_INSTALLED: &str = "cua_driver_release_installed";
-    pub const MCP_START_LEGACY: &str = "cua_driver_mcp";
     pub const SERVE_START_LEGACY: &str = "cua_driver_serve";
     pub const CLI_COMPLETED: &str = "cua_driver_cli_completed";
     pub const MCP_SESSION_STARTED: &str = "cua_driver_mcp_session_started";
     pub const MCP_TOOL_COMPLETED: &str = "cua_driver_mcp_tool_completed";
+    pub const MCP_STARTUP_COMPLETED: &str = "cua_driver_mcp_startup_completed";
+    pub const AGENT_SESSION_STARTED: &str = "cua_driver_agent_session_started";
+    pub const AGENT_SESSION_ENDED: &str = "cua_driver_agent_session_ended";
+    pub const PERMISSIONS_GATE_STARTED: &str = "cua_driver_permissions_gate_started";
+    pub const PERMISSIONS_GATE_DISMISSED: &str = "cua_driver_permissions_gate_dismissed";
+    pub const PERMISSIONS_GATE_COMPLETED: &str = "cua_driver_permissions_gate_completed";
 }
 
 const INSPECTABLE_EVENTS: &[&str] = &[
     event::INSTALLATION_REGISTERED,
     event::RELEASE_INSTALLED,
-    event::MCP_START_LEGACY,
     event::SERVE_START_LEGACY,
     event::CLI_COMPLETED,
     event::MCP_SESSION_STARTED,
     event::MCP_TOOL_COMPLETED,
+    event::MCP_STARTUP_COMPLETED,
+    event::AGENT_SESSION_STARTED,
+    event::AGENT_SESSION_ENDED,
+    event::PERMISSIONS_GATE_STARTED,
+    event::PERMISSIONS_GATE_DISMISSED,
+    event::PERMISSIONS_GATE_COMPLETED,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // HTTP is intentionally deferred until session semantics are defined.
 pub enum Transport {
     Cli,
+    Daemon,
     McpStdio,
     McpHttp,
-    Unknown,
 }
 
 impl Transport {
     fn as_str(self) -> &'static str {
         match self {
             Self::Cli => "cli",
+            Self::Daemon => "daemon",
             Self::McpStdio => "mcp_stdio",
             Self::McpHttp => "mcp_http",
-            Self::Unknown => "unknown",
         }
     }
 }
@@ -210,6 +223,9 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
         }
         event::CLI_COMPLETED => bounded_properties(&[
             ("command", Value::String("other".into())),
+            ("tool_name", Value::String("not_applicable".into())),
+            ("operation", Value::String("not_applicable".into())),
+            ("client_kind", Value::String("not_applicable".into())),
             ("success", Value::Bool(true)),
             ("exit_class", Value::String("success".into())),
             ("duration_bucket", Value::String("lt_100ms".into())),
@@ -228,19 +244,85 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("reported_model", Value::String("unknown".into())),
             ("reported_agent", Value::String("unknown".into())),
             ("reported_agent_version_major", Value::String("unknown".into())),
+            ("execution_mode", Value::String(execution_mode().into())),
         ]),
         event::MCP_TOOL_COMPLETED => bounded_properties(&[
             ("tool_name", Value::String("other".into())),
+            ("operation", Value::String("not_applicable".into())),
             ("success", Value::Bool(true)),
             ("error_class", Value::String("none".into())),
             ("duration_bucket", Value::String("lt_10ms".into())),
             ("output_type", Value::String("empty".into())),
             ("output_size_bucket", Value::String("0".into())),
+            ("execution_mode", Value::String(execution_mode().into())),
+        ]),
+        event::MCP_STARTUP_COMPLETED => bounded_properties(&[
+            ("path", Value::String("in_process".into())),
+            ("daemon", Value::String("not_applicable".into())),
+            ("success", Value::Bool(true)),
+            ("duration_bucket", Value::String("lt_100ms".into())),
+            ("execution_mode", Value::String(execution_mode().into())),
+        ]),
+        event::AGENT_SESSION_STARTED => bounded_properties(&[
+            ("declaration", Value::String("start_session".into())),
+            ("revived", Value::Bool(false)),
+            ("concurrent_sessions_bucket", Value::String("1".into())),
+            ("entry_transport", Value::String("mcp_stdio".into())),
+            ("execution_mode", Value::String(execution_mode().into())),
+        ]),
+        event::AGENT_SESSION_ENDED => bounded_properties(&[
+            ("end_reason", Value::String("explicit".into())),
+            ("duration_bucket", Value::String("lt_10s".into())),
+            ("tool_count_bucket", Value::String("1_4".into())),
+            ("computer_action_count_bucket", Value::String("1_4".into())),
+            ("error_count_bucket", Value::String("0".into())),
+            ("had_successful_tool", Value::Bool(true)),
+            ("had_successful_computer_action", Value::Bool(true)),
+            ("used_page", Value::Bool(false)),
+            ("used_cursor_tools", Value::Bool(false)),
+            ("used_recording", Value::Bool(false)),
+            ("used_config_write", Value::Bool(false)),
+            ("cursor_outcome_observed", Value::Bool(true)),
+            ("cursor_overlay_enabled_at_end", Value::Bool(true)),
+            ("cursor_style", Value::String("default".into())),
+            ("cursor_color_source", Value::String("automatic_palette".into())),
+            ("cursor_label_set", Value::Bool(false)),
+            ("cursor_motion_customized", Value::Bool(false)),
+            ("multi_cursor_bucket", Value::String("1".into())),
+            ("observed_multiple_transports", Value::Bool(false)),
+            ("execution_mode", Value::String(execution_mode().into())),
+        ]),
+        event::PERMISSIONS_GATE_STARTED => bounded_properties(&[
+            ("missing_accessibility", Value::Bool(true)),
+            ("missing_screen_recording", Value::Bool(true)),
+        ]),
+        event::PERMISSIONS_GATE_DISMISSED => bounded_properties(&[
+            ("missing_accessibility", Value::Bool(true)),
+            ("missing_screen_recording", Value::Bool(true)),
+            ("duration_bucket", Value::String("2s_9_999ms".into())),
+        ]),
+        event::PERMISSIONS_GATE_COMPLETED => bounded_properties(&[
+            ("missing_accessibility", Value::Bool(true)),
+            ("missing_screen_recording", Value::Bool(true)),
+            ("panel_shown", Value::Bool(true)),
+            ("dismissed", Value::Bool(false)),
+            ("resolution", Value::String("granted".into())),
+            ("duration_bucket", Value::String("2s_9_999ms".into())),
         ]),
         _ => Map::new(),
     };
     let transport = match event_name {
-        event::MCP_START_LEGACY | event::MCP_SESSION_STARTED | event::MCP_TOOL_COMPLETED => Transport::McpStdio,
+        event::MCP_SESSION_STARTED
+        | event::MCP_TOOL_COMPLETED
+        | event::MCP_STARTUP_COMPLETED
+        | event::AGENT_SESSION_STARTED
+        | event::AGENT_SESSION_ENDED => {
+            Transport::McpStdio
+        }
+        event::SERVE_START_LEGACY
+        | event::PERMISSIONS_GATE_STARTED
+        | event::PERMISSIONS_GATE_DISMISSED
+        | event::PERMISSIONS_GATE_COMPLETED => Transport::Daemon,
         _ => Transport::Cli,
     };
     Ok(build_payload(event_name, &properties, &identity, transport))
@@ -248,7 +330,7 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
 
 /// Transitional fixed start events for long-running processes only.
 pub fn capture_start(event_name: &'static str, transport: Transport) {
-    if !matches!(event_name, event::MCP_START_LEGACY | event::SERVE_START_LEGACY) {
+    if event_name != event::SERVE_START_LEGACY {
         return;
     }
     capture_bounded(event_name, Map::new(), transport);
@@ -256,93 +338,529 @@ pub fn capture_start(event_name: &'static str, transport: Transport) {
 
 pub fn register_stdio_observer() {
     let _ = cua_driver_core::server::set_stdio_observer(Arc::new(TelemetryObserver));
+    let _ = cua_driver_core::session::set_session_observer(Arc::new(TelemetryObserver));
+}
+
+fn execution_mode() -> &'static str {
+    if cua_driver_core::embedded_mode() {
+        "embedded"
+    } else {
+        "standalone"
+    }
 }
 
 struct TelemetryObserver;
 
 impl cua_driver_core::server::StdioObserver for TelemetryObserver {
     fn on_session_started(&self, metadata: cua_driver_core::protocol::InitializeMetadata) {
-        static OBSERVED: AtomicBool = AtomicBool::new(false);
-        if OBSERVED.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        let context = metadata.reported_agent_context.unwrap_or_default();
-        let capabilities = metadata.capability_flags;
-        capture_bounded(
-            event::MCP_SESSION_STARTED,
-            bounded_properties(&[
-                ("mcp_client", Value::String(normalize_client(metadata.client_name.as_deref()))),
-                ("mcp_client_version_major", Value::String(version_major(metadata.client_version.as_deref()))),
-                ("protocol_version", Value::String(normalize_protocol(metadata.protocol_version.as_deref()))),
-                ("capability_tools", Value::Bool(capabilities.tools)),
-                ("capability_roots", Value::Bool(capabilities.roots)),
-                ("capability_sampling", Value::Bool(capabilities.sampling)),
-                ("capability_experimental", Value::Bool(capabilities.experimental)),
-                ("capability_elicitation_form", Value::Bool(capabilities.elicitation_form)),
-                ("capability_elicitation_url", Value::Bool(capabilities.elicitation_url)),
-                ("reported_provider", Value::String(normalize_provider(context.provider.as_deref()))),
-                ("reported_model", Value::String(normalize_model(context.model.as_deref()))),
-                ("reported_agent", Value::String(normalize_client(context.agent_name.as_deref()))),
-                ("reported_agent_version_major", Value::String(version_major(context.agent_version.as_deref()))),
-            ]),
-            Transport::McpStdio,
-        );
+        capture_mcp_session_started(metadata, Transport::McpStdio);
     }
 
     fn on_tool_completed(&self, outcome: cua_driver_core::server::ToolCompletionObservation) {
-        use cua_driver_core::server::{DurationBucket, OutputSizeBucket, OutputType, ToolErrorClass};
-        let tool_name = if matches!(outcome.error_class, ToolErrorClass::UnknownTool | ToolErrorClass::InvalidParams) {
-            "other".to_owned()
-        } else if outcome.tool_name == "type_text_chars" {
-            "type_text".to_owned()
-        } else {
-            outcome.tool_name
+        capture_tool_completed(outcome, Transport::McpStdio);
+    }
+}
+
+const MAX_TRACKED_AGENT_SESSIONS: usize = 256;
+static AGENT_SESSIONS: OnceLock<Mutex<HashMap<String, AgentSessionState>>> = OnceLock::new();
+
+struct AgentSessionState {
+    started: std::time::Instant,
+    entry_transport: Transport,
+    transport_bits: u8,
+    tool_count: u64,
+    computer_action_count: u64,
+    error_count: u64,
+    had_successful_tool: bool,
+    had_successful_computer_action: bool,
+    used_page: bool,
+    used_cursor_tools: bool,
+    used_recording: bool,
+    used_config_write: bool,
+}
+
+impl AgentSessionState {
+    fn new(entry_transport: Transport) -> Self {
+        Self {
+            started: std::time::Instant::now(),
+            entry_transport,
+            transport_bits: transport_bit(entry_transport),
+            tool_count: 0,
+            computer_action_count: 0,
+            error_count: 0,
+            had_successful_tool: false,
+            had_successful_computer_action: false,
+            used_page: false,
+            used_cursor_tools: false,
+            used_recording: false,
+            used_config_write: false,
+        }
+    }
+
+    fn observe(
+        &mut self,
+        transport: Transport,
+        computer_action: bool,
+        outcome: &cua_driver_core::server::ToolCompletionObservation,
+    ) {
+        self.transport_bits |= transport_bit(transport);
+        let tool_name = outcome.tool_name.as_str();
+        if matches!(tool_name, "start_session" | "end_session") {
+            return;
+        }
+        self.tool_count = self.tool_count.saturating_add(1);
+        self.computer_action_count = self
+            .computer_action_count
+            .saturating_add(u64::from(computer_action));
+        self.error_count = self.error_count.saturating_add(u64::from(!outcome.success));
+        self.had_successful_tool |= outcome.success;
+        self.had_successful_computer_action |= outcome.success && computer_action;
+        self.used_page |= tool_name == "page";
+        self.used_cursor_tools |= matches!(
+            tool_name,
+            "set_agent_cursor_enabled"
+                | "set_agent_cursor_motion"
+                | "set_agent_cursor_style"
+                | "get_agent_cursor_state"
+        );
+        self.used_recording |= matches!(
+            tool_name,
+            "start_recording" | "stop_recording" | "replay_trajectory"
+        );
+        self.used_config_write |= tool_name == "set_config";
+    }
+
+    fn ended_properties(
+        &self,
+        reason: cua_driver_core::session::SessionEndReason,
+        cursor: Option<cua_driver_core::session::CursorOutcomeObservation>,
+    ) -> Map<String, Value> {
+        use cua_driver_core::session::{CursorColorSource, CursorStyleCategory, SessionEndReason};
+        let end_reason = match reason {
+            SessionEndReason::Explicit => "explicit",
+            SessionEndReason::IdleTimeout => "idle_timeout",
+            SessionEndReason::ProcessExit => "process_exit",
+            SessionEndReason::Unknown => "unknown",
         };
-        let error_class = match outcome.error_class {
-            ToolErrorClass::None => "none",
-            ToolErrorClass::InvalidParams => "invalid_params",
-            ToolErrorClass::UnknownTool => "unknown_tool",
-            ToolErrorClass::PermissionDenied => "permission_denied",
-            ToolErrorClass::BackgroundUnavailable => "background_unavailable",
-            ToolErrorClass::TransportError => "transport_error",
-            ToolErrorClass::InternalError => "internal_error",
+        let cursor = cursor.unwrap_or(cua_driver_core::session::CursorOutcomeObservation {
+            observed: false,
+            enabled: false,
+            style: CursorStyleCategory::Unknown,
+            color_source: CursorColorSource::Unknown,
+            label_set: false,
+            motion_customized: false,
+            active_cursor_count: 0,
+        });
+        let cursor_style = match cursor.style {
+            CursorStyleCategory::Default => "default",
+            CursorStyleCategory::BuiltinArrow => "builtin_arrow",
+            CursorStyleCategory::BuiltinTeardrop => "builtin_teardrop",
+            CursorStyleCategory::CustomIcon => "custom_icon",
+            CursorStyleCategory::Unknown => "unknown",
         };
-        let duration_bucket = match outcome.duration_bucket {
-            DurationBucket::Under10Ms => "lt_10ms",
-            DurationBucket::Ms10To49 => "10_49ms",
-            DurationBucket::Ms50To249 => "50_249ms",
-            DurationBucket::Ms250To999 => "250_999ms",
-            DurationBucket::Ms1000To4999 => "1_4s",
-            DurationBucket::Ms5000OrMore => "gte_5s",
+        let cursor_color_source = match cursor.color_source {
+            CursorColorSource::AutomaticPalette => "automatic_palette",
+            CursorColorSource::Custom => "custom",
+            CursorColorSource::Unknown => "unknown",
         };
-        let output_type = match outcome.output_type {
-            OutputType::Empty => "empty",
-            OutputType::Text => "text",
-            OutputType::Image => "image",
-            OutputType::Mixed => "mixed",
-            OutputType::Unknown => "unknown",
+        bounded_properties(&[
+            ("end_reason", Value::String(end_reason.into())),
+            ("duration_bucket", Value::String(agent_session_duration_bucket(self.started.elapsed()).into())),
+            ("tool_count_bucket", Value::String(agent_session_count_bucket(self.tool_count).into())),
+            ("computer_action_count_bucket", Value::String(agent_session_count_bucket(self.computer_action_count).into())),
+            ("error_count_bucket", Value::String(agent_session_error_bucket(self.error_count).into())),
+            ("had_successful_tool", Value::Bool(self.had_successful_tool)),
+            ("had_successful_computer_action", Value::Bool(self.had_successful_computer_action)),
+            ("used_page", Value::Bool(self.used_page)),
+            ("used_cursor_tools", Value::Bool(self.used_cursor_tools)),
+            ("used_recording", Value::Bool(self.used_recording)),
+            ("used_config_write", Value::Bool(self.used_config_write)),
+            ("cursor_outcome_observed", Value::Bool(cursor.observed)),
+            ("cursor_overlay_enabled_at_end", Value::Bool(cursor.enabled)),
+            ("cursor_style", Value::String(cursor_style.into())),
+            ("cursor_color_source", Value::String(cursor_color_source.into())),
+            ("cursor_label_set", Value::Bool(cursor.label_set)),
+            ("cursor_motion_customized", Value::Bool(cursor.motion_customized)),
+            ("multi_cursor_bucket", Value::String(cursor_count_bucket(cursor.active_cursor_count).into())),
+            ("observed_multiple_transports", Value::Bool(self.transport_bits.count_ones() > 1)),
+            ("execution_mode", Value::String(execution_mode().into())),
+        ])
+    }
+}
+
+fn transport_bit(transport: Transport) -> u8 {
+    match transport {
+        Transport::Cli => 1,
+        Transport::Daemon => 2,
+        Transport::McpStdio => 4,
+        Transport::McpHttp => 8,
+    }
+}
+
+fn session_transport(transport: cua_driver_core::session::SessionTransport) -> Transport {
+    match transport {
+        cua_driver_core::session::SessionTransport::Cli => Transport::Cli,
+        cua_driver_core::session::SessionTransport::Daemon => Transport::Daemon,
+        cua_driver_core::session::SessionTransport::McpStdio => Transport::McpStdio,
+        cua_driver_core::session::SessionTransport::McpHttp => Transport::McpHttp,
+    }
+}
+
+fn concurrent_sessions_bucket(count: usize) -> &'static str {
+    match count {
+        0 | 1 => "1",
+        2 => "2",
+        3..=5 => "3_5",
+        _ => "gte_6",
+    }
+}
+
+fn cursor_count_bucket(count: usize) -> &'static str {
+    match count {
+        0 | 1 => "1",
+        2 => "2",
+        3..=5 => "3_5",
+        _ => "gte_6",
+    }
+}
+
+fn agent_session_duration_bucket(duration: Duration) -> &'static str {
+    match duration.as_secs() {
+        0..=9 => "lt_10s",
+        10..=59 => "10_59s",
+        60..=299 => "1_4min",
+        300..=1799 => "5_29min",
+        _ => "gte_30min",
+    }
+}
+
+fn agent_session_count_bucket(count: u64) -> &'static str {
+    match count {
+        0 => "0",
+        1..=4 => "1_4",
+        5..=19 => "5_19",
+        20..=99 => "20_99",
+        _ => "gte_100",
+    }
+}
+
+fn agent_session_error_bucket(count: u64) -> &'static str {
+    match count {
+        0 => "0",
+        1 => "1",
+        2..=4 => "2_4",
+        _ => "gte_5",
+    }
+}
+
+impl cua_driver_core::session::SessionObserver for TelemetryObserver {
+    fn on_session_started(
+        &self,
+        session_id: &str,
+        observation: cua_driver_core::session::SessionStartObservation,
+    ) {
+        let sessions = AGENT_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
+        if !is_enabled() {
+            sessions.lock().unwrap().remove(session_id);
+            return;
+        }
+        let transport = session_transport(observation.transport);
+        let concurrent = {
+            let mut sessions = sessions.lock().unwrap();
+            if let Some(existing) = sessions.get_mut(session_id) {
+                existing.transport_bits |= transport_bit(transport);
+                return;
+            }
+            if sessions.len() >= MAX_TRACKED_AGENT_SESSIONS {
+                return;
+            }
+            sessions.insert(session_id.to_owned(), AgentSessionState::new(transport));
+            sessions.len()
         };
-        let output_size_bucket = match outcome.output_size_bucket {
-            OutputSizeBucket::Empty => "0",
-            OutputSizeBucket::Under1KiB => "lt_1kib",
-            OutputSizeBucket::KiB1To9 => "1_9kib",
-            OutputSizeBucket::KiB10To99 => "10_99kib",
-            OutputSizeBucket::KiB100To1023 => "100_1023kib",
-            OutputSizeBucket::MiB1OrMore => "gte_1mib",
+        let declaration = match observation.declaration {
+            cua_driver_core::session::SessionDeclaration::StartSession => "start_session",
+            cua_driver_core::session::SessionDeclaration::ImplicitFirstAction => {
+                "implicit_first_action"
+            }
         };
         capture_bounded(
-            event::MCP_TOOL_COMPLETED,
+            event::AGENT_SESSION_STARTED,
             bounded_properties(&[
-                ("tool_name", Value::String(tool_name)),
-                ("success", Value::Bool(outcome.success)),
-                ("error_class", Value::String(error_class.into())),
-                ("duration_bucket", Value::String(duration_bucket.into())),
-                ("output_type", Value::String(output_type.into())),
-                ("output_size_bucket", Value::String(output_size_bucket.into())),
+                ("declaration", Value::String(declaration.into())),
+                ("revived", Value::Bool(observation.revived)),
+                ("concurrent_sessions_bucket", Value::String(concurrent_sessions_bucket(concurrent).into())),
+                ("entry_transport", Value::String(transport.as_str().into())),
+                ("execution_mode", Value::String(execution_mode().into())),
             ]),
-            Transport::McpStdio,
+            transport,
         );
     }
+
+    fn on_tool_completed(
+        &self,
+        session_id: &str,
+        transport: cua_driver_core::session::SessionTransport,
+        computer_action: bool,
+        outcome: &cua_driver_core::server::ToolCompletionObservation,
+    ) {
+        let sessions = AGENT_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut sessions = sessions.lock().unwrap();
+        if !is_enabled() {
+            sessions.remove(session_id);
+            return;
+        }
+        if let Some(state) = sessions.get_mut(session_id) {
+            state.observe(session_transport(transport), computer_action, outcome);
+        }
+    }
+
+    fn on_session_ended(
+        &self,
+        session_id: &str,
+        reason: cua_driver_core::session::SessionEndReason,
+        cursor: Option<cua_driver_core::session::CursorOutcomeObservation>,
+    ) {
+        let state = AGENT_SESSIONS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap()
+            .remove(session_id);
+        if !is_enabled() {
+            return;
+        }
+        let Some(state) = state else { return; };
+        let transport = state.entry_transport;
+        capture_bounded(
+            event::AGENT_SESSION_ENDED,
+            state.ended_properties(reason, cursor),
+            transport,
+        );
+    }
+}
+
+static MCP_SESSION_OBSERVED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn mcp_session_observation_key(transport: Transport, mcp_client: &str) -> String {
+    match transport {
+        Transport::McpHttp => format!("mcp_http:{mcp_client}"),
+        _ => transport.as_str().to_owned(),
+    }
+}
+
+pub(crate) fn capture_mcp_session_started(
+    metadata: cua_driver_core::protocol::InitializeMetadata,
+    transport: Transport,
+) {
+    if !is_enabled() {
+        return;
+    }
+    let mcp_client = normalize_client(metadata.client_name.as_deref());
+    let observation_key = mcp_session_observation_key(transport, &mcp_client);
+    let observed = MCP_SESSION_OBSERVED.get_or_init(|| Mutex::new(HashSet::new()));
+    if !observed.lock().unwrap().insert(observation_key) {
+        return;
+    }
+
+    let context = metadata.reported_agent_context.unwrap_or_default();
+    let capabilities = metadata.capability_flags;
+    capture_bounded(
+        event::MCP_SESSION_STARTED,
+        bounded_properties(&[
+            ("mcp_client", Value::String(mcp_client)),
+            ("mcp_client_version_major", Value::String(version_major(metadata.client_version.as_deref()))),
+            ("protocol_version", Value::String(normalize_protocol(metadata.protocol_version.as_deref()))),
+            ("capability_tools", Value::Bool(capabilities.tools)),
+            ("capability_roots", Value::Bool(capabilities.roots)),
+            ("capability_sampling", Value::Bool(capabilities.sampling)),
+            ("capability_experimental", Value::Bool(capabilities.experimental)),
+            ("capability_elicitation_form", Value::Bool(capabilities.elicitation_form)),
+            ("capability_elicitation_url", Value::Bool(capabilities.elicitation_url)),
+            ("reported_provider", Value::String(normalize_provider(context.provider.as_deref()))),
+            ("reported_model", Value::String(normalize_model(context.model.as_deref()))),
+            ("reported_agent", Value::String(normalize_client(context.agent_name.as_deref()))),
+            ("reported_agent_version_major", Value::String(version_major(context.agent_version.as_deref()))),
+            ("execution_mode", Value::String(execution_mode().into())),
+        ]),
+        transport,
+    );
+}
+
+pub(crate) fn capture_tool_completed(
+    outcome: cua_driver_core::server::ToolCompletionObservation,
+    transport: Transport,
+) {
+    let mut properties = tool_completion_properties(outcome);
+    properties.insert(
+        "execution_mode".into(),
+        Value::String(execution_mode().into()),
+    );
+    capture_bounded(
+        event::MCP_TOOL_COMPLETED,
+        properties,
+        transport,
+    );
+}
+
+fn tool_completion_properties(
+    outcome: cua_driver_core::server::ToolCompletionObservation,
+) -> Map<String, Value> {
+    use cua_driver_core::server::{DurationBucket, OutputSizeBucket, OutputType, ToolErrorClass};
+    let tool_name = if matches!(
+        outcome.error_class,
+        ToolErrorClass::UnknownTool | ToolErrorClass::InvalidParams
+    ) {
+        "other".to_owned()
+    } else if outcome.tool_name == "type_text_chars" {
+        "type_text".to_owned()
+    } else {
+        outcome.tool_name
+    };
+    let error_class = match outcome.error_class {
+        ToolErrorClass::None => "none",
+        ToolErrorClass::InvalidParams => "invalid_params",
+        ToolErrorClass::UnknownTool => "unknown_tool",
+        ToolErrorClass::PermissionDenied => "permission_denied",
+        ToolErrorClass::BackgroundUnavailable => "background_unavailable",
+        ToolErrorClass::TransportError => "transport_error",
+        ToolErrorClass::InternalError => "internal_error",
+    };
+    let duration_bucket = match outcome.duration_bucket {
+        DurationBucket::Under10Ms => "lt_10ms",
+        DurationBucket::Ms10To49 => "10_49ms",
+        DurationBucket::Ms50To249 => "50_249ms",
+        DurationBucket::Ms250To999 => "250_999ms",
+        DurationBucket::Ms1000To4999 => "1_4s",
+        DurationBucket::Ms5000OrMore => "gte_5s",
+    };
+    let output_type = match outcome.output_type {
+        OutputType::Empty => "empty",
+        OutputType::Text => "text",
+        OutputType::Image => "image",
+        OutputType::Mixed => "mixed",
+        OutputType::Unknown => "unknown",
+    };
+    let output_size_bucket = match outcome.output_size_bucket {
+        OutputSizeBucket::Empty => "0",
+        OutputSizeBucket::Under1KiB => "lt_1kib",
+        OutputSizeBucket::KiB1To9 => "1_9kib",
+        OutputSizeBucket::KiB10To99 => "10_99kib",
+        OutputSizeBucket::KiB100To1023 => "100_1023kib",
+        OutputSizeBucket::MiB1OrMore => "gte_1mib",
+    };
+    bounded_properties(&[
+        ("tool_name", Value::String(tool_name)),
+        ("operation", Value::String(outcome.operation.as_str().into())),
+        ("success", Value::Bool(outcome.success)),
+        ("error_class", Value::String(error_class.into())),
+        ("duration_bucket", Value::String(duration_bucket.into())),
+        ("output_type", Value::String(output_type.into())),
+        ("output_size_bucket", Value::String(output_size_bucket.into())),
+    ])
+}
+
+pub(crate) fn capture_mcp_startup_completed(
+    path: &'static str,
+    daemon: &'static str,
+    success: bool,
+    elapsed: Duration,
+) {
+    let path = match path {
+        "in_process" => "in_process",
+        "daemon_proxy" => "daemon_proxy",
+        _ => "unknown",
+    };
+    let daemon = match daemon {
+        "not_applicable" => "not_applicable",
+        "already_running" => "already_running",
+        "launched" => "launched",
+        "launch_failed" => "launch_failed",
+        "launch_timeout" => "launch_timeout",
+        "unreachable" => "unreachable",
+        "unsupported_relaunch" => "unsupported_relaunch",
+        _ => "unknown",
+    };
+    capture_bounded(
+        event::MCP_STARTUP_COMPLETED,
+        bounded_properties(&[
+            ("path", Value::String(path.into())),
+            ("daemon", Value::String(daemon.into())),
+            ("success", Value::Bool(success)),
+            ("duration_bucket", Value::String(duration_bucket(elapsed).into())),
+            ("execution_mode", Value::String(execution_mode().into())),
+        ]),
+        Transport::McpStdio,
+    );
+}
+
+pub(crate) fn capture_permissions_gate_completed(
+    missing_accessibility: bool,
+    missing_screen_recording: bool,
+    panel_shown: bool,
+    dismissed: bool,
+    resolution: &'static str,
+    elapsed: Duration,
+) {
+    let resolution = match resolution {
+        "granted" => "granted",
+        "dismissed_then_granted" => "dismissed_then_granted",
+        "timeout" => "timeout",
+        _ => "unknown",
+    };
+    capture_bounded(
+        event::PERMISSIONS_GATE_COMPLETED,
+        bounded_properties(&[
+            ("missing_accessibility", Value::Bool(missing_accessibility)),
+            ("missing_screen_recording", Value::Bool(missing_screen_recording)),
+            ("panel_shown", Value::Bool(panel_shown)),
+            ("dismissed", Value::Bool(dismissed)),
+            ("resolution", Value::String(resolution.into())),
+            ("duration_bucket", Value::String(duration_bucket(elapsed).into())),
+        ]),
+        Transport::Daemon,
+    );
+}
+
+pub(crate) const fn permissions_gate_resolution(
+    gate_failed: bool,
+    dismissed: bool,
+) -> &'static str {
+    if gate_failed {
+        "timeout"
+    } else if dismissed {
+        "dismissed_then_granted"
+    } else {
+        "granted"
+    }
+}
+
+pub(crate) fn capture_permissions_gate_started(
+    missing_accessibility: bool,
+    missing_screen_recording: bool,
+) {
+    capture_bounded(
+        event::PERMISSIONS_GATE_STARTED,
+        bounded_properties(&[
+            ("missing_accessibility", Value::Bool(missing_accessibility)),
+            ("missing_screen_recording", Value::Bool(missing_screen_recording)),
+        ]),
+        Transport::Daemon,
+    );
+}
+
+pub(crate) fn capture_permissions_gate_dismissed(
+    missing_accessibility: bool,
+    missing_screen_recording: bool,
+    elapsed: Duration,
+) {
+    capture_bounded(
+        event::PERMISSIONS_GATE_DISMISSED,
+        bounded_properties(&[
+            ("missing_accessibility", Value::Bool(missing_accessibility)),
+            ("missing_screen_recording", Value::Bool(missing_screen_recording)),
+            ("duration_bucket", Value::String(duration_bucket(elapsed).into())),
+        ]),
+        Transport::Daemon,
+    );
 }
 
 fn normalize_client(value: Option<&str>) -> String {
@@ -621,6 +1139,9 @@ pub(crate) fn capture_bounded(
 /// a detached request is delivered.
 pub(crate) fn capture_cli_completed(
     command: &'static str,
+    tool_name: Option<&str>,
+    operation: &str,
+    client_kind: &str,
     exit_code: i32,
     elapsed: Duration,
 ) {
@@ -648,6 +1169,13 @@ pub(crate) fn capture_cli_completed(
         _ => "other",
     };
     let success = exit_code == 0;
+    let tool_name = if command == "call" {
+        fixed_tool_name(tool_name.unwrap_or(""))
+    } else {
+        "not_applicable".into()
+    };
+    let operation = fixed_cli_operation(command, operation);
+    let client_kind = fixed_cli_client_kind(command, client_kind);
     let exit_class = match exit_code {
         0 => "success",
         1 => "tool_error",
@@ -661,6 +1189,9 @@ pub(crate) fn capture_cli_completed(
         event::CLI_COMPLETED,
         &bounded_properties(&[
             ("command", Value::String(command.into())),
+            ("tool_name", Value::String(tool_name.into())),
+            ("operation", Value::String(operation.into())),
+            ("client_kind", Value::String(client_kind.into())),
             ("success", Value::Bool(success)),
             ("exit_class", Value::String(exit_class.into())),
             ("duration_bucket", Value::String(duration_bucket(elapsed).into())),
@@ -699,12 +1230,25 @@ pub(crate) fn run_cli_completion_worker_if_requested() -> bool {
         .map(Duration::from_millis)
         .unwrap_or_default();
     let command = fixed_cli_command(&command);
-    capture_cli_completed(command, exit_code, elapsed);
+    let tool_name = std::env::var(ENV_CLI_COMPLETION_TOOL).ok();
+    let operation = std::env::var(ENV_CLI_COMPLETION_OPERATION).unwrap_or_default();
+    let client_kind = std::env::var(ENV_CLI_COMPLETION_CLIENT_KIND).unwrap_or_default();
+    capture_cli_completed(
+        command,
+        tool_name.as_deref(),
+        &operation,
+        &client_kind,
+        exit_code,
+        elapsed,
+    );
     true
 }
 
 pub(crate) fn spawn_cli_completion_worker(
     command: &'static str,
+    tool_name: Option<&str>,
+    operation: &str,
+    client_kind: &str,
     exit_code: i32,
     elapsed: Duration,
 ) {
@@ -712,11 +1256,18 @@ pub(crate) fn spawn_cli_completion_worker(
         return;
     }
     let Ok(executable) = std::env::current_exe() else { return; };
-    let _ = std::process::Command::new(executable)
+    let mut worker = std::process::Command::new(executable);
+    worker
         .env(ENV_CLI_COMPLETION_WORKER, "1")
         .env(ENV_CLI_COMPLETION_COMMAND, fixed_cli_command(command))
+        .env(ENV_CLI_COMPLETION_OPERATION, fixed_cli_operation(command, operation))
+        .env(ENV_CLI_COMPLETION_CLIENT_KIND, fixed_cli_client_kind(command, client_kind))
         .env(ENV_CLI_COMPLETION_EXIT_CODE, exit_code.to_string())
-        .env(ENV_CLI_COMPLETION_DURATION_MS, elapsed.as_millis().to_string())
+        .env(ENV_CLI_COMPLETION_DURATION_MS, elapsed.as_millis().to_string());
+    if let Some(tool_name) = tool_name {
+        worker.env(ENV_CLI_COMPLETION_TOOL, fixed_tool_name(tool_name));
+    }
+    let _ = worker
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -742,6 +1293,70 @@ fn fixed_cli_command(command: &str) -> &'static str {
         "autostart" => "autostart",
         "skills" => "skills",
         "config" => "config",
+        _ => "other",
+    }
+}
+
+fn fixed_tool_name(tool_name: &str) -> String {
+    if tool_name == "type_text_chars" {
+        return "type_text".into();
+    }
+    if cua_driver_core::tool::default_capabilities_for(tool_name).is_empty() {
+        "other".into()
+    } else {
+        // Every canonical tool is asserted by cua-driver-core tests to have a
+        // capability entry. Returning the original value is therefore safe:
+        // arbitrary argv can reach this branch only when it matches that
+        // compile-time registry vocabulary exactly.
+        tool_name.to_owned()
+    }
+}
+
+fn fixed_cli_operation(command: &str, operation: &str) -> &'static str {
+    match command {
+        "recording" => match operation {
+            "start" => "start", "stop" => "stop", "status" => "status",
+            "render" => "render", _ => "other",
+        },
+        "permissions" => match operation {
+            "status" => "status", "grant" => "grant", _ => "other",
+        },
+        "config" => match operation {
+            "show" => "show", "get" => "get", "set" => "set",
+            "reset" => "reset", _ => "other",
+        },
+        "autostart" => match operation {
+            "enable" => "enable", "disable" => "disable", "status" => "status",
+            "kick" => "kick", _ => "other",
+        },
+        "skills" => match operation {
+            "install" => "install", "update" => "update", "uninstall" => "uninstall",
+            "status" => "status", "path" => "path", _ => "other",
+        },
+        "update" => match operation {
+            "apply" => "apply", "check_only" => "check_only", _ => "other",
+        },
+        _ => "not_applicable",
+    }
+}
+
+fn fixed_cli_client_kind(command: &str, client_kind: &str) -> &'static str {
+    if command != "mcp_config" {
+        return "not_applicable";
+    }
+    match client_kind {
+        "generic" => "generic",
+        "claude_code" => "claude_code",
+        "codex" => "codex",
+        "cursor" => "cursor",
+        "openclaw" => "openclaw",
+        "opencode" => "opencode",
+        "hermes" => "hermes",
+        "pi" => "pi",
+        "antigravity" => "antigravity",
+        "qwen_code" => "qwen_code",
+        "factory_droid" => "factory_droid",
+        "zcode" => "zcode",
         _ => "other",
     }
 }
@@ -1510,6 +2125,36 @@ mod tests {
     }
 
     #[test]
+    fn disabled_permissions_events_do_not_create_an_installation_id() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|_| {
+            set_enabled(false).unwrap();
+            capture_permissions_gate_started(true, false);
+            capture_permissions_gate_dismissed(true, false, Duration::from_secs(3));
+            capture_permissions_gate_completed(
+                true,
+                false,
+                true,
+                true,
+                "dismissed_then_granted",
+                Duration::from_secs(3),
+            );
+            assert!(read_install_id().is_none());
+        });
+    }
+
+    #[test]
+    fn permissions_resolution_covers_grant_dismissal_recovery_and_timeout() {
+        assert_eq!(permissions_gate_resolution(false, false), "granted");
+        assert_eq!(
+            permissions_gate_resolution(false, true),
+            "dismissed_then_granted"
+        );
+        assert_eq!(permissions_gate_resolution(true, false), "timeout");
+        assert_eq!(permissions_gate_resolution(true, true), "timeout");
+    }
+
+    #[test]
     fn lifecycle_markers_are_written_only_after_each_2xx() {
         let _guard = ENV_LOCK.lock().unwrap();
         with_isolated_home(|root| {
@@ -1628,17 +2273,325 @@ mod tests {
             "capability_tools", "capability_roots", "capability_sampling",
             "capability_experimental", "capability_elicitation_form",
             "capability_elicitation_url", "reported_provider", "reported_model",
-            "reported_agent", "reported_agent_version_major",
+            "reported_agent", "reported_agent_version_major", "execution_mode",
         ] {
             assert!(session_properties.contains_key(field), "missing {field}");
         }
 
         let tool = inspect_event(event::MCP_TOOL_COMPLETED).unwrap();
         assert_eq!(tool["properties"]["duration_bucket"], "lt_10ms");
-        let mcp_start = inspect_event(event::MCP_START_LEGACY).unwrap();
+        assert_eq!(tool["properties"]["operation"], "not_applicable");
+        assert!(matches!(
+            tool["properties"]["execution_mode"].as_str(),
+            Some("embedded" | "standalone")
+        ));
+        let mcp_start = inspect_event(event::MCP_STARTUP_COMPLETED).unwrap();
         assert_eq!(mcp_start["properties"]["transport"], "mcp_stdio");
+        assert_eq!(mcp_start["properties"]["path"], "in_process");
+        assert_eq!(
+            mcp_start["properties"]["execution_mode"],
+            tool["properties"]["execution_mode"]
+        );
+        let permissions_started = inspect_event(event::PERMISSIONS_GATE_STARTED).unwrap();
+        assert_eq!(permissions_started["properties"]["transport"], "daemon");
+        assert_eq!(
+            permissions_started["properties"]["missing_accessibility"],
+            true
+        );
+        assert_eq!(
+            permissions_started["properties"]["missing_screen_recording"],
+            true
+        );
+        assert!(permissions_started["properties"]
+            .get("duration_bucket")
+            .is_none());
+        let permissions_dismissed = inspect_event(event::PERMISSIONS_GATE_DISMISSED).unwrap();
+        assert_eq!(permissions_dismissed["properties"]["transport"], "daemon");
+        assert_eq!(permissions_dismissed["properties"]["duration_bucket"], "2s_9_999ms");
+        let permissions = inspect_event(event::PERMISSIONS_GATE_COMPLETED).unwrap();
+        assert_eq!(permissions["properties"]["resolution"], "granted");
+        for payload in [
+            permissions_started,
+            permissions_dismissed,
+            permissions,
+        ] {
+            assert_eq!(payload["properties"]["telemetry_schema_version"], 3);
+            assert!(payload.get("timestamp").is_none());
+            let serialized = serde_json::to_string(&payload)
+                .unwrap()
+                .to_ascii_lowercase();
+            for forbidden in [
+                "prompt",
+                "arguments",
+                "result_text",
+                "typed_text",
+                "screenshot",
+                "accessibility_tree",
+                "window_title",
+                "application_name",
+                "file_path",
+                "socket",
+                "raw_error",
+                "stack_trace",
+                "$ip",
+            ] {
+                assert!(
+                    !serialized.contains(forbidden),
+                    "permissions payload contains {forbidden}: {serialized}"
+                );
+            }
+        }
         let serve_start = inspect_event(event::SERVE_START_LEGACY).unwrap();
-        assert_eq!(serve_start["properties"]["transport"], "cli");
+        assert_eq!(serve_start["properties"]["transport"], "daemon");
+    }
+
+    #[test]
+    fn session_observation_keys_are_bounded_by_transport_and_client_category() {
+        assert_eq!(
+            mcp_session_observation_key(Transport::McpStdio, "claude_code"),
+            "mcp_stdio"
+        );
+        assert_eq!(
+            mcp_session_observation_key(Transport::McpHttp, "claude_code"),
+            "mcp_http:claude_code"
+        );
+        assert_eq!(
+            mcp_session_observation_key(Transport::McpHttp, "other"),
+            "mcp_http:other"
+        );
+    }
+
+    #[test]
+    fn execution_mode_requires_the_exact_embedded_sentinel() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let name = cua_driver_core::EMBEDDED_ENV;
+        let original = std::env::var_os(name);
+        unsafe {
+            std::env::remove_var(name);
+        }
+        assert_eq!(execution_mode(), "standalone");
+        unsafe {
+            std::env::set_var(name, "1");
+        }
+        assert_eq!(execution_mode(), "embedded");
+        unsafe {
+            std::env::set_var(name, "true");
+        }
+        assert_eq!(execution_mode(), "standalone");
+        unsafe {
+            match original {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+    }
+
+    #[test]
+    fn agent_session_aggregate_is_bounded_content_free_and_multi_transport() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
+            ToolErrorClass,
+        };
+
+        let mut state = AgentSessionState::new(Transport::McpStdio);
+        state.started = std::time::Instant::now() - Duration::from_secs(75);
+        state.observe(
+            Transport::McpHttp,
+            true,
+            &ToolCompletionObservation {
+                tool_name: "click".into(),
+                operation: cua_driver_core::server::ToolOperation::NotApplicable,
+                success: true,
+                error_class: ToolErrorClass::None,
+                duration_bucket: DurationBucket::Under10Ms,
+                output_type: OutputType::Text,
+                output_size_bucket: OutputSizeBucket::Under1KiB,
+            },
+        );
+        state.observe(
+            Transport::McpHttp,
+            false,
+            &ToolCompletionObservation {
+                tool_name: "page".into(),
+                operation: cua_driver_core::server::ToolOperation::QueryDom,
+                success: false,
+                error_class: ToolErrorClass::InternalError,
+                duration_bucket: DurationBucket::Ms50To249,
+                output_type: OutputType::Empty,
+                output_size_bucket: OutputSizeBucket::Empty,
+            },
+        );
+        let properties = state.ended_properties(
+            cua_driver_core::session::SessionEndReason::Explicit,
+            Some(cua_driver_core::session::CursorOutcomeObservation {
+                observed: true,
+                enabled: true,
+                style: cua_driver_core::session::CursorStyleCategory::CustomIcon,
+                color_source: cua_driver_core::session::CursorColorSource::Custom,
+                label_set: true,
+                motion_customized: true,
+                active_cursor_count: 3,
+            }),
+        );
+        assert_eq!(properties["duration_bucket"], "1_4min");
+        assert_eq!(properties["tool_count_bucket"], "1_4");
+        assert_eq!(properties["computer_action_count_bucket"], "1_4");
+        assert_eq!(properties["error_count_bucket"], "1");
+        assert_eq!(properties["had_successful_tool"], true);
+        assert_eq!(properties["had_successful_computer_action"], true);
+        assert_eq!(properties["used_page"], true);
+        assert_eq!(properties["cursor_style"], "custom_icon");
+        assert_eq!(properties["cursor_color_source"], "custom");
+        assert_eq!(properties["cursor_label_set"], true);
+        assert_eq!(properties["cursor_motion_customized"], true);
+        assert_eq!(properties["multi_cursor_bucket"], "3_5");
+        assert_eq!(properties["observed_multiple_transports"], true);
+
+        let serialized = serde_json::to_string(&properties).unwrap().to_ascii_lowercase();
+        for forbidden in [
+            "private-session-id",
+            "arguments",
+            "selector",
+            "typed_text",
+            "screenshot",
+            "window_title",
+            "file_path",
+            "raw_error",
+        ] {
+            assert!(!serialized.contains(forbidden), "aggregate contains {forbidden}: {serialized}");
+        }
+    }
+
+    #[test]
+    fn agent_session_buckets_have_fixed_boundaries() {
+        for (count, expected) in [
+            (0, "0"), (1, "1_4"), (4, "1_4"), (5, "5_19"),
+            (19, "5_19"), (20, "20_99"), (99, "20_99"), (100, "gte_100"),
+        ] {
+            assert_eq!(agent_session_count_bucket(count), expected);
+        }
+        for (count, expected) in [
+            (0, "0"), (1, "1"), (2, "2_4"), (4, "2_4"), (5, "gte_5"),
+        ] {
+            assert_eq!(agent_session_error_bucket(count), expected);
+        }
+    }
+
+    #[test]
+    fn agent_session_inspect_samples_expose_only_the_contract() {
+        for event_name in [event::AGENT_SESSION_STARTED, event::AGENT_SESSION_ENDED] {
+            let payload = inspect_event(event_name).unwrap();
+            assert_eq!(payload["properties"]["telemetry_schema_version"], 3);
+            let properties = payload["properties"].as_object().unwrap();
+            for forbidden_key in ["session", "session_id", "agent_session_id", "cursor_id"] {
+                assert!(!properties.contains_key(forbidden_key));
+            }
+            let serialized = serde_json::to_string(&payload).unwrap().to_ascii_lowercase();
+            for forbidden in [
+                "arguments", "result_text", "file_path", "socket", "raw_error", "$ip",
+            ] {
+                assert!(!serialized.contains(forbidden), "inspect payload contains {forbidden}: {serialized}");
+            }
+        }
+    }
+
+    #[test]
+    fn disabled_agent_session_observation_creates_no_state_or_identity() {
+        use cua_driver_core::session::{
+            SessionDeclaration, SessionObserver, SessionStartObservation, SessionTransport,
+        };
+
+        let _guard = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|_| {
+            set_enabled(false).unwrap();
+            let session_id = "private-disabled-session-telemetry-test";
+            TelemetryObserver.on_session_started(
+                session_id,
+                SessionStartObservation {
+                    declaration: SessionDeclaration::StartSession,
+                    revived: false,
+                    transport: SessionTransport::McpStdio,
+                },
+            );
+            assert!(!AGENT_SESSIONS
+                .get_or_init(|| Mutex::new(HashMap::new()))
+                .lock()
+                .unwrap()
+                .contains_key(session_id));
+            assert!(read_install_id().is_none());
+        });
+    }
+
+    #[test]
+    fn http_tool_completion_reaches_the_final_payload_as_mcp_http() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
+            ToolErrorClass,
+        };
+
+        let properties = tool_completion_properties(ToolCompletionObservation {
+            tool_name: "click".into(),
+            operation: cua_driver_core::server::ToolOperation::NotApplicable,
+            success: true,
+            error_class: ToolErrorClass::None,
+            duration_bucket: DurationBucket::Under10Ms,
+            output_type: OutputType::Text,
+            output_size_bucket: OutputSizeBucket::Under1KiB,
+        });
+        let payload = build_payload(
+            event::MCP_TOOL_COMPLETED,
+            &properties,
+            &InstallationIdentity {
+                id: "test-id".into(),
+                persisted: true,
+            },
+            Transport::McpHttp,
+        );
+
+        assert_eq!(payload["properties"]["transport"], "mcp_http");
+        assert_eq!(payload["properties"]["tool_name"], "click");
+        assert_eq!(payload["properties"]["operation"], "not_applicable");
+        assert_eq!(payload["properties"]["success"], true);
+    }
+
+    #[test]
+    fn compound_tool_operation_reaches_payload_as_a_fixed_value() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
+            ToolErrorClass, ToolOperation,
+        };
+        let properties = tool_completion_properties(ToolCompletionObservation {
+            tool_name: "page".into(),
+            operation: ToolOperation::InsertText,
+            success: true,
+            error_class: ToolErrorClass::None,
+            duration_bucket: DurationBucket::Under10Ms,
+            output_type: OutputType::Text,
+            output_size_bucket: OutputSizeBucket::Under1KiB,
+        });
+        assert_eq!(properties["operation"], "insert_text");
+        let serialized = serde_json::to_string(&properties).unwrap();
+        for forbidden in ["selector", "private typed text", "script"] {
+            assert!(!serialized.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn cli_tool_names_are_fixed_and_content_free() {
+        assert_eq!(fixed_tool_name("click"), "click");
+        assert_eq!(fixed_tool_name("type_text_chars"), "type_text");
+        assert_eq!(fixed_tool_name("../../private/secret"), "other");
+        assert_eq!(fixed_tool_name("https://example.com/private"), "other");
+    }
+
+    #[test]
+    fn cli_operations_and_client_kinds_are_revalidated_in_the_worker() {
+        assert_eq!(fixed_cli_operation("recording", "start"), "start");
+        assert_eq!(fixed_cli_operation("recording", "/private/path"), "other");
+        assert_eq!(fixed_cli_operation("doctor", "start"), "not_applicable");
+        assert_eq!(fixed_cli_client_kind("mcp_config", "claude_code"), "claude_code");
+        assert_eq!(fixed_cli_client_kind("mcp_config", "/private/client"), "other");
+        assert_eq!(fixed_cli_client_kind("doctor", "claude_code"), "not_applicable");
     }
 
     #[test]

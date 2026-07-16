@@ -61,22 +61,6 @@ fn init_logging() {
     telemetry::register_stdio_observer();
 }
 
-/// Keep entry events only for long-running process starts. Supported finite
-/// command paths emit a bounded event only after their outcome is known.
-fn emit_entry_telemetry(command: &cli::Command) {
-    match command {
-        cli::Command::Mcp { .. } => telemetry::capture_start(
-            telemetry::event::MCP_START_LEGACY,
-            telemetry::Transport::McpStdio,
-        ),
-        cli::Command::Serve { .. } => telemetry::capture_start(
-            telemetry::event::SERVE_START_LEGACY,
-            telemetry::Transport::Cli,
-        ),
-        _ => {}
-    }
-}
-
 /// Execute finite commands in a child so the parent can observe every exit,
 /// including validation failures and legacy `process::exit` paths. Delivery is
 /// delegated to a detached, no-output worker after the child exits, so network
@@ -86,6 +70,9 @@ fn maybe_wrap_finite_command() {
         return;
     }
     let Some(command_name) = cli::finite_command_name_from_argv() else { return; };
+    let tool_name = cli::finite_tool_name_from_argv();
+    let operation = cli::finite_operation_from_argv();
+    let client_kind = cli::finite_client_kind_from_argv();
     telemetry::spawn_first_run_registration_worker();
     let Ok(executable) = std::env::current_exe() else { return; };
     let started_at = std::time::Instant::now();
@@ -95,7 +82,14 @@ fn maybe_wrap_finite_command() {
         .status();
     let Ok(status) = status else { return; };
     let exit_code = status.code().unwrap_or(1);
-    telemetry::spawn_cli_completion_worker(command_name, exit_code, started_at.elapsed());
+    telemetry::spawn_cli_completion_worker(
+        command_name,
+        tool_name.as_deref(),
+        operation,
+        client_kind,
+        exit_code,
+        started_at.elapsed(),
+    );
     std::process::exit(exit_code);
 }
 
@@ -251,7 +245,6 @@ fn main() {
     if !telemetry::is_wrapped_cli_child() && !matches!(&command, cli::Command::Telemetry(_)) {
         telemetry::spawn_first_run_registration_worker();
     }
-    emit_entry_telemetry(&command);
     match command {
         cli::Command::Telemetry(command) => {
             run_telemetry_command(command);
@@ -308,13 +301,29 @@ fn main() {
         }
         cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
             responsibility::reexec_disclaimed_if_needed();
+            let gate_opts = platform_macos::permissions::GateOpts::from_env_and_flag(
+                no_permissions_gate,
+            );
+            if let Some((progress, context)) =
+                platform_macos::permissions::gate::prepare_telemetry_context(gate_opts.opt_out)
+            {
+                if progress == platform_macos::permissions::GateProgress::Started {
+                    telemetry::capture_permissions_gate_started(
+                        context.missing_accessibility,
+                        context.missing_screen_recording,
+                    );
+                }
+            }
+            if !platform_macos::permissions::gate::is_gate_reexec() {
+                telemetry::capture_start(
+                    telemetry::event::SERVE_START_LEGACY,
+                    telemetry::Transport::Daemon,
+                );
+            }
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr
             // early in the serve lifecycle.
             version_check::maybe_announce_update();
-            let gate_opts = platform_macos::permissions::GateOpts::from_env_and_flag(
-                no_permissions_gate,
-            );
             cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
                 if let Some(wid) = window_id {
                     platform_macos::capture::screenshot_window_bytes(wid as u32).ok()
@@ -407,7 +416,39 @@ fn main() {
             // and the daemon continues to serve — individual tool calls
             // will then fail with the underlying TCC error, mirroring
             // Swift's "user closed the panel" fallback.
-            if let Err(e) = platform_macos::permissions::run_if_needed(gate_opts) {
+            let gate_result = platform_macos::permissions::run_if_needed_with_observer(
+                gate_opts,
+                |progress, context| match progress {
+                    platform_macos::permissions::GateProgress::Started => {
+                        telemetry::capture_permissions_gate_started(
+                            context.missing_accessibility,
+                            context.missing_screen_recording,
+                        );
+                    }
+                    platform_macos::permissions::GateProgress::Dismissed => {
+                        telemetry::capture_permissions_gate_dismissed(
+                            context.missing_accessibility,
+                            context.missing_screen_recording,
+                            context.elapsed,
+                        );
+                    }
+                },
+            );
+            let gate_context = platform_macos::permissions::gate::telemetry_context();
+            if gate_context.engaged {
+                telemetry::capture_permissions_gate_completed(
+                    gate_context.missing_accessibility,
+                    gate_context.missing_screen_recording,
+                    gate_context.panel_shown,
+                    gate_context.dismissed,
+                    telemetry::permissions_gate_resolution(
+                        gate_result.is_err(),
+                        gate_context.dismissed,
+                    ),
+                    gate_context.elapsed,
+                );
+            }
+            if let Err(e) = gate_result {
                 eprintln!("[cua-driver] permissions gate: {e}");
                 eprintln!("[cua-driver] continuing — tool calls touching AX or \
                            Screen Recording fail until you grant the missing TCC \
@@ -501,6 +542,7 @@ fn main() {
             return;
         }
         cli::Command::Mcp { no_daemon_relaunch, socket, claude_code_compat } => {
+            let startup_started = std::time::Instant::now();
             CLAUDE_CODE_COMPAT.store(claude_code_compat, Ordering::SeqCst);
             // Long-running MCP server — kick off the background update
             // check before any TCC / daemon-proxy decisions so the
@@ -513,7 +555,16 @@ fn main() {
             // attribution and forwards stdio MCP through its socket.
             // Issue #1525 / mirror of Swift PR #1479.
             if cli::should_use_daemon_proxy(no_daemon_relaunch) {
-                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket, claude_code_compat) {
+                if let Err(e) = cli::run_mcp_via_daemon_proxy(
+                    socket,
+                    claude_code_compat,
+                    |daemon, success| telemetry::capture_mcp_startup_completed(
+                        "daemon_proxy",
+                        daemon.telemetry_value(),
+                        success,
+                        startup_started.elapsed(),
+                    ),
+                ) {
                     eprintln!("cua-driver-rs: {e}");
                     telemetry::flush_pending(std::time::Duration::from_millis(750));
                     std::process::exit(1);
@@ -525,6 +576,12 @@ fn main() {
             // `socket` flag is daemon-proxy-only; it has no meaning
             // in the in-process path, so we drop it on the floor.
             let _ = socket;
+            telemetry::capture_mcp_startup_completed(
+                "in_process",
+                "not_applicable",
+                true,
+                startup_started.elapsed(),
+            );
         }
     }
 
@@ -631,7 +688,6 @@ fn main() -> anyhow::Result<()> {
     if !telemetry::is_wrapped_cli_child() && !matches!(&command, cli::Command::Telemetry(_)) {
         telemetry::spawn_first_run_registration_worker();
     }
-    emit_entry_telemetry(&command);
     match command {
         cli::Command::Telemetry(command) => {
             run_telemetry_command(command);
@@ -668,6 +724,10 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
             responsibility::reexec_disclaimed_if_needed();
+            telemetry::capture_start(
+                telemetry::event::SERVE_START_LEGACY,
+                telemetry::Transport::Daemon,
+            );
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr.
             version_check::maybe_announce_update();
@@ -756,6 +816,7 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         cli::Command::Mcp { no_daemon_relaunch, socket, claude_code_compat } => {
+            let startup_started = std::time::Instant::now();
             CLAUDE_CODE_COMPAT.store(claude_code_compat, Ordering::SeqCst);
             // Long-running MCP server — kick off the background update
             // check before any daemon-proxy decisions.
@@ -771,7 +832,16 @@ fn main() -> anyhow::Result<()> {
             // Code over SSH lands in Session 0 and every desktop
             // tool returns empty. See `cli::should_use_daemon_proxy`.
             if cli::should_use_daemon_proxy(no_daemon_relaunch) {
-                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket, claude_code_compat) {
+                if let Err(e) = cli::run_mcp_via_daemon_proxy(
+                    socket,
+                    claude_code_compat,
+                    |daemon, success| telemetry::capture_mcp_startup_completed(
+                        "daemon_proxy",
+                        daemon.telemetry_value(),
+                        success,
+                        startup_started.elapsed(),
+                    ),
+                ) {
                     eprintln!("cua-driver-rs: {e}");
                     telemetry::flush_pending(std::time::Duration::from_millis(750));
                     std::process::exit(1);
@@ -784,6 +854,12 @@ fn main() -> anyhow::Result<()> {
             // in-process path (mirrors the macOS arm's drop-on-floor
             // behaviour).
             let _ = socket;
+            telemetry::capture_mcp_startup_completed(
+                "in_process",
+                "not_applicable",
+                true,
+                startup_started.elapsed(),
+            );
         }
     }
 

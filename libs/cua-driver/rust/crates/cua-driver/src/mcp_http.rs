@@ -22,7 +22,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use cua_driver_core::protocol::{Request, Response};
-use cua_driver_core::server::handle_request;
+use cua_driver_core::server::{
+    handle_request, session_tool_context, tool_observation_timer, StdioExecutionPath,
+};
 use cua_driver_core::tool::ToolRegistry;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -112,9 +114,41 @@ async fn dispatch(body: &[u8], registry: &Arc<ToolRegistry>) -> Option<String> {
     if req.id.is_none() {
         return None; // notification
     }
+    let initialize_metadata = req.initialize_metadata();
+    let session_context = session_tool_context(
+        &req,
+        registry,
+        cua_driver_core::session::SessionTransport::McpHttp,
+    );
     let id = req.id.clone().unwrap_or(serde_json::Value::Null);
     apply_session_identity(&mut req);
-    Some(serialize(&handle_request(req, id, registry).await))
+    let timer = http_tool_observation_timer(&req, registry);
+    let response = handle_request(req, id, registry).await;
+    if let Some(timer) = timer {
+        let outcome = timer.finish(&response);
+        if let Some(context) = session_context {
+            context.complete(&outcome);
+        }
+        crate::telemetry::capture_tool_completed(outcome, crate::telemetry::Transport::McpHttp);
+    }
+    if let Some(metadata) = initialize_metadata {
+        crate::telemetry::capture_mcp_session_started(
+            metadata,
+            crate::telemetry::Transport::McpHttp,
+        );
+    }
+    Some(serialize(&response))
+}
+
+fn http_tool_observation_timer(
+    req: &Request,
+    registry: &ToolRegistry,
+) -> Option<cua_driver_core::server::ToolObservationTimer> {
+    tool_observation_timer(
+        &req,
+        |name| name == "type_text_chars" || registry.get_def(name).is_some(),
+        StdioExecutionPath::InProcess,
+    )
 }
 
 fn serialize(resp: &Response) -> String {
@@ -259,6 +293,23 @@ mod tests {
         apply_session_identity(&mut req);
         let args = req.params.unwrap();
         assert!(args.get("arguments").unwrap().get("_session_id").is_none());
+    }
+
+    #[test]
+    fn http_observes_tool_calls_but_not_initialize_requests() {
+        let registry = ToolRegistry::new();
+        let tool_call: Request = serde_json::from_value(json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": "unknown", "arguments": {} }
+        }))
+        .unwrap();
+        assert!(http_tool_observation_timer(&tool_call, &registry).is_some());
+
+        let initialize: Request = serde_json::from_value(json!({
+            "jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {}
+        }))
+        .unwrap();
+        assert!(http_tool_observation_timer(&initialize, &registry).is_none());
     }
 
     #[test]

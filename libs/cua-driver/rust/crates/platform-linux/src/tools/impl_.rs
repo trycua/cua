@@ -6778,6 +6778,43 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     let state = ToolState::new();
     {
         let cursor_registry = state.cursor_registry.clone();
+        let _ = cua_driver_core::session::set_cursor_outcome_reader(std::sync::Arc::new(
+            move |session_id| {
+                let state = cursor_registry.get(session_id);
+                let motion_customized = state.is_some()
+                    && crate::overlay::current_motion_for(session_id)
+                        != cursor_overlay::MotionConfig::default();
+                let active_cursor_count = cursor_registry
+                    .all_states()
+                    .iter()
+                    .filter(|state| state.config.cursor_id != "default")
+                    .count()
+                    .max(1);
+                match state {
+                    Some(state) => cua_driver_core::session::bounded_cursor_outcome(
+                        true,
+                        state.config.enabled,
+                        state.config.cursor_icon.as_deref(),
+                        state.config.cursor_color.as_deref(),
+                        state.config.cursor_label.as_deref(),
+                        motion_customized,
+                        active_cursor_count,
+                    ),
+                    None => cua_driver_core::session::bounded_cursor_outcome(
+                        false,
+                        false,
+                        None,
+                        None,
+                        None,
+                        false,
+                        active_cursor_count,
+                    ),
+                }
+            },
+        ));
+    }
+    {
+        let cursor_registry = state.cursor_registry.clone();
         let state_for_session_end = state.clone();
         cua_driver_core::session::register_session_end_hook(move |session_id| {
             cursor_registry.remove(session_id);

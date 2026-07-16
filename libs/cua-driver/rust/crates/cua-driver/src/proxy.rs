@@ -25,6 +25,7 @@
 
 use std::sync::Arc;
 
+use cua_driver_core::policy::{configured_policy, PolicyDecision};
 use cua_driver_core::protocol::{initialize_result, Request, Response};
 use cua_driver_core::server::{
     observe_proxy_session_started, observe_proxy_tool_completed, tool_observation_timer,
@@ -33,7 +34,9 @@ use cua_driver_core::server::{
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
 
-use crate::serve::{is_daemon_listening, send_request, DaemonRequest};
+use crate::serve::{
+    is_daemon_listening, send_request, DaemonRequest, ToolObservationOrigin,
+};
 
 /// Run the MCP stdio proxy. Reads JSON-RPC lines from stdin, forwards
 /// the body of each `tools/list` / `tools/call` to the daemon at
@@ -49,6 +52,7 @@ use crate::serve::{is_daemon_listening, send_request, DaemonRequest};
 /// advertises zero tools and then errors on every call. Matches
 /// Swift `makeProxy`'s `fetchProxyToolList` pre-check.
 pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
+    configured_policy().map_err(anyhow::Error::msg)?;
     if !is_daemon_listening(&socket_path) {
         anyhow::bail!(
             "cua-driver-rs daemon not reachable on {socket_path}. Start it \
@@ -97,7 +101,8 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
     // static for the lifetime of the daemon, so polling on every
     // `tools/list` would waste a round-trip per call. Swift does the
     // same caching in `fetchProxyToolList`.
-    let cached_tools_list = fetch_tools_list_from_daemon(&socket_path, &session_id)?;
+    let (cached_tools_list, daemon_observes_tool_calls) =
+        fetch_tools_list_from_daemon(&socket_path, &session_id)?;
     let cached_tools_list = Arc::new(cached_tools_list);
 
     let stdin = tokio::io::stdin();
@@ -132,21 +137,48 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
                 let initialize_metadata = (!session_observed)
                     .then(|| req.initialize_metadata())
                     .flatten();
-                let tool_timer = tool_observation_timer(
-                    &req,
-                    |name| proxy_knows_tool(&cached_tools_list, name),
-                    StdioExecutionPath::DaemonProxy,
-                );
+                let session_context = (!daemon_observes_tool_calls)
+                    .then(|| {
+                        req.tool_call().ok().and_then(|call| {
+                            let known_tool = proxy_knows_tool(&cached_tools_list, &call.name);
+                            cua_driver_core::session::begin_tool_call(
+                                &call.name,
+                                &call.args,
+                                known_tool,
+                                cua_driver_core::session::SessionTransport::McpStdio,
+                            )
+                        })
+                    })
+                    .flatten();
+                let tool_timer = (!daemon_observes_tool_calls)
+                    .then(|| {
+                        tool_observation_timer(
+                            &req,
+                            |name| proxy_knows_tool(&cached_tools_list, name),
+                            StdioExecutionPath::DaemonProxy,
+                        )
+                    })
+                    .flatten();
                 let id = req.id.clone().unwrap_or(serde_json::Value::Null);
-                let response =
-                    handle_proxy_request(req, id, &socket_path, &cached_tools_list, &session_id)
-                        .await;
+                let response = handle_proxy_request(
+                    req,
+                    id,
+                    &socket_path,
+                    &cached_tools_list,
+                    &session_id,
+                    daemon_observes_tool_calls,
+                )
+                .await;
                 if let Some(metadata) = initialize_metadata {
                     observe_proxy_session_started(metadata);
                     session_observed = true;
                 }
                 if let Some(timer) = tool_timer {
-                    observe_proxy_tool_completed(timer.finish(&response));
+                    let outcome = timer.finish(&response);
+                    if let Some(context) = session_context {
+                        context.complete(&outcome);
+                    }
+                    observe_proxy_tool_completed(outcome);
                 }
                 response
             }
@@ -207,6 +239,7 @@ async fn run_control_connection(socket_path: String, session_id: String) {
         name: None,
         args: None,
         session_id: Some(session_id.clone()),
+        observation_origin: None,
     };
     let line = match serde_json::to_string(&begin) {
         Ok(s) => s + "\n",
@@ -326,12 +359,13 @@ fn mint_session_id() -> String {
 fn fetch_tools_list_from_daemon(
     socket_path: &str,
     session_id: &str,
-) -> anyhow::Result<serde_json::Value> {
+) -> anyhow::Result<(serde_json::Value, bool)> {
     let req = DaemonRequest {
         method: "list".into(),
         name: None,
         args: None,
         session_id: Some(session_id.to_owned()),
+        observation_origin: None,
     };
     let resp = send_request(socket_path, &req)?;
     if !resp.ok {
@@ -422,11 +456,23 @@ fn fetch_tools_list_from_daemon(
         .cloned()
         .unwrap_or_else(|| serde_json::Value::String("1".to_owned()));
 
-    Ok(serde_json::json!({
-        "tools": mcp_tools,
-        "capability_version": capability_version,
-        "schema_version": schema_version,
-    }))
+    let daemon_observes_tool_calls = daemon_owns_tool_observation(&result);
+
+    Ok((
+        serde_json::json!({
+            "tools": mcp_tools,
+            "capability_version": capability_version,
+            "schema_version": schema_version,
+        }),
+        daemon_observes_tool_calls,
+    ))
+}
+
+fn daemon_owns_tool_observation(result: &serde_json::Value) -> bool {
+    result
+        .get("tool_observation_owner")
+        .and_then(serde_json::Value::as_str)
+        == Some("daemon")
 }
 
 /// JSON-RPC method dispatcher for the proxy. Mirrors
@@ -444,6 +490,7 @@ async fn handle_proxy_request(
     socket_path: &str,
     cached_tools_list: &Arc<serde_json::Value>,
     session_id: &str,
+    daemon_observes_tool_calls: bool,
 ) -> Response {
     match req.method.as_str() {
         "initialize" => Response::ok(id, initialize_result()),
@@ -452,7 +499,44 @@ async fn handle_proxy_request(
 
         "tools/call" => match req.tool_call() {
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
-            Ok(call) => forward_tool_call(id, call.name, call.args, socket_path, session_id).await,
+            Ok(call) => {
+                match configured_policy() {
+                    Ok(Some(policy)) => match policy.evaluate(&call.name, &call.args) {
+                        PolicyDecision::Allow => {}
+                        PolicyDecision::Deny(reason) => {
+                            return Response::error(
+                                id,
+                                -32603,
+                                format!("Permission denied: {reason}"),
+                            );
+                        }
+                        PolicyDecision::Error(message) => {
+                            return Response::error(
+                                id,
+                                -32603,
+                                format!("Policy evaluation error: {message}"),
+                            );
+                        }
+                    },
+                    Ok(None) => {}
+                    Err(message) => {
+                        return Response::error(
+                            id,
+                            -32603,
+                            format!("Policy loading error: {message}"),
+                        );
+                    }
+                }
+                forward_tool_call(
+                    id,
+                    call.name,
+                    call.args,
+                    socket_path,
+                    session_id,
+                    daemon_observes_tool_calls,
+                )
+                .await
+            }
         },
 
         other => {
@@ -481,12 +565,15 @@ async fn forward_tool_call(
     args: serde_json::Value,
     socket_path: &str,
     session_id: &str,
+    daemon_observes_tool_calls: bool,
 ) -> Response {
     let req = DaemonRequest {
         method: "call".into(),
         name: Some(name.clone()),
         args: Some(args),
         session_id: Some(session_id.to_owned()),
+        observation_origin: daemon_observes_tool_calls
+            .then_some(ToolObservationOrigin::McpProxy),
     };
 
     // The daemon client is sync, so jump to a blocking thread to keep
@@ -635,5 +722,16 @@ mod tests {
         assert!(proxy_knows_tool(&cached, "type_text_chars"), "deprecated alias stays bounded/known");
         assert!(!proxy_knows_tool(&cached, "click/private-user-value"));
         assert!(!proxy_knows_tool(&cached, ""));
+    }
+
+    #[test]
+    fn observation_ownership_requires_the_daemon_capability() {
+        assert!(daemon_owns_tool_observation(&serde_json::json!({
+            "tool_observation_owner": "daemon"
+        })));
+        assert!(!daemon_owns_tool_observation(&serde_json::json!({})));
+        assert!(!daemon_owns_tool_observation(&serde_json::json!({
+            "tool_observation_owner": "proxy"
+        })));
     }
 }

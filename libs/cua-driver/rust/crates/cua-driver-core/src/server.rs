@@ -5,15 +5,16 @@ use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
 
+use crate::policy::{configured_policy, PolicyDecision};
 use crate::protocol::{initialize_result, InitializeMetadata, Request, Response, ResponseBody};
 use crate::tool::ToolRegistry;
 
 /// Receives privacy-bounded observations from the stdio MCP transport.
 ///
 /// The observer never receives tool arguments, text/image content, response
-/// bodies, arbitrary MCP metadata, or raw errors. HTTP dispatch deliberately
-/// bypasses this seam and remains unobserved until HTTP session semantics are
-/// defined.
+/// bodies, arbitrary MCP metadata, or raw errors. HTTP dispatch reuses the
+/// bounded tool timer directly; HTTP session-start telemetry remains deferred
+/// until the transport has explicit session semantics.
 pub trait StdioObserver: Send + Sync + 'static {
     fn on_session_started(&self, metadata: InitializeMetadata);
     fn on_tool_completed(&self, outcome: ToolCompletionObservation);
@@ -125,17 +126,69 @@ impl ToolErrorClass {
     }
 }
 
-/// Privacy-bounded completion record for a stdio `tools/call` request.
+/// Privacy-bounded completion record for a known tool call on any transport.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolCompletionObservation {
     /// Still self-reported input at this layer. The telemetry consumer must map
     /// this through the registry allowlist and use an `unknown` fallback.
     pub tool_name: String,
+    pub operation: ToolOperation,
     pub success: bool,
     pub error_class: ToolErrorClass,
     pub duration_bucket: DurationBucket,
     pub output_type: OutputType,
     pub output_size_bucket: OutputSizeBucket,
+}
+
+/// Closed sub-operation vocabulary for compound tools. This enum is derived
+/// at the dispatch boundary and cannot retain selectors, scripts, typed text,
+/// or any other argument content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolOperation {
+    NotApplicable,
+    ExecuteJavascript,
+    GetText,
+    QueryDom,
+    ClickElement,
+    InsertText,
+    TypeKeystrokes,
+    EnableJavascriptAppleEvents,
+    Other,
+}
+
+impl ToolOperation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotApplicable => "not_applicable",
+            Self::ExecuteJavascript => "execute_javascript",
+            Self::GetText => "get_text",
+            Self::QueryDom => "query_dom",
+            Self::ClickElement => "click_element",
+            Self::InsertText => "insert_text",
+            Self::TypeKeystrokes => "type_keystrokes",
+            Self::EnableJavascriptAppleEvents => "enable_javascript_apple_events",
+            Self::Other => "other",
+        }
+    }
+}
+
+pub fn tool_operation(tool_name: &str, args: Option<&serde_json::Value>) -> ToolOperation {
+    if tool_name != "page" {
+        return ToolOperation::NotApplicable;
+    }
+    match args
+        .and_then(|value| value.get("action"))
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("execute_javascript") => ToolOperation::ExecuteJavascript,
+        Some("get_text") => ToolOperation::GetText,
+        Some("query_dom") => ToolOperation::QueryDom,
+        Some("click_element") => ToolOperation::ClickElement,
+        Some("insert_text") => ToolOperation::InsertText,
+        Some("type_keystrokes") => ToolOperation::TypeKeystrokes,
+        Some("enable_javascript_apple_events") => ToolOperation::EnableJavascriptAppleEvents,
+        _ => ToolOperation::Other,
+    }
 }
 
 /// Which stdio execution path produced a response. This only affects the
@@ -150,6 +203,7 @@ pub enum StdioExecutionPath {
 /// exactly the same privacy and bucketing logic as the in-process transport.
 pub struct ToolObservationTimer {
     tool_name: String,
+    operation: ToolOperation,
     known_tool: bool,
     valid_params: bool,
     path: StdioExecutionPath,
@@ -163,8 +217,25 @@ impl ToolObservationTimer {
         valid_params: bool,
         path: StdioExecutionPath,
     ) -> Self {
+        Self::start_with_operation(
+            tool_name,
+            ToolOperation::NotApplicable,
+            known_tool,
+            valid_params,
+            path,
+        )
+    }
+
+    pub fn start_with_operation(
+        tool_name: String,
+        operation: ToolOperation,
+        known_tool: bool,
+        valid_params: bool,
+        path: StdioExecutionPath,
+    ) -> Self {
         Self {
             tool_name,
+            operation,
             known_tool,
             valid_params,
             path,
@@ -193,6 +264,7 @@ pub fn observe_proxy_tool_completed(outcome: ToolCompletionObservation) {
 /// responses to stdout. Exits when stdin reaches EOF or a fatal I/O
 /// error occurs.
 pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
+    configured_policy().map_err(anyhow::Error::msg)?;
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
     let mut reader = BufReader::new(stdin);
@@ -226,6 +298,11 @@ pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
                 let initialize_metadata = (!session_observed)
                     .then(|| req.initialize_metadata())
                     .flatten();
+                let session_context = session_tool_context(
+                    &req,
+                    &registry,
+                    crate::session::SessionTransport::McpStdio,
+                );
                 let tool_timer = tool_observation_timer(
                     &req,
                     |name| name == "type_text_chars" || registry.get_def(name).is_some(),
@@ -241,7 +318,11 @@ pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
                     session_observed = true;
                 }
                 if let Some(timer) = tool_timer {
-                    notify_tool_completed(timer.finish(&response));
+                    let outcome = timer.finish(&response);
+                    if let Some(context) = session_context {
+                        context.complete(&outcome);
+                    }
+                    notify_tool_completed(outcome);
                 }
                 response
             }
@@ -271,8 +352,12 @@ pub fn tool_observation_timer(
         return None;
     }
     let parsed = req.tool_call();
-    let (tool_name, valid_params) = match parsed {
-        Ok(call) => (bounded_tool_name(&call.name), true),
+    let (tool_name, operation, valid_params) = match parsed {
+        Ok(call) => {
+            let tool_name = bounded_tool_name(&call.name);
+            let operation = tool_operation(&tool_name, Some(&call.args));
+            (tool_name, operation, true)
+        }
         Err(_) => {
             let name = req
                 .params
@@ -281,16 +366,34 @@ pub fn tool_observation_timer(
                 .and_then(serde_json::Value::as_str)
                 .map(bounded_tool_name)
                 .unwrap_or_else(|| "unknown".to_owned());
-            (name, false)
+            let operation = tool_operation(&name, None);
+            (name, operation, false)
         }
     };
     let known_tool = valid_params && is_known_tool(&tool_name);
-    Some(ToolObservationTimer::start(
+    Some(ToolObservationTimer::start_with_operation(
         tool_name,
+        operation,
         known_tool,
         valid_params,
         path,
     ))
+}
+
+/// Build a private aggregate-session context from a valid, known tool call.
+/// Only the public `session` argument is considered; reserved fallback keys
+/// and all other arguments remain outside the observer seam.
+pub fn session_tool_context(
+    req: &Request,
+    registry: &ToolRegistry,
+    transport: crate::session::SessionTransport,
+) -> Option<crate::session::SessionToolContext> {
+    if req.method != "tools/call" {
+        return None;
+    }
+    let call = req.tool_call().ok()?;
+    let known_tool = call.name == "type_text_chars" || registry.get_def(&call.name).is_some();
+    crate::session::begin_tool_call(&call.name, &call.args, known_tool, transport)
 }
 
 fn notify_session_started(metadata: InitializeMetadata) {
@@ -371,6 +474,7 @@ fn classify_tool_completion(
 
     ToolCompletionObservation {
         tool_name: timer.tool_name,
+        operation: timer.operation,
         success,
         error_class,
         duration_bucket,
@@ -469,6 +573,33 @@ pub async fn handle_request(req: Request, id: serde_json::Value, registry: &Arc<
         "tools/call" => match req.tool_call() {
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
             Ok(call) => {
+                match configured_policy() {
+                    Ok(Some(policy)) => match policy.evaluate(&call.name, &call.args) {
+                        PolicyDecision::Allow => {}
+                        PolicyDecision::Deny(reason) => {
+                            return Response::error(
+                                id,
+                                -32603,
+                                format!("Permission denied: {reason}"),
+                            );
+                        }
+                        PolicyDecision::Error(message) => {
+                            return Response::error(
+                                id,
+                                -32603,
+                                format!("Policy evaluation error: {message}"),
+                            );
+                        }
+                    },
+                    Ok(None) => {}
+                    Err(message) => {
+                        return Response::error(
+                            id,
+                            -32603,
+                            format!("Policy loading error: {message}"),
+                        );
+                    }
+                }
                 let result = registry.invoke(&call.name, call.args).await;
                 match serde_json::to_value(result) {
                     Ok(v) => Response::ok(id, v),
@@ -515,6 +646,40 @@ mod observation_tests {
         for forbidden in ["private task text", "private-base64", "result body"] {
             assert!(!debug.contains(forbidden), "observer leaked content: {debug}");
         }
+    }
+
+    #[test]
+    fn page_operation_is_closed_and_retains_no_argument_content() {
+        for (action, expected) in [
+            ("execute_javascript", ToolOperation::ExecuteJavascript),
+            ("get_text", ToolOperation::GetText),
+            ("query_dom", ToolOperation::QueryDom),
+            ("click_element", ToolOperation::ClickElement),
+            ("insert_text", ToolOperation::InsertText),
+            ("type_keystrokes", ToolOperation::TypeKeystrokes),
+            (
+                "enable_javascript_apple_events",
+                ToolOperation::EnableJavascriptAppleEvents,
+            ),
+            ("private-custom-action", ToolOperation::Other),
+        ] {
+            let args = serde_json::json!({
+                "action": action,
+                "selector": "private selector",
+                "script": "private script",
+                "text": "private typed text"
+            });
+            let operation = tool_operation("page", Some(&args));
+            assert_eq!(operation, expected);
+            let debug = format!("{operation:?}");
+            for forbidden in ["private selector", "private script", "private typed text"] {
+                assert!(!debug.contains(forbidden));
+            }
+        }
+        assert_eq!(
+            tool_operation("click", Some(&serde_json::json!({"action": "private"}))),
+            ToolOperation::NotApplicable
+        );
     }
 
     #[test]

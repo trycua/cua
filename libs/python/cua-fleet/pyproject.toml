@@ -1,0 +1,51 @@
+[project]
+name = "cua-fleet"
+version = "0.0.2"
+description = "Reserved for Cua Fleet — fleet orchestration for computer-use agents and sandboxes"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "TryCua", email = "hello@trycua.com" }
+]
+keywords = [
+    "computer-use",
+    "sandbox",
+    "agents",
+    "fleet",
+    "orchestration",
+    "automation",
+]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries",
+]
+requires-python = ">=3.9"
+
+dependencies = []
+
+[project.urls]
+Homepage      = "https://github.com/trycua/cua"
+Documentation = "https://docs.trycua.com"
+Repository    = "https://github.com/trycua/cua"
+Issues        = "https://github.com/trycua/cua/issues"
+
+[build-system]
+requires      = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "cua_fleet/**",
+    "README.md",
+    "LICENSE",
+]
+exclude = [
+    "cua_fleet/**/__pycache__",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["cua_fleet"]

@@ -1,0 +1,219 @@
+---
+title: Restrict tool access with permission policies
+description: Use YAML or Rego policies to control which MCP tools an agent can call and what arguments it may pass.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+Cua Driver's permission policy engine lets you define exactly which tools an agent may call, and — for sensitive tools — restrict the argument values it can supply. The engine is deny-by-default: any tool not explicitly allowed is blocked. Two policy formats are supported — YAML for straightforward allow/deny lists and Rego for programmable logic.
+
+## Before you start
+
+- Cua Driver installed and working (`cua-driver --version`)
+- A running `cua-driver serve` daemon (or a process about to be started)
+- For Rego policies: a build with the `rego` feature enabled (included in the default release binary)
+
+## Create a YAML policy
+
+Create a file, for example `~/.cua-driver/policy.yaml`, that lists the tools you want to allow:
+
+```yaml
+allow:
+  tools:
+    - screenshot
+    - get_window_state
+    - list_apps
+    - list_windows
+    - click
+    - type_text
+    - press_key
+    - scroll
+    - launch_app
+    - wait
+deny:
+  tools:
+    - shell_execute
+```
+
+Every tool in `allow.tools` is unconditionally permitted. Every tool in `deny.tools` is rejected even if it also appears in an allow rule. Any tool not mentioned in either section is denied by the default policy.
+
+## Add argument constraints to a YAML policy
+
+Use `allow.rules` to permit a tool only when its arguments satisfy bounds, length, pattern, or allowed-value checks:
+
+```yaml
+allow:
+  tools:
+    - screenshot
+    - get_window_state
+  rules:
+    - tool: type_text
+      constraints:
+        text:
+          max_length: 500
+          pattern: "^[\\x20-\\x7E\\n\\t]*$"   # printable ASCII only
+    - tool: scroll
+      constraints:
+        amount:
+          min: -20
+          max: 20
+    - tool: launch_app
+      constraints:
+        bundle_id:
+          allowed:
+            - "com.apple.Safari"
+            - "com.google.Chrome"
+            - "com.microsoft.VSCode"
+deny:
+  tools:
+    - shell_execute
+```
+
+Each `constraints` key matches a JSON argument name. A rule allows the call only when **all** constraints pass. If you list the same tool in more than one rule, the call is allowed when **any** rule matches.
+
+<Callout type="info">
+  The `type_text_chars` tool name is automatically aliased to `type_text` before policy evaluation, so a rule on `type_text` covers both forms.
+</Callout>
+
+## Create a Rego policy
+
+For more complex access control — for example, allowing different tool sets based on the active task or runtime conditions — write a Rego policy:
+
+```rego
+package cua.policy
+
+import rego.v1
+
+# Tools that are always allowed.
+safe_tools := {
+    "screenshot",
+    "get_window_state",
+    "list_apps",
+    "list_windows",
+    "click",
+    "press_key",
+    "scroll",
+    "wait",
+}
+
+allow if {
+    input.tool in safe_tools
+}
+
+# Allow type_text only for short printable strings.
+allow if {
+    input.tool == "type_text"
+    count(input.arguments.text) <= 500
+    regex.match(`^[\x20-\x7E\n\t]*$`, input.arguments.text)
+}
+```
+
+Save this as `~/.cua-driver/policy.rego`. The policy engine evaluates `data.cua.policy.allow`; the rule must produce a boolean. `undefined` is treated as `false` (deny).
+
+## Load a policy directory (Rego only)
+
+When you point the environment variable at a directory instead of a single file, the engine loads every `.rego` file in that directory in lexicographic order:
+
+```bash
+mkdir -p ~/.cua-driver/policies
+# Place policy files in the directory:
+# 00_safe_tools.rego
+# 10_type_text.rego
+```
+
+Set the environment variable to the directory path:
+
+```bash
+export CUA_DRIVER_POLICY_FILE=~/.cua-driver/policies
+```
+
+<Callout type="warn">
+  A directory path only works with Rego. Pointing it at a directory when the `rego` feature is disabled returns an error on startup.
+</Callout>
+
+## Enable the policy
+
+Set `CUA_DRIVER_POLICY_FILE` to the path of your policy file before starting the driver:
+
+<Tabs items={['bash/zsh', 'fish', 'env for a single process']}>
+  <Tab value="bash/zsh">
+```bash
+export CUA_DRIVER_POLICY_FILE=~/.cua-driver/policy.yaml
+cua-driver serve
+```
+  </Tab>
+  <Tab value="fish">
+```fish
+set -x CUA_DRIVER_POLICY_FILE ~/.cua-driver/policy.yaml
+cua-driver serve
+```
+  </Tab>
+  <Tab value="env for a single process">
+```bash
+CUA_DRIVER_POLICY_FILE=~/.cua-driver/policy.yaml cua-driver serve
+```
+  </Tab>
+</Tabs>
+
+The policy is loaded once when the process starts. Changing the file while the daemon is running has no effect until the daemon restarts.
+
+## Verify the policy is active
+
+Make a call that should be denied and confirm the error:
+
+```bash
+cua-driver call shell_execute '{"command":"echo hello"}'
+# Error: tool 'shell_execute' is explicitly denied
+```
+
+Make a call that should be allowed:
+
+```bash
+cua-driver call screenshot '{}'
+# ✅ ...
+```
+
+## Add the policy to autostart (macOS launchd)
+
+If you use `cua-driver autostart enable`, add the environment variable to the launchd plist so it is set when the daemon starts automatically:
+
+1. Find the plist file:
+   ```bash
+   cat ~/Library/LaunchAgents/com.trycua.cua-driver.plist
+   ```
+
+2. Add an `EnvironmentVariables` key:
+   ```xml
+   <key>EnvironmentVariables</key>
+   <dict>
+     <key>CUA_DRIVER_POLICY_FILE</key>
+     <string>/Users/you/.cua-driver/policy.yaml</string>
+   </dict>
+   ```
+
+3. Reload the agent:
+   ```bash
+   launchctl unload ~/Library/LaunchAgents/com.trycua.cua-driver.plist
+   launchctl load  ~/Library/LaunchAgents/com.trycua.cua-driver.plist
+   ```
+
+## Troubleshooting
+
+**All calls are denied even though my policy allows them.**
+Check that `CUA_DRIVER_POLICY_FILE` points to the correct path and that the daemon has been restarted after setting the variable. A typo in the file path means the policy file is not found, which disables enforcement and allows all calls. A warning is logged at startup when the path does not exist.
+
+**The daemon fails to start with a policy parse error.**
+YAML policies must not contain empty tool names, and Rego policies must define `data.cua.policy.allow` as a boolean rule. Run `cat $CUA_DRIVER_POLICY_FILE` to confirm the file is readable and syntactically valid.
+
+**A tool I allowed still returns a denial.**
+The rule might exist but the argument constraints are not satisfied. Check the denial message: `"argument 'text' must be at most 500 characters"` tells you which constraint failed. For Rego policies, add a `print` statement temporarily to trace which branch runs.
+
+**I want to allow all tools.**
+Do not set `CUA_DRIVER_POLICY_FILE`. When the variable is absent, the policy engine is disabled and every tool call is allowed.
+
+## Related
+
+- [Permission policies](/reference/cua-driver/permission-policies): full YAML schema and Rego interface reference
+- [How permission policies work](/concepts/how-permission-policies-work): the engine internals, evaluation order, and trust model
+- [MCP tools](/reference/cua-driver/mcp-tools): complete list of tool names and their arguments

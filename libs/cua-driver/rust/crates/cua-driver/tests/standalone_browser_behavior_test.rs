@@ -114,16 +114,34 @@ fn browser_specs() -> Vec<BrowserSpec> {
     }
 
     #[cfg(target_os = "macos")]
-    let candidates = [
-        (
-            "chrome",
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        ),
-        (
-            "edge",
-            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-        ),
-    ];
+    {
+        let home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
+        return [
+            (
+                "chrome",
+                PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            ),
+            (
+                "chrome",
+                home.join("Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            ),
+            (
+                "edge",
+                PathBuf::from("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+            ),
+            (
+                "edge",
+                home.join("Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+            ),
+        ]
+        .into_iter()
+        .filter(|(_, executable)| executable.is_file())
+        .map(|(name, executable)| BrowserSpec {
+            name: name.to_owned(),
+            executable,
+        })
+        .collect();
+    }
     #[cfg(target_os = "linux")]
     let candidates = [
         ("chrome", "/usr/bin/google-chrome"),
@@ -173,7 +191,7 @@ fn browser_specs() -> Vec<BrowserSpec> {
         .collect();
     };
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     candidates
         .into_iter()
         .map(|(name, executable)| BrowserSpec {

@@ -57,6 +57,9 @@ if (Test-Path $sourceMarker) {
         $env:CUA_E2E_SOURCE_SHA = (Get-Content -Raw $sourceMarker).Trim()
     }
 }
+if (-not [string]::IsNullOrWhiteSpace($env:CUA_E2E_SOURCE_SHA)) {
+    $env:CUA_DRIVER_SOURCE_SHA = $env:CUA_E2E_SOURCE_SHA
+}
 Remove-Item Env:CUA_E2E_EXPECTED_MIN_CELLS -ErrorAction SilentlyContinue
 if (($suite -in @("shared", "all")) -and
     [string]::IsNullOrWhiteSpace($env:CUA_E2E_CELL_FILTER) -and

@@ -6169,6 +6169,7 @@ impl Tool for GetConfigTool {
         let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         ToolResult::text("cua-driver-rs configuration").with_structured(json!({
             "version": env!("CARGO_PKG_VERSION"),
+            "source_sha": option_env!("CUA_DRIVER_SOURCE_SHA"),
             "platform": "linux",
             "capture_mode": cfg.capture_mode,
             "capture_scope": cfg.capture_scope,

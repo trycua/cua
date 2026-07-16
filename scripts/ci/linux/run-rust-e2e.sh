@@ -71,6 +71,9 @@ if [[ -f "${SOURCE_MARKER}" ]]; then
     export CUA_E2E_SOURCE_SHA="$(tr -d '[:space:]' < "${SOURCE_MARKER}")"
   fi
 fi
+if [[ -n "${CUA_E2E_SOURCE_SHA:-}" ]]; then
+  export CUA_DRIVER_SOURCE_SHA="${CUA_E2E_SOURCE_SHA}"
+fi
 if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
   export GDK_BACKEND="${GDK_BACKEND:-wayland}"
   export CUA_E2E_COMPOSITOR="${CUA_E2E_COMPOSITOR:-wayland-unknown}"

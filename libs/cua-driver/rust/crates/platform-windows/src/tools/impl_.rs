@@ -7297,7 +7297,8 @@ impl Tool for GetConfigTool {
                 same fallback the daemon uses at startup. Sibling to `set_config`.\n\n\
                 Current schema (Windows):\n\n  \
                 {\n    \"schema_version\": 1,\n    \"version\": \"<crate version>\",\n    \
-                \"platform\": \"windows\",\n    \"capture_mode\": \"ax\" | \"vision\" (DEPRECATED, ignored),\n    \
+                \"source_sha\": \"<maintainer build commit or null>\",\n    \"platform\": \"windows\",\n    \
+                \"capture_mode\": \"ax\" | \"vision\" (DEPRECATED, ignored),\n    \
                 \"max_image_dimension\": 0\n  }\n\n\
                 `capture_mode` is deprecated and no longer affects behavior — \
                 `get_window_state` always returns both the UIA tree and a screenshot.".into(),
@@ -7318,6 +7319,7 @@ impl Tool for GetConfigTool {
         let payload = json!({
             "schema_version":      1,
             "version":             env!("CARGO_PKG_VERSION"),
+            "source_sha":          option_env!("CUA_DRIVER_SOURCE_SHA"),
             "platform":            "windows",
             "capture_mode":        cfg.capture_mode,
             "capture_scope":       cfg.capture_scope,
@@ -7516,6 +7518,7 @@ impl Tool for SetConfigTool {
         let payload = json!({
             "schema_version":      1,
             "version":             env!("CARGO_PKG_VERSION"),
+            "source_sha":          option_env!("CUA_DRIVER_SOURCE_SHA"),
             "platform":            "windows",
             "capture_mode":        cfg.capture_mode,
             "capture_scope":       cfg.capture_scope,

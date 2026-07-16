@@ -485,3 +485,20 @@ All prior Windows, Linux, and macOS artifacts remain diagnostic only until this
 correction is committed and every acceptance environment is replayed from that
 exact source revision. No test oracle, expected outcome, or declared row was
 weakened to accommodate the failure.
+
+## 2026-07-16: macOS Tauri fixture navigation correction
+
+The finite AX deadline exposed a separate fixture defect instead of masking it:
+Tauri opened a blank window because its custom-scheme WKWebView reported page
+navigation as started but never finished. A minimal embedded page and the full
+shared page without JavaScript both completed, as did the complete shared page
+when the fixture journal URL was absent. This isolated the stall to starting a
+loopback fixture-state request while the custom-scheme document was still
+finishing navigation.
+
+The shared web fixture now starts journal publication from the window `load`
+event. The fixture still publishes immediately after that event and every 250
+milliseconds thereafter, so the independent external oracle is unchanged for
+actions. Electron, Tauri, WebView2, and WKWebView continue to consume the same
+page; there is no macOS-only fixture or relaxed readiness assertion. Exact-head
+cross-platform replay remains required before release acceptance.

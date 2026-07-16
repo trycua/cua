@@ -25,10 +25,10 @@ EOF
 }
 
 RUN_STANDALONE_BROWSER=0
-CANONICAL_ARGS=()
+NO_BUILD=0
 for arg in "$@"; do
   case "${arg}" in
-    --no-build) CANONICAL_ARGS+=("${arg}") ;;
+    --no-build) NO_BUILD=1 ;;
     --standalone-browser) RUN_STANDALONE_BROWSER=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: ${arg}" >&2; usage >&2; exit 2 ;;
@@ -175,7 +175,11 @@ if ! "${INSTALLED_BIN}" list_apps '{}' > "${ARTIFACT_DIR}/driver-list-apps.json"
 fi
 
 echo "[E2E] Running the canonical macOS matrix"
-"${REPO_ROOT}/scripts/ci/macos/run-rust-e2e.sh" "${CANONICAL_ARGS[@]}"
+if [[ "${NO_BUILD}" == 1 ]]; then
+  "${REPO_ROOT}/scripts/ci/macos/run-rust-e2e.sh" --no-build
+else
+  "${REPO_ROOT}/scripts/ci/macos/run-rust-e2e.sh"
+fi
 
 if [[ "${RUN_STANDALONE_BROWSER}" == 1 ]]; then
   echo "[E2E] Running the optional standalone browser matrix"

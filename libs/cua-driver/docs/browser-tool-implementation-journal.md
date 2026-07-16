@@ -420,7 +420,9 @@ state.
 - The shared standalone runner now stages its own Electron focus sentinel,
   opts into native Wayland when the session requires it, discovers macOS
   browsers in both system and user Applications folders, and deduplicates
-  executable aliases before declaring rows.
+  executable aliases before declaring rows. Linux keeps a launcher path for
+  execution while comparing its canonical target for deduplication, which is
+  required for Snap-style browser launchers.
 - Windows runs every standalone scenario in an independent process from the
   canonical PowerShell entry point. One failed row therefore cannot hide later
   Chrome or Edge evidence.
@@ -447,7 +449,7 @@ authoritative source identity ledger.
 | Environment | Standalone rows | Embedded rows | Expected outcome |
 | --- | ---: | ---: | --- |
 | Windows interactive RDP | 16 | 3 | Chrome and Edge deliver 14 rows and refuse 2 ambiguous bindings; Electron delivers; Tauri and split-process WebView2 refuse |
-| Linux X11 | 8 | 2 | Chromium delivers 6 rows and refuses trusted background input plus ambiguous binding; Electron delivers; Tauri refuses |
+| Linux X11 | 8 per installed Chromium product | 2 | Chrome/Chromium each deliver 6 rows and refuse trusted background input plus ambiguous binding; Electron delivers; Tauri refuses |
 | Linux native Wayland/Sway | 8 | 2 | Same browser contract as X11; Electron delivers; Tauri refuses; cursor oracle is omitted because Wayland cannot read global pointer state |
 | macOS Lume | 8 | 3 | Chrome delivers 6 rows and refuses trusted background input plus ambiguous binding; Electron delivers; Tauri and WKWebView refuse |
 

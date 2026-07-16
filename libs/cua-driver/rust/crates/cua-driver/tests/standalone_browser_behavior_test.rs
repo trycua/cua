@@ -169,21 +169,30 @@ fn browser_specs() -> Vec<BrowserSpec> {
             .into_iter()
             .filter(|(_, executable)| executable.is_file())
             .map(|(name, executable)| {
-                let executable = std::fs::canonicalize(&executable).unwrap_or(executable);
-                (name, executable)
+                let identity = std::fs::canonicalize(&executable)
+                    .unwrap_or_else(|_| executable.clone());
+                (name, executable, identity)
             })
-            .fold(Vec::new(), |mut specs, (name, executable)| {
-                if !specs
+            .fold(Vec::new(), |mut entries, (name, executable, identity)| {
+                if !entries
                     .iter()
-                    .any(|spec: &BrowserSpec| spec.executable == executable)
+                    .any(|(_, existing_identity): &(BrowserSpec, PathBuf)| {
+                        *existing_identity == identity
+                    })
                 {
-                    specs.push(BrowserSpec {
-                        name: name.to_owned(),
-                        executable,
-                    });
+                    entries.push((
+                        BrowserSpec {
+                            name: name.to_owned(),
+                            executable,
+                        },
+                        identity,
+                    ));
                 }
-                specs
-            });
+                entries
+            })
+            .into_iter()
+            .map(|(spec, _)| spec)
+            .collect();
     }
     #[cfg(target_os = "windows")]
     let candidates = {

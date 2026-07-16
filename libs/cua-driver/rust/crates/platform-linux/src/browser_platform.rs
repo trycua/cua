@@ -25,8 +25,8 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
 fn is_chromium(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     let products = [
-        "chrome", "chromium", "electron", "brave", "edge", "vivaldi", "opera", "arc", "thorium",
-        "iridium", "yandex",
+        "chrome", "chromium", "electron", "brave", "edge", "msedge", "vivaldi", "opera", "arc",
+        "thorium", "iridium", "yandex",
     ];
     name.split(|ch: char| !ch.is_ascii_alphanumeric())
         .any(|token| products.contains(&token))
@@ -464,6 +464,8 @@ mod tests {
     fn classifier_covers_embedded_and_standalone_chromium() {
         assert!(is_chromium("CuaTestHarness.Electron"));
         assert!(is_chromium("chromium-browser"));
+        assert!(is_chromium("msedge --remote-debugging-port=9222"));
+        assert!(is_chromium("/opt/microsoft/msedge/msedge"));
         assert!(!is_chromium("firefox"));
         assert!(!is_chromium("search-worker"));
         assert!(!is_chromium("ledger-service"));

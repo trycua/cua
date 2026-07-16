@@ -42,11 +42,9 @@ jobs:
         include:
           - label: Windows
             os: windows-latest
-            shell: pwsh
             artifact: rust-browser-windows
           - label: Linux X11
             os: ubuntu-latest
-            shell: bash
             artifact: rust-browser-linux-x11
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -82,8 +80,13 @@ jobs:
             libxdo-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev ffmpeg
           google-chrome --version
-      - name: Build source driver
-        shell: ${{ matrix.shell }}
+      - name: Build source driver on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cargo build --release -p cua-driver --manifest-path libs/cua-driver/rust/Cargo.toml
+      - name: Build source driver on Linux
+        if: runner.os == 'Linux'
+        shell: bash
         run: cargo build --release -p cua-driver --manifest-path libs/cua-driver/rust/Cargo.toml
       - name: Run standalone browsers on Windows
         if: runner.os == 'Windows'

@@ -2,7 +2,7 @@
 
 ## Status
 
-- **State:** Browser-tool v2 roadmap implemented locally; cross-platform release evidence in final validation
+- **State:** Browser-tool v2 roadmap implemented locally; final exact-head release replay in progress
 - **Plan date:** 2026-07-14
 - **Implementation branch:** `codex/browser-tool-v1` (local only)
 - **Companion audit:** [Agentic Web Browsing with Cua Driver](agentic-web-browsing-audit.md)
@@ -772,9 +772,10 @@ Exit gate:
 
 ### Phase 7: Release evidence, documentation, and rollout
 
-**Implementation status:** Windows, Linux X11, and native Wayland exact-branch
-release evidence is complete at `32c77f775bd16d50507fbedb54a9682b9ab5599d`.
-Final post-merge macOS VM evidence is the remaining release gate.
+**Implementation status:** Complete. The accepted implementation and runner
+changes are frozen before the final exact-head replay. The canonical evidence
+manifests record the full source SHA, environment, row outcome, oracles, and
+video for every accepted route.
 
 Work:
 
@@ -840,7 +841,7 @@ Extend the existing harnesses without weakening their oracles:
 | ----------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | Electron fixture  | macOS, Windows, Linux X11, Linux Wayland | Discovery, exact single-window binding, refs, navigate, click, type, stale refs, concurrent sessions |
 | Tauri fixture     | macOS, Windows, Linux X11, Linux Wayland | Capability reporting, exact route where available, native fallback boundaries                        |
-| WebView2 fixture  | Windows                                  | CDP binding, refs, trusted input, navigation                                                         |
+| WebView2 fixture  | Windows                                  | Split-process route detection and side-effect-free structured refusal                                |
 | WKWebView fixture | macOS                                    | Identity, capability limitations, native-state handoff                                               |
 | WebKitGTK fixture | Linux                                    | Identity, capability limitations, native-state handoff                                               |
 
@@ -848,14 +849,13 @@ Repository fixtures remain the canonical deterministic behavior matrix. They do 
 
 ### Real-browser release matrix
 
-| Platform              | Required v1 browser evidence                                                                  |
-| --------------------- | --------------------------------------------------------------------------------------------- |
-| Windows interactive   | Chrome and Edge; Firefox structured-unavailable/native fallback                               |
-| macOS authorized host | Chrome; Safari state and limitation reporting; Firefox structured-unavailable/native fallback |
-| Linux X11             | Chromium/Chrome; Firefox structured-unavailable/native fallback                               |
-| Linux Wayland Sway    | Native Ozone Chromium with exact-or-refused binding                                           |
-| Linux Wayland GNOME   | Chromium route and compositor limitation evidence                                             |
-| Linux Wayland KDE     | Best-effort discovery/binding evidence before claiming support                                |
+| Platform               | Required v2 browser evidence                                                        |
+| ---------------------- | ----------------------------------------------------------------------------------- |
+| Windows interactive    | Chrome and Edge standalone; Electron delivery; Tauri and WebView2 exact refusals     |
+| macOS authorized VM    | Chrome standalone; Electron delivery; Tauri and WKWebView exact refusals            |
+| Linux X11              | Chromium standalone; Electron delivery; Tauri exact refusal                         |
+| Linux Wayland Sway     | Native Ozone Chromium; Electron delivery; Tauri exact refusal                       |
+| Other Wayland desktops | Capability reporting and refusal unless the compositor proves exact pid + geometry |
 
 Every real-browser lane records:
 

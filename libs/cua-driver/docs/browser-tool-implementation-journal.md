@@ -410,3 +410,48 @@ The final gate is to merge the reusable macOS VM work, rerun this branch at
 the resulting exact head inside that VM, and record the standalone Chromium
 and embedded Electron/Tauri/WKWebView outcomes without relying on host TCC
 state.
+
+## 2026-07-16: final runner convergence
+
+- Merged the reusable macOS Lume gate from main after preserving the browser
+  branch with a backup ref. The browser branch remains the only source of
+  commits; Windows, Linux, and macOS guests receive clean source snapshots with
+  an exact SHA marker.
+- The shared standalone runner now stages its own Electron focus sentinel,
+  opts into native Wayland when the session requires it, discovers macOS
+  browsers in both system and user Applications folders, and deduplicates
+  executable aliases before declaring rows.
+- Windows runs every standalone scenario in an independent process from the
+  canonical PowerShell entry point. One failed row therefore cannot hide later
+  Chrome or Edge evidence.
+- The macOS Lume wrapper preserves previous standalone evidence before a repeat
+  run. The Nix Wayland shell now supplies the Chromium binary used by the
+  native Ozone lane.
+- Sentinel setup waits for its final desktop geometry before recording the
+  baseline. Dispatch-time focus, z-order, cursor, and leaked-input checks remain
+  strict and are not retried.
+- Standalone browser setup now relists windows until the public browser API can
+  prove an exact binding. This handles a cold Sway toplevel that briefly has a
+  protocol-local id before compositor pid/geometry metadata arrives. The driver
+  continues to refuse the transient unprovable id; no mutation or behavior
+  assertion is retried.
+
+The cold native-Sway replay after that setup correction passed all 8 standalone
+Chromium rows: 6 delivered, 2 expected refusals, 0 failed, and 0 skipped. The
+final release replay uses the subsequent documentation commit as the exact
+source head on every platform; each retained `environment.jsonl` is the
+authoritative source identity ledger.
+
+### Final browser acceptance matrix
+
+| Environment | Standalone rows | Embedded rows | Expected outcome |
+| --- | ---: | ---: | --- |
+| Windows interactive RDP | 16 | 3 | Chrome and Edge deliver 14 rows and refuse 2 ambiguous bindings; Electron delivers; Tauri and split-process WebView2 refuse |
+| Linux X11 | 8 | 2 | Chromium delivers 6 rows and refuses trusted background input plus ambiguous binding; Electron delivers; Tauri refuses |
+| Linux native Wayland/Sway | 8 | 2 | Same browser contract as X11; Electron delivers; Tauri refuses; cursor oracle is omitted because Wayland cannot read global pointer state |
+| macOS Lume | 8 | 3 | Chrome delivers 6 rows and refuses trusted background input plus ambiguous binding; Electron delivers; Tauri and WKWebView refuse |
+
+Safari/WKWebView/WebKitGTK mutation, Firefox BiDi mutation, split-process
+WebView2 mutation, and mutation on Wayland compositors without exact pid and
+geometry remain deliberate structured limitations. Existing user profiles are
+never copied, restarted, or attached implicitly by `browser_prepare`.

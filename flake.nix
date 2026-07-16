@@ -24,6 +24,13 @@
           pkgs = import nixpkgs { inherit system; };
 
           rustSrc = ./libs/cua-driver/rust;
+          rustTestSrc = pkgs.lib.fileset.toSource {
+            root = ./libs/cua-driver;
+            fileset = pkgs.lib.fileset.unions [
+              ./libs/cua-driver/rust
+              ./libs/cua-driver/tests/fixtures/shared/web/index.html
+            ];
+          };
 
           cuaDriverPackage = import ./nix/cua-driver/package.nix {
             inherit pkgs;
@@ -127,7 +134,8 @@
             cua-driver-build = cuaDriverPackage;
             cua-driver-linux-rust-unit = import ./nix/cua-driver/tests/rust-unit.nix {
               inherit pkgs;
-              src = rustSrc;
+              src = rustTestSrc;
+              sourceSubdir = "rust";
             };
             cua-driver-policy-yaml = import ./nix/cua-driver/tests/policy-yaml.nix {
               inherit pkgs;

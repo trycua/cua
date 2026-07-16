@@ -510,3 +510,27 @@ oracle is unchanged for actions. Electron, Tauri, WebView2, and WKWebView
 continue to consume the same page; there is no macOS-only fixture or relaxed
 readiness assertion. Exact-head cross-platform replay remains required before
 release acceptance.
+
+## 2026-07-16: Tauri loopback fixture and macOS VM diagnosis
+
+Further replay showed that the production custom scheme was not a reliable
+fixture transport on the current macOS WebKit runtime. Tauri completed the
+custom-scheme and data-URL navigation callbacks, but the page remained empty.
+The fixture now starts a server on an ephemeral loopback port, serves the same
+checked-in `shared/web/index.html`, and creates its only webview against that
+exact URL. It does not contact an external service or duplicate the shared
+page. Cargo also watches `tauri.conf.json`, so a cached build cannot retain an
+older window declaration.
+
+The final fixture passed all 40 Tauri action cells on a physical macOS host,
+covering foreground and background delivery across AX and PX addressing. Its
+embedded browser row also returned the expected side-effect-free route
+refusal. The independent fixture journal remained the action oracle.
+
+The disposable macOS VM still renders both Tauri and the native WKWebView
+fixture as an empty surface. System logs show WebKit finishing the page load
+and then terminating an unresponsive GPU process. The same Tauri binary and
+page pass on the physical host, so this result is an environment limitation in
+that VM image rather than a browser-tool or fixture regression. The matrix
+keeps its readiness assertion; it does not convert the blank surface into a
+pass or an expected product refusal.

@@ -33,9 +33,13 @@ fn is_chromium(name: &str) -> bool {
 }
 
 fn is_firefox(name: &str) -> bool {
-    name.to_ascii_lowercase()
-        .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .any(|token| token == "firefox")
+    name.to_ascii_lowercase().split_whitespace().any(|word| {
+        word.rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(word)
+            .trim_end_matches(".exe")
+            == "firefox"
+    })
 }
 
 fn loopback_websocket_port(url: &str) -> Option<u16> {

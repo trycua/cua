@@ -789,11 +789,11 @@ Navigate one tab of an exactly-bound browser target to a new URL (http/https/abo
 
 ### `browser_click`
 
-Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent); input_route="dom_event" (synthetic el.click(), ref required) is used only when explicitly requested. Refused for heuristic bindings.
+Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture. input_route="dom_event" (synthetic el.click(), ref required) is used only when explicitly requested. Refused for heuristic bindings.
 
 **Arguments:**
 
-- `input_route` (string, optional): "trusted" (default): Input.dispatchMouseEvent. "dom_event": synthetic DOM click, only when explicitly requested.
+- `input_route` (string, optional): "trusted" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. "dom_event": synthetic full-background DOM click, only when explicitly requested.
 - `ref` (string, optional): Page element ref in the p&lt;snapshot&gt;:&lt;index&gt; namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.
 - `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.
 - `tab_id` (string, required): Opaque tab id from get_browser_state (session-scoped).

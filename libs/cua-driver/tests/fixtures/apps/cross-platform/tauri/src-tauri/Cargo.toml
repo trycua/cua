@@ -13,3 +13,4 @@ tauri-build = { version = "2" }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+tiny_http = "0.12"

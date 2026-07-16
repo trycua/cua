@@ -582,6 +582,42 @@ Reviewers should explicitly decide these points before PR 1 implementation:
    after the mutation gate or wait until macOS existing-profile evidence is
    accepted?
 
+## Implementation Evidence (2026-07-16)
+
+The macOS Chrome adapter now implements the approved setup decision from review
+question 2. When the exact approved process has no endpoint, it opens one
+temporary tab in the approved native window, proves the exact internal setup
+page through its URL, web-area title, and heading, and matches one exact remote
+debugging checkbox. It presses the checkbox only when its numeric AX state is
+off, then requires a unique loopback listener owned by the approved PID before
+attachment. The temporary tab is closed on both success and refusal.
+
+Tahoe VM acceptance started with Chrome's per-instance setting off and no
+listening endpoint. The first run exposed a real navigation defect and refused
+without attaching; the adapter was fixed to press the uniquely matched omnibox
+before setting and committing the setup URL. The repeated run returned
+`attached_existing_profile`, reported the setup page open/close, preference
+change, checkbox action, and browser consent prompt, and proved the endpoint
+owner. Its first follow-up bind then exposed a lifecycle defect: post-approval
+code reused the strict pre-approval discovery path, which correctly ignored a
+bare PID-owned listener even though the exact listener had already been claimed.
+The platform contract now has a separate re-proof operation that accepts only
+the stored approved WebSocket URL, proves its loopback port is still owned by
+the same PID, and leaves arbitrary pre-approval listeners undiscoverable.
+
+After reinstalling that fix, the complete checkbox-off flow was repeated from
+the start. `browser_prepare` and the required follow-up `get_browser_state` bind
+both exited successfully; the binding was exact, exposed one tab, and minted a
+session-scoped target capability. Snapshot mode then returned a non-truncated
+composed DOM snapshot. The original New Tab remained, the temporary setup tab
+was absent, and an unrelated Chrome restore prompt remained untouched.
+
+Focused regression evidence includes 238 passing core unit tests plus three
+session-lifecycle tests, 23 passing macOS browser tests, the approved-setup
+prepare-to-bind regression, generated documentation checks, and the source-built
+Tahoe VM acceptance above. No approval token, profile path, endpoint token, host
+address, or VM credential is recorded in repository artifacts.
+
 ## Recommendation
 
 Proceed with PRs 1 through 4 first. They establish the security boundary,

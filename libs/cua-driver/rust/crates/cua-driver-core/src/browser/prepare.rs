@@ -14,9 +14,10 @@ use super::approval::{
     ExistingProfileApprovalScope,
 };
 use super::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, PrepareAction, PrepareAttachment,
-    PrepareAttachmentKind, PrepareAuthorization, PrepareOutcome, PrepareProfile,
-    PrepareProfileMode, PrepareRequest, PrepareSideEffects, PrepareStrategy,
+    BrowserConsentOutcome, BrowserConsentRequest, ExistingProfileSetupOutcome,
+    ExistingProfileSetupRequest, PrepareAction, PrepareAttachment, PrepareAttachmentKind,
+    PrepareAuthorization, PrepareOutcome, PrepareProfile, PrepareProfileMode, PrepareRequest,
+    PrepareSideEffects, PrepareStrategy,
 };
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::types::{
@@ -26,6 +27,56 @@ use super::BrowserEngine;
 
 const PROFILE_MARKER: &str = ".cua-driver-owned-profile.json";
 const PROFILE_SCHEMA: &str = "cua-driver-browser-profile-v1";
+
+fn with_setup_side_effects(
+    mut error: BrowserRefusal,
+    setup: &ExistingProfileSetupOutcome,
+) -> BrowserRefusal {
+    if !setup.opened_setup_page
+        && !setup.closed_setup_page
+        && !setup.enabled_remote_debugging
+        && !setup.focused_setup_address_field
+    {
+        return error;
+    }
+    let cause = error.detail.take();
+    error.detail = Some(serde_json::json!({
+        "setup_side_effects": {
+            "opened_setup_page": setup.opened_setup_page,
+            "closed_setup_page": setup.closed_setup_page,
+            "focused_setup_address_field": setup.focused_setup_address_field,
+            "enabled_remote_debugging": setup.enabled_remote_debugging,
+        },
+        "cause": cause,
+    }));
+    error
+}
+
+fn with_prepare_side_effects(
+    mut error: BrowserRefusal,
+    setup: &ExistingProfileSetupOutcome,
+    displayed_consent_prompt: bool,
+) -> BrowserRefusal {
+    error = with_setup_side_effects(error, setup);
+    if !displayed_consent_prompt {
+        return error;
+    }
+    let mut detail = match error.detail.take() {
+        Some(serde_json::Value::Object(detail)) => detail,
+        Some(cause) => {
+            let mut detail = serde_json::Map::new();
+            detail.insert("cause".to_owned(), cause);
+            detail
+        }
+        None => serde_json::Map::new(),
+    };
+    detail.insert(
+        "displayed_consent_prompt".to_owned(),
+        serde_json::Value::Bool(true),
+    );
+    error.detail = Some(serde_json::Value::Object(detail));
+    error
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct ProfileMarker {
@@ -583,20 +634,62 @@ impl BrowserEngine {
         }
         self.native_window_checked(request.pid, window_id).await?;
         let fingerprint = self.platform.process_fingerprint(request.pid).await?;
-        let endpoint = self
+        let mut setup = ExistingProfileSetupOutcome::default();
+        let mut endpoint = self
             .platform
             .discover_existing_profile_endpoint(request.pid)
-            .await?
-            .ok_or_else(|| {
-                refusal(
+            .await?;
+        if endpoint.is_none() {
+            setup = self
+                .platform
+                .setup_existing_profile_endpoint(ExistingProfileSetupRequest {
+                    pid: request.pid,
+                    window_id,
+                })
+                .await?;
+
+            // Setup is allowed to interact only with the already-approved
+            // process/window generation. Re-prove both before accepting the
+            // newly exposed listener.
+            self.native_window_checked(request.pid, window_id)
+                .await
+                .map_err(|error| with_setup_side_effects(error, &setup))?;
+            let current_fingerprint = self
+                .platform
+                .process_fingerprint(request.pid)
+                .await
+                .map_err(|error| with_setup_side_effects(error, &setup))?;
+            if current_fingerprint != fingerprint {
+                return Err(with_setup_side_effects(
+                    refusal(
+                        BrowserRefusalCode::BrowserBindingStale,
+                        "the approved browser process changed while remote debugging was being enabled",
+                    ),
+                    &setup,
+                ));
+            }
+            endpoint = setup.endpoint.clone();
+            if endpoint.is_none() {
+                endpoint = self
+                    .platform
+                    .discover_existing_profile_endpoint(request.pid)
+                    .await
+                    .map_err(|error| with_setup_side_effects(error, &setup))?;
+            }
+        }
+        let endpoint = endpoint.ok_or_else(|| {
+                with_setup_side_effects(refusal(
                     BrowserRefusalCode::BrowserRequiresSetup,
-                    "the existing browser has no uniquely proven DevTools endpoint; enable remote debugging without restarting or modifying the profile, then retry",
-                )
+                    "the approved browser still has no uniquely proven DevTools endpoint after bounded setup",
+                ), &setup)
             })?;
         if endpoint.ownership.owner_pid != request.pid {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserEndpointOwnerMismatch,
-                "the existing-profile endpoint is not owned by the approved browser process",
+            return Err(with_setup_side_effects(
+                refusal(
+                    BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    "the existing-profile endpoint is not owned by the approved browser process",
+                ),
+                &setup,
             ));
         }
 
@@ -606,7 +699,8 @@ impl BrowserEngine {
                 request.transport_session.as_deref(),
                 request.pid,
             )
-            .await?;
+            .await
+            .map_err(|error| with_setup_side_effects(error, &setup))?;
         let previous_generation = previous_grant.as_ref().map_or(0, |grant| grant.generation);
         let grant = self.existing_profile_grants.mint(
             &request.session,
@@ -649,7 +743,7 @@ impl BrowserEngine {
                                 request.transport_session.as_deref(),
                                 request.pid,
                             ).await;
-                            return Err(error);
+                            return Err(with_setup_side_effects(error, &setup));
                         }
                     }
                 }
@@ -663,9 +757,13 @@ impl BrowserEngine {
                 request.pid,
             )
             .await;
-            return Err(refusal(
-                BrowserRefusalCode::BrowserReconnectExhausted,
-                "the approved browser socket could not be claimed",
+            return Err(with_prepare_side_effects(
+                refusal(
+                    BrowserRefusalCode::BrowserReconnectExhausted,
+                    "the approved browser socket could not be claimed",
+                ),
+                &setup,
+                displayed_consent_prompt,
             ));
         }
         self.store
@@ -678,6 +776,11 @@ impl BrowserEngine {
             prepared_pid: Some(request.pid),
             side_effects: PrepareSideEffects {
                 displayed_consent_prompt,
+                changed_preferences: setup.enabled_remote_debugging,
+                opened_setup_page: setup.opened_setup_page,
+                closed_setup_page: setup.closed_setup_page,
+                enabled_remote_debugging: setup.enabled_remote_debugging,
+                focused_setup_address_field: setup.focused_setup_address_field,
                 ..PrepareSideEffects::default()
             },
             attachment: Some(PrepareAttachment {
@@ -693,6 +796,31 @@ impl BrowserEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn setup_side_effects_are_preserved_on_refusal() {
+        let error = with_setup_side_effects(
+            refusal(
+                BrowserRefusalCode::BrowserBindingStale,
+                "fixture binding changed",
+            )
+            .with_detail(serde_json::json!({"original": true})),
+            &ExistingProfileSetupOutcome {
+                opened_setup_page: true,
+                closed_setup_page: true,
+                enabled_remote_debugging: true,
+                focused_setup_address_field: true,
+                endpoint: None,
+            },
+        );
+        let detail = error.detail.expect("setup detail");
+        assert_eq!(detail["setup_side_effects"]["opened_setup_page"], true);
+        assert_eq!(
+            detail["setup_side_effects"]["enabled_remote_debugging"],
+            true
+        );
+        assert_eq!(detail["cause"]["original"], true);
+    }
 
     #[test]
     fn profile_marker_must_match_mode_and_name_exactly() {

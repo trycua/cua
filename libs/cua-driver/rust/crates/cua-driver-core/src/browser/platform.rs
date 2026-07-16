@@ -118,6 +118,29 @@ pub struct BrowserConsentRequest {
     pub attempt: u8,
 }
 
+/// Exact, already-approved browser/window scope for enabling an existing
+/// Chromium profile's own DevTools endpoint. Core consumes the approval and
+/// validates this native window before invoking the platform adapter.
+#[derive(Debug, Clone)]
+pub struct ExistingProfileSetupRequest {
+    pub pid: i64,
+    pub window_id: u64,
+}
+
+/// Declared user-visible effects of one bounded existing-profile setup.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ExistingProfileSetupOutcome {
+    pub opened_setup_page: bool,
+    pub closed_setup_page: bool,
+    pub enabled_remote_debugging: bool,
+    pub focused_setup_address_field: bool,
+    /// Endpoint proven as part of an exact setup transition. This is needed
+    /// for Chrome's in-browser toggle, whose listener does not expose the
+    /// classic `/json/version` discovery surface.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<OwnedEndpoint>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrowserConsentOutcome {
     /// One exact browser-owned consent action was semantically pressed.
@@ -135,6 +158,10 @@ pub struct PrepareSideEffects {
     pub copied_profile_data: bool,
     pub changed_preferences: bool,
     pub displayed_consent_prompt: bool,
+    pub opened_setup_page: bool,
+    pub closed_setup_page: bool,
+    pub enabled_remote_debugging: bool,
+    pub focused_setup_address_field: bool,
 }
 
 /// OS-identity services a platform crate provides to the browser-tool
@@ -198,6 +225,32 @@ pub trait BrowserPlatform: Send + Sync {
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
         self.discover_owned_endpoint(pid).await
+    }
+
+    /// Re-prove an endpoint that was already claimed under an existing-profile
+    /// grant. Unlike discovery, this receives the exact WebSocket URL captured
+    /// during the approved setup and may therefore prove that specific route
+    /// without treating an arbitrary PID-owned listener as DevTools.
+    async fn reprove_existing_profile_endpoint(
+        &self,
+        pid: i64,
+        _expected_ws_url: &str,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        self.discover_existing_profile_endpoint(pid).await
+    }
+
+    /// Enable an existing Chromium profile's browser-owned DevTools endpoint
+    /// after core has consumed exact interactive approval. Implementations may
+    /// act only within `pid` and `window_id`, must fail on ambiguous UI, and
+    /// must not restart the browser or modify profile files.
+    async fn setup_existing_profile_endpoint(
+        &self,
+        _request: ExistingProfileSetupRequest,
+    ) -> Result<ExistingProfileSetupOutcome, BrowserRefusal> {
+        Err(BrowserRefusal::new(
+            super::refusal::BrowserRefusalCode::BrowserRequiresSetup,
+            "automatic existing-profile endpoint setup is not proven on this platform",
+        ))
     }
 
     /// Handle one pending browser-owned connection prompt. Implementations

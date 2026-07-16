@@ -41,9 +41,25 @@ A successful call returns `action: "attached_existing_profile"` and an
 | `capabilities_invalidated` | `true` |
 | `next_action` | `get_browser_state` |
 
-`side_effects` reports whether a browser consent prompt was displayed. The
-driver does not return the profile identity, endpoint address, port, connection
-generation, grant identifier, or approval artifact.
+`side_effects` reports the bounded setup and consent effects:
+
+| Field | Meaning |
+| --- | --- |
+| `opened_setup_page` | A temporary tab was opened in the approved native window. |
+| `closed_setup_page` | That temporary setup tab was closed successfully. |
+| `focused_setup_address_field` | The temporary tab's address field received in-app focus for exact navigation. |
+| `enabled_remote_debugging` | The exact per-instance Chrome checkbox was toggled from off to on. |
+| `changed_preferences` | Mirrors `enabled_remote_debugging` for the generic prepare contract. |
+| `displayed_consent_prompt` | Chrome displayed its browser-owned connection-consent prompt. |
+
+All fields are `false` when the endpoint was already available. The driver does
+not return the profile identity, endpoint address, port, connection generation,
+grant identifier, or approval artifact.
+
+A refusal after setup begins may include `detail.setup_side_effects`. This uses
+the same setup fields and adds `restored_remote_debugging` when the driver had
+to reverse its own checkbox change. It never claims cleanup succeeded unless
+the exact checkbox returned to the off state.
 
 ## Grant lifetime
 
@@ -81,10 +97,15 @@ URLs or ports, approval tokens, page content, tab URLs, cookies, or storage.
 ## Platform scope
 
 The prompt-assisted route is currently experimental for Google Chrome on
-macOS. Other platforms and products must refuse prompt automation until a real
-interactive harness proves browser identity, native prompt semantics, endpoint
-ownership, and exact rebind behavior. An already available endpoint may still
-use the ordinary exact browser binding route where that platform proves it.
+macOS. It can also enable Chrome's per-instance endpoint through the exact
+approved window when none exists. Other platforms and products must refuse
+setup or prompt automation until a real interactive harness proves browser
+identity, setup-control and prompt semantics, endpoint ownership, cleanup, and
+exact rebind behavior. An already available endpoint may still use the ordinary
+exact browser binding route where that platform proves it.
+
+The exact AX setup currently recognizes Chrome's English accessibility labels.
+Other UI locales fail closed without toggling an unrecognized control.
 
 See [Drive a web page](/how-to-guides/driver/drive-a-web-page) for the task
 workflow and [Browser targeting and background delivery](/concepts/browser-targeting-and-background-delivery)

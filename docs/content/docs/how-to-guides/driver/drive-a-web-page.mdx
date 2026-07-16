@@ -60,13 +60,8 @@ Pass the returned token as `approval_token` in the otherwise identical
 
 Use this experimental route only when the agent must work in a Chrome profile
 that is already running and authenticated. Cua Driver does not restart Chrome,
-copy the profile, change profile preferences, or enable remote debugging on
-your behalf.
-
-In the selected Chrome instance, open
-`chrome://inspect/#remote-debugging` and enable **Allow remote debugging for
-this browser instance**. Then start a named driver session and mint an approval
-artifact for the exact process, native window, and session:
+copy the profile, or modify profile files. Start a named driver session and
+mint an approval artifact for the exact process, native window, and session:
 
 ```bash
 cua-driver browser-approve \
@@ -93,6 +88,19 @@ Chrome may display its own remote-debugging consent sheet. Cua Driver will
 press only the exact browser-owned semantic allow action for this approved
 process and window. An absent, ambiguous, dismissed, or unrecognized prompt is
 refused; it is never treated as generic permission to click security dialogs.
+
+If the approved Chrome process has no DevTools endpoint, Cua Driver opens a
+temporary tab in the approved window, navigates it to
+`chrome://inspect/#remote-debugging`, matches exactly one **Allow remote
+debugging for this browser instance** checkbox, verifies that it is off, and
+presses it once. It then proves that the new listener is loopback-only and
+owned by the approved process before closing the temporary tab. The result's
+`side_effects` reports whether the page was opened and closed, whether the
+address field was focused, whether the setting was enabled, and whether Chrome
+displayed a connection-consent prompt. If setup fails after a visible action,
+the structured refusal reports `detail.setup_side_effects`; a checkbox changed
+by that failed attempt is restored when its exact state can still be proven.
+Any ambiguous control or changed process/window identity is refused.
 
 After `attached_existing_profile`, list windows again if needed and call
 `get_browser_state({pid, window_id, session})`. Attachment invalidates older

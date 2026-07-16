@@ -379,7 +379,7 @@ impl BrowserEngine {
             }
             let endpoint = self
                 .platform
-                .discover_existing_profile_endpoint(pid)
+                .reprove_existing_profile_endpoint(pid, &grant.endpoint_ws_url)
                 .await?
                 .ok_or_else(|| {
                     refuse(
@@ -523,10 +523,14 @@ impl BrowserEngine {
     /// endpoint discovery: Chrome's per-instance remote-debugging toggle can
     /// expose only a PID-owned listener, with no DevToolsActivePort file or
     /// discoverable driver-owned profile.
-    async fn existing_profile_endpoint(&self, pid: i64) -> Result<OwnedEndpoint, BrowserRefusal> {
+    async fn existing_profile_endpoint(
+        &self,
+        pid: i64,
+        expected_ws_url: &str,
+    ) -> Result<OwnedEndpoint, BrowserRefusal> {
         let endpoint = self
             .platform
-            .discover_existing_profile_endpoint(pid)
+            .reprove_existing_profile_endpoint(pid, expected_ws_url)
             .await?
             .ok_or_else(|| {
                 refuse(
@@ -732,8 +736,9 @@ impl BrowserEngine {
         let mut grant = self
             .existing_profile_grant(session, transport_session, pid)
             .await?;
-        let endpoint = if grant.is_some() {
-            self.existing_profile_endpoint(pid).await?
+        let endpoint = if let Some(live_grant) = &grant {
+            self.existing_profile_endpoint(pid, &live_grant.endpoint_ws_url)
+                .await?
         } else {
             self.owned_endpoint(pid).await?
         };
@@ -946,7 +951,8 @@ impl BrowserEngine {
 
         // 3. Endpoint still owned and unchanged.
         let endpoint = if record.generation > 0 {
-            self.existing_profile_endpoint(record.pid).await?
+            self.existing_profile_endpoint(record.pid, &record.ws_url)
+                .await?
         } else {
             self.owned_endpoint(record.pid).await?
         };

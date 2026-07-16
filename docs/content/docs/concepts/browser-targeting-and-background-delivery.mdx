@@ -76,9 +76,18 @@ now belongs to another document.
 Browser inspection never enables remote debugging or restarts a browser as a
 side effect. `browser_prepare` is a separate destructive approval boundary. It
 may launch another browser with a driver-owned `isolated_new` or
-`isolated_named` profile, but it never copies, modifies, restarts, or terminates
-the selected user profile. Remote-debugging arguments passed through
-`launch_app` are refused.
+`isolated_named` profile. For an existing macOS Chrome profile, a stronger
+operation-bound approval may instead authorize one exact-window AX setup of
+Chrome's per-instance remote-debugging switch. That route never copies profile
+data, edits profile files, restarts, or terminates the selected process, and it
+reports its temporary-tab and setting effects. Remote-debugging arguments
+passed through `launch_app` are refused.
+
+The setup transition and protocol attachment are separate proofs. A listener
+must be loopback-only, attributed to the approved pid, and either discoverable
+as DevTools or correlated with the exact approved checkbox transition. The
+driver then requires a successful DevTools WebSocket claim before reporting an
+attachment; a bare browser-owned loopback listener is not sufficient.
 
 An MCP host supplies approval through its destructive-tool approval path.
 Direct CLI and raw-socket callers use a short-lived, single-use token minted by

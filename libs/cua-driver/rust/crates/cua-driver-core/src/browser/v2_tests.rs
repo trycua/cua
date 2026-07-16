@@ -4,7 +4,10 @@
 //! revalidation, navigation invalidation, and unproven-capability
 //! omission/refusal.
 
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex as StdMutex,
+};
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -14,7 +17,10 @@ use crate::tool::Tool;
 
 use super::engine::BrowserEngine;
 use super::mock_cdp::{MockCdpServer, MockEvent, MockHandler, MockReply};
-use super::platform::{BrowserPlatform, PrepareAction, PrepareOutcome, PrepareRequest};
+use super::platform::{
+    BrowserPlatform, ExistingProfileSetupOutcome, ExistingProfileSetupRequest, PrepareAction,
+    PrepareOutcome, PrepareRequest,
+};
 use super::refusal::BrowserRefusal;
 use super::tools::{BrowserClickTool, BrowserPrepareTool, BrowserTypeTool, GetBrowserStateTool};
 use super::types::{
@@ -337,6 +343,8 @@ struct FixturePlatform {
     ws_url: String,
     trusted_input_limited: bool,
     managed_endpoint_visible: bool,
+    existing_endpoint_visible: Arc<AtomicBool>,
+    setup_invoked: Arc<AtomicBool>,
 }
 
 #[async_trait]
@@ -397,6 +405,9 @@ impl BrowserPlatform for FixturePlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        if !self.existing_endpoint_visible.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
         Ok(Some(OwnedEndpoint {
             ws_url: self.ws_url.clone(),
             http_port: None,
@@ -406,6 +417,47 @@ impl BrowserPlatform for FixturePlatform {
                 detail: None,
             },
         }))
+    }
+
+    async fn reprove_existing_profile_endpoint(
+        &self,
+        pid: i64,
+        expected_ws_url: &str,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        if expected_ws_url != self.ws_url {
+            return Ok(None);
+        }
+        Ok(Some(OwnedEndpoint {
+            ws_url: self.ws_url.clone(),
+            http_port: None,
+            ownership: EndpointOwnershipProof {
+                method: EndpointOwnershipMethod::ListeningSocketPid,
+                owner_pid: pid,
+                detail: Some("fixture exact approved endpoint".to_owned()),
+            },
+        }))
+    }
+
+    async fn setup_existing_profile_endpoint(
+        &self,
+        _request: ExistingProfileSetupRequest,
+    ) -> Result<ExistingProfileSetupOutcome, BrowserRefusal> {
+        self.setup_invoked.store(true, Ordering::SeqCst);
+        Ok(ExistingProfileSetupOutcome {
+            opened_setup_page: true,
+            closed_setup_page: true,
+            enabled_remote_debugging: true,
+            focused_setup_address_field: true,
+            endpoint: Some(OwnedEndpoint {
+                ws_url: self.ws_url.clone(),
+                http_port: None,
+                ownership: EndpointOwnershipProof {
+                    method: EndpointOwnershipMethod::ListeningSocketPid,
+                    owner_pid: 1,
+                    detail: Some("fixture exact setup transition".to_owned()),
+                },
+            }),
+        })
     }
 
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
@@ -438,6 +490,7 @@ struct Fixture {
     // Kept alive for the test's duration; dropping it kills the endpoint.
     _server: MockCdpServer,
     engine: Arc<BrowserEngine>,
+    setup_invoked: Arc<AtomicBool>,
 }
 
 async fn fixture_with(configure: impl FnOnce(&mut FixtureState)) -> Fixture {
@@ -452,15 +505,19 @@ async fn fixture_with_platform(
     configure(&mut initial);
     let state = Arc::new(StdMutex::new(initial));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
+    let setup_invoked = Arc::new(AtomicBool::new(false));
     let engine = BrowserEngine::new(Arc::new(FixturePlatform {
         ws_url: server.ws_url(),
         trusted_input_limited,
         managed_endpoint_visible: true,
+        existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
+        setup_invoked: setup_invoked.clone(),
     }));
     Fixture {
         state,
         _server: server,
         engine,
+        setup_invoked,
     }
 }
 
@@ -471,16 +528,42 @@ async fn fixture() -> Fixture {
 async fn existing_profile_only_fixture() -> Fixture {
     let state = Arc::new(StdMutex::new(FixtureState::default()));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
+    let setup_invoked = Arc::new(AtomicBool::new(false));
     let engine = BrowserEngine::new(Arc::new(FixturePlatform {
         ws_url: server.ws_url(),
         trusted_input_limited: false,
         managed_endpoint_visible: false,
+        existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
+        setup_invoked: setup_invoked.clone(),
     }));
     Fixture {
         state,
         _server: server,
         engine,
+        setup_invoked,
     }
+}
+
+async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
+    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    let server = MockCdpServer::start(fixture_handler(state.clone())).await;
+    let setup_invoked = Arc::new(AtomicBool::new(false));
+    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
+        ws_url: server.ws_url(),
+        trusted_input_limited: false,
+        managed_endpoint_visible: false,
+        existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+        setup_invoked: setup_invoked.clone(),
+    }));
+    (
+        Fixture {
+            state,
+            _server: server,
+            engine,
+            setup_invoked: setup_invoked.clone(),
+        },
+        setup_invoked,
+    )
 }
 
 fn structured(result: &ToolResult) -> &Value {
@@ -534,6 +617,7 @@ async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
     assert_eq!(prepared["attachment"]["kind"], "existing_profile");
     assert_eq!(prepared["attachment"]["capabilities_invalidated"], true);
     assert_eq!(prepared["side_effects"]["displayed_consent_prompt"], false);
+    assert!(!f.setup_invoked.load(Ordering::SeqCst));
 
     let state = GetBrowserStateTool::new(f.engine.clone())
         .invoke(json!({
@@ -545,6 +629,48 @@ async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
         .await;
     assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
     crate::session::fire_session_end("transport-v2-attach");
+}
+
+#[tokio::test]
+async fn approved_existing_profile_setup_reports_exact_side_effects() {
+    let (f, setup_invoked) = existing_profile_setup_fixture().await;
+    let token = super::approval::mint_existing_profile_approval(
+        super::approval::ExistingProfileApprovalScope {
+            pid: 1,
+            window_id: 7,
+            session: SESSION.to_owned(),
+        },
+    )
+    .unwrap();
+    let prepare = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" },
+            "approval_token": token
+        }))
+        .await;
+    let prepared = structured(&prepare);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert!(setup_invoked.load(Ordering::SeqCst));
+    assert_eq!(prepared["side_effects"]["opened_setup_page"], true);
+    assert_eq!(prepared["side_effects"]["closed_setup_page"], true);
+    assert_eq!(prepared["side_effects"]["enabled_remote_debugging"], true);
+    assert_eq!(prepared["side_effects"]["changed_preferences"], true);
+    assert_eq!(
+        prepared["side_effects"]["focused_setup_address_field"],
+        true
+    );
+
+    let state = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
 }
 
 async fn snapshot(f: &Fixture, target_id: &str, tab_id: &str) -> Value {

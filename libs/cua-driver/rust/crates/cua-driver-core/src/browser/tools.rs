@@ -271,7 +271,11 @@ impl BrowserPrepareTool {
                 profile. It launches a separate browser and never copies, modifies, or \
                 terminates the requested user profile. Existing-profile attachment is \
                 explicit, requires an exact interactive approval artifact, and never \
-                treats ordinary MCP transport approval as profile consent."
+                treats ordinary MCP transport approval as profile consent. On proven \
+                platforms, that approval also permits one bounded exact-window setup: \
+                open Chrome's internal remote-debugging page, toggle its uniquely matched \
+                per-instance checkbox, prove the PID-owned loopback endpoint, and close the \
+                temporary tab. Every visible effect is reported; ambiguity is refused."
                 .into(),
             input_schema: json!({
                 "type": "object",

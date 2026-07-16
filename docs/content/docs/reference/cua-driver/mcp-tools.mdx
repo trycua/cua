@@ -758,7 +758,7 @@ Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native br
 
 ### `browser_prepare`
 
-Explicitly prepare an owned DevTools endpoint for a browser pid. Existing endpoints are detected without side effects. Acting setup requires MCP-host approval or a short-lived token from the interactive browser-approve command, allow_launch=true, and a driver-owned isolated profile. It launches a separate browser and never copies, modifies, or terminates the requested user profile. Existing-profile attachment is explicit, requires an exact interactive approval artifact, and never treats ordinary MCP transport approval as profile consent.
+Explicitly prepare an owned DevTools endpoint for a browser pid. Existing endpoints are detected without side effects. Acting setup requires MCP-host approval or a short-lived token from the interactive browser-approve command, allow_launch=true, and a driver-owned isolated profile. It launches a separate browser and never copies, modifies, or terminates the requested user profile. Existing-profile attachment is explicit, requires an exact interactive approval artifact, and never treats ordinary MCP transport approval as profile consent. On proven platforms, that approval also permits one bounded exact-window setup: open Chrome's internal remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused.
 
 **Arguments:**
 

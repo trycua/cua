@@ -4,6 +4,7 @@ pub mod cdp_client;
 mod consent_ui;
 pub mod electron_js;
 pub mod platform;
+mod setup_ui;
 pub mod wk_web_view;
 
 pub use ax_page_reader::AXPageReader;

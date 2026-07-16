@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use cua_driver_core::browser::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, PrepareAction, PrepareOutcome,
-    PrepareRequest,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
+    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -362,28 +362,161 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 "multiple browser-level DevTools endpoints are owned by the approved process",
             ));
         }
-        if ports.len() == 1 {
-            let port = ports[0];
-            return Ok(Some(OwnedEndpoint {
-                // Chrome's in-browser existing-profile toggle exposes this
-                // browser-level route without the classic HTTP /json surface.
-                // Opening it is deferred until after exact user approval.
-                ws_url: format!("ws://127.0.0.1:{port}/devtools/browser"),
-                http_port: Some(port),
-                ownership: EndpointOwnershipProof {
-                    method: EndpointOwnershipMethod::ListeningSocketPid,
-                    owner_pid: pid,
-                    detail: Some("unique lsof loopback listener owned by browser pid".to_owned()),
-                },
-            }));
-        }
-        if ports.len() > 1 {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserBindingAmbiguous,
-                "the approved browser owns multiple non-discoverable loopback listeners; refusing to guess which one is DevTools",
-            ));
-        }
+        // A bare listener is not enough to identify DevTools before approval:
+        // Chromium can own unrelated loopback services. The setup path below
+        // correlates a listener with the exact checkbox transition and the
+        // pooled WebSocket claim proves the protocol before attachment.
         Ok(None)
+    }
+
+    async fn reprove_existing_profile_endpoint(
+        &self,
+        pid: i64,
+        expected_ws_url: &str,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let Some(port) = loopback_websocket_port(expected_ws_url) else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                "the approved existing-profile endpoint is not loopback-only",
+            ));
+        };
+        if !loopback_ports_for_pid(pid).await?.contains(&port) {
+            return Ok(None);
+        }
+        Ok(Some(OwnedEndpoint {
+            ws_url: expected_ws_url.to_owned(),
+            http_port: Some(port),
+            ownership: EndpointOwnershipProof {
+                method: EndpointOwnershipMethod::ListeningSocketPid,
+                owner_pid: pid,
+                detail: Some("lsof owner of exact approved endpoint".to_owned()),
+            },
+        }))
+    }
+
+    async fn setup_existing_profile_endpoint(
+        &self,
+        request: ExistingProfileSetupRequest,
+    ) -> Result<ExistingProfileSetupOutcome, BrowserRefusal> {
+        let pid = i32::try_from(request.pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser pid is outside the macOS process-id range",
+            )
+        })?;
+        let window_id = u32::try_from(request.window_id).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser window is outside the macOS window-id range",
+            )
+        })?;
+        let listeners_before = loopback_ports_for_pid(request.pid).await?;
+        let handle = crate::focus_guard::with_focus_suppressed_now(
+            Some(pid),
+            "browser_prepare.remote_debugging",
+            || async move {
+                tokio::task::spawn_blocking(move || super::setup_ui::enable(pid, window_id))
+                    .await
+                    .map_err(|error| {
+                        refusal(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            format!(
+                                "could not inspect Chrome's remote-debugging setup UI: {error}"
+                            ),
+                        )
+                    })?
+            },
+        )
+        .await?;
+        let opened_setup_page = handle.opened_setup_page;
+        let enabled_remote_debugging = handle.enabled_remote_debugging;
+        let focused_setup_address_field = handle.focused_setup_address_field;
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let endpoint_result = loop {
+            let ports = match loopback_ports_for_pid(request.pid).await {
+                Ok(ports) => ports,
+                Err(error) => break Err(error),
+            };
+            let mut endpoints = Vec::new();
+            for port in &ports {
+                if let Some(ws_url) = browser_websocket_url(*port).await {
+                    endpoints.push((*port, ws_url, "lsof owner plus /json/version"));
+                }
+            }
+            if endpoints.is_empty() {
+                let correlated = ports
+                    .iter()
+                    .copied()
+                    .filter(|port| !listeners_before.contains(port))
+                    .collect::<Vec<_>>();
+                let candidates = if correlated.is_empty() && ports.len() == 1 {
+                    // The checkbox may already have been on before setup. The
+                    // exact page proof plus one PID-owned loopback listener is
+                    // sufficient to attempt the bounded WebSocket claim.
+                    ports.clone()
+                } else {
+                    correlated
+                };
+                for port in candidates {
+                    endpoints.push((
+                        port,
+                        format!("ws://127.0.0.1:{port}/devtools/browser"),
+                        "lsof owner correlated with exact setup state",
+                    ));
+                }
+            }
+            match endpoints.as_slice() {
+                [(port, ws_url, detail)] => {
+                    break Ok(OwnedEndpoint {
+                        ws_url: ws_url.clone(),
+                        http_port: Some(*port),
+                        ownership: EndpointOwnershipProof {
+                            method: EndpointOwnershipMethod::ListeningSocketPid,
+                            owner_pid: request.pid,
+                            detail: Some((*detail).to_owned()),
+                        },
+                    })
+                }
+                [] if std::time::Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                [] => {
+                    break Err(refusal(
+                        BrowserRefusalCode::BrowserRequiresSetup,
+                        "Chrome did not expose a uniquely PID-owned loopback endpoint after the exact setup action",
+                    ))
+                }
+                _ => {
+                    break Err(refusal(
+                        BrowserRefusalCode::BrowserBindingAmbiguous,
+                        "Chrome exposed multiple PID-owned endpoint candidates after the exact setup action",
+                    ))
+                }
+            }
+        };
+        let endpoint = match endpoint_result {
+            Ok(endpoint) => endpoint,
+            Err(error) => return Err(handle.abort(pid, window_id, error)),
+        };
+        let closed_setup_page =
+            tokio::task::spawn_blocking(move || handle.close_for_success(pid, window_id))
+                .await
+                .map_err(|error| {
+                    refusal(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        format!("could not close Chrome's temporary setup tab: {error}"),
+                    )
+                })??
+                .unwrap_or(false);
+
+        Ok(ExistingProfileSetupOutcome {
+            opened_setup_page,
+            closed_setup_page,
+            enabled_remote_debugging,
+            focused_setup_address_field,
+            endpoint: Some(endpoint),
+        })
     }
 
     async fn handle_existing_profile_consent(

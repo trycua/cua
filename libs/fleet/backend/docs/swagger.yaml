@@ -1,0 +1,1053 @@
+basePath: /
+definitions:
+  handlers.ConfigResponse:
+    properties:
+      admin:
+        description: |-
+          Admin is true when the caller is in input.flags.admin_subs (OPA-evaluated).
+          Non-admins get the customer view: infra-only nav (Nodes, Operator events)
+          is hidden in the SPA and the corresponding kubectl-proxy paths are denied
+          server-side by authz.rego.
+        type: boolean
+    type: object
+  handlers.CreateKeyRequest:
+    properties:
+      name:
+        example: ci-prod
+        type: string
+      namespace:
+        example: test-pool
+        type: string
+    type: object
+  handlers.CreateKeyResponse:
+    properties:
+      client_id:
+        type: string
+      client_secret:
+        type: string
+      name:
+        type: string
+      namespace:
+        type: string
+      token_url:
+        type: string
+    type: object
+  handlers.CreateNamespaceRequest:
+    properties:
+      name:
+        example: my-workspace
+        type: string
+    type: object
+  handlers.CreatePoolTemplateRequest:
+    properties:
+      config:
+        type: object
+      name:
+        example: gpu-large
+        type: string
+    type: object
+  handlers.CreateUserKeyRequest:
+    properties:
+      name:
+        example: my-ci-key
+        type: string
+      scope:
+        example:
+        - '["ns1"'
+        - '"ns2"]'
+        items:
+          type: string
+        type: array
+    type: object
+  handlers.CreateUserKeyResponse:
+    properties:
+      client_id:
+        type: string
+      client_secret:
+        type: string
+      name:
+        type: string
+      scope:
+        items:
+          type: string
+        type: array
+      token_url:
+        type: string
+    type: object
+  handlers.ErrorResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  handlers.HealthResponse:
+    properties:
+      ok:
+        type: boolean
+    type: object
+  handlers.ListKeysResponse:
+    properties:
+      keys:
+        items:
+          $ref: '#/definitions/keycloak.KeyClient'
+        type: array
+    type: object
+  handlers.ListUserKeysResponse:
+    properties:
+      keys:
+        items:
+          $ref: '#/definitions/handlers.UserKeyResponse'
+        type: array
+    type: object
+  handlers.NamespaceResponse:
+    properties:
+      createdAt:
+        type: string
+      labels:
+        additionalProperties:
+          type: string
+        type: object
+      name:
+        type: string
+      status:
+        type: string
+    type: object
+  handlers.PoolTemplateResponse:
+    properties:
+      config:
+        type: object
+      createdAt:
+        type: string
+      name:
+        type: string
+      user:
+        type: string
+    type: object
+  handlers.UserKeyResponse:
+    properties:
+      client_id:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      scope:
+        items:
+          type: string
+        type: array
+    type: object
+  keycloak.KeyClient:
+    properties:
+      client_id:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      namespace:
+        type: string
+      owner_sub:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key
+    management, service proxies (k8s / orch / svc), namespace management, and
+    deprecated gateway / batch / label routes that now return 410 Gone. All
+    pool operations use OSGymSandboxClaim CRs (Path B).
+  title: Cyclops CS Backend API
+  version: "0.1"
+paths:
+  /api/batch/{pool}/{id}:
+    delete:
+      deprecated: true
+      description: Route is deprecated and unavailable. Returns 410 Gone for every
+        request. The orchestrator-backed batch surface is retired; callers must migrate
+        to the replacement flow.
+      parameters:
+      - description: Pool name
+        in: path
+        name: pool
+        required: true
+        type: string
+      - description: Batch ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "410":
+          description: Gone
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deprecated batch cancellation route
+      tags:
+      - batch
+  /api/batch/{pool}/{id}/results:
+    get:
+      deprecated: true
+      description: Route is deprecated and unavailable. Returns 410 Gone for every
+        request. The orchestrator-backed batch surface is retired; callers must migrate
+        to the replacement flow.
+      parameters:
+      - description: Pool name
+        in: path
+        name: pool
+        required: true
+        type: string
+      - description: Batch ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "410":
+          description: Gone
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deprecated batch results route
+      tags:
+      - batch
+  /api/batch/{pool}/{id}/status:
+    get:
+      deprecated: true
+      description: Route is deprecated and unavailable. Returns 410 Gone for every
+        request. The orchestrator-backed batch surface is retired; callers must migrate
+        to the replacement flow.
+      parameters:
+      - description: Pool name
+        in: path
+        name: pool
+        required: true
+        type: string
+      - description: Batch ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "410":
+          description: Gone
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deprecated batch status route
+      tags:
+      - batch
+  /api/batch/{pool}/lanes:
+    delete:
+      deprecated: true
+      description: Route is deprecated and unavailable. Returns 410 Gone for every
+        request. The orchestrator-backed batch surface is retired; callers must migrate
+        to the replacement flow.
+      parameters:
+      - description: Pool name
+        in: path
+        name: pool
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "410":
+          description: Gone
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deprecated batch lane release route
+      tags:
+      - batch
+    post:
+      deprecated: true
+      description: Route is deprecated and unavailable. Returns 410 Gone for every
+        request. The orchestrator-backed batch surface is retired; callers must migrate
+        to the replacement flow.
+      parameters:
+      - description: Pool name
+        in: path
+        name: pool
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "410":
+          description: Gone
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deprecated batch lane acquisition route
+      tags:
+      - batch
+  /api/batch/{pool}/submit:
+    post:
+      deprecated: true
+      description: Route is deprecated and unavailable. Returns 410 Gone for every
+        request. The orchestrator-backed batch surface is retired; callers must migrate
+        to the replacement flow.
+      parameters:
+      - description: Pool name
+        in: path
+        name: pool
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "410":
+          description: Gone
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deprecated batch submission route
+      tags:
+      - batch
+  /api/config:
+    get:
+      description: Returns OPA-evaluated feature flags for the authenticated SPA user.
+        `admin` is true when the caller's JWT sub appears in input.flags.admin_subs.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ConfigResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Per-user feature flags
+      tags:
+      - config
+  /api/gateway/{name}/{path}:
+    get:
+      description: 'DEPRECATED (CUA-609): The per-pool orchestrator HTTP layer has
+        been removed. This route returns 410 Gone for all requests. All pool
+        operations must use OSGymSandboxClaim CRs (Path B) directly.'
+      parameters:
+      - description: Pool name (DNS-1123 label)
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Upstream path (proxied verbatim, no validation)
+        in: path
+        name: path
+        type: string
+      responses:
+        "200":
+          description: Upstream response
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: DEPRECATED (CUA-609): per-pool orchestrator proxy — returns 410 Gone
+      tags:
+      - gateway
+  /api/k8s/{path}:
+    get:
+      description: Forwards requests to http://127.0.0.1:8001 (the kubectl-proxy sidecar)
+        so the SPA can read K8s resources via the pod ServiceAccount. SPA-only; OPA-gated.
+        EventList responses are filtered by the caller's OPA visible_events policy
+        via auth.K8sEventFilterMiddleware (mounted in main.go's route chain).
+      parameters:
+      - description: K8s API path
+        in: path
+        name: path
+        required: true
+        type: string
+      responses:
+        "200":
+          description: K8s API response
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Authenticated proxy to the in-pod kubectl-proxy sidecar
+      tags:
+      - passthrough
+  /api/keys:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ListKeysResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List the calling user's API keys
+      tags:
+      - keys
+    post:
+      consumes:
+      - application/json
+      description: Creates a Keycloak service-account client owned by the calling
+        user. The returned `client_secret` is shown exactly once.
+      parameters:
+      - description: Key parameters
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CreateKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handlers.CreateKeyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a new API key
+      tags:
+      - keys
+  /api/keys/{id}:
+    delete:
+      parameters:
+      - description: Keycloak client UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Revoke an API key by Keycloak client UUID
+      tags:
+      - keys
+  /api/label/{pool}/{label}:
+    delete:
+      deprecated: true
+      description: Route is deprecated and unavailable. Returns 410 Gone for every
+        request. The orchestrator-backed batch surface is retired; callers must migrate
+        to the replacement flow.
+      parameters:
+      - description: Pool name
+        in: path
+        name: pool
+        required: true
+        type: string
+      - description: Batch label
+        in: path
+        name: label
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "410":
+          description: Gone
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deprecated label cancellation route
+      tags:
+      - batch
+  /api/label/{pool}/{label}/batch:
+    post:
+      deprecated: true
+      description: Route is deprecated and unavailable. Returns 410 Gone for every
+        request. The orchestrator-backed batch surface is retired; callers must migrate
+        to the replacement flow.
+      parameters:
+      - description: Pool name
+        in: path
+        name: pool
+        required: true
+        type: string
+      - description: Batch label
+        in: path
+        name: label
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "410":
+          description: Gone
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deprecated label batch submission route
+      tags:
+      - batch
+  /api/label/{pool}/{label}/results:
+    get:
+      deprecated: true
+      description: Route is deprecated and unavailable. Returns 410 Gone for every
+        request. The orchestrator-backed batch surface is retired; callers must migrate
+        to the replacement flow.
+      parameters:
+      - description: Pool name
+        in: path
+        name: pool
+        required: true
+        type: string
+      - description: Batch label
+        in: path
+        name: label
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "410":
+          description: Gone
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deprecated label results route
+      tags:
+      - batch
+  /api/label/{pool}/{label}/status:
+    get:
+      deprecated: true
+      description: Route is deprecated and unavailable. Returns 410 Gone for every
+        request. The orchestrator-backed batch surface is retired; callers must migrate
+        to the replacement flow.
+      parameters:
+      - description: Pool name
+        in: path
+        name: pool
+        required: true
+        type: string
+      - description: Batch label
+        in: path
+        name: label
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "410":
+          description: Gone
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deprecated label status route
+      tags:
+      - batch
+  /api/namespaces:
+    get:
+      description: Returns namespaces owned by the caller's Capsule Tenant. The list
+        is scoped by a capsule.clastix.io/tenant=<tenant> label selector built from
+        the authenticated subject, so it stays fail-closed even when Capsule Proxy
+        isn't filtering.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/handlers.NamespaceResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List the calling user's namespaces
+      tags:
+      - namespaces
+    post:
+      consumes:
+      - application/json
+      description: Creates a K8s namespace via impersonation. Capsule's webhook intercepts
+        the creation and assigns it to the user's Tenant.
+      parameters:
+      - description: Namespace parameters
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CreateNamespaceRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handlers.NamespaceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a namespace for the calling user
+      tags:
+      - namespaces
+  /api/namespaces/{name}:
+    delete:
+      description: Deletes a K8s namespace via impersonation. Capsule blocks deletion
+        if the namespace doesn't belong to the user's Tenant.
+      parameters:
+      - description: Namespace name
+        in: path
+        name: name
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a namespace owned by the calling user
+      tags:
+      - namespaces
+  /api/orch/{namespace}/{service}/{path}:
+    get:
+      description: Resolves <service>.<namespace>.svc.cluster.local at request time
+        (in-cluster DNS). The caller must hold RBAC in {namespace} (verified via an
+        impersonated RoleBinding probe); OPA additionally validates that namespace
+        and service look like DNS-1123 labels.
+      parameters:
+      - description: Namespace (DNS-1123 label)
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Service name (DNS-1123 label)
+        in: path
+        name: service
+        required: true
+        type: string
+      - description: Upstream path
+        in: path
+        name: path
+        required: true
+        type: string
+      responses:
+        "200":
+          description: Upstream response
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: SPA-authenticated proxy to a per-namespace orchestrator service
+      tags:
+      - passthrough
+  /api/pool-templates:
+    get:
+      description: Returns every pool template owned by the calling user, newest first.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/handlers.PoolTemplateResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List the calling user's pool templates
+      tags:
+      - pool-templates
+    post:
+      consumes:
+      - application/json
+      description: Stores the given pool config under a name owned by the calling
+        user. Re-saving an existing name overwrites the config while preserving the
+        original creation time. Use GET /api/pool-templates to list them and seed
+        a new pool.
+      parameters:
+      - description: Template name + pool config
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CreatePoolTemplateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handlers.PoolTemplateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Save a pool config as a reusable template
+      tags:
+      - pool-templates
+  /api/pool-templates/{name}:
+    delete:
+      parameters:
+      - description: Template name
+        in: path
+        name: name
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete one of the calling user's pool templates
+      tags:
+      - pool-templates
+    get:
+      parameters:
+      - description: Template name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.PoolTemplateResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get one of the calling user's pool templates
+      tags:
+      - pool-templates
+  /api/svc/{namespace}/{service}/{path}:
+    get:
+      description: Proxies to {service}.{namespace}.svc.cluster.local:80. Per-key
+        tokens are bound to their `namespace` claim; all other principals (SPA, user
+        keys, oauth2-proxy browser sessions) must hold RBAC in {namespace}, verified
+        via an impersonated RoleBinding probe. Strips Authorization before forwarding.
+      parameters:
+      - description: K8s namespace (caller must own it, or it must match a per-key
+          token's namespace claim)
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: K8s Service name (DNS-1123 label)
+        in: path
+        name: service
+        required: true
+        type: string
+      - description: Upstream path (proxied verbatim)
+        in: path
+        name: path
+        type: string
+      responses:
+        "200":
+          description: Upstream response
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Authenticated reverse proxy to a K8s Service in a namespace the caller
+        owns
+      tags:
+      - gateway
+  /api/user-keys:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ListUserKeysResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List the calling user's API keys
+      tags:
+      - user-keys
+    post:
+      consumes:
+      - application/json
+      description: Creates a Keycloak service-account client that acts on behalf of
+        the calling user. The client_secret is returned exactly once; it cannot be
+        retrieved later.
+      parameters:
+      - description: Key parameters
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CreateUserKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handlers.CreateUserKeyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a per-user API key
+      tags:
+      - user-keys
+  /api/user-keys/{id}:
+    delete:
+      parameters:
+      - description: Keycloak client UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Revoke a per-user API key
+      tags:
+      - user-keys
+  /healthz:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.HealthResponse'
+      summary: Liveness/readiness probe
+      tags:
+      - health
+securityDefinitions:
+  BearerAuth:
+    description: Keycloak access token. For /api/keys and /api/{k8s,orch} the token
+      is the SPA's user JWT (azp=cyclops-cs-spa). /api/gateway/{name} and the deprecated
+      /api/batch/{pool} + /api/label/{pool} routes still run through the same OPA
+      checks; per-key tokens must carry a `namespace` claim matching "pool-{name}"
+      or "pool-{pool}" respectively.
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

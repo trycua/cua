@@ -1174,6 +1174,46 @@ impl Tool for BrowserTypeTool {
                 Err(error) => (Err(error), 0),
             }
         } else {
+            if let Err(error) = conn
+                .call(
+                    Some(cdp),
+                    "Emulation.setFocusEmulationEnabled",
+                    json!({ "enabled": true }),
+                )
+                .await
+            {
+                return BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserInputTrustUnavailable,
+                    format!(
+                        "the inactive tab could not enter CDP focus emulation for trusted keystrokes: {error}"
+                    ),
+                )
+                .to_tool_result();
+            }
+            if let Err(error) = conn
+                .call(
+                    Some(cdp),
+                    "DOM.focus",
+                    json!({ "backendNodeId": entry.backend_node_id }),
+                )
+                .await
+            {
+                let _ = conn
+                    .call(
+                        Some(cdp),
+                        "Emulation.setFocusEmulationEnabled",
+                        json!({ "enabled": false }),
+                    )
+                    .await;
+                return BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRefStale,
+                    format!(
+                        "the ref's node could not be refocused after enabling CDP focus emulation: {error}"
+                    ),
+                )
+                .to_tool_result();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
             let mut result = Ok(());
             let mut delivered = 0;
             for ch in text.chars() {
@@ -1186,9 +1226,24 @@ impl Tool for BrowserTypeTool {
                     .call(
                         Some(cdp),
                         "Input.dispatchKeyEvent",
-                        json!({ "type": "keyDown", "key": key, "text": key_text }),
+                        json!({ "type": "keyDown", "key": key }),
                     )
                     .await;
+                let character = if down.is_ok() {
+                    conn.call(
+                        Some(cdp),
+                        "Input.dispatchKeyEvent",
+                        json!({
+                            "type": "char",
+                            "key": key,
+                            "text": key_text,
+                            "unmodifiedText": key_text,
+                        }),
+                    )
+                    .await
+                } else {
+                    Ok(json!({}))
+                };
                 let up = conn
                     .call(
                         Some(cdp),
@@ -1196,11 +1251,22 @@ impl Tool for BrowserTypeTool {
                         json!({ "type": "keyUp", "key": key }),
                     )
                     .await;
-                if let Err(e) = down.and(up) {
+                if let Err(e) = down.and(character).and(up) {
                     result = Err(e);
                     break;
                 }
                 delivered += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+            }
+            if let Err(error) = conn
+                .call(
+                    Some(cdp),
+                    "Emulation.setFocusEmulationEnabled",
+                    json!({ "enabled": false }),
+                )
+                .await
+            {
+                result = Err(error);
             }
             (result, delivered)
         };

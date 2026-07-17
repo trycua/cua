@@ -606,9 +606,10 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     MockReply::ok(json!({}))
                 }
             }
-            "DOM.focus" | "Input.dispatchMouseEvent" | "Input.insertText" => {
-                MockReply::ok(json!({}))
-            }
+            "DOM.focus"
+            | "Emulation.setFocusEmulationEnabled"
+            | "Input.dispatchMouseEvent"
+            | "Input.insertText" => MockReply::ok(json!({})),
             "DOM.resolveNode" => MockReply::ok(json!({
                 "object": { "objectId": format!("obj-{}", call.params["backendNodeId"]) }
             })),
@@ -1831,4 +1832,48 @@ async fn partial_keystrokes_report_exact_delivered_prefix() {
     assert_eq!(refusal["detail"]["requested_chars"], 4);
     assert_eq!(refusal["detail"]["delivered_chars"], 2);
     assert_eq!(refusal["detail"]["retryable"], false);
+}
+
+#[tokio::test]
+async fn keystrokes_use_char_events_for_text_delivery() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let shadow_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": shadow_ref,
+            "text": "a\n",
+            "mode": "keystrokes",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&result)["status"], "ok");
+
+    let events = recorded_calls(&f, "Input.dispatchKeyEvent");
+    assert_eq!(events.len(), 6);
+    let params: Vec<&Value> = events.iter().map(|(_, params)| params).collect();
+    assert_eq!(params[0]["type"], "keyDown");
+    assert!(params[0].get("text").is_none());
+    assert_eq!(params[1]["type"], "char");
+    assert_eq!(params[1]["text"], "a");
+    assert_eq!(params[1]["unmodifiedText"], "a");
+    assert_eq!(params[2]["type"], "keyUp");
+    assert!(params[2].get("text").is_none());
+    assert_eq!(params[3]["type"], "keyDown");
+    assert_eq!(params[3]["key"], "Enter");
+    assert_eq!(params[4]["type"], "char");
+    assert_eq!(params[4]["key"], "Enter");
+    assert_eq!(params[4]["text"], "\r");
+    assert_eq!(params[4]["unmodifiedText"], "\r");
+    assert_eq!(params[5]["type"], "keyUp");
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(focus_emulation.len(), 2);
+    assert_eq!(focus_emulation[0].1["enabled"], true);
+    assert_eq!(focus_emulation[1].1["enabled"], false);
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
 }

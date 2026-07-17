@@ -38,8 +38,12 @@ fn setup_page_proven(
     descriptor: &BrowserSetupDescriptor,
     trusted_navigation: bool,
 ) -> bool {
-    let has_address_bar = nodes.iter().any(|node| {
-        role_is(node, &["entry", "text"]) && field_equals(node, "Address and search bar")
+    let has_contradictory_address_bar = nodes.iter().any(|node| {
+        role_is(node, &["entry", "text"])
+            && field_equals(node, "Address and search bar")
+            && node.value.as_deref().is_some_and(|value| {
+                !value.trim().is_empty() && !value.trim().eq_ignore_ascii_case(descriptor.setup_url)
+            })
     });
     let exact_url = nodes.iter().any(|node| {
         role_is(node, &["entry", "text"])
@@ -61,7 +65,9 @@ fn setup_page_proven(
                 .iter()
                 .any(|title| field_equals(node, title))
     });
-    (exact_url || (trusted_navigation && !has_address_bar)) && exact_page && exact_heading
+    (exact_url || (trusted_navigation && !has_contradictory_address_bar))
+        && exact_page
+        && exact_heading
 }
 
 fn exact_setup_checkbox<'a>(
@@ -485,6 +491,15 @@ mod tests {
                 .unwrap()
                 .is_some(),
             "the exact compositor-routed fixed navigation may substitute for hidden browser chrome"
+        );
+
+        let mut redacted_address = nodes.clone();
+        redacted_address[0].value = None;
+        assert!(
+            exact_setup_checkbox(&redacted_address, descriptor(), true)
+                .unwrap()
+                .is_some(),
+            "an address control with a withheld value is not contradictory evidence"
         );
 
         let mut contradictory = nodes;

@@ -105,8 +105,7 @@ class GitHubApi:
                     time.sleep(delay)
                     continue
                 raise ReleaseError(
-                    f"GitHub API {method} {path} failed after "
-                    f"{self.max_attempts} attempts: {error}"
+                    f"GitHub API {method} {path} failed after {self.max_attempts} attempts: {error}"
                 ) from error
         raise AssertionError("GitHub API retry loop exited unexpectedly")
 

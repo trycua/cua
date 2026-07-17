@@ -1,6 +1,6 @@
 # Release attribution and announcements plan
 
-- **Status:** Implemented locally; live fixture and rollout gates remain
+- **Status:** Implemented and fixture-proven; merge and first production smoke release remain
 - **Initial products:** Cua Driver and Lume
 - **Audience:** Engineering, developer relations, and release owners
 
@@ -27,7 +27,7 @@ This revision makes the initial design explicit:
 - Give one finalizer job sole ownership of the release body and draft-to-published transition.
 - Remove every legacy Cua Driver/Lume release trigger during cutover, including the `bump2version` menu entries, label-driven dispatch, reminder, and digest mappings.
 
-### Implementation status (July 16, 2026)
+### Implementation status (July 17, 2026)
 
 The core repository now contains the proposed Release Please configuration,
 version synchronizer, PR-first attribution collector, manifest schema, release
@@ -36,26 +36,46 @@ workflow cutover. The old Driver and Lume bump configs and legacy route mappings
 have been removed. The remaining generic bump workflow rejects existing tags
 instead of deleting them.
 
-Local verification currently includes:
+Verification includes:
 
-- 48 passing release-script and wiring tests;
+- 50 passing release-script and wiring tests;
 - validation against the pinned Release Please 17.3.0 config and manifest schemas;
 - direct Release Please updater tests for all configured TOML, Python, shell,
   PowerShell, and Swift version sources;
 - actionlint and YAML parsing for the changed workflows;
-- locked Cargo metadata with all nine Driver workspace packages at `0.8.3`;
+- locked Cargo metadata with all nine Driver workspace packages at `0.8.3` on
+  the checked-in branch and `0.9.0` on the generated fixture release branch;
 - an implementation review and re-audit by Claude Code Fable. The re-audit
   returned **PASS WITH FOLLOW-UPS**. Its findings about AI coauthors, linked
   Release Please changelog headings, and GitHub `[bot]` no-reply identities now
-  have regression coverage; the remaining follow-ups are part of the branch
-  fixture and rollout gates below.
+  have regression coverage, and its fixture follow-ups were exercised in the
+  fork rollout.
 
-The system is not ready to publish from `main` until the team completes the
-branch fixture matrix below and makes `CI: Release metadata` a required check
-for Driver and Lume release pull requests. That required check prevents a
-Release Please branch refresh from dropping the generated Cargo.lock sync
-commit before merge. The team must also review repository merge settings so
-product pull requests use squash merge titles as release input.
+The fork fixture completed the two-component lifecycle. Release Please created
+separate Lume and Driver release pull requests, exact component tags, and draft
+releases in [successful run #9](https://github.com/f-trycua/cua/actions/runs/29543877375).
+The finalizer was rerun against the same release and retained one
+release ID and one copy of each asset. A transient GitHub 503 was recovered by
+the retry path. The fixture also exposed and fixed a multi-component edge case:
+after one component ships, Release Please can rewrite another component's open
+release pull request. The workflow now resynchronizes every open trusted Driver
+release branch so the generated Cargo.lock commit cannot disappear.
+
+Production history also closes the GitHub App trigger gate. The legacy bump
+workflow uses the same `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY` as the new
+Release Please workflow. Tags it created as `cua-release-bot[bot]` started the
+existing Driver and Lume tag-push CD workflows, including successful
+[`cua-driver-rs-v0.8.3`](https://github.com/trycua/cua/actions/runs/29458645707)
+and [`lume-v0.3.16`](https://github.com/trycua/cua/actions/runs/29376412794)
+releases.
+
+The implementation is ready for review and merge. After the workflow exists on
+`main`, make `CI: Release metadata / validate` a required check for release
+pull requests. That check prevents a Release Please branch refresh from
+dropping the generated Cargo.lock sync commit before merge. The first real
+Release Please-driven Driver or Lume release remains an end-to-end smoke test.
+The team must also preserve squash-merge titles as the release input for
+product pull requests.
 
 ## Why this work is needed
 
@@ -232,15 +252,15 @@ Seed Release Please's version manifest from the current product versions:
 
 Add `libs/cua-driver/rust/VERSION` during implementation and seed it to the same value as `[workspace.package].version`. A release-PR workflow runs `cargo update -p cua-driver --precise <version>` after Release Please changes those two files. Cargo updates all nine inherited workspace-member versions without resolving unrelated dependencies. The workflow commits the resulting `Cargo.lock` change to the release pull request with the release GitHub App and fails if the version file, Cargo manifest, or lockfile disagree.
 
-The exact configuration must be tested against a branch before adoption. In particular, the test must prove that the existing tags are detected, the Cua Driver exclusion paths behave as intended, an installer-only change enters the driver history, the Rust version files and lockfile update together, Lume's two version files stay equal, and tags created with the Cua release GitHub App token trigger the existing CD workflows.
+The exact configuration was tested in an isolated fork before adoption. The fixture proved that existing tags are detected, component release pull requests remain independent, Rust version files and lockfile update together, Lume's version files stay equal, and draft finalization is idempotent. Production history separately proves that tags created with the Cua release GitHub App token trigger the existing CD workflows.
 
 Pin `googleapis/release-please-action` by commit SHA and record the embedded Release Please version. Do not point `$schema` at the moving `main` branch: the current schema and runtime have drifted on keys such as `component`, `package-name`, and `include-commit-authors`. Either use the schema from the exact embedded Release Please tag after validating it or omit `$schema` and validate the config with that pinned CLI/action in CI.
 
 Use Release Please's default changelog renderer for component releases. Its optional `github` changelog renderer asks GitHub for repository-wide generated notes and does not use Release Please's path-filtered commit list. That would mix unrelated monorepo changes into Cua Driver or Lume notes.
 
-Release Please documents `force-tag-creation` as eager creation of a tag ref when `draft` is enabled; it does not authorize overwriting or moving an existing tag. The branch fixture must still prove the complete integration: Release Please creates the component tag and draft release, the App-token-created tag starts the existing CD workflow, and the draft remains unpublished until the finalizer succeeds. If the pinned version does not satisfy that sequence, do not cut over; use a separate explicit tag-and-draft orchestration step instead.
+Release Please documents `force-tag-creation` as eager creation of a tag ref when `draft` is enabled; it does not authorize overwriting or moving an existing tag. The fork fixture proved that the pinned version creates the component tag and draft release and leaves the draft unpublished until the finalizer succeeds. Production history proves that App-token-created tags start the existing CD workflows. The first production release should verify the composed path end to end without weakening the immutable-tag or single-finalizer guarantees.
 
-Release Please should replace `bump2version` for these two components after the branch test passes. Other packages remain on the existing workflow.
+Release Please replaces `bump2version` for these two components when this implementation merges. Other packages remain on the existing workflow.
 
 ### Pull request release input
 

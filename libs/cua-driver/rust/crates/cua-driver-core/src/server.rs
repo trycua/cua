@@ -126,6 +126,104 @@ impl ToolErrorClass {
     }
 }
 
+/// Fixed structured-refusal codes that may cross the telemetry observer seam.
+///
+/// This vocabulary deliberately mirrors only reviewed, content-free browser
+/// refusal codes. Unknown future wire values become [`Self::Other`] until they
+/// are explicitly adopted here; refusal messages and details are never read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolRefusalCode {
+    None,
+    BrowserRouteUnavailable,
+    BrowserRequiresSetup,
+    BrowserBindingAmbiguous,
+    BrowserBindingStale,
+    BrowserWrongTargetRefused,
+    BrowserTabRequired,
+    BrowserTabNotFound,
+    BrowserRefStale,
+    BrowserInputTrustUnavailable,
+    BrowserEndpointOwnerMismatch,
+    BrowserConsentRequired,
+    BrowserConsentRevoked,
+    BrowserReconnectExhausted,
+    BrowserInputIncomplete,
+    BrowserActionUnavailable,
+    Other,
+}
+
+impl ToolRefusalCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::BrowserRouteUnavailable => "browser_route_unavailable",
+            Self::BrowserRequiresSetup => "browser_requires_setup",
+            Self::BrowserBindingAmbiguous => "browser_binding_ambiguous",
+            Self::BrowserBindingStale => "browser_binding_stale",
+            Self::BrowserWrongTargetRefused => "browser_wrong_target_refused",
+            Self::BrowserTabRequired => "browser_tab_required",
+            Self::BrowserTabNotFound => "browser_tab_not_found",
+            Self::BrowserRefStale => "browser_ref_stale",
+            Self::BrowserInputTrustUnavailable => "browser_input_trust_unavailable",
+            Self::BrowserEndpointOwnerMismatch => "browser_endpoint_owner_mismatch",
+            Self::BrowserConsentRequired => "browser_consent_required",
+            Self::BrowserConsentRevoked => "browser_consent_revoked",
+            Self::BrowserReconnectExhausted => "browser_reconnect_exhausted",
+            Self::BrowserInputIncomplete => "browser_input_incomplete",
+            Self::BrowserActionUnavailable => "browser_action_unavailable",
+            Self::Other => "other",
+        }
+    }
+
+    pub const fn is_refusal(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    fn from_wire_code(code: Option<&str>) -> Self {
+        match code {
+            Some("browser_route_unavailable") => Self::BrowserRouteUnavailable,
+            Some("browser_requires_setup") => Self::BrowserRequiresSetup,
+            Some("browser_binding_ambiguous") => Self::BrowserBindingAmbiguous,
+            Some("browser_binding_stale") => Self::BrowserBindingStale,
+            Some("browser_wrong_target_refused") => Self::BrowserWrongTargetRefused,
+            Some("browser_tab_required") => Self::BrowserTabRequired,
+            Some("browser_tab_not_found") => Self::BrowserTabNotFound,
+            Some("browser_ref_stale") => Self::BrowserRefStale,
+            Some("browser_input_trust_unavailable") => Self::BrowserInputTrustUnavailable,
+            Some("browser_endpoint_owner_mismatch") => Self::BrowserEndpointOwnerMismatch,
+            Some("browser_consent_required") => Self::BrowserConsentRequired,
+            Some("browser_consent_revoked") => Self::BrowserConsentRevoked,
+            Some("browser_reconnect_exhausted") => Self::BrowserReconnectExhausted,
+            Some("browser_input_incomplete") => Self::BrowserInputIncomplete,
+            Some("browser_action_unavailable") => Self::BrowserActionUnavailable,
+            Some(_) | None => Self::Other,
+        }
+    }
+}
+
+impl From<crate::browser::refusal::BrowserRefusalCode> for ToolRefusalCode {
+    fn from(code: crate::browser::refusal::BrowserRefusalCode) -> Self {
+        use crate::browser::refusal::BrowserRefusalCode;
+        match code {
+            BrowserRefusalCode::BrowserRouteUnavailable => Self::BrowserRouteUnavailable,
+            BrowserRefusalCode::BrowserRequiresSetup => Self::BrowserRequiresSetup,
+            BrowserRefusalCode::BrowserBindingAmbiguous => Self::BrowserBindingAmbiguous,
+            BrowserRefusalCode::BrowserBindingStale => Self::BrowserBindingStale,
+            BrowserRefusalCode::BrowserWrongTargetRefused => Self::BrowserWrongTargetRefused,
+            BrowserRefusalCode::BrowserTabRequired => Self::BrowserTabRequired,
+            BrowserRefusalCode::BrowserTabNotFound => Self::BrowserTabNotFound,
+            BrowserRefusalCode::BrowserRefStale => Self::BrowserRefStale,
+            BrowserRefusalCode::BrowserInputTrustUnavailable => Self::BrowserInputTrustUnavailable,
+            BrowserRefusalCode::BrowserEndpointOwnerMismatch => Self::BrowserEndpointOwnerMismatch,
+            BrowserRefusalCode::BrowserConsentRequired => Self::BrowserConsentRequired,
+            BrowserRefusalCode::BrowserConsentRevoked => Self::BrowserConsentRevoked,
+            BrowserRefusalCode::BrowserReconnectExhausted => Self::BrowserReconnectExhausted,
+            BrowserRefusalCode::BrowserInputIncomplete => Self::BrowserInputIncomplete,
+            BrowserRefusalCode::BrowserActionUnavailable => Self::BrowserActionUnavailable,
+        }
+    }
+}
+
 /// Privacy-bounded completion record for a known tool call on any transport.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolCompletionObservation {
@@ -135,6 +233,7 @@ pub struct ToolCompletionObservation {
     pub operation: ToolOperation,
     pub success: bool,
     pub error_class: ToolErrorClass,
+    pub refusal_code: ToolRefusalCode,
     pub duration_bucket: DurationBucket,
     pub output_type: OutputType,
     pub output_size_bucket: OutputSizeBucket,
@@ -153,6 +252,15 @@ pub enum ToolOperation {
     InsertText,
     TypeKeystrokes,
     EnableJavascriptAppleEvents,
+    BrowserBind,
+    BrowserSnapshotDomRefsV1,
+    BrowserSnapshotSemanticV2,
+    BrowserClickTrusted,
+    BrowserClickDomEvent,
+    BrowserTypeInsertText,
+    BrowserTypeKeystrokes,
+    BrowserPrepareIsolated,
+    BrowserPrepareExistingProfile,
     Other,
 }
 
@@ -167,27 +275,77 @@ impl ToolOperation {
             Self::InsertText => "insert_text",
             Self::TypeKeystrokes => "type_keystrokes",
             Self::EnableJavascriptAppleEvents => "enable_javascript_apple_events",
+            Self::BrowserBind => "browser_bind",
+            Self::BrowserSnapshotDomRefsV1 => "browser_snapshot_dom_refs_v1",
+            Self::BrowserSnapshotSemanticV2 => "browser_snapshot_semantic_v2",
+            Self::BrowserClickTrusted => "browser_click_trusted",
+            Self::BrowserClickDomEvent => "browser_click_dom_event",
+            Self::BrowserTypeInsertText => "browser_type_insert_text",
+            Self::BrowserTypeKeystrokes => "browser_type_keystrokes",
+            Self::BrowserPrepareIsolated => "browser_prepare_isolated",
+            Self::BrowserPrepareExistingProfile => "browser_prepare_existing_profile",
             Self::Other => "other",
         }
     }
 }
 
 pub fn tool_operation(tool_name: &str, args: Option<&serde_json::Value>) -> ToolOperation {
-    if tool_name != "page" {
-        return ToolOperation::NotApplicable;
-    }
-    match args
-        .and_then(|value| value.get("action"))
-        .and_then(serde_json::Value::as_str)
-    {
-        Some("execute_javascript") => ToolOperation::ExecuteJavascript,
-        Some("get_text") => ToolOperation::GetText,
-        Some("query_dom") => ToolOperation::QueryDom,
-        Some("click_element") => ToolOperation::ClickElement,
-        Some("insert_text") => ToolOperation::InsertText,
-        Some("type_keystrokes") => ToolOperation::TypeKeystrokes,
-        Some("enable_javascript_apple_events") => ToolOperation::EnableJavascriptAppleEvents,
-        _ => ToolOperation::Other,
+    let string_arg = |key: &str| {
+        args.and_then(|value| value.get(key))
+            .and_then(serde_json::Value::as_str)
+    };
+    match tool_name {
+        "page" => match string_arg("action") {
+            Some("execute_javascript") => ToolOperation::ExecuteJavascript,
+            Some("get_text") => ToolOperation::GetText,
+            Some("query_dom") => ToolOperation::QueryDom,
+            Some("click_element") => ToolOperation::ClickElement,
+            Some("insert_text") => ToolOperation::InsertText,
+            Some("type_keystrokes") => ToolOperation::TypeKeystrokes,
+            Some("enable_javascript_apple_events") => ToolOperation::EnableJavascriptAppleEvents,
+            _ => ToolOperation::Other,
+        },
+        "get_browser_state" => {
+            if string_arg("target_id").is_some() {
+                match string_arg("snapshot_format") {
+                    Some("semantic_v2") => ToolOperation::BrowserSnapshotSemanticV2,
+                    None | Some("dom_refs_v1") => ToolOperation::BrowserSnapshotDomRefsV1,
+                    Some(_) => ToolOperation::Other,
+                }
+            } else if args.and_then(|value| value.get("pid")).is_some()
+                || args.and_then(|value| value.get("window_id")).is_some()
+            {
+                ToolOperation::BrowserBind
+            } else {
+                ToolOperation::Other
+            }
+        }
+        "browser_click" => match string_arg("input_route") {
+            None | Some("trusted") => ToolOperation::BrowserClickTrusted,
+            Some("dom_event") => ToolOperation::BrowserClickDomEvent,
+            Some(_) => ToolOperation::Other,
+        },
+        "browser_type" => match string_arg("mode") {
+            None | Some("insert_text") => ToolOperation::BrowserTypeInsertText,
+            Some("keystrokes") => ToolOperation::BrowserTypeKeystrokes,
+            Some(_) => ToolOperation::Other,
+        },
+        "browser_prepare" => {
+            let strategy = args
+                .and_then(|value| value.pointer("/strategy/kind"))
+                .and_then(serde_json::Value::as_str);
+            let profile_mode = args
+                .and_then(|value| value.pointer("/profile/mode"))
+                .and_then(serde_json::Value::as_str);
+            match (strategy, profile_mode) {
+                (Some("existing_profile"), _) => ToolOperation::BrowserPrepareExistingProfile,
+                (None, Some("isolated_new" | "isolated_named")) => {
+                    ToolOperation::BrowserPrepareIsolated
+                }
+                _ => ToolOperation::Other,
+            }
+        }
+        _ => ToolOperation::NotApplicable,
     }
 }
 
@@ -461,6 +619,11 @@ fn classify_tool_completion(
     } else {
         structured_error_class(result)
     };
+    let refusal_code = if success {
+        structured_refusal_code(&timer.tool_name, result)
+    } else {
+        ToolRefusalCode::None
+    };
 
     let output_type = classify_output_type(result);
     let output_size_bucket = result
@@ -473,10 +636,37 @@ fn classify_tool_completion(
         operation: timer.operation,
         success,
         error_class,
+        refusal_code,
         duration_bucket,
         output_type,
         output_size_bucket,
     }
+}
+
+fn structured_refusal_code(tool_name: &str, result: Option<&serde_json::Value>) -> ToolRefusalCode {
+    if !matches!(
+        tool_name,
+        "get_browser_state"
+            | "browser_prepare"
+            | "browser_navigate"
+            | "browser_click"
+            | "browser_type"
+    ) {
+        return ToolRefusalCode::None;
+    }
+    let structured = result.and_then(|value| value.get("structuredContent"));
+    if structured
+        .and_then(|value| value.get("status"))
+        .and_then(serde_json::Value::as_str)
+        != Some("refused")
+    {
+        return ToolRefusalCode::None;
+    }
+    ToolRefusalCode::from_wire_code(
+        structured
+            .and_then(|value| value.pointer("/refusal/code"))
+            .and_then(serde_json::Value::as_str),
+    )
 }
 
 fn serialized_size_without_retaining(value: &serde_json::Value) -> Option<usize> {
@@ -716,6 +906,176 @@ mod observation_tests {
     }
 
     #[test]
+    fn browser_operations_are_closed_and_retain_no_argument_content() {
+        for (tool_name, args, expected) in [
+            (
+                "get_browser_state",
+                serde_json::json!({"pid": 42, "window_id": 7, "query": "private query"}),
+                ToolOperation::BrowserBind,
+            ),
+            (
+                "get_browser_state",
+                serde_json::json!({
+                    "target_id": "private-target",
+                    "snapshot_format": "dom_refs_v1"
+                }),
+                ToolOperation::BrowserSnapshotDomRefsV1,
+            ),
+            (
+                "get_browser_state",
+                serde_json::json!({
+                    "target_id": "private-target",
+                    "snapshot_format": "semantic_v2"
+                }),
+                ToolOperation::BrowserSnapshotSemanticV2,
+            ),
+            (
+                "browser_click",
+                serde_json::json!({"input_route": "trusted", "ref": "private-ref"}),
+                ToolOperation::BrowserClickTrusted,
+            ),
+            (
+                "browser_click",
+                serde_json::json!({"input_route": "dom_event", "ref": "private-ref"}),
+                ToolOperation::BrowserClickDomEvent,
+            ),
+            (
+                "browser_type",
+                serde_json::json!({"mode": "insert_text", "text": "private typed text"}),
+                ToolOperation::BrowserTypeInsertText,
+            ),
+            (
+                "browser_type",
+                serde_json::json!({"mode": "keystrokes", "text": "private typed text"}),
+                ToolOperation::BrowserTypeKeystrokes,
+            ),
+            (
+                "browser_prepare",
+                serde_json::json!({
+                    "profile": {"mode": "isolated_named", "name": "private-profile"}
+                }),
+                ToolOperation::BrowserPrepareIsolated,
+            ),
+            (
+                "browser_prepare",
+                serde_json::json!({
+                    "strategy": {"kind": "existing_profile"},
+                    "approval_token": "private-token"
+                }),
+                ToolOperation::BrowserPrepareExistingProfile,
+            ),
+        ] {
+            let operation = tool_operation(tool_name, Some(&args));
+            assert_eq!(operation, expected, "tool={tool_name}");
+            let debug = format!("{operation:?}");
+            for forbidden in [
+                "private query",
+                "private-target",
+                "private-ref",
+                "private typed text",
+                "private-profile",
+                "private-token",
+            ] {
+                assert!(!debug.contains(forbidden), "observer leaked {forbidden}");
+            }
+        }
+        assert_eq!(
+            tool_operation(
+                "browser_click",
+                Some(&serde_json::json!({"input_route": "private-route"})),
+            ),
+            ToolOperation::Other
+        );
+        assert_eq!(
+            tool_operation(
+                "browser_navigate",
+                Some(&serde_json::json!({"url": "https://private.example"})),
+            ),
+            ToolOperation::NotApplicable
+        );
+    }
+
+    #[test]
+    fn browser_refusals_preserve_protocol_success_without_retaining_content() {
+        let response = Response::ok(
+            serde_json::json!(1),
+            serde_json::json!({
+                "content": [{"type":"text", "text":"private refusal prose"}],
+                "structuredContent": {
+                    "status": "refused",
+                    "refusal": {
+                        "code": "browser_input_trust_unavailable",
+                        "message": "private refusal message",
+                        "detail": {"candidate": "private tab id"}
+                    }
+                }
+            }),
+        );
+        let observation = ToolObservationTimer::start_with_operation(
+            "browser_click".to_owned(),
+            ToolOperation::BrowserClickTrusted,
+            true,
+            true,
+            StdioExecutionPath::InProcess,
+        )
+        .finish(&response);
+        assert!(observation.success);
+        assert_eq!(observation.error_class, ToolErrorClass::None);
+        assert_eq!(
+            observation.refusal_code,
+            ToolRefusalCode::BrowserInputTrustUnavailable
+        );
+        let debug = format!("{observation:?}");
+        for forbidden in ["private refusal prose", "private refusal message", "private tab id"] {
+            assert!(!debug.contains(forbidden), "observer leaked {forbidden}");
+        }
+    }
+
+    #[test]
+    fn browser_refusal_allowlist_matches_the_public_contract() {
+        use crate::browser::refusal::BrowserRefusalCode;
+        for code in [
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            BrowserRefusalCode::BrowserRequiresSetup,
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            BrowserRefusalCode::BrowserBindingStale,
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            BrowserRefusalCode::BrowserTabRequired,
+            BrowserRefusalCode::BrowserTabNotFound,
+            BrowserRefusalCode::BrowserRefStale,
+            BrowserRefusalCode::BrowserInputTrustUnavailable,
+            BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+            BrowserRefusalCode::BrowserConsentRequired,
+            BrowserRefusalCode::BrowserConsentRevoked,
+            BrowserRefusalCode::BrowserReconnectExhausted,
+            BrowserRefusalCode::BrowserInputIncomplete,
+            BrowserRefusalCode::BrowserActionUnavailable,
+        ] {
+            assert_eq!(ToolRefusalCode::from(code).as_str(), code.as_str());
+        }
+        let unknown = Response::ok(
+            serde_json::json!(1),
+            serde_json::json!({
+                "structuredContent": {
+                    "status": "refused",
+                    "refusal": {"code": "private_future_refusal"}
+                }
+            }),
+        );
+        assert_eq!(
+            ToolObservationTimer::start(
+                "browser_click".to_owned(),
+                true,
+                true,
+                StdioExecutionPath::InProcess,
+            )
+            .finish(&unknown)
+            .refusal_code,
+            ToolRefusalCode::Other
+        );
+    }
+
+    #[test]
     fn invalid_params_and_unknown_tool_are_distinct() {
         let invalid = Response::error(serde_json::json!(1), -32602, "private invalid params");
         let invalid_observation =
@@ -808,5 +1168,13 @@ mod observation_tests {
         assert_eq!(OutputType::Empty.as_str(), "empty");
         assert_eq!(OutputSizeBucket::MiB1OrMore.as_str(), "gte_1mib");
         assert_eq!(ToolErrorClass::TransportError.as_str(), "transport_error");
+        assert_eq!(
+            ToolRefusalCode::BrowserConsentRevoked.as_str(),
+            "browser_consent_revoked"
+        );
+        assert_eq!(
+            ToolOperation::BrowserSnapshotSemanticV2.as_str(),
+            "browser_snapshot_semantic_v2"
+        );
     }
 }

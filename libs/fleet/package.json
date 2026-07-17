@@ -23,7 +23,7 @@
     "keycloak-js": "^25.0.6",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.28.0"
+    "react-router-dom": "^6.30.4"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",
@@ -33,9 +33,13 @@
     "@vitejs/plugin-react": "^4.3.4",
     "swagger-typescript-api": "13.2.7",
     "typescript": "^5.7.2",
-    "vite": "^5.4.11"
+    "vite": "^6.4.3"
   },
   "pnpm": {
+    "overrides": {
+      "@babel/core": "7.29.6",
+      "js-yaml": "4.2.0"
+    },
     "patchedDependencies": {
       "@novnc/novnc@1.7.0": "patches/@novnc__novnc@1.7.0.patch"
     }

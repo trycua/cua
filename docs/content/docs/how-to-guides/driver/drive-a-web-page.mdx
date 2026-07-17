@@ -166,13 +166,38 @@ Snapshot the selected tab before using an element ref:
 get_browser_state({
   "target_id": "<target_id>",
   "tab_id": "<tab_id>",
-  "session": "research-1"
+  "session": "research-1",
+  "snapshot_format": "semantic_v2"
 })
 ```
 
-The response contains interactive elements with refs such as `p1:7`. Refs are
-valid only for that session, target, tab, and latest snapshot. Take a fresh
-snapshot after navigation or whenever a call returns `browser_ref_stale`.
+Read `outline` for visible page content. Select actions only from `refs`, and
+check that the chosen entry declares `click` or `type` in `actions`.
+`content_refs` are read capabilities for `scope_ref`; they cannot be passed to
+an unsupported mutation.
+
+If `snapshot.continuation` is non-null, request the next ranked segment without
+changing the page:
+
+```jsonc
+get_browser_state({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "session": "research-1",
+  "snapshot_format": "semantic_v2",
+  "continuation": "<opaque_continuation>"
+})
+```
+
+Use `query` to find matching roles, accessible names, or visible text. Use a
+current `scope_ref` to inspect one semantic subtree when names repeat in
+different regions. A continuation is single-use; a newer snapshot invalidates
+it.
+
+Refs are valid only for that session, target, tab, document, frame, and latest
+snapshot. Take a fresh snapshot after navigation or whenever a call returns
+`browser_ref_stale`. `dom_refs_v1` remains available for compatibility when
+`snapshot_format` is omitted, but new workflows should request `semantic_v2`.
 
 ## Click and type
 

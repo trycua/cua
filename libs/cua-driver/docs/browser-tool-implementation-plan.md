@@ -78,7 +78,7 @@ This project will not:
 - provide ambient "current browser" or "current tab" global state;
 - silently retry, self-heal, or switch routes after an exact-target check fails;
 - promise a stable tab model for browsers or embedded webviews that do not expose one;
-- copy an agent-browser-style daemon or make a browser instance equivalent to a Cua session;
+- copy a third-party browser daemon or make a browser instance equivalent to a Cua session;
 - add universal `browser_wait`, `browser_close`, or tab lifecycle operations in v1;
 - deprecate `page` before the new browser surface has accepted cross-platform evidence.
 

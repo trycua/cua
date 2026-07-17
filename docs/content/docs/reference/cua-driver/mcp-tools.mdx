@@ -746,12 +746,16 @@ Install the ffmpeg binary used by start_recording's video capture (Linux/Windows
 
 ### `get_browser_state`
 
-Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id to snapshot the tab's composed DOM (main frame, shadow DOM, same-process iframes, and capability-tested out-of-process iframes) and mint p&lt;snapshot&gt;:&lt;index&gt; element refs for browser_click / browser_type; each ref reports its frame kind. Never performs setup — a missing endpoint is a structured browser_requires_setup refusal pointing at browser_prepare.
+Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, and opaque continuation. Never performs setup — a missing endpoint is a structured browser_requires_setup refusal pointing at browser_prepare.
 
 **Arguments:**
 
+- `continuation` (string, optional): Opaque continuation minted by an earlier semantic_v2 response.
 - `pid` (integer, optional): Native browser process id (bind mode).
+- `query` (string, optional): Read-only semantic match over role, accessible name, and visible text.
+- `scope_ref` (string, optional): Current semantic/content ref whose subtree should be observed.
 - `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.
+- `snapshot_format` (string, optional): Versioned snapshot contract. dom_refs_v1 remains the compatibility default.
 - `tab_id` (string, optional): Opaque tab id from get_browser_state (session-scoped).
 - `target_id` (string, optional): Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).
 - `window_id` (integer, optional): Native window id owned by pid (bind mode).

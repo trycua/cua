@@ -19,6 +19,7 @@ use super::approval::MCP_HOST_APPROVAL_ARG;
 use super::engine::BrowserEngine;
 use super::platform::{PrepareAuthorization, PrepareProfile, PrepareRequest, PrepareStrategy};
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
+use super::store::BrowserActionKind;
 use super::types::BindingQuality;
 
 /// Register all five browser tools against one shared engine. Platform
@@ -85,6 +86,19 @@ fn schema_session() -> Value {
     })
 }
 
+fn semantic_ref_value(listed: &super::engine::SemanticListedRef) -> Value {
+    json!({
+        "ref": listed.external,
+        "role": listed.node.role,
+        "name": listed.node.name,
+        "value": listed.node.value,
+        "states": listed.node.states,
+        "actions": listed.node.actions.iter().map(|action| action.as_str()).collect::<Vec<_>>(),
+        "frame": listed.node.frame.kind.as_str(),
+        "visibility": listed.node.visibility.as_str(),
+    })
+}
+
 // ── get_browser_state ────────────────────────────────────────────────────────
 
 pub struct GetBrowserStateTool {
@@ -99,11 +113,12 @@ impl GetBrowserStateTool {
             description: "Read-only browser inspection. Mode 1 (bind): pass pid + \
                 window_id of a native browser window to classify it, correlate it to \
                 a CDP target (exact-or-refuse), and mint a session-scoped target id \
-                plus tab ids. Mode 2 (snapshot): pass target_id + tab_id to snapshot \
-                the tab's composed DOM (main frame, shadow DOM, same-process iframes, \
-                and capability-tested out-of-process iframes) and mint \
-                p<snapshot>:<index> element refs for browser_click / browser_type; \
-                each ref reports its frame kind. Never performs setup — a missing \
+                plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The \
+                dom_refs_v1 compatibility format returns composed DOM refs. \
+                semantic_v2 joins accessibility, DOM, layout, and viewport state; \
+                ranks visible content before retained/offscreen state; and returns a \
+                semantic outline, typed action refs, content refs, scoped reads, and \
+                opaque continuation. Never performs setup — a missing \
                 endpoint is a structured browser_requires_setup refusal pointing at \
                 browser_prepare."
                 .into(),
@@ -115,6 +130,23 @@ impl GetBrowserStateTool {
                     "target_id": schema_target_id(),
                     "tab_id": schema_tab_id(),
                     "session": schema_session(),
+                    "snapshot_format": {
+                        "type": "string",
+                        "enum": ["dom_refs_v1", "semantic_v2"],
+                        "description": "Versioned snapshot contract. dom_refs_v1 remains the compatibility default."
+                    },
+                    "scope_ref": {
+                        "type": "string",
+                        "description": "Current semantic/content ref whose subtree should be observed."
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Read-only semantic match over role, accessible name, and visible text."
+                    },
+                    "continuation": {
+                        "type": "string",
+                        "description": "Opaque continuation minted by an earlier semantic_v2 response."
+                    },
                 },
                 "additionalProperties": true
             }),
@@ -150,6 +182,94 @@ impl Tool for GetBrowserStateTool {
                     .to_tool_result()
                 }
             };
+            let snapshot_format = args
+                .opt_str("snapshot_format")
+                .unwrap_or_else(|| "dom_refs_v1".into());
+            if snapshot_format != "dom_refs_v1" && snapshot_format != "semantic_v2" {
+                return ToolResult::error(format!(
+                    "snapshot_format must be \"dom_refs_v1\" or \"semantic_v2\", got {snapshot_format:?}"
+                ));
+            }
+            if snapshot_format == "dom_refs_v1"
+                && (args.opt_str("scope_ref").is_some()
+                    || args.opt_str("query").is_some()
+                    || args.opt_str("continuation").is_some())
+            {
+                return ToolResult::error(
+                    "scope_ref, query, and continuation require snapshot_format=\"semantic_v2\"",
+                );
+            }
+            if snapshot_format == "semantic_v2" {
+                return match self
+                    .engine
+                    .snapshot_tab_semantic(
+                        &session,
+                        &target_id,
+                        &tab_id,
+                        args.opt_str("scope_ref").as_deref(),
+                        args.opt_str("query").as_deref(),
+                        args.opt_str("continuation").as_deref(),
+                    )
+                    .await
+                {
+                    Ok(outcome) => {
+                        let refs = outcome
+                            .refs
+                            .iter()
+                            .map(semantic_ref_value)
+                            .collect::<Vec<_>>();
+                        let content_refs = outcome
+                            .content_refs
+                            .iter()
+                            .map(semantic_ref_value)
+                            .collect::<Vec<_>>();
+                        ToolResult::text(format!(
+                            "semantic snapshot p{} of {}: {} action ref(s), {} content ref(s)",
+                            outcome.snapshot_id,
+                            outcome.url,
+                            refs.len(),
+                            content_refs.len()
+                        ))
+                        .with_structured(json!({
+                            "status": "ok",
+                            "mode": "snapshot",
+                            "target_id": target_id,
+                            "tab_id": tab_id,
+                            "snapshot": {
+                                "id": format!("p{}", outcome.snapshot_id),
+                                "format": "semantic_v2",
+                                "complete": outcome.complete,
+                                "scope": outcome.scope,
+                                "selected_nodes": outcome.selected_nodes,
+                                "total_nodes": outcome.total_nodes,
+                                "node_budget": super::semantic::DEFAULT_SEMANTIC_NODE_BUDGET,
+                                "omitted": {
+                                    "css_hidden": outcome.omissions.css_hidden,
+                                    "offscreen": outcome.omissions.offscreen,
+                                    "page_occluded": outcome.omissions.page_occluded,
+                                    "no_layout": outcome.omissions.no_layout,
+                                    "unknown": outcome.omissions.unknown,
+                                    "budget": outcome.omissions.budget,
+                                    "unprovable_frame": outcome.omissions.unprovable_frame,
+                                },
+                                "continuation": outcome.continuation,
+                            },
+                            "page": {
+                                "url": outcome.url,
+                                "title": outcome.title,
+                            },
+                            "outline": outcome.outline,
+                            "refs": refs,
+                            "content_refs": content_refs,
+                            "oopif": {
+                                "status": outcome.oopif.as_str(),
+                                "frames": outcome.oopif.frames(),
+                            },
+                        }))
+                    }
+                    Err(refusal) => refusal.to_tool_result(),
+                };
+            }
             return match self
                 .engine
                 .snapshot_tab(&session, &target_id, &tab_id)
@@ -220,6 +340,8 @@ impl Tool for GetBrowserStateTool {
                     .map(|t| {
                         json!({
                             "tab_id": t.tab_id,
+                            "title": t.title,
+                            "url": t.url,
                             "active": t.cdp_target_id == record.cdp_target_id,
                         })
                     })
@@ -651,6 +773,13 @@ impl Tool for BrowserClickTool {
                     Ok(entry) => entry,
                     Err(refusal) => return refusal.to_tool_result(),
                 };
+                if entry.semantic && !entry.actions.contains(&BrowserActionKind::Click) {
+                    return BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserActionUnavailable,
+                        format!("semantic ref {r} does not declare the click action"),
+                    )
+                    .to_tool_result();
+                }
                 let frame_session = match self
                     .engine
                     .frame_session_for_mutation(
@@ -781,8 +910,27 @@ impl Tool for BrowserClickTool {
             (None, None) => unreachable!("validated above"),
         };
 
+        if let Err(error) = conn
+            .call(
+                Some(cdp),
+                "Emulation.setFocusEmulationEnabled",
+                json!({ "enabled": true }),
+            )
+            .await
+        {
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserInputTrustUnavailable,
+                format!(
+                    "the target tab could not enter CDP focus emulation for trusted input: {error}"
+                ),
+            )
+            .to_tool_result();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+
+        let mut delivery_error = None;
         for (event_type, click_count) in [("mousePressed", 1), ("mouseReleased", 1)] {
-            if let Err(e) = conn
+            if let Err(error) = conn
                 .call(
                     Some(cdp),
                     "Input.dispatchMouseEvent",
@@ -796,17 +944,39 @@ impl Tool for BrowserClickTool {
                 )
                 .await
             {
-                // Trusted input is the contract; we never silently fall
-                // back to synthetic events.
-                return BrowserRefusal::new(
-                    BrowserRefusalCode::BrowserInputTrustUnavailable,
-                    format!(
-                        "trusted Input route failed ({e}) — re-run with \
-                         input_route=\"dom_event\" to explicitly request a synthetic click"
-                    ),
-                )
-                .to_tool_result();
+                delivery_error = Some(error);
+                break;
             }
+        }
+        let cleanup_error = conn
+            .call(
+                Some(cdp),
+                "Emulation.setFocusEmulationEnabled",
+                json!({ "enabled": false }),
+            )
+            .await
+            .err();
+        if let Some(error) = delivery_error {
+            // Trusted input is the contract; we never silently fall back to
+            // synthetic events. Focus emulation has already been unwound.
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserInputTrustUnavailable,
+                format!(
+                    "trusted Input route failed ({error}) — re-run with \
+                     input_route=\"dom_event\" to explicitly request a synthetic click"
+                ),
+            )
+            .to_tool_result();
+        }
+        if let Some(error) = cleanup_error {
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserInputTrustUnavailable,
+                format!(
+                    "trusted click was acknowledged but CDP focus emulation could not be restored ({error}); delivery is unknown and must not be retried automatically"
+                ),
+            )
+            .with_detail(json!({ "delivery": "unknown", "retryable": false }))
+            .to_tool_result();
         }
         ToolResult::text(format!("clicked ({x:.0}, {y:.0}) in {tab_id}")).with_structured(json!({
             "status": "ok",
@@ -852,6 +1022,12 @@ const EDITABLE_AND_FOCUSED_CHECK: &str = "function() { \
     return !this.disabled && !this.readOnly && \
         !['button','checkbox','color','file','hidden','image','radio','range','reset','submit']\
         .includes((this.type || 'text').toLowerCase()); \
+}";
+
+const FOCUS_EMULATION_READY_CHECK: &str = "function() { \
+    const root = this.getRootNode(); \
+    const active = ('activeElement' in root) ? root.activeElement : null; \
+    return document.hasFocus() && active === this; \
 }";
 
 pub struct BrowserTypeTool {
@@ -951,6 +1127,13 @@ impl Tool for BrowserTypeTool {
             Ok(e) => e,
             Err(refusal) => return refusal.to_tool_result(),
         };
+        if entry.semantic && !entry.actions.contains(&BrowserActionKind::Type) {
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserActionUnavailable,
+                format!("semantic ref {ext_ref} does not declare the type action"),
+            )
+            .to_tool_result();
+        }
         // Re-prove the ref's frame identity; typing routes to the frame's
         // own session (tab, or the contained OOPIF child session).
         let cdp_session = match self
@@ -1038,6 +1221,101 @@ impl Tool for BrowserTypeTool {
                 Err(error) => (Err(error), 0),
             }
         } else {
+            if let Err(error) = conn
+                .call(
+                    Some(cdp),
+                    "Emulation.setFocusEmulationEnabled",
+                    json!({ "enabled": true }),
+                )
+                .await
+            {
+                return BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserInputTrustUnavailable,
+                    format!(
+                        "the inactive tab could not enter CDP focus emulation for trusted keystrokes: {error}"
+                    ),
+                )
+                .to_tool_result();
+            }
+            let mut focus_ready = false;
+            let mut focus_error = None;
+            for _ in 0..20 {
+                if let Err(error) = conn
+                    .call(
+                        Some(cdp),
+                        "DOM.focus",
+                        json!({ "backendNodeId": entry.backend_node_id }),
+                    )
+                    .await
+                {
+                    focus_error = Some(error);
+                    break;
+                }
+                let ready = conn
+                    .call(
+                        Some(cdp),
+                        "Runtime.callFunctionOn",
+                        json!({
+                            "objectId": object_id,
+                            "functionDeclaration": FOCUS_EMULATION_READY_CHECK,
+                            "returnByValue": true,
+                        }),
+                    )
+                    .await;
+                if matches!(
+                    ready,
+                    Ok(ref value) if value["result"]["value"].as_bool() == Some(true)
+                ) {
+                    focus_ready = true;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            if !focus_ready {
+                let _ = conn
+                    .call(
+                        Some(cdp),
+                        "Emulation.setFocusEmulationEnabled",
+                        json!({ "enabled": false }),
+                    )
+                    .await;
+                return BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserInputTrustUnavailable,
+                    format!(
+                        "the exact editable ref did not become focus-ready under CDP emulation{}",
+                        focus_error
+                            .as_ref()
+                            .map(|error| format!(": {error}"))
+                            .unwrap_or_default()
+                    ),
+                )
+                .to_tool_result();
+            }
+            // Chromium acknowledges focus emulation before every renderer's
+            // trusted-input path is ready. Edge on Linux can otherwise drop
+            // the first one or two characters while still returning success.
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if let Err(error) = conn
+                .call(
+                    Some(cdp),
+                    "DOM.focus",
+                    json!({ "backendNodeId": entry.backend_node_id }),
+                )
+                .await
+            {
+                let _ = conn
+                    .call(
+                        Some(cdp),
+                        "Emulation.setFocusEmulationEnabled",
+                        json!({ "enabled": false }),
+                    )
+                    .await;
+                return BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRefStale,
+                    format!("the exact editable ref became stale before trusted typing: {error}"),
+                )
+                .to_tool_result();
+            }
             let mut result = Ok(());
             let mut delivered = 0;
             for ch in text.chars() {
@@ -1050,9 +1328,24 @@ impl Tool for BrowserTypeTool {
                     .call(
                         Some(cdp),
                         "Input.dispatchKeyEvent",
-                        json!({ "type": "keyDown", "key": key, "text": key_text }),
+                        json!({ "type": "keyDown", "key": key }),
                     )
                     .await;
+                let character = if down.is_ok() {
+                    conn.call(
+                        Some(cdp),
+                        "Input.dispatchKeyEvent",
+                        json!({
+                            "type": "char",
+                            "key": key,
+                            "text": key_text,
+                            "unmodifiedText": key_text,
+                        }),
+                    )
+                    .await
+                } else {
+                    Ok(json!({}))
+                };
                 let up = conn
                     .call(
                         Some(cdp),
@@ -1060,11 +1353,22 @@ impl Tool for BrowserTypeTool {
                         json!({ "type": "keyUp", "key": key }),
                     )
                     .await;
-                if let Err(e) = down.and(up) {
+                if let Err(e) = down.and(character).and(up) {
                     result = Err(e);
                     break;
                 }
                 delivered += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+            }
+            if let Err(error) = conn
+                .call(
+                    Some(cdp),
+                    "Emulation.setFocusEmulationEnabled",
+                    json!({ "enabled": false }),
+                )
+                .await
+            {
+                result = Err(error);
             }
             (result, delivered)
         };
@@ -1475,6 +1779,8 @@ mod tests {
             crate::browser::store::TabRecord {
                 tab_id: tab_id.clone(),
                 cdp_target_id: "CDPX".into(),
+                title: "Mock".into(),
+                url: "https://example.test".into(),
                 generation: 0,
                 snapshots: HashMap::new(),
             },
@@ -1529,6 +1835,8 @@ mod tests {
             crate::browser::store::TabRecord {
                 tab_id: tab_id.clone(),
                 cdp_target_id: "CDPX".into(),
+                title: "Mock".into(),
+                url: "https://example.test".into(),
                 generation: 0,
                 snapshots: HashMap::new(),
             },

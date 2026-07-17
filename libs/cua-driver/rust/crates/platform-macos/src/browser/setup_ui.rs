@@ -14,7 +14,7 @@ use cua_driver_core::browser::{
 
 use crate::ax::bindings::{
     copy_number_attr, copy_string_attr, element_screen_center, focused_element_of_pid,
-    kAXErrorSuccess, perform_action, set_bool_attr_true, AXUIElementRef,
+    kAXErrorSuccess, perform_action, set_bool_attr_true, set_string_attr, AXUIElementRef,
 };
 use crate::ax::tree::{walk_tree, AXNode};
 
@@ -110,6 +110,100 @@ fn unique_omnibox(
             ),
         )
     })
+}
+
+fn is_exact_setup_suggestion(value: &str, setup_url: &str) -> bool {
+    let value = value.trim();
+    value.eq_ignore_ascii_case(setup_url)
+        || value.strip_prefix(setup_url).is_some_and(|suffix| {
+            suffix.eq_ignore_ascii_case(", press Tab then Enter to Remove Suggestion.")
+        })
+}
+
+fn node_is_exact_setup_suggestion(node: &AXNode, setup_url: &str) -> bool {
+    [
+        node.title.as_deref(),
+        node.value.as_deref(),
+        node.description.as_deref(),
+        node.help.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| is_exact_setup_suggestion(value, setup_url))
+}
+
+fn exact_omnibox_suggestion(
+    nodes: &[AXNode],
+    descriptor: &BrowserSetupDescriptor,
+) -> Result<Option<usize>, BrowserRefusal> {
+    let omniboxes = nodes
+        .iter()
+        .filter(|node| {
+            node.role == "AXTextField"
+                && field_equals(node, "Address and search bar")
+                && node
+                    .value
+                    .as_deref()
+                    .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
+        })
+        .count();
+    match omniboxes {
+        0 => return Ok(None),
+        1 => {}
+        _ => {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!(
+                    "{} exposed multiple exact address fields containing the setup URL",
+                    descriptor.product_name
+                ),
+            ))
+        }
+    }
+    let popups = nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.role == "AXWebArea" && field_equals(node, "Omnibox Popup"))
+        .collect::<Vec<_>>();
+    let (popup_index, popup) = match popups.as_slice() {
+        [] => return Ok(None),
+        [(index, popup)] => (*index, *popup),
+        _ => {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!(
+                    "{} exposed multiple exact omnibox suggestion popups",
+                    descriptor.product_name
+                ),
+            ))
+        }
+    };
+    let end = nodes
+        .iter()
+        .enumerate()
+        .skip(popup_index + 1)
+        .find(|(_, node)| node.depth <= popup.depth)
+        .map_or(nodes.len(), |(index, _)| index);
+    let matches = nodes[popup_index + 1..end]
+        .iter()
+        .filter(|node| {
+            node.role == "AXMenuItem"
+                && node_is_exact_setup_suggestion(node, descriptor.setup_url)
+                && has_action(node, "AXPress")
+        })
+        .map(|node| node.element_ptr)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [] => Ok(None),
+        [element] => Ok(Some(*element)),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!(
+                "{} exposed multiple exact setup URL suggestions",
+                descriptor.product_name
+            ),
+        )),
+    }
 }
 
 fn new_tab_button(
@@ -549,9 +643,8 @@ pub fn enable(
                     return Err(handle.abort(pid, window_id, error));
                 }
             };
-            let pressed = unsafe { perform_action(omnibox as AXUIElementRef, "AXPress") };
-            let focused = unsafe { set_bool_attr_true(omnibox as AXUIElementRef, "AXFocused") };
-            if pressed != kAXErrorSuccess || focused != kAXErrorSuccess {
+            let focused = unsafe { perform_action(omnibox as AXUIElementRef, "AXPress") };
+            if focused != kAXErrorSuccess {
                 release_actionable_nodes(&created.nodes);
                 return Err(handle.abort(
                     pid,
@@ -559,33 +652,17 @@ pub fn enable(
                     refusal(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
                         format!(
-                            "{}'s exact address field rejected the bounded setup navigation",
+                            "{}'s exact address field became stale before AXPress",
                             descriptor.product_name
                         ),
                     ),
                 ));
             }
             handle.focused_setup_address_field = true;
-            let exact_focus = unsafe {
-                focused_element_of_pid(pid).is_some_and(|focused_element| {
-                    let equal = is_same_element(focused_element as usize, omnibox);
-                    CFRelease(focused_element as CFTypeRef);
-                    equal
-                })
+            let wrote_url = unsafe {
+                set_string_attr(omnibox as AXUIElementRef, "AXValue", descriptor.setup_url)
             };
-            if !exact_focus {
-                release_actionable_nodes(&created.nodes);
-                return Err(handle.abort(pid, window_id, refusal(
-                    BrowserRefusalCode::BrowserWrongTargetRefused,
-                    format!(
-                        "{}'s exact address field lost focus before setup navigation could be confirmed",
-                        descriptor.product_name
-                    ),
-                )));
-            }
-            if let Err(error) = crate::input::keyboard::hotkey(pid, "a", &["cmd"]).and_then(|_| {
-                crate::input::keyboard::type_text_with_delay(pid, descriptor.setup_url, 30)
-            }) {
+            if wrote_url != kAXErrorSuccess {
                 release_actionable_nodes(&created.nodes);
                 return Err(handle.abort(
                     pid,
@@ -593,7 +670,7 @@ pub fn enable(
                     refusal(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
                         format!(
-                            "could not type {}'s fixed setup URL into the exact address field: {error}",
+                            "{}'s exact address field rejected the fixed setup URL",
                             descriptor.product_name
                         ),
                     ),
@@ -601,8 +678,17 @@ pub fn enable(
             }
             let exact_value = unsafe { copy_string_attr(omnibox as AXUIElementRef, "AXValue") }
                 .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url));
+            let can_confirm = created
+                .nodes
+                .iter()
+                .any(|node| node.element_ptr == omnibox && has_action(node, "AXConfirm"));
+            let confirmed = can_confirm
+                && unsafe { perform_action(omnibox as AXUIElementRef, "AXConfirm") }
+                    == kAXErrorSuccess;
+            unsafe { CFRetain(omnibox as CFTypeRef) };
+            release_actionable_nodes(&created.nodes);
             if !exact_value {
-                release_actionable_nodes(&created.nodes);
+                unsafe { CFRelease(omnibox as CFTypeRef) };
                 return Err(handle.abort(
                     pid,
                     window_id,
@@ -615,45 +701,144 @@ pub fn enable(
                     ),
                 ));
             }
-            let navigation = if descriptor.product == BrowserProduct::MicrosoftEdge {
-                handle.foregrounded_window = true;
-                handle.injected_global_input = true;
-                crate::input::skylight::with_foreground_assist(pid, window_id, || {
-                    std::thread::sleep(Duration::from_millis(60));
-                    if crate::apps::frontmost_pid() != Some(pid) {
-                        anyhow::bail!(
-                            "the approved browser lost foreground before setup navigation"
-                        );
-                    }
-                    crate::input::keyboard::press_key_global("return", &[])?;
-                    std::thread::sleep(Duration::from_millis(60));
-                    Ok(())
-                })
-                .and_then(|fronted| {
-                    if fronted {
-                        Ok(())
-                    } else {
-                        Err(anyhow::anyhow!(
-                            "the bounded Microsoft Edge foreground assist was unavailable"
-                        ))
-                    }
-                })
+            if confirmed {
+                unsafe { CFRelease(omnibox as CFTypeRef) };
             } else {
-                crate::input::keyboard::press_key(pid, "return", &[])
-            };
-            release_actionable_nodes(&created.nodes);
-            if let Err(error) = navigation {
-                return Err(handle.abort(
-                    pid,
-                    window_id,
-                    refusal(
-                        BrowserRefusalCode::BrowserWrongTargetRefused,
-                        format!(
-                            "could not confirm {}'s bounded setup navigation: {error}",
-                            descriptor.product_name
-                        ),
-                    ),
-                ));
+                let deadline = Instant::now() + Duration::from_secs(2);
+                let suggestion = loop {
+                    let popup = walk_tree(pid, Some(window_id), None);
+                    match exact_omnibox_suggestion(&popup.nodes, descriptor) {
+                        Ok(Some(element)) => break Ok(Some((popup, element))),
+                        Ok(None) if Instant::now() < deadline => {
+                            release_actionable_nodes(&popup.nodes);
+                            std::thread::sleep(Duration::from_millis(50));
+                        }
+                        Ok(None) => {
+                            release_actionable_nodes(&popup.nodes);
+                            break Ok(None);
+                        }
+                        Err(error) => {
+                            release_actionable_nodes(&popup.nodes);
+                            break Err(error);
+                        }
+                    }
+                };
+                match suggestion {
+                    Ok(Some((popup, suggestion))) => {
+                        unsafe { CFRelease(omnibox as CFTypeRef) };
+                        let navigation =
+                            unsafe { perform_action(suggestion as AXUIElementRef, "AXPress") };
+                        release_actionable_nodes(&popup.nodes);
+                        if navigation != kAXErrorSuccess {
+                            return Err(handle.abort(
+                                pid,
+                                window_id,
+                                refusal(
+                                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                                    format!(
+                                        "{}'s exact fixed-URL suggestion became stale before AXPress",
+                                        descriptor.product_name
+                                    ),
+                                ),
+                            ));
+                        }
+                    }
+                    Ok(None) => {
+                        handle.foregrounded_window = true;
+                        handle.injected_global_input = true;
+                        let navigated = crate::input::skylight::with_foreground_assist(
+                            pid,
+                            window_id,
+                            || {
+                                std::thread::sleep(Duration::from_millis(60));
+                                if crate::apps::frontmost_pid() != Some(pid) {
+                                    anyhow::bail!(
+                                        "the approved browser lost foreground before setup navigation"
+                                    );
+                                }
+                                let exact_value = unsafe {
+                                    copy_string_attr(omnibox as AXUIElementRef, "AXValue")
+                                }
+                                .is_some_and(|value| {
+                                    value.trim().eq_ignore_ascii_case(descriptor.setup_url)
+                                });
+                                if !exact_value {
+                                    anyhow::bail!(
+                                        "the exact address field no longer contained the fixed setup URL"
+                                    );
+                                }
+                                let focused = unsafe {
+                                    perform_action(omnibox as AXUIElementRef, "AXPress")
+                                };
+                                if focused != kAXErrorSuccess {
+                                    anyhow::bail!(
+                                        "the exact address field became stale before setup navigation"
+                                    );
+                                }
+                                let _ = unsafe {
+                                    set_bool_attr_true(omnibox as AXUIElementRef, "AXFocused")
+                                };
+                                std::thread::sleep(Duration::from_millis(60));
+                                let focused_element = unsafe { focused_element_of_pid(pid) };
+                                let exact_focus = focused_element.is_some_and(|element| {
+                                    let matches = is_same_element(element as usize, omnibox);
+                                    unsafe { CFRelease(element as CFTypeRef) };
+                                    matches
+                                });
+                                if !exact_focus {
+                                    anyhow::bail!(
+                                        "the exact address field did not own keyboard focus"
+                                    );
+                                }
+                                crate::input::keyboard::press_key_global("a", &["cmd"])?;
+                                std::thread::sleep(Duration::from_millis(30));
+                                crate::input::keyboard::type_text(pid, descriptor.setup_url)?;
+                                std::thread::sleep(Duration::from_millis(100));
+                                let typed_exact_value = unsafe {
+                                    copy_string_attr(omnibox as AXUIElementRef, "AXValue")
+                                }
+                                .is_some_and(|value| {
+                                    value.trim().eq_ignore_ascii_case(descriptor.setup_url)
+                                });
+                                if !typed_exact_value {
+                                    anyhow::bail!(
+                                        "trusted setup typing did not retain the fixed URL"
+                                    );
+                                }
+                                crate::input::keyboard::press_key_global("return", &[])?;
+                                std::thread::sleep(Duration::from_millis(100));
+                                Ok(())
+                            },
+                        )
+                        .and_then(|fronted| {
+                            if fronted {
+                                Ok(())
+                            } else {
+                                Err(anyhow::anyhow!(
+                                    "the bounded setup foreground assist was unavailable"
+                                ))
+                            }
+                        });
+                        unsafe { CFRelease(omnibox as CFTypeRef) };
+                        if let Err(error) = navigated {
+                            return Err(handle.abort(
+                                pid,
+                                window_id,
+                                refusal(
+                                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                                    format!(
+                                        "could not navigate the exact approved {} setup tab: {error}",
+                                        descriptor.product_name
+                                    ),
+                                ),
+                            ));
+                        }
+                    }
+                    Err(error) => {
+                        unsafe { CFRelease(omnibox as CFTypeRef) };
+                        return Err(handle.abort(pid, window_id, error));
+                    }
+                }
             }
             handle
         }
@@ -904,6 +1089,83 @@ mod tests {
         ];
         assert_eq!(
             select_new_tab_close_button(&before, &after, |left, right| left == right, chrome(),)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
+    fn setup_navigation_selects_only_the_exact_omnibox_suggestion() {
+        let omnibox = node(
+            "AXTextField",
+            Some("Address and search bar"),
+            Some(chrome().setup_url),
+            &["AXPress"],
+        );
+        let mut popup = node("AXWebArea", Some("Omnibox Popup"), None, &[]);
+        popup.depth = 1;
+        let mut menu = node("AXMenu", None, None, &[]);
+        menu.depth = 2;
+        let mut exact = node(
+            "AXMenuItem",
+            Some(&format!(
+                "{}, press Tab then Enter to Remove Suggestion.",
+                chrome().setup_url
+            )),
+            None,
+            &["AXPress"],
+        );
+        exact.element_ptr = 42;
+        exact.depth = 3;
+        let mut search = node(
+            "AXMenuItem",
+            Some("chrome://inspect/#remote-debugging search, Google Search"),
+            None,
+            &["AXPress"],
+        );
+        search.depth = 3;
+        let mut outside = node(
+            "AXMenuItem",
+            Some(chrome().setup_url),
+            Some(chrome().setup_url),
+            &["AXPress"],
+        );
+        outside.element_ptr = 99;
+        outside.depth = 1;
+
+        assert_eq!(
+            exact_omnibox_suggestion(&[omnibox, popup, menu, exact, search, outside], chrome())
+                .unwrap(),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn setup_navigation_rejects_search_suggestion() {
+        assert!(!is_exact_setup_suggestion(
+            "chrome://inspect/#remote-debugging search, Google Search",
+            chrome().setup_url
+        ));
+    }
+
+    #[test]
+    fn setup_navigation_refuses_multiple_exact_suggestions() {
+        let omnibox = node(
+            "AXTextField",
+            Some("Address and search bar"),
+            Some(chrome().setup_url),
+            &["AXPress"],
+        );
+        let mut popup = node("AXWebArea", Some("Omnibox Popup"), None, &[]);
+        popup.depth = 1;
+        let mut first = node("AXMenuItem", Some(chrome().setup_url), None, &["AXPress"]);
+        first.depth = 2;
+        let mut second = first.clone();
+        second.element_ptr = 8;
+
+        assert_eq!(
+            exact_omnibox_suggestion(&[omnibox, popup, first, second], chrome())
                 .unwrap_err()
                 .code,
             BrowserRefusalCode::BrowserWrongTargetRefused

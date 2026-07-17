@@ -22,7 +22,9 @@ use super::platform::{
     ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use super::refusal::BrowserRefusal;
-use super::tools::{BrowserClickTool, BrowserPrepareTool, BrowserTypeTool, GetBrowserStateTool};
+use super::tools::{
+    BrowserClickTool, BrowserNavigateTool, BrowserPrepareTool, BrowserTypeTool, GetBrowserStateTool,
+};
 use super::types::{
     BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
     EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
@@ -46,6 +48,10 @@ struct FixtureState {
     oopif_sessions: u64,
     fail_key_down_after: Option<usize>,
     completed_key_pairs: usize,
+    semantic_large_page: bool,
+    semantic_full_dom_fails: bool,
+    semantic_full_dom_times_out: bool,
+    semantic_truncated_dom: bool,
     /// Every incoming CDP call: (sessionId, method, params).
     calls: Vec<(Option<String>, String, Value)>,
 }
@@ -63,6 +69,10 @@ impl Default for FixtureState {
             oopif_sessions: 0,
             fail_key_down_after: None,
             completed_key_pairs: 0,
+            semantic_large_page: false,
+            semantic_full_dom_fails: false,
+            semantic_full_dom_times_out: false,
+            semantic_truncated_dom: false,
             calls: Vec::new(),
         }
     }
@@ -155,6 +165,205 @@ fn main_document() -> Value {
     })
 }
 
+/// Large application document used to prove that hidden retained controls do
+/// not consume the semantic snapshot budget ahead of the active view.
+fn large_semantic_document() -> Value {
+    let mut children = Vec::new();
+    for id in 0..320_i64 {
+        children.push(json!({
+            "nodeType": 1,
+            "nodeName": "BUTTON",
+            "backendNodeId": 1_000 + id,
+            "attributes": [
+                "aria-hidden", "true",
+                "style", "display:none",
+                "aria-label", format!("Retained control {id}"),
+            ],
+        }));
+    }
+    children.extend([
+        json!({
+            "nodeType": 1,
+            "nodeName": "H1",
+            "backendNodeId": 2_000,
+            "children": [{
+                "nodeType": 3,
+                "nodeName": "#text",
+                "nodeValue": "Visible message",
+                "backendNodeId": 2_001,
+            }],
+        }),
+        json!({
+            "nodeType": 1,
+            "nodeName": "P",
+            "backendNodeId": 2_002,
+            "children": [{
+                "nodeType": 3,
+                "nodeName": "#text",
+                "nodeValue": "Please review the attached fixture report.",
+                "backendNodeId": 2_003,
+            }],
+        }),
+        json!({
+            "nodeType": 1,
+            "nodeName": "TEXTAREA",
+            "backendNodeId": 2_010,
+            "attributes": ["aria-label", "Reply body"],
+        }),
+        json!({
+            "nodeType": 1,
+            "nodeName": "BUTTON",
+            "backendNodeId": 2_011,
+            "attributes": ["aria-label", "Reply"],
+        }),
+    ]);
+    for id in 0..305_i64 {
+        children.push(json!({
+            "nodeType": 1,
+            "nodeName": "BUTTON",
+            "backendNodeId": 3_000 + id,
+            "attributes": ["aria-label", format!("Archive item {id}")],
+        }));
+    }
+    json!({
+        "root": {
+            "nodeType": 9,
+            "nodeName": "#document",
+            "documentURL": "https://fixture.test/inbox/item-2",
+            "frameId": "F_MAIN",
+            "children": [{
+                "nodeType": 1,
+                "nodeName": "HTML",
+                "backendNodeId": 999,
+                "children": children,
+            }]
+        }
+    })
+}
+
+fn truncated_semantic_document() -> Value {
+    json!({
+        "root": {
+            "nodeType": 9,
+            "nodeName": "#document",
+            "documentURL": "https://fixture.test/inbox/item-2",
+            "frameId": "F_MAIN",
+            "children": [{
+                "nodeType": 1,
+                "nodeName": "HTML",
+                "backendNodeId": 999,
+                "childNodeCount": 629,
+                "children": [],
+            }]
+        }
+    })
+}
+
+fn large_semantic_ax_tree(frame_id: &str) -> Value {
+    if frame_id != "F_MAIN" {
+        return json!({"nodes": [{
+            "nodeId": format!("root-{frame_id}"),
+            "ignored": false,
+            "role": {"value": "RootWebArea"},
+            "name": {"value": "Inner fixture"},
+            "childIds": []
+        }]});
+    }
+    let mut child_ids = vec![
+        "heading".to_owned(),
+        "body".to_owned(),
+        "editor".to_owned(),
+        "reply".to_owned(),
+    ];
+    child_ids.extend((0..305).map(|id| format!("archive-{id}")));
+    let mut nodes = vec![
+        json!({
+            "nodeId": "root-main",
+            "ignored": false,
+            "role": {"value": "RootWebArea"},
+            "name": {"value": "Fixture inbox"},
+            "childIds": child_ids
+        }),
+        json!({
+            "nodeId": "heading",
+            "parentId": "root-main",
+            "ignored": false,
+            "backendDOMNodeId": 2000,
+            "role": {"value": "heading"},
+            "name": {"value": "Visible message"},
+            "childIds": []
+        }),
+        json!({
+            "nodeId": "body",
+            "parentId": "root-main",
+            "ignored": false,
+            "backendDOMNodeId": 2003,
+            "role": {"value": "StaticText"},
+            "name": {"value": "Please review the attached fixture report."},
+            "childIds": []
+        }),
+        json!({
+            "nodeId": "editor",
+            "parentId": "root-main",
+            "ignored": false,
+            "backendDOMNodeId": 2010,
+            "role": {"value": "textbox"},
+            "name": {"value": "Reply body"},
+            "value": {"value": ""},
+            "properties": [
+                {"name": "editable", "value": {"value": "plaintext"}},
+                {"name": "focusable", "value": {"value": true}}
+            ],
+            "childIds": []
+        }),
+        json!({
+            "nodeId": "reply",
+            "parentId": "root-main",
+            "ignored": false,
+            "backendDOMNodeId": 2011,
+            "role": {"value": "button"},
+            "name": {"value": "Reply"},
+            "properties": [
+                {"name": "disabled", "value": {"value": false}},
+                {"name": "focusable", "value": {"value": true}}
+            ],
+            "childIds": []
+        }),
+    ];
+    for id in 0..305_i64 {
+        nodes.push(json!({
+            "nodeId": format!("archive-{id}"),
+            "parentId": "root-main",
+            "ignored": false,
+            "backendDOMNodeId": 3_000 + id,
+            "role": {"value": "button"},
+            "name": {"value": format!("Archive item {id}")},
+            "childIds": []
+        }));
+    }
+    json!({"nodes": nodes})
+}
+
+fn semantic_layout_snapshot(backends: &[i64], bounds: &[[f64; 4]]) -> Value {
+    let styles = (0..backends.len())
+        .map(|_| json!([0, 1, 2, 3, 3]))
+        .collect::<Vec<_>>();
+    let node_indices = (0..backends.len()).collect::<Vec<_>>();
+    let paint_orders = (1..=backends.len()).collect::<Vec<_>>();
+    json!({
+        "strings": ["block", "visible", "1", "auto", "pointer"],
+        "documents": [{
+            "nodes": {"backendNodeId": backends},
+            "layout": {
+                "nodeIndex": node_indices,
+                "bounds": bounds,
+                "styles": styles,
+                "paintOrders": paint_orders
+            }
+        }]
+    })
+}
+
 fn oopif_document() -> Value {
     json!({
         "root": {
@@ -233,8 +442,80 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     }
                 }
             })),
-            "DOM.getDocument" if is_tab => MockReply::ok(main_document()),
+            "DOM.getDocument" if is_tab => {
+                let depth = call.params["depth"].as_i64().unwrap_or(-1);
+                if st.semantic_full_dom_times_out && (depth == -1 || depth > 8) {
+                    MockReply::err(-32000, "CDP DOM.getDocument timed out after 20s")
+                } else if st.semantic_full_dom_fails && (depth == -1 || depth > 8) {
+                    MockReply::err(-32000, "Object reference chain is too long")
+                } else if st.semantic_truncated_dom && depth == 8 {
+                    MockReply::ok(truncated_semantic_document())
+                } else {
+                    MockReply::ok(if st.semantic_large_page {
+                        large_semantic_document()
+                    } else {
+                        main_document()
+                    })
+                }
+            }
+            "DOM.describeNode" if is_tab && call.params["backendNodeId"] == 999 => {
+                MockReply::ok(json!({
+                    "node": large_semantic_document()["root"]["children"][0].clone()
+                }))
+            }
             "DOM.getDocument" if is_oopif => MockReply::ok(oopif_document()),
+            "Accessibility.getFullAXTree" if is_tab => {
+                let frame_id = call.params["frameId"].as_str().unwrap_or("F_MAIN");
+                if st.semantic_large_page {
+                    MockReply::ok(large_semantic_ax_tree(frame_id))
+                } else {
+                    MockReply::ok(json!({"nodes": []}))
+                }
+            }
+            "Accessibility.getFullAXTree" if is_oopif => MockReply::ok(json!({"nodes": [
+                {"nodeId": "oopif-root", "ignored": false,
+                 "role": {"value": "RootWebArea"}, "childIds": ["oopif-input"]},
+                {"nodeId": "oopif-input", "parentId": "oopif-root", "ignored": false,
+                 "backendDOMNodeId": 100, "role": {"value": "textbox"},
+                 "name": {"value": "Embedded input"},
+                 "properties": [{"name": "editable", "value": {"value": "plaintext"}}],
+                 "childIds": []}
+            ]})),
+            "DOMSnapshot.captureSnapshot" if is_tab => {
+                if st.semantic_large_page {
+                    let mut backends = vec![999, 2000, 2003, 2010, 2011];
+                    let mut bounds = vec![
+                        [0.0, 0.0, 800.0, 600.0],
+                        [20.0, 20.0, 500.0, 40.0],
+                        [20.0, 80.0, 600.0, 80.0],
+                        [20.0, 180.0, 600.0, 120.0],
+                        [20.0, 320.0, 100.0, 36.0],
+                    ];
+                    for id in 0..305_i64 {
+                        backends.push(3_000 + id);
+                        bounds.push([20.0, 2_000.0 + id as f64 * 40.0, 160.0, 30.0]);
+                    }
+                    MockReply::ok(semantic_layout_snapshot(&backends, &bounds))
+                } else {
+                    MockReply::ok(semantic_layout_snapshot(&[], &[]))
+                }
+            }
+            "DOMSnapshot.captureSnapshot" if is_oopif => MockReply::ok(semantic_layout_snapshot(
+                &[90, 100],
+                &[[0.0, 0.0, 300.0, 100.0], [10.0, 10.0, 120.0, 30.0]],
+            )),
+            "Page.getLayoutMetrics" => MockReply::ok(json!({
+                "cssVisualViewport": {
+                    "pageX": 0.0,
+                    "pageY": 0.0,
+                    "clientWidth": 800.0,
+                    "clientHeight": 600.0
+                }
+            })),
+            "Page.navigate" if is_tab => MockReply::ok(json!({
+                "frameId": "F_MAIN",
+                "loaderId": "L_MAIN_NAVIGATED",
+            })),
             "Target.setAutoAttach" if is_tab => {
                 if call.params["autoAttach"].as_bool() == Some(false) {
                     return MockReply::ok(json!({}));
@@ -325,9 +606,10 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     MockReply::ok(json!({}))
                 }
             }
-            "DOM.focus" | "Input.dispatchMouseEvent" | "Input.insertText" => {
-                MockReply::ok(json!({}))
-            }
+            "DOM.focus"
+            | "Emulation.setFocusEmulationEnabled"
+            | "Input.dispatchMouseEvent"
+            | "Input.insertText" => MockReply::ok(json!({})),
             "DOM.resolveNode" => MockReply::ok(json!({
                 "object": { "objectId": format!("obj-{}", call.params["backendNodeId"]) }
             })),
@@ -818,6 +1100,35 @@ async fn snapshot(f: &Fixture, target_id: &str, tab_id: &str) -> Value {
     structured(&result).clone()
 }
 
+async fn semantic_snapshot(f: &Fixture, target_id: &str, tab_id: &str) -> Value {
+    let tool = GetBrowserStateTool::new(f.engine.clone());
+    let result = tool
+        .invoke(json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2"
+        }))
+        .await;
+    structured(&result).clone()
+}
+
+async fn semantic_snapshot_with(f: &Fixture, target_id: &str, tab_id: &str, extra: Value) -> Value {
+    let mut args = json!({
+        "target_id": target_id,
+        "tab_id": tab_id,
+        "session": SESSION,
+        "snapshot_format": "semantic_v2"
+    });
+    args.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    let result = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(args)
+        .await;
+    structured(&result).clone()
+}
+
 /// The `ref` string of the first snapshot entry in the given frame kind
 /// with the given backing label fragment (or any, if empty).
 fn ref_of(snapshot: &Value, frame: &str, label_fragment: &str) -> String {
@@ -885,6 +1196,295 @@ async fn snapshot_composes_shadow_iframe_and_oopif_refs() {
         !labels.iter().any(|l| l.contains("role=button")),
         "user-agent shadow content leaked: {snap}"
     );
+}
+
+#[tokio::test]
+async fn semantic_snapshot_keeps_visible_content_after_hidden_node_pressure() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["format"], "semantic_v2", "{snap}");
+    assert!(
+        snap["outline"]
+            .as_str()
+            .is_some_and(|outline| outline.contains("Visible message")
+                && outline.contains("Please review the attached fixture report.")),
+        "visible semantic content was omitted: {snap}"
+    );
+    let refs = snap["refs"].as_array().expect("semantic refs");
+    assert!(
+        refs.iter().any(|entry| entry["name"] == "Reply"
+            && entry["actions"]
+                .as_array()
+                .is_some_and(|actions| actions.iter().any(|action| action == "click"))),
+        "visible Reply action was omitted: {snap}"
+    );
+    assert!(
+        refs.iter().any(|entry| entry["name"] == "Reply body"
+            && entry["actions"]
+                .as_array()
+                .is_some_and(|actions| actions.iter().any(|action| action == "type"))),
+        "visible editor was omitted: {snap}"
+    );
+    assert!(
+        refs.iter().all(|entry| !entry["name"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("Retained control")),
+        "CSS-hidden retained controls leaked into refs: {snap}"
+    );
+    assert_eq!(snap["snapshot"]["omitted"]["css_hidden"], 320);
+}
+
+#[tokio::test]
+async fn semantic_continuation_is_opaque_single_use_and_reaches_offscreen_content() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .expect("large fixture continuation")
+        .to_owned();
+    assert!(token.starts_with("bc-"), "{first}");
+
+    let continued = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
+    assert_eq!(continued["status"], "ok", "{continued}");
+    assert_eq!(continued["snapshot"]["scope"], "continuation");
+    assert!(
+        continued["refs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| { entry["name"] == "Archive item 304" }),
+        "last offscreen action was not reachable: {continued}"
+    );
+
+    let reused = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
+    assert_eq!(reused["status"], "refused", "{reused}");
+    assert_eq!(reused["refusal"]["code"], "browser_ref_stale");
+}
+
+#[tokio::test]
+async fn newer_semantic_snapshot_invalidates_prior_continuations() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .expect("large fixture continuation")
+        .to_owned();
+    let newer = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(newer["status"], "ok", "{newer}");
+
+    let stale = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
+    assert_eq!(stale["status"], "refused", "{stale}");
+    assert_eq!(stale["refusal"]["code"], "browser_ref_stale");
+}
+
+#[tokio::test]
+async fn main_frame_navigation_invalidates_semantic_continuations() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .expect("large fixture continuation")
+        .to_owned();
+
+    f.state.lock().unwrap().main_loader = "L_MAIN_2".into();
+
+    let stale = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
+    assert_eq!(stale["status"], "refused", "{stale}");
+    assert_eq!(stale["refusal"]["code"], "browser_ref_stale");
+}
+
+#[tokio::test]
+async fn semantic_query_and_content_scope_are_read_only_and_precise() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let queried =
+        semantic_snapshot_with(&f, &target, &tab, json!({"query": "Archive item 304"})).await;
+    assert_eq!(queried["snapshot"]["scope"], "query", "{queried}");
+    assert_eq!(queried["refs"].as_array().unwrap().len(), 1, "{queried}");
+    assert_eq!(queried["refs"][0]["name"], "Archive item 304");
+
+    let natural =
+        semantic_snapshot_with(&f, &target, &tab, json!({"query": "reply archive 304"})).await;
+    assert_eq!(natural["snapshot"]["scope"], "query", "{natural}");
+    assert_eq!(natural["refs"][0]["name"], "Archive item 304", "{natural}");
+    assert!(
+        natural["refs"]
+            .as_array()
+            .is_some_and(|refs| refs.iter().any(|entry| entry["name"] == "Reply")),
+        "{natural}"
+    );
+
+    let fresh = semantic_snapshot(&f, &target, &tab).await;
+    let heading_ref = fresh["content_refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "Visible message")
+        .and_then(|entry| entry["ref"].as_str())
+        .expect("heading content ref")
+        .to_owned();
+    let scoped = semantic_snapshot_with(&f, &target, &tab, json!({"scope_ref": heading_ref})).await;
+    assert_eq!(scoped["snapshot"]["scope"], "subtree", "{scoped}");
+    assert_eq!(scoped["refs"].as_array().unwrap().len(), 0, "{scoped}");
+    assert_eq!(
+        scoped["content_refs"].as_array().unwrap().len(),
+        1,
+        "{scoped}"
+    );
+    assert_eq!(scoped["content_refs"][0]["name"], "Visible message");
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn navigation_targets_an_inactive_tab_without_activating_it() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let result = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://fixture.test/background-navigation",
+            "session": SESSION,
+        }))
+        .await;
+
+    let structured = result
+        .structured_content
+        .as_ref()
+        .expect("navigation structured content");
+    assert_eq!(structured["status"], "ok", "{structured}");
+    let navigate = recorded_calls(&f, "Page.navigate");
+    assert_eq!(navigate.len(), 1, "{navigate:?}");
+    assert_eq!(
+        navigate[0].1["url"],
+        "https://fixture.test/background-navigation"
+    );
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn semantic_refs_enforce_declared_action_kinds_before_delivery() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+    let content_ref = snap["content_refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "Visible message")
+        .and_then(|entry| entry["ref"].as_str())
+        .unwrap();
+    let click = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "ref": content_ref,
+            "input_route": "dom_event"
+        }))
+        .await;
+    assert_eq!(
+        structured(&click)["refusal"]["code"],
+        "browser_action_unavailable"
+    );
+
+    let button_ref = snap["refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "Reply")
+        .and_then(|entry| entry["ref"].as_str())
+        .unwrap();
+    let typed = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "ref": button_ref,
+            "text": "must not deliver"
+        }))
+        .await;
+    assert_eq!(
+        structured(&typed)["refusal"]["code"],
+        "browser_action_unavailable"
+    );
+    assert!(recorded_calls(&f, "Input.insertText").is_empty());
+    assert!(recorded_calls(&f, "Runtime.callFunctionOn").is_empty());
+}
+
+#[tokio::test]
+async fn semantic_snapshot_uses_bounded_dom_fallback_only_for_known_size_failures() {
+    let f = fixture_with(|st| {
+        st.semantic_large_page = true;
+        st.semantic_full_dom_fails = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot_with(&f, &target, &tab, json!({"query": "Reply"})).await;
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["complete"], false, "{snap}");
+    let document_calls = recorded_calls(&f, "DOM.getDocument");
+    assert!(document_calls
+        .iter()
+        .any(|(_, params)| params["depth"] == -1));
+    assert!(document_calls
+        .iter()
+        .any(|(_, params)| params["depth"] == 256));
+    assert!(document_calls
+        .iter()
+        .any(|(_, params)| params["depth"] == 8));
+}
+
+#[tokio::test]
+async fn semantic_snapshot_uses_bounded_dom_fallback_for_full_tree_timeout() {
+    let f = fixture_with(|st| {
+        st.semantic_large_page = true;
+        st.semantic_full_dom_times_out = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot_with(&f, &target, &tab, json!({"query": "Reply"})).await;
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["complete"], false, "{snap}");
+    let document_calls = recorded_calls(&f, "DOM.getDocument");
+    assert!(document_calls
+        .iter()
+        .any(|(_, params)| params["depth"] == -1));
+    assert!(document_calls
+        .iter()
+        .any(|(_, params)| params["depth"] == 8));
+    assert!(document_calls.iter().all(|(_, params)| {
+        params["depth"] == -1 || params["depth"].as_i64().is_some_and(|depth| depth <= 8)
+    }));
+}
+
+#[tokio::test]
+async fn semantic_snapshot_hydrates_truncated_fallback_branches() {
+    let f = fixture_with(|st| {
+        st.semantic_large_page = true;
+        st.semantic_full_dom_fails = true;
+        st.semantic_truncated_dom = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot_with(&f, &target, &tab, json!({"query": "Reply"})).await;
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["complete"], false, "{snap}");
+    assert!(snap["refs"]
+        .as_array()
+        .is_some_and(|refs| refs.iter().any(|entry| entry["name"] == "Reply")));
+    assert!(recorded_calls(&f, "DOM.describeNode")
+        .iter()
+        .any(|(_, params)| params["backendNodeId"] == 999));
 }
 
 #[tokio::test]
@@ -977,6 +1577,12 @@ async fn click_routes_oopif_refs_through_the_contained_child_session() {
             .all(|(sess, _)| sess.as_deref().unwrap_or("").starts_with("oopif-sess-")),
         "OOPIF input must dispatch on the child session: {mouse:?}"
     );
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(focus_emulation.len(), 2);
+    assert_eq!(focus_emulation[0].1["enabled"], true);
+    assert_eq!(focus_emulation[1].1["enabled"], false);
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
 }
 
 #[tokio::test]
@@ -1035,6 +1641,8 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
         .await;
     assert_eq!(structured(&synthetic)["status"], "ok");
     assert!(!recorded_calls(&f, "Runtime.callFunctionOn").is_empty());
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
 }
 
 #[tokio::test]
@@ -1175,6 +1783,8 @@ async fn typing_into_composed_shadow_input_uses_the_tab_session() {
         !recorded_calls(&f, "Runtime.callFunctionOn").is_empty(),
         "editability must be checked on the node itself"
     );
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
 }
 
 #[tokio::test]
@@ -1228,4 +1838,57 @@ async fn partial_keystrokes_report_exact_delivered_prefix() {
     assert_eq!(refusal["detail"]["requested_chars"], 4);
     assert_eq!(refusal["detail"]["delivered_chars"], 2);
     assert_eq!(refusal["detail"]["retryable"], false);
+}
+
+#[tokio::test]
+async fn keystrokes_use_char_events_for_text_delivery() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let shadow_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": shadow_ref,
+            "text": "a\n",
+            "mode": "keystrokes",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&result)["status"], "ok");
+
+    let events = recorded_calls(&f, "Input.dispatchKeyEvent");
+    assert_eq!(events.len(), 6);
+    let params: Vec<&Value> = events.iter().map(|(_, params)| params).collect();
+    assert_eq!(params[0]["type"], "keyDown");
+    assert!(params[0].get("text").is_none());
+    assert_eq!(params[1]["type"], "char");
+    assert_eq!(params[1]["text"], "a");
+    assert_eq!(params[1]["unmodifiedText"], "a");
+    assert_eq!(params[2]["type"], "keyUp");
+    assert!(params[2].get("text").is_none());
+    assert_eq!(params[3]["type"], "keyDown");
+    assert_eq!(params[3]["key"], "Enter");
+    assert_eq!(params[4]["type"], "char");
+    assert_eq!(params[4]["key"], "Enter");
+    assert_eq!(params[4]["text"], "\r");
+    assert_eq!(params[4]["unmodifiedText"], "\r");
+    assert_eq!(params[5]["type"], "keyUp");
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(focus_emulation.len(), 2);
+    assert_eq!(focus_emulation[0].1["enabled"], true);
+    assert_eq!(focus_emulation[1].1["enabled"], false);
+    let readiness_checks = recorded_calls(&f, "Runtime.callFunctionOn");
+    assert!(readiness_checks.iter().any(|(_, params)| {
+        params["functionDeclaration"]
+            .as_str()
+            .is_some_and(|declaration| {
+                declaration.contains("document.hasFocus()")
+                    && declaration.contains("active === this")
+            })
+    }));
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
 }

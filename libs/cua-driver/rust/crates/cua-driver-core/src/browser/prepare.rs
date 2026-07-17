@@ -1,8 +1,10 @@
 //! Acting `browser_prepare` implementation for driver-owned Chromium profiles.
 
 use std::fs::{self, OpenOptions};
+use std::future::Future;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -27,6 +29,24 @@ use super::BrowserEngine;
 
 const PROFILE_MARKER: &str = ".cua-driver-owned-profile.json";
 const PROFILE_SCHEMA: &str = "cua-driver-browser-profile-v1";
+
+async fn claim_with_optional_consent<T, Claim, Consent>(
+    claim: &mut Pin<Box<Claim>>,
+    consent: Consent,
+) -> Result<(anyhow::Result<T>, bool), BrowserRefusal>
+where
+    Claim: Future<Output = anyhow::Result<T>>,
+    Consent: Future<Output = Result<BrowserConsentOutcome, BrowserRefusal>>,
+{
+    let mut consent = Box::pin(consent);
+    tokio::select! {
+        result = claim.as_mut() => Ok((result, false)),
+        outcome = consent.as_mut() => match outcome? {
+            BrowserConsentOutcome::Accepted => Ok((claim.as_mut().await, true)),
+            BrowserConsentOutcome::NotPresent => Ok((claim.as_mut().await, false)),
+        },
+    }
+}
 
 fn with_setup_side_effects(
     mut error: BrowserRefusal,
@@ -858,17 +878,18 @@ impl BrowserEngine {
             if let Some(result) = initial {
                 (result, false)
             } else {
-                match self
-                    .platform
-                    .handle_existing_profile_consent(BrowserConsentRequest {
-                        pid: request.pid,
-                        window_id,
-                        attempt: 1,
-                    })
-                    .await
+                match claim_with_optional_consent(
+                    &mut claim,
+                    self.platform
+                        .handle_existing_profile_consent(BrowserConsentRequest {
+                            pid: request.pid,
+                            window_id,
+                            attempt: 1,
+                        }),
+                )
+                .await
                 {
-                    Ok(BrowserConsentOutcome::Accepted) => (claim.await, true),
-                    Ok(BrowserConsentOutcome::NotPresent) => (claim.await, false),
+                    Ok(result) => result,
                     Err(error) => {
                         // The connection future may hold the pool mutex while
                         // awaiting its WebSocket handshake. Cancel it before
@@ -972,6 +993,40 @@ impl BrowserEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn completed_claim_wins_while_optional_consent_is_absent() {
+        let mut claim = Box::pin(async {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            Ok::<_, anyhow::Error>(7_u8)
+        });
+        let consent = async {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "no consent surface",
+            ))
+        };
+        let (result, displayed) = claim_with_optional_consent(&mut claim, consent)
+            .await
+            .expect("the completed claim should win the race");
+        assert_eq!(result.unwrap(), 7);
+        assert!(!displayed);
+    }
+
+    #[tokio::test]
+    async fn accepted_consent_waits_for_the_same_claim() {
+        let mut claim = Box::pin(async {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            Ok::<_, anyhow::Error>(9_u8)
+        });
+        let (result, displayed) =
+            claim_with_optional_consent(&mut claim, async { Ok(BrowserConsentOutcome::Accepted) })
+                .await
+                .expect("accepted consent should resume the existing claim");
+        assert_eq!(result.unwrap(), 9);
+        assert!(displayed);
+    }
 
     #[test]
     fn setup_side_effects_are_preserved_on_refusal() {

@@ -18,9 +18,11 @@ The canonical loop is:
 start_session
 list_windows or launch_app
 get_browser_state(pid, window_id, session)       # bind
-get_browser_state(target_id, tab_id, session)    # snapshot
+get_browser_state(target_id, tab_id, session,
+                  snapshot_format=semantic_v2)  # snapshot
 browser_navigate / browser_click / browser_type
-get_browser_state(target_id, tab_id, session)    # verify and refresh refs
+get_browser_state(target_id, tab_id, session,
+                  snapshot_format=semantic_v2)  # verify and refresh refs
 end_session
 ```
 
@@ -122,14 +124,43 @@ Choose a returned `tab_id`, then request the page snapshot:
 ```bash
 cua-driver get_browser_state \
   '{"target_id":"<target>","tab_id":"<tab>",
-    "session":"browser-run-1"}'
+    "session":"browser-run-1","snapshot_format":"semantic_v2"}'
 ```
 
-The response contains compact `p<snapshot>:<index>` refs. Refs are scoped to
-the session, target, tab, document, frame, and latest snapshot. Navigation and
-newer snapshots invalidate old refs. A stale-ref refusal means snapshot again;
-it is not permission to fall back to a CSS selector or coordinate remembered
-from an earlier page.
+`semantic_v2` composes the page accessibility tree, pierced DOM, layout, and
+viewport state. Read the compact `outline` for page content, use `refs` only
+for actions declared in each entry's `actions` array, and use `content_refs`
+only to scope later reads. A content ref is not an action capability.
+
+The snapshot ranks active dialogs and visible controls before near-viewport
+and offscreen content. It excludes CSS-hidden retained state before applying
+the output budget. Inspect `snapshot.complete`, `snapshot.omitted`, and
+`snapshot.continuation` rather than assuming the first response is exhaustive.
+To continue the same ranked snapshot:
+
+```bash
+cua-driver get_browser_state \
+  '{"target_id":"<target>","tab_id":"<tab>",
+    "session":"browser-run-1","snapshot_format":"semantic_v2",
+    "continuation":"<opaque-continuation>"}'
+```
+
+Continuations are opaque, single-use, and bound to the current session, tab,
+snapshot, and browser generation. A newer snapshot invalidates them. For a
+bounded read, pass either `query` or a current `scope_ref` from `refs` or
+`content_refs`:
+
+```bash
+cua-driver get_browser_state \
+  '{"target_id":"<target>","tab_id":"<tab>",
+    "session":"browser-run-1","snapshot_format":"semantic_v2",
+    "query":"Account settings"}'
+```
+
+Refs remain scoped to the session, target, tab, document, frame, and latest
+snapshot. Navigation and newer snapshots invalidate old refs. A stale-ref
+refusal means snapshot again; it is not permission to fall back to a CSS
+selector or coordinate remembered from an earlier page.
 
 Snapshots traverse the main document, open shadow roots, same-process frames,
 and capability-tested out-of-process frames. Each ref reports its frame kind.
@@ -255,6 +286,8 @@ result from the current host, process, window, session, and tab.
 - `browser_binding_ambiguous` or heuristic binding: resolve the native-window
   ambiguity and bind again; do not mutate.
 - `browser_ref_stale`: snapshot again and use a new ref.
+- `browser_action_unavailable`: choose a ref that declares the requested
+  action; never treat a readable `content_ref` as clickable or editable.
 - `browser_input_trust_unavailable`: either request `dom_event` when its
   semantics are acceptable or use the native action ladder. Do not foreground
   the browser while calling the action background.

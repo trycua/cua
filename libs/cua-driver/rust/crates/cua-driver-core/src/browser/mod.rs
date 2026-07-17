@@ -48,6 +48,7 @@ pub mod platform;
 mod prepare;
 mod reconnect;
 pub mod refusal;
+mod semantic;
 mod setup_descriptor;
 pub mod store;
 pub mod tools;

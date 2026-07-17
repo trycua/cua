@@ -916,8 +916,26 @@ fn run_with_background_oracles(
         pid: fixture.pid,
         native_id: fixture.window_id,
     };
+
+    // Chromium can occasionally map a fresh Windows profile as iconic even
+    // when no minimized launch flag was requested. Normalize the test-owned
+    // window before the recording boundary, then put the sentinel back in
+    // front. Dispatch still requires the target to be visibly mapped and
+    // fully occluded; this does not retry or weaken the action assertion.
+    let raised = fixture.driver.call(
+        "bring_to_front",
+        serde_json::json!({
+            "pid": target.pid,
+            "window_id": target.native_id,
+        }),
+    );
+    assert!(
+        !raised.is_error(),
+        "normalize standalone browser window posture: {}",
+        raised.raw
+    );
     sentinel
-        .assert_background_posture(target)
+        .prepare_background_observation(&mut fixture.driver, target)
         .expect("establish standalone browser background posture");
     fixture.driver.start_behavior_recording();
     sentinel

@@ -45,6 +45,8 @@ SOURCE_PR_RE = re.compile(
     r"\b(?:adapted from|based on|salvaged from|source[- ]?pr)\s*:?[ \t]*(?:(?:https://github\.com/(?P<repository>[^/]+/[^/]+)/pull/)|#)(?P<number>\d+)",
     re.IGNORECASE,
 )
+TRAILING_PR_RE = re.compile(r"\s+\(#(?P<number>\d+)\)\s*$")
+LEGACY_RELEASE_BUMP_RE = re.compile(r"^Bump (?:cua-driver-rs|lume) to v\S+$", re.IGNORECASE)
 NOREPLY_RE = re.compile(
     r"^(?:\d+\+)?(?P<login>[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?)@users\.noreply\.github\.com$",
     re.IGNORECASE,
@@ -174,10 +176,11 @@ def parse_conventional_line(line: str) -> ConventionalEntry | None:
     match = CONVENTIONAL_RE.match(line.strip())
     if not match:
         return None
+    summary = TRAILING_PR_RE.sub("", match.group("summary").strip()).strip().rstrip(".")
     return ConventionalEntry(
         change_type=match.group("type"),
         scope=match.group("scope"),
-        summary=match.group("summary").strip().rstrip("."),
+        summary=summary,
         breaking=bool(match.group("breaking")),
     )
 
@@ -257,6 +260,31 @@ def select_pull(pulls: Sequence[Mapping[str, Any]], commit_sha: str) -> Mapping[
         candidates = list(pulls)
     candidates = sorted(candidates, key=lambda pull: int(pull.get("number", 0)))
     return candidates[-1]
+
+
+def resolve_pull_for_commit(
+    github: GitHubClient,
+    repository: str,
+    commit: CommitRecord,
+) -> Mapping[str, Any]:
+    """Resolve a commit to its merged PR, including an exact squash-title fallback."""
+    pulls = github.pulls_for_commit(repository, commit.sha)
+    if pulls:
+        selected = select_pull(pulls, commit.sha)
+        return github.pull(repository, int(selected["number"]))
+
+    reference = TRAILING_PR_RE.search(commit.subject)
+    if not reference:
+        raise ReleaseError(f"commit {commit.sha} is not associated with a pull request")
+
+    pull = github.pull(repository, int(reference.group("number")))
+    expected_title = TRAILING_PR_RE.sub("", commit.subject).strip()
+    if not pull.get("merged_at") or str(pull.get("title") or "").strip() != expected_title:
+        raise ReleaseError(
+            f"commit {commit.sha} has an unverified pull request suffix "
+            f"#{reference.group('number')}"
+        )
+    return pull
 
 
 def contributor(
@@ -447,15 +475,16 @@ def build_manifest(
     visual_requested = False
 
     for commit in commits_in_range(repo_root, previous_tag, current_ref, paths, exclude_paths):
-        if re.match(r"^chore(?:\([^)]+\))?: release\b", commit.subject, re.IGNORECASE):
+        if re.match(
+            r"^chore(?:\([^)]+\))?: release\b", commit.subject, re.IGNORECASE
+        ) or LEGACY_RELEASE_BUMP_RE.match(commit.subject):
             continue
         parsed_subject = parse_conventional_line(commit.subject)
         if parsed_subject and parsed_subject.change_type not in RELEASING_TYPES:
             continue
 
-        selected = select_pull(github.pulls_for_commit(repository, commit.sha), commit.sha)
-        pull_number = int(selected["number"])
-        pull = github.pull(repository, pull_number)
+        pull = resolve_pull_for_commit(github, repository, commit)
+        pull_number = int(pull["number"])
         entries = release_entries(commit.subject, commit.body, str(pull.get("body") or ""))
         if not entries:
             continue

@@ -16,6 +16,8 @@ def copy_release_sources(destination: Path) -> None:
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(source, target)
+    docs = "docs/content/docs/reference/lume"
+    shutil.copytree(REPO_ROOT / docs, destination / docs)
 
 
 def test_current_release_versions_agree():
@@ -25,6 +27,7 @@ def test_current_release_versions_agree():
 def test_version_drift_fails_with_the_source_name(tmp_path: Path):
     copy_release_sources(tmp_path)
     path = tmp_path / "libs/lume/src/Main.swift"
-    path.write_text(path.read_text().replace('"0.3.16"', '"9.9.9"'))
+    current = (tmp_path / "libs/lume/VERSION").read_text().strip()
+    path.write_text(path.read_text().replace(f'"{current}"', '"9.9.9"'))
     with pytest.raises(VersionError, match="src/Main.swift=9.9.9"):
         validate(tmp_path, "lume")

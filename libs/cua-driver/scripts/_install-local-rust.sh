@@ -282,11 +282,14 @@ echo ""
 # this avoids image-specific login-keychain ACL failures. Local dev only;
 # releases are CI-signed.
 #
-# Echoes the `codesign --sign` argument: the valid identity's SHA-1 when
+# Echoes the `codesign --sign` argument: a matching identity's SHA-1 when
 # available, or "-" when it can't be created — no codesign/openssl, CI,
-# locked keychain. Use the identity hash rather than the certificate name:
-# stale certificate-only duplicates can share the same name and make codesign
-# reject an otherwise valid identity as ambiguous.
+# locked keychain. The installer creates a self-signed local certificate, which
+# `security find-identity -v` filters out as untrusted even when its private key
+# is present and codesign can use it. Query matching code-signing identities
+# without the valid-only filter; the bounded codesign call below remains the
+# authoritative usability check. Use the identity hash rather than the
+# certificate name because duplicate certificate names are ambiguous.
 CUA_LOCAL_SIGN_CN="CuaDriver Local Signing (cua-driver-rs)"
 ensure_local_signing_identity() {
     { [ "$OS" = "Darwin" ] && command -v codesign >/dev/null 2>&1; } || { printf -- '-'; return; }
@@ -296,7 +299,7 @@ ensure_local_signing_identity() {
     fi
     [ -f "$kc" ] || { printf -- '-'; return; }
     local identity
-    identity="$(security find-identity -v -p codesigning "$kc" 2>/dev/null \
+    identity="$(security find-identity -p codesigning "$kc" 2>/dev/null \
         | awk -v cn="$CUA_LOCAL_SIGN_CN" 'index($0, "\"" cn "\"") { print $2; exit }')"
     if [ -n "$identity" ]; then
         printf '%s' "$identity"; return
@@ -318,7 +321,7 @@ ensure_local_signing_identity() {
             || openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
                 -out "$tmp/id.p12" -passout pass:"$pw" -name "$CUA_LOCAL_SIGN_CN" >/dev/null 2>&1; } \
        && security import "$tmp/id.p12" -k "$kc" -P "$pw" -A -T /usr/bin/codesign >/dev/null 2>&1; then
-        identity="$(security find-identity -v -p codesigning "$kc" 2>/dev/null \
+        identity="$(security find-identity -p codesigning "$kc" 2>/dev/null \
             | awk -v cn="$CUA_LOCAL_SIGN_CN" 'index($0, "\"" cn "\"") { print $2; exit }')"
         rm -rf "$tmp"
         if [ -n "$identity" ]; then

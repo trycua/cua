@@ -48,6 +48,10 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             "gh pr list --state open --base main --limit 100 --json number",
             workflow,
         )
+        self.assertIn(
+            'git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"',
+            workflow,
+        )
         self.assertNotIn("if: steps.release.outputs.prs_created == 'true'", workflow)
         self.assertNotIn("RELEASE_PRS: ${{ steps.release.outputs.prs }}", workflow)
 

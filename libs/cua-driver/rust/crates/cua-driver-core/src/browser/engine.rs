@@ -110,7 +110,20 @@ fn is_semantic_document_size_error(error: &anyhow::Error) -> bool {
     .any(|needle| message.contains(needle))
 }
 
+fn is_semantic_document_fallback_error(error: &anyhow::Error) -> bool {
+    if is_semantic_document_size_error(error) {
+        return true;
+    }
+    is_semantic_document_timeout_error(error)
+}
+
+fn is_semantic_document_timeout_error(error: &anyhow::Error) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("cdp dom.getdocument timed out after")
+}
+
 const SEMANTIC_DOM_FALLBACK_DEPTHS: &[i64] = &[256, 128, 64, 32, 16, 8, 4, 2, 1];
+const SEMANTIC_DOM_TIMEOUT_FALLBACK_DEPTHS: &[i64] = &[8, 4, 2, 1];
 const SEMANTIC_DOM_HYDRATION_DEPTH: i64 = 8;
 const MAX_SEMANTIC_DOM_HYDRATION_CALLS: usize = 64;
 const MAX_SEMANTIC_DOM_SCAN_NODES: usize = 50_000;
@@ -1674,9 +1687,14 @@ impl BrowserEngine {
             .await
         {
             Ok(document) => Ok((document, true)),
-            Err(error) if is_semantic_document_size_error(&error) => {
+            Err(error) if is_semantic_document_fallback_error(&error) => {
                 let mut last_size_error = error.to_string();
-                for depth in SEMANTIC_DOM_FALLBACK_DEPTHS {
+                let fallback_depths = if is_semantic_document_timeout_error(&error) {
+                    SEMANTIC_DOM_TIMEOUT_FALLBACK_DEPTHS
+                } else {
+                    SEMANTIC_DOM_FALLBACK_DEPTHS
+                };
+                for depth in fallback_depths {
                     match conn
                         .call(
                             Some(cdp_session),
@@ -1691,7 +1709,7 @@ impl BrowserEngine {
                                 .await?;
                             return Ok((document, false));
                         }
-                        Err(error) if is_semantic_document_size_error(&error) => {
+                        Err(error) if is_semantic_document_fallback_error(&error) => {
                             last_size_error = error.to_string();
                         }
                         Err(error) => {

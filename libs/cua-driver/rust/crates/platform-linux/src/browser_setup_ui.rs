@@ -65,9 +65,9 @@ fn setup_page_proven(
                 .iter()
                 .any(|title| field_equals(node, title))
     });
-    (exact_url || (trusted_navigation && !has_contradictory_address_bar))
-        && exact_page
-        && exact_heading
+    let exact_identity =
+        exact_url || (trusted_navigation && !has_contradictory_address_bar && exact_page);
+    exact_identity && exact_heading
 }
 
 fn exact_setup_checkbox<'a>(
@@ -477,6 +477,14 @@ mod tests {
                 .unwrap()
                 .checked,
             Some(false)
+        );
+
+        let titleless = vec![nodes[0].clone(), nodes[2].clone(), nodes[3].clone()];
+        assert!(
+            exact_setup_checkbox(&titleless, descriptor(), false)
+                .unwrap()
+                .is_some(),
+            "an exact internal URL and heading prove products that omit the document title from AT-SPI"
         );
 
         let addressless = nodes[1..].to_vec();

@@ -9,7 +9,14 @@ use cua_driver_core::browser::{
 };
 
 use crate::ax::bindings::{kAXErrorSuccess, perform_action, AXUIElementRef};
-use crate::ax::tree::{walk_tree, AXNode};
+use crate::ax::tree::{walk_tree_bounded, AXNode, DEFAULT_MAX_DEPTH};
+
+// Large Chromium pages can put the browser-owned consent sheet after the
+// ordinary 2,000-node snapshot cap. Keep this privileged scan bounded while
+// allowing enough headroom to inspect Chrome's top-level sheet on pages such
+// as Gmail. The matcher below still requires one exact AXSheet and one exact
+// semantic Allow action before it will press anything.
+const CONSENT_MAX_ELEMENTS: usize = 5_000;
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
@@ -143,11 +150,21 @@ pub async fn handle(
     })?;
     let deadline = Instant::now() + Duration::from_secs(4);
     let mut saw_prompt = false;
+    let mut accepted_prompt = false;
     loop {
         let trees = tokio::task::spawn_blocking(move || {
             consent_surface_ids(crate::windows::all_windows(), pid, window_id)
                 .into_iter()
-                .map(|candidate_window_id| walk_tree(pid, Some(candidate_window_id), None).nodes)
+                .map(|candidate_window_id| {
+                    walk_tree_bounded(
+                        pid,
+                        Some(candidate_window_id),
+                        None,
+                        CONSENT_MAX_ELEMENTS,
+                        DEFAULT_MAX_DEPTH,
+                    )
+                    .nodes
+                })
                 .collect::<Vec<_>>()
         })
         .await
@@ -192,7 +209,14 @@ pub async fn handle(
                     "the exact browser consent action became stale before AXPress",
                 ));
             }
-            return Ok(BrowserConsentOutcome::Accepted);
+            // Chrome can queue more than one browser-owned consent sheet when
+            // an earlier connection attempt was interrupted. Do not report
+            // acceptance merely because AXPress returned success: keep
+            // inspecting the exact approved process until every matching
+            // sheet is gone, or the bounded deadline/ambiguity checks refuse.
+            accepted_prompt = true;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            continue;
         }
         for nodes in &trees {
             release_actionable_nodes(nodes);
@@ -202,6 +226,9 @@ pub async fn handle(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "multiple Chrome-owned remote-debugging consent sheets exposed semantic allow actions",
             ));
+        }
+        if accepted_prompt && !prompt_present {
+            return Ok(BrowserConsentOutcome::Accepted);
         }
         if saw_prompt && !prompt_present {
             return Err(refusal(

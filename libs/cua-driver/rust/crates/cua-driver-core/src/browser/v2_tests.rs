@@ -48,6 +48,7 @@ struct FixtureState {
     completed_key_pairs: usize,
     semantic_large_page: bool,
     semantic_full_dom_fails: bool,
+    semantic_full_dom_times_out: bool,
     semantic_truncated_dom: bool,
     /// Every incoming CDP call: (sessionId, method, params).
     calls: Vec<(Option<String>, String, Value)>,
@@ -68,6 +69,7 @@ impl Default for FixtureState {
             completed_key_pairs: 0,
             semantic_large_page: false,
             semantic_full_dom_fails: false,
+            semantic_full_dom_times_out: false,
             semantic_truncated_dom: false,
             calls: Vec::new(),
         }
@@ -440,7 +442,9 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             })),
             "DOM.getDocument" if is_tab => {
                 let depth = call.params["depth"].as_i64().unwrap_or(-1);
-                if st.semantic_full_dom_fails && (depth == -1 || depth > 8) {
+                if st.semantic_full_dom_times_out && (depth == -1 || depth > 8) {
+                    MockReply::err(-32000, "CDP DOM.getDocument timed out after 20s")
+                } else if st.semantic_full_dom_fails && (depth == -1 || depth > 8) {
                     MockReply::err(-32000, "Object reference chain is too long")
                 } else if st.semantic_truncated_dom && depth == 8 {
                     MockReply::ok(truncated_semantic_document())
@@ -1393,6 +1397,29 @@ async fn semantic_snapshot_uses_bounded_dom_fallback_only_for_known_size_failure
 }
 
 #[tokio::test]
+async fn semantic_snapshot_uses_bounded_dom_fallback_for_full_tree_timeout() {
+    let f = fixture_with(|st| {
+        st.semantic_large_page = true;
+        st.semantic_full_dom_times_out = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot_with(&f, &target, &tab, json!({"query": "Reply"})).await;
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["complete"], false, "{snap}");
+    let document_calls = recorded_calls(&f, "DOM.getDocument");
+    assert!(document_calls
+        .iter()
+        .any(|(_, params)| params["depth"] == -1));
+    assert!(document_calls
+        .iter()
+        .any(|(_, params)| params["depth"] == 8));
+    assert!(document_calls.iter().all(|(_, params)| {
+        params["depth"] == -1 || params["depth"].as_i64().is_some_and(|depth| depth <= 8)
+    }));
+}
+
+#[tokio::test]
 async fn semantic_snapshot_hydrates_truncated_fallback_branches() {
     let f = fixture_with(|st| {
         st.semantic_large_page = true;
@@ -1560,6 +1587,8 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
         .await;
     assert_eq!(structured(&synthetic)["status"], "ok");
     assert!(!recorded_calls(&f, "Runtime.callFunctionOn").is_empty());
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
 }
 
 #[tokio::test]
@@ -1700,6 +1729,8 @@ async fn typing_into_composed_shadow_input_uses_the_tab_session() {
         !recorded_calls(&f, "Runtime.callFunctionOn").is_empty(),
         "editability must be checked on the node itself"
     );
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
 }
 
 #[tokio::test]

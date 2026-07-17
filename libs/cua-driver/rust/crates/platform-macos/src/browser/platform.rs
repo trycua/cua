@@ -1,6 +1,7 @@
 //! macOS identity and endpoint evidence for the first-class browser tools.
 
 use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -87,6 +88,54 @@ fn stable_hash(value: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut hasher);
     hasher.finish()
+}
+
+fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let relative = match product {
+        BrowserProduct::GoogleChrome => "Library/Application Support/Google/Chrome",
+        BrowserProduct::MicrosoftEdge => "Library/Application Support/Microsoft Edge",
+        BrowserProduct::Chromium => "Library/Application Support/Chromium",
+        _ => return None,
+    };
+    Some(home.join(relative))
+}
+
+fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
+    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    let port = lines.next()?.parse::<u16>().ok()?;
+    let path = lines.next()?;
+    if lines.next().is_some() {
+        return None;
+    }
+    let instance = path.strip_prefix("/devtools/browser/")?;
+    (!instance.is_empty()
+        && instance
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
+    .then_some((port, path))
+}
+
+async fn process_uses_custom_user_data_dir(pid: i64) -> Result<bool, BrowserRefusal> {
+    let output = tokio::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not inspect browser arguments for pid {pid}: {error}"),
+            )
+        })?;
+    if !output.status.success() {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("browser process {pid} is no longer available"),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).contains("--user-data-dir"))
 }
 
 fn exact_browser_surface_ids(
@@ -181,6 +230,54 @@ async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     Ok(parse_loopback_lsof_ports(&String::from_utf8_lossy(
         &output.stdout,
     )))
+}
+
+async fn active_port_endpoint(
+    pid: i64,
+    product: BrowserProduct,
+) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+    // The Chrome 144+ existing-profile bridge deliberately returns 404 for
+    // legacy /json discovery. Its exact browser WebSocket path is instead
+    // published in the default profile's DevToolsActivePort file. Custom
+    // user-data dirs remain on the launch/HTTP discovery paths because this
+    // adapter cannot safely recover an arbitrary argv path from `ps` text.
+    if process_uses_custom_user_data_dir(pid).await? {
+        return Ok(None);
+    }
+    let Some(user_data_dir) = default_user_data_dir(product) else {
+        return Ok(None);
+    };
+    let text = match tokio::fs::read_to_string(user_data_dir.join("DevToolsActivePort")).await {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not read the browser's DevToolsActivePort file: {error}"),
+            ))
+        }
+    };
+    let Some((port, path)) = parse_devtools_active_port(&text) else {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+            "the browser's DevToolsActivePort file did not contain one exact browser endpoint",
+        ));
+    };
+    if !loopback_ports_for_pid(pid).await?.contains(&port) {
+        return Ok(None);
+    }
+    Ok(Some(OwnedEndpoint {
+        ws_url: format!("ws://127.0.0.1:{port}{path}"),
+        http_port: Some(port),
+        ownership: EndpointOwnershipProof {
+            method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
+            owner_pid: pid,
+            detail: Some(
+                "exact default-profile DevToolsActivePort path plus lsof loopback listener owner"
+                    .to_owned(),
+            ),
+        },
+    }))
 }
 
 async fn browser_websocket_url(port: u16) -> Option<String> {
@@ -368,6 +465,10 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let classification = self.classify_browser(pid).await?;
+        if let Some(endpoint) = active_port_endpoint(pid, classification.product_kind).await? {
+            return Ok(Some(endpoint));
+        }
         let ports = loopback_ports_for_pid(pid).await?;
         let mut discovered = Vec::new();
         for port in &ports {
@@ -413,6 +514,16 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         };
         if !loopback_ports_for_pid(pid).await?.contains(&port) {
             return Ok(None);
+        }
+        let classification = self.classify_browser(pid).await?;
+        if let Some(endpoint) = active_port_endpoint(pid, classification.product_kind).await? {
+            if endpoint.ws_url != expected_ws_url {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    "the browser's exact DevTools endpoint changed after approval",
+                ));
+            }
+            return Ok(Some(endpoint));
         }
         Ok(Some(OwnedEndpoint {
             ws_url: expected_ws_url.to_owned(),
@@ -479,6 +590,11 @@ impl BrowserPlatform for MacOsBrowserPlatform {
 
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         let endpoint_result = loop {
+            match active_port_endpoint(request.pid, request.browser).await {
+                Ok(Some(endpoint)) => break Ok(endpoint),
+                Ok(None) => {}
+                Err(error) => break Err(error),
+            }
             let ports = match loopback_ports_for_pid(request.pid).await {
                 Ok(ports) => ports,
                 Err(error) => break Err(error),
@@ -717,6 +833,31 @@ mod tests {
         );
         assert_eq!(
             loopback_websocket_port("ws://192.0.2.1:9222/devtools"),
+            None
+        );
+    }
+
+    #[test]
+    fn active_port_parser_requires_one_exact_browser_path() {
+        assert_eq!(
+            parse_devtools_active_port(
+                "9222\n/devtools/browser/f1d991b4-2694-4b28-b63a-1f2a8da3a435\n"
+            ),
+            Some((
+                9222,
+                "/devtools/browser/f1d991b4-2694-4b28-b63a-1f2a8da3a435"
+            ))
+        );
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/page/id\n"),
+            None
+        );
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/browser/id\nextra\n"),
+            None
+        );
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/browser/../page\n"),
             None
         );
     }

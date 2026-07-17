@@ -23,7 +23,53 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
+use super::semantic::SemanticDocument;
 use super::types::{BindingQuality, ProcessFingerprint, Rect};
+
+/// Browser action kinds proven for one semantic page ref.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserActionKind {
+    Click,
+    Type,
+}
+
+impl BrowserActionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Click => "click",
+            Self::Type => "type",
+        }
+    }
+}
+
+/// Browser-layout visibility. This is independent from native desktop
+/// foreground or occlusion state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserVisibility {
+    InViewport,
+    NearViewport,
+    Offscreen,
+    CssHidden,
+    NoLayout,
+    PageOccluded,
+    Unknown,
+}
+
+impl BrowserVisibility {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::InViewport => "in_viewport",
+            Self::NearViewport => "near_viewport",
+            Self::Offscreen => "offscreen",
+            Self::CssHidden => "css_hidden",
+            Self::NoLayout => "no_layout",
+            Self::PageOccluded => "page_occluded",
+            Self::Unknown => "unknown",
+        }
+    }
+}
 
 /// Which frame kind a ref was minted in. Exposed on the wire as a
 /// stable string via [`FrameKind::as_str`]; everything else about the
@@ -99,6 +145,16 @@ pub struct RefEntry {
     pub node_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Semantic action kinds. Empty for legacy DOM refs, whose existing
+    /// mutation behavior remains compatible during the v2 migration.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<BrowserActionKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<BrowserVisibility>,
+    /// Semantic refs enforce their declared action set. Legacy DOM refs keep
+    /// their existing permissive behavior during the versioned migration.
+    #[serde(skip_serializing)]
+    pub semantic: bool,
     /// Frame identity — internal; only the kind string is surfaced.
     #[serde(skip_serializing)]
     pub frame: FrameRef,
@@ -111,12 +167,26 @@ pub struct SnapshotRecord {
     pub url: String,
     /// index → entry; the external ref is `p<id>:<index>`.
     pub refs: HashMap<u32, RefEntry>,
+    pub(crate) semantic: Option<SemanticDocument>,
+    pub(crate) semantic_root_identity: Option<FrameIdentity>,
+    pub(crate) continuations: HashMap<String, SemanticContinuation>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SemanticContinuation {
+    pub offset: usize,
+    pub query: Option<String>,
+    pub scope_backend_node_id: Option<i64>,
+    pub oopif_supported: bool,
+    pub oopif_frames: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct TabRecord {
     pub tab_id: String,
     pub cdp_target_id: String,
+    pub title: String,
+    pub url: String,
     pub generation: u64,
     pub snapshots: HashMap<u64, SnapshotRecord>,
 }
@@ -294,6 +364,44 @@ impl BrowserStore {
             })
     }
 
+    /// Resolve an opaque continuation within the same session, target, tab,
+    /// snapshot generation, and currently-live snapshot namespace.
+    pub fn resolve_semantic_continuation(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+        token: &str,
+    ) -> Result<(SnapshotRecord, SemanticContinuation), BrowserRefusal> {
+        let target = self.get_target(session, target_id)?;
+        let tab = target.tabs.get(tab_id).ok_or_else(|| {
+            BrowserRefusal::new(
+                BrowserRefusalCode::BrowserTabNotFound,
+                format!("tab {tab_id} is not known for target {target_id}"),
+            )
+        })?;
+        tab.snapshots
+            .values()
+            .find(|snapshot| {
+                snapshot.generation == target.generation
+                    && snapshot.semantic.is_some()
+                    && snapshot.continuations.contains_key(token)
+            })
+            .and_then(|snapshot| {
+                snapshot
+                    .continuations
+                    .get(token)
+                    .cloned()
+                    .map(|continuation| (snapshot.clone(), continuation))
+            })
+            .ok_or_else(|| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRefStale,
+                    "the semantic continuation is stale or does not belong to this session and tab",
+                )
+            })
+    }
+
     /// Drop every snapshot of one tab (navigation invalidates refs).
     pub fn invalidate_tab_snapshots(&self, session: &str, target_id: &str, tab_id: &str) {
         self.update_target(session, target_id, |rec| {
@@ -381,6 +489,9 @@ mod tests {
                     backend_node_id: 555,
                     node_name: "button".into(),
                     label: Some("Submit".into()),
+                    actions: Vec::new(),
+                    visibility: None,
+                    semantic: false,
                     frame: FrameRef {
                         kind: FrameKind::Main,
                         oopif_target_id: None,
@@ -396,6 +507,8 @@ mod tests {
                 TabRecord {
                     tab_id: tab_id.clone(),
                     cdp_target_id: "CDP1".into(),
+                    title: "Example".into(),
+                    url: "https://example.test".into(),
                     generation: 0,
                     snapshots: HashMap::from([(
                         snap_id,
@@ -404,6 +517,9 @@ mod tests {
                             generation: 0,
                             url: "https://example.test".into(),
                             refs,
+                            semantic: None,
+                            semantic_root_identity: None,
+                            continuations: HashMap::new(),
                         },
                     )]),
                 },

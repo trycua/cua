@@ -313,6 +313,7 @@ pub enum RefusalCode {
     BrowserConsentRevoked,
     BrowserReconnectExhausted,
     BrowserInputIncomplete,
+    BrowserActionUnavailable,
 }
 
 impl RefusalCode {
@@ -333,6 +334,7 @@ impl RefusalCode {
             "browser_consent_revoked" => Some(Self::BrowserConsentRevoked),
             "browser_reconnect_exhausted" => Some(Self::BrowserReconnectExhausted),
             "browser_input_incomplete" => Some(Self::BrowserInputIncomplete),
+            "browser_action_unavailable" => Some(Self::BrowserActionUnavailable),
             _ => None,
         }
     }

@@ -58,6 +58,9 @@ pub enum BrowserRefusalCode {
     BrowserReconnectExhausted,
     /// A typing operation delivered only a proven prefix of the request.
     BrowserInputIncomplete,
+    /// A semantic ref is live, but it does not declare the requested typed
+    /// browser action.
+    BrowserActionUnavailable,
 }
 
 impl BrowserRefusalCode {
@@ -78,6 +81,7 @@ impl BrowserRefusalCode {
             Self::BrowserConsentRevoked => "browser_consent_revoked",
             Self::BrowserReconnectExhausted => "browser_reconnect_exhausted",
             Self::BrowserInputIncomplete => "browser_input_incomplete",
+            Self::BrowserActionUnavailable => "browser_action_unavailable",
         }
     }
 }
@@ -177,6 +181,10 @@ mod tests {
             (
                 BrowserRefusalCode::BrowserInputIncomplete,
                 "browser_input_incomplete",
+            ),
+            (
+                BrowserRefusalCode::BrowserActionUnavailable,
+                "browser_action_unavailable",
             ),
         ];
         for (code, wire) in all {

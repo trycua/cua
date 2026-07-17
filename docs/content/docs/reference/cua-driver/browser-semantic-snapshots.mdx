@@ -1,0 +1,154 @@
+---
+title: Browser semantic snapshots
+description: Reference for semantic_v2 browser state, refs, scopes, and continuation capabilities.
+---
+
+`get_browser_state` snapshot mode supports two versioned contracts:
+
+| Format | Status | Output |
+| --- | --- | --- |
+| `semantic_v2` | Recommended for new browser workflows | Semantic outline, typed action refs, content refs, visibility, omission counts, and continuation |
+| `dom_refs_v1` | Compatibility default when `snapshot_format` is omitted | Interactive DOM refs and a `truncated` flag |
+
+Bind a native browser window first. Snapshot mode requires the returned opaque
+`target_id`, one returned `tab_id`, and the same explicit driver `session`.
+
+## Request
+
+```json
+{
+  "session": "browser-run-1",
+  "target_id": "bt-...",
+  "tab_id": "tab-...",
+  "snapshot_format": "semantic_v2"
+}
+```
+
+Semantic snapshot requests may also contain one of these read scopes:
+
+| Field | Meaning |
+| --- | --- |
+| `query` | Match role, accessible name, or visible text and retain semantic ancestor context |
+| `scope_ref` | Read the subtree rooted at a current action ref or content ref |
+| `continuation` | Read the next ranked segment from the same stored snapshot |
+
+`continuation` cannot be combined with a new `query` or `scope_ref`.
+
+## Response
+
+```json
+{
+  "status": "ok",
+  "mode": "snapshot",
+  "target_id": "bt-...",
+  "tab_id": "tab-...",
+  "snapshot": {
+    "id": "p42",
+    "format": "semantic_v2",
+    "complete": false,
+    "scope": "viewport",
+    "selected_nodes": 300,
+    "total_nodes": 318,
+    "node_budget": 300,
+    "omitted": {
+      "css_hidden": 410,
+      "offscreen": 82,
+      "page_occluded": 1,
+      "no_layout": 0,
+      "unknown": 0,
+      "budget": 18,
+      "unprovable_frame": 0
+    },
+    "continuation": "bc-..."
+  },
+  "page": {
+    "url": "https://example.test/inbox",
+    "title": "Inbox"
+  },
+  "outline": "- heading \"Message\"\n- textbox \"Reply body\"",
+  "refs": [],
+  "content_refs": [],
+  "oopif": {
+    "status": "attached",
+    "frames": 1
+  }
+}
+```
+
+`complete` is true only when collection is complete and no ranked state remains
+behind the output budget. A non-null continuation identifies that remaining
+state. Known oversized-DOM fallback produces a partial snapshot with
+`complete: false`; unrelated transport failures remain errors.
+
+## Action refs
+
+Entries in `refs` declare their supported action kinds:
+
+```json
+{
+  "ref": "p42:8",
+  "role": "button",
+  "name": "Reply",
+  "value": null,
+  "states": { "disabled": false },
+  "actions": ["click"],
+  "frame": "main",
+  "visibility": "in_viewport"
+}
+```
+
+`browser_click` and `browser_type` reject a semantic ref when the requested
+action is absent from `actions`, returning `browser_action_unavailable` before
+delivery. Legacy `dom_refs_v1` refs retain their existing behavior.
+
+## Content refs
+
+`content_refs` identify readable semantic nodes that have a live backend node
+but no declared mutation. They exist so a caller can pass `scope_ref` without
+making static text clickable or editable.
+
+## Visibility
+
+`visibility` has this closed vocabulary:
+
+| Value | Meaning |
+| --- | --- |
+| `in_viewport` | Layout bounds intersect the current page viewport |
+| `near_viewport` | Layout bounds are within the bounded near-viewport margin |
+| `offscreen` | Layout exists outside that margin |
+| `css_hidden` | DOM or computed style proves the node hidden |
+| `no_layout` | No non-empty layout box is available |
+| `page_occluded` | A higher-painted fixed or absolute page overlay conservatively covers the node |
+| `unknown` | Available evidence cannot classify layout visibility |
+
+Page visibility is independent of native window foreground or desktop
+occlusion. It does not indicate whether the browser window is covered by
+another application.
+
+## Capability lifetime
+
+Targets, tabs, snapshots, refs, and continuations are opaque capabilities.
+They do not expose CDP target IDs, backend node IDs, object IDs, or selectors.
+
+- A newer snapshot of the tab invalidates older refs and continuations.
+- Navigation invalidates every snapshot of the tab.
+- Browser reconnect or process replacement invalidates the target generation.
+- Ending the driver session removes the complete capability namespace.
+- Continuations are single-use and resolve only in their owning session,
+  target, tab, snapshot, and generation.
+
+Every mutation re-proves the native binding, endpoint ownership, tab target,
+frame loader identity, and backend-node liveness.
+
+## Composition
+
+Semantic snapshots join the browser accessibility tree, pierced author DOM,
+layout snapshot, viewport metrics, and frame tree. They include the main frame,
+author shadow roots, proven same-process frames, and capability-tested
+out-of-process frames. User-agent shadow roots and unprovable frame content are
+omitted.
+
+CSS-hidden retained state is removed before ranking. Active dialogs and focused
+context rank first, followed by visible actions, visible content,
+near-viewport state, and offscreen state. Document order is stable within each
+tier.

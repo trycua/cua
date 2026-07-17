@@ -677,8 +677,45 @@ finished, produced its summary, exited from the process table, recorded all 10
 passing rows, and generated 10 valid videos. The acceptance verdict is based on
 those canonical artifacts rather than the disposable wrapper marker.
 
-Focused local validation at the same source SHA passed all 46 testkit library
-tests. Branch CI passed Windows and Linux unit/compile, Nix package and policy,
-documentation, link, distribution-compatibility, and publication checks. The
-later documentation-only commit records this evidence and does not alter the
-accepted executable or harness source.
+## 2026-07-17: semantic browser state
+
+Added the opt-in `semantic_v2` snapshot contract while retaining
+`dom_refs_v1` as the compatibility default. The new collector joins the
+Chromium accessibility tree, pierced author DOM, layout snapshot, viewport
+metrics, and proven frame identities. It separates compact readable content
+from typed action refs, ranks visible state before offscreen state, excludes
+CSS-hidden retained controls before budgeting, and conservatively identifies
+controls covered by fixed or absolute page overlays.
+
+Semantic action refs declare `click` and/or `type`. Mutation tools now return
+`browser_action_unavailable` before delivery when a semantic ref does not
+declare the requested action. Static nodes with live backend identity are
+returned separately as `content_refs` for read-only subtree scope; they do not
+become clickable. A bounded DOM supplement recovers visible custom controls
+with explicit interaction evidence when AX omits them.
+
+Read scoping supports role/name/text `query`, current `scope_ref`, and opaque
+single-use continuation. Continuations remain inside the session capability
+store and are invalidated by use, a newer snapshot, navigation, reconnect,
+target replacement, or session end. Raw CDP target IDs, backend node IDs,
+object IDs, selectors, and continuation offsets remain private.
+
+Known full-DOM size or serialization failures use a progressively shallower
+depth ladder and hydrate truncated branches with bounded `DOM.describeNode`
+calls. Time, call-count, and scan-node budgets terminate hydration and retain
+`complete:false`; unrelated transport failures remain hard errors. The
+deterministic fixture contains 320 CSS-hidden retained controls, visible
+message/editor/actions, and more than 300 offscreen controls. Focused tests
+prove visible-first state, continuation, query, subtree scope, action-kind
+enforcement, modal occlusion, DOM supplementation, bounded fallback and
+hydration, and stale continuations after both newer snapshots and out-of-band
+navigation. Hidden-node omission counts are deduplicated, and icon-font glyphs
+are removed from semantic text.
+
+Local source validation passed the complete core and session-lifecycle suites,
+all 46 testkit library tests, source compilation of the standalone browser
+harness, generated documentation drift checks, public-doc hygiene, and local
+link checks. A source-installed macOS product-path replay passed the real Chrome
+semantic row with the TCC-authorized daemon, foreground sentinel, fixture
+journal, exact DOM click, re-snapshot, and typed-value oracle. Windows and Linux
+X11 exact-SHA workflow evidence is the remaining release-acceptance gate.

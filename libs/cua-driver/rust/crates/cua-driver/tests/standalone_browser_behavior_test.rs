@@ -45,6 +45,29 @@ fn standalone_fixture_html() -> String {
     )
 }
 
+fn standalone_semantic_fixture_html() -> String {
+    let hidden = (0..320)
+        .map(|index| {
+            format!(
+                r#"<button hidden aria-hidden="true" aria-label="Retained control {index}">hidden</button>"#
+            )
+        })
+        .collect::<String>();
+    let offscreen = (0..305)
+        .map(|index| {
+            format!(r#"<button aria-label="Archive item {index}">Archive item {index}</button>"#)
+        })
+        .collect::<String>();
+    standalone_fixture_html()
+        .replace("<body>", &format!("<body>{hidden}"))
+        .replace(
+            "</body>",
+            &format!(
+                r#"<section aria-label="Retained archive" style="margin-top:2000px">{offscreen}</section></body>"#
+            ),
+        )
+}
+
 fn standalone_frame_fixture_html(oopif_url: &str) -> String {
     let oopif_url = serde_json::to_string(oopif_url).expect("serialize OOPIF fixture URL");
     FIXTURE_HTML.replace(
@@ -837,6 +860,22 @@ fn ref_by_frame_label(snapshot: &ToolResponse, frame: &str, fragment: &str) -> S
         .to_owned()
 }
 
+fn semantic_ref_by_name(snapshot: &ToolResponse, name: &str, action: &str) -> String {
+    snapshot.structured()["refs"]
+        .as_array()
+        .and_then(|refs| {
+            refs.iter().find(|entry| {
+                entry["name"] == name
+                    && entry["actions"]
+                        .as_array()
+                        .is_some_and(|actions| actions.iter().any(|value| value == action))
+            })
+        })
+        .and_then(|entry| entry["ref"].as_str())
+        .unwrap_or_else(|| panic!("missing semantic {action} ref {name:?}: {}", snapshot.raw))
+        .to_owned()
+}
+
 fn bind(fixture: &mut BrowserFixture, session: &str) -> (String, String, ToolResponse) {
     let started = fixture
         .driver
@@ -995,6 +1034,110 @@ fn run_roundtrip(spec: &BrowserSpec) {
             );
             assert_eq!(typed.structured()["status"], "ok", "{}", typed.raw);
             wait_for_value(&fixture.server, "txt-input", "standalone-browser");
+
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
+fn run_semantic_state(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-semantic-state",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(case(&spec.name, "browser_semantic_state"), |evidence| {
+        let mut fixture =
+            launch_browser_with_html(spec, &scenario, standalone_semantic_fixture_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let session = format!("standalone-semantic-state-{}", fixture.pid);
+            let (target, tab, _) = bind(fixture, &session);
+            let snapshot = fixture.driver.call(
+                "get_browser_state",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "session": session,
+                    "snapshot_format": "semantic_v2",
+                }),
+            );
+            assert_eq!(snapshot.structured()["status"], "ok", "{}", snapshot.raw);
+            assert_eq!(
+                snapshot.structured()["snapshot"]["format"],
+                "semantic_v2",
+                "{}",
+                snapshot.raw
+            );
+            assert!(
+                snapshot.structured()["outline"]
+                    .as_str()
+                    .is_some_and(|outline| outline.contains("WEB_HARNESS_MARKER_v1")),
+                "visible fixture marker missing from semantic outline: {}",
+                snapshot.raw
+            );
+            assert!(
+                snapshot.structured()["snapshot"]["omitted"]["css_hidden"]
+                    .as_u64()
+                    .is_some_and(|count| count >= 320),
+                "hidden retained controls were not accounted for: {}",
+                snapshot.raw
+            );
+            assert!(
+                snapshot.structured()["snapshot"]["continuation"].is_string(),
+                "offscreen fixture state did not produce continuation: {}",
+                snapshot.raw
+            );
+            assert!(
+                snapshot.structured()["refs"]
+                    .as_array()
+                    .is_some_and(|refs| refs.iter().all(|entry| {
+                        !entry["name"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .starts_with("Retained control")
+                    })),
+                "hidden retained action leaked into semantic refs: {}",
+                snapshot.raw
+            );
+
+            let increment_ref = semantic_ref_by_name(&snapshot, "Increment", "click");
+            let clicked = fixture.driver.call(
+                "browser_click",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": increment_ref,
+                    "input_route": "dom_event",
+                    "session": session,
+                }),
+            );
+            assert_eq!(clicked.structured()["status"], "ok", "{}", clicked.raw);
+            wait_for_text(&fixture.server, "lbl-counter", "counter=1");
+
+            let refreshed = fixture.driver.call(
+                "get_browser_state",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "session": session,
+                    "snapshot_format": "semantic_v2",
+                    "query": "txt-input",
+                }),
+            );
+            let input_ref = semantic_ref_by_name(&refreshed, "txt-input", "type");
+            let typed = fixture.driver.call(
+                "browser_type",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": input_ref,
+                    "text": "semantic-browser",
+                    "session": session,
+                }),
+            );
+            assert_eq!(typed.structured()["status"], "ok", "{}", typed.raw);
+            wait_for_value(&fixture.server, "txt-input", "semantic-browser");
 
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
@@ -1863,6 +2006,7 @@ macro_rules! standalone_browser_test {
 }
 
 standalone_browser_test!(standalone_browser_roundtrip, run_roundtrip);
+standalone_browser_test!(standalone_browser_semantic_state, run_semantic_state);
 standalone_browser_test!(standalone_browser_background_type, run_background_type);
 standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
 standalone_browser_test!(

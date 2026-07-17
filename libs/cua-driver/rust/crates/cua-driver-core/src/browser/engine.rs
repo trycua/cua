@@ -32,8 +32,11 @@ use crate::session::register_session_end_hook;
 
 use super::binding::{cardinality_exact_candidate, correlate, BindingOutcome, CdpWindowCandidate};
 use super::cdp_ws::{CdpConnection, CdpPool};
-use super::platform::BrowserPlatform;
+use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
+use super::mutation::{MutationGates, MutationKey};
+use super::platform::{BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform};
 use super::prepare::ManagedBrowsers;
+use super::reconnect::ReconnectGates;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::store::{
     format_ref, BrowserStore, FrameIdentity, FrameKind, FrameRef, RefEntry, SnapshotRecord,
@@ -54,6 +57,9 @@ pub struct BrowserEngine {
     pub(crate) store: BrowserStore,
     pub(crate) pool: CdpPool,
     pub(crate) managed_browsers: ManagedBrowsers,
+    pub(crate) existing_profile_grants: ExistingProfileGrants,
+    mutation_gates: MutationGates,
+    reconnect_gates: ReconnectGates,
 }
 
 fn refuse(code: BrowserRefusalCode, msg: impl Into<String>) -> BrowserRefusal {
@@ -209,12 +215,26 @@ impl BrowserEngine {
             store: BrowserStore::new(),
             pool: CdpPool::new(),
             managed_browsers: Default::default(),
+            existing_profile_grants: ExistingProfileGrants::new(),
+            mutation_gates: MutationGates::new(),
+            reconnect_gates: ReconnectGates::new(),
         });
         let weak: Weak<Self> = Arc::downgrade(&engine);
         register_session_end_hook(move |session_id| {
             if let Some(engine) = weak.upgrade() {
                 engine.store.remove_session(session_id);
                 engine.cleanup_prepared_session(session_id);
+                for (endpoint, generation) in
+                    engine.existing_profile_grants.remove_session(session_id)
+                {
+                    engine.pool.release_claim_marker(&endpoint);
+                    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                        let engine = engine.clone();
+                        runtime.spawn(async move {
+                            engine.pool.release_existing(&endpoint, generation).await;
+                        });
+                    }
+                }
             }
         });
         engine
@@ -222,7 +242,49 @@ impl BrowserEngine {
 
     // ── Endpoint / CDP plumbing ─────────────────────────────────────────
 
-    async fn connect(&self, ws_url: &str) -> Result<Arc<CdpConnection>, BrowserRefusal> {
+    pub(crate) async fn existing_profile_grant(
+        &self,
+        session: &str,
+        transport_session: Option<&str>,
+        pid: i64,
+    ) -> Result<Option<ExistingProfileGrant>, BrowserRefusal> {
+        match self
+            .existing_profile_grants
+            .lookup(session, transport_session, pid)
+        {
+            GrantLookup::Missing => Ok(None),
+            GrantLookup::Live(grant) => Ok(Some(grant)),
+            GrantLookup::Expired(grant) => {
+                self.pool.release_claim_marker(&grant.endpoint_ws_url);
+                self.pool
+                    .release_existing(&grant.endpoint_ws_url, grant.generation)
+                    .await;
+                Err(refuse(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    "the existing-profile grant expired; approve this attachment again",
+                ))
+            }
+        }
+    }
+
+    pub(crate) async fn revoke_existing_profile_grant(
+        &self,
+        session: &str,
+        transport_session: Option<&str>,
+        pid: i64,
+    ) {
+        if let Some(grant) = self
+            .existing_profile_grants
+            .revoke(session, transport_session, pid)
+        {
+            self.pool.release_claim_marker(&grant.endpoint_ws_url);
+            self.pool
+                .release_existing(&grant.endpoint_ws_url, grant.generation)
+                .await;
+        }
+    }
+
+    pub(crate) async fn connect(&self, ws_url: &str) -> Result<Arc<CdpConnection>, BrowserRefusal> {
         match self.pool.get(ws_url).await {
             Ok(conn) => Ok(conn),
             Err(first_err) => {
@@ -237,8 +299,204 @@ impl BrowserEngine {
         }
     }
 
+    async fn connect_existing_profile(
+        &self,
+        session: &str,
+        transport_session: Option<&str>,
+        pid: i64,
+    ) -> Result<(Arc<CdpConnection>, ExistingProfileGrant), BrowserRefusal> {
+        let grant = self
+            .existing_profile_grant(session, transport_session, pid)
+            .await?
+            .ok_or_else(|| {
+                refuse(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    "no live existing-profile grant remains for this browser session",
+                )
+            })?;
+        if let Ok(conn) = self
+            .pool
+            .get_existing(&grant.endpoint_ws_url, grant.generation)
+            .await
+        {
+            return Ok((conn, grant));
+        }
+
+        // One leader owns endpoint reproof and bounded redial. Followers
+        // re-check the generation after acquiring this gate and reuse its
+        // socket rather than opening another browser-level connection.
+        let _leader = self
+            .reconnect_gates
+            .lock(&grant.fingerprint, &grant.endpoint_ws_url)
+            .await;
+        let mut grant = self
+            .existing_profile_grant(session, transport_session, pid)
+            .await?
+            .ok_or_else(|| {
+                refuse(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    "the existing-profile grant ended while reconnecting",
+                )
+            })?;
+        if let Ok(conn) = self
+            .pool
+            .get_existing(&grant.endpoint_ws_url, grant.generation)
+            .await
+        {
+            return Ok((conn, grant));
+        }
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(32);
+        let mut last_error = None;
+        while tokio::time::Instant::now() < deadline && grant.reconnect_attempts_remaining > 0 {
+            if grant.pid != pid || grant.browser != "chromium" {
+                self.revoke_existing_profile_grant(session, transport_session, pid)
+                    .await;
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    "the reconnect request no longer matches the approved browser identity",
+                ));
+            }
+            let classification = self.platform.classify_browser(pid).await?;
+            if !classification.supports_cdp
+                || classification.engine != super::types::BrowserEngineFamily::Chromium
+            {
+                self.revoke_existing_profile_grant(session, transport_session, pid)
+                    .await;
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    "the approved process is no longer a supported Chromium browser",
+                ));
+            }
+            let fingerprint = self.platform.process_fingerprint(pid).await?;
+            if !grant.fingerprint.matches(&fingerprint) {
+                self.revoke_existing_profile_grant(session, transport_session, pid)
+                    .await;
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserConsentRequired,
+                    "the browser process changed; existing-profile attachment needs fresh approval",
+                ));
+            }
+            let endpoint = self
+                .platform
+                .reprove_existing_profile_endpoint(pid, &grant.endpoint_ws_url)
+                .await?
+                .ok_or_else(|| {
+                    refuse(
+                        BrowserRefusalCode::BrowserRequiresSetup,
+                        "the approved browser endpoint disappeared during reconnect",
+                    )
+                })?;
+            if endpoint.ownership.owner_pid != pid {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    "the reconnect endpoint is not owned by the approved browser process",
+                ));
+            }
+            if endpoint.ws_url != grant.endpoint_ws_url {
+                self.revoke_existing_profile_grant(session, transport_session, pid)
+                    .await;
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    "the browser DevTools endpoint changed during reconnect",
+                ));
+            }
+
+            let old_generation = grant.generation;
+            let new_generation =
+                self.existing_profile_grants
+                    .bump_generation(session, transport_session, pid)?;
+            self.store
+                .invalidate_endpoint_generation(pid, old_generation);
+            let attempt = super::grant::MAX_RECONNECT_ATTEMPTS
+                .saturating_sub(grant.reconnect_attempts_remaining)
+                .saturating_add(1);
+            let mut reconnect = Box::pin(self.pool.reconnect_existing(
+                &endpoint.ws_url,
+                old_generation,
+                new_generation,
+            ));
+            let reconnected = tokio::select! {
+                result = &mut reconnect => result,
+                _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                    match self.platform.handle_existing_profile_consent(BrowserConsentRequest {
+                        pid,
+                        window_id: grant.window_id,
+                        attempt,
+                    }).await {
+                        Ok(BrowserConsentOutcome::Accepted | BrowserConsentOutcome::NotPresent) => {
+                            reconnect.await
+                        }
+                        Err(error) => {
+                            // The reconnect future may be waiting on browser
+                            // consent. Cancel it before grant revocation so no
+                            // socket-pool resource can outlive this refusal.
+                            drop(reconnect);
+                            if error.code == BrowserRefusalCode::BrowserConsentRevoked {
+                                self.revoke_existing_profile_grant(session, transport_session, pid)
+                                    .await;
+                            }
+                            return Err(error);
+                        }
+                    }
+                }
+            };
+            match reconnected {
+                Ok(conn) => {
+                    grant = self
+                        .existing_profile_grant(session, transport_session, pid)
+                        .await?
+                        .expect("grant exists after successful generation bump");
+                    return Ok((conn, grant));
+                }
+                Err(error) => {
+                    last_error = Some(error.to_string());
+                    grant = self
+                        .existing_profile_grant(session, transport_session, pid)
+                        .await?
+                        .expect("grant exists while reconnect budget remains");
+                }
+            }
+        }
+        self.revoke_existing_profile_grant(session, transport_session, pid)
+            .await;
+        Err(refuse(
+            BrowserRefusalCode::BrowserReconnectExhausted,
+            "the bounded existing-profile reconnect attempts did not establish a proven browser socket",
+        )
+        .with_detail(json!({
+            "attempt_limit": super::grant::MAX_RECONNECT_ATTEMPTS,
+            "last_error": last_error.map(|_| "connection_failed"),
+            "retryable": false,
+        })))
+    }
+
+    async fn connection_for_record(
+        &self,
+        session: &str,
+        record: &TargetRecord,
+    ) -> Result<Arc<CdpConnection>, BrowserRefusal> {
+        if record.generation == 0 {
+            return self.connect(&record.ws_url).await;
+        }
+        let (conn, grant) = self
+            .connect_existing_profile(
+                session,
+                record.grant_transport_session.as_deref(),
+                record.pid,
+            )
+            .await?;
+        if grant.generation != record.generation {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserBindingStale,
+                "the browser reconnected and invalidated this target; re-run get_browser_state",
+            ));
+        }
+        Ok(conn)
+    }
+
     /// Discover + ownership-check the endpoint for `pid`.
-    async fn owned_endpoint(&self, pid: i64) -> Result<OwnedEndpoint, BrowserRefusal> {
+    pub(crate) async fn owned_endpoint(&self, pid: i64) -> Result<OwnedEndpoint, BrowserRefusal> {
         let endpoint = self
             .platform
             .discover_owned_endpoint(pid)
@@ -260,6 +518,35 @@ impl BrowserEngine {
                      target is pid {pid}",
                     endpoint.ownership.owner_pid
                 ),
+            ));
+        }
+        Ok(endpoint)
+    }
+
+    /// Re-prove the endpoint exposed by an explicitly approved existing
+    /// profile. This route is intentionally separate from driver-managed
+    /// endpoint discovery: Chrome's per-instance remote-debugging toggle can
+    /// expose only a PID-owned listener, with no DevToolsActivePort file or
+    /// discoverable driver-owned profile.
+    async fn existing_profile_endpoint(
+        &self,
+        pid: i64,
+        expected_ws_url: &str,
+    ) -> Result<OwnedEndpoint, BrowserRefusal> {
+        let endpoint = self
+            .platform
+            .reprove_existing_profile_endpoint(pid, expected_ws_url)
+            .await?
+            .ok_or_else(|| {
+                refuse(
+                    BrowserRefusalCode::BrowserRequiresSetup,
+                    "the approved existing-profile DevTools endpoint is no longer available",
+                )
+            })?;
+        if endpoint.ownership.owner_pid != pid {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                "the existing-profile endpoint is not owned by the approved browser process",
             ));
         }
         Ok(endpoint)
@@ -428,6 +715,7 @@ impl BrowserEngine {
     pub(crate) async fn bind_native(
         &self,
         session: &str,
+        transport_session: Option<&str>,
         pid: i64,
         window_id: u64,
     ) -> Result<(String, TargetRecord), BrowserRefusal> {
@@ -449,9 +737,36 @@ impl BrowserEngine {
         }
 
         let native = self.native_window_checked(pid, window_id).await?;
-        let endpoint = self.owned_endpoint(pid).await?;
         let fingerprint = self.platform.process_fingerprint(pid).await?;
-        let conn = self.connect(&endpoint.ws_url).await?;
+        let mut grant = self
+            .existing_profile_grant(session, transport_session, pid)
+            .await?;
+        let endpoint = if let Some(live_grant) = &grant {
+            self.existing_profile_endpoint(pid, &live_grant.endpoint_ws_url)
+                .await?
+        } else {
+            self.owned_endpoint(pid).await?
+        };
+        if let Some(grant) = &grant {
+            if !grant.fingerprint.matches(&fingerprint)
+                || grant.endpoint_ws_url != endpoint.ws_url
+                || grant.window_id != window_id
+            {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserBindingStale,
+                    "the approved browser process, endpoint, or native window changed; approve the existing profile again",
+                ));
+            }
+        }
+        let conn = if grant.is_some() {
+            let (conn, live_grant) = self
+                .connect_existing_profile(session, transport_session, pid)
+                .await?;
+            grant = Some(live_grant);
+            conn
+        } else {
+            self.connect(&endpoint.ws_url).await?
+        };
         let candidates = self.window_candidates(&conn).await?;
 
         let correlation = correlate(&native, &candidates, BOUNDS_TOLERANCE_PX);
@@ -513,6 +828,7 @@ impl BrowserEngine {
                 TabRecord {
                     tab_id,
                     cdp_target_id: c.cdp_target_id.clone(),
+                    generation: grant.as_ref().map_or(0, |grant| grant.generation),
                     snapshots: HashMap::new(),
                 },
             );
@@ -524,6 +840,8 @@ impl BrowserEngine {
             window_id,
             ws_url: endpoint.ws_url.clone(),
             endpoint_owner_pid: endpoint.ownership.owner_pid,
+            generation: grant.as_ref().map_or(0, |grant| grant.generation),
+            grant_transport_session: grant.as_ref().map(|grant| grant.transport_session.clone()),
             fingerprint,
             native_title: native.title.clone(),
             native_bounds: native.bounds,
@@ -537,7 +855,7 @@ impl BrowserEngine {
         Ok((target_id, record))
     }
 
-    async fn native_window_checked(
+    pub(crate) async fn native_window_checked(
         &self,
         pid: i64,
         window_id: u64,
@@ -590,6 +908,34 @@ impl BrowserEngine {
             )
         })?;
 
+        if record.generation != tab.generation {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserBindingStale,
+                "the tab capability belongs to an older browser connection generation",
+            ));
+        }
+        if record.generation > 0 {
+            let grant = self
+                .existing_profile_grant(
+                    session,
+                    record.grant_transport_session.as_deref(),
+                    record.pid,
+                )
+                .await?
+                .ok_or_else(|| {
+                    refuse(
+                        BrowserRefusalCode::BrowserConsentRequired,
+                        "the existing-profile grant ended; approve and bind the browser again",
+                    )
+                })?;
+            if grant.generation != record.generation {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserBindingStale,
+                    "the browser connection generation changed; re-run get_browser_state",
+                ));
+            }
+        }
+
         // 1. Process fingerprint — pid reuse / restart detection.
         let fp_now = self.platform.process_fingerprint(record.pid).await?;
         if !record.fingerprint.matches(&fp_now) {
@@ -609,7 +955,12 @@ impl BrowserEngine {
             .await?;
 
         // 3. Endpoint still owned and unchanged.
-        let endpoint = self.owned_endpoint(record.pid).await?;
+        let endpoint = if record.generation > 0 {
+            self.existing_profile_endpoint(record.pid, &record.ws_url)
+                .await?
+        } else {
+            self.owned_endpoint(record.pid).await?
+        };
         if endpoint.ws_url != record.ws_url {
             return Err(refuse(
                 BrowserRefusalCode::BrowserBindingStale,
@@ -620,7 +971,7 @@ impl BrowserEngine {
 
         // 4. CDP target still a page in the bound CDP window, with either
         //    matching geometry or the same singleton cardinality proof.
-        let conn = self.connect(&record.ws_url).await?;
+        let conn = self.connection_for_record(session, &record).await?;
         let candidates = self.window_candidates(&conn).await?;
         let live = candidates
             .iter()
@@ -679,6 +1030,27 @@ impl BrowserEngine {
             tab,
             cdp_session,
         })
+    }
+
+    /// Serialize the full revalidate-dispatch-verify interval by the real CDP
+    /// target rather than by a caller-controlled session id.
+    pub(crate) async fn lock_mutation(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+    ) -> Result<tokio::sync::OwnedMutexGuard<()>, BrowserRefusal> {
+        let record = self.store.get_target(session, target_id)?;
+        let tab = record.tabs.get(tab_id).ok_or_else(|| {
+            refuse(
+                BrowserRefusalCode::BrowserTabNotFound,
+                format!("tab {tab_id} is not known for target {target_id}"),
+            )
+        })?;
+        Ok(self
+            .mutation_gates
+            .lock(MutationKey::new(&record.fingerprint, &tab.cdp_target_id))
+            .await)
     }
 
     // ── Frame identity / OOPIF plumbing ─────────────────────────────────
@@ -875,7 +1247,7 @@ impl BrowserEngine {
                 format!("tab {tab_id} is not known for target {target_id}"),
             )
         })?;
-        let conn = self.connect(&record.ws_url).await?;
+        let conn = self.connection_for_record(session, &record).await?;
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
 
         let doc = conn
@@ -1057,6 +1429,7 @@ impl BrowserEngine {
                     snapshot_id,
                     SnapshotRecord {
                         id: snapshot_id,
+                        generation: record.generation,
                         url: url.clone(),
                         refs,
                     },

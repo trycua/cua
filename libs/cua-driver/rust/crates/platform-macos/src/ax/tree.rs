@@ -11,7 +11,7 @@
 //! - Tree is walked depth-first; element_index is assigned in DFS order.
 
 use super::bindings::*;
-use core_foundation::base::{CFRelease, CFRetain, CFTypeRef};
+use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
@@ -172,8 +172,14 @@ pub fn walk_tree_bounded(
 
         let mut top_level = from_children;
         for w in from_windows {
-            // Deduplicate by raw pointer identity.
-            if !top_level.iter().any(|&e| e == w) {
+            // AXChildren and AXWindows can return different proxy pointers for
+            // the same native window. CFEqual compares their AX identity;
+            // pointer equality alone duplicates the whole subtree and can turn
+            // one exact dialog action into a false ambiguity.
+            if !top_level
+                .iter()
+                .any(|&e| CFEqual(e as CFTypeRef, w as CFTypeRef) != 0)
+            {
                 top_level.push(w);
             } else {
                 // Already present — release the extra retain from copy_ax_windows.

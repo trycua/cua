@@ -22,6 +22,8 @@ pub struct AtspiNode {
     pub role: String,
     pub name: Option<String>,
     pub value: Option<String>,
+    /// Checked state when the accessibility backend exposes one for a toggle.
+    pub checked: Option<bool>,
     pub description: Option<String>,
     pub actions: Vec<String>,
     /// For AT-SPI: element_key = element_index as u64.
@@ -33,6 +35,9 @@ pub struct AtspiNode {
     /// `element_index` of the nearest actionable ancestor, if any.
     /// Mirrors what the markdown indent shows.
     pub parent_element_index: Option<usize>,
+    /// True when the native AT-SPI walker observed this node below renderer
+    /// web content. Browser-owned consent UI must never match such nodes.
+    pub in_web_content: bool,
 }
 
 pub struct AtspiTreeResult {
@@ -225,6 +230,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
             Some(title.clone())
         },
         value: None,
+        checked: None,
         description: if wm_class.is_empty() {
             None
         } else {
@@ -234,6 +240,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         element_key: xid,
         depth: 0,
         parent_element_index: None,
+        in_web_content: false,
     };
     md.push_str(&format!(
         "- [0] window \"{}\" [actions=[activate]]\n",

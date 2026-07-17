@@ -309,6 +309,10 @@ pub enum RefusalCode {
     BrowserTabNotFound,
     BrowserRefStale,
     BrowserInputTrustUnavailable,
+    BrowserConsentRequired,
+    BrowserConsentRevoked,
+    BrowserReconnectExhausted,
+    BrowserInputIncomplete,
 }
 
 impl RefusalCode {
@@ -325,6 +329,10 @@ impl RefusalCode {
             "browser_tab_not_found" => Some(Self::BrowserTabNotFound),
             "browser_ref_stale" => Some(Self::BrowserRefStale),
             "browser_input_trust_unavailable" => Some(Self::BrowserInputTrustUnavailable),
+            "browser_consent_required" => Some(Self::BrowserConsentRequired),
+            "browser_consent_revoked" => Some(Self::BrowserConsentRevoked),
+            "browser_reconnect_exhausted" => Some(Self::BrowserReconnectExhausted),
+            "browser_input_incomplete" => Some(Self::BrowserInputIncomplete),
             _ => None,
         }
     }
@@ -1473,6 +1481,10 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             .and_then(|value| value[phase][kind]["classification"].as_str())
     };
     let tool = action.as_ref().and_then(|value| value["tool"].as_str());
+    let private_existing_profile_prepare = action.as_ref().is_some_and(|value| {
+        value["tool"].as_str() == Some("browser_prepare")
+            && value["arguments"]["strategy"]["kind"].as_str() == Some("existing_profile")
+    });
     let successful_restore = action.as_ref().is_some_and(|value| {
         value["result_summary"]
             .as_str()
@@ -1482,13 +1494,15 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
         .as_ref()
         .is_some_and(|value| value["after"]["state"]["status"].as_str() == Some("captured"));
     let expected_unavailable_screenshot = |phase: &str| {
-        tool == Some("bring_to_front")
-            && ((phase == "before"
-                && classification(phase, "screenshot") == Some("target_minimized"))
-                || (phase == "after"
-                    && successful_restore
-                    && restored_state_captured
-                    && classification(phase, "screenshot") == Some("capture_failed")))
+        (private_existing_profile_prepare
+            && classification(phase, "screenshot") == Some("privacy_suppressed"))
+            || (tool == Some("bring_to_front")
+                && ((phase == "before"
+                    && classification(phase, "screenshot") == Some("target_minimized"))
+                    || (phase == "after"
+                        && successful_restore
+                        && restored_state_captured
+                        && classification(phase, "screenshot") == Some("capture_failed"))))
     };
 
     for (phase, kind) in [("before", "screenshot"), ("after", "screenshot")] {
@@ -1521,10 +1535,11 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
         );
     }
 
-    let state_expected = action
-        .as_ref()
-        .and_then(|value| value["arguments"]["pid"].as_i64())
-        .is_some();
+    let state_expected = !private_existing_profile_prepare
+        && action
+            .as_ref()
+            .and_then(|value| value["arguments"]["pid"].as_i64())
+            .is_some();
     if state_expected {
         for phase in ["before", "after"] {
             validate_capture_status(
@@ -2035,6 +2050,60 @@ mod tests {
         assert!(errors.iter().any(|error| {
             error.contains("turn-00001/after.png") && error.contains("classified capture_failed")
         }));
+    }
+
+    #[test]
+    fn validator_accepts_private_existing_profile_prepare_turn() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"browser_prepare",
+                "arguments":{
+                    "approval_token":"[redacted]",
+                    "pid":1,
+                    "window_id":2,
+                    "strategy":{"kind":"existing_profile"}
+                }
+            }"#,
+        )
+        .expect("write private prepare action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"not_applicable","classification":"no_target_pid"},"screenshot":{"status":"unavailable","classification":"privacy_suppressed"}},
+                "after":{"state":{"status":"not_applicable","classification":"no_target_pid"},"screenshot":{"status":"unavailable","classification":"privacy_suppressed"}},
+                "click":{"status":"not_applicable","classification":"no_target_pid"}
+            }"#,
+        )
+        .expect("write private prepare evidence");
+        for file in [
+            "before.png",
+            "after.png",
+            "screenshot.png",
+            "before_state.json",
+            "after_state.json",
+            "app_state.json",
+        ] {
+            std::fs::remove_file(turn.join(file)).expect("remove private visual evidence");
+        }
+
+        validate_catalog(&[case.clone()], &[result.clone()], Some(root.path()), true)
+            .expect("private existing-profile consent must not persist visual state");
+
+        let mut action: Value = read_json_value(&turn.join("action.json")).expect("read action");
+        action["arguments"]["strategy"]["kind"] = Value::String("isolated_new".to_owned());
+        std::fs::write(
+            turn.join("action.json"),
+            serde_json::to_vec(&action).expect("serialize action"),
+        )
+        .expect("rewrite non-private action");
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("privacy suppression is limited to existing-profile consent turns");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("classified privacy_suppressed")));
     }
 
     #[test]

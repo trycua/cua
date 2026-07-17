@@ -26,6 +26,34 @@ normal profile accidentally. MCP hosts approve the destructive prepare call;
 direct/raw clients first mint a single-use token with the interactive
 `cua-driver browser-approve` command.
 
+### Existing authenticated Chrome profiles (experimental macOS route)
+
+Do not treat ordinary MCP approval as permission to attach to a person's live
+profile. Mint an exact one-use artifact interactively before allowing any
+existing-profile setup:
+
+```bash
+cua-driver browser-approve --strategy existing_profile \
+  --pid <pid> --window-id <window_id> --session <session>
+```
+
+Pass the token to `browser_prepare` with
+`strategy:{kind:"existing_profile"}` and the same pid, window, and session.
+On macOS Chrome, if no endpoint exists, this approved operation opens a
+temporary tab in that exact window, navigates to Chrome's internal
+remote-debugging page, toggles the uniquely labelled per-instance checkbox,
+proves the loopback listener belongs to the approved pid, and closes the tab.
+Every visible effect, including temporary in-app address-field focus, is
+returned in `side_effects`; a refusal after setup starts reports partial effects
+in `detail.setup_side_effects`. Any missing or ambiguous control is refused.
+The exact AX setup currently recognizes English Chrome labels and fails closed
+on other locales. `get_browser_state` never performs this setup.
+After `attached_existing_profile`, bind again with `get_browser_state`; every
+older target, tab, and ref is stale. Rebind again after any successful bounded
+reconnect. Never retry a consent dismissal, invent an approval token, click a
+similar-looking dialog yourself, or pass the profile's path. End the named
+session when finished to revoke the in-memory grant.
+
 This is the page-aware Chromium rung. Navigation, default ref-bound text
 insertion, and an explicit DOM click can run against an exactly bound page
 without raising its native window. `browser_click` defaults to trusted

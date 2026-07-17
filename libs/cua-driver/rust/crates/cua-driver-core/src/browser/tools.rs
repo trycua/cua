@@ -17,7 +17,7 @@ use crate::tool_args::ArgsExt;
 
 use super::approval::MCP_HOST_APPROVAL_ARG;
 use super::engine::BrowserEngine;
-use super::platform::{PrepareAuthorization, PrepareProfile, PrepareRequest};
+use super::platform::{PrepareAuthorization, PrepareProfile, PrepareRequest, PrepareStrategy};
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::types::BindingQuality;
 
@@ -207,7 +207,12 @@ impl Tool for GetBrowserStateTool {
             Err(e) => return e,
         };
 
-        match self.engine.bind_native(&session, pid, window_id).await {
+        let transport_session = args.opt_str("_transport_session_id");
+        match self
+            .engine
+            .bind_native(&session, transport_session.as_deref(), pid, window_id)
+            .await
+        {
             Ok((target_id, record)) => {
                 let tabs: Vec<Value> = record
                     .tabs
@@ -264,12 +269,20 @@ impl BrowserPrepareTool {
                 requires MCP-host approval or a short-lived token from the interactive \
                 browser-approve command, allow_launch=true, and a driver-owned isolated \
                 profile. It launches a separate browser and never copies, modifies, or \
-                terminates the requested user profile."
+                terminates the requested user profile. Existing-profile attachment is \
+                explicit, requires an exact interactive approval artifact, and never \
+                treats ordinary MCP transport approval as profile consent. On proven \
+                platforms, that approval also permits one bounded exact-window setup: \
+                open the recognized browser product's fixed remote-debugging page, toggle \
+                its uniquely matched per-instance checkbox, prove the PID-owned loopback \
+                endpoint, and close the temporary tab. Every visible effect is reported; \
+                ambiguity is refused."
                 .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "pid": { "type": "integer", "description": "Browser process id to prepare." },
+                    "window_id": { "type": "integer", "description": "Exact native window approval anchor; required for strategy.kind=existing_profile." },
                     "approval_token": {
                         "type": "string",
                         "description": "Single-use token minted by `cua-driver browser-approve` for direct CLI/raw use. Omit for an MCP-host-approved call."
@@ -285,6 +298,14 @@ impl BrowserPrepareTool {
                             "name": { "type": "string", "description": "Required only for isolated_named; 1-64 path-safe ASCII characters." }
                         },
                         "required": ["mode"],
+                        "additionalProperties": false
+                    },
+                    "strategy": {
+                        "type": "object",
+                        "properties": {
+                            "kind": { "type": "string", "enum": ["existing_profile"] }
+                        },
+                        "required": ["kind"],
                         "additionalProperties": false
                     },
                     "session": schema_session(),
@@ -325,21 +346,36 @@ impl Tool for BrowserPrepareTool {
                 }
             },
         };
-        let authorization = if args
+        let strategy = match args.get("strategy") {
+            None | Some(Value::Null) => None,
+            Some(value) => match serde_json::from_value::<PrepareStrategy>(value.clone()) {
+                Ok(strategy) => Some(strategy),
+                Err(error) => {
+                    return ToolResult::error(format!(
+                        "invalid browser preparation strategy: {error}"
+                    ))
+                }
+            },
+        };
+        let approval_token = args.opt_str("approval_token");
+        let authorization = if strategy == Some(PrepareStrategy::ExistingProfile) {
+            approval_token.map(PrepareAuthorization::ApprovalArtifact)
+        } else if args
             .get(MCP_HOST_APPROVAL_ARG)
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
             Some(PrepareAuthorization::McpHost)
         } else {
-            args.opt_str("approval_token")
-                .map(PrepareAuthorization::ApprovalArtifact)
+            approval_token.map(PrepareAuthorization::ApprovalArtifact)
         };
         let request = PrepareRequest {
             pid,
+            window_id: args.opt_u64("window_id"),
             session,
             transport_session: args.opt_str("_transport_session_id"),
             authorization,
+            strategy,
             profile,
             allow_launch: args.opt_bool("allow_launch").unwrap_or(false),
         };
@@ -364,6 +400,7 @@ impl Tool for BrowserPrepareTool {
                     "endpoint_ownership": outcome.endpoint.map(|e| e.ownership),
                     "prepared_pid": outcome.prepared_pid,
                     "side_effects": outcome.side_effects,
+                    "attachment": outcome.attachment,
                 }))
             }
             Err(refusal) => refusal.to_tool_result(),
@@ -435,6 +472,14 @@ impl Tool for BrowserNavigateTool {
             ));
         }
 
+        let _mutation = match self
+            .engine
+            .lock_mutation(&session, &target_id, &tab_id)
+            .await
+        {
+            Ok(guard) => guard,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
         let validated = match self
             .engine
             .revalidate_for_mutation(&session, &target_id, Some(&tab_id))
@@ -562,6 +607,14 @@ impl Tool for BrowserClickTool {
 
         // Resolve the ref BEFORE revalidation? No — revalidate first so a
         // stale binding refuses before we touch the page at all.
+        let _mutation = match self
+            .engine
+            .lock_mutation(&session, &target_id, &tab_id)
+            .await
+        {
+            Ok(guard) => guard,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
         let validated = match self
             .engine
             .revalidate_for_mutation(&session, &target_id, Some(&tab_id))
@@ -869,6 +922,14 @@ impl Tool for BrowserTypeTool {
             ));
         }
 
+        let _mutation = match self
+            .engine
+            .lock_mutation(&session, &target_id, &tab_id)
+            .await
+        {
+            Ok(guard) => guard,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
         let validated = match self
             .engine
             .revalidate_for_mutation(&session, &target_id, Some(&tab_id))
@@ -967,12 +1028,18 @@ impl Tool for BrowserTypeTool {
             .to_tool_result();
         }
 
-        let typed = if mode == "insert_text" {
-            conn.call(Some(cdp), "Input.insertText", json!({ "text": text }))
+        let requested_chars = text.chars().count();
+        let (typed, delivered_chars) = if mode == "insert_text" {
+            match conn
+                .call(Some(cdp), "Input.insertText", json!({ "text": text }))
                 .await
-                .map(|_| ())
+            {
+                Ok(_) => (Ok(()), requested_chars),
+                Err(error) => (Err(error), 0),
+            }
         } else {
             let mut result = Ok(());
+            let mut delivered = 0;
             for ch in text.chars() {
                 let (key, key_text) = if ch == '\n' {
                     ("Enter".to_string(), "\r".to_string())
@@ -997,14 +1064,15 @@ impl Tool for BrowserTypeTool {
                     result = Err(e);
                     break;
                 }
+                delivered += 1;
             }
-            result
+            (result, delivered)
         };
 
         match typed {
             Ok(()) => ToolResult::text(format!(
                 "typed {} char(s) into {tab_id}",
-                text.chars().count()
+                requested_chars
             ))
             .with_structured(json!({
                 "status": "ok",
@@ -1013,12 +1081,21 @@ impl Tool for BrowserTypeTool {
                 "ref": ext_ref,
                 "frame": entry.frame.kind.as_str(),
                 "mode": mode,
-                "chars": text.chars().count(),
+                "chars": requested_chars,
+                "requested_chars": requested_chars,
+                "delivered_chars": delivered_chars,
             })),
             Err(e) => BrowserRefusal::new(
-                BrowserRefusalCode::BrowserInputTrustUnavailable,
-                format!("trusted Input typing route failed: {e}"),
+                BrowserRefusalCode::BrowserInputIncomplete,
+                format!(
+                    "trusted Input typing stopped after {delivered_chars} of {requested_chars} character(s): {e}"
+                ),
             )
+            .with_detail(json!({
+                "requested_chars": requested_chars,
+                "delivered_chars": delivered_chars,
+                "retryable": false,
+            }))
             .to_tool_result(),
         }
     }
@@ -1029,8 +1106,8 @@ mod tests {
     use super::*;
     use crate::browser::platform::{BrowserPlatform, PrepareOutcome, PrepareRequest};
     use crate::browser::types::{
-        BrowserClassification, BrowserEngineFamily, NativeWindowInfo, OwnedEndpoint,
-        ProcessFingerprint,
+        BrowserClassification, BrowserEngineFamily, BrowserProduct, NativeWindowInfo,
+        OwnedEndpoint, ProcessFingerprint,
     };
 
     /// Minimal adapter: pid 1 is a CDP-capable browser with no endpoint
@@ -1048,6 +1125,7 @@ mod tests {
                 1 => BrowserClassification {
                     is_browser: true,
                     engine: BrowserEngineFamily::Chromium,
+                    product_kind: BrowserProduct::GoogleChrome,
                     product: Some("MockChrome".into()),
                     channel: Some("stable".into()),
                     supports_cdp: true,
@@ -1055,6 +1133,7 @@ mod tests {
                 3 => BrowserClassification {
                     is_browser: true,
                     engine: BrowserEngineFamily::Webkit,
+                    product_kind: BrowserProduct::Safari,
                     product: Some("MockSafari".into()),
                     channel: None,
                     supports_cdp: false,
@@ -1062,6 +1141,7 @@ mod tests {
                 _ => BrowserClassification {
                     is_browser: false,
                     engine: BrowserEngineFamily::Unknown,
+                    product_kind: BrowserProduct::Other,
                     product: None,
                     channel: None,
                     supports_cdp: false,
@@ -1285,6 +1365,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ordinary_mcp_marker_never_approves_an_existing_profile() {
+        let tool = BrowserPrepareTool::new(engine());
+        let result = tool
+            .invoke(json!({
+                "pid": 1,
+                "window_id": 7,
+                "strategy": { "kind": "existing_profile" },
+                "session": "existing-profile-run",
+                MCP_HOST_APPROVAL_ARG: true
+            }))
+            .await;
+        let structured = structured(&result);
+        assert_eq!(structured["refusal"]["code"], "browser_consent_required");
+        assert!(structured["refusal"]["detail"]["approval_request_id"]
+            .as_str()
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn existing_strategy_conflicts_fail_before_platform_setup() {
+        let tool = BrowserPrepareTool::new(engine());
+        let token = crate::browser::approval::mint_existing_profile_approval(
+            crate::browser::approval::ExistingProfileApprovalScope {
+                pid: 1,
+                window_id: 7,
+                session: "existing-conflict".to_owned(),
+            },
+        )
+        .unwrap();
+        let result = tool
+            .invoke(json!({
+                "pid": 1,
+                "window_id": 7,
+                "strategy": { "kind": "existing_profile" },
+                "profile": { "mode": "isolated_new" },
+                "approval_token": token,
+                "session": "existing-conflict"
+            }))
+            .await;
+        assert_eq!(
+            structured(&result)["refusal"]["code"],
+            "browser_consent_required"
+        );
+    }
+
+    #[tokio::test]
     async fn mutations_on_unknown_targets_refuse_binding_stale() {
         let e = engine();
         for result in [
@@ -1349,6 +1475,7 @@ mod tests {
             crate::browser::store::TabRecord {
                 tab_id: tab_id.clone(),
                 cdp_target_id: "CDPX".into(),
+                generation: 0,
                 snapshots: HashMap::new(),
             },
         );
@@ -1360,6 +1487,8 @@ mod tests {
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
+                generation: 0,
+                grant_transport_session: None,
                 fingerprint: ProcessFingerprint {
                     pid: 1,
                     start_time: Some(1),
@@ -1400,6 +1529,7 @@ mod tests {
             crate::browser::store::TabRecord {
                 tab_id: tab_id.clone(),
                 cdp_target_id: "CDPX".into(),
+                generation: 0,
                 snapshots: HashMap::new(),
             },
         );
@@ -1412,6 +1542,8 @@ mod tests {
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
+                generation: 0,
+                grant_transport_session: None,
                 fingerprint: ProcessFingerprint {
                     pid: 1,
                     start_time: Some(999),
@@ -1453,6 +1585,8 @@ mod tests {
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
+                generation: 0,
+                grant_transport_session: None,
                 fingerprint: ProcessFingerprint {
                     pid: 1,
                     start_time: Some(1),

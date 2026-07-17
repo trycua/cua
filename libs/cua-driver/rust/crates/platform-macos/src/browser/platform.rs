@@ -5,14 +5,16 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
-    BrowserPlatform, PrepareAction, PrepareOutcome, PrepareRequest,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
+    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
-    BrowserClassification, BrowserEngineFamily, EndpointOwnershipMethod, EndpointOwnershipProof,
-    NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint,
-    ProcessFingerprint, Rect,
+    BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
+    EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
+    OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -39,6 +41,34 @@ fn is_firefox(name: &str, bundle_id: &str) -> bool {
         .to_ascii_lowercase()
         .split(|ch: char| !ch.is_ascii_alphanumeric())
         .any(|token| token == "firefox")
+}
+
+fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
+    let name = name.to_ascii_lowercase();
+    let bundle_id = bundle_id.to_ascii_lowercase();
+    if bundle_id.starts_with("com.google.chrome") || name == "google chrome" {
+        BrowserProduct::GoogleChrome
+    } else if bundle_id.starts_with("com.microsoft.edgemac") || name == "microsoft edge" {
+        BrowserProduct::MicrosoftEdge
+    } else if bundle_id.starts_with("org.chromium.chromium") || name == "chromium" {
+        BrowserProduct::Chromium
+    } else if bundle_id.starts_with("com.brave.browser") || name == "brave browser" {
+        BrowserProduct::Brave
+    } else if bundle_id.starts_with("com.vivaldi.vivaldi") || name == "vivaldi" {
+        BrowserProduct::Vivaldi
+    } else if bundle_id.starts_with("com.operasoftware.opera") || name == "opera" {
+        BrowserProduct::Opera
+    } else if bundle_id.starts_with("company.thebrowser.browser") || name == "arc" {
+        BrowserProduct::Arc
+    } else if bundle_id == "com.apple.safari" || name == "safari" {
+        BrowserProduct::Safari
+    } else if bundle_id.contains("firefox") || name == "firefox" {
+        BrowserProduct::Firefox
+    } else if bundle_id.contains("electron") || name == "electron" {
+        BrowserProduct::Electron
+    } else {
+        BrowserProduct::Other
+    }
 }
 
 fn loopback_websocket_port(url: &str) -> Option<u16> {
@@ -227,6 +257,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         let chromium = is_chromium(name, bundle_id);
         let webkit = bundle_id == "com.apple.Safari" || name.eq_ignore_ascii_case("Safari");
         let gecko = is_firefox(name, bundle_id);
+        let product_kind = browser_product(name, bundle_id);
         Ok(BrowserClassification {
             is_browser: chromium || webkit || gecko,
             engine: if chromium {
@@ -238,6 +269,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             } else {
                 BrowserEngineFamily::Unknown
             },
+            product_kind,
             product: (!name.is_empty()).then(|| name.to_owned()),
             channel: None,
             supports_cdp: chromium,
@@ -332,6 +364,270 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         Ok(None)
     }
 
+    async fn discover_existing_profile_endpoint(
+        &self,
+        pid: i64,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let ports = loopback_ports_for_pid(pid).await?;
+        let mut discovered = Vec::new();
+        for port in &ports {
+            if let Some(ws_url) = browser_websocket_url(*port).await {
+                discovered.push((*port, ws_url));
+            }
+        }
+        if discovered.len() == 1 {
+            let (port, ws_url) = discovered.pop().expect("one discovered endpoint");
+            return Ok(Some(OwnedEndpoint {
+                ws_url,
+                http_port: Some(port),
+                ownership: EndpointOwnershipProof {
+                    method: EndpointOwnershipMethod::ListeningSocketPid,
+                    owner_pid: pid,
+                    detail: Some("lsof loopback listener owner plus /json/version".to_owned()),
+                },
+            }));
+        }
+        if discovered.len() > 1 {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserBindingAmbiguous,
+                "multiple browser-level DevTools endpoints are owned by the approved process",
+            ));
+        }
+        // A bare listener is not enough to identify DevTools before approval:
+        // Chromium can own unrelated loopback services. The setup path below
+        // correlates a listener with the exact checkbox transition and the
+        // pooled WebSocket claim proves the protocol before attachment.
+        Ok(None)
+    }
+
+    async fn reprove_existing_profile_endpoint(
+        &self,
+        pid: i64,
+        expected_ws_url: &str,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let Some(port) = loopback_websocket_port(expected_ws_url) else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                "the approved existing-profile endpoint is not loopback-only",
+            ));
+        };
+        if !loopback_ports_for_pid(pid).await?.contains(&port) {
+            return Ok(None);
+        }
+        Ok(Some(OwnedEndpoint {
+            ws_url: expected_ws_url.to_owned(),
+            http_port: Some(port),
+            ownership: EndpointOwnershipProof {
+                method: EndpointOwnershipMethod::ListeningSocketPid,
+                owner_pid: pid,
+                detail: Some("lsof owner of exact approved endpoint".to_owned()),
+            },
+        }))
+    }
+
+    async fn setup_existing_profile_endpoint(
+        &self,
+        request: ExistingProfileSetupRequest,
+    ) -> Result<ExistingProfileSetupOutcome, BrowserRefusal> {
+        let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!(
+                    "approved existing-profile setup is not implemented for {:?}",
+                    request.browser
+                ),
+            )
+        })?;
+        let pid = i32::try_from(request.pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser pid is outside the macOS process-id range",
+            )
+        })?;
+        let window_id = u32::try_from(request.window_id).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser window is outside the macOS window-id range",
+            )
+        })?;
+        let listeners_before = loopback_ports_for_pid(request.pid).await?;
+        let handle = crate::focus_guard::with_focus_suppressed_now(
+            Some(pid),
+            "browser_prepare.remote_debugging",
+            || async move {
+                tokio::task::spawn_blocking(move || {
+                    super::setup_ui::enable(pid, window_id, descriptor)
+                })
+                .await
+                .map_err(|error| {
+                    refusal(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        format!(
+                            "could not inspect {}'s remote-debugging setup UI: {error}",
+                            descriptor.product_name
+                        ),
+                    )
+                })?
+            },
+        )
+        .await?;
+        let opened_setup_page = handle.opened_setup_page;
+        let enabled_remote_debugging = handle.enabled_remote_debugging;
+        let focused_setup_address_field = handle.focused_setup_address_field;
+        let foregrounded_window = handle.foregrounded_window;
+        let injected_global_input = handle.injected_global_input;
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let endpoint_result = loop {
+            let ports = match loopback_ports_for_pid(request.pid).await {
+                Ok(ports) => ports,
+                Err(error) => break Err(error),
+            };
+            let mut endpoints = Vec::new();
+            for port in &ports {
+                if let Some(ws_url) = browser_websocket_url(*port).await {
+                    endpoints.push((*port, ws_url, "lsof owner plus /json/version"));
+                }
+            }
+            if endpoints.is_empty() {
+                let correlated = ports
+                    .iter()
+                    .copied()
+                    .filter(|port| !listeners_before.contains(port))
+                    .collect::<Vec<_>>();
+                if let [port] = correlated.as_slice() {
+                    endpoints.push((
+                        *port,
+                        format!("ws://127.0.0.1:{port}/devtools/browser"),
+                        "new PID-owned listener correlated with exact approved setup",
+                    ));
+                } else if correlated.len() > 1 {
+                    break Err(refusal(
+                        BrowserRefusalCode::BrowserBindingAmbiguous,
+                        format!(
+                            "{} exposed multiple newly correlated PID-owned listeners",
+                            descriptor.product_name
+                        ),
+                    ));
+                }
+            }
+            match endpoints.as_slice() {
+                [(port, ws_url, detail)] => {
+                    break Ok(OwnedEndpoint {
+                        ws_url: ws_url.clone(),
+                        http_port: Some(*port),
+                        ownership: EndpointOwnershipProof {
+                            method: EndpointOwnershipMethod::ListeningSocketPid,
+                            owner_pid: request.pid,
+                            detail: Some((*detail).to_owned()),
+                        },
+                    })
+                }
+                [] if std::time::Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                [] => {
+                    break Err(refusal(
+                        BrowserRefusalCode::BrowserRequiresSetup,
+                        format!(
+                            "{} did not expose a uniquely PID-owned loopback endpoint after the exact setup action",
+                            descriptor.product_name
+                        ),
+                    ))
+                }
+                _ => {
+                    break Err(refusal(
+                        BrowserRefusalCode::BrowserBindingAmbiguous,
+                        format!(
+                            "{} exposed multiple PID-owned endpoint candidates after the exact setup action",
+                            descriptor.product_name
+                        ),
+                    ))
+                }
+            }
+        };
+        let endpoint = match endpoint_result {
+            Ok(endpoint) => endpoint,
+            Err(error) => {
+                let error =
+                    tokio::task::spawn_blocking(move || handle.abort(pid, window_id, error))
+                        .await
+                        .map_err(|join_error| {
+                            refusal(
+                                BrowserRefusalCode::BrowserRouteUnavailable,
+                                format!("could not roll back browser setup: {join_error}"),
+                            )
+                        })?;
+                return Err(error);
+            }
+        };
+        super::setup_ui::retain_pending(pid, window_id, handle)?;
+
+        Ok(ExistingProfileSetupOutcome {
+            opened_setup_page,
+            closed_setup_page: false,
+            enabled_remote_debugging,
+            focused_setup_address_field,
+            foregrounded_window,
+            injected_global_input,
+            endpoint: Some(endpoint),
+        })
+    }
+
+    async fn commit_existing_profile_setup(
+        &self,
+        request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        let pid = i32::try_from(request.pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser pid is outside the macOS process-id range",
+            )
+        })?;
+        let window_id = u32::try_from(request.window_id).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser window is outside the macOS window-id range",
+            )
+        })?;
+        tokio::task::spawn_blocking(move || super::setup_ui::commit_pending(pid, window_id))
+            .await
+            .map_err(|error| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not commit exact browser setup cleanup: {error}"),
+                )
+            })?
+    }
+
+    async fn abort_existing_profile_setup(
+        &self,
+        request: ExistingProfileSetupRequest,
+        error: BrowserRefusal,
+    ) -> BrowserRefusal {
+        let Ok(pid) = i32::try_from(request.pid) else {
+            return error;
+        };
+        let Ok(window_id) = u32::try_from(request.window_id) else {
+            return error;
+        };
+        tokio::task::spawn_blocking(move || super::setup_ui::abort_pending(pid, window_id, error))
+            .await
+            .unwrap_or_else(|join_error| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not roll back exact browser setup: {join_error}"),
+                )
+            })
+    }
+
+    async fn handle_existing_profile_consent(
+        &self,
+        request: BrowserConsentRequest,
+    ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
+        super::consent_ui::handle(request).await
+    }
+
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
         let (started, executable) = process_details(pid).await?;
         Ok(ProcessFingerprint {
@@ -352,6 +648,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 endpoint: Some(endpoint),
                 message: "An owned loopback DevTools endpoint is already available.".to_owned(),
                 side_effects: Default::default(),
+                attachment: None,
             });
         }
         Err(refusal(

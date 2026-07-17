@@ -17,7 +17,7 @@ pub fn press_key(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> 
     if key == "+" || key.to_lowercase() == "plus" {
         let flags = modifier_flags(&["shift"]);
         let eq_code = key_name_to_code("=")?;
-        post_key(pid, eq_code, true,  modifier_flags(modifiers) | flags)?;
+        post_key(pid, eq_code, true, modifier_flags(modifiers) | flags)?;
         std::thread::sleep(std::time::Duration::from_millis(8));
         post_key(pid, eq_code, false, modifier_flags(modifiers) | flags)?;
         return Ok(());
@@ -121,6 +121,31 @@ pub fn press_key_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Res
     Ok(())
 }
 
+/// Press and release one key on the global HID queue.
+///
+/// This is reserved for an explicitly approved, bounded foreground assist.
+/// Callers must prove and temporarily activate the exact target window before
+/// invoking it; unlike the PID-routed helpers above, the HID queue itself has
+/// no process addressing.
+pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+    use core_graphics::event::CGEventTapLocation;
+
+    let key_code = key_name_to_code(key)?;
+    let flags = modifier_flags(modifiers);
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    let down = CGEvent::new_keyboard_event(source.clone(), key_code, true)
+        .map_err(|_| anyhow::anyhow!("CGEvent keyboard down failed"))?;
+    down.set_flags(flags);
+    down.post(CGEventTapLocation::HID);
+    std::thread::sleep(std::time::Duration::from_millis(8));
+    let up = CGEvent::new_keyboard_event(source, key_code, false)
+        .map_err(|_| anyhow::anyhow!("CGEvent keyboard up failed"))?;
+    up.set_flags(flags);
+    up.post(CGEventTapLocation::HID);
+    Ok(())
+}
+
 /// Post a keyboard event to `pid` via SLEventPostToPid (with auth message for
 /// Chromium/Electron support) or fall back to CGEvent::post_to_pid.
 fn post_keyboard_event(pid: i32, event: &CGEvent) {
@@ -144,7 +169,12 @@ fn post_key(pid: i32, key_code: u16, key_down: bool, flags: CGEventFlags) -> any
     Ok(())
 }
 
-fn post_key_no_auth(pid: i32, key_code: u16, key_down: bool, flags: CGEventFlags) -> anyhow::Result<()> {
+fn post_key_no_auth(
+    pid: i32,
+    key_code: u16,
+    key_down: bool,
+    flags: CGEventFlags,
+) -> anyhow::Result<()> {
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let event = CGEvent::new_keyboard_event(source, key_code, key_down)
@@ -195,15 +225,65 @@ fn key_name_to_code(key: &str) -> anyhow::Result<u16> {
         "right" | "right_arrow" => 124,
         "down" | "down_arrow" => 125,
         "up" | "up_arrow" => 126,
-        "f1" => 122, "f2" => 120, "f3" => 99, "f4" => 118, "f5" => 96,
-        "f6" => 97, "f7" => 98, "f8" => 100, "f9" => 101, "f10" => 109,
-        "f11" => 103, "f12" => 111,
-        "a" => 0, "s" => 1, "d" => 2, "f" => 3, "h" => 4, "g" => 5, "z" => 6, "x" => 7,
-        "c" => 8, "v" => 9, "b" => 11, "q" => 12, "w" => 13, "e" => 14, "r" => 15, "y" => 16,
-        "t" => 17, "1" => 18, "2" => 19, "3" => 20, "4" => 21, "6" => 22, "5" => 23, "=" => 24,
-        "9" => 25, "7" => 26, "-" => 27, "8" => 28, "0" => 29, "]" => 30, "o" => 31, "u" => 32,
-        "[" => 33, "i" => 34, "p" => 35, "l" => 37, "j" => 38, "'" => 39, "k" => 40, ";" => 41,
-        "\\" => 42, "," => 43, "/" => 44, "n" => 45, "m" => 46, "." => 47, "`" => 50,
+        "f1" => 122,
+        "f2" => 120,
+        "f3" => 99,
+        "f4" => 118,
+        "f5" => 96,
+        "f6" => 97,
+        "f7" => 98,
+        "f8" => 100,
+        "f9" => 101,
+        "f10" => 109,
+        "f11" => 103,
+        "f12" => 111,
+        "a" => 0,
+        "s" => 1,
+        "d" => 2,
+        "f" => 3,
+        "h" => 4,
+        "g" => 5,
+        "z" => 6,
+        "x" => 7,
+        "c" => 8,
+        "v" => 9,
+        "b" => 11,
+        "q" => 12,
+        "w" => 13,
+        "e" => 14,
+        "r" => 15,
+        "y" => 16,
+        "t" => 17,
+        "1" => 18,
+        "2" => 19,
+        "3" => 20,
+        "4" => 21,
+        "6" => 22,
+        "5" => 23,
+        "=" => 24,
+        "9" => 25,
+        "7" => 26,
+        "-" => 27,
+        "8" => 28,
+        "0" => 29,
+        "]" => 30,
+        "o" => 31,
+        "u" => 32,
+        "[" => 33,
+        "i" => 34,
+        "p" => 35,
+        "l" => 37,
+        "j" => 38,
+        "'" => 39,
+        "k" => 40,
+        ";" => 41,
+        "\\" => 42,
+        "," => 43,
+        "/" => 44,
+        "n" => 45,
+        "m" => 46,
+        "." => 47,
+        "`" => 50,
         _ => anyhow::bail!("Unknown key name: {key}"),
     };
     Ok(code)

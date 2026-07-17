@@ -552,10 +552,20 @@ fn main() {
         }
         cli::Command::BrowserApprove {
             pid,
+            strategy,
+            window_id,
+            session,
             profile_mode,
             profile_name,
         } => {
-            cli::run_browser_approve(pid, &profile_mode, profile_name.as_deref());
+            cli::run_browser_approve(
+                pid,
+                strategy.as_deref(),
+                window_id,
+                session.as_deref(),
+                profile_mode.as_deref(),
+                profile_name.as_deref(),
+            );
             return;
         }
         cli::Command::Config {
@@ -867,10 +877,20 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::BrowserApprove {
             pid,
+            strategy,
+            window_id,
+            session,
             profile_mode,
             profile_name,
         } => {
-            cli::run_browser_approve(pid, &profile_mode, profile_name.as_deref());
+            cli::run_browser_approve(
+                pid,
+                strategy.as_deref(),
+                window_id,
+                session.as_deref(),
+                profile_mode.as_deref(),
+                profile_name.as_deref(),
+            );
             return Ok(());
         }
         cli::Command::Config {

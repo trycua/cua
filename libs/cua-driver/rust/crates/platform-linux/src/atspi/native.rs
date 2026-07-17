@@ -128,6 +128,7 @@ struct Visited<'a> {
     /// expose no name — the Text-interface content (where typed text lives).
     name: String,
     value: Option<String>,
+    checked: Option<bool>,
     actions: Vec<String>,
     has_editable: bool,
     has_value: bool,
@@ -482,7 +483,15 @@ async fn collect_visited_bounded<'a>(
             Some(Ok(n)) => n,
             _ => String::new(),
         };
-        let focused = matches!(state_r, Some(Ok(s)) if s.contains(State::Focused));
+        let focused = matches!(state_r.as_ref(), Some(Ok(s)) if s.contains(State::Focused));
+        let checked = if role.to_ascii_lowercase().contains("check") {
+            state_r
+                .as_ref()
+                .and_then(|state| state.as_ref().ok())
+                .map(|state| state.contains(State::Checked))
+        } else {
+            None
+        };
 
         // Collect action names, numeric value, and (crucially) Text-interface
         // content. Only touch `proxies` when an interface is actually present,
@@ -558,6 +567,7 @@ async fn collect_visited_bounded<'a>(
             role,
             name,
             value,
+            checked,
             actions,
             has_editable,
             has_value,
@@ -621,11 +631,13 @@ fn render(visited: &[Visited<'_>]) -> (String, Vec<AtspiNode>) {
                     Some(v.name.clone())
                 },
                 value: v.value.clone().filter(|s| !s.is_empty()),
+                checked: v.checked,
                 description: None,
                 actions: v.actions.clone(),
                 element_key: idx as u64,
                 depth: v.depth,
                 parent_element_index,
+                in_web_content: v.in_web_doc,
             });
             // Record this actionable index at its depth, and invalidate any
             // deeper entries from a previous subtree.

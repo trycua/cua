@@ -107,6 +107,7 @@ pub struct RefEntry {
 #[derive(Debug, Clone)]
 pub struct SnapshotRecord {
     pub id: u64,
+    pub generation: u64,
     pub url: String,
     /// index → entry; the external ref is `p<id>:<index>`.
     pub refs: HashMap<u32, RefEntry>,
@@ -116,6 +117,7 @@ pub struct SnapshotRecord {
 pub struct TabRecord {
     pub tab_id: String,
     pub cdp_target_id: String,
+    pub generation: u64,
     pub snapshots: HashMap<u64, SnapshotRecord>,
 }
 
@@ -128,6 +130,11 @@ pub struct TargetRecord {
     pub window_id: u64,
     pub ws_url: String,
     pub endpoint_owner_pid: i64,
+    /// CDP connection generation that minted this capability. Zero denotes
+    /// the legacy/non-grant route.
+    pub generation: u64,
+    /// Internal transport owner for a grant-backed existing-profile route.
+    pub grant_transport_session: Option<String>,
     pub fingerprint: ProcessFingerprint,
     pub native_title: String,
     pub native_bounds: Rect,
@@ -273,7 +280,8 @@ impl BrowserStore {
         })?;
         tab.snapshots
             .get(&snap)
-            .and_then(|s| s.refs.get(&idx))
+            .filter(|snapshot| snapshot.generation == target.generation)
+            .and_then(|snapshot| snapshot.refs.get(&idx))
             .cloned()
             .ok_or_else(|| {
                 BrowserRefusal::new(
@@ -299,6 +307,20 @@ impl BrowserStore {
     /// `session::register_session_end_hook` by the engine.
     pub fn remove_session(&self, session: &str) {
         self.inner.lock().unwrap().remove(session);
+    }
+
+    /// Invalidate every capability minted for one browser endpoint before a
+    /// reconnect generation becomes visible.
+    pub fn invalidate_endpoint_generation(&self, pid: i64, generation: u64) -> usize {
+        let mut removed = 0;
+        for session in self.inner.lock().unwrap().values_mut() {
+            let before = session.targets.len();
+            session
+                .targets
+                .retain(|_, target| !(target.pid == pid && target.generation == generation));
+            removed += before - session.targets.len();
+        }
+        removed
     }
 
     /// Number of live targets in a session (diagnostics/tests).
@@ -329,6 +351,8 @@ mod tests {
             window_id: 7,
             ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
             endpoint_owner_pid: 42,
+            generation: 0,
+            grant_transport_session: None,
             fingerprint: ProcessFingerprint {
                 pid: 42,
                 start_time: Some(1),
@@ -372,10 +396,12 @@ mod tests {
                 TabRecord {
                     tab_id: tab_id.clone(),
                     cdp_target_id: "CDP1".into(),
+                    generation: 0,
                     snapshots: HashMap::from([(
                         snap_id,
                         SnapshotRecord {
                             id: snap_id,
+                            generation: 0,
                             url: "https://example.test".into(),
                             refs,
                         },
@@ -471,6 +497,28 @@ mod tests {
         assert_eq!(store.target_count("sess-a"), 0);
         let err = store.resolve_ref("sess-a", &tid, &tab, &ext).unwrap_err();
         assert_eq!(err.code, BrowserRefusalCode::BrowserBindingStale);
+    }
+
+    #[test]
+    fn generation_invalidation_is_browser_wide_and_exact() {
+        let store = BrowserStore::new();
+        let mut old = record();
+        old.generation = 1;
+        let mut current = record();
+        current.generation = 2;
+        let mut other_process = record();
+        other_process.pid = 99;
+        other_process.endpoint_owner_pid = 99;
+        other_process.fingerprint.pid = 99;
+        other_process.generation = 1;
+        store.mint_target("session-a", old);
+        store.mint_target("session-b", current);
+        store.mint_target("session-c", other_process);
+
+        assert_eq!(store.invalidate_endpoint_generation(42, 1), 1);
+        assert_eq!(store.target_count("session-a"), 0);
+        assert_eq!(store.target_count("session-b"), 1);
+        assert_eq!(store.target_count("session-c"), 1);
     }
 
     #[test]

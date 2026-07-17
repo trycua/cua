@@ -534,3 +534,151 @@ page pass on the physical host, so this result is an environment limitation in
 that VM image rather than a browser-tool or fixture regression. The matrix
 keeps its readiness assertion; it does not convert the blank surface into a
 pass or an expected product refusal.
+
+## 2026-07-16: existing-profile attachment and bounded reconnect
+
+Implemented the reviewed existing-profile strategy without changing the
+driver-owned isolated profile contract:
+
+- `browser_prepare` accepts the tagged
+  `strategy:{kind:"existing_profile"}` request only with an exact pid,
+  native window, named session, and five-minute single-use artifact minted by
+  the interactive `browser-approve` CLI. The ordinary MCP host marker cannot
+  authorize this route.
+- Grants live only in daemon memory and are scoped to public and transport
+  session, process fingerprint, native window, browser product, endpoint, and
+  connection generation. Idle/absolute expiry, consent dismissal, identity
+  change, reconnect exhaustion, session end, and daemon restart revoke the
+  grant and release its claimed socket.
+- One browser-level CDP connection is owned per generation. Reconnect is
+  single-flight per approved browser, has three attempts under one bounded
+  deadline, re-proves endpoint/process identity, and invalidates every older
+  target, tab, snapshot, frame, and ref capability.
+- Browser mutations serialize by process fingerprint plus real CDP target, so
+  two sessions cannot interleave actions in the same tab while independent
+  tabs remain parallel. Keystroke typing reports exact requested and delivered
+  character counts and returns `browser_input_incomplete` for a partial prefix.
+- Consent-bearing recording turns persist redacted metadata and result only.
+  Browser screenshots, AX snapshots, approval tokens, endpoint addresses,
+  ports, profile data, and authenticated page content are suppressed.
+
+The macOS Chrome adapter discovers a unique PID-owned loopback listener and
+uses a bounded native AX adapter. It acts only on one browser-owned modal sheet
+with remote-debugging corroboration and one semantic Allow button advertising
+AXPress. During physical-host validation, Chrome exposed the same top-level
+window through both AXChildren and AXWindows with different proxy pointers;
+top-level deduplication now uses Core Foundation object equality so a single
+sheet cannot become a false ambiguous match.
+
+A fresh disposable Chrome profile provided the real acceptance evidence. The
+user-facing remote-debugging toggle exposed one PID-owned listener; the exact
+CLI artifact authorized one call; Cua Driver pressed Chrome's consent action;
+`browser_prepare` returned `attached_existing_profile`; and the following
+`get_browser_state(pid, window_id, session)` produced an exact
+`native_cdp_window` binding without launching, restarting, copying, or changing
+the profile. A separate disposable-profile standalone harness proves the same
+public contract and a DOM mutation against an independent fixture oracle.
+
+Final local verification passed 236 core tests, 134 macOS platform tests, 102
+CLI tests, the protocol and session integration suites, and the ignored
+source-built `standalone_browser_existing_profile` real-browser row. The shared
+Windows/Linux/testkit packages compile with the additive contract. The exact
+branch build was installed locally as Cua Driver 0.8.3; its stable app identity
+retained both Accessibility and Screen Recording grants.
+
+Windows and Linux compile the same contract, grant, generation, mutation, and
+refusal model. Their native consent adapters remain strict refusals until an
+interactive UIA or AT-SPI harness proves stable browser-owned prompt semantics;
+no unsupported prompt route is advertised as working.
+
+The committed source snapshot was also replayed natively on isolated remote VM
+staging paths. The interactive Windows VM passed all 236 shared-core tests and
+96 Windows platform tests, with the two pre-existing cache UAF repro cases
+remaining ignored. The Wayland VM passed all 237 Linux shared-core tests and
+all 100 Linux platform tests. These are native contract and platform-crate
+results, not evidence of UIA or AT-SPI consent-dialog automation. An additional
+X11 VM attempt reached dependency compilation but its root filesystem had only
+4 MB free and returned `No space left on device`; it produced no behavioral
+verdict and was not counted as product evidence.
+
+## 2026-07-16: cross-platform existing-profile setup parity
+
+The existing-profile route now has product-specific setup descriptors for
+Chrome, Chromium, and Edge and native exact-control adapters on all advertised
+desktop platforms:
+
+- macOS uses exact AX page, checkbox, tab-cleanup, and browser-owned consent
+  semantics. A disposable Lume guest passed Chrome and Edge setup with video.
+- Windows uses exact HWND ownership plus UIA page, checkbox, cleanup, and
+  consent semantics. Chrome and Edge passed in a live Azure RDP user session,
+  not Session 0, with video.
+- Linux X11 uses exact X11 foreground restoration for the fixed setup
+  navigation and AT-SPI for the checkbox and consent action. Chrome passed with
+  video.
+- Linux native Wayland requires an exact Sway container and the browser's full
+  renderer accessibility tree. The setup path keeps URL text plus Enter in one
+  virtual-keyboard lifetime, then invokes the unique AT-SPI Remote debugging
+  navigation control. Chrome passed with another Chrome process open, proving
+  that changing tab titles and a shared app id do not redirect the action.
+
+Linux Chromium-family processes used by this harness include
+`--force-renderer-accessibility`; production calls without a complete AT-SPI
+tree refuse with the missing prerequisite. Sway focus is restored through the
+exact compositor container guard. Generic Wayland sessions without exact PID,
+window, and geometry identity are not promoted into a mutation route.
+
+All setup paths still require an operation-bound one-use approval artifact,
+prove a loopback listener owned by the approved PID, attach one browser-level
+socket, invalidate old capabilities, report every visible side effect, and
+attempt exact rollback after a failed setup. Safari, Firefox, unrecognized
+products/locales, and ambiguous setup or consent controls remain refusals.
+
+The evidence in this entry was produced from a dirty diagnostic source marker
+while the implementation was converging. It establishes behavior but is not
+release acceptance; the final commit must be synced and replayed with its exact
+SHA on every retained platform lane.
+
+## 2026-07-17: exact-SHA cross-platform existing-profile acceptance
+
+The final acceptance replay used exact source SHA
+`7fa6c80f5c433a7d4dadef75e4873af89de0cd3f`. A preceding Windows replay was
+discarded because host input and another runner contaminated the interactive
+desktop. A macOS replay then exposed a testkit posture defect: the foreground
+sentinel waited for Electron to focus itself before the harness explicitly
+activated it. The final testkit change waits for readiness, activates the exact
+sentinel, and proves native focus plus the fixture focus journal. It does not
+change any browser action or oracle.
+
+| Platform | Representative products | Rows | Delivered | Expected refusals | Failed | Skipped | Playable videos |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Windows/Win32 | Chrome, Edge | 20 | 18 | 2 | 0 | 0 | 20 |
+| macOS/Quartz | Chrome, Edge | 20 | 16 | 4 | 0 | 0 | 20 |
+| Linux/X11 | Chrome | 10 | 8 | 2 | 0 | 0 | 10 |
+| Linux/Wayland | Chromium on Sway | 10 | 8 | 2 | 0 | 0 | 10 |
+| **Total** |  | **60** | **50** | **10** | **0** | **0** | **60** |
+
+All 60 declarations ran. Every result had `test_status=pass`; every MP4 was
+downloaded and independently checked for positive duration. The Windows lane
+ran in a live RDP user desktop rather than Session 0. The Linux lanes used
+Openbox/X11 and native Sway/Wayland respectively, while macOS ran in a
+TCC-authorized disposable Lume guest.
+
+The expected refusals are product signal, not environment skips. Every platform
+refused `browser_binding_ambiguous` when two native browser windows had the same
+bounds and no unique title tie-break. macOS and Linux additionally refused
+`browser_input_trust_unavailable` for Chromium's trusted CDP Input click because
+that route activated the standalone target; the ref-targeted `dom_event` route
+remains the synthetic full-background alternative. Windows delivered trusted
+clicks for both Chrome and Edge without changing the sentinel posture.
+
+The Sway wrapper replaced itself with `nix develop`, so its redundant shell EXIT
+trap could not write an exit-marker file. The canonical runner nevertheless
+finished, produced its summary, exited from the process table, recorded all 10
+passing rows, and generated 10 valid videos. The acceptance verdict is based on
+those canonical artifacts rather than the disposable wrapper marker.
+
+Focused local validation at the same source SHA passed all 46 testkit library
+tests. Branch CI passed Windows and Linux unit/compile, Nix package and policy,
+documentation, link, distribution-compatibility, and publication checks. The
+later documentation-only commit records this evidence and does not alter the
+accepted executable or harness source.

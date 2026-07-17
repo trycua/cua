@@ -90,6 +90,8 @@ fi
 
 tests=(
   standalone_browser_background_type
+  standalone_browser_existing_profile
+  standalone_browser_existing_profile_setup
   standalone_browser_frames
   standalone_browser_multi_tab
   standalone_browser_prepare_isolated

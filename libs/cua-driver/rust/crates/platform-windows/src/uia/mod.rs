@@ -80,6 +80,9 @@ pub struct UiaNode {
     /// `element_index` of the nearest actionable ancestor, if any.
     /// Mirrors the markdown's parent-of-this-row.
     pub parent_element_index: Option<usize>,
+    /// True when this node is below a UIA Document control. Browser-owned
+    /// consent chrome must never match renderer-controlled descendants.
+    pub in_web_content: bool,
 }
 
 pub struct UiaTreeResult {
@@ -254,6 +257,7 @@ unsafe fn walk_tree_unsafe(
         &root_elem,
         0,
         None,
+        false,
         &mut nodes,
         &mut lines,
         &mut counter,
@@ -474,6 +478,7 @@ unsafe fn walk_root_by_pid(
             &cached,
             0,
             None,
+            false,
             nodes,
             lines,
             counter,
@@ -497,6 +502,7 @@ unsafe fn walk_cached(
         element,
         depth,
         None,
+        false,
         nodes,
         lines,
         counter,
@@ -511,6 +517,7 @@ unsafe fn walk_cached_bounded(
     element: &IUIAutomationElement,
     depth: usize,
     parent_index: Option<usize>,
+    in_web_content: bool,
     nodes: &mut Vec<UiaNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
@@ -566,6 +573,7 @@ unsafe fn walk_cached_bounded(
                 msaa_role: None,
                 depth,
                 parent_element_index: parent_index,
+                in_web_content,
             }
         } else {
             UiaNode {
@@ -583,6 +591,7 @@ unsafe fn walk_cached_bounded(
                 msaa_role: None,
                 depth,
                 parent_element_index: parent_index,
+                in_web_content,
             }
         };
 
@@ -599,6 +608,7 @@ unsafe fn walk_cached_bounded(
                     &child,
                     depth + 1,
                     emitted_parent,
+                    in_web_content || control_type.eq_ignore_ascii_case("Document"),
                     nodes,
                     lines,
                     counter,

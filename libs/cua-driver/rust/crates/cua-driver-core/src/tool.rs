@@ -407,26 +407,17 @@ impl ToolRegistry {
                 resolved_name,
                 "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
             );
-        let recording_args = if resolved_name == "browser_prepare" {
-            let mut redacted = args.clone();
-            if let Some(arguments) = redacted.as_object_mut() {
-                if arguments.contains_key("approval_token") {
-                    arguments.insert(
-                        "approval_token".to_owned(),
-                        Value::String("[redacted]".to_owned()),
-                    );
-                }
-                arguments.remove("_cua_browser_prepare_mcp_host_approved");
-                arguments.remove("_transport_session_id");
-            }
-            redacted
-        } else {
-            args.clone()
-        };
+        let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
+        let recording_args = recording_args_for(resolved_name, &args);
         let pending_turn = should_record
             .then(|| {
-                self.recording
-                    .begin_turn(resolved_name, &recording_args, start_ms)
+                if private_consent_turn {
+                    self.recording
+                        .begin_private_turn(resolved_name, &recording_args, start_ms)
+                } else {
+                    self.recording
+                        .begin_turn(resolved_name, &recording_args, start_ms)
+                }
             })
             .flatten();
 
@@ -464,7 +455,7 @@ impl ToolRegistry {
         // of action tools the recording pipeline cares about (non-read-only,
         // not the recording-control meta-tools) so the live view matches
         // what the recorder would have captured for the turn.
-        if pip_hook::pip_enabled() && should_record {
+        if pip_hook::pip_enabled() && should_record && !private_consent_turn {
             let window_id = args.opt_u64("window_id");
             let pid = args.opt_i64("pid");
             if let Some(png_bytes) = screenshot_for(window_id, pid) {
@@ -479,6 +470,33 @@ impl ToolRegistry {
 
         result
     }
+}
+
+fn is_existing_profile_prepare(tool_name: &str, args: &Value) -> bool {
+    tool_name == "browser_prepare"
+        && args
+            .get("strategy")
+            .and_then(|strategy| strategy.get("kind"))
+            .and_then(Value::as_str)
+            == Some("existing_profile")
+}
+
+fn recording_args_for(tool_name: &str, args: &Value) -> Value {
+    if tool_name != "browser_prepare" {
+        return args.clone();
+    }
+    let mut redacted = args.clone();
+    if let Some(arguments) = redacted.as_object_mut() {
+        if arguments.contains_key("approval_token") {
+            arguments.insert(
+                "approval_token".to_owned(),
+                Value::String("[redacted]".to_owned()),
+            );
+        }
+        arguments.remove("_cua_browser_prepare_mcp_host_approved");
+        arguments.remove("_transport_session_id");
+    }
+    redacted
 }
 
 impl Default for ToolRegistry {
@@ -541,6 +559,46 @@ mod capability_tests {
     //! These belong in cua-driver-core because they cover the shape
     //! of the registry response — no platform code involved.
     use super::*;
+
+    #[test]
+    fn browser_prepare_recording_redacts_authority_and_transport_secrets() {
+        let recorded = recording_args_for(
+            "browser_prepare",
+            &serde_json::json!({
+                "pid": 42,
+                "window_id": 7,
+                "session": "public-session",
+                "strategy": {"kind": "existing_profile"},
+                "approval_token": "one-use-secret",
+                "_cua_browser_prepare_mcp_host_approved": true,
+                "_transport_session_id": "private-transport",
+            }),
+        );
+        assert_eq!(recorded["approval_token"], "[redacted]");
+        assert!(recorded
+            .get("_cua_browser_prepare_mcp_host_approved")
+            .is_none());
+        assert!(recorded.get("_transport_session_id").is_none());
+        assert_eq!(recorded["pid"], 42);
+        assert_eq!(recorded["window_id"], 7);
+        assert_eq!(recorded["strategy"]["kind"], "existing_profile");
+    }
+
+    #[test]
+    fn existing_profile_prepare_is_a_private_consent_turn() {
+        assert!(is_existing_profile_prepare(
+            "browser_prepare",
+            &serde_json::json!({"strategy": {"kind": "existing_profile"}}),
+        ));
+        assert!(!is_existing_profile_prepare(
+            "browser_prepare",
+            &serde_json::json!({"profile": {"mode": "isolated_new"}}),
+        ));
+        assert!(!is_existing_profile_prepare(
+            "get_browser_state",
+            &serde_json::json!({"strategy": {"kind": "existing_profile"}}),
+        ));
+    }
 
     /// Tools whose `default_capabilities_for` mapping must NOT be
     /// empty. Mirrors the documented vocabulary above. Lives here

@@ -1,0 +1,125 @@
+---
+title: Browser Profile Attachment
+description: Contract, lifetimes, refusals, and platform scope for attaching Cua Driver to an existing Chromium profile.
+---
+
+# Browser Profile Attachment
+
+Existing-profile attachment is an additive `browser_prepare` strategy. It does
+not change the lifecycle of driver-owned `isolated_new` and `isolated_named`
+profiles.
+
+## Request
+
+```jsonc
+{
+  "pid": 844,
+  "window_id": 10725,
+  "session": "research-1",
+  "strategy": {"kind": "existing_profile"},
+  "approval_token": "<interactive one-use token>"
+}
+```
+
+`pid`, `window_id`, and `session` are required. `strategy` cannot be combined
+with legacy `allow_launch` or `profile` fields. The approval token must be
+minted by `cua-driver browser-approve` for the exact same values. It expires
+after five minutes, is consumed once, and is consumed by a mismatched attempt.
+
+The internal approval marker supplied by an MCP transport does not authorize
+this strategy.
+
+## Success result
+
+A successful call returns `action: "attached_existing_profile"` and an
+`attachment` object with:
+
+| Field | Value |
+| --- | --- |
+| `kind` | `existing_profile` |
+| `browser` | `chromium` |
+| `capabilities_invalidated` | `true` |
+| `next_action` | `get_browser_state` |
+
+`side_effects` reports the bounded setup and consent effects:
+
+| Field | Meaning |
+| --- | --- |
+| `opened_setup_page` | A temporary tab was opened in the approved native window. |
+| `closed_setup_page` | That temporary setup tab was closed successfully. |
+| `focused_setup_address_field` | The temporary tab's address field received in-app focus for exact navigation. |
+| `enabled_remote_debugging` | The exact per-instance Chrome checkbox was toggled from off to on. |
+| `changed_preferences` | Mirrors `enabled_remote_debugging` for the generic prepare contract. |
+| `displayed_consent_prompt` | Chrome displayed its browser-owned connection-consent prompt. |
+
+All fields are `false` when the endpoint was already available. The driver does
+not return the profile identity, endpoint address, port, connection generation,
+grant identifier, or approval artifact.
+
+A refusal after setup begins may include `detail.setup_side_effects`. This uses
+the same setup fields and adds `restored_remote_debugging` when the driver had
+to reverse its own checkbox change. It never claims cleanup succeeded unless
+the exact checkbox returned to the off state.
+
+## Grant lifetime
+
+The grant is scoped to the daemon instance, public session, transport session,
+browser process fingerprint, approved native window, and proven loopback
+endpoint. It expires after 30 minutes of inactivity or eight hours absolutely,
+whichever comes first. Session end, consent dismissal, identity mismatch,
+reconnect exhaustion, and daemon restart revoke it.
+
+One browser-level connection is owned per generation. At most three reconnect
+attempts are made after a socket loss. A successful reconnect increments the
+generation and invalidates every target, tab, snapshot, frame, and ref minted
+by the previous generation.
+
+## Refusals
+
+| Code | Meaning |
+| --- | --- |
+| `browser_consent_required` | No live exact approval exists, or it expired. |
+| `browser_consent_revoked` | The person dismissed or denied the browser prompt. |
+| `browser_requires_setup` | No unique approved browser endpoint is available. |
+| `browser_endpoint_owner_mismatch` | Endpoint ownership or identity changed. |
+| `browser_wrong_target_refused` | The native window, prompt, or browser target is not exact. |
+| `browser_binding_stale` | A connection generation changed; bind again. |
+| `browser_reconnect_exhausted` | The bounded reconnect policy could not establish a proven socket. |
+| `browser_input_incomplete` | Keystroke typing delivered only a reported prefix. |
+
+## Recording and telemetry
+
+Consent turns persist redacted request metadata and the structured outcome.
+They suppress browser screenshots and accessibility snapshots. Public results,
+recordings, and telemetry must not contain profile paths or hashes, endpoint
+URLs or ports, approval tokens, page content, tab URLs, cookies, or storage.
+
+## Platform scope
+
+The prompt-assisted route is available for Google Chrome and Microsoft Edge on
+macOS and Windows. Chrome has product-specific acceptance evidence on Linux
+X11 and on the validated native-Wayland Sway lane. Chromium and Edge use the
+same descriptor-backed Linux route, but still need product-specific acceptance
+evidence before they are listed as validated. Every route requires an
+exact approved PID and native window, one uniquely matched setup control, a
+loopback endpoint owned by that process, one exact browser-owned consent
+action, and a fresh native/CDP rebind.
+
+Linux additionally requires the browser's complete AT-SPI renderer tree. Start
+the Chromium-family process with `--force-renderer-accessibility`, or run a
+screen reader that enables full renderer accessibility. On Sway, Cua Driver
+briefly focuses the exact compositor-attested container for fixed internal-page
+navigation and restores the previous container before continuing. It refuses
+generic Wayland sessions that cannot prove exact process, window, and geometry
+identity.
+
+The setup adapters currently recognize the products' English accessibility
+labels. Other UI locales fail closed without toggling an unrecognized control.
+Safari, Firefox, Brave, Vivaldi, Opera, Arc, and Electron do not have an
+existing-profile setup descriptor and return a structured refusal. An already
+available endpoint may still use the ordinary exact browser binding route when
+the platform independently proves it.
+
+See [Drive a web page](/how-to-guides/driver/drive-a-web-page) for the task
+workflow and [Browser targeting and background delivery](/concepts/browser-targeting-and-background-delivery)
+for the security and generation model.

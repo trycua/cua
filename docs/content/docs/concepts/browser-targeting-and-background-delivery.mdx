@@ -76,14 +76,41 @@ now belongs to another document.
 Browser inspection never enables remote debugging or restarts a browser as a
 side effect. `browser_prepare` is a separate destructive approval boundary. It
 may launch another browser with a driver-owned `isolated_new` or
-`isolated_named` profile, but it never copies, modifies, restarts, or terminates
-the selected user profile. Remote-debugging arguments passed through
+`isolated_named` profile. For an existing supported Chromium profile, a
+stronger operation-bound approval may instead authorize one exact-window AX,
+UIA, or AT-SPI setup of the browser's per-instance remote-debugging switch. The
+route is proven for Chrome and Edge on macOS and Windows and for Chrome in the
+validated Linux X11 and Sway lanes. It never copies profile data, edits profile
+files, restarts, or terminates the selected process, and it reports its
+temporary-tab and setting effects. Remote-debugging arguments passed through
 `launch_app` are refused.
+
+The setup transition and protocol attachment are separate proofs. A listener
+must be loopback-only, attributed to the approved pid, and either discoverable
+as DevTools or correlated with the exact approved checkbox transition. The
+driver then requires a successful DevTools WebSocket claim before reporting an
+attachment; a bare browser-owned loopback listener is not sufficient.
 
 An MCP host supplies approval through its destructive-tool approval path.
 Direct CLI and raw-socket callers use a short-lived, single-use token minted by
 the interactive `browser-approve` command. A Boolean supplied by the model is
 not treated as user consent.
+
+An existing authenticated profile has a stronger boundary than a
+driver-created isolated profile. Attaching exposes the profile's live pages,
+cookies, and storage to the browser protocol, so ordinary MCP transport
+approval is not enough. The initial existing-profile route requires a separate
+interactive artifact bound to one process, native window, and named driver
+session.
+
+Chrome can ask for consent whenever a genuinely new browser-level socket is
+opened. Cua Driver therefore keeps one socket for each approved connection
+generation and multiplexes tabs over it. If the socket drops, one reconnect
+leader re-proves process, endpoint, and native-window identity before it may
+press the exact browser-owned consent action. A successful reconnect changes
+the generation and makes every old target, tab, snapshot, and ref stale. This
+is deliberate: silently remapping an old capability could act on a different
+tab after a browser lifecycle change.
 
 ## Platform meaning
 

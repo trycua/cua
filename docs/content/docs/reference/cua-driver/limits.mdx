@@ -42,10 +42,14 @@ otherwise the omitted frame is reported as a limitation instead of being
 flattened into the main document. A newer snapshot or navigation invalidates
 previous refs.
 
-Chrome remote debugging is prepared only in a separate driver-owned isolated
-profile. `browser_prepare` never enables it on, copies, or restarts the selected
-user profile. Endpoint ownership must resolve to the requested browser pid;
-wrapper processes or ambiguous process trees are refused.
+`browser_prepare` can either create a separate driver-owned isolated profile or
+attach to an approved existing Chrome, Edge, or Chromium profile on a proven
+platform. Existing-profile setup may enable that browser instance's own
+remote-debugging switch through one exact accessibility action, but it never
+copies profile data, edits profile files, restarts, or terminates the selected
+process. Endpoint ownership must resolve to the approved browser PID; wrapper
+processes, ambiguous process trees, unsupported products, unrecognized UI
+locales, and generic Wayland identities are refused.
 
 On generic GNOME or KDE Wayland sessions, browser state may be discoverable
 without enough compositor evidence to correlate native and DevTools geometry

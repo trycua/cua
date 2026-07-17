@@ -162,7 +162,10 @@ pub enum Command {
     /// `browser_prepare` call. This command requires an interactive terminal.
     BrowserApprove {
         pid: i64,
-        profile_mode: String,
+        strategy: Option<String>,
+        window_id: Option<u64>,
+        session: Option<String>,
+        profile_mode: Option<String>,
         profile_name: Option<String>,
     },
 }
@@ -193,6 +196,9 @@ const VALUE_FLAGS: &[&str] = &[
     "--type",
     "--host-bundle-id",
     "--pid",
+    "--strategy",
+    "--window-id",
+    "--session",
     "--profile-mode",
     "--profile-name",
     // Experimental PiP preview — value flag for the optional geometry
@@ -422,6 +428,9 @@ pub fn parse_command() -> Command {
         println!("                                  Interactively mint a five-minute, single-use token for a");
         println!("                                  direct CLI/raw browser_prepare call. MCP hosts use their");
         println!("                                  destructive-tool approval flow instead.");
+        println!("  cua-driver browser-approve --strategy existing_profile --pid <pid>");
+        println!("                                  --window-id <window_id> --session <session>");
+        println!("                                  Approve attachment to one exact existing browser request.");
         println!();
         println!("mcp options (macOS):");
         println!(
@@ -515,6 +524,9 @@ pub fn parse_command() -> Command {
     let mcp_client = flag_value(&args, "--client");
     let socket = flag_value(&args, "--socket");
     let approval_pid = flag_value(&args, "--pid");
+    let approval_strategy = flag_value(&args, "--strategy");
+    let approval_window_id = flag_value(&args, "--window-id");
+    let approval_session = flag_value(&args, "--session");
     let approval_profile_mode = flag_value(&args, "--profile-mode");
     let approval_profile_name = flag_value(&args, "--profile-name");
 
@@ -750,13 +762,12 @@ pub fn parse_command() -> Command {
                     eprintln!("browser-approve requires --pid <positive integer>");
                     process::exit(64);
                 });
-            let profile_mode = approval_profile_mode.unwrap_or_else(|| {
-                eprintln!("browser-approve requires --profile-mode isolated_new|isolated_named");
-                process::exit(64);
-            });
             Command::BrowserApprove {
                 pid,
-                profile_mode,
+                strategy: approval_strategy,
+                window_id: approval_window_id.and_then(|value| value.parse::<u64>().ok()),
+                session: approval_session,
+                profile_mode: approval_profile_mode,
                 profile_name: approval_profile_name,
             }
         }
@@ -796,13 +807,73 @@ pub fn parse_command() -> Command {
     }
 }
 
-pub fn run_browser_approve(pid: i64, profile_mode: &str, profile_name: Option<&str>) {
+pub fn run_browser_approve(
+    pid: i64,
+    strategy: Option<&str>,
+    window_id: Option<u64>,
+    session: Option<&str>,
+    profile_mode: Option<&str>,
+    profile_name: Option<&str>,
+) {
     use std::io::{IsTerminal as _, Write as _};
 
     if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         eprintln!("browser-approve requires an interactive terminal; approval cannot be piped or scripted");
         process::exit(1);
     }
+    if let Some(strategy) = strategy {
+        if strategy != "existing_profile" {
+            eprintln!("unsupported browser approval strategy {strategy:?}; use existing_profile");
+            process::exit(64);
+        }
+        if profile_mode.is_some() || profile_name.is_some() {
+            eprintln!("--strategy existing_profile cannot be combined with profile flags");
+            process::exit(64);
+        }
+        let Some(window_id) = window_id.filter(|window_id| *window_id > 0) else {
+            eprintln!("existing-profile approval requires --window-id <positive integer>");
+            process::exit(64);
+        };
+        let Some(session) = session.filter(|session| !session.trim().is_empty()) else {
+            eprintln!("existing-profile approval requires --session <explicit session>");
+            process::exit(64);
+        };
+        eprintln!("Approve CUA Driver to attach to this existing Chromium profile?");
+        eprintln!("  browser pid: {pid}");
+        eprintln!("  native window id: {window_id}");
+        eprintln!("  caller session: {session}");
+        eprintln!("This grant stays in daemon memory, expires, and never authorizes arbitrary dialogs.");
+        eprint!("Type APPROVE to continue: ");
+        let _ = std::io::stderr().flush();
+        let mut confirmation = String::new();
+        if std::io::stdin().read_line(&mut confirmation).is_err()
+            || confirmation.trim() != "APPROVE"
+        {
+            eprintln!("browser attachment approval declined; no artifact was created");
+            process::exit(1);
+        }
+        let scope = cua_driver_core::browser::approval::ExistingProfileApprovalScope {
+            pid,
+            window_id,
+            session: session.to_owned(),
+        };
+        match cua_driver_core::browser::approval::mint_existing_profile_approval(scope) {
+            Ok(token) => println!("{token}"),
+            Err(error) => {
+                eprintln!("{}", error.message);
+                process::exit(1);
+            }
+        }
+        return;
+    }
+    if window_id.is_some() || session.is_some() {
+        eprintln!("--window-id/--session require --strategy existing_profile");
+        process::exit(64);
+    }
+    let profile_mode = profile_mode.unwrap_or_else(|| {
+        eprintln!("browser-approve requires --profile-mode isolated_new|isolated_named");
+        process::exit(64);
+    });
     let mode = match profile_mode {
         "isolated_new" => cua_driver_core::browser::PrepareProfileMode::IsolatedNew,
         "isolated_named" => cua_driver_core::browser::PrepareProfileMode::IsolatedNamed,

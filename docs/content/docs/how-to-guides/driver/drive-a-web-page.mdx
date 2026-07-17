@@ -66,6 +66,79 @@ cua-driver browser-approve --pid 844 --profile-mode isolated_new
 Pass the returned token as `approval_token` in the otherwise identical
 `browser_prepare` call. `get_browser_state` never performs this setup itself.
 
+## Attach to an existing Chrome or Edge profile
+
+Use this route only when the agent must work in a supported Chromium profile
+that is already running and authenticated. Cua Driver does not restart the
+browser, copy the profile, or modify profile files. The route supports Chrome
+and Edge on macOS and Windows, plus Chrome in the validated Linux X11 and Sway
+configurations. Chromium and Edge have descriptor-backed Linux routes but are
+not yet product-validated there. Start a named driver session and mint an approval
+artifact for the exact process, native window, and session:
+
+```bash
+cua-driver browser-approve \
+  --strategy existing_profile \
+  --pid 844 \
+  --window-id 10725 \
+  --session research-1
+```
+
+The command requires an interactive terminal and asks you to type `APPROVE`.
+Pass its five-minute, single-use token to `browser_prepare`:
+
+```jsonc
+browser_prepare({
+  "pid": 844,
+  "window_id": 10725,
+  "session": "research-1",
+  "strategy": {"kind": "existing_profile"},
+  "approval_token": "<token>"
+})
+```
+
+The browser may display its own remote-debugging consent prompt. Cua Driver will
+press only the exact browser-owned semantic allow action for this approved
+process and window. An absent, ambiguous, dismissed, or unrecognized prompt is
+refused; it is never treated as generic permission to click security dialogs.
+
+If the approved process has no DevTools endpoint, Cua Driver opens a temporary
+tab in the approved window and navigates to the product's fixed remote-debugging
+page (`chrome://inspect/#remote-debugging` or
+`edge://inspect/#remote-debugging`). It matches exactly one **Allow remote
+debugging for this browser instance** checkbox, verifies that it is off, and
+presses it once. It then proves that the new listener is loopback-only and
+owned by the approved process before closing the temporary tab. The result's
+`side_effects` reports whether the page was opened and closed, whether the
+address field was focused, whether the setting was enabled, and whether Chrome
+displayed a connection-consent prompt. If setup fails after a visible action,
+the structured refusal reports `detail.setup_side_effects`; a checkbox changed
+by that failed attempt is restored when its exact state can still be proven.
+Any ambiguous control or changed process/window identity is refused.
+
+On Linux, launch the browser with `--force-renderer-accessibility` unless a
+screen reader already enables its complete AT-SPI tree. Native Wayland also
+requires a validated compositor route that can prove the exact process,
+window, geometry, and temporary focus restoration. A missing prerequisite is
+reported as a refusal; Cua Driver does not fall back to an unscoped desktop
+click.
+
+After `attached_existing_profile`, list windows again if needed and call
+`get_browser_state({pid, window_id, session})`. Attachment invalidates older
+browser capabilities, so do not reuse a previous `target_id`, `tab_id`, or
+page ref.
+
+The grant lives only in daemon memory. It expires after inactivity, has an
+absolute lifetime, and is revoked when its owning session ends or the daemon
+restarts. A dropped browser socket may reconnect up to three times under the
+same live grant; a successful reconnect invalidates capabilities again and
+requires another bind. Browser restart requires a new approval in this first
+release.
+
+Existing-profile consent turns record redacted action metadata and results but
+omit screenshots and accessibility snapshots, so authenticated page content is
+not persisted as consent evidence.
+
 ## Bind the native window
 
 Browser capabilities are scoped to a driver session. Start one and pass the
@@ -194,5 +267,6 @@ ownership, capability lifetime, and refusal reasons remain explicit.
 
 - [Browser targeting and background delivery](/concepts/browser-targeting-and-background-delivery)
 - [Browser tool reference](/reference/cua-driver/mcp-tools#get_browser_state)
+- [Existing-profile attachment reference](/reference/cua-driver/browser-profile-attachment)
 - [Known limits](/reference/cua-driver/limits)
 - [Capture and delivery modalities](/concepts/capture-and-delivery-modalities)

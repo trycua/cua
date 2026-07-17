@@ -12,7 +12,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::refusal::BrowserRefusal;
-use super::types::{BrowserClassification, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint};
+use super::types::{
+    BrowserClassification, BrowserProduct, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -125,6 +127,8 @@ pub struct BrowserConsentRequest {
 pub struct ExistingProfileSetupRequest {
     pub pid: i64,
     pub window_id: u64,
+    /// Product identity attested immediately before approval-bound setup.
+    pub browser: BrowserProduct,
 }
 
 /// Declared user-visible effects of one bounded existing-profile setup.
@@ -134,6 +138,8 @@ pub struct ExistingProfileSetupOutcome {
     pub closed_setup_page: bool,
     pub enabled_remote_debugging: bool,
     pub focused_setup_address_field: bool,
+    pub foregrounded_window: bool,
+    pub injected_global_input: bool,
     /// Endpoint proven as part of an exact setup transition. This is needed
     /// for Chrome's in-browser toggle, whose listener does not expose the
     /// classic `/json/version` discovery surface.
@@ -162,6 +168,8 @@ pub struct PrepareSideEffects {
     pub closed_setup_page: bool,
     pub enabled_remote_debugging: bool,
     pub focused_setup_address_field: bool,
+    pub foregrounded_window: bool,
+    pub injected_global_input: bool,
 }
 
 /// OS-identity services a platform crate provides to the browser-tool
@@ -251,6 +259,27 @@ pub trait BrowserPlatform: Send + Sync {
             super::refusal::BrowserRefusalCode::BrowserRequiresSetup,
             "automatic existing-profile endpoint setup is not proven on this platform",
         ))
+    }
+
+    /// Commit a setup transition after core has protocol-proven and claimed
+    /// the correlated browser endpoint. Implementations use this boundary to
+    /// close only the exact temporary setup tab they opened.
+    async fn commit_existing_profile_setup(
+        &self,
+        _request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        Ok(false)
+    }
+
+    /// Roll back a setup transition that core could not safely claim. The
+    /// adapter must preserve `error`, adding exact cleanup evidence where
+    /// useful, and must never act on an unproven current tab or control.
+    async fn abort_existing_profile_setup(
+        &self,
+        _request: ExistingProfileSetupRequest,
+        error: BrowserRefusal,
+    ) -> BrowserRefusal {
+        error
     }
 
     /// Handle one pending browser-owned connection prompt. Implementations

@@ -96,16 +96,29 @@ URLs or ports, approval tokens, page content, tab URLs, cookies, or storage.
 
 ## Platform scope
 
-The prompt-assisted route is currently experimental for Google Chrome on
-macOS. It can also enable Chrome's per-instance endpoint through the exact
-approved window when none exists. Other platforms and products must refuse
-setup or prompt automation until a real interactive harness proves browser
-identity, setup-control and prompt semantics, endpoint ownership, cleanup, and
-exact rebind behavior. An already available endpoint may still use the ordinary
-exact browser binding route where that platform proves it.
+The prompt-assisted route is available for Google Chrome and Microsoft Edge on
+macOS and Windows. Chrome has product-specific acceptance evidence on Linux
+X11 and on the validated native-Wayland Sway lane. Chromium and Edge use the
+same descriptor-backed Linux route, but still need product-specific acceptance
+evidence before they are listed as validated. Every route requires an
+exact approved PID and native window, one uniquely matched setup control, a
+loopback endpoint owned by that process, one exact browser-owned consent
+action, and a fresh native/CDP rebind.
 
-The exact AX setup currently recognizes Chrome's English accessibility labels.
-Other UI locales fail closed without toggling an unrecognized control.
+Linux additionally requires the browser's complete AT-SPI renderer tree. Start
+the Chromium-family process with `--force-renderer-accessibility`, or run a
+screen reader that enables full renderer accessibility. On Sway, Cua Driver
+briefly focuses the exact compositor-attested container for fixed internal-page
+navigation and restores the previous container before continuing. It refuses
+generic Wayland sessions that cannot prove exact process, window, and geometry
+identity.
+
+The setup adapters currently recognize the products' English accessibility
+labels. Other UI locales fail closed without toggling an unrecognized control.
+Safari, Firefox, Brave, Vivaldi, Opera, Arc, and Electron do not have an
+existing-profile setup descriptor and return a structured refusal. An already
+available endpoint may still use the ordinary exact browser binding route when
+the platform independently proves it.
 
 See [Drive a web page](/how-to-guides/driver/drive-a-web-page) for the task
 workflow and [Browser targeting and background delivery](/concepts/browser-targeting-and-background-delivery)

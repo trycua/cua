@@ -48,6 +48,7 @@ pub mod platform;
 mod prepare;
 mod reconnect;
 pub mod refusal;
+mod setup_descriptor;
 pub mod store;
 pub mod tools;
 pub mod types;
@@ -62,9 +63,12 @@ pub use platform::{
     PrepareSideEffects, PrepareStrategy,
 };
 pub use refusal::{BrowserRefusal, BrowserRefusalCode};
+pub use setup_descriptor::{
+    existing_profile_setup_descriptor, BrowserSetupDescriptor, EXISTING_PROFILE_SETUP_READY_TIMEOUT,
+};
 pub use tools::register_browser_tools;
 pub use types::{
-    BindingQuality, BrowserClassification, BrowserEngineFamily, EndpointOwnershipMethod,
-    EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
-    OwnedEndpoint, ProcessFingerprint, Rect,
+    BindingQuality, BrowserClassification, BrowserEngineFamily, BrowserProduct,
+    EndpointOwnershipMethod, EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof,
+    NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };

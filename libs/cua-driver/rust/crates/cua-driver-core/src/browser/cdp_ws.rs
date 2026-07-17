@@ -368,19 +368,37 @@ impl CdpPool {
         old_generation: u64,
         new_generation: u64,
     ) -> anyhow::Result<Arc<CdpConnection>> {
+        {
+            let conns = self.conns.lock().await;
+            if let Some(entry) = conns.get(ws_url) {
+                if entry
+                    .generation
+                    .is_some_and(|generation| generation > old_generation)
+                {
+                    anyhow::bail!("the reconnect source generation is no longer current");
+                }
+                if entry.generation == Some(old_generation) && !entry.conn.is_closed() {
+                    return Ok(entry.conn.clone());
+                }
+            }
+        }
+
+        // A WebSocket handshake can wait for browser-owned consent UI. Never
+        // hold the pool mutex across that wait: grant revocation must remain
+        // able to remove the old generation when consent is refused.
+        let conn = Arc::new(CdpConnection::connect(ws_url).await?);
         let mut conns = self.conns.lock().await;
         if let Some(entry) = conns.get(ws_url) {
             if entry
                 .generation
                 .is_some_and(|generation| generation > old_generation)
             {
+                if entry.generation == Some(new_generation) && !entry.conn.is_closed() {
+                    return Ok(entry.conn.clone());
+                }
                 anyhow::bail!("the reconnect source generation is no longer current");
             }
-            if entry.generation == Some(old_generation) && !entry.conn.is_closed() {
-                return Ok(entry.conn.clone());
-            }
         }
-        let conn = Arc::new(CdpConnection::connect(ws_url).await?);
         conns.insert(
             ws_url.to_owned(),
             PoolEntry {
@@ -487,6 +505,36 @@ mod tests {
             pool.get(&url).await.is_ok(),
             "session cleanup releases ownership"
         );
+    }
+
+    #[tokio::test]
+    async fn stalled_reconnect_does_not_block_generation_release() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (first, _) = listener.accept().await.unwrap();
+            let _first_ws = tokio_tungstenite::accept_async(first).await.unwrap();
+            let (_stalled_reconnect, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        });
+        let url = format!("ws://127.0.0.1:{port}/devtools/browser/reconnect");
+        let pool = CdpPool::new();
+        let claimed = pool.claim_existing(&url, 1).await.unwrap();
+        claimed.demux.close();
+
+        let mut reconnect = Box::pin(pool.reconnect_existing(&url, 1, 2));
+        tokio::select! {
+            _ = &mut reconnect => panic!("reconnect unexpectedly completed"),
+            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+        }
+        tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            pool.release_existing(&url, 1),
+        )
+        .await
+        .expect("grant release must not wait for the reconnect handshake");
+        drop(reconnect);
+        server.abort();
     }
 
     #[tokio::test]

@@ -18,15 +18,15 @@ use crate::tool::Tool;
 use super::engine::BrowserEngine;
 use super::mock_cdp::{MockCdpServer, MockEvent, MockHandler, MockReply};
 use super::platform::{
-    BrowserPlatform, ExistingProfileSetupOutcome, ExistingProfileSetupRequest, PrepareAction,
-    PrepareOutcome, PrepareRequest,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
+    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use super::refusal::BrowserRefusal;
 use super::tools::{BrowserClickTool, BrowserPrepareTool, BrowserTypeTool, GetBrowserStateTool};
 use super::types::{
-    BrowserClassification, BrowserEngineFamily, EndpointOwnershipMethod, EndpointOwnershipProof,
-    NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint,
-    ProcessFingerprint, Rect,
+    BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
+    EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
+    OwnedEndpoint, ProcessFingerprint, Rect,
 };
 
 // ── Scripted Chromium fixture ────────────────────────────────────────────────
@@ -345,6 +345,8 @@ struct FixturePlatform {
     managed_endpoint_visible: bool,
     existing_endpoint_visible: Arc<AtomicBool>,
     setup_invoked: Arc<AtomicBool>,
+    setup_aborted: Arc<AtomicBool>,
+    stall_consent: bool,
 }
 
 #[async_trait]
@@ -358,6 +360,7 @@ impl BrowserPlatform for FixturePlatform {
         Ok(BrowserClassification {
             is_browser: true,
             engine: BrowserEngineFamily::Chromium,
+            product_kind: BrowserProduct::GoogleChrome,
             product: Some("MockChrome".into()),
             channel: Some("stable".into()),
             supports_cdp: true,
@@ -445,9 +448,11 @@ impl BrowserPlatform for FixturePlatform {
         self.setup_invoked.store(true, Ordering::SeqCst);
         Ok(ExistingProfileSetupOutcome {
             opened_setup_page: true,
-            closed_setup_page: true,
+            closed_setup_page: false,
             enabled_remote_debugging: true,
             focused_setup_address_field: true,
+            foregrounded_window: false,
+            injected_global_input: false,
             endpoint: Some(OwnedEndpoint {
                 ws_url: self.ws_url.clone(),
                 http_port: None,
@@ -458,6 +463,36 @@ impl BrowserPlatform for FixturePlatform {
                 },
             }),
         })
+    }
+
+    async fn commit_existing_profile_setup(
+        &self,
+        _request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        Ok(true)
+    }
+
+    async fn abort_existing_profile_setup(
+        &self,
+        _request: ExistingProfileSetupRequest,
+        error: BrowserRefusal,
+    ) -> BrowserRefusal {
+        self.setup_aborted.store(true, Ordering::SeqCst);
+        error
+    }
+
+    async fn handle_existing_profile_consent(
+        &self,
+        _request: BrowserConsentRequest,
+    ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
+        if self.stall_consent {
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            return Ok(BrowserConsentOutcome::NotPresent);
+        }
+        Err(BrowserRefusal::new(
+            super::refusal::BrowserRefusalCode::BrowserRouteUnavailable,
+            "fixture consent prompt is unavailable",
+        ))
     }
 
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
@@ -512,6 +547,8 @@ async fn fixture_with_platform(
         managed_endpoint_visible: true,
         existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
         setup_invoked: setup_invoked.clone(),
+        setup_aborted: Arc::new(AtomicBool::new(false)),
+        stall_consent: false,
     }));
     Fixture {
         state,
@@ -535,6 +572,8 @@ async fn existing_profile_only_fixture() -> Fixture {
         managed_endpoint_visible: false,
         existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
         setup_invoked: setup_invoked.clone(),
+        setup_aborted: Arc::new(AtomicBool::new(false)),
+        stall_consent: false,
     }));
     Fixture {
         state,
@@ -554,6 +593,8 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
         managed_endpoint_visible: false,
         existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
         setup_invoked: setup_invoked.clone(),
+        setup_aborted: Arc::new(AtomicBool::new(false)),
+        stall_consent: false,
     }));
     (
         Fixture {
@@ -671,6 +712,102 @@ async fn approved_existing_profile_setup_reports_exact_side_effects() {
         }))
         .await;
     assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
+}
+
+#[tokio::test]
+async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let stalled_server = tokio::spawn(async move {
+        let (_stream, _) = listener.accept().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    });
+    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
+        ws_url: format!("ws://{address}/devtools/browser"),
+        trusted_input_limited: false,
+        managed_endpoint_visible: false,
+        existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+        setup_invoked: Arc::new(AtomicBool::new(false)),
+        setup_aborted: Arc::new(AtomicBool::new(false)),
+        stall_consent: false,
+    }));
+    let token = super::approval::mint_existing_profile_approval(
+        super::approval::ExistingProfileApprovalScope {
+            pid: 1,
+            window_id: 7,
+            session: SESSION.to_owned(),
+        },
+    )
+    .unwrap();
+    let prepared = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        BrowserPrepareTool::new(engine).invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" },
+            "approval_token": token
+        })),
+    )
+    .await
+    .expect("a refused consent route must not deadlock grant revocation");
+    assert_eq!(structured(&prepared)["status"], "refused");
+    assert_eq!(
+        structured(&prepared)["refusal"]["code"],
+        "browser_route_unavailable"
+    );
+    stalled_server.abort();
+}
+
+#[tokio::test]
+async fn cancelled_prepare_aborts_the_exact_pending_setup() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let stalled_server = tokio::spawn(async move {
+        let (_stream, _) = listener.accept().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    });
+    let setup_aborted = Arc::new(AtomicBool::new(false));
+    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
+        ws_url: format!("ws://{address}/devtools/browser"),
+        trusted_input_limited: false,
+        managed_endpoint_visible: false,
+        existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+        setup_invoked: Arc::new(AtomicBool::new(false)),
+        setup_aborted: setup_aborted.clone(),
+        stall_consent: true,
+    }));
+    let token = super::approval::mint_existing_profile_approval(
+        super::approval::ExistingProfileApprovalScope {
+            pid: 1,
+            window_id: 7,
+            session: SESSION.to_owned(),
+        },
+    )
+    .unwrap();
+    let cancelled = tokio::time::timeout(
+        std::time::Duration::from_millis(750),
+        BrowserPrepareTool::new(engine).invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" },
+            "approval_token": token
+        })),
+    )
+    .await;
+    assert!(
+        cancelled.is_err(),
+        "fixture must cancel during consent handling"
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while !setup_aborted.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("dropping prepare must schedule exact pending-setup rollback");
+    stalled_server.abort();
 }
 
 async fn snapshot(f: &Fixture, target_id: &str, tab_id: &str) -> Value {

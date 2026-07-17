@@ -96,10 +96,21 @@ unsafe fn walk_unsafe(hwnd: u64) -> UiaTreeResult {
     let mut counter = 0usize;
     let mut total = 0usize;
 
-    walk(&root, 0, None, &mut nodes, &mut lines, &mut counter, &mut total);
+    walk(
+        &root,
+        0,
+        None,
+        &mut nodes,
+        &mut lines,
+        &mut counter,
+        &mut total,
+    );
 
     let tree_markdown = render_lines(&lines);
-    UiaTreeResult { tree_markdown, nodes }
+    UiaTreeResult {
+        tree_markdown,
+        nodes,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -188,6 +199,7 @@ unsafe fn walk(
                 msaa_role: role_int,
                 depth,
                 parent_element_index: parent_index,
+                in_web_content: false,
             }
         } else {
             UiaNode {
@@ -205,6 +217,7 @@ unsafe fn walk(
                 msaa_role: role_int,
                 depth,
                 parent_element_index: parent_index,
+                in_web_content: false,
             }
         };
         // Track this node as the parent_index for its descendants only when
@@ -221,7 +234,15 @@ unsafe fn walk(
             // accChild returns IDispatch — query for IAccessible.
             if let Ok(child_disp) = acc.get_accChild(&child_var) {
                 if let Ok(child_acc) = child_disp.cast::<IAccessible>() {
-                    walk(&child_acc, depth + 1, next_parent, nodes, lines, counter, total);
+                    walk(
+                        &child_acc,
+                        depth + 1,
+                        next_parent,
+                        nodes,
+                        lines,
+                        counter,
+                        total,
+                    );
                 }
             }
         }
@@ -235,7 +256,15 @@ unsafe fn walk(
         let child_var = VARIANT::from(i);
         if let Ok(child_disp) = acc.get_accChild(&child_var) {
             if let Ok(child_acc) = child_disp.cast::<IAccessible>() {
-                walk(&child_acc, depth + 1, parent_index, nodes, lines, counter, total);
+                walk(
+                    &child_acc,
+                    depth + 1,
+                    parent_index,
+                    nodes,
+                    lines,
+                    counter,
+                    total,
+                );
             }
         }
     }

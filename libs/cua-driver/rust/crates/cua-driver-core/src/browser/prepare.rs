@@ -4,7 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,8 @@ fn with_setup_side_effects(
         && !setup.closed_setup_page
         && !setup.enabled_remote_debugging
         && !setup.focused_setup_address_field
+        && !setup.foregrounded_window
+        && !setup.injected_global_input
     {
         return error;
     }
@@ -46,6 +48,8 @@ fn with_setup_side_effects(
             "closed_setup_page": setup.closed_setup_page,
             "focused_setup_address_field": setup.focused_setup_address_field,
             "enabled_remote_debugging": setup.enabled_remote_debugging,
+            "foregrounded_window": setup.foregrounded_window,
+            "injected_global_input": setup.injected_global_input,
         },
         "cause": cause,
     }));
@@ -76,6 +80,67 @@ fn with_prepare_side_effects(
     );
     error.detail = Some(serde_json::Value::Object(detail));
     error
+}
+
+struct PendingExistingProfileSetup {
+    platform: Arc<dyn super::platform::BrowserPlatform>,
+    request: Option<ExistingProfileSetupRequest>,
+}
+
+impl PendingExistingProfileSetup {
+    fn new(
+        platform: Arc<dyn super::platform::BrowserPlatform>,
+        request: ExistingProfileSetupRequest,
+    ) -> Self {
+        Self {
+            platform,
+            request: Some(request),
+        }
+    }
+
+    async fn abort(&mut self, error: BrowserRefusal) -> BrowserRefusal {
+        let Some(request) = self.request.clone() else {
+            return error;
+        };
+        let result = self
+            .platform
+            .abort_existing_profile_setup(request, error)
+            .await;
+        self.request = None;
+        result
+    }
+
+    async fn commit(&mut self) -> Result<bool, BrowserRefusal> {
+        let request = self.request.clone().ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserBindingStale,
+                "the pending browser setup was already finalized",
+            )
+        })?;
+        let result = self.platform.commit_existing_profile_setup(request).await;
+        if result.is_ok() {
+            self.request = None;
+        }
+        result
+    }
+}
+
+impl Drop for PendingExistingProfileSetup {
+    fn drop(&mut self) {
+        let Some(request) = self.request.take() else {
+            return;
+        };
+        let platform = self.platform.clone();
+        let error = refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            "the existing-profile setup request ended before commit; rolling back its exact pending setup",
+        );
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let _ = platform.abort_existing_profile_setup(request, error).await;
+            });
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -635,6 +700,13 @@ impl BrowserEngine {
         self.native_window_checked(request.pid, window_id).await?;
         let fingerprint = self.platform.process_fingerprint(request.pid).await?;
         let mut setup = ExistingProfileSetupOutcome::default();
+        let setup_request = ExistingProfileSetupRequest {
+            pid: request.pid,
+            window_id,
+            browser: classification.product_kind,
+        };
+        let mut setup_pending = false;
+        let mut setup_guard = None;
         let mut endpoint = self
             .platform
             .discover_existing_profile_endpoint(request.pid)
@@ -642,55 +714,99 @@ impl BrowserEngine {
         if endpoint.is_none() {
             setup = self
                 .platform
-                .setup_existing_profile_endpoint(ExistingProfileSetupRequest {
-                    pid: request.pid,
-                    window_id,
-                })
+                .setup_existing_profile_endpoint(setup_request.clone())
                 .await?;
+            setup_pending = true;
+            setup_guard = Some(PendingExistingProfileSetup::new(
+                self.platform.clone(),
+                setup_request.clone(),
+            ));
 
             // Setup is allowed to interact only with the already-approved
             // process/window generation. Re-prove both before accepting the
             // newly exposed listener.
-            self.native_window_checked(request.pid, window_id)
-                .await
-                .map_err(|error| with_setup_side_effects(error, &setup))?;
-            let current_fingerprint = self
-                .platform
-                .process_fingerprint(request.pid)
-                .await
-                .map_err(|error| with_setup_side_effects(error, &setup))?;
+            if let Err(error) = self.native_window_checked(request.pid, window_id).await {
+                return Err(setup_guard
+                    .as_mut()
+                    .expect("setup guard exists while setup is pending")
+                    .abort(with_setup_side_effects(error, &setup))
+                    .await);
+            }
+            let current_fingerprint = match self.platform.process_fingerprint(request.pid).await {
+                Ok(fingerprint) => fingerprint,
+                Err(error) => {
+                    return Err(setup_guard
+                        .as_mut()
+                        .expect("setup guard exists while setup is pending")
+                        .abort(with_setup_side_effects(error, &setup))
+                        .await)
+                }
+            };
             if current_fingerprint != fingerprint {
-                return Err(with_setup_side_effects(
+                let error = with_setup_side_effects(
                     refusal(
                         BrowserRefusalCode::BrowserBindingStale,
                         "the approved browser process changed while remote debugging was being enabled",
                     ),
                     &setup,
-                ));
+                );
+                return Err(setup_guard
+                    .as_mut()
+                    .expect("setup guard exists while setup is pending")
+                    .abort(error)
+                    .await);
             }
             endpoint = setup.endpoint.clone();
             if endpoint.is_none() {
-                endpoint = self
+                endpoint = match self
                     .platform
                     .discover_existing_profile_endpoint(request.pid)
                     .await
-                    .map_err(|error| with_setup_side_effects(error, &setup))?;
+                {
+                    Ok(endpoint) => endpoint,
+                    Err(error) => {
+                        return Err(setup_guard
+                            .as_mut()
+                            .expect("setup guard exists while setup is pending")
+                            .abort(with_setup_side_effects(error, &setup))
+                            .await)
+                    }
+                };
             }
         }
-        let endpoint = endpoint.ok_or_else(|| {
-                with_setup_side_effects(refusal(
+        let endpoint = match endpoint {
+            Some(endpoint) => endpoint,
+            None => {
+                let error = with_setup_side_effects(refusal(
                     BrowserRefusalCode::BrowserRequiresSetup,
                     "the approved browser still has no uniquely proven DevTools endpoint after bounded setup",
-                ), &setup)
-            })?;
+                ), &setup);
+                if setup_pending {
+                    return Err(setup_guard
+                        .as_mut()
+                        .expect("setup guard exists while setup is pending")
+                        .abort(error)
+                        .await);
+                }
+                return Err(error);
+            }
+        };
         if endpoint.ownership.owner_pid != request.pid {
-            return Err(with_setup_side_effects(
+            let error = with_setup_side_effects(
                 refusal(
                     BrowserRefusalCode::BrowserEndpointOwnerMismatch,
                     "the existing-profile endpoint is not owned by the approved browser process",
                 ),
                 &setup,
-            ));
+            );
+            if setup_pending {
+                return Err(setup_guard
+                    .as_mut()
+                    .expect("setup guard exists while setup is pending")
+                    .abort(error)
+                    .await);
+            }
+            return Err(error);
         }
 
         let previous_grant = self
@@ -699,8 +815,21 @@ impl BrowserEngine {
                 request.transport_session.as_deref(),
                 request.pid,
             )
-            .await
-            .map_err(|error| with_setup_side_effects(error, &setup))?;
+            .await;
+        let previous_grant = match previous_grant {
+            Ok(grant) => grant,
+            Err(error) => {
+                let error = with_setup_side_effects(error, &setup);
+                if setup_pending {
+                    return Err(setup_guard
+                        .as_mut()
+                        .expect("setup guard exists while setup is pending")
+                        .abort(error)
+                        .await);
+                }
+                return Err(error);
+            }
+        };
         let previous_generation = previous_grant.as_ref().map_or(0, |grant| grant.generation);
         let grant = self.existing_profile_grants.mint(
             &request.session,
@@ -721,34 +850,48 @@ impl BrowserEngine {
         }
         let (claimed, displayed_consent_prompt) = {
             let ws_url = endpoint.ws_url.clone();
-            let claim = self.pool.claim_existing(&ws_url, grant.generation);
-            tokio::pin!(claim);
-            let mut displayed = false;
-            let result = tokio::select! {
-                result = &mut claim => result,
-                _ = tokio::time::sleep(Duration::from_millis(500)) => {
-                    match self.platform.handle_existing_profile_consent(BrowserConsentRequest {
+            let mut claim = Box::pin(self.pool.claim_existing(&ws_url, grant.generation));
+            let initial = tokio::select! {
+                result = &mut claim => Some(result),
+                _ = tokio::time::sleep(Duration::from_millis(500)) => None,
+            };
+            if let Some(result) = initial {
+                (result, false)
+            } else {
+                match self
+                    .platform
+                    .handle_existing_profile_consent(BrowserConsentRequest {
                         pid: request.pid,
                         window_id,
                         attempt: 1,
-                    }).await {
-                        Ok(BrowserConsentOutcome::Accepted) => {
-                            displayed = true;
-                            claim.await
+                    })
+                    .await
+                {
+                    Ok(BrowserConsentOutcome::Accepted) => (claim.await, true),
+                    Ok(BrowserConsentOutcome::NotPresent) => (claim.await, false),
+                    Err(error) => {
+                        // The connection future may hold the pool mutex while
+                        // awaiting its WebSocket handshake. Cancel it before
+                        // revoking the grant, which also needs that mutex.
+                        drop(claim);
+                        self.revoke_existing_profile_grant(
+                            &request.session,
+                            request.transport_session.as_deref(),
+                            request.pid,
+                        )
+                        .await;
+                        let error = with_setup_side_effects(error, &setup);
+                        if setup_pending {
+                            return Err(setup_guard
+                                .as_mut()
+                                .expect("setup guard exists while setup is pending")
+                                .abort(error)
+                                .await);
                         }
-                        Ok(BrowserConsentOutcome::NotPresent) => claim.await,
-                        Err(error) => {
-                            self.revoke_existing_profile_grant(
-                                &request.session,
-                                request.transport_session.as_deref(),
-                                request.pid,
-                            ).await;
-                            return Err(with_setup_side_effects(error, &setup));
-                        }
+                        return Err(error);
                     }
                 }
-            };
-            (result, displayed)
+            }
         };
         if let Err(_error) = claimed {
             self.revoke_existing_profile_grant(
@@ -757,14 +900,45 @@ impl BrowserEngine {
                 request.pid,
             )
             .await;
-            return Err(with_prepare_side_effects(
+            let error = with_prepare_side_effects(
                 refusal(
                     BrowserRefusalCode::BrowserReconnectExhausted,
                     "the approved browser socket could not be claimed",
                 ),
                 &setup,
                 displayed_consent_prompt,
-            ));
+            );
+            if setup_pending {
+                return Err(setup_guard
+                    .as_mut()
+                    .expect("setup guard exists while setup is pending")
+                    .abort(error)
+                    .await);
+            }
+            return Err(error);
+        }
+        if setup_pending {
+            match setup_guard
+                .as_mut()
+                .expect("setup guard exists while setup is pending")
+                .commit()
+                .await
+            {
+                Ok(closed) => setup.closed_setup_page = closed,
+                Err(error) => {
+                    self.revoke_existing_profile_grant(
+                        &request.session,
+                        request.transport_session.as_deref(),
+                        request.pid,
+                    )
+                    .await;
+                    return Err(with_prepare_side_effects(
+                        error,
+                        &setup,
+                        displayed_consent_prompt,
+                    ));
+                }
+            }
         }
         self.store
             .invalidate_endpoint_generation(request.pid, previous_generation);
@@ -781,6 +955,8 @@ impl BrowserEngine {
                 closed_setup_page: setup.closed_setup_page,
                 enabled_remote_debugging: setup.enabled_remote_debugging,
                 focused_setup_address_field: setup.focused_setup_address_field,
+                foregrounded_window: setup.foregrounded_window,
+                injected_global_input: setup.injected_global_input,
                 ..PrepareSideEffects::default()
             },
             attachment: Some(PrepareAttachment {
@@ -810,6 +986,8 @@ mod tests {
                 closed_setup_page: true,
                 enabled_remote_debugging: true,
                 focused_setup_address_field: true,
+                foregrounded_window: true,
+                injected_global_input: true,
                 endpoint: None,
             },
         );

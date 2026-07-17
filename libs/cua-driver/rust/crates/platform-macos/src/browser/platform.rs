@@ -5,15 +5,16 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
     ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
-    BrowserClassification, BrowserEngineFamily, EndpointOwnershipMethod, EndpointOwnershipProof,
-    NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint,
-    ProcessFingerprint, Rect,
+    BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
+    EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
+    OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -40,6 +41,34 @@ fn is_firefox(name: &str, bundle_id: &str) -> bool {
         .to_ascii_lowercase()
         .split(|ch: char| !ch.is_ascii_alphanumeric())
         .any(|token| token == "firefox")
+}
+
+fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
+    let name = name.to_ascii_lowercase();
+    let bundle_id = bundle_id.to_ascii_lowercase();
+    if bundle_id.starts_with("com.google.chrome") || name == "google chrome" {
+        BrowserProduct::GoogleChrome
+    } else if bundle_id.starts_with("com.microsoft.edgemac") || name == "microsoft edge" {
+        BrowserProduct::MicrosoftEdge
+    } else if bundle_id.starts_with("org.chromium.chromium") || name == "chromium" {
+        BrowserProduct::Chromium
+    } else if bundle_id.starts_with("com.brave.browser") || name == "brave browser" {
+        BrowserProduct::Brave
+    } else if bundle_id.starts_with("com.vivaldi.vivaldi") || name == "vivaldi" {
+        BrowserProduct::Vivaldi
+    } else if bundle_id.starts_with("com.operasoftware.opera") || name == "opera" {
+        BrowserProduct::Opera
+    } else if bundle_id.starts_with("company.thebrowser.browser") || name == "arc" {
+        BrowserProduct::Arc
+    } else if bundle_id == "com.apple.safari" || name == "safari" {
+        BrowserProduct::Safari
+    } else if bundle_id.contains("firefox") || name == "firefox" {
+        BrowserProduct::Firefox
+    } else if bundle_id.contains("electron") || name == "electron" {
+        BrowserProduct::Electron
+    } else {
+        BrowserProduct::Other
+    }
 }
 
 fn loopback_websocket_port(url: &str) -> Option<u16> {
@@ -228,6 +257,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         let chromium = is_chromium(name, bundle_id);
         let webkit = bundle_id == "com.apple.Safari" || name.eq_ignore_ascii_case("Safari");
         let gecko = is_firefox(name, bundle_id);
+        let product_kind = browser_product(name, bundle_id);
         Ok(BrowserClassification {
             is_browser: chromium || webkit || gecko,
             engine: if chromium {
@@ -239,6 +269,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             } else {
                 BrowserEngineFamily::Unknown
             },
+            product_kind,
             product: (!name.is_empty()).then(|| name.to_owned()),
             channel: None,
             supports_cdp: chromium,
@@ -398,6 +429,15 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         &self,
         request: ExistingProfileSetupRequest,
     ) -> Result<ExistingProfileSetupOutcome, BrowserRefusal> {
+        let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!(
+                    "approved existing-profile setup is not implemented for {:?}",
+                    request.browser
+                ),
+            )
+        })?;
         let pid = i32::try_from(request.pid).map_err(|_| {
             refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -415,22 +455,27 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             Some(pid),
             "browser_prepare.remote_debugging",
             || async move {
-                tokio::task::spawn_blocking(move || super::setup_ui::enable(pid, window_id))
-                    .await
-                    .map_err(|error| {
-                        refusal(
-                            BrowserRefusalCode::BrowserRouteUnavailable,
-                            format!(
-                                "could not inspect Chrome's remote-debugging setup UI: {error}"
-                            ),
-                        )
-                    })?
+                tokio::task::spawn_blocking(move || {
+                    super::setup_ui::enable(pid, window_id, descriptor)
+                })
+                .await
+                .map_err(|error| {
+                    refusal(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        format!(
+                            "could not inspect {}'s remote-debugging setup UI: {error}",
+                            descriptor.product_name
+                        ),
+                    )
+                })?
             },
         )
         .await?;
         let opened_setup_page = handle.opened_setup_page;
         let enabled_remote_debugging = handle.enabled_remote_debugging;
         let focused_setup_address_field = handle.focused_setup_address_field;
+        let foregrounded_window = handle.foregrounded_window;
+        let injected_global_input = handle.injected_global_input;
 
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         let endpoint_result = loop {
@@ -450,19 +495,19 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                     .copied()
                     .filter(|port| !listeners_before.contains(port))
                     .collect::<Vec<_>>();
-                let candidates = if correlated.is_empty() && ports.len() == 1 {
-                    // The checkbox may already have been on before setup. The
-                    // exact page proof plus one PID-owned loopback listener is
-                    // sufficient to attempt the bounded WebSocket claim.
-                    ports.clone()
-                } else {
-                    correlated
-                };
-                for port in candidates {
+                if let [port] = correlated.as_slice() {
                     endpoints.push((
-                        port,
+                        *port,
                         format!("ws://127.0.0.1:{port}/devtools/browser"),
-                        "lsof owner correlated with exact setup state",
+                        "new PID-owned listener correlated with exact approved setup",
+                    ));
+                } else if correlated.len() > 1 {
+                    break Err(refusal(
+                        BrowserRefusalCode::BrowserBindingAmbiguous,
+                        format!(
+                            "{} exposed multiple newly correlated PID-owned listeners",
+                            descriptor.product_name
+                        ),
                     ));
                 }
             }
@@ -484,39 +529,96 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 [] => {
                     break Err(refusal(
                         BrowserRefusalCode::BrowserRequiresSetup,
-                        "Chrome did not expose a uniquely PID-owned loopback endpoint after the exact setup action",
+                        format!(
+                            "{} did not expose a uniquely PID-owned loopback endpoint after the exact setup action",
+                            descriptor.product_name
+                        ),
                     ))
                 }
                 _ => {
                     break Err(refusal(
                         BrowserRefusalCode::BrowserBindingAmbiguous,
-                        "Chrome exposed multiple PID-owned endpoint candidates after the exact setup action",
+                        format!(
+                            "{} exposed multiple PID-owned endpoint candidates after the exact setup action",
+                            descriptor.product_name
+                        ),
                     ))
                 }
             }
         };
         let endpoint = match endpoint_result {
             Ok(endpoint) => endpoint,
-            Err(error) => return Err(handle.abort(pid, window_id, error)),
+            Err(error) => {
+                let error =
+                    tokio::task::spawn_blocking(move || handle.abort(pid, window_id, error))
+                        .await
+                        .map_err(|join_error| {
+                            refusal(
+                                BrowserRefusalCode::BrowserRouteUnavailable,
+                                format!("could not roll back browser setup: {join_error}"),
+                            )
+                        })?;
+                return Err(error);
+            }
         };
-        let closed_setup_page =
-            tokio::task::spawn_blocking(move || handle.close_for_success(pid, window_id))
-                .await
-                .map_err(|error| {
-                    refusal(
-                        BrowserRefusalCode::BrowserRouteUnavailable,
-                        format!("could not close Chrome's temporary setup tab: {error}"),
-                    )
-                })??
-                .unwrap_or(false);
+        super::setup_ui::retain_pending(pid, window_id, handle)?;
 
         Ok(ExistingProfileSetupOutcome {
             opened_setup_page,
-            closed_setup_page,
+            closed_setup_page: false,
             enabled_remote_debugging,
             focused_setup_address_field,
+            foregrounded_window,
+            injected_global_input,
             endpoint: Some(endpoint),
         })
+    }
+
+    async fn commit_existing_profile_setup(
+        &self,
+        request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        let pid = i32::try_from(request.pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser pid is outside the macOS process-id range",
+            )
+        })?;
+        let window_id = u32::try_from(request.window_id).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser window is outside the macOS window-id range",
+            )
+        })?;
+        tokio::task::spawn_blocking(move || super::setup_ui::commit_pending(pid, window_id))
+            .await
+            .map_err(|error| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not commit exact browser setup cleanup: {error}"),
+                )
+            })?
+    }
+
+    async fn abort_existing_profile_setup(
+        &self,
+        request: ExistingProfileSetupRequest,
+        error: BrowserRefusal,
+    ) -> BrowserRefusal {
+        let Ok(pid) = i32::try_from(request.pid) else {
+            return error;
+        };
+        let Ok(window_id) = u32::try_from(request.window_id) else {
+            return error;
+        };
+        tokio::task::spawn_blocking(move || super::setup_ui::abort_pending(pid, window_id, error))
+            .await
+            .unwrap_or_else(|join_error| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not roll back exact browser setup: {join_error}"),
+                )
+            })
     }
 
     async fn handle_existing_profile_consent(

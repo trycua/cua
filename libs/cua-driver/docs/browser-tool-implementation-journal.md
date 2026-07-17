@@ -600,3 +600,40 @@ results, not evidence of UIA or AT-SPI consent-dialog automation. An additional
 X11 VM attempt reached dependency compilation but its root filesystem had only
 4 MB free and returned `No space left on device`; it produced no behavioral
 verdict and was not counted as product evidence.
+
+## 2026-07-16: cross-platform existing-profile setup parity
+
+The existing-profile route now has product-specific setup descriptors for
+Chrome, Chromium, and Edge and native exact-control adapters on all advertised
+desktop platforms:
+
+- macOS uses exact AX page, checkbox, tab-cleanup, and browser-owned consent
+  semantics. A disposable Lume guest passed Chrome and Edge setup with video.
+- Windows uses exact HWND ownership plus UIA page, checkbox, cleanup, and
+  consent semantics. Chrome and Edge passed in a live Azure RDP user session,
+  not Session 0, with video.
+- Linux X11 uses exact X11 foreground restoration for the fixed setup
+  navigation and AT-SPI for the checkbox and consent action. Chrome passed with
+  video.
+- Linux native Wayland requires an exact Sway container and the browser's full
+  renderer accessibility tree. The setup path keeps URL text plus Enter in one
+  virtual-keyboard lifetime, then invokes the unique AT-SPI Remote debugging
+  navigation control. Chrome passed with another Chrome process open, proving
+  that changing tab titles and a shared app id do not redirect the action.
+
+Linux Chromium-family processes used by this harness include
+`--force-renderer-accessibility`; production calls without a complete AT-SPI
+tree refuse with the missing prerequisite. Sway focus is restored through the
+exact compositor container guard. Generic Wayland sessions without exact PID,
+window, and geometry identity are not promoted into a mutation route.
+
+All setup paths still require an operation-bound one-use approval artifact,
+prove a loopback listener owned by the approved PID, attach one browser-level
+socket, invalidate old capabilities, report every visible side effect, and
+attempt exact rollback after a failed setup. Safari, Firefox, unrecognized
+products/locales, and ambiguous setup or consent controls remain refusals.
+
+The evidence in this entry was produced from a dirty diagnostic source marker
+while the implementation was converging. It establishes behavior but is not
+release acceptance; the final commit must be synced and replayed with its exact
+SHA on every retained platform lane.

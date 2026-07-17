@@ -1,19 +1,22 @@
 //! Exact macOS setup for Chrome's per-instance remote-debugging toggle.
 
 use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    sync::{Mutex, OnceLock},
+};
 
 use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
-use cua_driver_core::browser::{BrowserRefusal, BrowserRefusalCode};
+use cua_driver_core::browser::{
+    BrowserProduct, BrowserRefusal, BrowserRefusalCode, BrowserSetupDescriptor,
+    EXISTING_PROFILE_SETUP_READY_TIMEOUT,
+};
 
 use crate::ax::bindings::{
-    copy_number_attr, copy_string_attr, focused_element_of_pid, kAXErrorSuccess, perform_action,
-    set_bool_attr_true, set_string_attr, AXUIElementRef,
+    copy_number_attr, copy_string_attr, element_screen_center, focused_element_of_pid,
+    kAXErrorSuccess, perform_action, set_bool_attr_true, AXUIElementRef,
 };
 use crate::ax::tree::{walk_tree, AXNode};
-
-const SETUP_URL: &str = "chrome://inspect/#remote-debugging";
-const SETUP_PAGE_TITLE: &str = "Inspect with Chrome Developer Tools";
-const CHECKBOX_LABEL: &str = "Allow remote debugging for this browser instance";
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
@@ -62,45 +65,64 @@ fn unique_actionable(
     }
 }
 
-fn setup_page_proven(nodes: &[AXNode]) -> bool {
+fn setup_page_proven(nodes: &[AXNode], descriptor: &BrowserSetupDescriptor) -> bool {
     let exact_url = nodes.iter().any(|node| {
         node.role == "AXTextField"
             && field_equals(node, "Address and search bar")
             && node
                 .value
                 .as_deref()
-                .is_some_and(|value| value.trim().eq_ignore_ascii_case(SETUP_URL))
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
     });
-    let exact_page = nodes
-        .iter()
-        .any(|node| node.role == "AXWebArea" && field_equals(node, SETUP_PAGE_TITLE));
+    let exact_page = nodes.iter().any(|node| {
+        node.role == "AXWebArea"
+            && descriptor
+                .page_titles
+                .iter()
+                .any(|title| field_equals(node, title))
+    });
     let exact_heading = nodes
         .iter()
-        .any(|node| node.role == "AXHeading" && field_equals(node, "Remote debugging"));
+        .any(|node| node.role == "AXHeading" && field_equals(node, descriptor.page_heading));
     exact_url && exact_page && exact_heading
 }
 
-fn exact_setup_checkbox(nodes: &[AXNode]) -> Result<Option<usize>, BrowserRefusal> {
-    if !setup_page_proven(nodes) {
+fn exact_setup_checkbox(
+    nodes: &[AXNode],
+    descriptor: &BrowserSetupDescriptor,
+) -> Result<Option<usize>, BrowserRefusal> {
+    if !setup_page_proven(nodes, descriptor) {
         return Ok(None);
     }
-    unique_actionable(nodes, "AXCheckBox", CHECKBOX_LABEL, "AXPress")
+    unique_actionable(nodes, "AXCheckBox", descriptor.checkbox_label, "AXPress")
 }
 
-fn unique_omnibox(nodes: &[AXNode]) -> Result<usize, BrowserRefusal> {
+fn unique_omnibox(
+    nodes: &[AXNode],
+    descriptor: &BrowserSetupDescriptor,
+) -> Result<usize, BrowserRefusal> {
     unique_actionable(nodes, "AXTextField", "Address and search bar", "AXPress")?.ok_or_else(|| {
         refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
-            "the approved Chrome window has no exact address-and-search field",
+            format!(
+                "the approved {} window has no exact address-and-search field",
+                descriptor.product_name
+            ),
         )
     })
 }
 
-fn new_tab_button(nodes: &[AXNode]) -> Result<usize, BrowserRefusal> {
+fn new_tab_button(
+    nodes: &[AXNode],
+    descriptor: &BrowserSetupDescriptor,
+) -> Result<usize, BrowserRefusal> {
     unique_actionable(nodes, "AXButton", "New Tab", "AXPress")?.ok_or_else(|| {
         refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
-            "the approved Chrome window has no exact New Tab button",
+            format!(
+                "the approved {} window has no exact New Tab button",
+                descriptor.product_name
+            ),
         )
     })
 }
@@ -113,6 +135,7 @@ fn select_new_tab_close_button(
     before: &[AXNode],
     after: &[AXNode],
     same_element: impl Fn(usize, usize) -> bool,
+    descriptor: &BrowserSetupDescriptor,
 ) -> Result<Option<usize>, BrowserRefusal> {
     let prior_tabs = before
         .iter()
@@ -136,7 +159,10 @@ fn select_new_tab_close_button(
         _ => {
             return Err(refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
-                "Chrome exposed multiple new tab candidates",
+                format!(
+                    "{} exposed multiple new tab candidates",
+                    descriptor.product_name
+                ),
             ))
         }
     };
@@ -149,7 +175,12 @@ fn select_new_tab_close_button(
     let close_buttons = after[tab_index + 1..end]
         .iter()
         .filter(|node| {
-            node.role == "AXButton" && field_equals(node, "Close") && has_action(node, "AXPress")
+            node.role == "AXButton"
+                && descriptor
+                    .tab_close_labels
+                    .iter()
+                    .any(|label| field_equals(node, label))
+                && has_action(node, "AXPress")
         })
         .map(|node| node.element_ptr)
         .collect::<Vec<_>>();
@@ -157,11 +188,17 @@ fn select_new_tab_close_button(
         [element] => Ok(Some(*element)),
         [] => Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
-            "the newly created Chrome tab has no exact Close button",
+            format!(
+                "the newly created {} tab has no exact Close button",
+                descriptor.product_name
+            ),
         )),
         _ => Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
-            "the newly created Chrome tab has multiple Close buttons",
+            format!(
+                "the newly created {} tab has multiple Close buttons",
+                descriptor.product_name
+            ),
         )),
     }
 }
@@ -169,8 +206,9 @@ fn select_new_tab_close_button(
 fn new_tab_close_button(
     before: &[AXNode],
     after: &[AXNode],
+    descriptor: &BrowserSetupDescriptor,
 ) -> Result<Option<usize>, BrowserRefusal> {
-    let element = select_new_tab_close_button(before, after, is_same_element)?;
+    let element = select_new_tab_close_button(before, after, is_same_element, descriptor)?;
     if let Some(element) = element {
         unsafe { CFRetain(element as CFTypeRef) };
     }
@@ -195,10 +233,15 @@ fn checkbox_state(value: Option<f64>) -> Result<CheckboxState, BrowserRefusal> {
 }
 
 pub struct SetupUiHandle {
+    descriptor: &'static BrowserSetupDescriptor,
     close_button: Option<usize>,
+    enable_attempted: bool,
+    trusted_checkbox_fallback_attempted: bool,
     pub opened_setup_page: bool,
     pub enabled_remote_debugging: bool,
     pub focused_setup_address_field: bool,
+    pub foregrounded_window: bool,
+    pub injected_global_input: bool,
 }
 
 impl SetupUiHandle {
@@ -208,18 +251,17 @@ impl SetupUiHandle {
         }
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut pressed_rollback = false;
+        let mut trusted_fallback_attempted = false;
         loop {
             let tree = walk_tree(pid, Some(window_id), None);
-            let checkbox = exact_setup_checkbox(&tree.nodes);
+            let checkbox = exact_setup_checkbox(&tree.nodes, self.descriptor);
             let result = match checkbox {
                 Ok(Some(element)) => {
                     let value = unsafe { copy_number_attr(element as AXUIElementRef, "AXValue") };
                     match checkbox_state(value) {
                         Ok(CheckboxState::Off) => Some(true),
                         Ok(CheckboxState::On) => {
-                            if pressed_rollback {
-                                None
-                            } else {
+                            if !pressed_rollback {
                                 let pressed =
                                     unsafe { perform_action(element as AXUIElementRef, "AXPress") };
                                 if pressed == kAXErrorSuccess {
@@ -228,6 +270,43 @@ impl SetupUiHandle {
                                 } else {
                                     Some(false)
                                 }
+                            } else if self.descriptor.product == BrowserProduct::MicrosoftEdge
+                                && !trusted_fallback_attempted
+                            {
+                                let center =
+                                    unsafe { element_screen_center(element as AXUIElementRef) };
+                                trusted_fallback_attempted = true;
+                                release_actionable_nodes(&tree.nodes);
+                                let Some((x, y)) = center else {
+                                    return false;
+                                };
+                                self.foregrounded_window = true;
+                                self.injected_global_input = true;
+                                let restored = crate::input::skylight::with_foreground_assist(
+                                    pid,
+                                    window_id,
+                                    || {
+                                        std::thread::sleep(Duration::from_millis(60));
+                                        if crate::apps::frontmost_pid() != Some(pid) {
+                                            anyhow::bail!(
+                                                "the approved browser lost foreground before the rollback click"
+                                            );
+                                        }
+                                        crate::input::mouse::click_at_xy_desktop_preserving_cursor(
+                                            x, y,
+                                        )?;
+                                        std::thread::sleep(Duration::from_millis(60));
+                                        Ok(())
+                                    },
+                                )
+                                .unwrap_or(false);
+                                if !restored {
+                                    return false;
+                                }
+                                std::thread::sleep(Duration::from_millis(100));
+                                continue;
+                            } else {
+                                None
                             }
                         }
                         Err(_) => Some(false),
@@ -255,6 +334,8 @@ impl SetupUiHandle {
         let restored_remote_debugging = self.rollback_remote_debugging(pid, window_id);
         let opened_setup_page = self.opened_setup_page;
         let focused_setup_address_field = self.focused_setup_address_field;
+        let foregrounded_window = self.foregrounded_window;
+        let injected_global_input = self.injected_global_input;
         let closed_setup_page = self.close().unwrap_or(false);
         let mut error = error;
         let cause = error.detail.take();
@@ -264,6 +345,8 @@ impl SetupUiHandle {
                 "closed_setup_page": closed_setup_page,
                 "focused_setup_address_field": focused_setup_address_field,
                 "enabled_remote_debugging": enabled_remote_debugging,
+                "foregrounded_window": foregrounded_window,
+                "injected_global_input": injected_global_input,
                 "restored_remote_debugging": restored_remote_debugging,
             },
             "cause": cause,
@@ -283,12 +366,16 @@ impl SetupUiHandle {
         if result == kAXErrorSuccess {
             return Ok(Some(true));
         }
+        let product_name = self.descriptor.product_name;
         Err(self.abort(
             pid,
             window_id,
             refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
-                "Chrome's exact temporary-tab Close action became stale before AXPress",
+                format!(
+                    "{}'s exact temporary-tab Close action became stale before AXPress",
+                    product_name
+                ),
             ),
         ))
     }
@@ -312,18 +399,78 @@ impl Drop for SetupUiHandle {
     }
 }
 
-pub fn enable(pid: i32, window_id: u32) -> Result<SetupUiHandle, BrowserRefusal> {
+type PendingSetupKey = (i32, u32);
+
+fn pending_setups() -> &'static Mutex<HashMap<PendingSetupKey, SetupUiHandle>> {
+    static PENDING: OnceLock<Mutex<HashMap<PendingSetupKey, SetupUiHandle>>> = OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn retain_pending(
+    pid: i32,
+    window_id: u32,
+    handle: SetupUiHandle,
+) -> Result<(), BrowserRefusal> {
+    let mut pending = pending_setups().lock().unwrap();
+    if pending.contains_key(&(pid, window_id)) {
+        drop(pending);
+        return Err(handle.abort(
+            pid,
+            window_id,
+            refusal(
+                BrowserRefusalCode::BrowserBindingAmbiguous,
+                "another approved browser setup is already pending for this exact window",
+            ),
+        ));
+    }
+    pending.insert((pid, window_id), handle);
+    Ok(())
+}
+
+pub fn commit_pending(pid: i32, window_id: u32) -> Result<bool, BrowserRefusal> {
+    let handle = pending_setups()
+        .lock()
+        .unwrap()
+        .remove(&(pid, window_id))
+        .ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserBindingStale,
+                "the exact pending browser setup cleanup handle is missing",
+            )
+        })?;
+    Ok(handle.close_for_success(pid, window_id)?.unwrap_or(false))
+}
+
+pub fn abort_pending(pid: i32, window_id: u32, error: BrowserRefusal) -> BrowserRefusal {
+    match pending_setups().lock().unwrap().remove(&(pid, window_id)) {
+        Some(handle) => handle.abort(pid, window_id, error),
+        None => error.with_detail(serde_json::json!({
+            "setup_cleanup": "the exact pending browser setup cleanup handle was missing"
+        })),
+    }
+}
+
+pub fn enable(
+    pid: i32,
+    window_id: u32,
+    descriptor: &'static BrowserSetupDescriptor,
+) -> Result<SetupUiHandle, BrowserRefusal> {
     let initial = walk_tree(pid, Some(window_id), None);
-    let initial_checkbox = exact_setup_checkbox(&initial.nodes);
+    let initial_checkbox = exact_setup_checkbox(&initial.nodes, descriptor);
     let mut handle = match initial_checkbox {
         Ok(Some(_)) => SetupUiHandle {
+            descriptor,
             close_button: None,
+            enable_attempted: false,
+            trusted_checkbox_fallback_attempted: false,
             opened_setup_page: false,
             enabled_remote_debugging: false,
             focused_setup_address_field: false,
+            foregrounded_window: false,
+            injected_global_input: false,
         },
         Ok(None) => {
-            let new_tab = new_tab_button(&initial.nodes);
+            let new_tab = new_tab_button(&initial.nodes, descriptor);
             let new_tab = match new_tab {
                 Ok(element) => element,
                 Err(error) => {
@@ -336,13 +483,16 @@ pub fn enable(pid: i32, window_id: u32) -> Result<SetupUiHandle, BrowserRefusal>
                 release_actionable_nodes(&initial.nodes);
                 return Err(refusal(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
-                    "Chrome's exact New Tab action became stale before AXPress",
+                    format!(
+                        "{}'s exact New Tab action became stale before AXPress",
+                        descriptor.product_name
+                    ),
                 ));
             }
             let deadline = Instant::now() + Duration::from_secs(2);
             let (created, close_button) = loop {
                 let created = walk_tree(pid, Some(window_id), None);
-                match new_tab_close_button(&initial.nodes, &created.nodes) {
+                match new_tab_close_button(&initial.nodes, &created.nodes, descriptor) {
                     Ok(Some(element)) => break (created, element),
                     Ok(None) if Instant::now() < deadline => {
                         release_actionable_nodes(&created.nodes);
@@ -353,7 +503,10 @@ pub fn enable(pid: i32, window_id: u32) -> Result<SetupUiHandle, BrowserRefusal>
                         release_actionable_nodes(&created.nodes);
                         return Err(refusal(
                             BrowserRefusalCode::BrowserWrongTargetRefused,
-                            "Chrome did not expose exactly one newly created tab",
+                            format!(
+                                "{} did not expose exactly one newly created tab",
+                                descriptor.product_name
+                            ),
                         )
                         .with_detail(serde_json::json!({
                             "setup_side_effects": {
@@ -378,12 +531,17 @@ pub fn enable(pid: i32, window_id: u32) -> Result<SetupUiHandle, BrowserRefusal>
             };
             release_actionable_nodes(&initial.nodes);
             let mut handle = SetupUiHandle {
+                descriptor,
                 close_button: Some(close_button),
+                enable_attempted: false,
+                trusted_checkbox_fallback_attempted: false,
                 opened_setup_page: true,
                 enabled_remote_debugging: false,
                 focused_setup_address_field: false,
+                foregrounded_window: false,
+                injected_global_input: false,
             };
-            let omnibox = unique_omnibox(&created.nodes);
+            let omnibox = unique_omnibox(&created.nodes, descriptor);
             let omnibox = match omnibox {
                 Ok(element) => element,
                 Err(error) => {
@@ -393,19 +551,17 @@ pub fn enable(pid: i32, window_id: u32) -> Result<SetupUiHandle, BrowserRefusal>
             };
             let pressed = unsafe { perform_action(omnibox as AXUIElementRef, "AXPress") };
             let focused = unsafe { set_bool_attr_true(omnibox as AXUIElementRef, "AXFocused") };
-            let written =
-                unsafe { set_string_attr(omnibox as AXUIElementRef, "AXValue", SETUP_URL) };
-            if pressed != kAXErrorSuccess
-                || focused != kAXErrorSuccess
-                || written != kAXErrorSuccess
-            {
+            if pressed != kAXErrorSuccess || focused != kAXErrorSuccess {
                 release_actionable_nodes(&created.nodes);
                 return Err(handle.abort(
                     pid,
                     window_id,
                     refusal(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
-                        "Chrome's exact address field rejected the bounded setup navigation",
+                        format!(
+                            "{}'s exact address field rejected the bounded setup navigation",
+                            descriptor.product_name
+                        ),
                     ),
                 ));
             }
@@ -417,16 +573,74 @@ pub fn enable(pid: i32, window_id: u32) -> Result<SetupUiHandle, BrowserRefusal>
                     equal
                 })
             };
-            let exact_value = unsafe { copy_string_attr(omnibox as AXUIElementRef, "AXValue") }
-                .is_some_and(|value| value.trim().eq_ignore_ascii_case(SETUP_URL));
-            if !exact_focus || !exact_value {
+            if !exact_focus {
                 release_actionable_nodes(&created.nodes);
                 return Err(handle.abort(pid, window_id, refusal(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
-                    "Chrome's exact address field lost focus before setup navigation could be confirmed",
+                    format!(
+                        "{}'s exact address field lost focus before setup navigation could be confirmed",
+                        descriptor.product_name
+                    ),
                 )));
             }
-            let navigation = crate::input::keyboard::press_key(pid, "return", &[]);
+            if let Err(error) = crate::input::keyboard::hotkey(pid, "a", &["cmd"]).and_then(|_| {
+                crate::input::keyboard::type_text_with_delay(pid, descriptor.setup_url, 30)
+            }) {
+                release_actionable_nodes(&created.nodes);
+                return Err(handle.abort(
+                    pid,
+                    window_id,
+                    refusal(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        format!(
+                            "could not type {}'s fixed setup URL into the exact address field: {error}",
+                            descriptor.product_name
+                        ),
+                    ),
+                ));
+            }
+            let exact_value = unsafe { copy_string_attr(omnibox as AXUIElementRef, "AXValue") }
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url));
+            if !exact_value {
+                release_actionable_nodes(&created.nodes);
+                return Err(handle.abort(
+                    pid,
+                    window_id,
+                    refusal(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        format!(
+                            "{}'s exact address field did not retain the fixed setup URL",
+                            descriptor.product_name
+                        ),
+                    ),
+                ));
+            }
+            let navigation = if descriptor.product == BrowserProduct::MicrosoftEdge {
+                handle.foregrounded_window = true;
+                handle.injected_global_input = true;
+                crate::input::skylight::with_foreground_assist(pid, window_id, || {
+                    std::thread::sleep(Duration::from_millis(60));
+                    if crate::apps::frontmost_pid() != Some(pid) {
+                        anyhow::bail!(
+                            "the approved browser lost foreground before setup navigation"
+                        );
+                    }
+                    crate::input::keyboard::press_key_global("return", &[])?;
+                    std::thread::sleep(Duration::from_millis(60));
+                    Ok(())
+                })
+                .and_then(|fronted| {
+                    if fronted {
+                        Ok(())
+                    } else {
+                        Err(anyhow::anyhow!(
+                            "the bounded Microsoft Edge foreground assist was unavailable"
+                        ))
+                    }
+                })
+            } else {
+                crate::input::keyboard::press_key(pid, "return", &[])
+            };
             release_actionable_nodes(&created.nodes);
             if let Err(error) = navigation {
                 return Err(handle.abort(
@@ -434,7 +648,10 @@ pub fn enable(pid: i32, window_id: u32) -> Result<SetupUiHandle, BrowserRefusal>
                     window_id,
                     refusal(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
-                        format!("could not confirm Chrome's bounded setup navigation: {error}"),
+                        format!(
+                            "could not confirm {}'s bounded setup navigation: {error}",
+                            descriptor.product_name
+                        ),
                     ),
                 ));
             }
@@ -449,34 +666,95 @@ pub fn enable(pid: i32, window_id: u32) -> Result<SetupUiHandle, BrowserRefusal>
         release_actionable_nodes(&initial.nodes);
     }
 
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
     loop {
         let tree = walk_tree(pid, Some(window_id), None);
-        let checkbox = exact_setup_checkbox(&tree.nodes);
+        let checkbox = exact_setup_checkbox(&tree.nodes, descriptor);
         match checkbox {
             Ok(Some(element)) => {
                 let value = unsafe { copy_number_attr(element as AXUIElementRef, "AXValue") };
                 match checkbox_state(value) {
                     Ok(CheckboxState::On) => {
+                        if handle.enable_attempted {
+                            handle.enabled_remote_debugging = true;
+                        }
                         release_actionable_nodes(&tree.nodes);
                         return Ok(handle);
                     }
                     Ok(CheckboxState::Off) => {
-                        let pressed = if handle.enabled_remote_debugging {
-                            kAXErrorSuccess
-                        } else {
-                            unsafe { perform_action(element as AXUIElementRef, "AXPress") }
-                        };
+                        if !handle.enable_attempted {
+                            handle.enable_attempted = true;
+                            let pressed =
+                                unsafe { perform_action(element as AXUIElementRef, "AXPress") };
+                            release_actionable_nodes(&tree.nodes);
+                            if pressed != kAXErrorSuccess {
+                                return Err(handle.abort(pid, window_id, refusal(
+                                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                                    "the exact remote-debugging checkbox became stale before AXPress",
+                                )));
+                            }
+                            continue;
+                        }
+
+                        if descriptor.product == BrowserProduct::MicrosoftEdge
+                            && !handle.trusted_checkbox_fallback_attempted
+                        {
+                            let center =
+                                unsafe { element_screen_center(element as AXUIElementRef) };
+                            handle.trusted_checkbox_fallback_attempted = true;
+                            release_actionable_nodes(&tree.nodes);
+                            let Some((x, y)) = center else {
+                                return Err(handle.abort(
+                                    pid,
+                                    window_id,
+                                    refusal(
+                                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                                        "the exact remote-debugging checkbox had no stable screen center",
+                                    ),
+                                ));
+                            };
+                            handle.foregrounded_window = true;
+                            handle.injected_global_input = true;
+                            let clicked = crate::input::skylight::with_foreground_assist(
+                                pid,
+                                window_id,
+                                || {
+                                    std::thread::sleep(Duration::from_millis(60));
+                                    if crate::apps::frontmost_pid() != Some(pid) {
+                                        anyhow::bail!(
+                                            "the approved browser lost foreground before the setup click"
+                                        );
+                                    }
+                                    crate::input::mouse::click_at_xy_desktop_preserving_cursor(x, y)?;
+                                    std::thread::sleep(Duration::from_millis(60));
+                                    Ok(())
+                                },
+                            )
+                            .and_then(|fronted| {
+                                if fronted {
+                                    Ok(())
+                                } else {
+                                    Err(anyhow::anyhow!(
+                                        "the bounded Microsoft Edge foreground assist was unavailable"
+                                    ))
+                                }
+                            });
+                            if let Err(error) = clicked {
+                                return Err(handle.abort(
+                                    pid,
+                                    window_id,
+                                    refusal(
+                                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                                        format!(
+                                            "could not toggle the exact Microsoft Edge remote-debugging checkbox: {error}"
+                                        ),
+                                    ),
+                                ));
+                            }
+                            continue;
+                        }
+
                         release_actionable_nodes(&tree.nodes);
-                        if pressed != kAXErrorSuccess {
-                            return Err(handle.abort(pid, window_id, refusal(
-                                BrowserRefusalCode::BrowserWrongTargetRefused,
-                                "the exact remote-debugging checkbox became stale before AXPress",
-                            )));
-                        }
-                        if !handle.enabled_remote_debugging {
-                            handle.enabled_remote_debugging = true;
-                        }
                     }
                     Err(error) => {
                         release_actionable_nodes(&tree.nodes);
@@ -496,7 +774,10 @@ pub fn enable(pid: i32, window_id: u32) -> Result<SetupUiHandle, BrowserRefusal>
                 window_id,
                 refusal(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
-                    "the exact Chrome remote-debugging setup page did not become ready",
+                    format!(
+                        "the exact {} remote-debugging setup page did not become ready",
+                        descriptor.product_name
+                    ),
                 ),
             ));
         }
@@ -507,6 +788,11 @@ pub fn enable(pid: i32, window_id: u32) -> Result<SetupUiHandle, BrowserRefusal>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cua_driver_core::browser::{existing_profile_setup_descriptor, BrowserProduct};
+
+    fn chrome() -> &'static BrowserSetupDescriptor {
+        existing_profile_setup_descriptor(BrowserProduct::GoogleChrome).unwrap()
+    }
 
     fn node(role: &str, title: Option<&str>, value: Option<&str>, actions: &[&str]) -> AXNode {
         AXNode {
@@ -535,39 +821,54 @@ mod tests {
     #[test]
     fn checkbox_requires_exact_internal_page_proof() {
         let nodes = vec![
-            node("AXWebArea", Some(SETUP_PAGE_TITLE), None, &[]),
-            node("AXHeading", Some("Remote debugging"), None, &[]),
+            node("AXWebArea", Some(chrome().page_titles[0]), None, &[]),
+            node("AXHeading", Some(chrome().page_heading), None, &[]),
             node(
                 "AXTextField",
                 Some("Address and search bar"),
-                Some(SETUP_URL),
+                Some(chrome().setup_url),
                 &["AXPress"],
             ),
-            node("AXCheckBox", Some(CHECKBOX_LABEL), None, &["AXPress"]),
+            node(
+                "AXCheckBox",
+                Some(chrome().checkbox_label),
+                None,
+                &["AXPress"],
+            ),
         ];
-        assert_eq!(exact_setup_checkbox(&nodes).unwrap(), Some(7));
+        assert_eq!(exact_setup_checkbox(&nodes, chrome()).unwrap(), Some(7));
 
         let mut wrong_url = nodes.clone();
         wrong_url[2].value = Some("https://example.test/".to_owned());
-        assert_eq!(exact_setup_checkbox(&wrong_url).unwrap(), None);
+        assert_eq!(exact_setup_checkbox(&wrong_url, chrome()).unwrap(), None);
     }
 
     #[test]
     fn checkbox_matcher_refuses_ambiguity() {
         let nodes = vec![
-            node("AXWebArea", Some(SETUP_PAGE_TITLE), None, &[]),
-            node("AXHeading", Some("Remote debugging"), None, &[]),
+            node("AXWebArea", Some(chrome().page_titles[0]), None, &[]),
+            node("AXHeading", Some(chrome().page_heading), None, &[]),
             node(
                 "AXTextField",
                 Some("Address and search bar"),
-                Some(SETUP_URL),
+                Some(chrome().setup_url),
                 &["AXPress"],
             ),
-            node("AXCheckBox", Some(CHECKBOX_LABEL), None, &["AXPress"]),
-            node("AXCheckBox", Some(CHECKBOX_LABEL), None, &["AXPress"]),
+            node(
+                "AXCheckBox",
+                Some(chrome().checkbox_label),
+                None,
+                &["AXPress"],
+            ),
+            node(
+                "AXCheckBox",
+                Some(chrome().checkbox_label),
+                None,
+                &["AXPress"],
+            ),
         ];
         assert_eq!(
-            exact_setup_checkbox(&nodes).unwrap_err().code,
+            exact_setup_checkbox(&nodes, chrome()).unwrap_err().code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
     }
@@ -585,7 +886,8 @@ mod tests {
             tree_node("AXButton", Some("Close"), 21, 2),
         ];
         assert_eq!(
-            select_new_tab_close_button(&before, &after, |left, right| left == right).unwrap(),
+            select_new_tab_close_button(&before, &after, |left, right| left == right, chrome(),)
+                .unwrap(),
             Some(21)
         );
     }
@@ -601,7 +903,7 @@ mod tests {
             tree_node("AXButton", Some("Close"), 31, 2),
         ];
         assert_eq!(
-            select_new_tab_close_button(&before, &after, |left, right| left == right)
+            select_new_tab_close_button(&before, &after, |left, right| left == right, chrome(),)
                 .unwrap_err()
                 .code,
             BrowserRefusalCode::BrowserWrongTargetRefused

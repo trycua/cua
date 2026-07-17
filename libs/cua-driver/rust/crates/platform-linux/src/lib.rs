@@ -33,6 +33,12 @@ pub mod proc_fs;
 pub mod browser_platform;
 
 #[cfg(target_os = "linux")]
+mod browser_setup_ui;
+
+#[cfg(target_os = "linux")]
+mod browser_consent_ui;
+
+#[cfg(target_os = "linux")]
 pub mod installed_apps;
 
 #[cfg(target_os = "linux")]

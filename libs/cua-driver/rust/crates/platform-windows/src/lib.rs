@@ -47,6 +47,11 @@ pub mod win32;
 pub mod browser_platform;
 
 #[cfg(target_os = "windows")]
+mod browser_consent_ui;
+#[cfg(target_os = "windows")]
+mod browser_setup_ui;
+
+#[cfg(target_os = "windows")]
 pub mod uia;
 
 #[cfg(target_os = "windows")]

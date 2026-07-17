@@ -4,14 +4,16 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
-    BrowserPlatform, PrepareAction, PrepareOutcome, PrepareRequest,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
+    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
-    BrowserClassification, BrowserEngineFamily, EndpointOwnershipMethod, EndpointOwnershipProof,
-    NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint,
-    ProcessFingerprint, Rect,
+    BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
+    EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
+    OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND, RECT};
@@ -43,6 +45,26 @@ fn is_firefox(name: &str) -> bool {
     name.to_ascii_lowercase()
         .split(|ch: char| !ch.is_ascii_alphanumeric())
         .any(|token| token == "firefox")
+}
+
+fn browser_product(name: &str) -> BrowserProduct {
+    let executable = name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(name)
+        .to_ascii_lowercase();
+    match executable.trim_end_matches(".exe") {
+        "chrome" => BrowserProduct::GoogleChrome,
+        "chromium" => BrowserProduct::Chromium,
+        "msedge" => BrowserProduct::MicrosoftEdge,
+        "brave" => BrowserProduct::Brave,
+        "vivaldi" => BrowserProduct::Vivaldi,
+        "opera" => BrowserProduct::Opera,
+        "arc" => BrowserProduct::Arc,
+        "electron" => BrowserProduct::Electron,
+        "firefox" => BrowserProduct::Firefox,
+        _ => BrowserProduct::Other,
+    }
 }
 
 fn loopback_websocket_port(url: &str) -> Option<u16> {
@@ -228,6 +250,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         })?;
         let chromium = is_chromium(&name);
         let gecko = is_firefox(&name);
+        let product_kind = browser_product(&name);
         Ok(BrowserClassification {
             is_browser: chromium || gecko,
             engine: if chromium {
@@ -237,6 +260,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             } else {
                 BrowserEngineFamily::Unknown
             },
+            product_kind,
             product: Some(name),
             channel: None,
             supports_cdp: chromium,
@@ -338,6 +362,246 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             }
         }
         Ok(None)
+    }
+
+    async fn discover_existing_profile_endpoint(
+        &self,
+        pid: i64,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let pid_u32 = u32::try_from(pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!("pid {pid} is outside the Windows process-id range"),
+            )
+        })?;
+        let mut discovered = Vec::new();
+        for port in loopback_ports_for_pid(pid_u32).await? {
+            if let Some(ws_url) = browser_websocket_url(port).await {
+                discovered.push((port, ws_url));
+            }
+        }
+        match discovered.as_slice() {
+            [] => Ok(None),
+            [(port, ws_url)] => Ok(Some(OwnedEndpoint {
+                ws_url: ws_url.clone(),
+                http_port: Some(*port),
+                ownership: EndpointOwnershipProof {
+                    method: EndpointOwnershipMethod::ListeningSocketPid,
+                    owner_pid: pid,
+                    detail: Some("Windows listener owner plus /json/version".to_owned()),
+                },
+            })),
+            _ => Err(refusal(
+                BrowserRefusalCode::BrowserBindingAmbiguous,
+                "multiple browser-level DevTools endpoints are owned by the approved process",
+            )),
+        }
+    }
+
+    async fn reprove_existing_profile_endpoint(
+        &self,
+        pid: i64,
+        expected_ws_url: &str,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let pid_u32 = u32::try_from(pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!("pid {pid} is outside the Windows process-id range"),
+            )
+        })?;
+        let Some(port) = loopback_websocket_port(expected_ws_url) else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                "the approved existing-profile endpoint is not loopback-only",
+            ));
+        };
+        if !loopback_ports_for_pid(pid_u32).await?.contains(&port) {
+            return Ok(None);
+        }
+        Ok(Some(OwnedEndpoint {
+            ws_url: expected_ws_url.to_owned(),
+            http_port: Some(port),
+            ownership: EndpointOwnershipProof {
+                method: EndpointOwnershipMethod::ListeningSocketPid,
+                owner_pid: pid,
+                detail: Some("Windows owner of exact approved endpoint".to_owned()),
+            },
+        }))
+    }
+
+    async fn setup_existing_profile_endpoint(
+        &self,
+        request: ExistingProfileSetupRequest,
+    ) -> Result<ExistingProfileSetupOutcome, BrowserRefusal> {
+        let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!(
+                    "approved existing-profile setup is not implemented for {:?}",
+                    request.browser
+                ),
+            )
+        })?;
+        let pid_u32 = u32::try_from(request.pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser pid is outside the Windows process-id range",
+            )
+        })?;
+        let hwnd = request.window_id;
+        let listeners_before = loopback_ports_for_pid(pid_u32).await?;
+        let handle =
+            tokio::task::spawn_blocking(move || crate::browser_setup_ui::enable(hwnd, descriptor))
+                .await
+                .map_err(|error| {
+                    refusal(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        format!(
+                            "could not inspect {}'s remote-debugging setup UI: {error}",
+                            descriptor.product_name
+                        ),
+                    )
+                })??;
+        let opened_setup_page = handle.opened_setup_page;
+        let enabled_remote_debugging = handle.enabled_remote_debugging;
+        let focused_setup_address_field = handle.focused_setup_address_field;
+        let foregrounded_window = handle.foregrounded_window;
+        let injected_global_input = handle.injected_global_input;
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(6);
+        let endpoint_result = loop {
+            let ports = match loopback_ports_for_pid(pid_u32).await {
+                Ok(ports) => ports,
+                Err(error) => break Err(error),
+            };
+            let mut endpoints = Vec::new();
+            for port in &ports {
+                if let Some(ws_url) = browser_websocket_url(*port).await {
+                    endpoints.push((*port, ws_url, "Windows owner plus /json/version"));
+                }
+            }
+            if endpoints.is_empty() {
+                let correlated = ports
+                    .iter()
+                    .copied()
+                    .filter(|port| !listeners_before.contains(port))
+                    .collect::<Vec<_>>();
+                if let [port] = correlated.as_slice() {
+                    endpoints.push((
+                        *port,
+                        format!("ws://127.0.0.1:{port}/devtools/browser"),
+                        "new PID-owned listener correlated with exact approved setup",
+                    ));
+                } else if correlated.len() > 1 {
+                    break Err(refusal(
+                        BrowserRefusalCode::BrowserBindingAmbiguous,
+                        format!(
+                            "{} exposed multiple newly correlated PID-owned listeners",
+                            descriptor.product_name
+                        ),
+                    ));
+                }
+            }
+            match endpoints.as_slice() {
+                [(port, ws_url, detail)] => {
+                    break Ok(OwnedEndpoint {
+                        ws_url: ws_url.clone(),
+                        http_port: Some(*port),
+                        ownership: EndpointOwnershipProof {
+                            method: EndpointOwnershipMethod::ListeningSocketPid,
+                            owner_pid: request.pid,
+                            detail: Some((*detail).to_owned()),
+                        },
+                    })
+                }
+                [] if std::time::Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                [] => {
+                    break Err(refusal(
+                        BrowserRefusalCode::BrowserRequiresSetup,
+                        format!(
+                            "{} did not expose a uniquely PID-owned loopback endpoint after the exact setup action",
+                            descriptor.product_name
+                        ),
+                    ))
+                }
+                _ => {
+                    break Err(refusal(
+                        BrowserRefusalCode::BrowserBindingAmbiguous,
+                        format!(
+                            "{} exposed multiple PID-owned endpoint candidates after the exact setup action",
+                            descriptor.product_name
+                        ),
+                    ))
+                }
+            }
+        };
+        let endpoint = match endpoint_result {
+            Ok(endpoint) => endpoint,
+            Err(error) => {
+                let error = tokio::task::spawn_blocking(move || handle.abort(error))
+                    .await
+                    .map_err(|join_error| {
+                        refusal(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            format!("could not roll back browser setup: {join_error}"),
+                        )
+                    })?;
+                return Err(error);
+            }
+        };
+        crate::browser_setup_ui::retain_pending(hwnd, handle)?;
+
+        Ok(ExistingProfileSetupOutcome {
+            opened_setup_page,
+            closed_setup_page: false,
+            enabled_remote_debugging,
+            focused_setup_address_field,
+            foregrounded_window,
+            injected_global_input,
+            endpoint: Some(endpoint),
+        })
+    }
+
+    async fn commit_existing_profile_setup(
+        &self,
+        request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        tokio::task::spawn_blocking(move || {
+            crate::browser_setup_ui::commit_pending(request.window_id)
+        })
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not commit exact browser setup cleanup: {error}"),
+            )
+        })?
+    }
+
+    async fn abort_existing_profile_setup(
+        &self,
+        request: ExistingProfileSetupRequest,
+        error: BrowserRefusal,
+    ) -> BrowserRefusal {
+        tokio::task::spawn_blocking(move || {
+            crate::browser_setup_ui::abort_pending(request.window_id, error)
+        })
+        .await
+        .unwrap_or_else(|join_error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not roll back exact browser setup: {join_error}"),
+            )
+        })
+    }
+
+    async fn handle_existing_profile_consent(
+        &self,
+        request: BrowserConsentRequest,
+    ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
+        crate::browser_consent_ui::handle(request).await
     }
 
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {

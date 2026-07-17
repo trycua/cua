@@ -51,6 +51,26 @@ pub enum BrowserEngineFamily {
     Unknown,
 }
 
+/// Browser product identity attested by the platform adapter. Engine family
+/// alone is insufficient for acting setup because Chromium products expose
+/// different internal URLs and accessibility labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserProduct {
+    GoogleChrome,
+    Chromium,
+    MicrosoftEdge,
+    Brave,
+    Vivaldi,
+    Opera,
+    Arc,
+    Electron,
+    Firefox,
+    Safari,
+    #[default]
+    Other,
+}
+
 /// Platform adapter's verdict on whether a pid is a browser and which
 /// engine family it belongs to. `supports_cdp` is the gate for the whole
 /// browser-tool route in v1 (Chromium-family only).
@@ -58,6 +78,9 @@ pub enum BrowserEngineFamily {
 pub struct BrowserClassification {
     pub is_browser: bool,
     pub engine: BrowserEngineFamily,
+    /// Stable product identity used for product-specific setup policy.
+    #[serde(default)]
+    pub product_kind: BrowserProduct,
     /// Human-readable product name, e.g. "Google Chrome", "Microsoft Edge".
     pub product: Option<String>,
     /// Release channel when known, e.g. "stable", "canary".

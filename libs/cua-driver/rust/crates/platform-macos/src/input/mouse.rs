@@ -87,6 +87,25 @@ pub fn click_at_xy_desktop(x: f64, y: f64, count: usize, button: &str) -> anyhow
     Ok(())
 }
 
+/// Click one exact desktop point, then restore the user's cursor position.
+///
+/// This is intentionally narrower than the public desktop click path. It is
+/// used only by approved, bounded setup flows after an accessibility element
+/// has proven the exact target point and window.
+pub fn click_at_xy_desktop_preserving_cursor(x: f64, y: f64) -> anyhow::Result<()> {
+    use core_graphics::display::CGDisplay;
+
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    let prior = CGEvent::new(source)
+        .map_err(|_| anyhow::anyhow!("CGEvent::new failed"))?
+        .location();
+    let result = click_at_xy_desktop(x, y, 1, "left");
+    let _ = CGDisplay::warp_mouse_cursor_position(prior);
+    unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
+    result
+}
+
 extern "C" {
     /// Reconnect the mouse-delta stream to the (just-warped) cursor position so a
     /// synthesized click hit-tests at the new location, not the pre-warp one.
@@ -929,15 +948,9 @@ pub fn scroll_wheel_at_xy(
         // into a bounded line delta for the event API.
         let wheel_y = (delta_y_per_tick / 120).clamp(-10, 10);
         let wheel_x = (delta_x_per_tick / 120).clamp(-10, 10);
-        let event = CGEvent::new_scroll_event(
-            source,
-            ScrollEventUnit::LINE,
-            2,
-            wheel_y,
-            wheel_x,
-            0,
-        )
-        .map_err(|_| anyhow::anyhow!("CGEvent::new_scroll_event failed"))?;
+        let event =
+            CGEvent::new_scroll_event(source, ScrollEventUnit::LINE, 2, wheel_y, wheel_x, 0)
+                .map_err(|_| anyhow::anyhow!("CGEvent::new_scroll_event failed"))?;
 
         let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
 

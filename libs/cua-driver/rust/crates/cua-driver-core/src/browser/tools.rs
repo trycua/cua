@@ -273,9 +273,10 @@ impl BrowserPrepareTool {
                 explicit, requires an exact interactive approval artifact, and never \
                 treats ordinary MCP transport approval as profile consent. On proven \
                 platforms, that approval also permits one bounded exact-window setup: \
-                open Chrome's internal remote-debugging page, toggle its uniquely matched \
-                per-instance checkbox, prove the PID-owned loopback endpoint, and close the \
-                temporary tab. Every visible effect is reported; ambiguity is refused."
+                open the recognized browser product's fixed remote-debugging page, toggle \
+                its uniquely matched per-instance checkbox, prove the PID-owned loopback \
+                endpoint, and close the temporary tab. Every visible effect is reported; \
+                ambiguity is refused."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -1105,8 +1106,8 @@ mod tests {
     use super::*;
     use crate::browser::platform::{BrowserPlatform, PrepareOutcome, PrepareRequest};
     use crate::browser::types::{
-        BrowserClassification, BrowserEngineFamily, NativeWindowInfo, OwnedEndpoint,
-        ProcessFingerprint,
+        BrowserClassification, BrowserEngineFamily, BrowserProduct, NativeWindowInfo,
+        OwnedEndpoint, ProcessFingerprint,
     };
 
     /// Minimal adapter: pid 1 is a CDP-capable browser with no endpoint
@@ -1124,6 +1125,7 @@ mod tests {
                 1 => BrowserClassification {
                     is_browser: true,
                     engine: BrowserEngineFamily::Chromium,
+                    product_kind: BrowserProduct::GoogleChrome,
                     product: Some("MockChrome".into()),
                     channel: Some("stable".into()),
                     supports_cdp: true,
@@ -1131,6 +1133,7 @@ mod tests {
                 3 => BrowserClassification {
                     is_browser: true,
                     engine: BrowserEngineFamily::Webkit,
+                    product_kind: BrowserProduct::Safari,
                     product: Some("MockSafari".into()),
                     channel: None,
                     supports_cdp: false,
@@ -1138,6 +1141,7 @@ mod tests {
                 _ => BrowserClassification {
                     is_browser: false,
                     engine: BrowserEngineFamily::Unknown,
+                    product_kind: BrowserProduct::Other,
                     product: None,
                     channel: None,
                     supports_cdp: false,

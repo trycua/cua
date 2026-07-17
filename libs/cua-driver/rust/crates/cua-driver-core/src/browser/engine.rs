@@ -411,10 +411,11 @@ impl BrowserEngine {
             let attempt = super::grant::MAX_RECONNECT_ATTEMPTS
                 .saturating_sub(grant.reconnect_attempts_remaining)
                 .saturating_add(1);
-            let reconnect =
-                self.pool
-                    .reconnect_existing(&endpoint.ws_url, old_generation, new_generation);
-            tokio::pin!(reconnect);
+            let mut reconnect = Box::pin(self.pool.reconnect_existing(
+                &endpoint.ws_url,
+                old_generation,
+                new_generation,
+            ));
             let reconnected = tokio::select! {
                 result = &mut reconnect => result,
                 _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
@@ -427,6 +428,10 @@ impl BrowserEngine {
                             reconnect.await
                         }
                         Err(error) => {
+                            // The reconnect future may be waiting on browser
+                            // consent. Cancel it before grant revocation so no
+                            // socket-pool resource can outlive this refusal.
+                            drop(reconnect);
                             if error.code == BrowserRefusalCode::BrowserConsentRevoked {
                                 self.revoke_existing_profile_grant(session, transport_session, pid)
                                     .await;

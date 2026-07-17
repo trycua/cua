@@ -2,12 +2,30 @@
 
 ## Status
 
-- **State:** Implemented locally; macOS Chrome evidence accepted, broader prompt adapters remain strict refusals
+- **State:** Implemented across macOS, Windows, Linux X11, and validated Linux Wayland; exact-SHA acceptance replay pending
 - **Plan date:** 2026-07-16
 - **Base:** `main` at `0835daa6` (`feat(cua-driver): add capability-aware browser tools`)
 - **Primary tracker:** [#2192](https://github.com/trycua/cua/issues/2192)
 - **Scope:** First-class, user-approved attachment to an existing Chromium profile, followed by bounded autonomous reconnection
-- **Delivery:** One local implementation branch, not pushed; can be split into independently reviewable pull requests before publication
+- **Delivery:** Draft PR [#2261](https://github.com/trycua/cua/pull/2261) on `codex/browser-existing-profile-reconnect-plan`; do not merge until canonical replay is attached
+
+## Implementation outcome
+
+- Chrome and Edge use exact AX setup and consent adapters on macOS and exact
+  UIA adapters on Windows. Chrome, Chromium, and Edge have exact product
+  descriptors on Linux, with AT-SPI adapters for X11 and the validated native
+  Sway route.
+- Setup is bounded and visible: it opens one fixed internal page in the
+  approved window, toggles one exact per-instance control, proves a PID-owned
+  loopback endpoint, handles one exact browser-owned consent action, closes the
+  temporary tab, and reports or rolls back its own effects.
+- macOS Lume passed Chrome and Edge; a live Windows RDP user session passed
+  Chrome and Edge; Linux X11 passed Chrome; native Sway passed Chrome while a
+  second Chrome process was open. These current runs are diagnostic until the
+  final commit is replayed from its exact source marker.
+- Safari, Firefox, products without an exact setup descriptor, unrecognized UI
+  locales, and Wayland sessions without exact compositor identity remain
+  structured refusals.
 
 This plan is based on a read-only audit of the merged browser tools, platform
 adapters, approval path, CDP transport, legacy macOS page implementation,

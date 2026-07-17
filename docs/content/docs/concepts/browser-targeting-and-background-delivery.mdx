@@ -76,12 +76,14 @@ now belongs to another document.
 Browser inspection never enables remote debugging or restarts a browser as a
 side effect. `browser_prepare` is a separate destructive approval boundary. It
 may launch another browser with a driver-owned `isolated_new` or
-`isolated_named` profile. For an existing macOS Chrome profile, a stronger
-operation-bound approval may instead authorize one exact-window AX setup of
-Chrome's per-instance remote-debugging switch. That route never copies profile
-data, edits profile files, restarts, or terminates the selected process, and it
-reports its temporary-tab and setting effects. Remote-debugging arguments
-passed through `launch_app` are refused.
+`isolated_named` profile. For an existing supported Chromium profile, a
+stronger operation-bound approval may instead authorize one exact-window AX,
+UIA, or AT-SPI setup of the browser's per-instance remote-debugging switch. The
+route is proven for Chrome and Edge on macOS and Windows and for Chrome in the
+validated Linux X11 and Sway lanes. It never copies profile data, edits profile
+files, restarts, or terminates the selected process, and it reports its
+temporary-tab and setting effects. Remote-debugging arguments passed through
+`launch_app` are refused.
 
 The setup transition and protocol attachment are separate proofs. A listener
 must be loopback-only, attributed to the approved pid, and either discoverable

@@ -50,13 +50,15 @@ approved destructive call. `isolated_new` processes and their complete child
 trees are reaped and the marked profile is removed when the owning session
 ends.
 
-Existing-profile attachment is experimental for Chrome on macOS. A real-browser
-test proves a manually enabled per-instance endpoint, exact interactive
-approval, the browser-owned AX consent action, PID-owned endpoint discovery,
-and an exact native/CDP rebind without launching, restarting, copying, or
-modifying the profile. Windows, Linux, Edge, and other Chromium products return
-a structured refusal unless their endpoint already satisfies the independently
-proven route; prompt automation is not advertised for them yet.
+Existing-profile attachment is proven for Chrome and Edge on macOS and Windows,
+for Chrome on Linux X11, and for Chrome in the native Sway lane. The same exact
+descriptor route covers Chromium and Edge on Linux, subject to a complete
+AT-SPI renderer tree and product-specific acceptance evidence. The harness
+proves exact interactive approval, setup-control identity, browser-owned
+consent, PID-owned loopback endpoint discovery, temporary-tab cleanup, focus
+restoration, and an exact native/CDP rebind without restarting, copying, or
+editing the profile. Unsupported products and unproven Wayland compositors
+return a structured refusal.
 
 ## Linux window systems
 

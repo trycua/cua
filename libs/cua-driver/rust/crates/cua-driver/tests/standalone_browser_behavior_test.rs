@@ -1855,7 +1855,6 @@ fn run_multi_tab(spec: &BrowserSpec) {
         *evidence = recording_evidence(fixture.driver.recording_dir());
         let session = format!("standalone-multi-tab-{}", fixture.pid);
         let _ = bind(&mut fixture, &session);
-        let first_target = cdp_target_for_url(fixture.cdp_port, fixture.server.page_url());
         let second_server = BrowserFixtureServer::start(&standalone_fixture_html());
         let created = harness_cdp_call(
             fixture.cdp_port,
@@ -1863,16 +1862,39 @@ fn run_multi_tab(spec: &BrowserSpec) {
             serde_json::json!({
                 "url": second_server.page_url(),
                 "newWindow": false,
+                "background": true,
             }),
         );
         assert!(created["targetId"].is_string(), "{created}");
         wait_for_observed(&second_server, "WEB_HARNESS_MARKER_v1");
-        let activated = harness_cdp_call(
-            fixture.cdp_port,
-            "Target.activateTarget",
-            serde_json::json!({"targetId": first_target}),
-        );
-        assert!(activated.is_object(), "{activated}");
+
+        // Begin the background proof only after Chromium has honored the
+        // explicit background-tab creation posture and the first fixture is
+        // observably still active.
+        let setup_deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let state = fixture.driver.call(
+                "get_browser_state",
+                serde_json::json!({
+                    "pid": fixture.pid as i64,
+                    "window_id": fixture.window_id,
+                    "session": session,
+                }),
+            );
+            let first_is_active = state.structured()["tabs"]
+                .as_array()
+                .and_then(|tabs| tabs.iter().find(|tab| tab["active"] == true))
+                .is_some_and(|tab| tab["url"] == fixture.server.page_url());
+            if first_is_active {
+                break;
+            }
+            assert!(
+                Instant::now() < setup_deadline,
+                "fixture setup did not make the first tab observably active: {}",
+                state.raw
+            );
+            thread::sleep(Duration::from_millis(100));
+        }
 
         run_with_background_oracles(&mut fixture, |fixture| {
             let deadline = Instant::now() + Duration::from_secs(5);

@@ -7,7 +7,7 @@ use std::{
 };
 
 use cua_driver_core::browser::{
-    BrowserRefusal, BrowserRefusalCode, BrowserSetupDescriptor,
+    BrowserProduct, BrowserRefusal, BrowserRefusalCode, BrowserSetupDescriptor,
     EXISTING_PROFILE_SETUP_READY_TIMEOUT,
 };
 
@@ -219,6 +219,8 @@ pub struct SetupUiHandle {
     window_id: u64,
     descriptor: &'static BrowserSetupDescriptor,
     trusted_setup_navigation: bool,
+    enable_attempted: bool,
+    trusted_checkbox_fallback_attempted: bool,
     pub opened_setup_page: bool,
     pub enabled_remote_debugging: bool,
     pub focused_setup_address_field: bool,
@@ -364,6 +366,8 @@ pub fn enable(
             window_id,
             descriptor,
             trusted_setup_navigation: false,
+            enable_attempted: false,
+            trusted_checkbox_fallback_attempted: false,
             opened_setup_page: false,
             enabled_remote_debugging: false,
             focused_setup_address_field: false,
@@ -376,6 +380,8 @@ pub fn enable(
             window_id,
             descriptor,
             trusted_setup_navigation: true,
+            enable_attempted: false,
+            trusted_checkbox_fallback_attempted: false,
             opened_setup_page: true,
             enabled_remote_debugging: false,
             focused_setup_address_field: true,
@@ -399,8 +405,13 @@ pub fn enable(
         let tree = crate::atspi::walk_tree(pid, window_id, None);
         match exact_setup_checkbox(&tree.nodes, descriptor, handle.trusted_setup_navigation) {
             Ok(Some(node)) => match node.checked {
-                Some(true) => return Ok(handle),
-                Some(false) if !handle.enabled_remote_debugging => {
+                Some(true) => {
+                    if handle.enable_attempted {
+                        handle.enabled_remote_debugging = true;
+                    }
+                    return Ok(handle);
+                }
+                Some(false) if !handle.enable_attempted => {
                     let index = node.element_index.expect("actionable checkbox index");
                     if let Err(error) = crate::atspi::perform_action(pid, index) {
                         return Err(handle.abort(refusal(
@@ -408,7 +419,68 @@ pub fn enable(
                             format!("the exact checkbox action failed: {error}"),
                         )));
                     }
-                    handle.enabled_remote_debugging = true;
+                    handle.enable_attempted = true;
+                }
+                Some(false)
+                    if descriptor.product == BrowserProduct::MicrosoftEdge
+                        && !handle.trusted_checkbox_fallback_attempted =>
+                {
+                    handle.trusted_checkbox_fallback_attempted = true;
+                    handle.foregrounded_window = true;
+                    let trusted_navigation = handle.trusted_setup_navigation;
+                    let clicked = with_target_foreground(pid, window_id, || {
+                        std::thread::sleep(Duration::from_millis(60));
+                        let tree = crate::atspi::walk_tree(pid, window_id, None);
+                        let checkbox = exact_setup_checkbox(
+                            &tree.nodes,
+                            descriptor,
+                            trusted_navigation,
+                        )
+                        .map_err(|error| anyhow::anyhow!(error.message))?
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "the exact Microsoft Edge remote-debugging checkbox became stale before the trusted click"
+                            )
+                        })?;
+                        if checkbox.checked == Some(true) {
+                            return Ok(false);
+                        }
+                        if checkbox.checked != Some(false) {
+                            anyhow::bail!(
+                                "the exact Microsoft Edge remote-debugging checkbox had an unknown state before the trusted click"
+                            );
+                        }
+                        let index = checkbox.element_index.expect("actionable checkbox index");
+                        let (x, y, width, height) = crate::atspi::get_element_bounds(pid, index)?;
+                        if width <= 1 || height <= 1 {
+                            anyhow::bail!(
+                                "the exact Microsoft Edge remote-debugging checkbox had empty screen bounds"
+                            );
+                        }
+                        let center_x = x
+                            .checked_add(i32::try_from(width / 2)?)
+                            .ok_or_else(|| anyhow::anyhow!("checkbox center x overflowed"))?;
+                        let center_y = y
+                            .checked_add(i32::try_from(height / 2)?)
+                            .ok_or_else(|| anyhow::anyhow!("checkbox center y overflowed"))?;
+                        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+                            crate::wayland::click_desktop(center_x, center_y, 1, 1)?;
+                        } else {
+                            crate::input::send_click_xtest_desktop(center_x, center_y, 1, 1)?;
+                        }
+                        Ok(true)
+                    });
+                    match clicked {
+                        Ok(injected) => handle.injected_global_input |= injected,
+                        Err(error) => {
+                            return Err(handle.abort(refusal(
+                                BrowserRefusalCode::BrowserWrongTargetRefused,
+                                format!(
+                                    "could not toggle the exact Microsoft Edge remote-debugging checkbox: {error}"
+                                ),
+                            )))
+                        }
+                    }
                 }
                 Some(false) => {}
                 None => {

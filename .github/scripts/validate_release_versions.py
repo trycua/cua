@@ -36,6 +36,7 @@ def require_equal(product: str, expected: str, values: dict[str, str]) -> None:
 
 def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
     base = root / "libs/cua-driver"
+    docs = root / "docs/content/docs/reference/cua-driver"
     expected = (base / "rust/VERSION").read_text().strip()
     cargo = tomllib.loads((base / "rust/Cargo.toml").read_text())
     python_project = tomllib.loads((base / "python/pyproject.toml").read_text())
@@ -51,6 +52,15 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
         "scripts/install.ps1": read_match(
             base / "scripts/install.ps1",
             r'^\$Script:CuaDriverRsBakedVersion\s*=\s*"([^"]+)"',
+        ),
+        "docs/cli-reference.mdx:metadata": read_match(
+            docs / "cli-reference.mdx", r"^  Version: (\S+)$"
+        ),
+        "docs/cli-reference.mdx:body": read_match(
+            docs / "cli-reference.mdx", r"Documented against Cua Driver \*\*(\S+)\*\*\."
+        ),
+        "docs/mcp-tools.mdx:metadata": read_match(
+            docs / "mcp-tools.mdx", r"^  Version: (\S+)$"
         ),
     }
 

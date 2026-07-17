@@ -1,0 +1,102 @@
+name: "CI: Release metadata"
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Determine product release scope
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          PRODUCT_CHANGED=false
+          while IFS= read -r path; do
+            case "$path" in
+              libs/lume/*)
+                PRODUCT_CHANGED=true
+                ;;
+              libs/cua-driver/docs/*|libs/cua-driver/python/*|libs/cua-driver/tests/*)
+                ;;
+              libs/cua-driver/*)
+                PRODUCT_CHANGED=true
+                ;;
+            esac
+          done < <(git diff --name-only "$BASE_SHA...$HEAD_SHA")
+          echo "product_changed=$PRODUCT_CHANGED" >> "$GITHUB_OUTPUT"
+
+      - name: Validate squash-release title
+        if: steps.scope.outputs.product_changed == 'true'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          python3 .github/scripts/release_attribution.py validate-title \
+            --title "$PR_TITLE"
+
+      - name: Validate checked-in release versions
+        run: python3 .github/scripts/validate_release_versions.py --product all
+
+      - name: Preflight trusted Release Please attribution
+        if: >-
+          steps.scope.outputs.product_changed == 'true' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          startsWith(github.event.pull_request.head.ref, 'release-please--branches--')
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA")
+          if grep -qx 'libs/cua-driver/rust/VERSION' <<<"$CHANGED"; then
+            VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/VERSION)
+            python3 .github/scripts/release_attribution.py collect \
+              --repository "${{ github.repository }}" \
+              --product cua-driver-rs \
+              --display-name "Cua Driver" \
+              --version "$VERSION" \
+              --tag "cua-driver-rs-v$VERSION" \
+              --tag-prefix cua-driver-rs-v \
+              --ref "$HEAD_SHA" \
+              --sha "$HEAD_SHA" \
+              --path libs/cua-driver \
+              --exclude-path libs/cua-driver/docs \
+              --exclude-path libs/cua-driver/python \
+              --exclude-path libs/cua-driver/tests \
+              --changelog libs/cua-driver/rust/CHANGELOG.md \
+              --output /tmp/cua-driver-release-manifest.json
+          fi
+          if grep -qx 'libs/lume/VERSION' <<<"$CHANGED"; then
+            VERSION=$(tr -d '[:space:]' < libs/lume/VERSION)
+            python3 .github/scripts/release_attribution.py collect \
+              --repository "${{ github.repository }}" \
+              --product lume \
+              --display-name Lume \
+              --version "$VERSION" \
+              --tag "lume-v$VERSION" \
+              --tag-prefix lume-v \
+              --ref "$HEAD_SHA" \
+              --sha "$HEAD_SHA" \
+              --path libs/lume \
+              --changelog libs/lume/CHANGELOG.md \
+              --output /tmp/lume-release-manifest.json
+          fi

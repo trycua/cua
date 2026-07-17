@@ -32,6 +32,28 @@ workarounds when known.
 5. Run the formatters and linters owned by the changed component.
 6. Open a focused pull request that explains behavior, validation, and known gaps.
 
+Use a Conventional Commit title because the squash-merge title becomes the
+release entry. `fix(driver): preserve input while reconnecting` produces a
+patch release, `feat(lume): add a VM readiness probe` produces a minor release,
+and `feat(driver)!: remove the legacy event endpoint` marks a breaking change.
+Use `docs`, `test`, `ci`, or `chore` when the pull request has no user-facing
+release entry.
+
+## Preserve Contributor Authorship
+
+Keep the original author when external code or design ships in Cua. Merge the
+contributor's pull request when possible. If you move their commit, use
+`git cherry-pick -x <sha>` so the original author and source commit remain in
+history.
+
+If a maintainer adapts material parts of a contribution in a new commit,
+include a `Co-authored-by` trailer with the contributor's GitHub no-reply email
+and link the source pull request in the landing pull request. Use a line such as
+`Salvaged from #123` so release automation can recover the source author.
+Preserve human coauthor trailers during rebases and squash merges. Honor public
+credit opt-out requests and keep security-report attribution private until the
+report can be disclosed.
+
 Root pre-commit hooks are optional local helpers. Install them with:
 
 ```bash

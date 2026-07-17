@@ -47,8 +47,6 @@ jobs:
             ["libs/qemu-docker/android/"]="docker/qemu-android"
             ["libs/qemu-docker/linux/"]="docker/qemu-linux"
             ["libs/qemu-docker/windows/"]="docker/qemu-windows"
-            ["libs/lume/"]="lume"
-            ["libs/cua-driver/rust/"]="cua-driver-rs"
           )
 
           # Find affected services
@@ -109,16 +107,6 @@ jobs:
             BODY+="\nAdd \`release:<service>\` labels to auto-release on merge"
             BODY+=" (+ optional \`bump:minor\` or \`bump:major\`, default is patch)."
             BODY+="\nOr add \`no-release\` to skip."
-          fi
-
-          if printf '%s\n' "${AFFECTED[@]}" | grep -qx 'cua-driver-rs'; then
-            BODY+="\n\n### cua-driver desktop release validation\n\n"
-            BODY+="Before adding the release label, a maintainer records green runs on the exact release SHA:\n"
-            BODY+="- [ ] [Windows canonical matrix](https://github.com/${REPO}/actions/workflows/e2e-rust-windows.yml)\n"
-            BODY+="- [ ] macOS Lume maintainer gate: \`libs/cua-driver/tests/runners/macos-lume/run-all.sh\`, with the typed summary attached to the PR\n"
-            BODY+="- [ ] [Linux X11 canonical matrix](https://github.com/${REPO}/actions/workflows/e2e-rust-linux.yml)\n"
-            BODY+="- [ ] [Linux Sway canonical matrix](https://github.com/${REPO}/actions/workflows/e2e-rust-linux-wayland.yml) with environment \`sway\`\n"
-            BODY+="- [ ] Result links and remaining experimental environment gaps are recorded in the PR\n"
           fi
 
           # Delete previous reminder comment if exists, then post new one

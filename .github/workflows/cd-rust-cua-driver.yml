@@ -28,6 +28,12 @@ on:
 
 permissions:
   contents: write
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: cd-cua-driver-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   # ── Linux (x86_64 + arm64) ───────────────────────────────────────────────────
@@ -107,7 +113,7 @@ jobs:
             rust-cua-driver-rs-linux-${{ matrix.arch }}-
       - name: Build (release)
         working-directory: libs/cua-driver/rust
-        run: cargo build -p cua-driver --release --features portal-input --target ${{ matrix.target }}
+        run: cargo build --locked -p cua-driver --release --features portal-input --target ${{ matrix.target }}
       - name: Package
         working-directory: libs/cua-driver/rust
         run: |
@@ -175,7 +181,7 @@ jobs:
         # `cua-driver-uia.exe` is the Windows-only sibling daemon that runs
         # at UIAccess integrity so SendInput / UI Automation can cross UIPI
         # into UWP apps — see crates/cua-driver-uia/ and #1602.
-        run: cargo build -p cua-driver -p cua-driver-uia --release --target ${{ matrix.target }}
+        run: cargo build --locked -p cua-driver -p cua-driver-uia --release --target ${{ matrix.target }}
       - name: Package
         working-directory: libs/cua-driver/rust
         shell: pwsh
@@ -284,10 +290,10 @@ jobs:
             rust-cua-driver-rs-darwin-universal-
       - name: Build arm64
         working-directory: libs/cua-driver/rust
-        run: cargo build -p cua-driver --release --target aarch64-apple-darwin
+        run: cargo build --locked -p cua-driver --release --target aarch64-apple-darwin
       - name: Build x86_64
         working-directory: libs/cua-driver/rust
-        run: cargo build -p cua-driver --release --target x86_64-apple-darwin
+        run: cargo build --locked -p cua-driver --release --target x86_64-apple-darwin
       - name: Create universal binary (lipo)
         working-directory: libs/cua-driver/rust
         run: |
@@ -434,38 +440,8 @@ jobs:
         with:
           path: artifacts
 
-      # Bake the new version into the working-tree install scripts BEFORE
-      # staging them for the release upload, so the per-tag release assets
-      # carry version N's baked default — not version N-1's. The same sed
-      # patterns run again later under `Bake version into install scripts
-      # (commit + push)` to land the change on main; doing the in-tree
-      # rewrite here is idempotent (sed on an already-baked file is a
-      # no-op) and ensures the GitHub Release page and main-branch commit
-      # stay in lockstep.
-      - name: Bake version into install scripts (in-tree)
-        if: startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          # GNU sed (ubuntu-latest). The Swift CD workflow runs on
-          # macos-15 and uses the BSD form (`sed -i ''`).
-          # The Rust install logic now lives at
-          # libs/cua-driver/scripts/_install-rust.sh (a private helper
-          # invoked by libs/cua-driver/scripts/install.sh by default).
-          sed -i \
-            "s/^CUA_DRIVER_RS_BAKED_VERSION=.*/CUA_DRIVER_RS_BAKED_VERSION=\"${VERSION}\"/" \
-            libs/cua-driver/scripts/_install-rust.sh
-
-          # install.ps1 lives at the canonical Swift install dir;
-          # PowerShell line starts with `$Script:` — escape the `$` for
-          # sed's BRE so it matches the literal dollar sign.
-          sed -i \
-            "s/^\\\$Script:CuaDriverRsBakedVersion = .*/\\\$Script:CuaDriverRsBakedVersion = \"${VERSION}\"/" \
-            libs/cua-driver/scripts/install.ps1
-
-          echo "Baked version ${VERSION} into working-tree install scripts:"
-          grep -E '^CUA_DRIVER_RS_BAKED_VERSION=' libs/cua-driver/scripts/_install-rust.sh
-          grep -E '^\$Script:CuaDriverRsBakedVersion = ' libs/cua-driver/scripts/install.ps1
+      - name: Verify checked-in release versions
+        run: python3 .github/scripts/validate_release_versions.py --product driver
 
       - name: Stage release files
         run: |
@@ -480,9 +456,8 @@ jobs:
           # The tag-pinned asset URLs below are a convenience for users who
           # want to audit the exact installer that shipped with a release.
           #
-          # The freshly-baked scripts (rewritten in the prior step) are
-          # what gets copied here, so the per-tag release assets carry the
-          # current version's baked default — not the previous version's.
+          # Release Please updates checked-in versions before tagging, so
+          # these assets match the immutable tag without a later main push.
           # Both user-facing installers live under libs/cua-driver/scripts/:
           # install.sh is the canonical macOS/Linux installer and delegates
           # to the Rust _install-rust.sh helper by default. install.ps1 is
@@ -528,174 +503,61 @@ jobs:
           echo "Release files:"
           ls -lh release-upload/
 
-      - name: Generate SHA256 checksums
-        id: checksums
-        run: |
-          cd release-upload
-          {
-            echo "## SHA256 Checksums"
-            echo '```'
-            shasum -a 256 cua-driver-rs-*.{tar.gz,zip} 2>/dev/null | sort
-            echo '```'
-          } > checksums.txt
-          checksums=$(cat checksums.txt)
-          echo "checksums<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$checksums" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
-
-      - name: Generate path-filtered release notes
-        id: notes
-        run: |
-          PREV_TAG=$(git tag -l "cua-driver-rs-v*" --sort=-v:refname \
-            | grep -v "^${{ github.ref_name }}$" \
-            | head -n 1 || echo "")
-          if [ -n "$PREV_TAG" ]; then
-            NOTES=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h) by @%an" -- "libs/cua-driver/rust" | head -50)
-          else
-            NOTES=$(git log --pretty=format:"* %s (%h) by @%an" -- "libs/cua-driver/rust" | head -50)
-          fi
-          [ -z "$NOTES" ] && NOTES="* No path-specific changes found"
-          {
-            echo "RELEASE_NOTES<<EOF"
-            echo "## What's Changed"
-            echo ""
-            echo "$NOTES"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release-upload/*
-          prerelease: true
-          body: |
-            > **cua-driver-rs**
-            >
-            > `cua-driver-rs` is the Rust implementation of
-            > [`cua-driver`](https://github.com/trycua/cua/tree/main/libs/cua-driver),
-            > shipping the same user-facing `cua-driver` binary for macOS and
-            > Windows, plus Linux pre-release artifacts for early testing.
-            >
-            > The Rust port and the Swift driver publish to the same GitHub repo under
-            > **distinct tag prefixes** (`cua-driver-rs-v*` vs `cua-driver-v*`), so their
-            > release artifacts do not collide.
-
-            ${{ steps.notes.outputs.RELEASE_NOTES }}
-
-            ${{ steps.checksums.outputs.checksums }}
-
-            ### Install (macOS / Linux pre-release)
-
-            ```bash
-            /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
-            ```
-
-            The shell installer covers macOS and the Linux pre-release backend
-            and installs the Rust implementation by default. Linux artifacts are
-            published for early testing and are not yet an official supported
-            release tier.
-
-            ### Install (Windows)
-
-            ```powershell
-            irm https://cua.ai/driver/install.ps1 | iex
-            ```
-
-            The installer auto-detects host architecture (x86_64 / arm64) and uses
-            directory junctions for the install layout, so it runs without admin
-            and without Developer Mode.
-
-            ### Artifacts
-
-            **macOS (universal — arm64 + x86_64 in one binary, like the Swift cua-driver)**
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-universal.tar.gz` — directory tarball with LICENSE + `CuaDriver.app` bundle (install.sh expects this layout)
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-arm64.tar.gz` — same payload, named for arm64 callers
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-x86_64.tar.gz` — same payload, named for x86_64 callers
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-universal-binary.tar.gz` — bare universal binary (single file at archive root; **no** .app — bypasses the TCC auto-relaunch path)
-
-            **Linux pre-release**
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz` — directory tarball
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-x86_64-binary.tar.gz` — bare binary
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-arm64.tar.gz` — directory tarball (Linux on ARM / aarch64)
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-arm64-binary.tar.gz` — bare binary (Linux on ARM / aarch64)
-
-            **Windows**
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-windows-x86_64.zip` — directory zip
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-windows-x86_64-binary.zip` — bare `cua-driver.exe`
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-windows-arm64.zip` — directory zip (Windows on ARM)
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-windows-arm64-binary.zip` — bare `cua-driver.exe` (Windows on ARM)
-
-            **Installer scripts**
-            - `install.sh` — macOS / Linux pre-release one-liner installer
-            - `install.ps1` — Windows one-liner installer
-            - `uninstall.sh` — macOS / Linux pre-release one-liner uninstaller
-            - `uninstall.ps1` — Windows one-liner uninstaller
-          generate_release_notes: false
-          make_latest: false
-
-      # The bump-version workflow uses this same GitHub App so its pushes
-      # bypass the "Changes must be made through a pull request" ruleset
-      # on main. The default GITHUB_TOKEN (github-actions[bot]) is NOT on
-      # the bypass list and gets rejected here. Mirror the Swift CD
-      # workflow's auth setup so the bake-version push lands.
-      - name: Generate GitHub App token (for bake-version push)
-        id: app-token
-        if: startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-
-      - name: Bake version into install scripts (commit + push)
-        if: startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+      - name: Collect PR-first release attribution
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # Re-authenticate the origin remote with the app token so the
-          # push uses the bypass-enabled identity, not the default
-          # github-actions[bot] credentials baked in by actions/checkout.
-          #
-          # actions/checkout sets `http.https://github.com/.extraheader`
-          # with the default GITHUB_TOKEN; that header otherwise overrides
-          # the URL-embedded App token on the push (two Authorization
-          # headers sent → server takes the extraheader → push rejected
-          # by the main-branch ruleset). Drop it so only the App token's
-          # auth survives.
-          git config --unset-all "http.https://github.com/.extraheader" || true
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-          git fetch origin main
-          git checkout -B bake-version origin/main
+          mkdir -p release-metadata
+          python3 .github/scripts/release_attribution.py collect \
+            --repository "${{ github.repository }}" \
+            --product cua-driver-rs \
+            --display-name "Cua Driver" \
+            --version "${{ steps.version.outputs.version }}" \
+            --tag "${{ github.ref_name }}" \
+            --tag-prefix cua-driver-rs-v \
+            --sha "${{ github.sha }}" \
+            --path libs/cua-driver \
+            --exclude-path libs/cua-driver/docs \
+            --exclude-path libs/cua-driver/python \
+            --exclude-path libs/cua-driver/tests \
+            --changelog libs/cua-driver/rust/CHANGELOG.md \
+            --asset-dir release-upload \
+            --output release-metadata/release-manifest.json
 
-          # Replay the same sed the earlier in-tree step ran against the
-          # working tree — but here against origin/main, so the commit we
-          # push back to main has the new baked version regardless of
-          # whether the in-tree step ran (it's idempotent and the on-disk
-          # working-tree edits got discarded by the checkout above).
-          #
-          # The release job runs on ubuntu-latest, so this uses GNU sed
-          # syntax (`sed -i` with no empty-string arg) — the Swift CD
-          # workflow's bake step runs on macos-15 and uses the BSD form
-          # (`sed -i ''`).
-          # Rust install logic lives at libs/cua-driver/scripts/_install-rust.sh
-          # (private helper invoked by the canonical libs/cua-driver/scripts/install.sh
-          # by default).
-          sed -i \
-            "s/^CUA_DRIVER_RS_BAKED_VERSION=.*/CUA_DRIVER_RS_BAKED_VERSION=\"${VERSION}\"/" \
-            libs/cua-driver/scripts/_install-rust.sh
+      - name: Render release body and announcement draft
+        run: |
+          python3 .github/scripts/release_attribution.py render \
+            --manifest release-metadata/release-manifest.json \
+            --body release-metadata/release-body.md \
+            --social release-metadata/release-social.txt \
+            --card release-metadata/release-card.svg \
+            --alt release-metadata/release-card-alt.txt \
+            --footer .github/release-notes/cua-driver-rs.md
+          cp release-metadata/release-manifest.json release-upload/
+          if [ -f release-metadata/release-card.svg ]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends librsvg2-bin
+            rsvg-convert release-metadata/release-card.svg \
+              --output release-metadata/release-card.png
+            cp release-metadata/release-card.png release-upload/
+          fi
 
-          # install.ps1 lives at libs/cua-driver/scripts/install.ps1
-          # (canonical Windows entry point). The PowerShell line starts
-          # with `$Script:` — escape the `$` for sed's BRE so it matches
-          # the literal dollar sign.
-          sed -i \
-            "s/^\\\$Script:CuaDriverRsBakedVersion = .*/\\\$Script:CuaDriverRsBakedVersion = \"${VERSION}\"/" \
-            libs/cua-driver/scripts/install.ps1
+      - name: Preserve release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-release-metadata-${{ steps.version.outputs.version }}
+          path: release-metadata/
+          if-no-files-found: error
+          retention-days: 90
 
-          git config user.name  "trycua-release[bot]"
-          git config user.email "trycua-release[bot]@users.noreply.github.com"
-          git add libs/cua-driver/scripts/_install-rust.sh libs/cua-driver/scripts/install.ps1
-          git commit -m "chore(cua-driver-rs): bake version ${VERSION} into install scripts [skip ci]"
-          git push origin bake-version:main
+      - name: Publish the verified Release Please draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/github_release.py \
+            --repository "${{ github.repository }}" \
+            --tag "${{ github.ref_name }}" \
+            --sha "${{ github.sha }}" \
+            --body release-metadata/release-body.md \
+            --asset-dir release-upload \
+            --prerelease

@@ -501,8 +501,7 @@ done
 #
 # Version is resolved in priority order:
 #   1. CUA_DRIVER_RS_VERSION env var (explicit pin)
-#   2. CUA_DRIVER_RS_BAKED_VERSION below (set automatically by CD after
-#      each release — no API call needed)
+#   2. CUA_DRIVER_RS_BAKED_VERSION below (updated in the release PR)
 #   3. GitHub Releases API (fallback for dev / un-baked checkouts;
 #      unauthenticated = 60 req/hr per IP)
 #
@@ -512,8 +511,8 @@ done
 # API fallback only fires when this script is run from a branch where
 # the baked line hasn't been updated yet (dev / pre-release checkouts).
 #
-# ~~~ BAKED_VERSION: auto-updated by CD workflow after each release — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.8.3"
+# ~~~ BAKED_VERSION: auto-updated in the release PR — do not edit ~~~
+CUA_DRIVER_RS_BAKED_VERSION="0.8.3" # x-release-please-version
 # ~~~ END_BAKED_VERSION ~~~
 
 if [[ -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then

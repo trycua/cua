@@ -42,8 +42,6 @@ jobs:
           SERVICE_TAG_DIR["docker/qemu-android"]="docker-cua-qemu-android-v|libs/qemu-docker/android/"
           SERVICE_TAG_DIR["docker/qemu-linux"]="docker-cua-qemu-linux-v|libs/qemu-docker/linux/"
           SERVICE_TAG_DIR["docker/qemu-windows"]="docker-cua-qemu-windows-v|libs/qemu-docker/windows/"
-          SERVICE_TAG_DIR["lume"]="lume-v|libs/lume/"
-          SERVICE_TAG_DIR["cua-driver-rs"]="cua-driver-rs-v|libs/cua-driver/rust/"
 
           UNRELEASED=""
           UNRELEASED_COUNT=0

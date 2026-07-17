@@ -1,6 +1,6 @@
-# cua-driver-rs — macOS specifics
+# cua-driver — macOS specifics
 
-This file holds macOS-only material that used to live in `SKILL.md`.
+This file is the macOS-specific extension to `SKILL.md`.
 The cross-platform core (snapshot invariant, CLI/MCP defaults,
 behavior matrix, canonical loop, pixel-click contract, common error
 patterns) is in `SKILL.md`. Read this in addition to `SKILL.md` when
@@ -62,38 +62,17 @@ frontmost state:
   the receiving app interprets "user wants to type here" as
   activation intent and raises its window to be key. Even when
   delivered to a backgrounded pid via `hotkey`, the downstream app
-  pulls focus. **For omnibox navigation specifically**, the correct
-  path is `launch_app({bundle_id: "com.google.Chrome", urls:
-  ["https://…"]})` — no omnibox dance, no `⌘L`, no focus-steal. Do
-  NOT try `set_value` on the omnibox: Chrome's commit logic requires
-  a "user-typed" signal that neither an AX value write nor
-  `CGEvent.postToPid` keystrokes supply from a backgrounded pid —
-  the URL lands in the field but Return fires as a no-op. See
-  `WEB_APPS.md` → "Navigate to a URL" for the full pattern. The
-  general principle: a shortcut that says "put my cursor inside this
-  app" is a focus-steal; a shortcut that says "do this thing" (copy,
-  save, quit) is fine.
+  pulls focus. For an exactly bound Chromium page, use
+  `browser_navigate`; otherwise use `launch_app({bundle_id, urls})`
+  to create a separately addressable window. Do not emulate navigation
+  by writing the omnibox and pressing Return in a background window.
 - **Tab-switching shortcuts in browsers (`⌘1..⌘9`, `⌘]`, `⌘[`,
   `⌘⇧[`, `⌘⇧]`) are visibly disruptive even when delivered to a
   backgrounded pid.** The app's key handler processes the shortcut,
-  the window re-renders the new tab's content, the user sees their
-  tabs flipping. There is no AX-only workaround: page content (HTML,
-  form state, `AXWebArea`) populates only for the focused tab;
-  inspecting a background tab requires activating it, which is the
-  visible flip. Observed with Dia; the same mechanic applies to every
-  Chromium-family browser (Chrome, Arc, Brave, Edge).
-
-  **Prefer the windows-over-tabs pattern**: for each URL you need to
-  drive backgrounded, use `launch_app({bundle_id, urls: [url]})` —
-  browsers open each URL in a new **window**. Each window has its own
-  `window_id`, its own AX tree, and can be inspected / interacted with
-  via `element_index` without activating or switching anything. Tabs
-  are a UX grouping for humans; cua-driver workflows should default to
-  windows. See `WEB_APPS.md` → "Tabs vs windows" for the full pattern.
-
-  Tab-title enumeration (read-only) IS safe — walk a window's toolbar
-  AX tree for `AXTab` / `AXRadioButton` children and read their
-  `AXTitle`s. Tab switching (activating one) is not.
+  the window re-renders the new tab's content, and the user sees their
+  tabs flipping. The typed browser route can inspect and mutate a returned
+  `tab_id` without driving this native shortcut. For unsupported browsers,
+  prefer separately addressable windows over visible tab switching.
 
 Reading frontmost state is fine (`osascript -e 'tell application
 "System Events" to get name of first application process whose
@@ -509,72 +488,26 @@ Right" or similar. Don't silently steal focus. You don't need to
 restore the previous frontmost afterwards unless the user asks —
 they can cmd-tab back.
 
-## Browser JS primitives — Apple Events backend
+## Browsers on macOS
 
-The `page` tool is **cross-platform** — Windows uses UIA + CDP,
-Linux uses AT-SPI + CDP, and macOS (this section) uses the
-Apple-Events / CDP / AX-tree routing described below.
+Use `BROWSER.md` for the typed browser capability workflow. Chrome and Edge
+support exact native-window binding, page refs, navigation, typing, and an
+explicit synthetic DOM click. Existing-profile preparation is separately
+approved and may automate the exact product-specific remote-debugging control;
+it does not depend on System Events or direct profile-file edits.
 
-When the AX tree doesn't expose the data you need (common in
-Chromium/Electron — the tree is sparse for web content), use the
-`page` tool or the `javascript` param on `get_window_state` to query
-the DOM directly via Apple Events. Requires "Allow JavaScript from
-Apple Events" to be enabled — see `WEB_APPS.md` for the setup path.
+Standalone Chromium activates its window when CDP's trusted pointer route is
+used on macOS. The driver therefore returns
+`browser_input_trust_unavailable` before dispatch rather than falsely claiming
+background delivery. Use `input_route:"dom_event"` only when synthetic click
+semantics are acceptable. Embedded Electron has a separately bounded route;
+do not infer that route for arbitrary WKWebView or Tauri hosts.
 
-**Three actions on the `page` tool:**
-
-- `page({pid, window_id, action: "get_text"})` — returns
-  `document.body.innerText`. Fastest way to read page content, prices,
-  article text, or any raw text the AX tree truncates or omits.
-
-- `page({pid, window_id, action: "query_dom", css_selector: "a[href]",
-  attributes: ["href"]})` — runs `querySelectorAll` and returns each
-  match's tag, text, and requested attributes as a JSON array. Use for
-  table rows, link hrefs, data attributes, structured page data.
-
-- `page({pid, window_id, action: "execute_javascript", javascript:
-  "..."})` — raw JS. Wrap in an IIFE with try-catch. Don't use this for
-  elements already indexed by `get_window_state` — `click` and
-  `set_value` are more reliable there.
-
-**Co-located read — `get_window_state` with `javascript`:**
-
-```bash
-get_window_state({pid, window_id, javascript: "document.title"})
-```
-
-Runs the JS and appends the result as a `## JavaScript result` section
-alongside the AX snapshot — one round-trip instead of two. Use this
-when you need both the element tree (for subsequent clicks) and some
-page data in the same turn.
-
-**Decision rule — AX vs JS:**
-
-| Need | Use |
-|---|---|
-| Click / type into an element | `get_window_state` → `click` / `set_value` (AX, works backgrounded) |
-| Read text the AX tree drops | `page(get_text)` or `get_window_state(javascript=)` |
-| Scrape structured data (tables, hrefs) | `page(query_dom)` |
-| Trigger JS events / mutations | `page(execute_javascript)` |
-
-Supported backends:
-
-| App type | How | Context |
-|---|---|---|
-| Chrome / Brave / Edge | Apple Events `execute javascript` | Full DOM ✅ |
-| Safari | Apple Events `do JavaScript` | Full DOM ✅ |
-| Electron (VS Code, Cursor…) | SIGUSR1 → V8 inspector → CDP | Main process only: `process`, `Buffer` — no `document`, no `require` in sandboxed apps |
-| Electron (with `--remote-debugging-port`) | CDP page target | Full DOM ✅ |
-
-**Electron sandbox note:** SIGUSR1 connects to the Node.js *main* process.
-Sandboxed Electron apps (VS Code, Cursor) strip `require` and Electron
-APIs there. Useful for: `process.env`, `process.versions`, `process.cwd()`,
-`process.pid`. For full DOM/renderer access, launch the app with
-`--remote-debugging-port=9222` — cua-driver will detect and prefer the
-page target automatically.
-
-Arc returns no values; Firefox has no JS-via-AppleEvents support — see
-`WEB_APPS.md` for the full matrix.
+Browser chrome, permission prompts, downloads, file pickers, Safari, Firefox,
+and unbound embedded webviews remain native surfaces. Inspect them with
+`get_window_state` and use the AX/PX ladder in this file. The legacy `page`
+tool and Apple Events JavaScript bridge remain compatibility surfaces, not the
+starting point for new browser workflows.
 
 ## macOS common error patterns
 

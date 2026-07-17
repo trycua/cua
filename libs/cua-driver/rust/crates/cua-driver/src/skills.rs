@@ -80,9 +80,8 @@ const SKILL_FILES: &[&str] = &[
     "WINDOWS.md",
     "MACOS.md",
     "LINUX.md",
-    "WEB_APPS.md",
+    "BROWSER.md",
     "RECORDING.md",
-    "TESTS.md",
     "EMBEDDING.md",
 ];
 
@@ -213,7 +212,7 @@ const AGENTS: &[Agent] = &[
     // teaches the Hermes `computer_use` action vocabulary; the
     // cua-driver pack symlinked here adds the platform-specific deep
     // dives (MACOS.md / WINDOWS.md / LINUX.md / RECORDING.md /
-    // WEB_APPS.md / TESTS.md) that Hermes deliberately doesn't clone.
+    // BROWSER.md) that Hermes deliberately doesn't clone.
     Agent { label: "Hermes",      parent: AgentParent::Home(".hermes/skills") },
 ];
 
@@ -825,14 +824,13 @@ mod tests {
             ("cua-driver-rs-v0.2.20-skills/MACOS.md",    b"m"),
             ("cua-driver-rs-v0.2.20-skills/LINUX.md",    b"l"),
             ("cua-driver-rs-v0.2.20-skills/RECORDING.md",b"R"),
-            ("cua-driver-rs-v0.2.20-skills/WEB_APPS.md", b"W"),
-            ("cua-driver-rs-v0.2.20-skills/TESTS.md",    b"T"),
+            ("cua-driver-rs-v0.2.20-skills/BROWSER.md",  b"B"),
             ("cua-driver-rs-v0.2.20-skills/EMBEDDING.md",b"E"),
         ]);
         let dest = tempdir().unwrap();
         extract_tar_gz(&bytes, dest.path(), /*all_platforms=*/ false).unwrap();
         // README + SKILL + cross-platform docs ALWAYS present.
-        for f in ["README.md", "SKILL.md", "RECORDING.md", "WEB_APPS.md", "TESTS.md", "EMBEDDING.md"] {
+        for f in ["README.md", "SKILL.md", "RECORDING.md", "BROWSER.md", "EMBEDDING.md"] {
             assert!(dest.path().join(f).exists(),
                 "{f} should be present after per-host extraction");
         }

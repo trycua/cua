@@ -1,18 +1,12 @@
----
-name: cua-driver-rs-windows
-description: Drive a native Windows app (Win32, UWP, WebView2/Edge) via the cua-driver CLI or MCP server — snapshot its UIA tree, click/type/scroll by element_index or window-client pixels, verify via re-snapshot, all without bringing the target to the foreground. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real Windows application on the host.
----
+# cua-driver — Windows
 
-# cua-driver-rs — Windows
-
-Orchestrates Windows app automation via the `cua-driver` Rust binary
-(`cua-driver-rs` repo, ships as `cua-driver.exe`). Whenever a user
+Orchestrates Windows app automation via the `cua-driver` binary (`cua-driver.exe`). Whenever a user
 asks to drive a native Windows app, follow the loop in this doc
 rather than calling tools ad-hoc — the snapshot-before-action
 invariant is not optional and silently breaks if you skip it.
 
-`SKILL.md` in this directory describes the macOS-flavored core
-patterns; this file is the Windows-specific carve-out. Read both:
+`SKILL.md` in this directory describes the cross-platform core;
+this file is the Windows-specific extension. Read both:
 the snapshot invariant, MCP-vs-CLI choice, agent cursor overlay, and
 recording flow are identical. The launch, click, and accessibility-
 tree mechanics in this file replace the macOS ones.
@@ -25,22 +19,6 @@ the background. Violate this rule and every other nice property the
 driver gives you (no cursor warp, no taskbar flash, no window
 restore-and-raise) stops mattering — you just shipped a `SendInput`
 wrapper with extra steps.
-
-### Cursor feedback for JS-driven browser actions: prefer `click_element`
-
-The `page` tool gained a fourth action: `click_element`. It takes a CSS
-selector, animates the agent cursor to the element's on-screen center,
-fires a click-pulse, then runs `el.click()`. Prefer this over
-`execute_javascript('document.querySelector(...).click()')` whenever you
-want the user to see what the agent is doing — raw `execute_javascript`
-will perform the click but leaves the cursor frozen.
-
-```json
-{ "action": "click_element", "pid": <int>, "window_id": <int>, "selector": "button.submit" }
-```
-
-Returns the resolved screen coords in `structuredContent` so callers can
-chain subsequent operations against the same point.
 
 ### How the contract is enforced per call: the `delivery_mode` field
 
@@ -529,8 +507,8 @@ subcommands:
   registers it (idempotent — replaces existing). `kick` runs it
   immediately without waiting for a fresh logon.
 - **`cua-driver recording start|stop|status`** — see `RECORDING.md`.
-  **Note: recording is currently macOS-only on the Rust port. The
-  command is registered but returns "not yet supported" on Windows.**
+  Windows video uses ffmpeg with `gdigrab`; trajectory evidence continues
+  without video when ffmpeg is unavailable.
 
 Canonical multi-step workflow:
 
@@ -726,195 +704,25 @@ To find an AUMID at runtime:
 Get-StartApps | Where-Object Name -like "*Calculator*"
 ```
 
-## Web apps on Windows (Edge, Chrome, Firefox)
+## Browsers and embedded webviews on Windows
 
-Browsers on Windows are mostly Win32 windows with browser-specific
-chrome and a WebView2 / Chromium / Gecko surface inside. Click and
-key handling rules:
+Use the typed, exact-binding workflow in `BROWSER.md` for Chrome and Edge page
+content. Windows has validated trusted background browser clicks when the
+driver runs in an interactive user desktop. A daemon in Session 0 cannot
+provide representative UIA, capture, focus, or browser evidence.
 
-### Launch
+Keep browser chrome and native dialogs on the normal UIA/PX ladder in this
+file. This includes tabs, the address bar, menus, permission prompts,
+downloads, file pickers, and authentication windows. Avoid `Ctrl+L`, tab
+switching shortcuts, `Start-Process`, and shell activation paths when the user
+expects background operation.
 
-Use `launch_app` with `urls`:
-
-```json
-{"urls": ["https://example.com"]}
-```
-
-This opens the URL in the user's default browser, in a **new
-window**, without activating it. For specific browsers:
-
-```json
-{"path": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", "args": ["--new-window", "https://example.com"]}
-```
-
-or via AUMID:
-
-```json
-{"aumid": "Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe!App", "args": ["https://example.com"]}
-```
-
-**Do NOT use** `Start-Process "msedge.exe" "url"` — it activates
-the new window.
-
-### Click and input
-
-- **Click on hyperlinks, buttons, form controls inside the page** —
-  pixel-click via `(x, y)` works. Chromium dispatches
-  `WM_LBUTTONDOWN` to its internal renderer, which routes the click
-  to the DOM. Validated: clicking the "Learn more" link on
-  `example.com` navigates to `iana.org` (PostMessage fallback path,
-  no focus steal). Edge title changes from "Example Domain" to
-  "Example Domains" without bringing the browser to front.
-- **Click on browser chrome (tabs, address bar, menus, bookmarks
-  bar)** — UIA Invoke path works (the chrome is XAML/native, fully
-  exposed via UIA). Prefer `element_index` here.
-- **Type into web forms** — `type_text` via PostMessage WM_CHAR to
-  the focused element. **The element must be focused first.** Click
-  it (pixel or element_index) before typing.
-- **Type into the URL bar without `Ctrl+L` (which would foreground
-  the window)** — use `launch_app({urls: [...]})` to open a new URL
-  in a new window. For navigation within an existing window, click
-  the address bar via `element_index` (it appears in the chrome UIA
-  tree as a Text Edit with name like "Address and search bar"),
-  then `type_text` + `press_key({key: "enter"})`.
-
-### Forbidden keyboard shortcuts in browsers
-
-| Shortcut | What it does | Why forbidden | Alternative |
-|---|---|---|---|
-| `Ctrl+L` / `Alt+D` / `F6` | Focus address bar | Activates window (focus-steal semantics) | `element_index` click on address-bar element |
-| `Ctrl+T` | New tab | Activates window | `launch_app({urls: [<url>]})` — opens in new window instead |
-| `Ctrl+W` | Close tab | Activates window before closing | If the tab is in a backgrounded window, this is OK with hotkey to pid; otherwise close via UIA on the tab's close button |
-| `Ctrl+1..9` / `Ctrl+Tab` | Switch tab | Visible flip, page content re-renders | Prefer windows-per-URL pattern (`launch_app({urls})`) |
-| `Ctrl+Shift+T` | Reopen closed tab | Activates window | N/A — usually user intent, ask first |
-| `Ctrl+N` | New window | New window comes to foreground | `launch_app({urls: ["about:blank"]})` |
-| `Ctrl+Shift+N` | New incognito | Same as above + state mutation | ask user first |
-| `F11` | Fullscreen | Visibly disruptive | Avoid |
-| `F5` / `Ctrl+R` | Reload | OK if the agent owns this window | safe to use via `hotkey` |
-| `Ctrl+F` | Find in page | Activates window + opens find bar | If the agent owns this window, OK |
-| `Esc` | Close find bar / cancel | OK | safe |
-
-### Tabs vs windows
-
-Same rule as macOS: drive each URL in its own **window**, not as
-tabs in a shared window. Each window has its own `window_id`, its
-own UIA tree. Tab-switching within a window is a visible disruption
-(see forbidden shortcuts above); window switching via `cua-driver`
-is per-pid / per-HWND and invisible.
-
-Tab-title enumeration (read-only) IS safe — walk a window's tab strip
-in the UIA tree for `TabItem` elements and read their names. Tab
-switching (activating one) is not.
-
-### `page` tool — JS execution, text extraction, DOM query
-
-The cross-platform `page` tool exposes four actions against the
-browser instance identified by `(pid, window_id)`:
-
-- **`get_text`** — `document.body.innerText` equivalent, sourced from
-  the web `Document`'s UIA `TextPattern`.
-- **`query_dom`** — CSS-selector → UIA `ControlType` match.  Supports
-  simple tag selectors (`a`, `button`, `input`, `h1`-`h6`, `img`,
-  `li`, `p`, `span`, `select`), `tag#id`, `[role=…]`.  **Does not**
-  support `.class` or `[data-*]` (UIA has no class-list and no
-  data-attribute exposure).
-- **`execute_javascript`** — runs arbitrary JS in the active tab.
-  Two-tier dispatch (see below).
-- **`enable_javascript_apple_events`** — macOS-only; errors here.
-
-#### `execute_javascript` dispatch
-
-1. **Bookmark-URL UIA bypass (default)** — `cua-driver` looks for a
-   bookmark named `cua-driver-eval` on the Favorites bar, edits its
-   URL to the user's expression wrapped in a `try/catch` IIFE,
-   invokes the bookmark via UIA `InvokePattern`, and reads the
-   result back from `document.title` (the wrapper writes
-   `CUA:<JSON>` or `CUA_ERR:<message>`).  Zero config required —
-   no `--remote-debugging-port` flag, no companion extension.
-
-   **Requirements:**
-   - The `cua-driver-eval` bookmark **must exist** on the Favorites
-     bar.  Any URL is fine; the driver overwrites it on first use.
-     Automatic creation (drive the omnibox to `edge://favorites`,
-     click "Add favorite", fill the dialog) is not yet wired up —
-     create it manually.
-   - **The Favorites bar must already be visible.** This is a
-     one-time setup: press `Ctrl+Shift+B` once inside the browser
-     and the setting persists across sessions. **If the bar is
-     hidden, cua-driver now synthesizes `Ctrl+Shift+B` via
-     `PostMessage(WM_KEYDOWN/UP)` with no foreground swap** —
-     Chromium's `Browser::HandleKeyboardEvent` dispatches
-     accelerators from the WM_KEYDOWN LPARAM bits without
-     consulting `GetKeyState`, so PostMessage works without the
-     `SetForegroundWindow` dance that previously violated the
-     no-foreground contract. After a brief settle the path
-     re-checks for the bar; if it's still hidden (locked-down
-     browser policy / non-Chromium target) the call bails with a
-     clear error and falls through to the CDP path.
-   - The user's expression should be a single statement or block;
-     `return` inside the IIFE is honored.  Bookmarks strip line
-     breaks, so multi-line expressions are joined with spaces.
-
-   **Known limitation — Chromium's window activation on Invoke.**
-   When the bookmark is invoked via UIA `InvokePattern::Invoke`,
-   Chromium activates the browser window because clicking a
-   bookmark is a user-initiated navigation in Chromium's input
-   model. The activation happens inside Chromium's window-aura
-   layer, not in our UIA call. **Mitigation in place**: a polling
-   foreground-restore guard runs immediately after the Invoke —
-   same pattern `launch_app` uses (PR #1668) — capturing the
-   user's foreground HWND beforehand and calling
-   `SetForegroundWindow(prev)` once Chromium grabs foreground.
-   The restore is gated on `GetWindowThreadProcessId(fg_now) ==
-   browser_pid` so we never yank focus from a window the user
-   legitimately Alt-Tabbed to. Without UIAccess (the daemon's
-   normal integrity) Windows' foreground lock may deny the
-   restore — in that case the browser dwell time is bounded to
-   the ~600 ms poll budget instead of "until next user action".
-   The `get_text` and `query_dom` actions don't share this issue
-   (no Invoke → no activation).
-
-2. **CDP fallback** — `Runtime.evaluate` via raw WebSocket against
-   `--remote-debugging-port=N`.  Requires the browser launched with
-   that flag and `CUA_DRIVER_CDP_PORT=N` exported before the daemon
-   starts.
-
-   Use this when the bookmark path can't be made to work (locked-
-   down GPO disables Ctrl+Shift+B, user explicitly hides the
-   Favorites bar in a fresh profile and won't summon it, etc.).
-
-3. **Either succeeds** → the result is returned to the caller with a
-   prefix indicating which path ran: `uia.bookmark_exec: <result>` or
-   `cdp.runtime.evaluate.user_gesture: <result>`.
-
-#### Why bookmark exec exists
-
-Chromium's omnibox aggressively strips `javascript:` schemes when
-the URL is pasted or `SetValue`-d via UIA, so the "omnibox
-`javascript:` then Enter" trick is dead in modern Chrome / Edge.
-The bookmark URL field doesn't apply the same scrub because
-bookmarklets are a documented Web-platform feature dating back to
-the late '90s — closing that path would break a long tail of
-existing user data.  Empirically validated on Edge 148.0.3967.70
-(see PR description for the commit landing this).
-
-#### Concurrency
-
-The bookmark-exec primitive holds a process-wide mutex.  Calls
-serialise — concurrent invocations would race on the single
-`cua-driver-eval` URL field and one caller would invoke another's
-JS.  If you need parallel JS execution against multiple browser
-instances, fall through to CDP (each browser instance gets its
-own port, no shared state).
-
-### WebView2 in non-browser hosts (Teams, VS Code, Outlook desktop)
-
-These embed a WebView2 control inside a Win32 host. The HWND
-hierarchy is `OuterHost > Chrome_WidgetWin_0 > Chrome_WidgetWin_1
-... > WebView2 ...`. UIA Invoke at the page level works for some
-controls; for arbitrary DOM nodes, fall back to pixel clicks. The
-WebView2's underlying Chromium dispatches PostMessage to its
-renderer, so the fallback path works for hyperlinks and buttons.
+WebView2 inside a non-browser host is not automatically equivalent to a
+standalone Edge target. Use typed browser mutation only when
+`get_browser_state` returns an exact binding and `mutation_allowed:true` for
+the selected `(pid, window_id)`. Otherwise use the native UIA/PX route or
+accept the structured refusal. Firefox page mutation is not supported by the
+typed browser tools yet.
 
 ## Common failure modes (Windows-specific)
 
@@ -1005,11 +813,7 @@ registered to auto-start at logon AND whether it's currently running:
 
 ## Recording
 
-Screen recording is **not yet supported on Windows** in
-cua-driver-rs. The `recording start|stop|status` subcommands are
-registered but return "Recording is currently macOS-only" on
-Windows. Tracking: see the cua-driver-rs roadmap in the main repo.
-
-For now, capture state via `screenshot` (per-window or full-desktop)
-or `get_window_state` (returns a screenshot embedded alongside the
-UIA tree).
+Windows recording uses ffmpeg with `gdigrab` and writes the same trajectory
+shape described in `RECORDING.md`. Install ffmpeg on `PATH` for MP4 capture.
+When it is unavailable, per-turn state and screenshots continue and
+`last_error` reports the missing dependency.

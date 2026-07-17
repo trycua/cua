@@ -8,9 +8,6 @@ metadata:
       bins:
         - cua-driver
     envVars:
-      - name: CUA_DRIVER_CDP_PORT
-        required: false
-        description: Optional Chromium DevTools Protocol port for browser automation.
       - name: CUA_DRIVER_EMBEDDED
         required: false
         description: Set to 1 when a macOS host app launches the driver in embedded mode.
@@ -22,7 +19,7 @@ metadata:
         description: Optional path to a cua-driver binary used by an embedding host.
       - name: CUA_DRIVER_RS_ENABLE_WAYLAND
         required: false
-        description: Set to 1 to enable the preview native Wayland backend.
+        description: Set to 1 to enable the native Wayland backend.
       - name: CUA_DRIVER_RS_MCP_HTTP_PORT
         required: false
         description: Optional port for the local MCP HTTP endpoint.
@@ -47,21 +44,19 @@ directory:
 
 - **macOS** — read `MACOS.md` (no-foreground contract, forbidden
   `open`/`osascript`/`cliclick` invocations, AXMenuBar navigation,
-  SkyLight pixel-click dispatch, Apple-Events JS bridge).
+  SkyLight pixel-click dispatch).
 - **Windows** — read `WINDOWS.md` (UIA tree vs AX, UWP /
   ApplicationFrameHost hosting, layered UIA+PostMessage click chain,
   Session 0 isolation, Windows-specific focus-steal vectors).
 - **Linux** — read `LINUX.md` (X11 background input via AT-SPI +
-  XSendEvent, recording, Wayland opt-in/preview).
+  XSendEvent and compositor-specific Wayland capabilities).
 
 Cross-cutting topics also have their own files:
 
-- `WEB_APPS.md` — the typed, full-background Chromium browser workflow plus
-  browser / Electron / Tauri fallbacks (sparse AX trees, omnibox navigation,
-  minimized windows, and tabs-vs-windows guidance).
+- `BROWSER.md` — exact native-window binding, explicit browser preparation,
+  typed Chromium/Electron page tools, input trust classes, and native
+  fallbacks for browser chrome and unsupported engines.
 - `RECORDING.md` — session recording + `replay_trajectory`.
-- `TESTS.md` in the source repository contains the internal test surface. It is
-  intentionally excluded from ClawHub release bundles.
 
 Use whichever combination matches the host. When in doubt, run
 `cua-driver doctor` — it reports the platform and the right entry
@@ -151,14 +146,14 @@ cua-driver stop
 For Chromium page content, keep the same native window selection but switch to
 the browser capability loop: `start_session`, bind `(pid, window_id)` with
 `get_browser_state`, snapshot the returned tab, then use `browser_click`,
-`browser_type`, or `browser_navigate`. Read `WEB_APPS.md` before using this
+`browser_type`, or `browser_navigate`. Read `BROWSER.md` before using this
 route. Browser target ids, tab ids, and refs are session-scoped and stale refs
 must be replaced by a fresh snapshot.
 
 ## Agent cursor overlay
 
-Visual cursor overlay for demos and screen recordings. Default:
-enabled — you do NOT need to enable it. Toggle with
+Visual cursor overlay for demos and screen recordings. It is enabled by
+default for declared sessions; anonymous actions remain cursor-less. Toggle with
 `cua-driver set_agent_cursor_enabled '{"enabled":true|false}'` only to
 hide or re-show it. A triangle pointer Bezier-glides to each click
 target, ring-ripples on landing, idle-hides after ~1.5s. Motion knobs:
@@ -422,8 +417,8 @@ without a separate `list_windows` hop.
 you choose (`"research-1"`), declared with `start_session` and passed as
 `session` on every action. It owns your agent cursor (a distinct colour
 per id), follows the run across any apps/windows, and is the same whether
-you drive over MCP, the CLI, or the socket. The cursor is **opt-in**: it
-appears only once you declare a session (anonymous actions run cursor-less).
+you drive over MCP, the CLI, or the socket. Declaring the session creates the
+cursor; anonymous actions remain cursor-less.
 End with `end_session` (or the idle-TTL reclaims it).
 
 **Concurrent runs/subagents:** `launch_app` is idempotent — two runs that
@@ -548,7 +543,7 @@ against a specific window.
 | Snapshot a window                | `get_window_state({pid, window_id})`                                                                            | returns `tree_markdown` + `screenshot_*`; populates the `(pid, window_id)` element_index cache                                                                                                                        |
 | Left click                       | `click({pid, window_id, element_index})`                                                                        | default `action: "press"`. Pixel form: `click({pid, x, y})` (window_id optional) — `modifier: ["cmd"\|"ctrl"]`                                                                                                        |
 | Double-click / open              | `double_click({pid, window_id, element_index})`                                                                 | Default action when the element advertises one (Open on Finder items / openable rows), else stamped pixel double-click at the element's center                                                                        |
-| Right click / context menu       | `right_click({pid, window_id, element_index})` or `click({pid, window_id, element_index, action: "show_menu"})` | Chromium web-content coerces pixel right-click to left on macOS — see `WEB_APPS.md`                                                                                                                                   |
+| Right click / context menu       | `right_click({pid, window_id, element_index})` or `click({pid, window_id, element_index, action: "show_menu"})` | Browser page content should use the typed route where available; see `BROWSER.md`                                                                                                                                     |
 | Type at cursor                   | `type_text({pid, text, window_id, element_index})` (ax) or `type_text({pid, text, window_id, x, y})` (px)       | ax focuses the element then writes via the platform's text-set primitive; **px** pixel-clicks `(x,y)` to focus the renderer, then types — the one-call fix for Chromium/Electron inputs the AX path can't reach       |
 | Set whole non-text control value | `set_value({pid, window_id, element_index, value})`                                                             | **AX-only by design** — dropdown/`AXPopUpButton`, checkbox, slider, stepper; **also the keyboard-commit workaround on minimized windows.** For text use `type_text`; to pixel-manipulate a control use `click`/`drag` |
 | Scroll                           | `scroll({pid, direction, amount, by, window_id, element_index})`                                                | synthesizes per-pid PageUp/PageDown/arrows                                                                                                                                                                            |
@@ -692,22 +687,17 @@ per-OS companion files.
 
 ## Web-rendered apps (browsers, Electron, Tauri)
 
-For Chrome / Edge / Brave / Arc / Safari, Electron apps (Slack,
-VSCode, Notion, Discord), and Tauri apps — see **`WEB_APPS.md`**.
+For Chromium-family browsers and Electron, use the exact, session-scoped
+browser capability workflow in **`BROWSER.md`**. It keeps native
+`(pid, window_id)` selection as the entry point, makes setup explicit through
+`browser_prepare`, and distinguishes trusted browser input from an explicitly
+requested synthetic DOM event.
 
-Covers: sparse accessibility tree population (retry-once pattern for
-Chromium), URL navigation via omnibox suggestions, the `set_value`
-workaround for keyboard commits on **minimized** windows (Return
-silently no-ops — symptom is a system bell; use `set_value` or click
-a clickable equivalent), scrolling via synthetic PageUp/Down
-keystrokes, in-page clicks, and typing into web inputs.
-
-Browser JS primitives are now **cross-platform** via the `page` tool —
-macOS uses Apple Events for Chrome/Brave/Edge/Safari + CDP for Electron
-(see `MACOS.md`); Windows + Linux use UIA / AT-SPI for `get_text` /
-`query_dom` and the shared CDP client for `execute_javascript` (browser
-must be launched with `--remote-debugging-port=N` and the port exported
-as `CUA_DRIVER_CDP_PORT`).
+Use the native `get_window_state` and AX/PX action ladder for browser chrome,
+permission prompts, downloads, file pickers, Safari, Firefox, Tauri, and any
+embedded webview for which exact browser binding is unavailable. The legacy
+`page` tool remains a compatibility surface; do not use it as the starting
+point for new browser workflows.
 
 ## Re-snapshot and verify — mandatory
 

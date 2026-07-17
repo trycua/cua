@@ -449,7 +449,7 @@ give core access to the full platform `ToolState`.
 | `.github/workflows/e2e-rust-standalone-browsers.yml` | Maintainer-dispatched Windows/Linux compatibility evidence |
 | `tests/runners/macos-lume/` | TCC-stable macOS real-browser evidence |
 | `docs/content/docs/` | Diataxis tutorial, how-to, reference, and explanation updates |
-| `rust/Skills/cua-driver/WEB_APPS.md` and platform skill docs | Agent flow, refusal handling, and platform limits |
+| `rust/Skills/cua-driver/BROWSER.md` and platform skill docs | Agent flow, refusal handling, and platform limits |
 
 ## Validation Strategy
 

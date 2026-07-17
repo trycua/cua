@@ -402,6 +402,6 @@ Two known exceptions:
   mode forces in-process execution, so it does NOT route through a running
   uia worker — an embedded host that must drive elevated apps has to manage
   that worker itself.
-- **Linux Wayland** (opt-in/preview): capture goes through XDG desktop
+- **Linux Wayland** (compositor-specific): capture goes through XDG desktop
   portals, which prompt per-session at capture time and cannot be
-  pre-granted by the host. X11, the supported path, has no gate.
+  pre-granted by the host. X11 has no portal gate.

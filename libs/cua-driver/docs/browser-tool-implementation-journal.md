@@ -637,3 +637,48 @@ The evidence in this entry was produced from a dirty diagnostic source marker
 while the implementation was converging. It establishes behavior but is not
 release acceptance; the final commit must be synced and replayed with its exact
 SHA on every retained platform lane.
+
+## 2026-07-17: exact-SHA cross-platform existing-profile acceptance
+
+The final acceptance replay used exact source SHA
+`7fa6c80f5c433a7d4dadef75e4873af89de0cd3f`. A preceding Windows replay was
+discarded because host input and another runner contaminated the interactive
+desktop. A macOS replay then exposed a testkit posture defect: the foreground
+sentinel waited for Electron to focus itself before the harness explicitly
+activated it. The final testkit change waits for readiness, activates the exact
+sentinel, and proves native focus plus the fixture focus journal. It does not
+change any browser action or oracle.
+
+| Platform | Representative products | Rows | Delivered | Expected refusals | Failed | Skipped | Playable videos |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Windows/Win32 | Chrome, Edge | 20 | 18 | 2 | 0 | 0 | 20 |
+| macOS/Quartz | Chrome, Edge | 20 | 16 | 4 | 0 | 0 | 20 |
+| Linux/X11 | Chrome | 10 | 8 | 2 | 0 | 0 | 10 |
+| Linux/Wayland | Chromium on Sway | 10 | 8 | 2 | 0 | 0 | 10 |
+| **Total** |  | **60** | **50** | **10** | **0** | **0** | **60** |
+
+All 60 declarations ran. Every result had `test_status=pass`; every MP4 was
+downloaded and independently checked for positive duration. The Windows lane
+ran in a live RDP user desktop rather than Session 0. The Linux lanes used
+Openbox/X11 and native Sway/Wayland respectively, while macOS ran in a
+TCC-authorized disposable Lume guest.
+
+The expected refusals are product signal, not environment skips. Every platform
+refused `browser_binding_ambiguous` when two native browser windows had the same
+bounds and no unique title tie-break. macOS and Linux additionally refused
+`browser_input_trust_unavailable` for Chromium's trusted CDP Input click because
+that route activated the standalone target; the ref-targeted `dom_event` route
+remains the synthetic full-background alternative. Windows delivered trusted
+clicks for both Chrome and Edge without changing the sentinel posture.
+
+The Sway wrapper replaced itself with `nix develop`, so its redundant shell EXIT
+trap could not write an exit-marker file. The canonical runner nevertheless
+finished, produced its summary, exited from the process table, recorded all 10
+passing rows, and generated 10 valid videos. The acceptance verdict is based on
+those canonical artifacts rather than the disposable wrapper marker.
+
+Focused local validation at the same source SHA passed all 46 testkit library
+tests. Branch CI passed Windows and Linux unit/compile, Nix package and policy,
+documentation, link, distribution-compatibility, and publication checks. The
+later documentation-only commit records this evidence and does not alter the
+accepted executable or harness source.

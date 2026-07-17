@@ -2,12 +2,12 @@
 
 ## Status
 
-- **State:** Implemented across macOS, Windows, Linux X11, and validated Linux Wayland; exact-SHA acceptance replay pending
+- **State:** Implemented and accepted from exact source SHA `7fa6c80f` across macOS, Windows, Linux X11, and Linux Wayland on Sway
 - **Plan date:** 2026-07-16
 - **Base:** `main` at `0835daa6` (`feat(cua-driver): add capability-aware browser tools`)
 - **Primary tracker:** [#2192](https://github.com/trycua/cua/issues/2192)
 - **Scope:** First-class, user-approved attachment to an existing Chromium profile, followed by bounded autonomous reconnection
-- **Delivery:** Draft PR [#2261](https://github.com/trycua/cua/pull/2261) on `codex/browser-existing-profile-reconnect-plan`; do not merge until canonical replay is attached
+- **Delivery:** Draft PR [#2261](https://github.com/trycua/cua/pull/2261) on `codex/browser-existing-profile-reconnect-plan`; canonical replay is complete and the PR remains draft for review
 
 ## Implementation outcome
 
@@ -19,10 +19,10 @@
   approved window, toggles one exact per-instance control, proves a PID-owned
   loopback endpoint, handles one exact browser-owned consent action, closes the
   temporary tab, and reports or rolls back its own effects.
-- macOS Lume passed Chrome and Edge; a live Windows RDP user session passed
-  Chrome and Edge; Linux X11 passed Chrome; native Sway passed Chrome while a
-  second Chrome process was open. These current runs are diagnostic until the
-  final commit is replayed from its exact source marker.
+- Exact-SHA acceptance passed Chrome and Edge on macOS Lume and a live Windows
+  RDP user session, Chrome on Linux X11, and Chromium on native Sway. The 60
+  declared rows produced 50 deliveries, 10 expected structured refusals, no
+  failures or skips, and 60 playable videos.
 - Safari, Firefox, products without an exact setup descriptor, unrecognized UI
   locales, and Wayland sessions without exact compositor identity remain
   structured refusals.
@@ -600,51 +600,53 @@ Reviewers should explicitly decide these points before PR 1 implementation:
    after the mutation gate or wait until macOS existing-profile evidence is
    accepted?
 
-## Implementation Evidence (2026-07-16)
+## Implementation Evidence (2026-07-17)
 
-The macOS Chrome adapter now implements the approved setup decision from review
-question 2. When the exact approved process has no endpoint, it opens one
-temporary tab in the approved native window, proves the exact internal setup
-page through its URL, web-area title, and heading, and matches one exact remote
-debugging checkbox. It presses the checkbox only when its numeric AX state is
-off, then requires a unique loopback listener owned by the approved PID before
-attachment. The temporary tab is closed on both success and refusal.
+The canonical standalone-browser matrix was replayed from exact source SHA
+`7fa6c80f5c433a7d4dadef75e4873af89de0cd3f` after the final testkit posture
+correction. That correction waits for the foreground sentinel to become ready,
+then explicitly activates and proves the exact sentinel instead of assuming an
+application will take focus during launch. It changes setup reliability only;
+no action oracle or expected product outcome was relaxed.
 
-Tahoe VM acceptance started with Chrome's per-instance setting off and no
-listening endpoint. The first run exposed a real navigation defect and refused
-without attaching; the adapter was fixed to press the uniquely matched omnibox
-before setting and committing the setup URL. The repeated run returned
-`attached_existing_profile`, reported the setup page open/close, preference
-change, checkbox action, and browser consent prompt, and proved the endpoint
-owner. Its first follow-up bind then exposed a lifecycle defect: post-approval
-code reused the strict pre-approval discovery path, which correctly ignored a
-bare PID-owned listener even though the exact listener had already been claimed.
-The platform contract now has a separate re-proof operation that accepts only
-the stored approved WebSocket URL, proves its loopback port is still owned by
-the same PID, and leaves arbitrary pre-approval listeners undiscoverable.
+| Platform | Representative products | Rows | Delivered | Expected refusals | Failed | Skipped | Videos |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Windows/Win32 | Chrome, Edge | 20 | 18 | 2 | 0 | 0 | 20 |
+| macOS/Quartz | Chrome, Edge | 20 | 16 | 4 | 0 | 0 | 20 |
+| Linux/X11 | Chrome | 10 | 8 | 2 | 0 | 0 | 10 |
+| Linux/Wayland | Chromium on Sway | 10 | 8 | 2 | 0 | 0 | 10 |
+| **Total** |  | **60** | **50** | **10** | **0** | **0** | **60** |
 
-After reinstalling that fix, the complete checkbox-off flow was repeated from
-the start. `browser_prepare` and the required follow-up `get_browser_state` bind
-both exited successfully; the binding was exact, exposed one tab, and minted a
-session-scoped target capability. Snapshot mode then returned a non-truncated
-composed DOM snapshot. The original New Tab remained, the temporary setup tab
-was absent, and an unrelated Chrome restore prompt remained untouched.
+Every expected refusal was exact and fail-closed. All platforms refused a
+native-window/CDP bind when two browser windows had indistinguishable bounds
+and titles. macOS and Linux also refused Chromium's trusted CDP Input click
+because that route activated the standalone browser; callers can use the
+ref-targeted `dom_event` route when a synthetic full-background click is
+acceptable. Windows delivered the trusted route without changing the sentinel
+posture.
 
-Focused regression evidence includes 238 passing core unit tests plus three
-session-lifecycle tests, 23 passing macOS browser tests, the approved-setup
-prepare-to-bind regression, generated documentation checks, and the source-built
-Tahoe VM acceptance above. No approval token, profile path, endpoint token, host
-address, or VM credential is recorded in repository artifacts.
+The final reports prove existing-profile setup, attach, exact multi-tab and
+frame binding, isolated launch, background type and mutation, stale-ref
+invalidation, trusted-input policy, ambiguity refusal, focus and z-order
+preservation, no leaked input, cursor preservation where available, and video
+capture. Local testkit validation also passed all 46 library tests. CI at the
+same branch head passed Windows and Linux unit/compile, Nix package and policy,
+documentation, link, distribution-compatibility, and publication checks.
+
+No approval token, profile path, endpoint token, host address, machine name, or
+credential is recorded in committed documentation or the pull request.
 
 ## Recommendation
 
-Proceed with PRs 1 through 4 first. They establish the security boundary,
-transport lifecycle, mutation correctness, and one fully evidenced platform.
-Do not start Windows or Linux implementation until the macOS route proves that
-one approved browser-level socket, exact prompt semantics, generation
-invalidation, and privacy-bounded evidence work together in a real browser.
+The implementation is ready for security and maintainer review in draft PR
+[#2261](https://github.com/trycua/cua/pull/2261). Keep the advertised support
+matrix limited to the representative products and desktops proven above:
+Chrome and Edge on macOS and Windows, Chrome on X11, and Chromium on Sway.
+Linux product descriptors for Chrome, Chromium, and Edge remain available, but
+an untested product/desktop pair must not be described as release-accepted.
 
-Treat [#2240](https://github.com/trycua/cua/issues/2240) as the first consumer of
-the mutation gate in a separate stacked PR. Keep legacy page migration and
-native Chrome input defects linked but independent. This preserves one coherent
-browser initiative without recreating a single oversized pull request.
+Keep Safari, Firefox, unknown browser builds or locales, and generic Wayland
+compositors as structured refusals until they have an exact native setup
+adapter and representative real-browser evidence. Treat
+[#2240](https://github.com/trycua/cua/issues/2240) as the first consumer of the
+mutation gate in a separate follow-up; legacy page migration remains separate.

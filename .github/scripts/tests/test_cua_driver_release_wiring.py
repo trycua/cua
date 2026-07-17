@@ -91,6 +91,40 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"', workflow)
         self.assertIn('CUA_TELEMETRY_ENABLED: "false"', workflow)
 
+    def test_distro_compat_does_not_run_for_unreleased_source_changes(self) -> None:
+        workflow = self.read(".github/workflows/ci-distro-compat-cua-driver.yml")
+
+        self.assertNotIn('      - "libs/cua-driver/rust/**"', workflow)
+        self.assertEqual(
+            workflow.count(
+                '      - ".github/workflows/ci-distro-compat-cua-driver.yml"'
+            ),
+            2,
+        )
+        self.assertIn('      - "cua-driver-rs-v*"', workflow)
+        self.assertIn("  workflow_dispatch:", workflow)
+
+    def test_expensive_rust_workflows_do_not_watch_the_entire_tree(self) -> None:
+        for relative_path in (
+            ".github/workflows/ci-nix-linux.yml",
+            ".github/workflows/ci-rust-linux.yml",
+            ".github/workflows/ci-rust-windows.yml",
+        ):
+            workflow = self.read(relative_path)
+            self.assertNotIn(
+                '      - "libs/cua-driver/rust/**"', workflow, relative_path
+            )
+            self.assertIn(
+                '      - "libs/cua-driver/rust/crates/cua-driver/**"',
+                workflow,
+                relative_path,
+            )
+            self.assertIn(
+                '      - "libs/cua-driver/rust/crates/cua-driver-core/**"',
+                workflow,
+                relative_path,
+            )
+
     def test_release_please_keeps_driver_version_sources_synced(self) -> None:
         config = self.read("release-please-config.json")
 

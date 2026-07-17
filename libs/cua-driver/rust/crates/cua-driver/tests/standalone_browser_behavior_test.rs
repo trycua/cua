@@ -1855,16 +1855,24 @@ fn run_multi_tab(spec: &BrowserSpec) {
         *evidence = recording_evidence(fixture.driver.recording_dir());
         let session = format!("standalone-multi-tab-{}", fixture.pid);
         let _ = bind(&mut fixture, &session);
+        let first_target = cdp_target_for_url(fixture.cdp_port, fixture.server.page_url());
+        let second_server = BrowserFixtureServer::start(&standalone_fixture_html());
         let created = harness_cdp_call(
             fixture.cdp_port,
             "Target.createTarget",
             serde_json::json!({
-                "url": format!("{}?tab=second", fixture.server.page_url()),
+                "url": second_server.page_url(),
                 "newWindow": false,
             }),
         );
         assert!(created["targetId"].is_string(), "{created}");
-        wait_for_observed(&fixture.server, "new_tab=open");
+        wait_for_observed(&second_server, "WEB_HARNESS_MARKER_v1");
+        let activated = harness_cdp_call(
+            fixture.cdp_port,
+            "Target.activateTarget",
+            serde_json::json!({"targetId": first_target}),
+        );
+        assert!(activated.is_object(), "{activated}");
 
         run_with_background_oracles(&mut fixture, |fixture| {
             let deadline = Instant::now() + Duration::from_secs(5);
@@ -1892,6 +1900,114 @@ fn run_multi_tab(spec: &BrowserSpec) {
                 thread::sleep(Duration::from_millis(100));
             };
             assert_eq!(rebound.structured()["binding_quality"], "exact");
+            let target = rebound.structured()["target_id"]
+                .as_str()
+                .expect("multi-tab target")
+                .to_owned();
+            let tabs = rebound.structured()["tabs"]
+                .as_array()
+                .expect("multi-tab list");
+            let active = tabs
+                .iter()
+                .find(|tab| tab["active"] == true)
+                .expect("one active tab");
+            assert_eq!(
+                active["url"],
+                fixture.server.page_url(),
+                "fixture setup must leave the first tab active: {}",
+                rebound.raw
+            );
+            let background_tab = tabs
+                .iter()
+                .find(|tab| tab["url"] == second_server.page_url())
+                .and_then(|tab| tab["tab_id"].as_str())
+                .expect("inactive second tab")
+                .to_owned();
+
+            let navigated_url = format!("{}?background=navigated", second_server.page_url());
+            let navigated = fixture.driver.call(
+                "browser_navigate",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": background_tab,
+                    "url": navigated_url,
+                    "session": session,
+                }),
+            );
+            assert_eq!(navigated.structured()["status"], "ok", "{}", navigated.raw);
+            wait_for_observed(&second_server, "WEB_HARNESS_MARKER_v1");
+
+            let snapshot = fixture.driver.call(
+                "get_browser_state",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": background_tab,
+                    "session": session,
+                }),
+            );
+            assert_eq!(snapshot.structured()["status"], "ok", "{}", snapshot.raw);
+            let click_ref = ref_by_label(&snapshot, "id=btn-increment");
+            let clicked = fixture.driver.call(
+                "browser_click",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": background_tab,
+                    "ref": click_ref,
+                    "input_route": "dom_event",
+                    "session": session,
+                }),
+            );
+            assert_eq!(clicked.structured()["status"], "ok", "{}", clicked.raw);
+
+            let snapshot = fixture.driver.call(
+                "get_browser_state",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": background_tab,
+                    "session": session,
+                }),
+            );
+            let input_ref = ref_by_label(&snapshot, "id=txt-input");
+            let typed = fixture.driver.call(
+                "browser_type",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": background_tab,
+                    "ref": input_ref,
+                    "text": "inactive-tab",
+                    "session": session,
+                }),
+            );
+            assert_eq!(typed.structured()["status"], "ok", "{}", typed.raw);
+            wait_for_text(&second_server, "lbl-counter", "counter=1");
+            wait_for_value(&second_server, "txt-input", "inactive-tab");
+            wait_for_text(&fixture.server, "lbl-counter", "counter=0");
+            wait_for_value(&fixture.server, "txt-input", "");
+
+            let verified = fixture.driver.call(
+                "get_browser_state",
+                serde_json::json!({
+                    "pid": fixture.pid as i64,
+                    "window_id": fixture.window_id,
+                    "session": session,
+                }),
+            );
+            let tabs = verified.structured()["tabs"]
+                .as_array()
+                .expect("verified multi-tab list");
+            assert!(
+                tabs.iter().any(|tab| {
+                    tab["active"] == true && tab["url"] == fixture.server.page_url()
+                }),
+                "the first tab must remain active: {}",
+                verified.raw
+            );
+            assert!(
+                tabs.iter()
+                    .any(|tab| { tab["active"] == false && tab["url"] == navigated_url }),
+                "the mutated second tab must remain inactive: {}",
+                verified.raw
+            );
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
     });

@@ -96,6 +96,7 @@ tests=(
   standalone_browser_multi_tab
   standalone_browser_prepare_isolated
   standalone_browser_roundtrip
+  standalone_browser_semantic_state
   standalone_browser_stale_ref
   standalone_browser_trusted_click
   standalone_browser_window_collision

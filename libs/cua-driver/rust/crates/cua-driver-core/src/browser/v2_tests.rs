@@ -22,7 +22,9 @@ use super::platform::{
     ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use super::refusal::BrowserRefusal;
-use super::tools::{BrowserClickTool, BrowserPrepareTool, BrowserTypeTool, GetBrowserStateTool};
+use super::tools::{
+    BrowserClickTool, BrowserNavigateTool, BrowserPrepareTool, BrowserTypeTool, GetBrowserStateTool,
+};
 use super::types::{
     BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
     EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
@@ -509,6 +511,10 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     "clientWidth": 800.0,
                     "clientHeight": 600.0
                 }
+            })),
+            "Page.navigate" if is_tab => MockReply::ok(json!({
+                "frameId": "F_MAIN",
+                "loaderId": "L_MAIN_NAVIGATED",
             })),
             "Target.setAutoAttach" if is_tab => {
                 if call.params["autoAttach"].as_bool() == Some(false) {
@@ -1303,6 +1309,17 @@ async fn semantic_query_and_content_scope_are_read_only_and_precise() {
     assert_eq!(queried["refs"].as_array().unwrap().len(), 1, "{queried}");
     assert_eq!(queried["refs"][0]["name"], "Archive item 304");
 
+    let natural =
+        semantic_snapshot_with(&f, &target, &tab, json!({"query": "reply archive 304"})).await;
+    assert_eq!(natural["snapshot"]["scope"], "query", "{natural}");
+    assert_eq!(natural["refs"][0]["name"], "Archive item 304", "{natural}");
+    assert!(
+        natural["refs"]
+            .as_array()
+            .is_some_and(|refs| refs.iter().any(|entry| entry["name"] == "Reply")),
+        "{natural}"
+    );
+
     let fresh = semantic_snapshot(&f, &target, &tab).await;
     let heading_ref = fresh["content_refs"]
         .as_array()
@@ -1321,6 +1338,36 @@ async fn semantic_query_and_content_scope_are_read_only_and_precise() {
         "{scoped}"
     );
     assert_eq!(scoped["content_refs"][0]["name"], "Visible message");
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn navigation_targets_an_inactive_tab_without_activating_it() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let result = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://fixture.test/background-navigation",
+            "session": SESSION,
+        }))
+        .await;
+
+    let structured = result
+        .structured_content
+        .as_ref()
+        .expect("navigation structured content");
+    assert_eq!(structured["status"], "ok", "{structured}");
+    let navigate = recorded_calls(&f, "Page.navigate");
+    assert_eq!(navigate.len(), 1, "{navigate:?}");
+    assert_eq!(
+        navigate[0].1["url"],
+        "https://fixture.test/background-navigation"
+    );
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
 }
 
 #[tokio::test]

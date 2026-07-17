@@ -5,6 +5,7 @@
 //! DOM backend ids preserve exact mutation capabilities, and layout evidence
 //! keeps hidden retained application state from displacing the active view.
 
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::Value;
@@ -195,7 +196,13 @@ impl SemanticDocument {
                 BrowserVisibility::CssHidden | BrowserVisibility::PageOccluded
             )
         });
-        candidates.sort_by_key(|idx| (rank(&self.nodes[*idx]), self.nodes[*idx].document_order));
+        candidates.sort_by_key(|idx| {
+            (
+                Reverse(query.map_or(0, |query| query_score(&self.nodes[*idx], query))),
+                rank(&self.nodes[*idx]),
+                self.nodes[*idx].document_order,
+            )
+        });
 
         let start = offset.min(candidates.len());
         let end = (start + budget.max(1)).min(candidates.len());
@@ -924,26 +931,67 @@ fn scoped_indices(
             }
         }
     }
-    let query = query.map(|value| value.to_ascii_lowercase());
+    let query = query.map(|value| value.trim().to_ascii_lowercase());
+    let in_scope =
+        |node: &SemanticNode| scope_backend_node_id.is_none() || allowed.contains(&node.ax_id);
+    let exact_match_exists = query.as_ref().is_some_and(|query| {
+        !query.is_empty()
+            && nodes
+                .iter()
+                .any(|node| in_scope(node) && node_contains_query(node, query))
+    });
     nodes
         .iter()
         .enumerate()
         .filter(|(_, node)| {
-            (scope_backend_node_id.is_none() || allowed.contains(&node.ax_id))
+            in_scope(node)
                 && query.as_ref().is_none_or(|query| {
-                    node.role.to_ascii_lowercase().contains(query)
-                        || node
-                            .name
-                            .as_ref()
-                            .is_some_and(|name| name.to_ascii_lowercase().contains(query))
-                        || node
-                            .value
-                            .as_ref()
-                            .is_some_and(|value| value.to_ascii_lowercase().contains(query))
+                    query.is_empty()
+                        || if exact_match_exists {
+                            node_contains_query(node, query)
+                        } else {
+                            query_score(node, query) > 0
+                        }
                 })
         })
         .map(|(idx, _)| idx)
         .collect()
+}
+
+fn node_contains_query(node: &SemanticNode, query: &str) -> bool {
+    node.role.to_ascii_lowercase().contains(query)
+        || node
+            .name
+            .as_ref()
+            .is_some_and(|name| name.to_ascii_lowercase().contains(query))
+        || node
+            .value
+            .as_ref()
+            .is_some_and(|value| value.to_ascii_lowercase().contains(query))
+}
+
+fn query_score(node: &SemanticNode, query: &str) -> usize {
+    let query = query.trim().to_ascii_lowercase();
+    if query.is_empty() {
+        return 0;
+    }
+    if node_contains_query(node, &query) {
+        return usize::MAX;
+    }
+    let fields = [
+        Some(node.role.as_str()),
+        node.name.as_deref(),
+        node.value.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::to_ascii_lowercase)
+    .collect::<Vec<_>>();
+    query
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|term| !term.is_empty())
+        .filter(|term| fields.iter().any(|field| field.contains(term)))
+        .count()
 }
 
 fn with_ancestors(nodes: &[SemanticNode], selected: &[usize]) -> HashSet<usize> {

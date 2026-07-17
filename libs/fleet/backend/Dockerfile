@@ -4,7 +4,7 @@
 # Build context is the repo root so the pkg/featureflags module (referenced
 # by cyclops-cs/backend/go.mod via a local `replace`) is reachable. The
 # build-cyclops-cs.yml workflow sets the context to `.` for this image.
-FROM --platform=linux/amd64 golang:1.24-alpine AS builder
+FROM --platform=linux/amd64 golang:1.25-alpine AS builder
 WORKDIR /src
 COPY pkg/featureflags ./pkg/featureflags
 COPY cyclops-cs/backend ./cyclops-cs/backend

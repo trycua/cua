@@ -42,13 +42,10 @@ jobs:
           manifest-file: .release-please-manifest.json
 
       - name: Synchronize Cua Driver Cargo.lock on its release pull request
-        if: steps.release.outputs.prs_created == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          RELEASE_PRS: ${{ steps.release.outputs.prs }}
         run: |
           set -euo pipefail
-          echo "$RELEASE_PRS" | jq -e 'type == "array"' >/dev/null
           while read -r number; do
             PR=$(gh pr view "$number" --json headRefName,headRepositoryOwner,files)
             if ! echo "$PR" | jq -e \
@@ -78,7 +75,7 @@ jobs:
             git config user.email "trycua-release[bot]@users.noreply.github.com"
             git commit -m "chore(cua-driver-rs): synchronize release lockfile"
             git push origin "HEAD:$BRANCH"
-          done < <(echo "$RELEASE_PRS" | jq -r '.[].number')
+          done < <(gh pr list --state open --base main --limit 100 --json number --jq '.[].number')
 
       - name: Verify repository release versions
         if: steps.release.outputs.prs_created != 'true'

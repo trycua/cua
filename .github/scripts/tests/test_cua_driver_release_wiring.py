@@ -44,6 +44,12 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('"component": "lume"', config)
         self.assertIn("5c625bfb5d1ff62eadeeb3772007f7f66fdcf071", workflow)
         self.assertIn('-p cua-driver --precise "$DRIVER_VERSION"', workflow)
+        self.assertIn(
+            "gh pr list --state open --base main --limit 100 --json number",
+            workflow,
+        )
+        self.assertNotIn("if: steps.release.outputs.prs_created == 'true'", workflow)
+        self.assertNotIn("RELEASE_PRS: ${{ steps.release.outputs.prs }}", workflow)
 
     def test_required_release_metadata_check_runs_for_every_pull_request(self) -> None:
         workflow = self.read(".github/workflows/ci-release-metadata.yml")

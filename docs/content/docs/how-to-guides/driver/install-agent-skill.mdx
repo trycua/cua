@@ -91,6 +91,11 @@ cua-driver skills install
 In Windows PowerShell, use `New-Item -ItemType Directory -Force
 "$HOME\.agents\skills"` for Codex or `New-Item -ItemType Directory -Force
 "$HOME\.claude\skills"` for Claude Code, then rerun `cua-driver skills install`.
+The default source is the release archive for the running driver's exact
+version. Cua Driver validates the archive manifest and SHA-256 hashes before a
+rollback-safe activation. `skills status` reports the installed and running
+versions, source provenance, compatibility, and any missing, extra, or modified
+files.
 
 Direct installation keeps only the current host's OS guide by default. Pass `--all-platforms` when the same skill directory must cover macOS, Windows, and Linux:
 
@@ -108,6 +113,10 @@ guidance.
 OpenCode, Antigravity, and Hermes. Grok Bot is not in that list. On Grok Bot,
 save a private skill that follows the installed pack at
 `~/.cua-driver/skills/cua-driver`. See [Grok Bot](/use-cua-with/grok-bot).
+For an immutable snapshot of current development content, run
+`cua-driver skills update --from main`. For a source build, use
+`libs/cua-driver/scripts/install-local.sh`; it passes the skill directory from
+the same checkout explicitly instead of fetching remote content.
 
 ## Next steps
 

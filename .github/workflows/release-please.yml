@@ -60,7 +60,9 @@ jobs:
               exit 1
             fi
 
-            git fetch origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+            # release-please updates the remote branch after checkout, so the
+            # checkout-created remote-tracking ref can no longer fast-forward.
+            git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
             git checkout -B "$BRANCH" "origin/$BRANCH"
             DRIVER_VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/VERSION)
             cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \

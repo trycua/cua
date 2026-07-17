@@ -1,9 +1,4 @@
----
-name: cua-driver-rs-linux
-description: Drive a native Linux app via the cua-driver CLI — snapshot the AT-SPI tree, click by element_index or pixel, type, screenshot, record, verify via re-snapshot. Background by default (no foreground steal, no real-pointer move) on X11. Wayland input/capture is opt-in and still preview.
----
-
-# cua-driver-rs — Linux
+# cua-driver — Linux
 
 The Linux backend drives X11 apps **in the background**: clicks and
 keystrokes are injected to the target window without raising it,
@@ -182,7 +177,7 @@ uinput, escalate to `delivery_mode:"foreground"`. (`type_text` in the
 `background` rung is focus-dependent for non-editable widgets; that's the one
 genuine background limitation, and `foreground` is the documented escalation.)
 
-## Wayland (opt-in)
+## Wayland
 
 Set `CUA_DRIVER_RS_ENABLE_WAYLAND=1` to enable native Wayland support. The
 driver selects a backend from compositor capabilities:
@@ -223,7 +218,7 @@ If a tool call surprises you on Linux:
    "is there a bus"), the discovered `DBUS_SESSION_BUS_ADDRESS`, and
    `ffmpeg` availability (for recording).
 2. Check `XDG_SESSION_TYPE` — `x11` is fully supported; `wayland`
-   needs `CUA_DRIVER_RS_ENABLE_WAYLAND=1` for native input (preview),
+   needs `CUA_DRIVER_RS_ENABLE_WAYLAND=1` for the native backend,
    else XWayland.
 3. **Empty AT-SPI tree** (`get_window_state` returns `degraded:true`) — in
    order of likelihood: (a) the daemon isn't on the desktop session bus

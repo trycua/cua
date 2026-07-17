@@ -251,6 +251,7 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("operation", Value::String("not_applicable".into())),
             ("success", Value::Bool(true)),
             ("error_class", Value::String("none".into())),
+            ("refusal_code", Value::String("none".into())),
             ("duration_bucket", Value::String("lt_10ms".into())),
             ("output_type", Value::String("empty".into())),
             ("output_size_bucket", Value::String("0".into())),
@@ -276,9 +277,11 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("tool_count_bucket", Value::String("1_4".into())),
             ("computer_action_count_bucket", Value::String("1_4".into())),
             ("error_count_bucket", Value::String("0".into())),
+            ("browser_refusal_count_bucket", Value::String("0".into())),
             ("had_successful_tool", Value::Bool(true)),
             ("had_successful_computer_action", Value::Bool(true)),
             ("used_page", Value::Bool(false)),
+            ("used_browser", Value::Bool(true)),
             ("used_cursor_tools", Value::Bool(false)),
             ("used_recording", Value::Bool(false)),
             ("used_config_write", Value::Bool(false)),
@@ -371,9 +374,11 @@ struct AgentSessionState {
     tool_count: u64,
     computer_action_count: u64,
     error_count: u64,
+    browser_refusal_count: u64,
     had_successful_tool: bool,
     had_successful_computer_action: bool,
     used_page: bool,
+    used_browser: bool,
     used_cursor_tools: bool,
     used_recording: bool,
     used_config_write: bool,
@@ -388,9 +393,11 @@ impl AgentSessionState {
             tool_count: 0,
             computer_action_count: 0,
             error_count: 0,
+            browser_refusal_count: 0,
             had_successful_tool: false,
             had_successful_computer_action: false,
             used_page: false,
+            used_browser: false,
             used_cursor_tools: false,
             used_recording: false,
             used_config_write: false,
@@ -408,14 +415,28 @@ impl AgentSessionState {
         if matches!(tool_name, "start_session" | "end_session") {
             return;
         }
+        let used_browser = matches!(
+            tool_name,
+            "get_browser_state"
+                | "browser_prepare"
+                | "browser_navigate"
+                | "browser_click"
+                | "browser_type"
+        );
+        let refused = outcome.refusal_code.is_refusal();
+        let completed_computer_action = computer_action && !refused;
         self.tool_count = self.tool_count.saturating_add(1);
         self.computer_action_count = self
             .computer_action_count
-            .saturating_add(u64::from(computer_action));
+            .saturating_add(u64::from(completed_computer_action));
         self.error_count = self.error_count.saturating_add(u64::from(!outcome.success));
+        self.browser_refusal_count = self
+            .browser_refusal_count
+            .saturating_add(u64::from(used_browser && refused));
         self.had_successful_tool |= outcome.success;
-        self.had_successful_computer_action |= outcome.success && computer_action;
+        self.had_successful_computer_action |= outcome.success && completed_computer_action;
         self.used_page |= tool_name == "page";
+        self.used_browser |= used_browser;
         self.used_cursor_tools |= matches!(
             tool_name,
             "set_agent_cursor_enabled"
@@ -469,9 +490,11 @@ impl AgentSessionState {
             ("tool_count_bucket", Value::String(agent_session_count_bucket(self.tool_count).into())),
             ("computer_action_count_bucket", Value::String(agent_session_count_bucket(self.computer_action_count).into())),
             ("error_count_bucket", Value::String(agent_session_error_bucket(self.error_count).into())),
+            ("browser_refusal_count_bucket", Value::String(agent_session_error_bucket(self.browser_refusal_count).into())),
             ("had_successful_tool", Value::Bool(self.had_successful_tool)),
             ("had_successful_computer_action", Value::Bool(self.had_successful_computer_action)),
             ("used_page", Value::Bool(self.used_page)),
+            ("used_browser", Value::Bool(self.used_browser)),
             ("used_cursor_tools", Value::Bool(self.used_cursor_tools)),
             ("used_recording", Value::Bool(self.used_recording)),
             ("used_config_write", Value::Bool(self.used_config_write)),
@@ -752,6 +775,7 @@ fn tool_completion_properties(
         ("operation", Value::String(outcome.operation.as_str().into())),
         ("success", Value::Bool(outcome.success)),
         ("error_class", Value::String(error_class.into())),
+        ("refusal_code", Value::String(outcome.refusal_code.as_str().into())),
         ("duration_bucket", Value::String(duration_bucket.into())),
         ("output_type", Value::String(output_type.into())),
         ("output_size_bucket", Value::String(output_size_bucket.into())),
@@ -2281,6 +2305,7 @@ mod tests {
         let tool = inspect_event(event::MCP_TOOL_COMPLETED).unwrap();
         assert_eq!(tool["properties"]["duration_bucket"], "lt_10ms");
         assert_eq!(tool["properties"]["operation"], "not_applicable");
+        assert_eq!(tool["properties"]["refusal_code"], "none");
         assert!(matches!(
             tool["properties"]["execution_mode"].as_str(),
             Some("embedded" | "standalone")
@@ -2403,6 +2428,7 @@ mod tests {
                 operation: cua_driver_core::server::ToolOperation::NotApplicable,
                 success: true,
                 error_class: ToolErrorClass::None,
+                refusal_code: cua_driver_core::server::ToolRefusalCode::None,
                 duration_bucket: DurationBucket::Under10Ms,
                 output_type: OutputType::Text,
                 output_size_bucket: OutputSizeBucket::Under1KiB,
@@ -2416,6 +2442,7 @@ mod tests {
                 operation: cua_driver_core::server::ToolOperation::QueryDom,
                 success: false,
                 error_class: ToolErrorClass::InternalError,
+                refusal_code: cua_driver_core::server::ToolRefusalCode::None,
                 duration_bucket: DurationBucket::Ms50To249,
                 output_type: OutputType::Empty,
                 output_size_bucket: OutputSizeBucket::Empty,
@@ -2440,6 +2467,8 @@ mod tests {
         assert_eq!(properties["had_successful_tool"], true);
         assert_eq!(properties["had_successful_computer_action"], true);
         assert_eq!(properties["used_page"], true);
+        assert_eq!(properties["used_browser"], false);
+        assert_eq!(properties["browser_refusal_count_bucket"], "0");
         assert_eq!(properties["cursor_style"], "custom_icon");
         assert_eq!(properties["cursor_color_source"], "custom");
         assert_eq!(properties["cursor_label_set"], true);
@@ -2460,6 +2489,46 @@ mod tests {
         ] {
             assert!(!serialized.contains(forbidden), "aggregate contains {forbidden}: {serialized}");
         }
+    }
+
+    #[test]
+    fn browser_refusal_is_bounded_and_not_a_completed_computer_action() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
+            ToolErrorClass, ToolOperation, ToolRefusalCode,
+        };
+
+        let outcome = ToolCompletionObservation {
+            tool_name: "browser_click".into(),
+            operation: ToolOperation::BrowserClickTrusted,
+            success: true,
+            error_class: ToolErrorClass::None,
+            refusal_code: ToolRefusalCode::BrowserInputTrustUnavailable,
+            duration_bucket: DurationBucket::Ms50To249,
+            output_type: OutputType::Text,
+            output_size_bucket: OutputSizeBucket::Under1KiB,
+        };
+        let event_properties = tool_completion_properties(outcome.clone());
+        assert_eq!(event_properties["success"], true);
+        assert_eq!(event_properties["error_class"], "none");
+        assert_eq!(
+            event_properties["refusal_code"],
+            "browser_input_trust_unavailable"
+        );
+        assert_eq!(event_properties["operation"], "browser_click_trusted");
+
+        let mut state = AgentSessionState::new(Transport::McpStdio);
+        state.observe(Transport::McpStdio, true, &outcome);
+        let session_properties = state.ended_properties(
+            cua_driver_core::session::SessionEndReason::Explicit,
+            None,
+        );
+        assert_eq!(session_properties["computer_action_count_bucket"], "0");
+        assert_eq!(session_properties["error_count_bucket"], "0");
+        assert_eq!(session_properties["browser_refusal_count_bucket"], "1");
+        assert_eq!(session_properties["had_successful_tool"], true);
+        assert_eq!(session_properties["had_successful_computer_action"], false);
+        assert_eq!(session_properties["used_browser"], true);
     }
 
     #[test]
@@ -2500,6 +2569,10 @@ mod tests {
         use cua_driver_core::session::{
             SessionDeclaration, SessionObserver, SessionStartObservation, SessionTransport,
         };
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
+            ToolErrorClass, ToolOperation, ToolRefusalCode,
+        };
 
         let _guard = ENV_LOCK.lock().unwrap();
         with_isolated_home(|_| {
@@ -2512,6 +2585,19 @@ mod tests {
                     revived: false,
                     transport: SessionTransport::McpStdio,
                 },
+            );
+            capture_tool_completed(
+                ToolCompletionObservation {
+                    tool_name: "browser_prepare".into(),
+                    operation: ToolOperation::BrowserPrepareExistingProfile,
+                    success: true,
+                    error_class: ToolErrorClass::None,
+                    refusal_code: ToolRefusalCode::BrowserConsentRevoked,
+                    duration_bucket: DurationBucket::Ms50To249,
+                    output_type: OutputType::Text,
+                    output_size_bucket: OutputSizeBucket::Under1KiB,
+                },
+                Transport::McpStdio,
             );
             assert!(!AGENT_SESSIONS
                 .get_or_init(|| Mutex::new(HashMap::new()))
@@ -2534,6 +2620,7 @@ mod tests {
             operation: cua_driver_core::server::ToolOperation::NotApplicable,
             success: true,
             error_class: ToolErrorClass::None,
+            refusal_code: cua_driver_core::server::ToolRefusalCode::None,
             duration_bucket: DurationBucket::Under10Ms,
             output_type: OutputType::Text,
             output_size_bucket: OutputSizeBucket::Under1KiB,
@@ -2565,6 +2652,7 @@ mod tests {
             operation: ToolOperation::InsertText,
             success: true,
             error_class: ToolErrorClass::None,
+            refusal_code: cua_driver_core::server::ToolRefusalCode::None,
             duration_bucket: DurationBucket::Under10Ms,
             output_type: OutputType::Text,
             output_size_bucket: OutputSizeBucket::Under1KiB,

@@ -1804,7 +1804,7 @@ mod telemetry_routing_tests {
     fn request(origin: Option<ToolObservationOrigin>) -> DaemonRequest {
         DaemonRequest {
             method: "call".into(),
-            name: Some("click".into()),
+            name: Some("browser_click".into()),
             args: Some(serde_json::json!({})),
             session_id: Some("bounded-session".into()),
             observation_origin: origin,

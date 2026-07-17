@@ -229,7 +229,12 @@ fn is_computer_action(tool_name: &str, args: &serde_json::Value) -> bool {
                 || capability.starts_with("input.keyboard.")
                 || matches!(
                     capability.as_str(),
-                    "app.launch" | "app.kill" | "window.activate"
+                    "app.launch"
+                        | "app.kill"
+                        | "window.activate"
+                        | "browser.navigate"
+                        | "browser.input.click"
+                        | "browser.input.type"
                 )
         })
 }
@@ -468,6 +473,17 @@ mod tests {
                 probe
             })
             .clone()
+    }
+
+    #[test]
+    fn browser_mutations_are_computer_actions_but_reads_and_prepare_are_not() {
+        let args = serde_json::json!({"session": "test-session"});
+        for tool_name in ["browser_navigate", "browser_click", "browser_type"] {
+            assert!(is_computer_action(tool_name, &args), "tool={tool_name}");
+        }
+        for tool_name in ["get_browser_state", "browser_prepare"] {
+            assert!(!is_computer_action(tool_name, &args), "tool={tool_name}");
+        }
     }
 
     #[test]

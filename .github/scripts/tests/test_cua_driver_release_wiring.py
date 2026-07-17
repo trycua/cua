@@ -52,6 +52,9 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             'git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"',
             workflow,
         )
+        self.assertIn("git rebase origin/main", workflow)
+        self.assertIn('--force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD"', workflow)
+        self.assertNotIn("git push --force ", workflow)
         self.assertIn("sync_lume_release_docs.py", workflow)
         self.assertIn("chore(lume): synchronize release documentation", workflow)
         self.assertNotIn("if: steps.release.outputs.prs_created == 'true'", workflow)
@@ -96,9 +99,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
 
         self.assertNotIn('      - "libs/cua-driver/rust/**"', workflow)
         self.assertEqual(
-            workflow.count(
-                '      - ".github/workflows/ci-distro-compat-cua-driver.yml"'
-            ),
+            workflow.count('      - ".github/workflows/ci-distro-compat-cua-driver.yml"'),
             2,
         )
         self.assertIn('      - "cua-driver-rs-v*"', workflow)
@@ -111,9 +112,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             ".github/workflows/ci-rust-windows.yml",
         ):
             workflow = self.read(relative_path)
-            self.assertNotIn(
-                '      - "libs/cua-driver/rust/**"', workflow, relative_path
-            )
+            self.assertNotIn('      - "libs/cua-driver/rust/**"', workflow, relative_path)
             self.assertIn(
                 '      - "libs/cua-driver/rust/crates/cua-driver/**"',
                 workflow,

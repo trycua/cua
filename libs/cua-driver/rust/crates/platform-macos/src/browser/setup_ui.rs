@@ -13,8 +13,8 @@ use cua_driver_core::browser::{
 };
 
 use crate::ax::bindings::{
-    copy_number_attr, copy_string_attr, element_screen_center, kAXErrorSuccess, perform_action,
-    set_string_attr, AXUIElementRef,
+    copy_number_attr, copy_string_attr, element_screen_center, focused_element_of_pid,
+    kAXErrorSuccess, perform_action, set_bool_attr_true, set_string_attr, AXUIElementRef,
 };
 use crate::ax::tree::{walk_tree, AXNode};
 
@@ -624,7 +624,7 @@ pub fn enable(
                 }
             };
             release_actionable_nodes(&initial.nodes);
-            let handle = SetupUiHandle {
+            let mut handle = SetupUiHandle {
                 descriptor,
                 close_button: Some(close_button),
                 enable_attempted: false,
@@ -643,6 +643,22 @@ pub fn enable(
                     return Err(handle.abort(pid, window_id, error));
                 }
             };
+            let focused = unsafe { perform_action(omnibox as AXUIElementRef, "AXPress") };
+            if focused != kAXErrorSuccess {
+                release_actionable_nodes(&created.nodes);
+                return Err(handle.abort(
+                    pid,
+                    window_id,
+                    refusal(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        format!(
+                            "{}'s exact address field became stale before AXPress",
+                            descriptor.product_name
+                        ),
+                    ),
+                ));
+            }
+            handle.focused_setup_address_field = true;
             let wrote_url = unsafe {
                 set_string_attr(omnibox as AXUIElementRef, "AXValue", descriptor.setup_url)
             };
@@ -662,8 +678,17 @@ pub fn enable(
             }
             let exact_value = unsafe { copy_string_attr(omnibox as AXUIElementRef, "AXValue") }
                 .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url));
+            let can_confirm = created
+                .nodes
+                .iter()
+                .any(|node| node.element_ptr == omnibox && has_action(node, "AXConfirm"));
+            let confirmed = can_confirm
+                && unsafe { perform_action(omnibox as AXUIElementRef, "AXConfirm") }
+                    == kAXErrorSuccess;
+            unsafe { CFRetain(omnibox as CFTypeRef) };
             release_actionable_nodes(&created.nodes);
             if !exact_value {
+                unsafe { CFRelease(omnibox as CFTypeRef) };
                 return Err(handle.abort(
                     pid,
                     window_id,
@@ -676,49 +701,144 @@ pub fn enable(
                     ),
                 ));
             }
-            let deadline = Instant::now() + Duration::from_secs(2);
-            let suggestion = loop {
-                let popup = walk_tree(pid, Some(window_id), None);
-                match exact_omnibox_suggestion(&popup.nodes, descriptor) {
-                    Ok(Some(element)) => break Ok((popup, element)),
-                    Ok(None) if Instant::now() < deadline => {
+            if confirmed {
+                unsafe { CFRelease(omnibox as CFTypeRef) };
+            } else {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                let suggestion = loop {
+                    let popup = walk_tree(pid, Some(window_id), None);
+                    match exact_omnibox_suggestion(&popup.nodes, descriptor) {
+                        Ok(Some(element)) => break Ok(Some((popup, element))),
+                        Ok(None) if Instant::now() < deadline => {
+                            release_actionable_nodes(&popup.nodes);
+                            std::thread::sleep(Duration::from_millis(50));
+                        }
+                        Ok(None) => {
+                            release_actionable_nodes(&popup.nodes);
+                            break Ok(None);
+                        }
+                        Err(error) => {
+                            release_actionable_nodes(&popup.nodes);
+                            break Err(error);
+                        }
+                    }
+                };
+                match suggestion {
+                    Ok(Some((popup, suggestion))) => {
+                        unsafe { CFRelease(omnibox as CFTypeRef) };
+                        let navigation =
+                            unsafe { perform_action(suggestion as AXUIElementRef, "AXPress") };
                         release_actionable_nodes(&popup.nodes);
-                        std::thread::sleep(Duration::from_millis(50));
+                        if navigation != kAXErrorSuccess {
+                            return Err(handle.abort(
+                                pid,
+                                window_id,
+                                refusal(
+                                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                                    format!(
+                                        "{}'s exact fixed-URL suggestion became stale before AXPress",
+                                        descriptor.product_name
+                                    ),
+                                ),
+                            ));
+                        }
                     }
                     Ok(None) => {
-                        release_actionable_nodes(&popup.nodes);
-                        break Err(refusal(
-                            BrowserRefusalCode::BrowserWrongTargetRefused,
-                            format!(
-                                "{} did not expose one exact fixed-URL omnibox suggestion",
-                                descriptor.product_name
-                            ),
-                        ));
+                        handle.foregrounded_window = true;
+                        handle.injected_global_input = true;
+                        let navigated = crate::input::skylight::with_foreground_assist(
+                            pid,
+                            window_id,
+                            || {
+                                std::thread::sleep(Duration::from_millis(60));
+                                if crate::apps::frontmost_pid() != Some(pid) {
+                                    anyhow::bail!(
+                                        "the approved browser lost foreground before setup navigation"
+                                    );
+                                }
+                                let exact_value = unsafe {
+                                    copy_string_attr(omnibox as AXUIElementRef, "AXValue")
+                                }
+                                .is_some_and(|value| {
+                                    value.trim().eq_ignore_ascii_case(descriptor.setup_url)
+                                });
+                                if !exact_value {
+                                    anyhow::bail!(
+                                        "the exact address field no longer contained the fixed setup URL"
+                                    );
+                                }
+                                let focused = unsafe {
+                                    perform_action(omnibox as AXUIElementRef, "AXPress")
+                                };
+                                if focused != kAXErrorSuccess {
+                                    anyhow::bail!(
+                                        "the exact address field became stale before setup navigation"
+                                    );
+                                }
+                                let _ = unsafe {
+                                    set_bool_attr_true(omnibox as AXUIElementRef, "AXFocused")
+                                };
+                                std::thread::sleep(Duration::from_millis(60));
+                                let focused_element = unsafe { focused_element_of_pid(pid) };
+                                let exact_focus = focused_element.is_some_and(|element| {
+                                    let matches = is_same_element(element as usize, omnibox);
+                                    unsafe { CFRelease(element as CFTypeRef) };
+                                    matches
+                                });
+                                if !exact_focus {
+                                    anyhow::bail!(
+                                        "the exact address field did not own keyboard focus"
+                                    );
+                                }
+                                crate::input::keyboard::press_key_global("a", &["cmd"])?;
+                                std::thread::sleep(Duration::from_millis(30));
+                                crate::input::keyboard::type_text(pid, descriptor.setup_url)?;
+                                std::thread::sleep(Duration::from_millis(100));
+                                let typed_exact_value = unsafe {
+                                    copy_string_attr(omnibox as AXUIElementRef, "AXValue")
+                                }
+                                .is_some_and(|value| {
+                                    value.trim().eq_ignore_ascii_case(descriptor.setup_url)
+                                });
+                                if !typed_exact_value {
+                                    anyhow::bail!(
+                                        "trusted setup typing did not retain the fixed URL"
+                                    );
+                                }
+                                crate::input::keyboard::press_key_global("return", &[])?;
+                                std::thread::sleep(Duration::from_millis(100));
+                                Ok(())
+                            },
+                        )
+                        .and_then(|fronted| {
+                            if fronted {
+                                Ok(())
+                            } else {
+                                Err(anyhow::anyhow!(
+                                    "the bounded setup foreground assist was unavailable"
+                                ))
+                            }
+                        });
+                        unsafe { CFRelease(omnibox as CFTypeRef) };
+                        if let Err(error) = navigated {
+                            return Err(handle.abort(
+                                pid,
+                                window_id,
+                                refusal(
+                                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                                    format!(
+                                        "could not navigate the exact approved {} setup tab: {error}",
+                                        descriptor.product_name
+                                    ),
+                                ),
+                            ));
+                        }
                     }
                     Err(error) => {
-                        release_actionable_nodes(&popup.nodes);
-                        break Err(error);
+                        unsafe { CFRelease(omnibox as CFTypeRef) };
+                        return Err(handle.abort(pid, window_id, error));
                     }
                 }
-            };
-            let (popup, suggestion) = match suggestion {
-                Ok(value) => value,
-                Err(error) => return Err(handle.abort(pid, window_id, error)),
-            };
-            let navigation = unsafe { perform_action(suggestion as AXUIElementRef, "AXPress") };
-            release_actionable_nodes(&popup.nodes);
-            if navigation != kAXErrorSuccess {
-                return Err(handle.abort(
-                    pid,
-                    window_id,
-                    refusal(
-                        BrowserRefusalCode::BrowserWrongTargetRefused,
-                        format!(
-                            "{}'s exact fixed-URL suggestion became stale before AXPress",
-                            descriptor.product_name
-                        ),
-                    ),
-                ));
             }
             handle
         }

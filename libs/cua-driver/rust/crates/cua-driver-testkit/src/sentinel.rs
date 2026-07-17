@@ -89,19 +89,10 @@ impl ForegroundSentinel {
             // The compositor observation is the authoritative Wayland focus gate.
             wait_for_native_focus_stable(target);
         } else {
-            loop {
-                let journal = fs::read_to_string(&journal_path).unwrap_or_default();
-                if journal.contains(r#""kind":"ready""#) && journal.contains(r#""kind":"focus""#) {
-                    break;
-                }
-                assert!(
-                    Instant::now() < focus_deadline,
-                    "foreground sentinel did not become ready and focused: {journal}"
-                );
-                std::thread::sleep(Duration::from_millis(100));
-            }
+            wait_for_journal(&journal_path, focus_deadline, r#""kind":"ready""#, "ready");
             activate_native_foreground(driver, target);
             wait_for_native_focus_stable(target);
+            wait_for_journal(&journal_path, focus_deadline, r#""kind":"focus""#, "focus");
         }
         fs::write(&journal_path, "").expect("reset focused sentinel journal");
 

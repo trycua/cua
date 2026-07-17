@@ -360,6 +360,7 @@ impl RenderState {
     /// tick can change pixels. A brand-new sentinel cursor is deliberately
     /// quiescent, so an idle MCP server can block on the command channel
     /// instead of repainting a full-screen X11 pixmap at 60 fps.
+    #[cfg(target_os = "linux")]
     fn needs_frame_tick(&self) -> bool {
         let fade_start = self.core.motion.idle_hide_ms / 1000.0;
         self.core.path.is_some()
@@ -373,17 +374,71 @@ impl RenderState {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn render_map_needs_frame_tick(map: &RenderMap) -> bool {
     map.cursors.values().any(RenderState::needs_frame_tick)
 }
 
+#[cfg(target_os = "linux")]
 fn render_map_needs_z_order_tick(map: &RenderMap) -> bool {
     map.cursors
         .values()
         .any(|rs| rs.core.visible && rs.core.idle_alpha >= 0.004 && rs.core.pos.0 >= -100.0)
 }
 
-fn render_map_idle_wait_interval(map: &RenderMap, max_interval: Duration) -> Duration {
+#[cfg(target_os = "linux")]
+fn tick_render_map(map: &mut RenderMap, dt: f64) -> Vec<CursorKey> {
+    let mut arrived = Vec::new();
+    for (key, rs) in map.cursors.iter_mut() {
+        if rs.tick(dt) {
+            arrived.push(key.clone());
+        }
+    }
+    arrived
+}
+
+#[cfg(target_os = "linux")]
+fn scheduled_tick_dt(elapsed_dt: f64, maintenance_timeout: bool) -> f64 {
+    if maintenance_timeout {
+        // No animation is active while parked, so maintenance must advance the
+        // complete idle interval rather than the 50 ms animation safety cap.
+        elapsed_dt
+    } else {
+        elapsed_dt.min(0.05)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn apply_messages_after_wake(
+    map: &mut RenderMap,
+    first_msg: Option<OverlayMsg>,
+    rx: &std::sync::mpsc::Receiver<OverlayMsg>,
+    parked_elapsed: Option<f64>,
+) -> (Vec<CursorKey>, bool) {
+    // Advance pre-existing quiescent state before commands mutate it. This
+    // preserves each cursor's independent idle clock while ensuring newly
+    // commanded animations render their initial frame at dt=0.
+    let arrived = parked_elapsed
+        .map(|dt| tick_render_map(map, dt))
+        .unwrap_or_default();
+    let mut had_msg = false;
+    if let Some(msg) = first_msg {
+        had_msg = true;
+        if let Some(key) = apply_msg(map, msg) {
+            map.last_active = Some(key);
+        }
+    }
+    while let Ok(msg) = rx.try_recv() {
+        had_msg = true;
+        if let Some(key) = apply_msg(map, msg) {
+            map.last_active = Some(key);
+        }
+    }
+    (arrived, had_msg)
+}
+
+#[cfg(target_os = "linux")]
+fn render_map_idle_wait_interval(map: &RenderMap) -> Option<Duration> {
     map.cursors
         .values()
         .filter_map(|rs| {
@@ -401,9 +456,23 @@ fn render_map_idle_wait_interval(map: &RenderMap, max_interval: Duration) -> Dur
             let remaining = core.motion.idle_hide_ms / 1000.0 - core.idle_secs;
             (remaining.is_finite() && remaining > 0.0).then(|| Duration::from_secs_f64(remaining))
         })
-        .fold(max_interval, Duration::min)
+        .min()
 }
 
+#[cfg(target_os = "linux")]
+fn next_maintenance_deadline(
+    last_tick: Instant,
+    last_z_order_tick: Instant,
+    z_order_interval: Duration,
+    idle_wait_interval: Option<Duration>,
+) -> Instant {
+    let z_order_deadline = last_z_order_tick + z_order_interval;
+    idle_wait_interval
+        .map(|interval| (last_tick + interval).min(z_order_deadline))
+        .unwrap_or(z_order_deadline)
+}
+
+#[cfg(target_os = "linux")]
 enum OverlayWake {
     Frame,
     Message(OverlayMsg),
@@ -411,18 +480,20 @@ enum OverlayWake {
     Disconnected,
 }
 
+#[cfg(target_os = "linux")]
 fn wait_for_overlay_work(
     rx: &std::sync::mpsc::Receiver<OverlayMsg>,
     frame_tick_needed: bool,
     z_order_tick_needed: bool,
-    maintenance_interval: Duration,
+    maintenance_deadline: Instant,
 ) -> OverlayWake {
     if frame_tick_needed {
         return OverlayWake::Frame;
     }
 
     if z_order_tick_needed {
-        return match rx.recv_timeout(maintenance_interval) {
+        let timeout = maintenance_deadline.saturating_duration_since(Instant::now());
+        return match rx.recv_timeout(timeout) {
             Ok(msg) => OverlayWake::Message(msg),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => OverlayWake::MaintenanceTimeout,
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => OverlayWake::Disconnected,
@@ -559,7 +630,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let mut last_ztick = Instant::now();
     let mut frame_tick_needed = false;
     let mut z_order_tick_needed = false;
-    let mut maintenance_interval = z_order_interval;
+    let mut maintenance_deadline = last_ztick + z_order_interval;
     let mut last_pinned: Option<u64> = None;
     let z_enforcer = X11ZOrderEnforcer { conn: &conn, win };
 
@@ -572,7 +643,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
             &rx,
             frame_tick_needed,
             z_order_tick_needed,
-            maintenance_interval,
+            maintenance_deadline,
         ) {
             OverlayWake::Frame => (None, false),
             OverlayWake::Message(msg) => (Some(msg), false),
@@ -582,18 +653,8 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
 
         let woke_for_command = first_msg.is_some();
         let now = Instant::now();
-        let dt = if woke_for_command {
-            // A blocking receive can span an arbitrarily long idle period. Do
-            // not fast-forward the first animation frame after waking.
-            0.0
-        } else if maintenance_timeout {
-            // A maintenance wake is the cheap clock for both z-order and a
-            // future idle-hide deadline. No animation is active in this branch,
-            // so it is safe to advance the full elapsed interval without painting.
-            now.duration_since(last_tick).as_secs_f64()
-        } else {
-            now.duration_since(last_tick).as_secs_f64().min(0.05)
-        };
+        let elapsed_dt = now.duration_since(last_tick).as_secs_f64();
+        let tick_dt = scheduled_tick_dt(elapsed_dt, maintenance_timeout);
         last_tick = now;
 
         // Drain commands and tick.
@@ -603,30 +664,18 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
             had_msg,
             next_frame_tick_needed,
             next_z_order_tick_needed,
-            next_maintenance_interval,
+            next_idle_wait_interval,
         ) = {
             let mut guard = RENDER.lock().unwrap();
             if let Some(map) = guard.as_mut() {
-                let mut had_msg = false;
-                if let Some(msg) = first_msg {
-                    had_msg = true;
-                    if let Some(key) = apply_msg(map, msg) {
-                        map.last_active = Some(key);
-                    }
-                }
-                while let Ok(msg) = rx.try_recv() {
-                    had_msg = true;
-                    if let Some(key) = apply_msg(map, msg) {
-                        map.last_active = Some(key);
-                    }
-                }
-                let mut arrived = Vec::new();
-                if frame_tick_needed || had_msg || maintenance_timeout {
-                    for (key, rs) in map.cursors.iter_mut() {
-                        if rs.tick(dt) {
-                            arrived.push(key.clone());
-                        }
-                    }
+                let (mut arrived, had_msg) = apply_messages_after_wake(
+                    map,
+                    first_msg,
+                    &rx,
+                    woke_for_command.then_some(elapsed_dt),
+                );
+                if !woke_for_command && (frame_tick_needed || had_msg || maintenance_timeout) {
+                    arrived.extend(tick_render_map(map, tick_dt));
                 }
                 let pinned_wid = map
                     .last_active
@@ -635,15 +684,14 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
                     .and_then(|rs| rs.core.pinned_wid);
                 let next_frame_tick_needed = render_map_needs_frame_tick(map);
                 let next_z_order_tick_needed = render_map_needs_z_order_tick(map);
-                let next_maintenance_interval =
-                    render_map_idle_wait_interval(map, z_order_interval);
+                let next_idle_wait_interval = render_map_idle_wait_interval(map);
                 (
                     arrived,
                     pinned_wid,
                     had_msg,
                     next_frame_tick_needed,
                     next_z_order_tick_needed,
-                    next_maintenance_interval,
+                    next_idle_wait_interval,
                 )
             } else {
                 break;
@@ -707,7 +755,12 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
 
         frame_tick_needed = next_frame_tick_needed;
         z_order_tick_needed = next_z_order_tick_needed;
-        maintenance_interval = next_maintenance_interval;
+        maintenance_deadline = next_maintenance_deadline(
+            last_tick,
+            last_ztick,
+            z_order_interval,
+            next_idle_wait_interval,
+        );
         if frame_tick_needed {
             let elapsed = Instant::now().duration_since(last_tick);
             if let Some(remaining) = frame_dur.checked_sub(elapsed) {
@@ -973,7 +1026,7 @@ mod tests {
         tx.send(test_message()).unwrap();
 
         assert!(matches!(
-            wait_for_overlay_work(&rx, true, false, Duration::from_millis(1)),
+            wait_for_overlay_work(&rx, true, false, Instant::now()),
             OverlayWake::Frame
         ));
         assert!(rx.try_recv().is_ok());
@@ -984,7 +1037,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         tx.send(test_message()).unwrap();
 
-        match wait_for_overlay_work(&rx, false, false, Duration::from_millis(1)) {
+        match wait_for_overlay_work(&rx, false, false, Instant::now()) {
             OverlayWake::Message(OverlayMsg::Cmd(keyed)) => assert_eq!(keyed.key, "default"),
             _ => panic!("idle wait did not return the queued command"),
         }
@@ -994,9 +1047,39 @@ mod tests {
     fn resting_cursor_wait_times_out_for_maintenance() {
         let (_tx, rx) = std::sync::mpsc::channel();
         assert!(matches!(
-            wait_for_overlay_work(&rx, false, true, Duration::from_millis(1)),
+            wait_for_overlay_work(&rx, false, true, Instant::now() + Duration::from_millis(1)),
             OverlayWake::MaintenanceTimeout
         ));
+    }
+
+    #[test]
+    fn expired_maintenance_deadline_times_out_immediately() {
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let deadline = Instant::now() - Duration::from_millis(1);
+        assert!(matches!(
+            wait_for_overlay_work(&rx, false, true, deadline),
+            OverlayWake::MaintenanceTimeout
+        ));
+    }
+
+    #[test]
+    fn idle_deadline_is_anchored_to_the_state_tick() {
+        let state_tick = Instant::now();
+        let z_order_tick = state_tick + Duration::from_millis(5);
+        let deadline = next_maintenance_deadline(
+            state_tick,
+            z_order_tick,
+            Duration::from_millis(80),
+            Some(Duration::from_millis(20)),
+        );
+
+        assert_eq!(deadline, state_tick + Duration::from_millis(20));
+    }
+
+    #[test]
+    fn maintenance_tick_advances_the_full_elapsed_interval() {
+        assert_eq!(scheduled_tick_dt(0.08, true), 0.08);
+        assert_eq!(scheduled_tick_dt(0.08, false), 0.05);
     }
 
     #[test]
@@ -1004,14 +1087,14 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         drop(tx);
         assert!(matches!(
-            wait_for_overlay_work(&rx, false, false, Duration::from_millis(1)),
+            wait_for_overlay_work(&rx, false, false, Instant::now()),
             OverlayWake::Disconnected
         ));
 
         let (tx, rx) = std::sync::mpsc::channel();
         drop(tx);
         assert!(matches!(
-            wait_for_overlay_work(&rx, false, true, Duration::from_millis(1)),
+            wait_for_overlay_work(&rx, false, true, Instant::now()),
             OverlayWake::Disconnected
         ));
     }
@@ -1083,6 +1166,41 @@ mod tests {
     }
 
     #[test]
+    fn commands_for_one_cursor_do_not_starve_another_cursors_idle_deadline() {
+        let mut map = default_render_map();
+        {
+            let cursor = map.cursors.get_mut("default").unwrap();
+            cursor.core.pos = (10.0, 10.0);
+            cursor.core.motion.idle_hide_ms = 500.0;
+        }
+        let other = render_state_for_key(&map.template, "other");
+        map.cursors.insert("other".to_owned(), other);
+        let (_tx, rx) = std::sync::mpsc::channel();
+
+        // Model five command-channel wakeups at 100 ms intervals. The parked
+        // elapsed time must advance all existing cursors before each unrelated
+        // command is applied.
+        for _ in 0..5 {
+            let (arrived, had_msg) = apply_messages_after_wake(
+                &mut map,
+                Some(OverlayMsg::Cmd(KeyedOverlayCommand {
+                    key: "other".to_owned(),
+                    cmd: OverlayCommand::SetPalette(Palette::for_instance("other")),
+                })),
+                &rx,
+                Some(0.1),
+            );
+            assert!(arrived.is_empty());
+            assert!(had_msg);
+        }
+
+        let cursor = map.cursors.get("default").unwrap();
+        assert!(cursor.core.idle_secs >= 0.5);
+        assert!(cursor.needs_frame_tick());
+        assert_eq!(cursor.core.idle_alpha, 1.0);
+    }
+
+    #[test]
     fn idle_heartbeat_starts_fade_then_frames_return_to_quiescence() {
         let mut map = default_render_map();
         {
@@ -1101,7 +1219,7 @@ mod tests {
 
         // Shorten the final maintenance wait to the exact fade deadline rather
         // than overshooting by another 80 ms and jumping the first alpha frame.
-        let deadline_wait = render_map_idle_wait_interval(&map, Duration::from_millis(80));
+        let deadline_wait = render_map_idle_wait_interval(&map).unwrap();
         assert!(deadline_wait >= Duration::from_millis(19));
         assert!(deadline_wait <= Duration::from_millis(21));
 

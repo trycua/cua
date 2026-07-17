@@ -1577,6 +1577,12 @@ async fn click_routes_oopif_refs_through_the_contained_child_session() {
             .all(|(sess, _)| sess.as_deref().unwrap_or("").starts_with("oopif-sess-")),
         "OOPIF input must dispatch on the child session: {mouse:?}"
     );
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(focus_emulation.len(), 2);
+    assert_eq!(focus_emulation[0].1["enabled"], true);
+    assert_eq!(focus_emulation[1].1["enabled"], false);
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
 }
 
 #[tokio::test]

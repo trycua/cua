@@ -910,8 +910,27 @@ impl Tool for BrowserClickTool {
             (None, None) => unreachable!("validated above"),
         };
 
+        if let Err(error) = conn
+            .call(
+                Some(cdp),
+                "Emulation.setFocusEmulationEnabled",
+                json!({ "enabled": true }),
+            )
+            .await
+        {
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserInputTrustUnavailable,
+                format!(
+                    "the target tab could not enter CDP focus emulation for trusted input: {error}"
+                ),
+            )
+            .to_tool_result();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+
+        let mut delivery_error = None;
         for (event_type, click_count) in [("mousePressed", 1), ("mouseReleased", 1)] {
-            if let Err(e) = conn
+            if let Err(error) = conn
                 .call(
                     Some(cdp),
                     "Input.dispatchMouseEvent",
@@ -925,17 +944,39 @@ impl Tool for BrowserClickTool {
                 )
                 .await
             {
-                // Trusted input is the contract; we never silently fall
-                // back to synthetic events.
-                return BrowserRefusal::new(
-                    BrowserRefusalCode::BrowserInputTrustUnavailable,
-                    format!(
-                        "trusted Input route failed ({e}) — re-run with \
-                         input_route=\"dom_event\" to explicitly request a synthetic click"
-                    ),
-                )
-                .to_tool_result();
+                delivery_error = Some(error);
+                break;
             }
+        }
+        let cleanup_error = conn
+            .call(
+                Some(cdp),
+                "Emulation.setFocusEmulationEnabled",
+                json!({ "enabled": false }),
+            )
+            .await
+            .err();
+        if let Some(error) = delivery_error {
+            // Trusted input is the contract; we never silently fall back to
+            // synthetic events. Focus emulation has already been unwound.
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserInputTrustUnavailable,
+                format!(
+                    "trusted Input route failed ({error}) — re-run with \
+                     input_route=\"dom_event\" to explicitly request a synthetic click"
+                ),
+            )
+            .to_tool_result();
+        }
+        if let Some(error) = cleanup_error {
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserInputTrustUnavailable,
+                format!(
+                    "trusted click was acknowledged but CDP focus emulation could not be restored ({error}); delivery is unknown and must not be retried automatically"
+                ),
+            )
+            .with_detail(json!({ "delivery": "unknown", "retryable": false }))
+            .to_tool_result();
         }
         ToolResult::text(format!("clicked ({x:.0}, {y:.0}) in {tab_id}")).with_structured(json!({
             "status": "ok",

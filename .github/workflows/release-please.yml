@@ -63,10 +63,16 @@ jobs:
               exit 1
             fi
 
-            # release-please updates the remote branch after checkout, so the
-            # checkout-created remote-tracking ref can no longer fast-forward.
+            # Release Please can update an existing branch that predates the
+            # current workflow. Refresh it, then replay only this trusted bot
+            # branch onto main so validation uses the current release tooling.
+            git fetch origin "+refs/heads/main:refs/remotes/origin/main"
             git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+            REMOTE_HEAD=$(git rev-parse "origin/$BRANCH")
             git checkout -B "$BRANCH" "origin/$BRANCH"
+            git config user.name "trycua-release[bot]"
+            git config user.email "trycua-release[bot]@users.noreply.github.com"
+            git rebase origin/main
             if [[ "$DRIVER" == "true" ]]; then
               DRIVER_VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/VERSION)
               cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \
@@ -83,12 +89,13 @@ jobs:
             fi
             if git diff --cached --quiet; then
               echo "Generated files already match release PR #$number"
-              continue
+            else
+              git commit -m "$COMMIT_MESSAGE"
             fi
-            git config user.name "trycua-release[bot]"
-            git config user.email "trycua-release[bot]@users.noreply.github.com"
-            git commit -m "$COMMIT_MESSAGE"
-            git push origin "HEAD:$BRANCH"
+            if [[ "$(git rev-parse HEAD)" != "$REMOTE_HEAD" ]]; then
+              git push --force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD" \
+                origin "HEAD:refs/heads/$BRANCH"
+            fi
           done < <(gh pr list --state open --base main --limit 100 --json number --jq '.[].number')
 
       - name: Verify repository release versions

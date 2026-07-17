@@ -1880,6 +1880,15 @@ async fn keystrokes_use_char_events_for_text_delivery() {
     assert_eq!(focus_emulation.len(), 2);
     assert_eq!(focus_emulation[0].1["enabled"], true);
     assert_eq!(focus_emulation[1].1["enabled"], false);
+    let readiness_checks = recorded_calls(&f, "Runtime.callFunctionOn");
+    assert!(readiness_checks.iter().any(|(_, params)| {
+        params["functionDeclaration"]
+            .as_str()
+            .is_some_and(|declaration| {
+                declaration.contains("document.hasFocus()")
+                    && declaration.contains("active === this")
+            })
+    }));
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
 }

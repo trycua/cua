@@ -1024,6 +1024,12 @@ const EDITABLE_AND_FOCUSED_CHECK: &str = "function() { \
         .includes((this.type || 'text').toLowerCase()); \
 }";
 
+const FOCUS_EMULATION_READY_CHECK: &str = "function() { \
+    const root = this.getRootNode(); \
+    const active = ('activeElement' in root) ? root.activeElement : null; \
+    return document.hasFocus() && active === this; \
+}";
+
 pub struct BrowserTypeTool {
     def: ToolDef,
     engine: Arc<BrowserEngine>,
@@ -1231,6 +1237,64 @@ impl Tool for BrowserTypeTool {
                 )
                 .to_tool_result();
             }
+            let mut focus_ready = false;
+            let mut focus_error = None;
+            for _ in 0..20 {
+                if let Err(error) = conn
+                    .call(
+                        Some(cdp),
+                        "DOM.focus",
+                        json!({ "backendNodeId": entry.backend_node_id }),
+                    )
+                    .await
+                {
+                    focus_error = Some(error);
+                    break;
+                }
+                let ready = conn
+                    .call(
+                        Some(cdp),
+                        "Runtime.callFunctionOn",
+                        json!({
+                            "objectId": object_id,
+                            "functionDeclaration": FOCUS_EMULATION_READY_CHECK,
+                            "returnByValue": true,
+                        }),
+                    )
+                    .await;
+                if matches!(
+                    ready,
+                    Ok(ref value) if value["result"]["value"].as_bool() == Some(true)
+                ) {
+                    focus_ready = true;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            if !focus_ready {
+                let _ = conn
+                    .call(
+                        Some(cdp),
+                        "Emulation.setFocusEmulationEnabled",
+                        json!({ "enabled": false }),
+                    )
+                    .await;
+                return BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserInputTrustUnavailable,
+                    format!(
+                        "the exact editable ref did not become focus-ready under CDP emulation{}",
+                        focus_error
+                            .as_ref()
+                            .map(|error| format!(": {error}"))
+                            .unwrap_or_default()
+                    ),
+                )
+                .to_tool_result();
+            }
+            // Chromium acknowledges focus emulation before every renderer's
+            // trusted-input path is ready. Edge on Linux can otherwise drop
+            // the first one or two characters while still returning success.
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             if let Err(error) = conn
                 .call(
                     Some(cdp),
@@ -1248,13 +1312,10 @@ impl Tool for BrowserTypeTool {
                     .await;
                 return BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRefStale,
-                    format!(
-                        "the ref's node could not be refocused after enabling CDP focus emulation: {error}"
-                    ),
+                    format!("the exact editable ref became stale before trusted typing: {error}"),
                 )
                 .to_tool_result();
             }
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
             let mut result = Ok(());
             let mut delivered = 0;
             for ch in text.chars() {

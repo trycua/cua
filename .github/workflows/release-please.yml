@@ -77,9 +77,12 @@ jobs:
               DRIVER_VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/VERSION)
               cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \
                 -p cua-driver --precise "$DRIVER_VERSION"
+              python3 .github/scripts/sync_driver_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product driver
-              git add libs/cua-driver/rust/Cargo.lock
-              COMMIT_MESSAGE="chore(cua-driver-rs): synchronize release lockfile"
+              git add libs/cua-driver/rust/Cargo.lock \
+                docs/content/docs/reference/cua-driver/cli-reference.mdx \
+                docs/content/docs/reference/cua-driver/mcp-tools.mdx
+              COMMIT_MESSAGE="chore(cua-driver-rs): synchronize generated release files"
             else
               python3 .github/scripts/sync_lume_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product lume

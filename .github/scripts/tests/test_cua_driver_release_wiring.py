@@ -55,6 +55,11 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("git rebase origin/main", workflow)
         self.assertIn('--force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD"', workflow)
         self.assertNotIn("git push --force ", workflow)
+        self.assertIn("sync_driver_release_docs.py", workflow)
+        self.assertIn(
+            "chore(cua-driver-rs): synchronize generated release files",
+            workflow,
+        )
         self.assertIn("sync_lume_release_docs.py", workflow)
         self.assertIn("chore(lume): synchronize release documentation", workflow)
         self.assertNotIn("if: steps.release.outputs.prs_created == 'true'", workflow)

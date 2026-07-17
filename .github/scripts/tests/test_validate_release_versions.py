@@ -16,8 +16,9 @@ def copy_release_sources(destination: Path) -> None:
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(source, target)
-    docs = "docs/content/docs/reference/lume"
-    shutil.copytree(REPO_ROOT / docs, destination / docs)
+    for product in ("cua-driver", "lume"):
+        docs = f"docs/content/docs/reference/{product}"
+        shutil.copytree(REPO_ROOT / docs, destination / docs)
 
 
 def test_current_release_versions_agree():

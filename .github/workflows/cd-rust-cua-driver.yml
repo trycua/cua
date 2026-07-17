@@ -422,6 +422,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Determine version
         id: version
@@ -633,11 +634,10 @@ jobs:
           generate_release_notes: false
           make_latest: false
 
-      # The bump-version workflow uses this same GitHub App so its pushes
-      # bypass the "Changes must be made through a pull request" ruleset
-      # on main. The default GITHUB_TOKEN (github-actions[bot]) is NOT on
-      # the bypass list and gets rejected here. Mirror the Swift CD
-      # workflow's auth setup so the bake-version push lands.
+      # The bump-version workflow uses this same GitHub App for release-time
+      # repo writes. Push the bake commit to a temporary branch first, then
+      # fast-forward main via the GitHub API; direct git pushes to main are
+      # brittle under the main-branch ruleset.
       - name: Generate GitHub App token (for bake-version push)
         id: app-token
         if: startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
@@ -654,26 +654,17 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          # Re-authenticate the origin remote with the app token so the
-          # push uses the bypass-enabled identity, not the default
-          # github-actions[bot] credentials baked in by actions/checkout.
-          #
-          # actions/checkout sets `http.https://github.com/.extraheader`
-          # with the default GITHUB_TOKEN; that header otherwise overrides
-          # the URL-embedded App token on the push (two Authorization
-          # headers sent → server takes the extraheader → push rejected
-          # by the main-branch ruleset). Drop it so only the App token's
-          # auth survives.
+          # Re-authenticate origin with the App token so git and gh use the
+          # release App identity, not the default github-actions[bot] token.
           git config --unset-all "http.https://github.com/.extraheader" || true
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
           git fetch origin main
-          git checkout -B bake-version origin/main
+          git checkout -f -B bake-version origin/main
 
           # Replay the same sed the earlier in-tree step ran against the
           # working tree — but here against origin/main, so the commit we
           # push back to main has the new baked version regardless of
-          # whether the in-tree step ran (it's idempotent and the on-disk
-          # working-tree edits got discarded by the checkout above).
+          # whether the in-tree step ran.
           #
           # The release job runs on ubuntu-latest, so this uses GNU sed
           # syntax (`sed -i` with no empty-string arg) — the Swift CD
@@ -697,5 +688,30 @@ jobs:
           git config user.name  "trycua-release[bot]"
           git config user.email "trycua-release[bot]@users.noreply.github.com"
           git add libs/cua-driver/scripts/_install-rust.sh libs/cua-driver/scripts/install.ps1
+          if git diff --cached --quiet; then
+            echo "Installer scripts already bake cua-driver-rs ${VERSION}; nothing to push."
+            exit 0
+          fi
           git commit -m "chore(cua-driver-rs): bake version ${VERSION} into install scripts [skip ci]"
-          git push origin bake-version:main
+
+          COMMIT_SHA="$(git rev-parse HEAD)"
+          TEMP_BRANCH="bake-cua-driver-rs-${VERSION}-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
+          if ! git push origin "HEAD:refs/heads/${TEMP_BRANCH}"; then
+            echo "::error::Failed to create ${TEMP_BRANCH} with the release GitHub App token. Confirm RELEASE_APP_ID is installed on ${{ github.repository }} with Contents: write, and that no stale temp branch exists for this run attempt."
+            exit 1
+          fi
+
+          cleanup_temp_branch() {
+            git push origin --delete "${TEMP_BRANCH}" || true
+          }
+          trap cleanup_temp_branch EXIT
+
+          if ! gh api -X PATCH "/repos/${{ github.repository }}/git/refs/heads/main" \
+            -f sha="${COMMIT_SHA}" \
+            -F force=false; then
+            echo "::error::Failed to fast-forward main to ${COMMIT_SHA}. Confirm the release GitHub App can bypass the main-branch ruleset."
+            exit 1
+          fi
+
+          trap - EXIT
+          cleanup_temp_branch

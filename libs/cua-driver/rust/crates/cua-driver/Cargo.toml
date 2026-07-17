@@ -35,14 +35,10 @@ semver = "1"
 # session D-Bus is hung — without a timeout, `doctor` would block forever
 # on a broken accessibility stack. Tiny dep, exactly this use case.
 wait-timeout = "0.2"
-# Tarball extraction for `cua-driver skills install`. The verb fetches a
-# versioned `cua-driver-rs-v<v>-skills.tar.gz` release asset from GitHub
-# and unpacks it under `<HomeDir>/skills/cua-driver-rs/`. `tar` is the
-# canonical streaming TAR reader; `flate2` provides gzip decoding (pulled
-# in transitively by ureq already, but declared explicitly here so the
-# dependency is easy to find).
+# Tarball extraction and SHA-256 verification for `cua-driver skills install`.
 tar = { version = "0.4", default-features = false }
 flate2 = "1"
+sha2 = "0.10"
 
 # Used by crate::bundle::parent_is_not_launchd() for the TCC
 # auto-relaunch detection path on Unix (only the macOS heuristic

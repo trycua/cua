@@ -221,6 +221,25 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("https://cua.ai/driver/install.ps1", windows_skill)
         self.assertNotIn("/releases/latest/download/install.ps1", windows_skill)
 
+    def test_release_skill_archive_records_version_hashes_and_commit(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+
+        self.assertIn("package_cua_driver_skills.py", workflow)
+        self.assertIn("--source-kind release", workflow)
+        self.assertIn('--git-commit "${GITHUB_SHA}"', workflow)
+        self.assertNotIn('cp -R libs/cua-driver/rust/Skills/cua-driver/. "${SKILLS_STAGE}/"', workflow)
+
+    def test_local_installers_use_the_same_checkout_skill_source(self) -> None:
+        shell = self.read("libs/cua-driver/scripts/_install-local-rust.sh")
+        self.assertIn('SOURCE_SKILLS="$REPO_ROOT/Skills/cua-driver"', shell)
+        self.assertIn("skills update --from local --source", shell)
+        self.assertIn('CUA_DRIVER_RS_HOME="$HOME_DIR"', shell)
+
+        powershell = self.read("libs/cua-driver/scripts/install-local.ps1")
+        self.assertIn('Join-Path $RepoRoot "Skills\\cua-driver"', powershell)
+        self.assertIn("@('skills', 'update', '--from', 'local', '--source', $SourceSkills)", powershell)
+        self.assertNotIn('Skills\\cua-driver-rs', powershell)
+
     def test_lume_uses_the_same_draft_finalizer(self) -> None:
         workflow = self.read(".github/workflows/cd-swift-lume.yml")
 

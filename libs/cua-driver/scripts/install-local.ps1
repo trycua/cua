@@ -225,20 +225,7 @@ New-Item -ItemType Directory -Path $VersionedDir -Force | Out-Null
 Copy-Item -LiteralPath $BuiltBinary -Destination $DestBinary -Force
 $installedBinary = $DestBinary
 
-# Stage the skill pack alongside the binary. install-local mirrors what
-# install.ps1 does from a release zip — copies Skills/cua-driver-rs/ from
-# the repo into the versioned dir so the `current` junction below
-# transparently exposes it to agents.
-$SourceSkills = Join-Path $RepoRoot "Skills\cua-driver-rs"
-if (Test-Path -LiteralPath $SourceSkills) {
-    $StagedSkills = Join-Path $VersionedDir "Skills\cua-driver-rs"
-    if (Test-Path -LiteralPath $StagedSkills) {
-        Remove-Item -LiteralPath $StagedSkills -Recurse -Force
-    }
-    New-Item -ItemType Directory -Path (Split-Path -Parent $StagedSkills) -Force | Out-Null
-    Copy-Item -Path $SourceSkills -Destination $StagedSkills -Recurse -Force
-    Write-Step "staged skill pack at $StagedSkills"
-}
+$SourceSkills = Join-Path $RepoRoot "Skills\cua-driver"
 
 # ---------- Repoint junctions ---------------------------------------------
 
@@ -335,6 +322,32 @@ if ($AutoStart) {
 # (Try-it / skill pack / MCP setup / docs link) with {{BINARY}}
 # placeholders; OS-specific bits stay inline below.
 $installedBinary = Join-Path $VisibleBinDir $BinaryName
+
+# Use the driver's canonical manifest validation and rollback-safe activation
+# path. Passing the checkout explicitly prevents a local build from fetching
+# unrelated release or main content.
+if (-not (Test-Path -LiteralPath $SourceSkills -PathType Container)) {
+    throw "local skill source is missing"
+}
+$skillArguments = @('skills', 'update', '--from', 'local', '--source', $SourceSkills)
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    $localGitCommit = (& git -C $RepoRoot rev-parse HEAD 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $localGitCommit -match '^[0-9a-fA-F]{40}$') {
+        $skillArguments += @('--git-commit', $localGitCommit)
+    }
+}
+$previousDriverHome = $env:CUA_DRIVER_RS_HOME
+try {
+    $env:CUA_DRIVER_RS_HOME = $PackageHome
+    & $installedBinary @skillArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "cua-driver skills update from local checkout failed (exit $LASTEXITCODE)"
+    }
+    Write-Step "installed verified local skill pack"
+}
+finally {
+    $env:CUA_DRIVER_RS_HOME = $previousDriverHome
+}
 $HintsTxt = Join-Path $ScriptDir "post-install-hints.txt"
 if (Test-Path -LiteralPath $HintsTxt) {
     # Read explicitly as UTF-8. PowerShell 5.1's Get-Content -Raw falls

@@ -32,10 +32,10 @@
 //! content to the binary release so an agent loading the doc knows
 //! every example matches the daemon it'll talk to.
 //!
-//! `--from <tag>` lets the user pin a different release tag.
-//! `--from main` fetches the latest from the `main` branch via the
-//! `Skills/cua-driver/` directory (one HTTP call per file — used
-//! for bleeding-edge dev validation; not the default).
+//! `--from main` first resolves the branch to an immutable commit and
+//! fetches every file from that commit. `--from local --source <dir>`
+//! copies a source checkout explicitly. Every source is staged, verified
+//! against `skill-pack.json`, and activated with rollback protection.
 //!
 //! ## Agent detection
 //!
@@ -64,10 +64,16 @@
 //! hand-rolled symlinks.
 
 use anyhow::{anyhow, bail, Context, Result};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 const SKILL_PACK_NAME: &str = "cua-driver";
+const MANIFEST_FILE: &str = "skill-pack.json";
+const MANIFEST_SCHEMA_VERSION: u32 = 1;
 /// Pre-rename name. The skill pack used to install as `cua-driver-rs`
 /// (when the Rust port lived at `libs/cua-driver-rs/`). On install /
 /// uninstall we sweep this name out of every agent skills dir and the
@@ -85,6 +91,81 @@ const SKILL_FILES: &[&str] = &[
     "EMBEDDING.md",
 ];
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct SkillPackManifest {
+    schema_version: u32,
+    skill_version: String,
+    compatible_driver_version: String,
+    source: SkillPackSource,
+    files: Vec<SkillPackFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct SkillPackSource {
+    kind: SourceKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    git_commit: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum SourceKind {
+    Release,
+    Main,
+    Local,
+}
+
+impl std::fmt::Display for SourceKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Release => "release",
+            Self::Main => "main",
+            Self::Local => "local",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct SkillPackFile {
+    path: String,
+    sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum InstallSource {
+    Release,
+    Main,
+    Local(PathBuf),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InstallOptions {
+    source: InstallSource,
+    force: bool,
+    all_platforms: bool,
+    git_commit: Option<String>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct IntegrityReport {
+    missing: Vec<String>,
+    extra: Vec<String>,
+    modified: Vec<String>,
+    manifest_error: Option<String>,
+}
+
+impl IntegrityReport {
+    fn is_valid(&self) -> bool {
+        self.manifest_error.is_none()
+            && self.missing.is_empty()
+            && self.extra.is_empty()
+            && self.modified.is_empty()
+    }
+}
+
 /// Per-host filter: returns the platform-specific docs that should NOT
 /// land in the local stage. The skill pack ships docs for all three
 /// platforms in the same tarball, but a Windows user has no need for
@@ -100,13 +181,21 @@ fn excluded_platform_docs(all_platforms: bool) -> &'static [&'static str] {
         return &[];
     }
     #[cfg(target_os = "windows")]
-    { &["LINUX.md", "MACOS.md"] }
+    {
+        &["LINUX.md", "MACOS.md"]
+    }
     #[cfg(target_os = "linux")]
-    { &["WINDOWS.md", "MACOS.md"] }
+    {
+        &["WINDOWS.md", "MACOS.md"]
+    }
     #[cfg(target_os = "macos")]
-    { &["WINDOWS.md", "LINUX.md"] }
+    {
+        &["WINDOWS.md", "LINUX.md"]
+    }
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-    { &[] }
+    {
+        &[]
+    }
 }
 
 /// True when the basename matches one of the excluded platform docs.
@@ -139,14 +228,13 @@ fn home_dir() -> Result<PathBuf> {
     }
     #[cfg(windows)]
     {
-        let userprofile = std::env::var("USERPROFILE")
-            .map_err(|_| anyhow!("USERPROFILE not set"))?;
+        let userprofile =
+            std::env::var("USERPROFILE").map_err(|_| anyhow!("USERPROFILE not set"))?;
         return Ok(PathBuf::from(userprofile).join(HOME_SUBDIRECTORY));
     }
     #[cfg(not(windows))]
     {
-        let home = std::env::var("HOME")
-            .map_err(|_| anyhow!("HOME not set"))?;
+        let home = std::env::var("HOME").map_err(|_| anyhow!("HOME not set"))?;
         return Ok(PathBuf::from(home).join(HOME_SUBDIRECTORY));
     }
 }
@@ -194,17 +282,35 @@ enum AgentParent {
 }
 
 const AGENTS: &[Agent] = &[
-    Agent { label: "Claude Code", parent: AgentParent::Home(".claude/skills") },
-    Agent { label: "Codex",       parent: AgentParent::Home(".agents/skills") },
-    Agent { label: "OpenClaw",    parent: AgentParent::Home(".openclaw/skills") },
+    Agent {
+        label: "Claude Code",
+        parent: AgentParent::Home(".claude/skills"),
+    },
+    Agent {
+        label: "Codex",
+        parent: AgentParent::Home(".agents/skills"),
+    },
+    Agent {
+        label: "OpenClaw",
+        parent: AgentParent::Home(".openclaw/skills"),
+    },
     #[cfg(windows)]
-    Agent { label: "OpenCode",    parent: AgentParent::AppData("opencode/skills") },
+    Agent {
+        label: "OpenCode",
+        parent: AgentParent::AppData("opencode/skills"),
+    },
     #[cfg(not(windows))]
-    Agent { label: "OpenCode",    parent: AgentParent::Home(".config/opencode/skills") },
+    Agent {
+        label: "OpenCode",
+        parent: AgentParent::Home(".config/opencode/skills"),
+    },
     // Antigravity CLI + Antigravity IDE share the `.gemini/skills/` dir
     // (the same path Gemini CLI used pre-May-2026). Registering the
     // single shared path means both surfaces pick up the same symlink.
-    Agent { label: "Antigravity", parent: AgentParent::Home(".gemini/skills") },
+    Agent {
+        label: "Antigravity",
+        parent: AgentParent::Home(".gemini/skills"),
+    },
     // Hermes (NousResearch/hermes-agent) resolves user skills from
     // `~/.hermes/skills/` at agent load time — the same directory its
     // `/skills install …` slash command and `hermes skills install`
@@ -213,7 +319,10 @@ const AGENTS: &[Agent] = &[
     // cua-driver pack symlinked here adds the platform-specific deep
     // dives (MACOS.md / WINDOWS.md / LINUX.md / RECORDING.md /
     // BROWSER.md) that Hermes deliberately doesn't clone.
-    Agent { label: "Hermes",      parent: AgentParent::Home(".hermes/skills") },
+    Agent {
+        label: "Hermes",
+        parent: AgentParent::Home(".hermes/skills"),
+    },
 ];
 
 impl Agent {
@@ -221,20 +330,17 @@ impl Agent {
         match self.parent {
             AgentParent::Home(seg) => {
                 #[cfg(windows)]
-                let base = std::env::var("USERPROFILE")
-                    .map_err(|_| anyhow!("USERPROFILE not set"))?;
+                let base =
+                    std::env::var("USERPROFILE").map_err(|_| anyhow!("USERPROFILE not set"))?;
                 #[cfg(not(windows))]
-                let base = std::env::var("HOME")
-                    .map_err(|_| anyhow!("HOME not set"))?;
+                let base = std::env::var("HOME").map_err(|_| anyhow!("HOME not set"))?;
                 Ok(PathBuf::from(base).join(seg.replace('/', std::path::MAIN_SEPARATOR_STR)))
             }
             AgentParent::AppData(seg) => {
                 #[cfg(windows)]
-                let base = std::env::var("APPDATA")
-                    .map_err(|_| anyhow!("APPDATA not set"))?;
+                let base = std::env::var("APPDATA").map_err(|_| anyhow!("APPDATA not set"))?;
                 #[cfg(not(windows))]
-                let base = std::env::var("HOME")
-                    .map_err(|_| anyhow!("HOME not set"))?;
+                let base = std::env::var("HOME").map_err(|_| anyhow!("HOME not set"))?;
                 Ok(PathBuf::from(base).join(seg.replace('/', std::path::MAIN_SEPARATOR_STR)))
             }
         }
@@ -249,10 +355,10 @@ impl Agent {
 pub fn run(subcommand: &str, flags: &[String]) {
     let result = match subcommand {
         "install" => install(flags, false),
-        "update"  => install(flags, true),
+        "update" => install(flags, true),
         "uninstall" => uninstall(flags),
-        "status"  => status(),
-        "path"    => print_path(),
+        "status" => status(),
+        "path" => print_path(),
         other => {
             eprintln!("Unknown skills subcommand: {other:?}");
             eprintln!("Usage: cua-driver skills {{install|update|uninstall|status|path}}");
@@ -271,14 +377,7 @@ pub fn run(subcommand: &str, flags: &[String]) {
 // ── install / update ──────────────────────────────────────────────────────
 
 fn install(flags: &[String], force: bool) -> Result<()> {
-    let from_main = flags.iter().any(|f| f == "--from=main")
-        || (flags.iter().any(|f| f == "--from")
-            && flags.iter().zip(flags.iter().skip(1)).any(|(a, b)| a == "--from" && b == "main"));
-    let force = force || flags.iter().any(|f| f == "--force");
-    // `--all-platforms` opts INTO keeping LINUX.md / MACOS.md / WINDOWS.md
-    // for every host. Default is host-only — only the matching platform's
-    // doc is kept, the other two are skipped during fetch.
-    let all_platforms = flags.iter().any(|f| f == "--all-platforms");
+    let options = parse_install_options(flags, force)?;
 
     // Sweep the legacy `cua-driver-rs`-named pack out FIRST so the
     // post-install state has exactly one skill pack at the new name.
@@ -287,14 +386,21 @@ fn install(flags: &[String], force: bool) -> Result<()> {
     sweep_legacy_skill_pack();
 
     let local = local_skill_dir()?;
-    let already_present = local.join("SKILL.md").exists();
+    recover_interrupted_activation(&local)?;
+    let already_present = load_manifest(&local).ok().is_some_and(|manifest| {
+        manifest.compatible_driver_version == env!("CARGO_PKG_VERSION")
+            && audit_pack(&local, Some(&manifest)).is_valid()
+    });
 
-    if !already_present || force {
-        fetch_into(&local, from_main, all_platforms)
+    if !already_present || options.force {
+        fetch_into(&local, &options)
             .with_context(|| format!("failed to fetch skill pack to {}", local.display()))?;
         println!("✅ Skill pack at {}", local.display());
     } else {
-        println!("✅ Skill pack already at {} (use `cua-driver skills update` to refresh)", local.display());
+        println!(
+            "✅ Skill pack already at {} (use `cua-driver skills update` to refresh)",
+            local.display()
+        );
     }
 
     let mut linked_any = false;
@@ -309,6 +415,83 @@ fn install(flags: &[String], force: bool) -> Result<()> {
         println!("(No agent skills dirs present yet — install Claude Code / Codex / OpenClaw / OpenCode / Antigravity / Hermes then re-run.)");
     }
     Ok(())
+}
+
+fn parse_install_options(flags: &[String], update: bool) -> Result<InstallOptions> {
+    let mut source_name: Option<String> = None;
+    let mut source_path: Option<PathBuf> = None;
+    let mut git_commit: Option<String> = None;
+    let mut force = update;
+    let mut all_platforms = false;
+    let mut index = 0;
+
+    while index < flags.len() {
+        let flag = &flags[index];
+        let mut take_value = |name: &str| -> Result<String> {
+            index += 1;
+            flags
+                .get(index)
+                .cloned()
+                .ok_or_else(|| anyhow!("{name} requires a value"))
+        };
+        match flag.as_str() {
+            "--force" => force = true,
+            "--all-platforms" => all_platforms = true,
+            "--from" => source_name = Some(take_value("--from")?),
+            "--source" => source_path = Some(PathBuf::from(take_value("--source")?)),
+            "--git-commit" => git_commit = Some(take_value("--git-commit")?),
+            "--local" => {
+                source_name = Some("local".to_owned());
+                source_path = Some(PathBuf::from(take_value("--local")?));
+            }
+            _ if flag.starts_with("--from=") => {
+                source_name = Some(flag["--from=".len()..].to_owned());
+            }
+            _ if flag.starts_with("--source=") => {
+                source_path = Some(PathBuf::from(&flag["--source=".len()..]));
+            }
+            _ if flag.starts_with("--local=") => {
+                source_name = Some("local".to_owned());
+                source_path = Some(PathBuf::from(&flag["--local=".len()..]));
+            }
+            _ if flag.starts_with("--git-commit=") => {
+                git_commit = Some(flag["--git-commit=".len()..].to_owned());
+            }
+            _ => bail!(
+                "unknown option {flag:?}; supported options are --from <release|main|local>, \
+                 --source <path>, --local <path>, --git-commit <sha>, --all-platforms, and --force"
+            ),
+        }
+        index += 1;
+    }
+
+    let source = match source_name.as_deref().unwrap_or("release") {
+        "release" => InstallSource::Release,
+        "main" => InstallSource::Main,
+        "local" => InstallSource::Local(source_path.clone().ok_or_else(|| {
+            anyhow!("--from local requires --source <skill-directory> (or use --local <skill-directory>)")
+        })?),
+        other => bail!("unsupported skill source {other:?}; expected release, main, or local"),
+    };
+
+    if source_path.is_some() && !matches!(source, InstallSource::Local(_)) {
+        bail!("--source is only valid with --from local");
+    }
+    if let Some(commit) = git_commit.as_deref() {
+        validate_git_commit(commit)?;
+        if !matches!(source, InstallSource::Local(_)) {
+            bail!("--git-commit is only valid with a local source");
+        }
+    }
+
+    force |= !matches!(source, InstallSource::Release);
+
+    Ok(InstallOptions {
+        source,
+        force,
+        all_platforms,
+        git_commit,
+    })
 }
 
 /// Best-effort removal of any pre-rename skill pack. Three legacy
@@ -335,10 +518,15 @@ fn sweep_legacy_skill_pack() {
         let legacy_local = home.join("skills").join(LEGACY_SKILL_PACK_NAME);
         if legacy_local.exists() {
             if let Err(e) = fs::remove_dir_all(&legacy_local) {
-                eprintln!("  warning: could not remove legacy local pack at {}: {e}",
-                    legacy_local.display());
+                eprintln!(
+                    "  warning: could not remove legacy local pack at {}: {e}",
+                    legacy_local.display()
+                );
             } else {
-                println!("  cleaned up legacy local pack at {}", legacy_local.display());
+                println!(
+                    "  cleaned up legacy local pack at {}",
+                    legacy_local.display()
+                );
             }
         }
     }
@@ -350,8 +538,10 @@ fn sweep_legacy_skill_pack() {
             let dir = legacy_skills_dir.join(name);
             if dir.exists() {
                 if let Err(e) = fs::remove_dir_all(&dir) {
-                    eprintln!("  warning: could not remove legacy pack at {}: {e}",
-                        dir.display());
+                    eprintln!(
+                        "  warning: could not remove legacy pack at {}: {e}",
+                        dir.display()
+                    );
                 } else {
                     println!("  cleaned up legacy local pack at {}", dir.display());
                 }
@@ -379,10 +569,17 @@ fn sweep_legacy_skill_pack() {
             continue;
         }
         if let Err(e) = remove_link(&legacy_link) {
-            eprintln!("  warning: could not remove legacy {} link at {}: {e}",
-                agent.label, legacy_link.display());
+            eprintln!(
+                "  warning: could not remove legacy {} link at {}: {e}",
+                agent.label,
+                legacy_link.display()
+            );
         } else {
-            println!("  cleaned up legacy {} link at {}", agent.label, legacy_link.display());
+            println!(
+                "  cleaned up legacy {} link at {}",
+                agent.label,
+                legacy_link.display()
+            );
         }
     }
 }
@@ -406,9 +603,13 @@ fn link_agent(agent: Agent, local_skill_dir: &Path) -> Result<bool> {
     // the signature of case 3. We then check `is_symlink_or_junction`
     // before deleting, so we never touch a real user directory.
     let has_metadata = link.symlink_metadata().is_ok();
-    let resolves    = link.exists();
+    let resolves = link.exists();
     if has_metadata && resolves {
-        println!("  {} skill link already exists at {} (skipping)", agent.label, link.display());
+        println!(
+            "  {} skill link already exists at {} (skipping)",
+            agent.label,
+            link.display()
+        );
         return Ok(false);
     }
     if has_metadata && !resolves && is_symlink_or_junction(&link) {
@@ -416,14 +617,26 @@ fn link_agent(agent: Agent, local_skill_dir: &Path) -> Result<bool> {
         // sweep_legacy_skill_pack cleaned a pre-rename pack out from
         // under it). Remove + recreate pointing at the new target.
         if let Err(e) = remove_link(&link) {
-            eprintln!("  warning: could not remove stale {} link at {}: {e}",
-                agent.label, link.display());
+            eprintln!(
+                "  warning: could not remove stale {} link at {}: {e}",
+                agent.label,
+                link.display()
+            );
             return Ok(false);
         }
-        println!("  cleaned up stale {} link at {}", agent.label, link.display());
+        println!(
+            "  cleaned up stale {} link at {}",
+            agent.label,
+            link.display()
+        );
     }
-    make_dir_symlink(local_skill_dir, &link)
-        .with_context(|| format!("symlink {} -> {}", link.display(), local_skill_dir.display()))?;
+    make_dir_symlink(local_skill_dir, &link).with_context(|| {
+        format!(
+            "symlink {} -> {}",
+            link.display(),
+            local_skill_dir.display()
+        )
+    })?;
     println!("  ✅ linked {} skill at {}", agent.label, link.display());
     Ok(true)
 }
@@ -454,44 +667,191 @@ fn make_dir_symlink(target: &Path, link: &Path) -> Result<()> {
 
 // ── fetch ──────────────────────────────────────────────────────────────────
 
-fn fetch_into(dest: &Path, from_main: bool, all_platforms: bool) -> Result<()> {
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    // Wipe stale content so an update is a clean replace, not a merge.
-    if dest.exists() {
-        fs::remove_dir_all(dest)?;
-    }
-    fs::create_dir_all(dest)?;
+fn fetch_into(dest: &Path, options: &InstallOptions) -> Result<()> {
+    let parent = dest
+        .parent()
+        .ok_or_else(|| anyhow!("skill directory has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let staging = parent.join(format!(
+        ".{SKILL_PACK_NAME}.staging-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir(&staging)?;
 
-    if from_main {
-        // Per-file raw GitHub fetch — used for bleeding-edge dev validation.
-        let base = "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/rust/Skills/cua-driver";
-        for f in SKILL_FILES {
-            if is_excluded_platform_doc(f, all_platforms) {
-                continue;
+    let staged_result = (|| -> Result<()> {
+        match &options.source {
+            InstallSource::Release => fetch_release_into(&staging)?,
+            InstallSource::Main => fetch_main_into(&staging)?,
+            InstallSource::Local(source) => {
+                copy_local_into(source, &staging, options.git_commit.clone())?
             }
-            let url = format!("{base}/{f}");
-            let body = http_get_text(&url)
-                .with_context(|| format!("GET {url}"))?;
-            fs::write(dest.join(f), body)?;
         }
-        return Ok(());
-    }
 
-    // Versioned release asset.
+        let manifest = load_manifest(&staging)?;
+        validate_manifest_shape(&manifest)?;
+        ensure_compatible(&manifest)?;
+        let report = audit_pack(&staging, Some(&manifest));
+        if !report.is_valid() {
+            bail!(
+                "downloaded skill pack failed integrity validation: {}",
+                describe_integrity(&report)
+            );
+        }
+
+        apply_platform_filter(&staging, manifest, options.all_platforms)?;
+        let filtered = load_manifest(&staging)?;
+        let filtered_report = audit_pack(&staging, Some(&filtered));
+        if !filtered_report.is_valid() {
+            bail!(
+                "staged skill pack failed integrity validation: {}",
+                describe_integrity(&filtered_report)
+            );
+        }
+        activate_staged(dest, &staging)
+    })();
+
+    if staging.exists() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    staged_result
+}
+
+fn fetch_release_into(dest: &Path) -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
     let url = format!(
         "https://github.com/trycua/cua/releases/download/cua-driver-rs-v{version}/cua-driver-rs-v{version}-skills.tar.gz"
     );
-    let bytes = http_get_bytes(&url)
-        .with_context(|| format!("GET {url}"))?;
-    extract_tar_gz(&bytes, dest, all_platforms)?;
+    let bytes = http_get_bytes(&url).with_context(|| format!("GET {url}"))?;
+    extract_tar_gz(&bytes, dest)?;
+    let manifest = load_manifest(dest)?;
+    if manifest.source.kind != SourceKind::Release {
+        bail!(
+            "release archive declares source kind {}",
+            manifest.source.kind
+        );
+    }
+    if manifest.compatible_driver_version != version || manifest.skill_version != version {
+        bail!(
+            "release archive version mismatch: asset={version}, skill={}, compatible_driver={}",
+            manifest.skill_version,
+            manifest.compatible_driver_version
+        );
+    }
+    Ok(())
+}
+
+fn fetch_main_into(dest: &Path) -> Result<()> {
+    let commit = resolve_main_commit()?;
+    let base = main_raw_base(&commit)?;
+    for file in SKILL_FILES {
+        let url = format!("{base}/Skills/cua-driver/{file}");
+        let body = http_get_bytes(&url).with_context(|| format!("GET {url}"))?;
+        fs::write(dest.join(file), body)?;
+    }
+    let cargo_url = format!("{base}/Cargo.toml");
+    let cargo_toml = http_get_text(&cargo_url).with_context(|| format!("GET {cargo_url}"))?;
+    let compatible_driver_version = parse_workspace_version(&cargo_toml)?;
+    let skill_version = parse_skill_version(&fs::read_to_string(dest.join("SKILL.md"))?)?;
+    write_generated_manifest(
+        dest,
+        skill_version,
+        compatible_driver_version,
+        SkillPackSource {
+            kind: SourceKind::Main,
+            git_commit: Some(commit),
+        },
+    )
+}
+
+fn main_raw_base(commit: &str) -> Result<String> {
+    validate_git_commit(commit)?;
+    Ok(format!(
+        "https://raw.githubusercontent.com/trycua/cua/{commit}/libs/cua-driver/rust"
+    ))
+}
+
+fn resolve_main_commit() -> Result<String> {
+    let url = "https://api.github.com/repos/trycua/cua/commits/main";
+    let body = http_get_text(url).with_context(|| format!("GET {url}"))?;
+    parse_resolved_commit(&body)
+}
+
+fn parse_resolved_commit(body: &str) -> Result<String> {
+    #[derive(Deserialize)]
+    struct CommitResponse {
+        sha: String,
+    }
+    let response: CommitResponse =
+        serde_json::from_str(body).context("invalid GitHub commit response")?;
+    validate_git_commit(&response.sha)?;
+    Ok(response.sha)
+}
+
+fn copy_local_into(source: &Path, dest: &Path, git_commit: Option<String>) -> Result<()> {
+    if !source.is_dir() {
+        bail!(
+            "local skill source is not a directory: {}",
+            source.display()
+        );
+    }
+    copy_payload_tree(source, dest, source)?;
+    let skill_version = parse_skill_version(&fs::read_to_string(dest.join("SKILL.md"))?)?;
+    let compatible_driver_version = env!("CARGO_PKG_VERSION").to_owned();
+    if skill_version != compatible_driver_version {
+        bail!(
+            "local skill version {skill_version} does not match this driver build {compatible_driver_version}"
+        );
+    }
+    write_generated_manifest(
+        dest,
+        skill_version,
+        compatible_driver_version,
+        SkillPackSource {
+            kind: SourceKind::Local,
+            git_commit,
+        },
+    )
+}
+
+fn copy_payload_tree(root: &Path, dest: &Path, current: &Path) -> Result<()> {
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let relative = source_path.strip_prefix(root)?;
+        if relative == Path::new(MANIFEST_FILE) {
+            continue;
+        }
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            bail!(
+                "local skill source contains a symlink: {}",
+                relative.display()
+            );
+        }
+        let destination = dest.join(relative);
+        if file_type.is_dir() {
+            fs::create_dir_all(&destination)?;
+            copy_payload_tree(root, dest, &source_path)?;
+        } else if file_type.is_file() {
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(&source_path, &destination)?;
+        } else {
+            bail!(
+                "local skill source contains an unsupported entry: {}",
+                relative.display()
+            );
+        }
+    }
     Ok(())
 }
 
 fn http_get_text(url: &str) -> Result<String> {
-    let resp = ureq::get(url).call()
+    let resp = ureq::get(url)
+        .header("User-Agent", "cua-driver")
+        .call()
         .map_err(|e| anyhow!("HTTP error fetching {url}: {e}"))?;
     if resp.status() != 200 {
         bail!("HTTP {} fetching {url}", resp.status());
@@ -500,7 +860,9 @@ fn http_get_text(url: &str) -> Result<String> {
 }
 
 fn http_get_bytes(url: &str) -> Result<Vec<u8>> {
-    let resp = ureq::get(url).call()
+    let resp = ureq::get(url)
+        .header("User-Agent", "cua-driver")
+        .call()
         .map_err(|e| anyhow!("HTTP error fetching {url}: {e}"))?;
     if resp.status() != 200 {
         bail!("HTTP {} fetching {url}", resp.status());
@@ -511,7 +873,7 @@ fn http_get_bytes(url: &str) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-fn extract_tar_gz(bytes: &[u8], dest: &Path, all_platforms: bool) -> Result<()> {
+fn extract_tar_gz(bytes: &[u8], dest: &Path) -> Result<()> {
     let gz = flate2::read::GzDecoder::new(bytes);
     let mut archive = tar::Archive::new(gz);
     // Tarball shape across versions:
@@ -543,13 +905,6 @@ fn extract_tar_gz(bytes: &[u8], dest: &Path, all_platforms: bool) -> Result<()> 
         if stripped.as_os_str().is_empty() {
             continue;
         }
-        // Per-host filter: skip the other platforms' .md files unless
-        // the user opted into the full set with --all-platforms.
-        if let Some(basename) = stripped.file_name().and_then(|s| s.to_str()) {
-            if is_excluded_platform_doc(basename, all_platforms) {
-                continue;
-            }
-        }
         let out = dest.join(&stripped);
         if let Some(parent) = out.parent() {
             fs::create_dir_all(parent)?;
@@ -559,7 +914,363 @@ fn extract_tar_gz(bytes: &[u8], dest: &Path, all_platforms: bool) -> Result<()> 
     Ok(())
 }
 
-use std::io::Read;
+fn write_generated_manifest(
+    directory: &Path,
+    skill_version: String,
+    compatible_driver_version: String,
+    source: SkillPackSource,
+) -> Result<()> {
+    let files = collect_payload_files(directory)?
+        .into_iter()
+        .map(|path| {
+            let hash = sha256_file(&directory.join(&path))?;
+            Ok(SkillPackFile { path, sha256: hash })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let manifest = SkillPackManifest {
+        schema_version: MANIFEST_SCHEMA_VERSION,
+        skill_version,
+        compatible_driver_version,
+        source,
+        files,
+    };
+    write_manifest(directory, &manifest)
+}
+
+fn write_manifest(directory: &Path, manifest: &SkillPackManifest) -> Result<()> {
+    let mut json = serde_json::to_string_pretty(manifest)?;
+    json.push('\n');
+    fs::write(directory.join(MANIFEST_FILE), json)?;
+    Ok(())
+}
+
+fn load_manifest(directory: &Path) -> Result<SkillPackManifest> {
+    let path = directory.join(MANIFEST_FILE);
+    let body = fs::read_to_string(&path)
+        .with_context(|| format!("missing or unreadable manifest {}", path.display()))?;
+    serde_json::from_str(&body).with_context(|| format!("invalid manifest {}", path.display()))
+}
+
+fn validate_manifest_shape(manifest: &SkillPackManifest) -> Result<()> {
+    if manifest.schema_version != MANIFEST_SCHEMA_VERSION {
+        bail!(
+            "unsupported skill-pack schema {}; expected {}",
+            manifest.schema_version,
+            MANIFEST_SCHEMA_VERSION
+        );
+    }
+    semver::Version::parse(&manifest.skill_version)
+        .with_context(|| format!("invalid skill version {:?}", manifest.skill_version))?;
+    semver::Version::parse(&manifest.compatible_driver_version).with_context(|| {
+        format!(
+            "invalid compatible driver version {:?}",
+            manifest.compatible_driver_version
+        )
+    })?;
+    if manifest.source.kind == SourceKind::Main && manifest.source.git_commit.is_none() {
+        bail!("main skill source must record an immutable Git commit");
+    }
+    if let Some(commit) = manifest.source.git_commit.as_deref() {
+        validate_git_commit(commit)?;
+    }
+    if manifest.files.is_empty() {
+        bail!("skill-pack manifest has no payload files");
+    }
+    let mut previous: Option<&str> = None;
+    let mut has_skill = false;
+    for file in &manifest.files {
+        validate_relative_path(&file.path)?;
+        if file.path == MANIFEST_FILE {
+            bail!("manifest cannot hash itself");
+        }
+        if let Some(prior) = previous {
+            if prior >= file.path.as_str() {
+                bail!("manifest file list must be strictly sorted and unique");
+            }
+        }
+        previous = Some(&file.path);
+        has_skill |= file.path == "SKILL.md";
+        if file.sha256.len() != 64
+            || !file
+                .sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            bail!("invalid SHA-256 for {:?}", file.path);
+        }
+    }
+    if !has_skill {
+        bail!("skill-pack manifest does not include SKILL.md");
+    }
+    Ok(())
+}
+
+fn validate_relative_path(path: &str) -> Result<()> {
+    let candidate = Path::new(path);
+    if path.is_empty()
+        || candidate.is_absolute()
+        || candidate
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        || path.contains('\\')
+    {
+        bail!("unsafe manifest path {path:?}");
+    }
+    Ok(())
+}
+
+fn validate_git_commit(commit: &str) -> Result<()> {
+    if commit.len() != 40 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("Git commit must be a full 40-character hexadecimal SHA");
+    }
+    Ok(())
+}
+
+fn ensure_compatible(manifest: &SkillPackManifest) -> Result<()> {
+    let running = env!("CARGO_PKG_VERSION");
+    if manifest.compatible_driver_version != running {
+        bail!(
+            "skill pack requires cua-driver {}, but the running driver is {}; previous installation retained",
+            manifest.compatible_driver_version,
+            running
+        );
+    }
+    Ok(())
+}
+
+fn apply_platform_filter(
+    directory: &Path,
+    mut manifest: SkillPackManifest,
+    all_platforms: bool,
+) -> Result<()> {
+    if all_platforms {
+        return Ok(());
+    }
+    manifest.files.retain(|file| {
+        if is_excluded_platform_doc(&file.path, false) {
+            let _ = fs::remove_file(directory.join(&file.path));
+            false
+        } else {
+            true
+        }
+    });
+    write_manifest(directory, &manifest)
+}
+
+fn audit_pack(directory: &Path, manifest: Option<&SkillPackManifest>) -> IntegrityReport {
+    let Some(manifest) = manifest else {
+        return IntegrityReport {
+            manifest_error: Some(format!("missing or invalid {MANIFEST_FILE}")),
+            ..IntegrityReport::default()
+        };
+    };
+    if let Err(error) = validate_manifest_shape(manifest) {
+        return IntegrityReport {
+            manifest_error: Some(error.to_string()),
+            ..IntegrityReport::default()
+        };
+    }
+
+    let expected = manifest
+        .files
+        .iter()
+        .map(|file| (file.path.clone(), file.sha256.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let actual = match collect_payload_files(directory) {
+        Ok(files) => files.into_iter().collect::<BTreeSet<_>>(),
+        Err(error) => {
+            return IntegrityReport {
+                manifest_error: Some(error.to_string()),
+                ..IntegrityReport::default()
+            };
+        }
+    };
+    let expected_paths = expected.keys().cloned().collect::<BTreeSet<_>>();
+    let missing = expected_paths
+        .difference(&actual)
+        .cloned()
+        .collect::<Vec<_>>();
+    let extra = actual
+        .difference(&expected_paths)
+        .cloned()
+        .collect::<Vec<_>>();
+    let modified = expected_paths
+        .intersection(&actual)
+        .filter_map(|path| match sha256_file(&directory.join(path)) {
+            Ok(hash) if expected.get(path) == Some(&hash) => None,
+            _ => Some(path.clone()),
+        })
+        .collect();
+    IntegrityReport {
+        missing,
+        extra,
+        modified,
+        manifest_error: None,
+    }
+}
+
+fn collect_payload_files(directory: &Path) -> Result<Vec<String>> {
+    let mut files = Vec::new();
+    collect_payload_files_from(directory, directory, &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+fn collect_payload_files_from(root: &Path, current: &Path, files: &mut Vec<String>) -> Result<()> {
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let relative = path.strip_prefix(root)?;
+        if relative == Path::new(MANIFEST_FILE) {
+            continue;
+        }
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            bail!("skill pack contains symlink {}", relative.display());
+        }
+        if file_type.is_dir() {
+            collect_payload_files_from(root, &path, files)?;
+        } else if file_type.is_file() {
+            files.push(path_to_manifest_string(relative)?);
+        } else {
+            bail!(
+                "skill pack contains unsupported entry {}",
+                relative.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn path_to_manifest_string(path: &Path) -> Result<String> {
+    let parts = path
+        .components()
+        .map(|component| match component {
+            std::path::Component::Normal(value) => value
+                .to_str()
+                .map(str::to_owned)
+                .ok_or_else(|| anyhow!("skill path is not UTF-8")),
+            _ => Err(anyhow!("skill path is not relative")),
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(parts.join("/"))
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn parse_skill_version(skill: &str) -> Result<String> {
+    skill
+        .lines()
+        .find_map(|line| line.strip_prefix("version:").map(str::trim))
+        .filter(|version| !version.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow!("SKILL.md frontmatter has no version"))
+}
+
+fn parse_workspace_version(cargo_toml: &str) -> Result<String> {
+    let mut in_workspace_package = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_workspace_package = trimmed == "[workspace.package]";
+            continue;
+        }
+        if in_workspace_package {
+            if let Some(value) = trimmed.strip_prefix("version") {
+                if let Some(value) = value.trim_start().strip_prefix('=') {
+                    return Ok(value.trim().trim_matches('"').to_owned());
+                }
+            }
+        }
+    }
+    bail!("workspace Cargo.toml has no [workspace.package] version")
+}
+
+fn describe_integrity(report: &IntegrityReport) -> String {
+    let mut parts = Vec::new();
+    if let Some(error) = &report.manifest_error {
+        parts.push(format!("manifest: {error}"));
+    }
+    if !report.missing.is_empty() {
+        parts.push(format!("missing: {}", report.missing.join(", ")));
+    }
+    if !report.extra.is_empty() {
+        parts.push(format!("extra: {}", report.extra.join(", ")));
+    }
+    if !report.modified.is_empty() {
+        parts.push(format!("modified: {}", report.modified.join(", ")));
+    }
+    if parts.is_empty() {
+        "valid".to_owned()
+    } else {
+        parts.join("; ")
+    }
+}
+
+fn backup_path(dest: &Path) -> Result<PathBuf> {
+    let parent = dest
+        .parent()
+        .ok_or_else(|| anyhow!("skill directory has no parent"))?;
+    Ok(parent.join(format!(".{SKILL_PACK_NAME}.previous")))
+}
+
+fn recover_interrupted_activation(dest: &Path) -> Result<()> {
+    let backup = backup_path(dest)?;
+    if !backup.exists() {
+        return Ok(());
+    }
+    if !dest.exists() {
+        fs::rename(&backup, dest)
+            .context("restore previous skill pack after interrupted update")?;
+        return Ok(());
+    }
+
+    let dest_manifest = load_manifest(dest).ok();
+    if audit_pack(dest, dest_manifest.as_ref()).is_valid() {
+        fs::remove_dir_all(&backup)?;
+        return Ok(());
+    }
+    let backup_manifest = load_manifest(&backup).ok();
+    if !audit_pack(&backup, backup_manifest.as_ref()).is_valid() {
+        bail!("both active and rollback skill packs are invalid; refusing to overwrite either");
+    }
+    fs::remove_dir_all(dest)?;
+    fs::rename(&backup, dest).context("restore previous valid skill pack")
+}
+
+fn activate_staged(dest: &Path, staging: &Path) -> Result<()> {
+    let backup = backup_path(dest)?;
+    if backup.exists() {
+        bail!(
+            "stale rollback directory remains at {}; rerun the command to recover it",
+            backup.display()
+        );
+    }
+    if dest.exists() {
+        fs::rename(dest, &backup).context("move active skill pack to rollback location")?;
+    }
+    if let Err(error) = fs::rename(staging, dest) {
+        if backup.exists() {
+            fs::rename(&backup, dest)
+                .context("failed to activate new pack and failed to restore previous pack")?;
+        }
+        return Err(error).context("activate staged skill pack; previous installation restored");
+    }
+    if backup.exists() {
+        if let Err(error) = fs::remove_dir_all(&backup) {
+            eprintln!(
+                "  warning: activated the verified skill pack but could not remove rollback copy at {}: {error}",
+                backup.display()
+            );
+        }
+    }
+    Ok(())
+}
 
 // ── uninstall ──────────────────────────────────────────────────────────────
 
@@ -584,7 +1295,11 @@ fn uninstall(flags: &[String]) -> Result<()> {
                     println!("  ✅ removed {} link at {}", agent.label, link.display());
                     removed_any = true;
                 } else {
-                    println!("  {} link at {} is not a symlink/junction; leaving alone", agent.label, link.display());
+                    println!(
+                        "  {} link at {} is not a symlink/junction; leaving alone",
+                        agent.label,
+                        link.display()
+                    );
                 }
             }
         }
@@ -611,7 +1326,10 @@ fn uninstall(flags: &[String]) -> Result<()> {
                 let local = legacy_skills_dir.join(name);
                 if local.exists() {
                     fs::remove_dir_all(&local)?;
-                    println!("  ✅ removed legacy local skill pack at {}", local.display());
+                    println!(
+                        "  ✅ removed legacy local skill pack at {}",
+                        local.display()
+                    );
                 }
             }
             let _ = fs::remove_dir(&legacy_skills_dir);
@@ -637,7 +1355,9 @@ fn is_symlink_or_junction(p: &Path) -> bool {
 
 #[cfg(not(windows))]
 fn is_symlink_or_junction(p: &Path) -> bool {
-    p.symlink_metadata().map(|md| md.file_type().is_symlink()).unwrap_or(false)
+    p.symlink_metadata()
+        .map(|md| md.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 #[cfg(windows)]
@@ -657,8 +1377,64 @@ fn remove_link(p: &Path) -> Result<()> {
 
 fn status() -> Result<()> {
     let local = local_skill_dir()?;
-    if local.exists() && local.join("SKILL.md").exists() {
-        println!("Local skill pack: {} ✅", local.display());
+    println!("Running driver version: {}", env!("CARGO_PKG_VERSION"));
+    if local.exists() {
+        println!("Local skill pack: {}", local.display());
+        let manifest = load_manifest(&local);
+        match manifest {
+            Ok(manifest) => {
+                let report = audit_pack(&local, Some(&manifest));
+                let compatible = manifest.compatible_driver_version == env!("CARGO_PKG_VERSION");
+                let provenance = match manifest.source.git_commit.as_deref() {
+                    Some(commit) => format!("{} ({commit})", manifest.source.kind),
+                    None => manifest.source.kind.to_string(),
+                };
+                println!("Installed skill version: {}", manifest.skill_version);
+                println!(
+                    "Compatible driver version: {}",
+                    manifest.compatible_driver_version
+                );
+                println!("Source: {provenance}");
+                println!(
+                    "Integrity: {}",
+                    if report.is_valid() {
+                        "valid ✅"
+                    } else {
+                        "invalid ❌"
+                    }
+                );
+                println!(
+                    "Compatibility: {}",
+                    if compatible {
+                        "compatible ✅"
+                    } else {
+                        "incompatible ❌"
+                    }
+                );
+                println!("Missing files: {}", display_file_list(&report.missing));
+                println!("Extra/obsolete files: {}", display_file_list(&report.extra));
+                println!("Modified files: {}", display_file_list(&report.modified));
+                if let Some(error) = report.manifest_error {
+                    println!("Manifest error: {error}");
+                }
+            }
+            Err(error) => {
+                let skill_version = fs::read_to_string(local.join("SKILL.md"))
+                    .ok()
+                    .and_then(|skill| parse_skill_version(&skill).ok())
+                    .unwrap_or_else(|| "unknown".to_owned());
+                let untracked = collect_payload_files(&local).unwrap_or_default();
+                println!("Installed skill version: {skill_version}");
+                println!("Compatible driver version: unknown");
+                println!("Source: unknown");
+                println!("Integrity: invalid ❌");
+                println!("Compatibility: unknown");
+                println!("Missing files: {MANIFEST_FILE}");
+                println!("Extra/obsolete files: {}", display_file_list(&untracked));
+                println!("Modified files: unknown");
+                println!("Manifest error: {error}");
+            }
+        }
     } else {
         println!("Local skill pack: not installed (`cua-driver skills install` to fetch)");
     }
@@ -672,7 +1448,11 @@ fn status() -> Result<()> {
         let link = parent.join(SKILL_PACK_NAME);
         let parent_exists = parent.exists();
         if !parent_exists {
-            println!("  {} — agent dir not present ({})", agent.label, parent.display());
+            println!(
+                "  {} — agent dir not present ({})",
+                agent.label,
+                parent.display()
+            );
             continue;
         }
         if !link.exists() && link.symlink_metadata().is_err() {
@@ -680,14 +1460,31 @@ fn status() -> Result<()> {
         } else if is_symlink_or_junction(&link) {
             let target = fs::read_link(&link).ok();
             match target {
-                Some(t) => println!("  {} — ✅ linked: {} → {}", agent.label, link.display(), t.display()),
-                None    => println!("  {} — ✅ linked: {}", agent.label, link.display()),
+                Some(t) => println!(
+                    "  {} — ✅ linked: {} → {}",
+                    agent.label,
+                    link.display(),
+                    t.display()
+                ),
+                None => println!("  {} — ✅ linked: {}", agent.label, link.display()),
             }
         } else {
-            println!("  {} — non-symlink path at {} (left alone)", agent.label, link.display());
+            println!(
+                "  {} — non-symlink path at {} (left alone)",
+                agent.label,
+                link.display()
+            );
         }
     }
     Ok(())
+}
+
+fn display_file_list(files: &[String]) -> String {
+    if files.is_empty() {
+        "none".to_owned()
+    } else {
+        files.join(", ")
+    }
 }
 
 fn print_path() -> Result<()> {
@@ -698,7 +1495,12 @@ fn print_path() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_tar_gz, SKILL_FILES};
+    use super::{
+        activate_staged, apply_platform_filter, audit_pack, copy_local_into, extract_tar_gz,
+        fetch_into, load_manifest, main_raw_base, parse_install_options, parse_resolved_commit,
+        recover_interrupted_activation, write_generated_manifest, InstallOptions, InstallSource,
+        SkillPackSource, SourceKind, MANIFEST_FILE, SKILL_FILES,
+    };
     use std::path::PathBuf;
     use tempfile::tempdir;
 
@@ -721,10 +1523,31 @@ mod tests {
         gz_buf
     }
 
+    fn write_valid_pack(directory: &std::path::Path, marker: &str) {
+        std::fs::write(
+            directory.join("SKILL.md"),
+            format!(
+                "---\nversion: {}\n---\n{marker}\n",
+                env!("CARGO_PKG_VERSION")
+            ),
+        )
+        .unwrap();
+        std::fs::write(directory.join("README.md"), marker).unwrap();
+        write_generated_manifest(
+            directory,
+            env!("CARGO_PKG_VERSION").to_owned(),
+            env!("CARGO_PKG_VERSION").to_owned(),
+            SkillPackSource {
+                kind: SourceKind::Local,
+                git_commit: None,
+            },
+        )
+        .unwrap();
+    }
+
     #[test]
     fn from_main_manifest_matches_canonical_markdown_files() {
-        let skill_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../Skills/cua-driver");
+        let skill_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Skills/cua-driver");
         let mut canonical = std::fs::read_dir(&skill_dir)
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", skill_dir.display()))
             .map(|entry| entry.unwrap().path())
@@ -733,13 +1556,16 @@ mod tests {
             .collect::<Vec<_>>();
         canonical.sort();
 
-        let mut manifest = SKILL_FILES.iter()
+        let mut manifest = SKILL_FILES
+            .iter()
             .map(|file| (*file).to_owned())
             .collect::<Vec<_>>();
         manifest.sort();
 
-        assert_eq!(manifest, canonical,
-            "SKILL_FILES must include every canonical Markdown file");
+        assert_eq!(
+            manifest, canonical,
+            "SKILL_FILES must include every canonical Markdown file"
+        );
     }
 
     #[test]
@@ -748,11 +1574,11 @@ mod tests {
         //   cua-driver-rs-v0.2.20-skills/SKILL.md
         //   cua-driver-rs-v0.2.20-skills/WINDOWS.md
         let bytes = build_tarball(&[
-            ("cua-driver-rs-v0.2.20-skills/SKILL.md",   b"flat-skill"),
+            ("cua-driver-rs-v0.2.20-skills/SKILL.md", b"flat-skill"),
             ("cua-driver-rs-v0.2.20-skills/WINDOWS.md", b"flat-win"),
         ]);
         let dest = tempdir().unwrap();
-        extract_tar_gz(&bytes, dest.path(), true).unwrap();
+        extract_tar_gz(&bytes, dest.path()).unwrap();
 
         let s = std::fs::read_to_string(dest.path().join("SKILL.md")).unwrap();
         assert_eq!(s, "flat-skill");
@@ -770,28 +1596,37 @@ mod tests {
         // Both wrappers must be stripped or the user ends up with a
         // nested cua-driver-rs/ dir (the bug this fixes).
         let bytes = build_tarball(&[
-            ("cua-driver-rs-v0.2.18-skills/cua-driver-rs/SKILL.md",   b"legacy-skill"),
-            ("cua-driver-rs-v0.2.18-skills/cua-driver-rs/WINDOWS.md", b"legacy-win"),
+            (
+                "cua-driver-rs-v0.2.18-skills/cua-driver-rs/SKILL.md",
+                b"legacy-skill",
+            ),
+            (
+                "cua-driver-rs-v0.2.18-skills/cua-driver-rs/WINDOWS.md",
+                b"legacy-win",
+            ),
         ]);
         let dest = tempdir().unwrap();
-        extract_tar_gz(&bytes, dest.path(), true).unwrap();
+        extract_tar_gz(&bytes, dest.path()).unwrap();
 
         let s = std::fs::read_to_string(dest.path().join("SKILL.md")).unwrap();
         assert_eq!(s, "legacy-skill");
         let w = std::fs::read_to_string(dest.path().join("WINDOWS.md")).unwrap();
         assert_eq!(w, "legacy-win");
-        assert!(!dest.path().join("cua-driver-rs").exists(),
-            "nested cua-driver-rs/ dir should have been stripped");
+        assert!(
+            !dest.path().join("cua-driver-rs").exists(),
+            "nested cua-driver-rs/ dir should have been stripped"
+        );
     }
 
     #[test]
     fn extract_double_wrap_new_name_also_strips() {
         // Interim shape (v0.2.19, briefly): inner dir is `cua-driver/`.
-        let bytes = build_tarball(&[
-            ("cua-driver-rs-v0.2.19-skills/cua-driver/SKILL.md", b"interim-skill"),
-        ]);
+        let bytes = build_tarball(&[(
+            "cua-driver-rs-v0.2.19-skills/cua-driver/SKILL.md",
+            b"interim-skill",
+        )]);
         let dest = tempdir().unwrap();
-        extract_tar_gz(&bytes, dest.path(), true).unwrap();
+        extract_tar_gz(&bytes, dest.path()).unwrap();
         let s = std::fs::read_to_string(dest.path().join("SKILL.md")).unwrap();
         assert_eq!(s, "interim-skill");
         assert!(!dest.path().join("cua-driver").exists());
@@ -802,70 +1637,260 @@ mod tests {
         // If a future skill pack adds a real subdir (e.g. `examples/`),
         // it must NOT be stripped — only the unambiguous pack-name
         // wrappers are.
-        let bytes = build_tarball(&[
-            ("cua-driver-rs-v0.2.20-skills/examples/click.md", b"sample"),
-        ]);
+        let bytes = build_tarball(&[("cua-driver-rs-v0.2.20-skills/examples/click.md", b"sample")]);
         let dest = tempdir().unwrap();
-        extract_tar_gz(&bytes, dest.path(), true).unwrap();
+        extract_tar_gz(&bytes, dest.path()).unwrap();
         let s = std::fs::read_to_string(dest.path().join("examples/click.md")).unwrap();
         assert_eq!(s, "sample");
     }
 
     #[test]
-    fn extract_per_host_filter_drops_other_platform_docs() {
-        // The skill pack ships docs for all three platforms but a given
-        // host only needs one. all_platforms=false means the other two
-        // platform docs get skipped during extraction. README + SKILL +
-        // platform-agnostic docs are always kept.
+    fn extraction_keeps_complete_archive_for_pre_filter_validation() {
+        // Integrity is checked against the complete source manifest before
+        // host-only filtering derives the installed manifest.
         let bytes = build_tarball(&[
-            ("cua-driver-rs-v0.2.20-skills/README.md",   b"r"),
-            ("cua-driver-rs-v0.2.20-skills/SKILL.md",    b"s"),
-            ("cua-driver-rs-v0.2.20-skills/WINDOWS.md",  b"w"),
-            ("cua-driver-rs-v0.2.20-skills/MACOS.md",    b"m"),
-            ("cua-driver-rs-v0.2.20-skills/LINUX.md",    b"l"),
-            ("cua-driver-rs-v0.2.20-skills/RECORDING.md",b"R"),
-            ("cua-driver-rs-v0.2.20-skills/BROWSER.md",  b"B"),
-            ("cua-driver-rs-v0.2.20-skills/EMBEDDING.md",b"E"),
+            ("cua-driver-rs-v0.2.20-skills/README.md", b"r"),
+            ("cua-driver-rs-v0.2.20-skills/SKILL.md", b"s"),
+            ("cua-driver-rs-v0.2.20-skills/WINDOWS.md", b"w"),
+            ("cua-driver-rs-v0.2.20-skills/MACOS.md", b"m"),
+            ("cua-driver-rs-v0.2.20-skills/LINUX.md", b"l"),
+            ("cua-driver-rs-v0.2.20-skills/RECORDING.md", b"R"),
+            ("cua-driver-rs-v0.2.20-skills/BROWSER.md", b"B"),
+            ("cua-driver-rs-v0.2.20-skills/EMBEDDING.md", b"E"),
         ]);
         let dest = tempdir().unwrap();
-        extract_tar_gz(&bytes, dest.path(), /*all_platforms=*/ false).unwrap();
-        // README + SKILL + cross-platform docs ALWAYS present.
-        for f in ["README.md", "SKILL.md", "RECORDING.md", "BROWSER.md", "EMBEDDING.md"] {
-            assert!(dest.path().join(f).exists(),
-                "{f} should be present after per-host extraction");
+        extract_tar_gz(&bytes, dest.path()).unwrap();
+        // README + SKILL + cross-platform docs are present.
+        for f in [
+            "README.md",
+            "SKILL.md",
+            "RECORDING.md",
+            "BROWSER.md",
+            "EMBEDDING.md",
+        ] {
+            assert!(
+                dest.path().join(f).exists(),
+                "{f} should be present after per-host extraction"
+            );
         }
-        // Exactly one platform doc should land — whichever matches this
-        // test's compile target. The other two must be absent.
-        #[cfg(target_os = "windows")]
-        let expected_present = "WINDOWS.md";
-        #[cfg(target_os = "linux")]
-        let expected_present = "LINUX.md";
-        #[cfg(target_os = "macos")]
-        let expected_present = "MACOS.md";
-        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-        let expected_present = "";
         for f in ["WINDOWS.md", "MACOS.md", "LINUX.md"] {
-            let exists = dest.path().join(f).exists();
-            if f == expected_present {
-                assert!(exists, "{f} (host doc) should be present");
-            } else if !expected_present.is_empty() {
-                assert!(!exists, "{f} (non-host doc) should NOT be present");
-            }
+            assert!(
+                dest.path().join(f).exists(),
+                "archive extraction must validate before filtering {f}"
+            );
         }
     }
 
     #[test]
-    fn extract_all_platforms_flag_keeps_every_platform_doc() {
+    fn extraction_keeps_every_platform_doc() {
         let bytes = build_tarball(&[
             ("cua-driver-rs-v0.2.20-skills/WINDOWS.md", b"w"),
-            ("cua-driver-rs-v0.2.20-skills/MACOS.md",   b"m"),
-            ("cua-driver-rs-v0.2.20-skills/LINUX.md",   b"l"),
+            ("cua-driver-rs-v0.2.20-skills/MACOS.md", b"m"),
+            ("cua-driver-rs-v0.2.20-skills/LINUX.md", b"l"),
         ]);
         let dest = tempdir().unwrap();
-        extract_tar_gz(&bytes, dest.path(), /*all_platforms=*/ true).unwrap();
+        extract_tar_gz(&bytes, dest.path()).unwrap();
         for f in ["WINDOWS.md", "MACOS.md", "LINUX.md"] {
-            assert!(dest.path().join(f).exists(),
-                "--all-platforms should keep {f}");
+            assert!(
+                dest.path().join(f).exists(),
+                "--all-platforms should keep {f}"
+            );
         }
+    }
+
+    #[test]
+    fn host_filter_rewrites_manifest_without_breaking_integrity() {
+        let pack = tempdir().unwrap();
+        for file in ["WINDOWS.md", "MACOS.md", "LINUX.md"] {
+            std::fs::write(pack.path().join(file), file).unwrap();
+        }
+        std::fs::write(
+            pack.path().join("SKILL.md"),
+            format!("---\nversion: {}\n---\n", env!("CARGO_PKG_VERSION")),
+        )
+        .unwrap();
+        write_generated_manifest(
+            pack.path(),
+            env!("CARGO_PKG_VERSION").to_owned(),
+            env!("CARGO_PKG_VERSION").to_owned(),
+            SkillPackSource {
+                kind: SourceKind::Local,
+                git_commit: None,
+            },
+        )
+        .unwrap();
+
+        let manifest = load_manifest(pack.path()).unwrap();
+        apply_platform_filter(pack.path(), manifest, false).unwrap();
+        let filtered = load_manifest(pack.path()).unwrap();
+        assert!(audit_pack(pack.path(), Some(&filtered)).is_valid());
+        assert_eq!(
+            filtered
+                .files
+                .iter()
+                .filter(|file| ["WINDOWS.md", "MACOS.md", "LINUX.md"].contains(&file.path.as_str()))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn parses_consistent_install_and_update_sources() {
+        let local = parse_install_options(
+            &["--from".into(), "local".into(), "--source=pack".into()],
+            false,
+        )
+        .unwrap();
+        assert_eq!(local.source, InstallSource::Local(PathBuf::from("pack")));
+        assert!(local.force);
+
+        let release = parse_install_options(&[], false).unwrap();
+        assert_eq!(release.source, InstallSource::Release);
+        assert!(!release.force);
+
+        let main = parse_install_options(&["--from=main".into()], true).unwrap();
+        assert_eq!(main.source, InstallSource::Main);
+        assert!(main.force);
+
+        assert!(
+            parse_install_options(&["--from".into(), "branch-name".into()], false)
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported skill source")
+        );
+    }
+
+    #[test]
+    fn main_commit_resolution_requires_and_records_an_immutable_sha() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(
+            parse_resolved_commit(&format!(r#"{{"sha":"{sha}"}}"#)).unwrap(),
+            sha
+        );
+        assert!(main_raw_base(sha).unwrap().contains(sha));
+        assert!(!main_raw_base(sha).unwrap().contains("/main/"));
+        assert!(parse_resolved_commit(r#"{"sha":"main"}"#).is_err());
+    }
+
+    #[test]
+    fn explicit_local_source_is_copied_and_attributed() {
+        let source = tempdir().unwrap();
+        std::fs::write(
+            source.path().join("SKILL.md"),
+            format!("---\nversion: {}\n---\n", env!("CARGO_PKG_VERSION")),
+        )
+        .unwrap();
+        std::fs::write(source.path().join("README.md"), "local").unwrap();
+        let destination = tempdir().unwrap();
+        let commit = "0123456789abcdef0123456789abcdef01234567".to_owned();
+        copy_local_into(source.path(), destination.path(), Some(commit.clone())).unwrap();
+
+        let manifest = load_manifest(destination.path()).unwrap();
+        assert_eq!(manifest.source.kind, SourceKind::Local);
+        assert_eq!(manifest.source.git_commit.as_deref(), Some(commit.as_str()));
+        assert!(audit_pack(destination.path(), Some(&manifest)).is_valid());
+    }
+
+    #[test]
+    fn audit_reports_corrupt_incomplete_and_obsolete_content() {
+        let pack = tempdir().unwrap();
+        write_valid_pack(pack.path(), "original");
+        let manifest = load_manifest(pack.path()).unwrap();
+
+        std::fs::write(pack.path().join("README.md"), "modified").unwrap();
+        std::fs::remove_file(pack.path().join("SKILL.md")).unwrap();
+        std::fs::write(pack.path().join("OBSOLETE.md"), "old").unwrap();
+        let report = audit_pack(pack.path(), Some(&manifest));
+        assert_eq!(report.missing, vec!["SKILL.md"]);
+        assert_eq!(report.extra, vec!["OBSOLETE.md"]);
+        assert_eq!(report.modified, vec!["README.md"]);
+    }
+
+    #[test]
+    fn audit_rejects_incomplete_manifest() {
+        let pack = tempdir().unwrap();
+        std::fs::write(pack.path().join("SKILL.md"), "content").unwrap();
+        std::fs::write(pack.path().join(MANIFEST_FILE), "{}").unwrap();
+        assert!(!audit_pack(pack.path(), load_manifest(pack.path()).ok().as_ref()).is_valid());
+    }
+
+    #[test]
+    fn compatibility_mismatch_is_visible_without_changing_hash_integrity() {
+        let pack = tempdir().unwrap();
+        write_valid_pack(pack.path(), "valid");
+        let mut manifest = load_manifest(pack.path()).unwrap();
+        manifest.compatible_driver_version = "999.0.0".to_owned();
+        super::write_manifest(pack.path(), &manifest).unwrap();
+
+        let reloaded = load_manifest(pack.path()).unwrap();
+        assert!(audit_pack(pack.path(), Some(&reloaded)).is_valid());
+        assert_ne!(
+            reloaded.compatible_driver_version,
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(super::ensure_compatible(&reloaded).is_err());
+    }
+
+    #[test]
+    fn failed_activation_restores_previous_valid_pack() {
+        let root = tempdir().unwrap();
+        let active = root.path().join("cua-driver");
+        std::fs::create_dir(&active).unwrap();
+        write_valid_pack(&active, "previous");
+        let missing_stage = root.path().join("missing-stage");
+
+        assert!(activate_staged(&active, &missing_stage).is_err());
+        assert_eq!(
+            std::fs::read_to_string(active.join("README.md")).unwrap(),
+            "previous"
+        );
+        let manifest = load_manifest(&active).unwrap();
+        assert!(audit_pack(&active, Some(&manifest)).is_valid());
+    }
+
+    #[test]
+    fn incompatible_update_retains_previous_valid_pack() {
+        let root = tempdir().unwrap();
+        let active = root.path().join("cua-driver");
+        std::fs::create_dir(&active).unwrap();
+        write_valid_pack(&active, "previous");
+        let incompatible = root.path().join("incompatible");
+        std::fs::create_dir(&incompatible).unwrap();
+        std::fs::write(
+            incompatible.join("SKILL.md"),
+            "---\nversion: 999.0.0\n---\n",
+        )
+        .unwrap();
+
+        let options = InstallOptions {
+            source: InstallSource::Local(incompatible),
+            force: true,
+            all_platforms: true,
+            git_commit: None,
+        };
+        assert!(fetch_into(&active, &options).is_err());
+        assert_eq!(
+            std::fs::read_to_string(active.join("README.md")).unwrap(),
+            "previous"
+        );
+        let manifest = load_manifest(&active).unwrap();
+        assert!(audit_pack(&active, Some(&manifest)).is_valid());
+    }
+
+    #[test]
+    fn interrupted_activation_recovers_previous_pack() {
+        let root = tempdir().unwrap();
+        let active = root.path().join("cua-driver");
+        std::fs::create_dir(&active).unwrap();
+        write_valid_pack(&active, "previous");
+        let backup = root.path().join(".cua-driver.previous");
+        std::fs::rename(&active, &backup).unwrap();
+
+        recover_interrupted_activation(&active).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(active.join("README.md")).unwrap(),
+            "previous"
+        );
+        assert!(!backup.exists());
     }
 }

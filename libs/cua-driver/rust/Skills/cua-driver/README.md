@@ -51,9 +51,11 @@ directories:
 cua-driver skills install
 ```
 
-The direct installer keeps only the current host's platform guide by default.
-Use `--all-platforms` when the agent assists users across operating systems.
-`cua-driver skills update` refreshes the pack to match a later driver release.
+The direct installer validates a versioned manifest and every file hash before
+atomically activating the pack. It keeps only the current host's platform guide
+by default. Use `--all-platforms` when the agent assists users across operating
+systems. `cua-driver skills update` refreshes the pack for the running driver;
+a failed or incompatible update retains the previous valid pack.
 
 ## Reading order
 
@@ -95,14 +97,26 @@ missing. See `RECORDING.md`.
 ## Updates and source builds
 
 The skill is versioned with Cua Driver releases. For bleeding-edge validation
-against `main`:
+against `main`, the driver first resolves `main` to an immutable Git commit and
+records that commit in the installed manifest:
 
 ```bash
 cua-driver skills install --from main
 ```
 
-From a local checkout, `libs/cua-driver/scripts/install-local.sh` installs the
-source-built macOS driver. Keep standalone and embedded identity rules from
+From a local checkout, `libs/cua-driver/scripts/install-local.sh` builds the
+driver and installs the skill from that same checkout through an explicit local
+source. You can invoke the same flow directly with
+`cua-driver skills update --from local --source <skill-directory>`.
+
+Run `cua-driver skills status` to compare the installed and running versions,
+inspect source provenance, and list missing, extra/obsolete, or modified files.
+The installed `skill-pack.json` uses schema version 1 and records the skill
+version, exact compatible driver version, source kind, optional immutable Git
+commit, and a sorted list of payload paths with SHA-256 hashes. The manifest
+itself is metadata and is not included in its recursive payload hash list.
+
+Keep standalone and embedded identity rules from
 `MACOS.md` and `EMBEDDING.md`; launching a raw binary is not a substitute for
 the stable app identity that owns macOS TCC grants.
 

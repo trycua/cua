@@ -44,11 +44,11 @@ UPDATE_ON_LOGIN=false
 
 # Release selection:
 #   LUME_VERSION=0.3.10 pins a specific `lume-v0.3.10` release.
-#   LUME_BAKED_VERSION is updated by release automation so the default
+#   LUME_BAKED_VERSION is updated in the release PR so the default
 #   installer path does not need a GitHub API call.
 LUME_VERSION="${LUME_VERSION:-}"
-# ~~~ BAKED_VERSION: auto-updated by CD workflow after each release — do not edit ~~~
-LUME_BAKED_VERSION="0.3.16"
+# ~~~ BAKED_VERSION: auto-updated in the release PR — do not edit ~~~
+LUME_BAKED_VERSION="0.3.16" # x-release-please-version
 # ~~~ END_BAKED_VERSION ~~~
 
 # Default port for lume serve (default: 7777)

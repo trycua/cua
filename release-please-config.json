@@ -1,0 +1,63 @@
+{
+  "separate-pull-requests": true,
+  "include-component-in-tag": true,
+  "include-v-in-tag": true,
+  "tag-separator": "-",
+  "draft": true,
+  "force-tag-creation": true,
+  "packages": {
+    "libs/cua-driver": {
+      "release-type": "simple",
+      "component": "cua-driver-rs",
+      "package-name": "cua-driver-rs",
+      "version-file": "rust/VERSION",
+      "changelog-path": "rust/CHANGELOG.md",
+      "exclude-paths": [
+        "libs/cua-driver/docs",
+        "libs/cua-driver/python",
+        "libs/cua-driver/tests"
+      ],
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "rust/Cargo.toml",
+          "jsonpath": "$.workspace.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "python/pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "generic",
+          "path": "python/src/cua_driver/__init__.py"
+        },
+        {
+          "type": "generic",
+          "path": "scripts/_install-rust.sh"
+        },
+        {
+          "type": "generic",
+          "path": "scripts/install.ps1"
+        }
+      ]
+    },
+    "libs/lume": {
+      "release-type": "simple",
+      "component": "lume",
+      "package-name": "lume",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "src/Main.swift"
+        },
+        {
+          "type": "generic",
+          "path": "scripts/install.sh"
+        }
+      ]
+    }
+  }
+}

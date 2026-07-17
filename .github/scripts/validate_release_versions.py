@@ -72,6 +72,7 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
 
 def lume_versions(root: Path) -> tuple[str, dict[str, str]]:
     base = root / "libs/lume"
+    docs = root / "docs/content/docs/reference/lume"
     expected = (base / "VERSION").read_text().strip()
     return expected, {
         "src/Main.swift": read_match(
@@ -79,6 +80,16 @@ def lume_versions(root: Path) -> tuple[str, dict[str, str]]:
         ),
         "scripts/install.sh": read_match(
             base / "scripts/install.sh", r'^LUME_BAKED_VERSION="([^"]+)"'
+        ),
+        "docs/cli-reference.mdx:metadata": read_match(
+            docs / "cli-reference.mdx", r"^  Version: (\S+)$"
+        ),
+        "docs/cli-reference.mdx:body": read_match(
+            docs / "cli-reference.mdx", r"Documented against Lume \*\*(\S+)\*\*\."
+        ),
+        "docs/http-api.mdx:metadata": read_match(docs / "http-api.mdx", r"^  Version: (\S+)$"),
+        "docs/http-api.mdx:body": read_match(
+            docs / "http-api.mdx", r"Documented against Lume \*\*(\S+)\*\*\."
         ),
     }
 

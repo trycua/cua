@@ -9,6 +9,7 @@
   ],
   "ignoredCoauthorEmails": [
     "claude@anthropic.com",
+    "coding-sub-agent@trycua.com",
     "codex@openai.com",
     "cua@cua.localdomain",
     "noreply@anthropic.com"

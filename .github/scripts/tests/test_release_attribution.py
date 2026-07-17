@@ -9,6 +9,7 @@ from jsonschema import Draft202012Validator
 
 from release_attribution import (
     CommitRecord,
+    LEGACY_RELEASE_BUMP_RE,
     ReleaseError,
     _change_contributors,
     build_manifest,
@@ -19,6 +20,7 @@ from release_attribution import (
     render_card_svg,
     render_card_alt_text,
     render_social,
+    resolve_pull_for_commit,
     source_pull_numbers,
     validate_pr_title,
 )
@@ -85,6 +87,9 @@ def test_title_validation_and_override_entries():
         ("feat", "add readiness"),
         ("fix", "keep focus"),
     ]
+    assert release_entries("feat(driver): add policies (#2235)", "", "")[0].summary == (
+        "add policies"
+    )
 
 
 def test_login_from_noreply_and_override():
@@ -104,6 +109,42 @@ def test_cross_repository_references_are_not_resolved_in_cua():
     )
     assert linked_issue_numbers(body, "trycua/cua") == [8]
     assert source_pull_numbers(body, "trycua/cua") == [10]
+
+
+def test_exact_squash_title_resolves_when_commit_association_is_missing():
+    class UnassociatedGitHub:
+        def pulls_for_commit(self, repository: str, commit_sha: str):
+            return []
+
+        def pull(self, repository: str, number: int):
+            assert repository == "trycua/cua"
+            assert number == 2235
+            return {
+                "number": 2235,
+                "title": "feat(driver): add YAML and Rego permission policies",
+                "merged_at": "2026-07-15T23:19:09Z",
+            }
+
+    commit = CommitRecord(
+        "abc123",
+        "feat(driver): add YAML and Rego permission policies (#2235)",
+        "",
+    )
+    pull = resolve_pull_for_commit(UnassociatedGitHub(), "trycua/cua", commit)
+    assert pull["number"] == 2235
+
+    with pytest.raises(ReleaseError, match="not associated"):
+        resolve_pull_for_commit(
+            UnassociatedGitHub(),
+            "trycua/cua",
+            CommitRecord("def456", "feat(driver): no pull suffix", ""),
+        )
+
+
+def test_legacy_release_bump_subject_is_recognized():
+    assert LEGACY_RELEASE_BUMP_RE.match("Bump cua-driver-rs to v0.8.3")
+    assert LEGACY_RELEASE_BUMP_RE.match("Bump lume to v0.3.16")
+    assert not LEGACY_RELEASE_BUMP_RE.match("feat(driver): bump reconnect retries")
 
 
 def test_manifest_is_pr_first_and_renders_deterministically(tmp_path: Path):

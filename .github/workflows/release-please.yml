@@ -41,15 +41,18 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      - name: Synchronize Cua Driver Cargo.lock on its release pull request
+      - name: Synchronize generated files on release pull requests
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           while read -r number; do
             PR=$(gh pr view "$number" --json headRefName,headRepositoryOwner,files)
-            if ! echo "$PR" | jq -e \
-              '.files | any(.path == "libs/cua-driver/rust/VERSION")' >/dev/null; then
+            DRIVER=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/cua-driver/rust/VERSION")')
+            LUME=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/lume/VERSION")')
+            if [[ "$DRIVER" != "true" && "$LUME" != "true" ]]; then
               continue
             fi
 
@@ -64,18 +67,27 @@ jobs:
             # checkout-created remote-tracking ref can no longer fast-forward.
             git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
             git checkout -B "$BRANCH" "origin/$BRANCH"
-            DRIVER_VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/VERSION)
-            cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \
-              -p cua-driver --precise "$DRIVER_VERSION"
-            python3 .github/scripts/validate_release_versions.py --product driver
-            git add libs/cua-driver/rust/Cargo.lock
+            if [[ "$DRIVER" == "true" ]]; then
+              DRIVER_VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/VERSION)
+              cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \
+                -p cua-driver --precise "$DRIVER_VERSION"
+              python3 .github/scripts/validate_release_versions.py --product driver
+              git add libs/cua-driver/rust/Cargo.lock
+              COMMIT_MESSAGE="chore(cua-driver-rs): synchronize release lockfile"
+            else
+              python3 .github/scripts/sync_lume_release_docs.py
+              python3 .github/scripts/validate_release_versions.py --product lume
+              git add docs/content/docs/reference/lume/cli-reference.mdx \
+                docs/content/docs/reference/lume/http-api.mdx
+              COMMIT_MESSAGE="chore(lume): synchronize release documentation"
+            fi
             if git diff --cached --quiet; then
-              echo "Cargo.lock already matches release PR #$number"
+              echo "Generated files already match release PR #$number"
               continue
             fi
             git config user.name "trycua-release[bot]"
             git config user.email "trycua-release[bot]@users.noreply.github.com"
-            git commit -m "chore(cua-driver-rs): synchronize release lockfile"
+            git commit -m "$COMMIT_MESSAGE"
             git push origin "HEAD:$BRANCH"
           done < <(gh pr list --state open --base main --limit 100 --json number --jq '.[].number')
 

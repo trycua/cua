@@ -77,8 +77,11 @@ function createWindow() {
     title: fixedTitle,
     // Map the normal harness immediately. Xvfb/Openbox can enumerate a
     // deferred BrowserWindow while never painting it into the root desktop.
-    // The sentinel stays hidden until it has maximized and claimed focus.
-    show: !sentinelMode,
+    // The sentinel normally stays hidden until it has maximized and claimed
+    // focus. cua-compositor has no window-policy transition to perform, so map
+    // it at construction time; a synchronous show() after DOMContentLoaded can
+    // otherwise stall Chromium before the renderer paints or schedules timers.
+    show: !sentinelMode || customCuaCompositor,
     // A floating-level macOS window is omitted by cua-driver's deliberate
     // layer-0 top-level window contract. Foreground + maximized is sufficient
     // for occlusion there and lets an unexpected target raise remain visible.
@@ -138,12 +141,11 @@ function createWindow() {
           // policy implementation. Requesting fullscreen leaves Chromium
           // waiting on a configure transition and stops the heartbeat oracle.
           // Its 1280x900 sentinel already covers the smaller fixture at origin.
-          mainWindow.show();
-          // cua-compositor focuses every newly mapped toplevel itself. Asking
-          // Chromium to focus the just-mapped window again can wedge its
-          // renderer in a second configure/focus transition before the green
-          // sentinel frame is painted or preload input listeners can run.
+          // cua-compositor mapped and focused this toplevel at construction
+          // time. Avoid a second synchronous show/configure/focus transition
+          // after the renderer has emitted its ready event.
           if (!customCuaCompositor) {
+            mainWindow.show();
             mainWindow.focus();
           }
         } else {

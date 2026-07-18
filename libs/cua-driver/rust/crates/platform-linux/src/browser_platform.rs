@@ -779,7 +779,17 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                     .copied()
                     .filter(|port| !listeners_before.contains(port))
                     .collect::<Vec<_>>();
-                if correlated.len() > 1 {
+                if let [port] = correlated.as_slice() {
+                    // Chromium's consent-gated server intentionally disables
+                    // `/json/*` discovery and accepts the stable browser route
+                    // without a UUID. The exact setup action plus the newly
+                    // PID-owned listener proves which approval server this is.
+                    endpoints.push((
+                        *port,
+                        format!("ws://127.0.0.1:{port}/devtools/browser"),
+                        "new PID-owned approval listener correlated with exact setup",
+                    ));
+                } else if correlated.len() > 1 {
                     break Err(refusal(
                         BrowserRefusalCode::BrowserBindingAmbiguous,
                         format!(
@@ -788,10 +798,6 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                         ),
                     ));
                 }
-                // A newly correlated listener proves process ownership, but it
-                // does not yet reveal Chrome's UUID-bearing browser WebSocket
-                // path. Keep polling `/json/version` instead of fabricating
-                // `/devtools/browser`, which is not a connectable endpoint.
             }
             match endpoints.as_slice() {
                 [(port, ws_url, detail)] => {

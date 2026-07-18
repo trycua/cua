@@ -342,7 +342,7 @@ impl Tool for GetBrowserStateTool {
                             "tab_id": t.tab_id,
                             "title": t.title,
                             "url": t.url,
-                            "active": t.cdp_target_id == record.cdp_target_id,
+                            "active": t.active,
                         })
                     })
                     .collect();
@@ -1781,6 +1781,7 @@ mod tests {
                 cdp_target_id: "CDPX".into(),
                 title: "Mock".into(),
                 url: "https://example.test".into(),
+                active: Some(true),
                 generation: 0,
                 snapshots: HashMap::new(),
             },
@@ -1837,6 +1838,7 @@ mod tests {
                 cdp_target_id: "CDPX".into(),
                 title: "Mock".into(),
                 url: "https://example.test".into(),
+                active: Some(true),
                 generation: 0,
                 snapshots: HashMap::new(),
             },

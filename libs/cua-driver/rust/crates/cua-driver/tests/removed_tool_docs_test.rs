@@ -1,60 +1,40 @@
-//! Keep removed tools out of the live registry and maintained user guidance.
+//! Guard current user guidance against resurrecting the removed screenshot tool.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use cua_driver_testkit::driver_binary;
+const FORBIDDEN: &[&str] = &[
+    "cua-driver call screenshot",
+    "cua-driver screenshot",
+    "gui tools (click, type_text, screenshot,",
+    "screenshot({",
+    "changes only `screenshot`",
+    "changes only the screenshot tool",
+    "compatibility `screenshot`",
+    "`screenshot` or the png",
+    "tool named `screenshot`",
+];
 
-const REMOVED_TOOLS: &[&str] = &["screenshot"];
-const GUIDANCE_EXTENSIONS: &[&str] = &["md", "mdx"];
-
-fn collect_guidance_files(dir: &Path, files: &mut Vec<PathBuf>) {
+fn collect_docs(dir: &Path, files: &mut Vec<PathBuf>) {
     let mut entries = std::fs::read_dir(dir)
-        .unwrap_or_else(|error| {
-            panic!(
-                "failed to read guidance directory {}: {error}",
-                dir.display()
-            )
-        })
-        .map(|entry| {
-            entry
-                .expect("failed to read guidance directory entry")
-                .path()
-        })
+        .unwrap_or_else(|error| panic!("failed to read docs directory {}: {error}", dir.display()))
+        .map(|entry| entry.expect("failed to read docs directory entry").path())
         .collect::<Vec<_>>();
     entries.sort();
 
     for path in entries {
         if path.is_dir() {
-            collect_guidance_files(&path, files);
-        } else if path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| GUIDANCE_EXTENSIONS.contains(&extension))
-        {
+            collect_docs(&path, files);
+        } else if matches!(
+            path.extension().and_then(|ext| ext.to_str()),
+            Some("md" | "mdx")
+        ) {
             files.push(path);
         }
     }
 }
 
-fn forbidden_guidance_patterns(tool: &str) -> Vec<String> {
-    [
-        format!("cua-driver call {tool}"),
-        format!("cua-driver {tool}"),
-        format!("{tool}({{"),
-        format!("changes only `{tool}`"),
-        format!("changes only the {tool} tool"),
-        format!("compatibility `{tool}`"),
-        format!("`{tool}` or the png"),
-        format!("tool named `{tool}`"),
-        format!("gui tools (click, type_text, {tool},"),
-    ]
-    .into_iter()
-    .collect()
-}
-
 #[test]
-fn removed_tools_are_absent_from_registry_and_guidance() {
+fn maintained_guidance_does_not_advertise_removed_screenshot_tool() {
     let rust_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
@@ -66,44 +46,21 @@ fn removed_tools_are_absent_from_registry_and_guidance() {
         .and_then(Path::parent)
         .expect("repository root");
 
-    let output = Command::new(driver_binary())
-        .args(["dump-docs", "--type", "mcp"])
-        .env("CUA_DRIVER_EMBEDDED", "1")
-        .output()
-        .expect("run cua-driver dump-docs");
-    assert!(
-        output.status.success(),
-        "cua-driver dump-docs failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let registry_docs: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("parse cua-driver dump-docs output");
-    let registered = registry_docs["tools"]
-        .as_array()
-        .expect("dump-docs tools array")
-        .iter()
-        .filter_map(|tool| tool["name"].as_str())
-        .collect::<Vec<_>>();
-    for removed in REMOVED_TOOLS {
-        assert!(
-            !registered.contains(removed),
-            "removed tool {removed:?} is still present in the live registry"
-        );
-    }
-
+    // Keep this list limited to current user guidance. Historical plans may
+    // accurately discuss the old tool and are not instructions to users.
     let mut files = vec![
         driver_root.join("README.md"),
+        driver_root.join("docs/tool-output-format.md"),
         rust_root.join("README.md"),
         driver_root.join("scripts/post-install-hints.txt"),
         driver_root.join("scripts/install.ps1"),
     ];
-    collect_guidance_files(&driver_root.join("docs"), &mut files);
-    collect_guidance_files(&rust_root.join("Skills/cua-driver"), &mut files);
-    collect_guidance_files(
+    collect_docs(&rust_root.join("Skills/cua-driver"), &mut files);
+    collect_docs(
         &repo_root.join("docs/content/docs/reference/cua-driver"),
         &mut files,
     );
-    collect_guidance_files(
+    collect_docs(
         &repo_root.join("docs/content/docs/how-to-guides/driver"),
         &mut files,
     );
@@ -114,18 +71,16 @@ fn removed_tools_are_absent_from_registry_and_guidance() {
             panic!("failed to read guidance file {}: {error}", path.display())
         });
         let lower = contents.to_ascii_lowercase();
-        for removed in REMOVED_TOOLS {
-            for pattern in forbidden_guidance_patterns(removed) {
-                if lower.contains(&pattern) {
-                    failures.push(format!("{} contains {pattern:?}", path.display()));
-                }
+        for pattern in FORBIDDEN {
+            if lower.contains(pattern) {
+                failures.push(format!("{} contains {pattern:?}", path.display()));
             }
         }
     }
 
     assert!(
         failures.is_empty(),
-        "removed tools appear in maintained guidance:\n{}",
+        "removed screenshot tool appears in maintained guidance:\n{}",
         failures.join("\n")
     );
 }

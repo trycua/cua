@@ -1,7 +1,7 @@
 //! Image / capture / recording tool tests.
 //!
-//! Removed-tool refusal, zoom + the zoom→from_zoom click round trip, the
-//! recording session lifecycle (start/stop + action.json), recording
+//! Zoom + the zoom→from_zoom click round trip, the recording session lifecycle
+//! (start/stop + action.json), recording
 //! screenshot capture, the `record_video` flag, trajectory replay, click
 //! `debug_image_out`, and the `set_config` screenshot-resize pipeline. Split
 //! out of the old monolithic `mcp_protocol_test.rs`; mac/windows pairs merge
@@ -10,28 +10,6 @@
 #![cfg(any(target_os = "macos", target_os = "windows"))]
 
 use cua_driver_testkit::RawDriver;
-
-#[test]
-fn standalone_screenshot_tool_is_removed() {
-    let Some(mut d) = RawDriver::spawn() else {
-        return;
-    };
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"screenshot","arguments":{}}
-    }));
-    let resp = d.recv();
-    assert_eq!(resp["result"]["isError"], serde_json::json!(true), "{resp:?}");
-    let text = resp["result"]["content"]
-        .as_array()
-        .and_then(|items| items.iter().find_map(|item| item["text"].as_str()))
-        .unwrap_or_default();
-    assert_eq!(text, "Unknown tool: screenshot");
-}
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]

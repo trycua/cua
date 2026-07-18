@@ -113,12 +113,11 @@ CI so the three surfaces can't drift. Linux-relevant notes:
   Linux builds rejected it via `additionalProperties:false` (it was
   effectively macOS-only); it is now uniformly schema-accepted — Linux
   glides a per-session cursor on X11 where the overlay is available.
-- **Windowless screen-absolute clicks** are supported on Linux, but Linux
-  has **no per-call `scope` param** (that form is macOS-only). Linux gates
-  the windowless path on the persisted `capture_scope` config: opt in once
-  with `set_config capture_scope=desktop`, then send `x,y` with no
-  pid/window_id. Under the default `capture_scope=window` a windowless
-  action is rejected with a structured `desktop_scope_disabled` error.
+- **Windowless screen-absolute actions** pass `scope:"desktop"` with no
+  pid/window_id, uniformly with macOS and Windows. The session must have
+  effective desktop scope (`start_session(..., capture_scope:"desktop")`, or
+  an explicitly escalated `auto` session). Strict window sessions receive
+  `desktop_scope_disabled`; no persistent config is read or written.
 
 ## AT-SPI needs the session bus (headless / containers / `runuser`)
 

@@ -306,6 +306,7 @@ pub fn fire_session_end(session_id: &str) -> bool {
             return false; // already ended — idempotent no-op.
         }
     }
+    crate::capture_scope::clear_session(session_id);
     for hook in hooks().lock().unwrap().iter() {
         hook(session_id);
     }

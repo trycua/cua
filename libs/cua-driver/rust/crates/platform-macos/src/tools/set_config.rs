@@ -19,13 +19,12 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "set_config".into(),
         description: "Update cua-driver-rs configuration. Changes to \
-            max_image_dimension and capture_scope take effect immediately. The \
+            max_image_dimension take effect immediately. The \
             experimental_pip keys are persisted to ~/.cua-driver/config.json and \
             take effect on the next daemon restart (the PiP backend is \
             initialised once at startup).\n\nNote: capture_mode is a per-call \
-            param (on get_window_state / click), not a stored setting. \
-            capture_scope IS a global setting: it gates get_desktop_state \
-            (full-display capture requires capture_scope=desktop).".into(),
+            param (on get_window_state / click), not a stored setting. Capture \
+            scope is selected by start_session, not set_config.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -41,13 +40,6 @@ fn def() -> &'static ToolDef {
                 "max_image_dimension": {
                     "type": "integer",
                     "description": "Max dimension for screenshot resizing (0 = no limit)."
-                },
-                "capture_scope": {
-                    "type": "string",
-                    "enum": ["window", "desktop"],
-                    "description": "Capture scope: \"window\" (default) or \"desktop\". Desktop \
-                        scope enables get_desktop_state (full-display capture) and window-less \
-                        screen-absolute click/scroll. Global setting; takes effect immediately."
                 },
                 "experimental_pip": {
                     "type": "boolean",
@@ -75,6 +67,18 @@ impl Tool for SetConfigTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        if args.get("capture_scope").is_some()
+            || args.get("key").and_then(Value::as_str) == Some("capture_scope")
+        {
+            return ToolResult::error(
+                "config key 'capture_scope' is retired; pass capture_scope=auto|window|desktop to start_session",
+            )
+            .with_structured(serde_json::json!({
+                "code": "config_key_retired",
+                "key": "capture_scope",
+                "replacement": "start_session.capture_scope",
+            }));
+        }
         // The daemon injects `_session_id` for non-anonymous MCP sessions.
         // Absent => anonymous/global session (CLI one-shot, legacy proxy) =>
         // today's behavior: write the shared global DriverConfig + persist to
@@ -83,10 +87,7 @@ impl Tool for SetConfigTool {
         // sessions don't clobber each other or the persisted default.
         let session_id = args.opt_str("_session_id");
 
-        // Accept BOTH shapes, matching Windows/Linux + the CLI `config set`:
-        //   - direct fields:  {"capture_scope":"desktop"}
-        //   - {key, value}:    {"key":"capture_scope","value":"desktop"}
-        // A direct field wins if both are somehow present.
+        // Accept BOTH the direct field and {key,value} shapes.
         let kv: Option<(String, Value)> = args
             .opt_str("key")
             .and_then(|k| args.get("value").map(|v| (k, v.clone())));
@@ -144,46 +145,19 @@ impl Tool for SetConfigTool {
                 pip_note = format!(" — restart cua-driver for experimental_pip_geometry={geom} to take effect");
             }
         }
-        // capture_scope: GLOBAL setting (gates get_desktop_state). Accept the
-        // direct field or {key,value} shape; validate window|desktop; write the
-        // shared global config + persist (matches Windows/Linux — not
-        // session-scoped, since it's the baseline a no-args capture tool reads).
-        let scope_arg = args.opt_str("capture_scope").or_else(|| {
-            kv.as_ref()
-                .filter(|(k, _)| k == "capture_scope")
-                .and_then(|(_, v)| v.as_str().map(str::to_owned))
-        });
-        let mut capture_scope_note = String::new();
-        if let Some(sc) = scope_arg {
-            if sc != "window" && sc != "desktop" {
-                return ToolResult::error(format!(
-                    "`capture_scope` must be \"window\" or \"desktop\", got \"{sc}\"."
-                ));
-            }
-            self.state.config.write().unwrap().capture_scope = sc.clone();
-            if let Err(e) = write_driver_config_key("capture_scope", &Value::String(sc.clone())) {
-                tracing::warn!("set_config: failed to persist capture_scope: {e}");
-            }
-            capture_scope_note = format!(", capture_scope={sc}");
-        }
-
         let scope_note = if session_id.is_some() {
             " (session-scoped; persisted default unchanged)"
         } else {
             ""
         };
-        // Echo the config back in structured content (matches Windows/Linux
-        // set_config, which callers/tests read for the applied capture_scope).
-        let capture_scope = self.state.config.read().unwrap().capture_scope.clone();
         ToolResult::text(format!(
-            "Config updated: max_image_dimension={}{}{}{}",
-            effective_dim, capture_scope_note, scope_note, pip_note
+            "Config updated: max_image_dimension={}{}{}",
+            effective_dim, scope_note, pip_note
         ))
         .with_structured(serde_json::json!({
             "version": env!("CARGO_PKG_VERSION"),
             "platform": "macos",
             "max_image_dimension": effective_dim,
-            "capture_scope": capture_scope,
         }))
     }
 }

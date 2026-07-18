@@ -247,14 +247,13 @@ pub(crate) fn resolve_cursor_key(args: &Value) -> String {
 
 /// Returns `true` when a click/scroll invocation should take the **window-less
 /// screen-absolute** branch: the caller gave numeric `x` AND `y`, gave NO `pid`
-/// and NO `window_id`, and the effective `capture_scope` is `"desktop"`.
+/// and NO `window_id`, and explicitly selected `scope="desktop"`.
 ///
 /// Pure + arg-shape agnostic (works for both click and scroll args) so it's
 /// unit-testable without Win32. When this returns `false` but `x,y` are present
-/// with no pid/window_id, the caller returns a `desktop_scope_disabled`
-/// structured error telling the agent to `set_config capture_scope=desktop`.
-fn is_windowless_desktop_action(args: &serde_json::Value, scope: &str) -> bool {
-    if scope != "desktop" {
+/// with no pid/window_id, the caller returns a coordinate-scope error.
+fn is_windowless_desktop_action(args: &serde_json::Value) -> bool {
+    if args.get("scope").and_then(Value::as_str) != Some("desktop") {
         return false;
     }
     let has_pid = args.get("pid").map(|v| !v.is_null()).unwrap_or(false);
@@ -271,10 +270,6 @@ fn is_windowless_desktop_action(args: &serde_json::Value, scope: &str) -> bool {
 #[derive(Clone)]
 pub struct DriverConfig {
     pub capture_mode: String,
-    /// Capture scope for vision loops: `"window"` (per-window, the default) or
-    /// `"desktop"` (full-display). Gates the window-less screen-absolute
-    /// click/scroll branches — those activate only under `"desktop"`.
-    pub capture_scope: String,
     pub max_image_dimension: u32,
 }
 
@@ -282,7 +277,6 @@ impl Default for DriverConfig {
     fn default() -> Self {
         Self {
             capture_mode: "ax".into(),
-            capture_scope: "window".into(),
             max_image_dimension: 1568,
         }
     }
@@ -301,11 +295,6 @@ pub fn load_driver_config() -> DriverConfig {
         pip_preview::read_config_value("capture_mode").and_then(|v| v.as_str().map(str::to_owned))
     {
         cfg.capture_mode = v;
-    }
-    if let Some(v) =
-        pip_preview::read_config_value("capture_scope").and_then(|v| v.as_str().map(str::to_owned))
-    {
-        cfg.capture_scope = v;
     }
     if let Some(v) = pip_preview::read_config_value("max_image_dimension").and_then(|v| v.as_u64())
     {
@@ -2469,7 +2458,7 @@ impl Tool for ClickTool {
                 a visible on-screen window to anchor the coordinate conversion (errors \
                 with `pid X has no on-screen window` otherwise).\n\n\
                 Exactly one of `element_index` or (`x` AND `y`) must be provided. \
-                `pid` is required in both modes. `window_id` is required when \
+                `pid` is required for window scope and omitted for desktop scope. `window_id` is required when \
                 `element_index` is used (scopes the cache lookup). After a `zoom` call, \
                 pass `from_zoom=true` to auto-translate zoom-image coords back to \
                 full-window space.\n\n\
@@ -2480,7 +2469,7 @@ impl Tool for ClickTool {
             input_schema: json!({
                 "type":"object","properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
-                    "pid":{"type":"integer","description":"Target process ID. Required UNLESS using window-less desktop-scope clicks: with capture_scope=\"desktop\" and no pid/window_id, x/y are treated as TRUE SCREEN pixels (call get_desktop_state first)."},
+                    "pid":{"type":"integer","description":"Target process ID for window scope. Omit with scope=desktop for screen-absolute coordinates from get_desktop_state."},
                     "window_id":{"type":"integer","description":"HWND for the window whose get_window_state produced the element_index. Required when element_index is used. Optional when element_token is supplied (the token carries it)."},
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
@@ -2490,6 +2479,7 @@ impl Tool for ClickTool {
                     "count":{"type":"integer","minimum":1,"maximum":3,"description":"Click count — 1 (single), 2 (double), 3 (triple). Default 1."},
                     "modifier": cua_driver_core::tool_schema::modifier_schema(),
                     "from_zoom":{"type":"boolean","description":"When true, x and y are pixel coordinates in the last `zoom` image for this pid. The driver maps them back to window coords."},
+                    "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -2505,26 +2495,21 @@ impl Tool for ClickTool {
 
         // ── Window-less screen-absolute branch (capture_scope="desktop") ──────
         // When the caller gives x,y with NO pid/window_id, treat x,y as TRUE
-        // SCREEN pixels. Gate on effective capture_scope: only "desktop" enables
-        // this; under "window" we return a structured `desktop_scope_disabled`
-        // error pointing the caller at set_config.
+        // SCREEN pixels. The core registry has already enforced the session's
+        // effective capture scope; this local check validates the action form.
         let has_pid = args.get("pid").map(|v| !v.is_null()).unwrap_or(false);
         let has_window_id = args.get("window_id").map(|v| !v.is_null()).unwrap_or(false);
         let has_xy = args.get("x").map(|v| v.is_number()).unwrap_or(false)
             && args.get("y").map(|v| v.is_number()).unwrap_or(false);
         if !has_pid && !has_window_id && has_xy {
-            let scope = self.state.config.read().unwrap().capture_scope.clone();
-            if !is_windowless_desktop_action(&args, &scope) {
+            if !is_windowless_desktop_action(&args) {
                 return ToolResult::error(
-                    "click: x,y given with no pid/window_id, but capture_scope is \
-                     \"window\". Screen-absolute clicks require desktop scope. Call \
-                     set_config with capture_scope=desktop (and use get_desktop_state \
-                     to pick coordinates), or pass a pid/window_id.",
+                    "click: x,y given with no pid/window_id requires scope=\"desktop\"; \
+                     use get_desktop_state to pick coordinates, or pass a pid/window_id.",
                 )
                 .with_structured(json!({
-                    "code": "desktop_scope_disabled",
-                    "capture_scope": scope,
-                    "suggestion": "set_config capture_scope=desktop",
+                    "code": "desktop_coordinate_scope_required",
+                    "suggestion": "pass scope=desktop",
                 }));
             }
             // Resolve button (reuse the same validation as the pid path).
@@ -3465,8 +3450,9 @@ impl Tool for TypeTextTool {
                 PostMessage path so autocomplete and IME can keep up. Ignored on the \
                 UIA path (SetValue is atomic).".into(),
             input_schema: json!({
-                "type":"object","required":["pid","text"],"properties":{
+                "type":"object","required":["text"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
+                    "scope":{"type":"string","enum":["window","desktop"],"description":"Use desktop with no pid/window_id to type into the current foreground application."},
                     "pid":{"type":"integer","description":"Target process ID."},
                     "text":{"type":"string","description":"Text to insert at the focused element's cursor."},
                     "window_id":{"type":"integer","description":"HWND of the target window. Required when element_index is used. Optional when element_token is supplied (the token carries it)."},
@@ -3485,11 +3471,6 @@ impl Tool for TypeTextTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use crate::input::delivery::{DeliveryMode, EventKind};
         use cua_driver_core::tool_args::ArgsExt;
-        let raw_pid = match args.require_i64("pid") {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        let pid = raw_pid as u32;
         let text_raw = match args.require_str("text") {
             Ok(v) => v,
             Err(e) => return e,
@@ -3502,6 +3483,36 @@ impl Tool for TypeTextTool {
         // case is allocation-free.
         let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
+        if args.get("scope").and_then(Value::as_str) == Some("desktop")
+            && args.get("pid").is_none()
+            && args.get("window_id").is_none()
+        {
+            let hwnd = match crate::input::mouse::foreground_window() {
+                Ok(hwnd) => hwnd,
+                Err(error) => return ToolResult::error(error.to_string()),
+            };
+            let text_len = text.chars().count();
+            return match tokio::task::spawn_blocking(move || {
+                crate::input::send_text_synthesized(hwnd, &text)
+            })
+            .await
+            {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Typed {text_len} character(s) into the foreground application (scope:desktop)."
+                ))
+                .with_structured(json!({
+                    "scope": "desktop", "path": "SendInput", "characters": text_len,
+                    "effect": "unverifiable"
+                })),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("desktop type task failed: {error}")),
+            };
+        }
+        let raw_pid = match args.require_i64("pid") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let pid = raw_pid as u32;
         // Surface 6: element_token / element_index precedence resolution.
         let resolved = match cua_driver_core::element_token::resolve_element_args(
             pid as i32,
@@ -4101,8 +4112,9 @@ impl Tool for PressKeyTool {
                 `element_index` focuses the cached UIA element before sending the key; the \
                 top-level window remains backgrounded when delivery_mode is background.".into(),
             input_schema: json!({
-                "type":"object","required":["pid","key"],"properties":{
+                "type":"object","required":["key"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
+                    "scope":{"type":"string","enum":["window","desktop"],"description":"Use desktop with no pid/window_id to send the key to the current foreground application."},
                     "pid":{"type":"integer","description":"Target process ID."},
                     "key":{"type":"string","description":"Key name (return, tab, escape, up, down, left, right, space, delete, home, end, pageup, pagedown, f1-f12, letter, digit)."},
                     "modifiers":{"type":"array","items":{"type":"string"},"description":"Optional modifier names held while the key is pressed (ctrl/shift/alt/win)."},
@@ -4121,16 +4133,42 @@ impl Tool for PressKeyTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use crate::input::delivery::{DeliveryMode, EventKind};
         use cua_driver_core::tool_args::ArgsExt;
-        let raw_pid = match args.require_i64("pid") {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        let pid = raw_pid as u32;
         let key = match args.require_str("key") {
             Ok(v) => v,
             Err(e) => return e,
         };
         let mods: Vec<String> = args.str_array("modifiers");
+        if args.get("scope").and_then(Value::as_str) == Some("desktop")
+            && args.get("pid").is_none()
+            && args.get("window_id").is_none()
+        {
+            let hwnd = match crate::input::mouse::foreground_window() {
+                Ok(hwnd) => hwnd,
+                Err(error) => return ToolResult::error(error.to_string()),
+            };
+            let key_display = key.clone();
+            return match tokio::task::spawn_blocking(move || {
+                let modifiers: Vec<&str> = mods.iter().map(String::as_str).collect();
+                crate::input::send_key_synthesized(hwnd, &key, &modifiers)
+            })
+            .await
+            {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Sent {key_display} to the foreground application (scope:desktop)."
+                ))
+                .with_structured(json!({
+                    "scope": "desktop", "path": "SendInput", "key": key_display,
+                    "effect": "unverifiable"
+                })),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("desktop key task failed: {error}")),
+            };
+        }
+        let raw_pid = match args.require_i64("pid") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let pid = raw_pid as u32;
         // Surface 6: element_token / element_index precedence resolution.
         let resolved = match cua_driver_core::element_token::resolve_element_args(
             pid as i32,
@@ -4416,8 +4454,9 @@ impl Tool for HotkeyTool {
                 up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, \
                 letters, digits). Order: modifiers first, one non-modifier last.".into(),
             input_schema: json!({
-                "type":"object","required":["pid","keys"],"properties":{
+                "type":"object","required":["keys"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
+                    "scope":{"type":"string","enum":["window","desktop"],"description":"Use desktop with no pid/window_id to send the hotkey to the current foreground application."},
                     "pid":{"type":"integer","description":"Target process ID."},
                     "keys":{"type":"array","items":{"type":"string"},"minItems":2,
                         "description":"Modifier(s) and one non-modifier key, e.g. [\"ctrl\", \"c\"]."},
@@ -4434,14 +4473,6 @@ impl Tool for HotkeyTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use crate::input::delivery::{DeliveryMode, EventKind};
         use cua_driver_core::tool_args::ArgsExt;
-        let hwnd_opt = args.opt_u64("window_id");
-        let raw_pid = match args.require_i64("pid") {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        let pid = raw_pid as u32;
-        let delivery = DeliveryMode::from_args(&args);
-
         // Parse keys array (Swift's only path).  Legacy key+modifiers shape
         // still accepted as a Rust-side convenience.
         let (key, mods, full_keys) = if let Some(arr) = args.get("keys") {
@@ -4478,6 +4509,39 @@ impl Tool for HotkeyTool {
         } else {
             return ToolResult::error("Missing required array field keys.");
         };
+        if args.get("scope").and_then(Value::as_str) == Some("desktop")
+            && args.get("pid").is_none()
+            && args.get("window_id").is_none()
+        {
+            let hwnd = match crate::input::mouse::foreground_window() {
+                Ok(hwnd) => hwnd,
+                Err(error) => return ToolResult::error(error.to_string()),
+            };
+            let key_display = full_keys.join("+");
+            return match tokio::task::spawn_blocking(move || {
+                let modifiers: Vec<&str> = mods.iter().map(String::as_str).collect();
+                crate::input::send_key_synthesized(hwnd, &key, &modifiers)
+            })
+            .await
+            {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Sent {key_display} to the foreground application (scope:desktop)."
+                ))
+                .with_structured(json!({
+                    "scope": "desktop", "path": "SendInput", "keys": full_keys,
+                    "effect": "unverifiable"
+                })),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("desktop hotkey task failed: {error}")),
+            };
+        }
+        let hwnd_opt = args.opt_u64("window_id");
+        let raw_pid = match args.require_i64("pid") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let pid = raw_pid as u32;
+        let delivery = DeliveryMode::from_args(&args);
 
         // Resolve HWND: use window_id if given, else pick first window for pid.
         let hwnd = match hwnd_opt {
@@ -4890,7 +4954,7 @@ impl Tool for ScrollTool {
             input_schema: json!({
                 "type":"object","required":["direction"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
-                    "pid":{"type":"integer","description":"Target process ID. Required UNLESS using window-less desktop-scope scroll: with capture_scope=\"desktop\" and no pid/window_id, x/y are TRUE SCREEN pixels and the wheel routes to the window under that point."},
+                    "pid":{"type":"integer","description":"Target process ID for window scope. Omit with scope=desktop for screen-absolute coordinates from get_desktop_state."},
                     "direction":{"type":"string","enum":["up","down","left","right"]},
                     "by":{"type":"string","enum":["line","page"],"description":"Scroll granularity. Default: line."},
                     "amount":{"type":"integer","minimum":1,"maximum":50,
@@ -4900,6 +4964,7 @@ impl Tool for ScrollTool {
                     "window_id":{"type":"integer","description":"HWND of the target window. Required when element_index is used; otherwise auto-resolves the pid's first visible window."},
                     "element_index":{"type":"integer","description":"Optional element_index. Accepted for parity; currently no-op on Windows."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -4928,18 +4993,14 @@ impl Tool for ScrollTool {
         let has_xy = args.get("x").map(|v| v.is_number()).unwrap_or(false)
             && args.get("y").map(|v| v.is_number()).unwrap_or(false);
         if !has_pid && !has_window_id && has_xy {
-            let scope = self.state.config.read().unwrap().capture_scope.clone();
-            if !is_windowless_desktop_action(&args, &scope) {
+            if !is_windowless_desktop_action(&args) {
                 return ToolResult::error(
-                    "scroll: x,y given with no pid/window_id, but capture_scope is \
-                     \"window\". Screen-absolute scroll requires desktop scope. Call \
-                     set_config with capture_scope=desktop (and use get_desktop_state \
-                     to pick coordinates), or pass a pid/window_id.",
+                    "scroll: x,y given with no pid/window_id requires scope=\"desktop\"; \
+                     use get_desktop_state to pick coordinates, or pass a pid/window_id.",
                 )
                 .with_structured(serde_json::json!({
-                    "code": "desktop_scope_disabled",
-                    "capture_scope": scope,
-                    "suggestion": "set_config capture_scope=desktop",
+                    "code": "desktop_coordinate_scope_required",
+                    "suggestion": "pass scope=desktop",
                 }));
             }
             let sx = args.f64_or("x", 0.0) as i32;
@@ -6115,8 +6176,9 @@ impl Tool for DragTool {
             description: "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels. \
                           duration_ms (default 500) is the wall-clock budget; steps (default 20) interpolates intermediate \
                           WM_MOUSEMOVE events along the path. No focus steal. After a zoom call, pass from_zoom=true.".into(),
-            input_schema: json!({"type":"object","required":["pid","from_x","from_y","to_x","to_y"],"properties":{
+            input_schema: json!({"type":"object","required":["from_x","from_y","to_x","to_y"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
+                "scope":{"type":"string","enum":["window","desktop"],"description":"Use desktop with no pid/window_id for screen-absolute coordinates."},
                 "pid":{"type":"integer","description":"Target process ID."},
                 "window_id":{"type":"integer","description":"Target window handle (HWND). Optional — driver picks frontmost window of pid when omitted."},
                 "from_x":{"type":"number","description":"Drag-start X in window-local screenshot pixels."},
@@ -6135,6 +6197,57 @@ impl Tool for DragTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         use crate::input::delivery::{DeliveryMode, EventKind};
+        use cua_driver_core::tool_args::ArgsExt;
+        if args.get("scope").and_then(Value::as_str) == Some("desktop")
+            && args.get("pid").is_none()
+            && args.get("window_id").is_none()
+        {
+            let required = |key: &str| {
+                args.opt_f64(key)
+                    .or_else(|| args.opt_i64(key).map(|value| value as f64))
+            };
+            let (from_x, from_y, to_x, to_y) = match (
+                required("from_x"),
+                required("from_y"),
+                required("to_x"),
+                required("to_y"),
+            ) {
+                (Some(a), Some(b), Some(c), Some(d)) => (a as i32, b as i32, c as i32, d as i32),
+                _ => return ToolResult::error("from_x, from_y, to_x, and to_y are required."),
+            };
+            let duration_ms = args.u64_or("duration_ms", 500);
+            let steps = args.u64_or("steps", 20) as usize;
+            let button = args.str_or("button", "left");
+            let hwnd = match crate::input::mouse::foreground_window() {
+                Ok(hwnd) => hwnd,
+                Err(error) => return ToolResult::error(error.to_string()),
+            };
+            return match tokio::task::spawn_blocking(move || {
+                crate::input::mouse::send_drag_synthesized(
+                    hwnd,
+                    from_x,
+                    from_y,
+                    to_x,
+                    to_y,
+                    duration_ms,
+                    steps,
+                    &button,
+                )
+            })
+            .await
+            {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Dragged from ({from_x}, {from_y}) to ({to_x}, {to_y}) (scope:desktop)."
+                ))
+                .with_structured(json!({
+                    "scope": "desktop", "path": "SendInput",
+                    "from": {"x": from_x, "y": from_y}, "to": {"x": to_x, "y": to_y},
+                    "effect": "unverifiable"
+                })),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("desktop drag task failed: {error}")),
+            };
+        }
         // Swift error wording 1:1.
         let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(p) => p,
@@ -6143,7 +6256,6 @@ impl Tool for DragTool {
         let pid = raw_pid as u32;
         let delivery = DeliveryMode::from_args(&args);
 
-        use cua_driver_core::tool_args::ArgsExt;
         let cursor_key = resolve_cursor_key(&args);
         // Accepts numeric JSON as either float or integer — coerce both to f64.
         let coerce = |key: &str| -> Option<f64> {
@@ -6491,29 +6603,6 @@ impl Tool for GetDesktopStateTool {
         use cua_driver_core::protocol::Content;
         use cua_driver_core::tool_args::ArgsExt;
 
-        // Gate on the global capture_scope: a full-display capture is a
-        // desktop-scope operation, so it's only available when the agent has
-        // opted into capture_scope="desktop" (same gate as window-less
-        // screen-absolute click/scroll — see is_windowless_desktop_action).
-        // Read the persisted value the same way load_config does.
-        let scope = pip_preview::read_config_value("capture_scope")
-            .and_then(|v| v.as_str().map(str::to_owned))
-            .unwrap_or_else(|| "window".to_owned());
-        if scope != "desktop" {
-            return ToolResult::error(format!(
-                "get_desktop_state requires capture_scope=\"desktop\" (current scope is \
-                 \"{scope}\"). Full-display capture is a desktop-scope operation; call \
-                 set_config with capture_scope=desktop first (it also enables window-less \
-                 screen-absolute click/scroll). For a single window, use \
-                 get_window_state(pid, window_id) instead."
-            ))
-            .with_structured(serde_json::json!({
-                "code": "desktop_scope_disabled",
-                "capture_scope": scope,
-                "suggestion": "set_config capture_scope=desktop",
-            }));
-        }
-
         let screenshot_out_file = args.opt_str("screenshot_out_file");
 
         // True screen geometry in physical pixels (same space as the capture).
@@ -6555,10 +6644,15 @@ impl Tool for GetDesktopStateTool {
 
         let mut structured = json!({
             "platform": "windows",
+            "display": "primary",
             "screenshot_width": screenshot_width,
             "screenshot_height": screenshot_height,
             "screen_width": screen_width,
             "screen_height": screen_height,
+            "scale_factor": unsafe {
+                let dpi = windows::Win32::UI::HiDpi::GetDpiForSystem();
+                if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 }
+            },
             "screenshot_mime_type": "image/png",
         });
         if let Some(ref fp) = file_path {
@@ -6624,6 +6718,7 @@ impl Tool for MoveCursorTool {
                     .into(),
             input_schema: json!({"type":"object","required":["x","y"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
+                "scope":{"type":"string","enum":["window","desktop"],"description":"desktop moves the real OS pointer; window moves only the agent overlay."},
                 "x":{"type":"number"},"y":{"type":"number"},"cursor_id":{"type":"string"}
             },"additionalProperties":false}),
             read_only: false,
@@ -6636,6 +6731,17 @@ impl Tool for MoveCursorTool {
         use cua_driver_core::tool_args::ArgsExt;
         let x = args.f64_or("x", 0.0);
         let y = args.f64_or("y", 0.0);
+        if args.get("scope").and_then(Value::as_str) == Some("desktop") {
+            return match crate::input::mouse::move_cursor_desktop(x as i32, y as i32) {
+                Ok(()) => ToolResult::text(format!(
+                    "Moved the OS pointer to ({x:.1}, {y:.1}) (scope:desktop)."
+                ))
+                .with_structured(json!({
+                    "scope": "desktop", "path": "SetCursorPos", "x": x, "y": y
+                })),
+                Err(error) => ToolResult::error(error.to_string()),
+            };
+        }
         // Cursor key precedence: caller-declared `session` > legacy `cursor_id`
         // > NO_CURSOR. An anonymous run (no session) has no cursor to move.
         let cursor_key = resolve_cursor_key(&args);
@@ -7322,7 +7428,6 @@ impl Tool for GetConfigTool {
             "source_sha":          option_env!("CUA_DRIVER_SOURCE_SHA"),
             "platform":            "windows",
             "capture_mode":        cfg.capture_mode,
-            "capture_scope":       cfg.capture_scope,
             "max_image_dimension": cfg.max_image_dimension,
             "agent_cursor":        { "enabled": cursor_enabled },
             "experimental_pip":    pip_enabled,
@@ -7368,7 +7473,6 @@ impl Tool for SetConfigTool {
                 "key":{"type":"string","description":"Dotted snake_case path to a leaf config field (Swift-compatible shape). Pair with `value`."},
                 "value":{"description":"New value for `key`. JSON type depends on the key."},
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"DEPRECATED and ignored — get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
-                "capture_scope":{"type":"string","enum":["window","desktop"],"description":"Capture scope: single window (default) or whole desktop. Desktop scope enables window-less screen-absolute click/scroll (no pid/window_id). Accepted in both the {key,value} and legacy per-field shapes."},
                 "max_image_dimension":{"type":"integer","description":"Legacy per-field shape."},
                 "experimental_pip":{"type":"boolean","description":"Legacy per-field shape. Enables PiP preview (applies next restart)."},
                 "experimental_pip_geometry":{"type":"string","description":"Legacy per-field shape. PiP window size + optional position."}
@@ -7377,6 +7481,18 @@ impl Tool for SetConfigTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
+        if args.get("capture_scope").is_some()
+            || args.get("key").and_then(Value::as_str) == Some("capture_scope")
+        {
+            return ToolResult::error(
+                "config key 'capture_scope' is retired; pass capture_scope=auto|window|desktop to start_session",
+            )
+            .with_structured(json!({
+                "code": "config_key_retired",
+                "key": "capture_scope",
+                "replacement": "start_session.capture_scope",
+            }));
+        }
         let mut cfg = self.state.config.write().unwrap();
         let mut applied = false;
         // Swift-compatible {key, value} shape.
@@ -7393,17 +7509,6 @@ impl Tool for SetConfigTool {
                         applied = true;
                     }
                     None    => return ToolResult::error(format!("`capture_mode` must be a string, got {val}.")),
-                },
-                "capture_scope" => match val.as_str() {
-                    Some(s @ ("window" | "desktop")) => {
-                        cfg.capture_scope = s.to_owned();
-                        if let Err(e) = pip_preview::write_config_key("capture_scope", Value::String(s.to_owned())) {
-                            tracing::warn!("set_config: failed to persist capture_scope: {e}");
-                        }
-                        applied = true;
-                    }
-                    Some(other) => return ToolResult::error(format!("`capture_scope` must be \"window\" or \"desktop\", got \"{other}\".")),
-                    None => return ToolResult::error(format!("`capture_scope` must be a string, got {val}.")),
                 },
                 "max_image_dimension" => match val.as_u64() {
                     Some(n) => {
@@ -7439,7 +7544,7 @@ impl Tool for SetConfigTool {
                     None => return ToolResult::error(format!("`experimental_pip_geometry` must be a string, got {val}.")),
                 },
                 other => return ToolResult::error(format!(
-                    "Unknown config key `{other}`. Known: capture_mode, capture_scope, max_image_dimension, experimental_pip, experimental_pip_geometry."
+                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension, experimental_pip, experimental_pip_geometry."
                 )),
             }
         }
@@ -7450,20 +7555,6 @@ impl Tool for SetConfigTool {
                 pip_preview::write_config_key("capture_mode", Value::String(mode.to_owned()))
             {
                 tracing::warn!("set_config: failed to persist capture_mode: {e}");
-            }
-            applied = true;
-        }
-        if let Some(scope) = args.get("capture_scope").and_then(|v| v.as_str()) {
-            if !matches!(scope, "window" | "desktop") {
-                return ToolResult::error(format!(
-                    "`capture_scope` must be \"window\" or \"desktop\", got \"{scope}\"."
-                ));
-            }
-            cfg.capture_scope = scope.to_owned();
-            if let Err(e) =
-                pip_preview::write_config_key("capture_scope", Value::String(scope.to_owned()))
-            {
-                tracing::warn!("set_config: failed to persist capture_scope: {e}");
             }
             applied = true;
         }
@@ -7521,7 +7612,6 @@ impl Tool for SetConfigTool {
             "source_sha":          option_env!("CUA_DRIVER_SOURCE_SHA"),
             "platform":            "windows",
             "capture_mode":        cfg.capture_mode,
-            "capture_scope":       cfg.capture_scope,
             "max_image_dimension": cfg.max_image_dimension,
             "agent_cursor":        { "enabled": cursor_enabled },
             "experimental_pip":    pip_enabled,
@@ -8888,7 +8978,7 @@ mod click_button_schema_tests {
 
 #[cfg(test)]
 mod desktop_scope_tests {
-    use super::{is_windowless_desktop_action, DriverConfig, GetDesktopStateTool};
+    use super::{is_windowless_desktop_action, GetDesktopStateTool};
     use cua_driver_core::tool::Tool;
     use serde_json::json;
 
@@ -8898,61 +8988,52 @@ mod desktop_scope_tests {
     fn windowless_true_for_xy_under_desktop_scope_click_shape() {
         // Click arg shape: {x, y}.
         assert!(is_windowless_desktop_action(
-            &json!({"x": 10, "y": 20}),
-            "desktop"
+            &json!({"x": 10, "y": 20, "scope": "desktop"})
         ));
     }
 
     #[test]
     fn windowless_true_for_xy_under_desktop_scope_scroll_shape() {
         // Scroll arg shape: {direction, x, y}.
-        assert!(is_windowless_desktop_action(
-            &json!({"direction": "down", "x": 10, "y": 20}),
-            "desktop"
-        ));
+        assert!(is_windowless_desktop_action(&json!({
+            "direction": "down", "x": 10, "y": 20, "scope": "desktop"
+        })));
     }
 
     #[test]
     fn windowless_false_when_pid_present() {
-        assert!(!is_windowless_desktop_action(
-            &json!({"x": 10, "y": 20, "pid": 5}),
-            "desktop"
-        ));
+        assert!(!is_windowless_desktop_action(&json!({
+            "x": 10, "y": 20, "pid": 5, "scope": "desktop"
+        })));
     }
 
     #[test]
     fn windowless_false_when_window_id_present() {
-        assert!(!is_windowless_desktop_action(
-            &json!({"x": 10, "y": 20, "window_id": 99}),
-            "desktop"
-        ));
+        assert!(!is_windowless_desktop_action(&json!({
+            "x": 10, "y": 20, "window_id": 99, "scope": "desktop"
+        })));
     }
 
     #[test]
     fn windowless_false_under_window_scope() {
-        assert!(!is_windowless_desktop_action(
-            &json!({"x": 10, "y": 20}),
-            "window"
-        ));
+        assert!(!is_windowless_desktop_action(&json!({
+            "x": 10, "y": 20, "scope": "window"
+        })));
     }
 
     #[test]
     fn windowless_false_when_xy_missing() {
-        assert!(!is_windowless_desktop_action(&json!({"x": 10}), "desktop"));
-        assert!(!is_windowless_desktop_action(&json!({"y": 20}), "desktop"));
-        assert!(!is_windowless_desktop_action(&json!({}), "desktop"));
-        // Non-numeric x/y must not qualify.
         assert!(!is_windowless_desktop_action(
-            &json!({"x": "10", "y": "20"}),
-            "desktop"
+            &json!({"x": 10, "scope": "desktop"})
         ));
-    }
-
-    // ── DriverConfig default ──────────────────────────────────────────────────
-
-    #[test]
-    fn default_capture_scope_is_window() {
-        assert_eq!(DriverConfig::default().capture_scope, "window");
+        assert!(!is_windowless_desktop_action(
+            &json!({"y": 20, "scope": "desktop"})
+        ));
+        assert!(!is_windowless_desktop_action(&json!({"scope": "desktop"})));
+        // Non-numeric x/y must not qualify.
+        assert!(!is_windowless_desktop_action(&json!({
+            "x": "10", "y": "20", "scope": "desktop"
+        })));
     }
 
     // ── get_desktop_state schema ──────────────────────────────────────────────

@@ -1753,7 +1753,9 @@ mod gate_tests {
         let start = DaemonRequest {
             method: "call".into(),
             name: Some("start_session".into()),
-            args: Some(serde_json::json!({})),
+            // Session policy is caller-declared. The transport session id is
+            // cleanup/ownership metadata and must not grant policy authority.
+            args: Some(serde_json::json!({ "session": s3b.clone() })),
             session_id: Some(s3b),
             observation_origin: None,
         };

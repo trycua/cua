@@ -3314,6 +3314,12 @@ pub fn run_config_cmd(
                     process::exit(64);
                 }
             };
+            if key == "capture_scope" {
+                eprintln!(
+                    "config key 'capture_scope' is retired; use start_session(capture_scope=auto|window|desktop)"
+                );
+                process::exit(64);
+            }
             // Try daemon first.
             if crate::serve::is_daemon_listening(&socket_path) {
                 let req = crate::serve::DaemonRequest {
@@ -3353,7 +3359,9 @@ pub fn run_config_cmd(
                 (&mut sc, file_cfg)
             {
                 for (k, v) in file_map {
-                    sc_map.insert(k, v);
+                    if k != "capture_scope" {
+                        sc_map.insert(k, v);
+                    }
                 }
             }
             // Support dotted key paths like "agent_cursor.enabled".
@@ -3388,6 +3396,12 @@ pub fn run_config_cmd(
                     process::exit(64);
                 }
             };
+            if key == "capture_scope" {
+                eprintln!(
+                    "config key 'capture_scope' is retired; use start_session(capture_scope=auto|window|desktop)"
+                );
+                process::exit(64);
+            }
             let value = match value {
                 Some(v) => v,
                 None => {

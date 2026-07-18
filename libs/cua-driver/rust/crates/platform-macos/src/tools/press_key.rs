@@ -1,8 +1,11 @@
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
+use libc;
 use serde_json::Value;
 use std::sync::Arc;
-use libc;
 
 use crate::apps;
 use crate::focus_guard;
@@ -15,7 +18,9 @@ pub struct PressKeyTool {
 }
 
 impl PressKeyTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -39,7 +44,7 @@ fn def() -> &'static ToolDef {
             Modifiers array: cmd, shift, option/alt, ctrl, fn.".into(),
         input_schema: serde_json::json!({
             "type": "object",
-            "required": ["pid", "key"],
+            "required": ["key"],
             "properties": {
                 "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid": { "type": "integer" },
@@ -54,6 +59,7 @@ fn def() -> &'static ToolDef {
                 "element_token": { "type": "string", "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." },
                 "x": { "type": "number", "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index." },
                 "y": { "type": "number", "description": "Screenshot-pixel Y (see x)." },
+                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id to send the key to the frontmost application." },
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false
@@ -67,16 +73,50 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for PressKeyTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
-        let key_raw = match args.require_str("key") { Ok(v) => v, Err(e) => return e };
+        if args.opt_str("scope").as_deref() == Some("desktop")
+            && args.get("pid").is_none()
+            && args.get("window_id").is_none()
+        {
+            let key = match args.require_str("key") {
+                Ok(value) => value,
+                Err(error) => return error,
+            };
+            let modifiers: Vec<String> = args.str_array("modifiers");
+            let key_for_input = key.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                crate::input::keyboard::press_key_global(&key_for_input, &modifier_refs)
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!("Pressed '{key}' on the desktop."))
+                    .with_structured(serde_json::json!({
+                        "scope": "desktop",
+                        "path": "hid",
+                        "effect": "unverifiable"
+                    })),
+                Ok(Err(error)) => ToolResult::error(format!("desktop press_key failed: {error}")),
+                Err(error) => ToolResult::error(format!("desktop press_key task failed: {error}")),
+            };
+        }
+        let pid = match args.require_i32("pid") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let key_raw = match args.require_str("key") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         let mut modifiers: Vec<String> = args.str_array("modifiers");
         // Surface 6: element_token / element_index precedence resolution.
         let element_token_arg = args.opt_str("element_token");
-        let window_id_arg     = args.opt_u64("window_id").map(|v| v as u32);
+        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
         let resolved = match cua_driver_core::element_token::resolve_element_args(
             pid,
@@ -91,7 +131,9 @@ impl Tool for PressKeyTool {
         let (element_index, window_id) = match resolved {
             cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
             cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid, element_index: idx, via_token: _,
+                window_id: wid,
+                element_index: idx,
+                via_token: _,
             } => (Some(idx), wid),
         };
 
@@ -120,18 +162,32 @@ impl Tool for PressKeyTool {
             if let (Some(cx), Some(cy)) = (px, py) {
                 if element_index.is_some() {
                     return ToolResult::error(
-                        "Pass either element_index (ax) or x,y (px) to press_key, not both."
+                        "Pass either element_index (ax) or x,y (px) to press_key, not both.",
                     );
                 }
-                let from_zoom = args.get("from_zoom").and_then(|v| v.as_bool()).unwrap_or(false);
+                let from_zoom = args
+                    .get("from_zoom")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 if let Err(e) = super::focus_by_pixel(
-                    &self.state, pid, window_id, cx, cy, fg,
-                    args.opt_str("session"), args.opt_str("_session_id"), from_zoom,
-                ).await {
+                    &self.state,
+                    pid,
+                    window_id,
+                    cx,
+                    cy,
+                    fg,
+                    args.opt_str("session"),
+                    args.opt_str("_session_id"),
+                    from_zoom,
+                )
+                .await
+                {
                     return e;
                 }
                 true
-            } else { false }
+            } else {
+                false
+            }
         };
 
         // Resolve the pre-focus element pointer (if requested) outside
@@ -168,7 +224,8 @@ impl Tool for PressKeyTool {
                 if let Some(element_ptr) = pre_focus_ptr {
                     let _ = tokio::task::spawn_blocking(move || {
                         crate::input::ax_actions::focus_element(element_ptr)
-                    }).await;
+                    })
+                    .await;
                     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
                 }
 
@@ -180,9 +237,11 @@ impl Tool for PressKeyTool {
                     if fg && !px_focus {
                         if let Some(wid) = window_id {
                             if element_index.is_none() {
-                                crate::input::skylight::with_menu_shortcut_activation(pid as libc::pid_t, wid, || {
-                                    crate::input::keyboard::press_key_no_auth(pid, &key, &m)
-                                })?;
+                                crate::input::skylight::with_menu_shortcut_activation(
+                                    pid as libc::pid_t,
+                                    wid,
+                                    || crate::input::keyboard::press_key_no_auth(pid, &key, &m),
+                                )?;
                                 return Ok(());
                             }
                         }
@@ -199,7 +258,11 @@ impl Tool for PressKeyTool {
 
         match result {
             Ok(Ok(())) => {
-                let label = if fg { " (delivery_mode:foreground)" } else { "" };
+                let label = if fg {
+                    " (delivery_mode:foreground)"
+                } else {
+                    ""
+                };
                 let mut structured = serde_json::json!({
                     "path": if fg { "key_events_fg" } else { "key_events" },
                     "verified": false,
@@ -216,7 +279,8 @@ impl Tool for PressKeyTool {
                 ToolResult::text(format!(
                     "✅ Pressed {display_key} on pid {pid}{label}.{}",
                     changes.result_suffix()
-                )).with_structured(structured)
+                ))
+                .with_structured(structured)
             }
             Ok(Err(e)) => ToolResult::error(format!("press_key failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),

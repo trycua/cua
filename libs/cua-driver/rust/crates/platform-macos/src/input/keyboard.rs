@@ -146,6 +146,32 @@ pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Type Unicode text into the frontmost application through the global HID
+/// queue. This is the desktop-scope counterpart to PID-routed `type_text` and
+/// mirrors computer-server's frontmost pynput typing behavior.
+pub fn type_text_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
+    use core_graphics::event::CGEventTapLocation;
+
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    for ch in text.chars() {
+        let value = ch.to_string();
+        let down = CGEvent::new_keyboard_event(source.clone(), 0, true)
+            .map_err(|_| anyhow::anyhow!("CGEvent keyboard down failed"))?;
+        down.set_string(&value);
+        down.set_flags(CGEventFlags::CGEventFlagNull);
+        down.post(CGEventTapLocation::HID);
+        std::thread::sleep(std::time::Duration::from_millis(8));
+        let up = CGEvent::new_keyboard_event(source.clone(), 0, false)
+            .map_err(|_| anyhow::anyhow!("CGEvent keyboard up failed"))?;
+        up.set_string(&value);
+        up.set_flags(CGEventFlags::CGEventFlagNull);
+        up.post(CGEventTapLocation::HID);
+        std::thread::sleep(std::time::Duration::from_millis(inter_char_delay_ms.max(8)));
+    }
+    Ok(())
+}
+
 /// Post a keyboard event to `pid` via SLEventPostToPid (with auth message for
 /// Chromium/Electron support) or fall back to CGEvent::post_to_pid.
 fn post_keyboard_event(pid: i32, event: &CGEvent) {

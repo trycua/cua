@@ -3,7 +3,7 @@
 //! These never invoke a tool — they only inspect the advertised inputSchemas:
 //! that `type_text_chars` is hidden, the `list_windows.on_screen_only` knob, the
 //! `set_agent_cursor_motion` Bezier knobs, delivery and scope enums, and the
-//! `set_config.capture_mode` enum.
+//! `set_config.capture_mode` enum and the per-session capture-scope contract.
 
 #![cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 
@@ -120,22 +120,35 @@ fn tools_list_schema_shape() {
             "{tool}.delivery_mode should advertise background and foreground: {delivery:?}"
         );
     }
-    // macOS selects desktop coordinates per click. Linux and Windows retain
-    // the process-level capture_scope gate used by their desktop-state tools.
-    #[cfg(target_os = "macos")]
-    {
-        let scope = &properties("click")["scope"];
+    // Capture scope belongs to the session lifecycle on every platform. The
+    // action-level `scope` selects a coordinate/transport form but cannot
+    // override the session policy enforced by the registry.
+    let capture_scope = &properties("start_session")["capture_scope"];
+    for expected in ["auto", "window", "desktop"] {
         assert!(
-            enum_contains(scope, "window") && enum_contains(scope, "desktop"),
-            "click.scope should advertise window and desktop: {scope:?}"
+            enum_contains(capture_scope, expected),
+            "start_session.capture_scope should advertise {expected}: {capture_scope:?}"
         );
     }
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    {
-        let capture_scope = &properties("set_config")["capture_scope"];
+    assert!(
+        tools.iter().any(|tool| tool["name"] == "escalate_session"),
+        "escalate_session missing from tools/list"
+    );
+    assert!(
+        tools.iter().any(|tool| tool["name"] == "get_session_state"),
+        "get_session_state missing from tools/list"
+    );
+    assert!(
+        properties("set_config")["capture_scope"].is_null(),
+        "persistent set_config.capture_scope must remain retired"
+    );
+    for action in [
+        "click", "type_text", "press_key", "hotkey", "scroll", "drag", "move_cursor",
+    ] {
+        let scope = &properties(action)["scope"];
         assert!(
-            enum_contains(capture_scope, "window") && enum_contains(capture_scope, "desktop"),
-            "set_config.capture_scope should advertise window and desktop: {capture_scope:?}"
+            enum_contains(scope, "window") && enum_contains(scope, "desktop"),
+            "{action}.scope should advertise window and desktop: {scope:?}"
         );
     }
 

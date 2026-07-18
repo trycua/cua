@@ -252,4 +252,3 @@ fn probe_duration_ms(video_path: &Path) -> Option<f64> {
     let secs: f64 = s.trim().parse().ok()?;
     Some(secs * 1000.0)
 }
-

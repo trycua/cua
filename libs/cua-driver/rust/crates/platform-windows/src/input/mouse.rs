@@ -834,6 +834,23 @@ pub fn send_wheel_synthesized(sx: i32, sy: i32, ticks: i32, horizontal: bool) ->
     Ok(())
 }
 
+/// Return the current foreground window for desktop-scope keyboard and drag
+/// operations, which intentionally target whatever the user can currently see.
+pub fn foreground_window() -> Result<u64> {
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.0.is_null() {
+        bail!("no foreground window is available");
+    }
+    Ok(hwnd.0 as u64)
+}
+
+/// Move the real OS pointer to a desktop coordinate.
+pub fn move_cursor_desktop(x: i32, y: i32) -> Result<()> {
+    unsafe { SetCursorPos(x, y) }
+        .ok()
+        .map_err(|error| anyhow::anyhow!("SetCursorPos({x}, {y}) failed: {error}"))
+}
+
 #[cfg(test)]
 mod wheel_tests {
     use super::{posted_press_message, wheel_mouse_data, WHEEL_DELTA};

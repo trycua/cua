@@ -99,10 +99,6 @@ stub_tool!(scroll_m, ScrollTool, "scroll",
     "Scroll the target pid's focused region. direction required; by defaults to line, amount defaults to 3.",
     serde_json::json!({"type":"object","required":["direction"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"cursor_id":{"type":"string"},"pid":{"type":"integer"},"direction":{"type":"string","enum":["up","down","left","right"]},"by":{"type":"string","enum":["line","page"]},"amount":{"type":"integer","minimum":1,"maximum":50},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema()},"additionalProperties":false}));
 
-stub_tool!(screenshot_m, ScreenshotTool, "screenshot",
-    "Capture a screenshot. Without window_id captures the full display. Supports png and jpeg formats.",
-    serde_json::json!({"type":"object","properties":{"window_id":{"type":"integer"},"format":{"type":"string","enum":["png","jpeg"]},"quality":{"type":"integer","minimum":1,"maximum":95}},"additionalProperties":false}));
-
 stub_tool!(get_screen_size_m, GetScreenSizeTool, "get_screen_size",
     "Return the main screen's width and height in points.",
     serde_json::json!({"type":"object","properties":{},"additionalProperties":false}));
@@ -216,7 +212,6 @@ pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     r.register(Box::new(HotkeyTool));
     r.register(Box::new(SetValueTool));
     r.register(Box::new(ScrollTool));
-    r.register(Box::new(ScreenshotTool));
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetCursorPositionTool));
     r.register(Box::new(MoveCursorTool));

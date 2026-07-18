@@ -248,7 +248,7 @@ fn append_platform_probes(report: &mut Report) {
             report.push(
                 Probe::warn(
                     "interactive session",
-                    "running in Session 0 (services); window-driving tools (list_windows, click, type_text, screenshot, get_window_state) will return empty results — these APIs need an attached interactive desktop.",
+                    "running in Session 0 (services); window-driving tools (list_windows, click, type_text, get_window_state, get_desktop_state) will return empty results — these APIs need an attached interactive desktop.",
                 )
                 .with_detail(
                     "re-run cua-driver from an interactive logon (RDP, console, or a scheduled task in the user's session) for the GUI tools to function.",
@@ -408,7 +408,7 @@ fn append_platform_probes(report: &mut Report) {
                 format!("Wayland only (WAYLAND_DISPLAY={w}, DISPLAY unset)"),
             )
             .with_detail(
-                "X11 tools (list_windows, screenshot) need XWayland — start your session with XWayland enabled.",
+                "X11 window discovery and capture (list_windows, get_window_state) need XWayland — start your session with XWayland enabled.",
             ),
         ),
         (Some(d), Some(w)) => report.push(Probe::ok(

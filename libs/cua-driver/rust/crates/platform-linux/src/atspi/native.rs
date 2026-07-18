@@ -345,7 +345,7 @@ async fn collect_visited<'a>(
 /// - `max_elements = None` keeps the historical 5 000-node budget.
 /// - `max_depth = None` keeps depth uncapped (the historical behaviour);
 ///   `Some(d)` skips enqueueing children whose depth would exceed `d`.
-/// Issue #22865: caps protect against Electron / large web apps that produce
+/// These caps protect against Electron / large web apps that produce
 /// 10k+ element trees and blow context windows.
 async fn collect_visited_bounded<'a>(
     conn: &'a AccessibilityConnection,
@@ -547,7 +547,7 @@ async fn collect_visited_bounded<'a>(
         let child_in_web_doc = in_web_doc || is_document_role(&role);
 
         // Enqueue children (fetched above) before moving `acc` into `visited`.
-        // Honor max_depth (#22865): skip enqueueing descendants whose depth
+        // Honor max_depth: skip enqueueing descendants whose depth
         // would exceed the cap.
         let descend = max_depth.map(|d| depth + 1 <= d).unwrap_or(true);
         if descend {
@@ -697,7 +697,7 @@ pub fn walk_tree(pid: u32) -> Result<Option<(String, Vec<AtspiNode>)>> {
 
 /// Walk the AT-SPI tree with caller-supplied node + depth caps.
 /// `max_elements = None` keeps the historical 5 000-node default; `max_depth
-/// = None` keeps the historical unbounded depth. Issue #22865.
+/// = None` keeps the historical unbounded depth.
 pub fn walk_tree_bounded(
     pid: u32,
     xid: u64,

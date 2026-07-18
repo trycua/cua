@@ -112,7 +112,7 @@ is safe even for apps that normally foreground on media-load
 | Enumerate an app's windows | `list_windows({pid})` — or read the `windows` array `launch_app` already returns | `osascript 'every window of app …'` |
 | Click / type / scroll / keys | `click`, `type_text`, `scroll`, `press_key`, `hotkey` | `osascript`, `cliclick`, raw `CGEvent`, `open <url>` |
 | Drag / drag-and-drop / marquee select | `drag({pid, from_x, from_y, to_x, to_y})` (pixel-only — macOS AX has no semantic drag) | `cliclick dd:`, `osascript drag` |
-| Screenshot | `screenshot` or the PNG in `get_window_state` | `screencapture` |
+| Capture a window | the PNG in `get_window_state({pid, window_id})`; use `screenshot_out_file` to write it to disk | `screencapture` |
 | Quit an app | ask the user first, then `hotkey({pid, keys:["cmd","q"]})` | `kill`, `killall`, `pkill` |
 | Hand a file/URL to an app | `launch_app({bundle_id, urls:[<path>]})` | `open -a <App> <path>`, `open <url>` |
 
@@ -515,7 +515,7 @@ starting point for new browser workflows.
 |---|---|---|
 | macOS system-alert beep on `press_key` with no visible change | Target window is minimized; Return / Space / Tab commits don't establish real renderer focus on minimized windows | AX-click a clickable equivalent (Go button, Submit button, checkbox) instead of pressing the key; see "Keyboard commits on minimized windows" under the Browser section |
 | `Accessibility permission not granted` | TCC not granted | Stop; tell user to grant in System Settings |
-| `Screen Recording permission not granted` | TCC not granted for capture | Affects `screenshot` and `get_window_state` (which always captures). Grant in System Settings — the driver can't operate without it |
+| `Screen Recording permission not granted` | TCC not granted for capture | Affects `get_window_state` screenshots and `get_desktop_state`. Grant in System Settings; tree-only reads can use `include_screenshot:false` |
 
 ## Example end-to-end task (macOS)
 

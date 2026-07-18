@@ -7,7 +7,7 @@
 //!
 //! ## Why the session-id probe matters
 //!
-//! Window-driving tools (`list_windows`, `click`, `type_text`, `screenshot`,
+//! Window-driving tools (`list_windows`, `click`, `type_text`, `get_window_state`,
 //! `get_window_state`) all bottom out in Win32 APIs that are scoped to the
 //! calling process's WindowStation + Desktop. A process that lives in
 //! Session 0 (services) — which is where Windows lands all SSH-launched

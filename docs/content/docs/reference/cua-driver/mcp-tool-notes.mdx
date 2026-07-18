@@ -17,6 +17,21 @@ Several parameters are a **shared cross-platform contract**: the same JSON shape
 | `include_screenshot` | `get_window_state` | Boolean, default `true` (returns the tree **and** a screenshot). Set `false` to skip the screenshot grab and return the tree only when re-indexing before an element-`ax` action. |
 | `modifier`, `button`, `element_index`, `element_token` | pointer and element tools | Held modifier keys, mouse button, and the two element-addressing handles. |
 
+### Accessibility-tree bounds
+
+`get_window_state` accepts `max_elements` and `max_depth`, with platform-specific
+defaults. macOS visits at most 2,000 nodes to depth 25; Windows visits at most
+5,000 nodes to depth 25; Linux visits at most 5,000 nodes and has no default
+depth cap. Traversal is pre-order and depth-first, and the element budget counts
+visited nodes, including layout containers that may not appear in the returned
+`elements` array. An early subtree can therefore consume the budget before a
+later target is reached.
+
+`query` filters the rendered tree after traversal, so it cannot recover a node
+omitted by either cap. Lower limits reduce latency and output size but make the
+snapshot partial; use the accompanying screenshot or a more exactly scoped
+surface when the target is missing.
+
 ### Required parameters
 
 The `required` set is uniform across platforms: `click` requires nothing, `scroll` requires `direction`, and `zoom` requires `window_id` plus `x1`/`y1`/`x2`/`y2`. `pid` is **conditionally** required. Every per-window action needs it; a windowless desktop-scope call omits it. Code validates that rule with a clear error rather than pinning it in the schema, so a client that omits `pid` for a desktop-scope action is not schema-rejected.

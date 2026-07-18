@@ -4,9 +4,9 @@ The Linux backend drives X11 apps **in the background**: clicks and
 keystrokes are injected to the target window without raising it,
 activating it, or moving the real pointer — the same no-foreground
 contract the macOS and Windows backends hold. The full tool surface is
-supported: `click`, `type_text`, scroll, `press_key`, `screenshot`,
-`launch_app`, `list_apps`, `list_windows`, `get_window_state`, and
-session recording.
+supported: `click`, `type_text`, scroll, `press_key`, `launch_app`,
+`list_apps`, `list_windows`, `get_window_state`, `get_desktop_state`,
+`zoom`, and session recording.
 
 AT-SPI is talked to natively over D-Bus (the `atspi`/zbus crate) — no
 `pyatspi` or GObject-introspection typelibs are required at runtime.

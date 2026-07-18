@@ -36,7 +36,7 @@ pub const DEFAULT_MAX_DEPTH: usize = 25;
 pub const DEFAULT_MAX_TOTAL_ELEMENTS: usize = 5000;
 
 // Historical aliases — referenced by the thin `walk_cached` shim that
-// keeps the pre-#22865 call signature compiling. `walk_tree_bounded`
+// keeps the original call signature compiling. `walk_tree_bounded`
 // reads from the caller-supplied caps instead.
 #[allow(dead_code)]
 const MAX_DEPTH: usize = DEFAULT_MAX_DEPTH;
@@ -96,8 +96,8 @@ pub fn walk_tree(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
 }
 
 /// Walk the UIA tree with caller-supplied caps. `max_elements`/`max_depth`
-/// truncate the walk and the rendered markdown identically. Issue #22865:
-/// caps protect against Electron / large web apps that produce 10k+
+/// truncate the walk and the rendered markdown identically. These caps
+/// protect against Electron / large web apps that produce 10k+
 /// element trees and blow context windows.
 pub fn walk_tree_bounded(
     hwnd: u64,

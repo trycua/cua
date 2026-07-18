@@ -536,9 +536,11 @@ impl Tool for GetWindowStateTool {
                 deprecated and ignored.\n\n\
                 Optional `max_elements` / `max_depth` bound the AT-SPI walk to \
                 mitigate context-window blow-up on Electron / large web apps \
-                that produce 10k+ element trees. When applied, BOTH \
-                the markdown and the structured elements are truncated \
-                identically. Omit both for current default behaviour.".into(),
+                that produce 10k+ element trees. The pre-order depth-first budget \
+                counts visited nodes, including containers omitted from the output; \
+                `query` filters only after traversal. When applied, BOTH the markdown \
+                and the structured elements are truncated identically. Omit both for \
+                the default (≤5 000 visited nodes, depth uncapped).".into(),
             input_schema: json!({"type":"object","required":["pid","window_id"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":{"type":"integer"},
@@ -594,7 +596,7 @@ impl Tool for GetWindowStateTool {
             }
         });
         // Optional caps — when omitted, the AT-SPI walker uses its built-in
-        // defaults (#22865).
+        // defaults.
         let max_elements = args
             .get("max_elements")
             .and_then(|v| v.as_u64())
@@ -3716,9 +3718,9 @@ impl Tool for ScrollTool {
     }
 }
 
-// `ScreenshotTool` and `ScreenshotCompatTool` removed in PR #1692 — see the
-// matching note in platform-windows/src/tools/impl_.rs. `get_window_state` is
-// the canonical screenshot path (it always returns a screenshot now); the
+// The standalone screenshot tools were removed in PR #1692. `get_window_state`
+// is the canonical window-capture path and `get_desktop_state` handles
+// full-display capture; the
 // underlying capture machinery (XGetImage / `import` shell-out / etc.)
 // stays reachable through GetWindowStateTool.
 
@@ -6870,10 +6872,9 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     }));
     r.register(Box::new(SetValueTool));
     r.register(Box::new(ScrollTool));
-    // `screenshot` removed - see the matching comment in
-    // platform-windows/src/tools/impl_.rs::build_registry. Canonical
-    // screenshot path is `get_window_state` (it always returns a screenshot now).
-    let _ = compat;
+    // Standalone screenshot capture is intentionally absent. Use
+    // `get_window_state` for a window or `get_desktop_state` for the display.
+    let _ = compat; // legacy flag; no current tool-surface effect
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetDesktopStateTool));
     r.register(Box::new(GetCursorPositionTool));
@@ -6986,6 +6987,26 @@ mod click_button_schema_tests {
         assert!(!maps_indicate_gtk(
             "7f00-7f01 r-xp /usr/lib/x86_64-linux-gnu/libgdk_pixbuf-2.0.so"
         ));
+    }
+}
+
+#[cfg(test)]
+mod registry_surface_tests {
+    use super::*;
+
+    #[test]
+    fn default_and_legacy_compat_surfaces_have_no_screenshot_tool() {
+        let default = build_registry(false)
+            .tool_names()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let compat = build_registry(true)
+            .tool_names()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert!(!default.iter().any(|name| name == "screenshot"));
+        assert!(!compat.iter().any(|name| name == "screenshot"));
+        assert_eq!(default, compat, "legacy compat flag must remain surface-neutral");
     }
 }
 

@@ -45,7 +45,7 @@ The `allow` and `deny` fields also accept a flat list of strings as a shorthand 
 
 ```yaml
 allow:
-  - screenshot
+  - get_window_state
   - wait
 deny:
   - shell_execute
@@ -58,8 +58,8 @@ A list of tool names that are permitted for any argument values. Order does not 
 ```yaml
 allow:
   tools:
-    - screenshot
     - get_window_state
+    - get_desktop_state
     - list_apps
 ```
 
@@ -115,8 +115,8 @@ deny:
 ```yaml
 allow:
   tools:
-    - screenshot
     - get_window_state
+    - get_desktop_state
     - list_apps
     - list_windows
     - click
@@ -194,8 +194,8 @@ package cua.policy
 import rego.v1
 
 safe_tools := {
-    "screenshot",
     "get_window_state",
+    "get_desktop_state",
     "list_apps",
     "list_windows",
     "click",

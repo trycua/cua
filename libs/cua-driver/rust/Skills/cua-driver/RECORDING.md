@@ -13,7 +13,7 @@ user explicitly asks to record — the skill does not auto-enable this.
 enabled, every action-tool call (`click`, `right_click`, `scroll`,
 `type_text`, `press_key`, `hotkey`, `set_value`) writes a numbered
 turn folder under a caller-chosen output directory. Read-only tools
-(`get_window_state`, `list_windows`, `screenshot`, `list_apps`,
+(`get_window_state`, `get_desktop_state`, `list_windows`, `list_apps`,
 permission probes, agent-cursor getters / setters, and the recording
 controls themselves) are not recorded.
 

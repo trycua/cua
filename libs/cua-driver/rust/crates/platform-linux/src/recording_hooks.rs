@@ -14,7 +14,13 @@ pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Ve
 #[cfg(target_os = "linux")]
 fn app_state_json_for_blocking(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
     let pid = u32::try_from(pid?).ok()?;
-    let window_id = resolve_window_for_recording(pid, window_id)?.xid;
+    let window_id = if crate::wayland::is_inject_mode() {
+        // The compositor protocol already verified this action target. Avoid a
+        // second AT-SPI window enumeration before the bounded tree snapshot.
+        window_id?
+    } else {
+        resolve_window_for_recording(pid, window_id)?.xid
+    };
     let result = if crate::wayland::is_inject_mode() {
         // The nested compositor intentionally exercises blocked/background
         // renderers. Keep trajectory evidence best-effort so one unresponsive
@@ -40,6 +46,27 @@ fn app_state_json_for_blocking(window_id: Option<u64>, pid: Option<i64>) -> Opti
         "tree_markdown": result.tree_markdown,
     });
     serde_json::to_vec_pretty(&payload).ok()
+}
+
+#[cfg(target_os = "linux")]
+pub fn screenshot_for_recording(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
+    if crate::wayland::is_inject_mode() {
+        // A full-output frame is the strongest evidence for the nested
+        // compositor's background/focus guarantees and needs no slow AT-SPI
+        // geometry re-resolution. Per-window screenshots elsewhere retain the
+        // normal crop behavior.
+        return crate::wayland::screenshot_display_dispatch().ok();
+    }
+    if let Some(window_id) = window_id {
+        crate::wayland::screenshot_dispatch(window_id).ok()
+    } else if let Some(pid) = pid.and_then(|pid| u32::try_from(pid).ok()) {
+        let windows = crate::wayland::list_windows_dispatch(Some(pid));
+        windows
+            .first()
+            .and_then(|window| crate::wayland::screenshot_dispatch(window.xid).ok())
+    } else {
+        crate::capture::screenshot_display_bytes().ok()
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -91,6 +118,11 @@ fn resolve_window_for_recording(
 
 #[cfg(not(target_os = "linux"))]
 pub fn app_state_json_for(_window_id: Option<u64>, _pid: Option<i64>) -> Option<Vec<u8>> {
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn screenshot_for_recording(_window_id: Option<u64>, _pid: Option<i64>) -> Option<Vec<u8>> {
     None
 }
 

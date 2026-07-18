@@ -2544,14 +2544,38 @@ fn no_app_id(window_id: u64) -> anyhow::Error {
 /// is the same credential the compositor observes on the owning wl_client.
 /// Fall back to app_id for clients whose accessibility metadata has no PID.
 pub fn inject_target_for_window(window_id: u64) -> anyhow::Result<String> {
-    if let Some(pid) = crate::atspi::list_windows(None)
-        .into_iter()
+    let atspi = crate::atspi::list_windows(None);
+    let direct_pid = atspi
+        .iter()
         .find(|window| window.xid == window_id)
-        .and_then(|window| window.pid)
-    {
+        .and_then(|window| window.pid);
+    let correlated_pid = identity_for(window_id)
+        .as_ref()
+        .and_then(|identity| unique_atspi_pid_for_identity(identity, &atspi));
+    if let Some(pid) = direct_pid.or(correlated_pid) {
         return Ok(format!("pid:{pid}"));
     }
     app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))
+}
+
+/// Correlate a connection-local native toplevel with its AT-SPI process. Exact
+/// titles are the same bridge used by window enumeration; requiring one unique
+/// PID prevents a shared toolkit app_id from silently selecting another app.
+fn unique_atspi_pid_for_identity(
+    identity: &ToplevelIdentity,
+    windows: &[WindowInfo],
+) -> Option<u32> {
+    if identity.title.is_empty() {
+        return None;
+    }
+    let mut pids = windows
+        .iter()
+        .filter(|window| window.title == identity.title)
+        .filter_map(|window| window.pid)
+        .collect::<Vec<_>>();
+    pids.sort_unstable();
+    pids.dedup();
+    (pids.len() == 1).then(|| pids[0])
 }
 
 /// Focus-free type into the window's surface (no focus change). Rejects any
@@ -3141,6 +3165,35 @@ mod tests {
             identity_for(enriched[0].xid).unwrap().title,
             "CuaTestHarness"
         );
+    }
+
+    #[test]
+    fn inject_target_correlates_native_identity_to_unique_atspi_pid() {
+        let identity = ToplevelIdentity {
+            title: "Unique sentinel".into(),
+            app_id: "electron".into(),
+        };
+        let windows = vec![
+            window(10, Some(100), "Background fixture"),
+            window(20, Some(200), "Unique sentinel"),
+        ];
+        assert_eq!(
+            unique_atspi_pid_for_identity(&identity, &windows),
+            Some(200)
+        );
+    }
+
+    #[test]
+    fn inject_target_refuses_ambiguous_title_pid_correlation() {
+        let identity = ToplevelIdentity {
+            title: "Shared title".into(),
+            app_id: "electron".into(),
+        };
+        let windows = vec![
+            window(10, Some(100), "Shared title"),
+            window(20, Some(200), "Shared title"),
+        ];
+        assert_eq!(unique_atspi_pid_for_identity(&identity, &windows), None);
     }
 
     #[test]

@@ -14,79 +14,8 @@ use crate::{harness_app, spawn_in_job, BehaviorRecording, ChildReaper, Driver};
 pub struct ForegroundSentinel {
     journal_path: std::path::PathBuf,
     target: TargetWindow,
-    _process_heartbeat: Option<ProcessHeartbeat>,
     _reaper: ChildReaper,
     _user_data: tempfile::TempDir,
-}
-
-struct ProcessHeartbeat {
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    thread: Option<std::thread::JoinHandle<()>>,
-}
-
-impl ProcessHeartbeat {
-    fn launch(pid: u32, journal_path: &std::path::Path) -> Option<Self> {
-        #[cfg(target_os = "linux")]
-        {
-            if std::env::var("CUA_E2E_WAYLAND_SESSION")
-                .is_ok_and(|session| session == "cua-compositor")
-            {
-                let (_, started) = linux_process_state(pid)?;
-                let journal_path = journal_path.to_owned();
-                let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                let thread_stop = stop.clone();
-                let thread = std::thread::spawn(move || {
-                    while !thread_stop.load(std::sync::atomic::Ordering::Relaxed) {
-                        let Some((state, current_started)) = linux_process_state(pid) else {
-                            break;
-                        };
-                        if state == 'Z' || current_started != started {
-                            break;
-                        }
-                        let at_ms = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|duration| duration.as_millis())
-                            .unwrap_or_default();
-                        if let Ok(mut journal) =
-                            std::fs::OpenOptions::new().append(true).open(&journal_path)
-                        {
-                            use std::io::Write;
-                            let _ = writeln!(
-                                journal,
-                                "{{\"kind\":\"heartbeat\",\"at_ms\":{at_ms},\"source\":\"process-liveness\"}}"
-                            );
-                        }
-                        std::thread::sleep(Duration::from_millis(100));
-                    }
-                });
-                return Some(Self {
-                    stop,
-                    thread: Some(thread),
-                });
-            }
-        }
-        let _ = (pid, journal_path);
-        None
-    }
-}
-
-impl Drop for ProcessHeartbeat {
-    fn drop(&mut self) {
-        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn linux_process_state(pid: u32) -> Option<(char, u64)> {
-    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let tail = stat.rsplit_once(')')?.1.trim();
-    let mut fields = tail.split_whitespace();
-    let state = fields.next()?.chars().next()?;
-    let started = fields.nth(18)?.parse::<u64>().ok()?;
-    Some((state, started))
 }
 
 impl ForegroundSentinel {
@@ -118,12 +47,6 @@ impl ForegroundSentinel {
             .stderr(Stdio::null());
         let child = spawn_in_job(&mut command).expect("launch foreground sentinel");
         let launched_pid = child.id();
-        // The deliberately minimal compositor can block both Chromium event
-        // loops during a synchronous configure/focus transition. In that one
-        // lane, prove liveness from the exact child PID + Linux start time.
-        // Renderer input and native focus canaries below remain independent
-        // GUI-responsiveness oracles.
-        let process_heartbeat = ProcessHeartbeat::launch(launched_pid, &journal_path);
         let mut reaper = ChildReaper::new();
         reaper.push(child);
         let expected_title = format!("CuaTestHarness Sentinel [cdp={cdp_port}]");
@@ -176,7 +99,6 @@ impl ForegroundSentinel {
         Self {
             journal_path,
             target,
-            _process_heartbeat: process_heartbeat,
             _reaper: reaper,
             _user_data: user_data,
         }

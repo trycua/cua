@@ -11,8 +11,12 @@
 //! ## Subcommands
 //!
 //! - `install` — fetch + place + symlink (idempotent: re-run is a no-op).
-//! - `update` — same as `install --force`: re-fetch even if local copy
-//!   already exists, refreshes content.
+//!   Pass `--force` to re-fetch the pack and repoint per-agent symlinks
+//!   that already exist (useful when switching between a release install
+//!   and a local-build install, since the target pack lives under
+//!   `~/.cua-driver/skills/cua-driver` either way but the link's target
+//!   path needs refreshing if the pack was rebuilt in place).
+//! - `update` — alias for `install --force`.
 //! - `uninstall [--all]` — remove the agent symlinks. With `--all`, also
 //!   delete the local copy under `<HomeDir>/skills/cua-driver/` (and the
 //!   pre-rename `cua-driver-rs/` location if present).
@@ -299,7 +303,7 @@ fn install(flags: &[String], force: bool) -> Result<()> {
 
     let mut linked_any = false;
     for agent in AGENTS {
-        match link_agent(*agent, &local) {
+        match link_agent(*agent, &local, force) {
             Ok(true) => linked_any = true,
             Ok(false) => {}
             Err(e) => eprintln!("  warning: failed to link {}: {e}", agent.label),
@@ -389,7 +393,14 @@ fn sweep_legacy_skill_pack() {
 
 /// Returns `Ok(true)` when a new link was created, `Ok(false)` when
 /// skipped (parent dir missing, link already there, etc.).
-fn link_agent(agent: Agent, local_skill_dir: &Path) -> Result<bool> {
+///
+/// `force = true` (from `cua-driver skills update` or `install --force`)
+/// makes case 2 — link exists + resolves — re-link instead of skip, so
+/// switching between a release install and a local-build install
+/// repoints the per-agent symlinks at the freshly-fetched pack. Case 4
+/// (real directory at the link path) still falls through to skip
+/// unconditionally so we never clobber user-managed content.
+fn link_agent(agent: Agent, local_skill_dir: &Path, force: bool) -> Result<bool> {
     let parent = agent.parent_path()?;
     if !parent.exists() {
         return Ok(false);
@@ -397,7 +408,9 @@ fn link_agent(agent: Agent, local_skill_dir: &Path) -> Result<bool> {
     let link = agent.link_path()?;
     // Four states for `link`:
     //   1. doesn't exist at all                 → create
-    //   2. exists + resolves                    → already linked (skip)
+    //   2. exists + resolves                    → already linked
+    //         force=false → skip
+    //         force=true  → recreate IF it's a symlink/junction; else skip
     //   3. exists as link/junction but target dangling → remove + recreate
     //   4. exists as a real directory           → user-managed, leave alone
     //
@@ -408,10 +421,27 @@ fn link_agent(agent: Agent, local_skill_dir: &Path) -> Result<bool> {
     let has_metadata = link.symlink_metadata().is_ok();
     let resolves    = link.exists();
     if has_metadata && resolves {
-        println!("  {} skill link already exists at {} (skipping)", agent.label, link.display());
-        return Ok(false);
-    }
-    if has_metadata && !resolves && is_symlink_or_junction(&link) {
+        if !force {
+            println!("  {} skill link already exists at {} (skipping; pass --force or use `skills update` to relink)",
+                agent.label, link.display());
+            return Ok(false);
+        }
+        if !is_symlink_or_junction(&link) {
+            // Case 4 even under --force: a real directory at the link
+            // path is user-managed (or a downstream agent install). Never
+            // recursively delete it; the surface area for an `rm -rf`
+            // mistake here is too high.
+            println!("  {} skill link at {} is a real directory; leaving alone (remove it manually then re-run)",
+                agent.label, link.display());
+            return Ok(false);
+        }
+        if let Err(e) = remove_link(&link) {
+            eprintln!("  warning: could not remove existing {} link at {}: {e}",
+                agent.label, link.display());
+            return Ok(false);
+        }
+        println!("  refreshing {} skill link at {}", agent.label, link.display());
+    } else if has_metadata && !resolves && is_symlink_or_junction(&link) {
         // Dangling link/junction — target was removed (typical after
         // sweep_legacy_skill_pack cleaned a pre-rename pack out from
         // under it). Remove + recreate pointing at the new target.

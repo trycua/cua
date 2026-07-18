@@ -127,6 +127,23 @@ fn validate_destination_root(raw: &str) -> Result<PathBuf, ToolResult> {
     Ok(canonical)
 }
 
+fn download_path_for_cdp(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    #[cfg(target_os = "windows")]
+    {
+        // `canonicalize` deliberately gives containment checks a verbatim
+        // Windows path. Chromium's download API does not accept that transport
+        // spelling, so remove only the namespace prefix after validation.
+        if let Some(unc) = raw.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{unc}");
+        }
+        if let Some(local) = raw.strip_prefix(r"\\?\") {
+            return local.to_owned();
+        }
+    }
+    raw.into_owned()
+}
+
 fn main_frame_id(frame_tree: &Value) -> Option<&str> {
     frame_tree
         .get("frameTree")?
@@ -403,7 +420,7 @@ impl Tool for BrowserDownloadTool {
                 "Browser.setDownloadBehavior",
                 json!({
                     "behavior": "allowAndName",
-                    "downloadPath": destination_root.to_string_lossy(),
+                    "downloadPath": download_path_for_cdp(&destination_root),
                     "eventsEnabled": true
                 }),
             )
@@ -553,5 +570,24 @@ mod tests {
 
         remove_proven_partial(&canonical, Some("opaque-guid"));
         assert!(!partial.exists());
+    }
+
+    #[test]
+    fn cdp_download_path_preserves_ordinary_paths() {
+        let path = Path::new("/tmp/approved-downloads");
+        assert_eq!(download_path_for_cdp(path), path.to_string_lossy());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn cdp_download_path_removes_only_windows_verbatim_prefixes() {
+        assert_eq!(
+            download_path_for_cdp(Path::new(r"\\?\C:\approved\downloads")),
+            r"C:\approved\downloads"
+        );
+        assert_eq!(
+            download_path_for_cdp(Path::new(r"\\?\UNC\server\share\downloads")),
+            r"\\server\share\downloads"
+        );
     }
 }

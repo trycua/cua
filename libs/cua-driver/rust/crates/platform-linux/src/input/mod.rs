@@ -930,7 +930,19 @@ pub fn x11_activate_window_persistent(xid: u64) -> Result<Option<u64>> {
         prior.unwrap_or(0) as x11::xlib::Window,
     );
     unsafe {
+        // Some WMs honor `_NET_ACTIVE_WINDOW` as raise-only. Persistent
+        // activation must establish input focus too, just like the bounded
+        // foreground rung above, or `bring_to_front` can report success while
+        // keyboard focus remains on the previous window.
+        let previous_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+        x11::xlib::XSetInputFocus(
+            display,
+            xid as x11::xlib::Window,
+            x11::xlib::RevertToParent,
+            x11::xlib::CurrentTime,
+        );
         x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous_handler);
         x11::xlib::XCloseDisplay(display);
     }
     Ok(prior)

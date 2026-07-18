@@ -1078,6 +1078,38 @@ mod tests {
     }
 
     #[test]
+    fn disabling_settled_cursor_clears_once_then_parks() {
+        let mut map = default_render_map();
+        let cursor = map.cursors.get_mut("default").unwrap();
+        cursor.core.pos = (100.0, 100.0);
+        cursor.core.motion.idle_hide_ms = 0.0;
+        let (_tx, rx) = std::sync::mpsc::channel();
+
+        assert!(!render_map_needs_frame_tick(&map));
+        assert!(render_map_needs_z_order_tick(&map));
+
+        let (arrived, had_msg) = process_render_wake(
+            &mut map,
+            Some(OverlayMsg::Cmd(KeyedOverlayCommand {
+                key: "default".to_owned(),
+                cmd: OverlayCommand::SetEnabled(false),
+            })),
+            &rx,
+            0.08,
+            false,
+            false,
+        );
+
+        assert!(arrived.is_empty());
+        // The production render gate includes `had_msg`, so disabling paints
+        // one final transparent frame before both scheduler paths park.
+        assert!(had_msg);
+        assert!(!map.cursors["default"].core.visible);
+        assert!(!render_map_needs_frame_tick(&map));
+        assert!(!render_map_needs_z_order_tick(&map));
+    }
+
+    #[test]
     fn active_cursor_requires_frame_ticks() {
         let mut map = default_render_map();
         let cursor = map.cursors.get_mut("default").unwrap();

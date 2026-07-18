@@ -282,6 +282,13 @@ impl ForegroundSentinel {
         wait_for_native_focus_stable(self.target);
         std::thread::sleep(Duration::from_millis(100));
         reset_journal(&self.journal_path)?;
+        // Windows establishes focus with a physical click. Its DOM `click`
+        // can arrive after the native focus transition and the first journal
+        // reset, falsely attributing setup input to the background action.
+        // A later heartbeat is an event-loop barrier: once observed, clear the
+        // journal again so the action boundary starts from a quiet sentinel.
+        wait_for_event(&self.journal_path, "heartbeat", Duration::from_secs(2))?;
+        reset_journal(&self.journal_path)?;
         self.assert_background_posture(target)
     }
 

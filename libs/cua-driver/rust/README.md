@@ -74,8 +74,8 @@ See `crates/cua-driver/tests/README.md` for the test matrix.
 
 ## Permission Policies
 
-Set `CUA_DRIVER_POLICY_FILE` to enforce a deny-by-default policy on MCP
-`tools/call` requests. If the variable is unset, or points to a path that does
+Set `CUA_DRIVER_POLICY_FILE` on the daemon to enforce a deny-by-default policy
+on all tool calls from MCP and CLI clients. If the variable is unset, or points to a path that does
 not exist, the driver keeps its backward-compatible behavior with no policy
 enforcement. Supported paths are:
 
@@ -107,4 +107,4 @@ deny:
 
 Rego policies must expose a boolean rule at `data.cua.policy.allow`. The input
 shape is `{ "server": "cua-driver", "tool": <name>, "arguments": <object> }`.
-Regorus evaluates policies in-process; no OPA service is required.
+Regorus evaluates policies inside the daemon; no OPA service is required.

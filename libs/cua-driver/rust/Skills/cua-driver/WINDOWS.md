@@ -491,9 +491,9 @@ Tool names are `snake_case`, management subcommands are
 <tool-name>` with JSON via stdin or positional arg. Management
 subcommands:
 
-- **`cua-driver serve`** — start persistent daemon (**required** for
-  `element_index` workflows; without it each CLI invocation spawns a
-  fresh process and the per-pid element cache dies between calls).
+- **`cua-driver serve`** — start the persistent daemon (**required for every
+  tool call**). CLI and MCP processes are adapters; the daemon owns the
+  interactive-session identity, policy, and per-pid element cache.
   Normally not run manually — the autostart Scheduled Task fires it
   at every interactive logon. If you stopped it (`Stop-Process`),
   re-run with `schtasks /Run /TN cua-driver-serve`, not by spawning

@@ -4,7 +4,7 @@ use crate::response::ToolResponse;
 use serde_json::Value;
 
 /// A way to invoke cua-driver tools. Implemented by [`crate::McpDriver`]
-/// (long-lived server) and [`crate::CliDriver`] (stateless per-call process).
+/// (long-lived proxy) and [`crate::CliDriver`] (one shell process per call).
 ///
 /// Write scenarios against `Driver` to run them over either transport — the one
 /// behavior that only surfaces across both is config persistence (`set_config`

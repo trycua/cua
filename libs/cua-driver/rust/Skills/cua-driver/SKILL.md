@@ -128,9 +128,9 @@ Tool names are `snake_case`, management subcommands are
 `kebab-case` — no ambiguity. Tools invoked as `cua-driver
 <tool-name> '<JSON-args>'`. Management subcommands:
 
-- `cua-driver serve` — start persistent daemon (**required** for
-  `element_index` workflows; without it each CLI invocation spawns a
-  fresh process and the per-pid element cache dies between calls).
+- `cua-driver serve` — start the persistent daemon (**required for every
+  tool call**). CLI and MCP processes are adapters; the daemon owns policy,
+  platform identity, state, and the per-pid element cache.
   macOS users: see `MACOS.md` for the LaunchServices-routed launch
   form.
 - `cua-driver stop` / `status`
@@ -186,8 +186,8 @@ recording, do a pixel click (`click({pid,x,y})`) or a `move_cursor`
 first to put the cursor on-screen; subsequent AX actions then glide the
 full path normally.
 
-Requires the daemon process's UI runloop, which `cua-driver serve` /
-`mcp` bootstraps. One-shot CLI invocations skip the overlay entirely.
+Requires the daemon process's UI runloop, which `cua-driver serve`
+bootstraps. One-shot CLI adapters do not own an overlay themselves.
 
 ## The core invariant — snapshot before AND after every action
 

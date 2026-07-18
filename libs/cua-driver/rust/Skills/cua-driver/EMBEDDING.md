@@ -44,20 +44,23 @@ embedded mode does not address.
 
 ```sh
 # env var form — set by the host on the child process
-CUA_DRIVER_EMBEDDED=1 CUA_DRIVER_HOST_BUNDLE_ID=com.yourco.yourapp cua-driver mcp
+CUA_DRIVER_EMBEDDED=1 CUA_DRIVER_HOST_BUNDLE_ID=com.yourco.yourapp \
+  cua-driver serve --socket /tmp/yourapp-cua.sock
 
-# flag form — equivalent (the flags just set the env vars)
-cua-driver mcp --embedded --host-bundle-id com.yourco.yourapp
+# after the daemon socket is ready, start the stdio MCP proxy
+CUA_DRIVER_EMBEDDED=1 cua-driver mcp --socket /tmp/yourapp-cua.sock
 ```
 
 Requirements on the host side:
 
-- **Spawn the driver directly** as a child process (`Process`/`NSTask`,
-  `posix_spawn`, `exec` from your own code). Do **not** launch it via
-  `open(1)` or `NSWorkspace` — that hands it to LaunchServices and breaks
-  inheritance.
-- Speak MCP over the child's stdin/stdout (line-delimited JSON-RPC, the
-  driver's native transport). The reference host does exactly this.
+- **Spawn `cua-driver serve --embedded` directly** as a child process
+  (`Process`/`NSTask`, `posix_spawn`, `exec` from your own code). Do
+  **not** launch the daemon via `open(1)` or `NSWorkspace` — that hands it
+  to LaunchServices and breaks inheritance.
+- Give the daemon a private socket and wait until it is accepting connections.
+- Spawn `cua-driver mcp --embedded --socket <path>` and speak MCP over that
+  proxy's stdin/stdout (line-delimited JSON-RPC). The proxy never executes
+  tools; the host-owned daemon does.
 - Request Accessibility and Screen Recording **from your app** before (or
   after — the driver just reports "not granted" until then) starting the
   driver, using `AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt: true])`
@@ -74,6 +77,7 @@ setting it.
 |                                | Standalone                          | Embedded (`CUA_DRIVER_EMBEDDED=1`)       |
 | ------------------------------ | ----------------------------------- | ---------------------------------------- |
 | Responsibility disclaim re-exec| ON (owns its TCC identity)          | OFF (stays in the host's chain)          |
+| Tool execution process          | `serve` daemon                     | host-spawned `serve --embedded` daemon |
 | Daemon auto-relaunch via `open -a CuaDriver` | Yes, when installed   | Never (would leave the host's chain)     |
 | TCC identity                   | `com.trycua.driver`                 | the host app                             |
 | Permission prompts / startup gate | May prompt once                  | **Never prompts**                        |
@@ -89,14 +93,15 @@ behavior is byte-for-byte what it was.
 ## The responsibility-chain requirement, exactly
 
 The host must be the responsible process for the driver. That holds
-automatically when you spawn the driver directly and embedded mode is on. If
-the driver were allowed to disclaim (standalone behavior), macOS would treat
-it as its own responsible process: your user would get a *second* prompt
+automatically when you spawn the `serve` daemon directly and embedded mode
+is on. If the daemon were allowed to disclaim (standalone behavior), macOS
+would treat it as its own responsible process: your user would get a *second* prompt
 attributed to the driver binary, a second Settings entry, and capture/AX
 would fail until that second grant — the exact experience embedding exists
 to eliminate. Embedded mode short-circuits the disclaim re-exec
-(`responsibility.rs`) and the `open -a CuaDriver` daemon relaunch, which are
-the only two places the driver would otherwise leave your chain.
+(`responsibility.rs`) and the `open -a CuaDriver` daemon relaunch. MCP is
+always a proxy, so the embedded daemon remains the single process that checks
+TCC and executes tools.
 
 ### App + gateway architectures
 
@@ -104,15 +109,17 @@ the only two places the driver would otherwise leave your chain.
 only keeps the driver inside its **spawner's** TCC responsibility chain. If
 your product has a GUI app that owns the macOS grants and a separate
 gateway, daemon, or Node process that spawns MCP servers, registering
-`cua-driver mcp --embedded` with the gateway makes the driver inherit the
-gateway's identity, not the app's. Spawn the driver from the GUI app itself,
-or bridge MCP from the gateway to an app-spawned child.
+`cua-driver serve --embedded` with the gateway makes the daemon inherit the
+gateway's identity, not the app's. Spawn the daemon from the GUI app itself;
+gateways may connect an MCP proxy to the app-owned private socket.
 
 ```text
 Wrong (inherits the gateway's identity):        Right:
 
 gateway / node daemon                           YourApp.app
-  └─ cua-driver --embedded                        └─ cua-driver --embedded
+  └─ cua-driver serve --embedded                  ├─ cua-driver serve --embedded
+                                                  └─ cua-driver mcp --embedded
+                                                     --socket <private-path>
 ```
 
 Note `check_permissions` cannot detect this: `source.attribution` reports
@@ -173,8 +180,8 @@ The file below is the complete reference host — mirrored verbatim from
 `libs/cua-driver/rust/examples/embedded-host-macos/ExampleAgentHarness.swift`
 in the cua repo (which also has a build-and-run `demo.sh` covering the
 TCC-reset flow).
-It requests the two grants as the host, spawns cua-driver embedded, and
-runs the whole demo sequence: attribution check, background screenshot,
+It requests the two grants as the host, spawns an embedded daemon plus an MCP
+proxy, and runs the whole demo sequence: attribution check, background screenshot,
 background AX read, agent-cursor glide.
 
 `ExampleAgentHarness.swift`:
@@ -190,8 +197,8 @@ background AX read, agent-cursor glide.
 // Runs the one-grant demo sequence from EMBEDDING.md end to end:
 //   1. Requests Accessibility + Screen Recording AS THE HOST (the only
 //      prompts the user ever sees), then
-//   2. spawns cua-driver as a direct child in embedded mode and, over
-//      stdio MCP, verifies attribution, takes a background screenshot,
+//   2. spawns an embedded cua-driver daemon plus its stdio MCP proxy and
+//      verifies attribution, takes a background screenshot,
 //      reads a background app's window state, and glides the agent-cursor
 //      overlay — with zero driver-side prompts.
 //
@@ -224,16 +231,36 @@ if !ax || !sr {
     log("after this run: grant the missing item(s) in System Settings, then re-run")
 }
 
-// 2. Spawn cua-driver as a DIRECT child (never via `open`/NSWorkspace —
-//    that breaks responsibility inheritance) in embedded mode.
+// 2. Spawn the daemon as a DIRECT child (never via `open`/NSWorkspace —
+//    that breaks responsibility inheritance), then attach an MCP proxy.
 let driverPath = ProcessInfo.processInfo.environment["CUA_DRIVER_PATH"]
     ?? "/usr/local/bin/cua-driver"
-let driver = Process()
-driver.executableURL = URL(fileURLWithPath: driverPath)
-driver.arguments = ["mcp"]
+let socketPath = "/tmp/cua-embedded-\(ProcessInfo.processInfo.processIdentifier).sock"
 var env = ProcessInfo.processInfo.environment
 env["CUA_DRIVER_EMBEDDED"] = "1"
 env["CUA_DRIVER_HOST_BUNDLE_ID"] = Bundle.main.bundleIdentifier ?? ""
+
+let daemon = Process()
+daemon.executableURL = URL(fileURLWithPath: driverPath)
+daemon.arguments = ["serve", "--embedded", "--socket", socketPath]
+daemon.environment = env
+daemon.standardOutput = logFile
+daemon.standardError = logFile
+try daemon.run()
+
+let deadline = Date().addingTimeInterval(10)
+while !FileManager.default.fileExists(atPath: socketPath) && Date() < deadline {
+    Thread.sleep(forTimeInterval: 0.05)
+}
+guard FileManager.default.fileExists(atPath: socketPath) else {
+    log("embedded daemon did not create \(socketPath)")
+    daemon.terminate()
+    exit(1)
+}
+
+let driver = Process()
+driver.executableURL = URL(fileURLWithPath: driverPath)
+driver.arguments = ["mcp", "--embedded", "--socket", socketPath]
 driver.environment = env
 let toDriver = Pipe(), fromDriver = Pipe()
 driver.standardInput = toDriver
@@ -282,7 +309,7 @@ send(["jsonrpc": "2.0", "id": nextId, "method": "initialize", "params": [
     "clientInfo": ["name": "ExampleAgentHarness", "version": "0.1"]]])
 _ = readMessage()
 send(["jsonrpc": "2.0", "method": "notifications/initialized"])
-log("embedded cua-driver started (\(driverPath)) — no driver prompt should have appeared")
+log("embedded cua-driver daemon + proxy started (\(driverPath)) — no driver prompt should have appeared")
 
 // 4. check_permissions must report attribution "host" and never prompt.
 let perms = call("check_permissions")
@@ -323,6 +350,7 @@ log("move_cursor — \(cursorOk ? "ok" : "FAILED")")
 let pass = attribution == "host" && !images.isEmpty && hasTree && cursorOk
 log(pass ? "DEMO COMPLETE: PASS" : "DEMO COMPLETE: FAIL")
 driver.terminate()
+daemon.terminate()
 exit(pass ? 0 : 1)
 ```
 
@@ -351,12 +379,11 @@ tail -f /tmp/cua-embedded-demo.log
 **"I still get a second permission prompt / a second Settings entry."**
 Embedded mode is not in effect for the process doing the TCC check. Causes,
 in order of likelihood: (a) `CUA_DRIVER_EMBEDDED` is not exactly `1`, or was
-set on your app but not passed into the child's environment; (b) the driver
+set on your app but not passed into the daemon child's environment; (b) the daemon
 was launched via `open(1)` / `NSWorkspace` instead of spawned directly, so
-it is its own responsible process; (c) an old standalone `CuaDriver.app`
-daemon is running and your MCP calls are being answered by *it* — check
-`check_permissions` → `source.attribution` (must be `host`) and stop the
-daemon (`cua-driver stop`). To see exactly which identity macOS is charging,
+it is its own responsible process; (c) the MCP proxy connected to an old standalone `CuaDriver.app` daemon — check
+`check_permissions` → `source.attribution` (must be `host`) and verify
+that the proxy uses the host's private socket. To see exactly which identity macOS is charging,
 run: `log stream --debug --predicate 'subsystem == "com.apple.TCC" AND
 eventMessage BEGINSWITH "AttributionChain"'` and trigger the action again.
 
@@ -385,23 +412,19 @@ change can orphan the old row. Reset and re-grant:
 
 ## Platform notes (Windows / Linux)
 
-Embedding already works on Windows and Linux (X11) with **no permission
-ceremony at all**: neither platform gates screen capture, tree reads, or
-input injection behind per-app grants, so a directly-spawned driver child
-inherits everything relevant (session, desktop, integrity level) by plain
-process inheritance. Set the flag anyway — it keeps the driver answering
-in-process as the host's child instead of proxying to an out-of-session
-daemon, and it makes intent explicit in `check_permissions` output. The
-one-grant inheritance story this guide describes is macOS-specific because
-macOS is the only platform where a grant exists to inherit.
+Embedding also works on Windows and Linux (X11) with **no per-app permission
+ceremony**. The host still spawns a daemon in the intended interactive session
+or desktop, then points MCP and CLI adapters at its private socket. The
+one-grant inheritance story in this guide is macOS-specific because macOS is
+the platform where Accessibility and Screen Recording grants follow the
+responsibility chain.
 
 Two known exceptions:
 
 - **Windows, elevated / UWP targets**: injecting into higher-integrity
-  windows needs the uiAccess-signed worker (`cua-driver-uia`). Embedded
-  mode forces in-process execution, so it does NOT route through a running
-  uia worker — an embedded host that must drive elevated apps has to manage
-  that worker itself.
+  windows needs the uiAccess-signed worker (`cua-driver-uia`). An embedded
+  host that must drive elevated apps has to manage that worker and connect
+  clients to its named pipe.
 - **Linux Wayland** (compositor-specific): capture goes through XDG desktop
   portals, which prompt per-session at capture time and cannot be
   pre-granted by the host. X11 has no portal gate.

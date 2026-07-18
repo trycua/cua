@@ -28,13 +28,24 @@ let
     }
     POLICY
 
+    socket=/tmp/cua-driver-policy-rego.sock
+    env \
+      CUA_DRIVER_POLICY_FILE=/tmp/policy \
+      CUA_DRIVER_RS_TELEMETRY_ENABLED=false \
+      cua-driver serve --socket "$socket" --no-permissions-gate --no-overlay \
+      >/tmp/daemon.log 2>&1 &
+    daemon_pid=$!
+    trap 'kill "$daemon_pid" 2>/dev/null || true; if [[ -n "''${DRIVER_PID:-}" ]]; then kill "$DRIVER_PID" 2>/dev/null || true; fi' EXIT
+    for _ in $(seq 1 200); do
+      cua-driver status --socket "$socket" >/dev/null 2>&1 && break
+      sleep 0.05
+    done
+    cua-driver status --socket "$socket" >/dev/null
+
     coproc DRIVER {
-      env \
-        CUA_DRIVER_POLICY_FILE=/tmp/policy \
-        CUA_DRIVER_RS_TELEMETRY_ENABLED=false \
-        cua-driver mcp --no-daemon-relaunch 2>/tmp/driver.log
+      env CUA_DRIVER_RS_TELEMETRY_ENABLED=false \
+        cua-driver mcp --socket "$socket" 2>/tmp/driver.log
     }
-    trap 'kill "$DRIVER_PID" 2>/dev/null || true' EXIT
     exec 3>&"''${DRIVER[1]}"
     exec 4<&"''${DRIVER[0]}"
 

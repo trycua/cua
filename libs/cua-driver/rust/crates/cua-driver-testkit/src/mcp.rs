@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::daemon::TestDaemon;
 use crate::driver::{BehaviorRecording, Driver};
 use crate::paths::driver_binary;
 use crate::reaper::{spawn_in_job, ChildReaper};
@@ -23,6 +24,7 @@ use crate::CALL_TIMEOUT;
 /// [`reaper`]: McpDriver::reaper
 pub struct McpDriver {
     reaper: ChildReaper,
+    _daemon: Option<TestDaemon>,
     stdin: ChildStdin,
     rx: Receiver<String>,
     next_id: u32,
@@ -67,6 +69,13 @@ impl McpDriver {
         }
 
         let mut reaper = ChildReaper::new();
+        let daemon = if args.is_empty() {
+            // Environment that changes tool behavior belongs on the daemon,
+            // because the stdio process is now only a transport proxy.
+            Some(TestDaemon::spawn(&bin, &mut reaper, env)?)
+        } else {
+            None
+        };
         let mut cmd = Command::new(&bin);
         let stderr = if std::env::var_os("CUA_TEST_DRIVER_STDERR").is_some() {
             Stdio::inherit()
@@ -81,9 +90,11 @@ impl McpDriver {
             // A test that exercises telemetry can explicitly override this
             // through `spawn_with_env` / `spawn_named_with_env` below.
             .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false");
-        cmd.args(args);
-        #[cfg(not(target_os = "macos"))]
-        cmd.env("CUA_DRIVER_RS_MCP_NO_RELAUNCH", "1");
+        if let Some(daemon) = &daemon {
+            cmd.args(["mcp", "--socket", &daemon.socket]);
+        } else {
+            cmd.args(args);
+        }
         for (key, value) in env {
             cmd.env(key, value);
         }
@@ -113,6 +124,7 @@ impl McpDriver {
 
         let mut d = McpDriver {
             reaper,
+            _daemon: daemon,
             stdin,
             rx,
             next_id: 2,
@@ -154,11 +166,7 @@ impl McpDriver {
             );
             return None;
         }
-        Self::spawn_internal(
-            &[("CUA_DRIVER_RS_MCP_FORCE_PROXY", "1")],
-            &["mcp", "--socket", &socket],
-            recording_label,
-        )
+        Self::spawn_internal(&[], &["mcp", "--socket", &socket], recording_label)
     }
 
     fn initialize(&mut self) {

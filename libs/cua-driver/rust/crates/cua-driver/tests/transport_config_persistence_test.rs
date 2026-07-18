@@ -1,14 +1,12 @@
-//! Transport axis: `set_config` persistence across the CLI vs MCP transports.
+//! Transport axis: `set_config` visibility across the CLI vs MCP transports.
 //!
 //! This is the one behavior that only shows up when a test covers BOTH
 //! transports, so it lives on the shared testkit `Driver` abstraction:
 //!
-//!   - **CLI** (`CliDriver`) is stateless — each `cua-driver call` is its own
-//!     process. For a `set_config` to be visible to the *next* invocation it
-//!     must persist to **disk**. #2034 made that true on Windows + Linux (macOS
-//!     already did); this test guards against a regression.
-//!   - **MCP** (`McpDriver`) is one long-lived connection — a `set_config` is
-//!     visible to later calls on the SAME driver within the session.
+//!   - **CLI** (`CliDriver`) starts a fresh shell process for each call, but all
+//!     calls go through one test-owned daemon.
+//!   - **MCP** (`McpDriver`) is one long-lived proxy connection to its own
+//!     test-owned daemon.
 //!
 //! Uses `max_image_dimension` as the persisted key. `capture_mode` /
 //! `capture_scope` are NO LONGER settings (`capture_scope` is per-session), so
@@ -29,12 +27,11 @@ fn config_max_dim(structured: &serde_json::Value) -> Option<u64> {
     structured[KEY].as_u64()
 }
 
-/// CLI: a `set_config` in one process is observed by a *separate* `get_config`
-/// process — i.e. it persisted to disk (#2034). The two `cli.call(...)`s below
-/// are independent `cua-driver call` invocations.
+/// CLI: a `set_config` in one shell process is observed by a separate
+/// `get_config` process through their shared daemon.
 #[test]
 #[ignore]
-fn cli_set_config_persists_to_disk_across_invocations() {
+fn cli_set_config_visible_across_daemon_backed_invocations() {
     let mut cli = CliDriver::new();
     if !cli.available() {
         eprintln!("[transport] driver binary not built — skipping");
@@ -50,12 +47,12 @@ fn cli_set_config_persists_to_disk_across_invocations() {
     );
     assert!(!set.is_error(), "CLI set_config errored: {}", set.text());
 
-    // A fresh process must see the persisted value.
+    // A fresh shell process must see the daemon-owned value.
     let after = cli.call("get_config", serde_json::json!({}));
     assert_eq!(
         config_max_dim(after.structured()),
         Some(PROBE),
-        "CLI set_config did NOT persist to disk across invocations (#2034 regression): {}",
+        "CLI set_config was not visible across daemon-backed invocations: {}",
         after.text()
     );
 

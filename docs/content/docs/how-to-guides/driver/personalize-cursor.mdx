@@ -19,7 +19,7 @@ cua-driver serve --cursor-shape teardrop   # explicit; same as the default
 cua-driver serve --cursor-shape arrow      # opt into the procedural arrow
 ```
 
-`--cursor-shape` is parsed on `serve` and `mcp`. It has no effect on one-shot CLI calls like `cua-driver call`, because those do not keep the long-lived UI runloop the overlay needs.
+`--cursor-shape` is a daemon startup option. Passing it to an MCP proxy or one-shot CLI adapter does not change the already-running daemon's overlay; set it on `cua-driver serve`.
 
 `--cursor-icon <path>` always wins over `--cursor-shape`: if you pass both, the custom file is what renders.
 

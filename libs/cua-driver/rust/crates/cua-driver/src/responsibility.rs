@@ -136,7 +136,7 @@ pub fn reexec_disclaimed_if_needed() {
 
     // The disclaimed child is the real `serve` process. Block on it and mirror
     // its exit status so the launch keeps its original foreground semantics:
-    // `serve` ran in-process before, so callers that wait on it, forward
+    // callers that wait on `serve`, forward
     // terminal signals to the foreground process group, or read `$?` still see
     // the same behavior. The child shares our process group (no
     // POSIX_SPAWN_SETPGROUP), so Ctrl-C reaches it directly.

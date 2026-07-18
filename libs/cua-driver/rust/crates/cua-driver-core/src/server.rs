@@ -1,9 +1,8 @@
-//! Async MCP stdio server loop.
+//! Shared MCP request dispatch and privacy-bounded observations.
 
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tracing::{debug, error, warn};
+use tracing::warn;
 
 use crate::policy::{configured_policy, PolicyDecision};
 use crate::protocol::{initialize_result, InitializeMetadata, Request, Response, ResponseBody};
@@ -456,16 +455,16 @@ pub fn is_computer_action(tool_name: &str, operation: ToolOperation) -> bool {
         })
 }
 
-/// Which stdio execution path produced a response. This only affects the
+/// Which daemon transport path produced a response. This only affects the
 /// classification of JSON-RPC internal errors and is not emitted directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StdioExecutionPath {
-    InProcess,
+    DirectDaemon,
     DaemonProxy,
 }
 
-/// Start-state for one tool call. Public so the daemon-proxy transport can use
-/// exactly the same privacy and bucketing logic as the in-process transport.
+/// Start-state for one tool call. Public so direct daemon and daemon-proxy
+/// transports use exactly the same privacy and bucketing logic.
 pub struct ToolObservationTimer {
     tool_name: String,
     operation: ToolOperation,
@@ -514,95 +513,13 @@ impl ToolObservationTimer {
 }
 
 /// Notify the registered observer about a proxy-path initialize request.
-/// Direct stdio calls this internally from [`run`].
 pub fn observe_proxy_session_started(metadata: InitializeMetadata) {
     notify_session_started(metadata);
 }
 
 /// Notify the registered observer about a proxy-path tool result.
-/// Direct stdio calls this internally from [`run`].
 pub fn observe_proxy_tool_completed(outcome: ToolCompletionObservation) {
     notify_tool_completed(outcome);
-}
-
-/// Run the MCP server, reading JSON-RPC lines from stdin and writing
-/// responses to stdout. Exits when stdin reaches EOF or a fatal I/O
-/// error occurs.
-pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
-    configured_policy().map_err(anyhow::Error::msg)?;
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
-    let mut reader = BufReader::new(stdin);
-    let mut writer = tokio::io::BufWriter::new(stdout);
-    let mut line = String::new();
-    let mut session_observed = false;
-
-    loop {
-        line.clear();
-        let n = reader.read_line(&mut line).await?;
-        if n == 0 {
-            // EOF
-            break;
-        }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        debug!(raw = trimmed, "→ request");
-
-        let response = match serde_json::from_str::<Request>(trimmed) {
-            Err(e) => {
-                error!("JSON parse error: {e}");
-                Response::parse_error()
-            }
-            Ok(req) if req.is_notification() => {
-                // Notifications are silently dropped.
-                continue;
-            }
-            Ok(req) => {
-                let initialize_metadata = (!session_observed)
-                    .then(|| req.initialize_metadata())
-                    .flatten();
-                let session_context = session_tool_context(
-                    &req,
-                    &registry,
-                    crate::session::SessionTransport::McpStdio,
-                );
-                let tool_timer = tool_observation_timer(
-                    &req,
-                    |name| name == "type_text_chars" || registry.get_def(name).is_some(),
-                    StdioExecutionPath::InProcess,
-                );
-                let id = req.id.clone().unwrap_or(serde_json::Value::Null);
-                let response = handle_request(req, id, &registry).await;
-                if let Some(metadata) = initialize_metadata {
-                    // A parsed initialize request always receives the static
-                    // initialize result from handle_request. Mark it once only
-                    // after that successful dispatch.
-                    notify_session_started(metadata);
-                    session_observed = true;
-                }
-                if let Some(timer) = tool_timer {
-                    let outcome = timer.finish(&response);
-                    if let Some(context) = session_context {
-                        context.complete(&outcome);
-                    }
-                    notify_tool_completed(outcome);
-                }
-                response
-            }
-        };
-
-        let serialized = serde_json::to_string(&response)
-            .unwrap_or_else(|e| format!(r#"{{"jsonrpc":"2.0","id":null,"error":{{"code":-32603,"message":"serialize error: {e}"}}}}"#));
-        debug!(raw = %serialized, "← response");
-
-        writer.write_all(serialized.as_bytes()).await?;
-        writer.write_all(b"\n").await?;
-        writer.flush().await?;
-    }
-
-    Ok(())
 }
 
 /// Build a completion timer from a `tools/call` request while extracting only
@@ -976,7 +893,7 @@ mod observation_tests {
                 "structuredContent": {"private": "result body"}
             }),
         );
-        let observation = timer(true, true, StdioExecutionPath::InProcess).finish(&response);
+        let observation = timer(true, true, StdioExecutionPath::DirectDaemon).finish(&response);
         assert!(observation.success);
         assert_eq!(observation.error_class, ToolErrorClass::None);
         assert_eq!(observation.output_type, OutputType::Mixed);
@@ -1170,7 +1087,7 @@ mod observation_tests {
             ToolOperation::BrowserClickTrusted,
             true,
             true,
-            StdioExecutionPath::InProcess,
+            StdioExecutionPath::DirectDaemon,
         )
         .finish(&response);
         assert!(observation.success);
@@ -1225,7 +1142,7 @@ mod observation_tests {
                 "browser_click".to_owned(),
                 true,
                 true,
-                StdioExecutionPath::InProcess,
+                StdioExecutionPath::DirectDaemon,
             )
             .finish(&unknown)
             .refusal_code,
@@ -1237,7 +1154,7 @@ mod observation_tests {
     fn invalid_params_and_unknown_tool_are_distinct() {
         let invalid = Response::error(serde_json::json!(1), -32602, "private invalid params");
         let invalid_observation =
-            timer(false, false, StdioExecutionPath::InProcess).finish(&invalid);
+            timer(false, false, StdioExecutionPath::DirectDaemon).finish(&invalid);
         assert!(!invalid_observation.success);
         assert_eq!(
             invalid_observation.error_class,
@@ -1253,7 +1170,7 @@ mod observation_tests {
             }),
         );
         let unknown_observation =
-            timer(false, true, StdioExecutionPath::InProcess).finish(&unknown);
+            timer(false, true, StdioExecutionPath::DirectDaemon).finish(&unknown);
         assert_eq!(unknown_observation.error_class, ToolErrorClass::UnknownTool);
         assert!(!format!("{unknown_observation:?}").contains("private unknown-tool error"));
     }
@@ -1262,7 +1179,7 @@ mod observation_tests {
     fn proxy_internal_rpc_error_is_transport_error() {
         let response = Response::error(serde_json::json!(1), -32603, "private daemon failure");
         let proxy = timer(true, true, StdioExecutionPath::DaemonProxy).finish(&response);
-        let direct = timer(true, true, StdioExecutionPath::InProcess).finish(&response);
+        let direct = timer(true, true, StdioExecutionPath::DirectDaemon).finish(&response);
         assert_eq!(proxy.error_class, ToolErrorClass::TransportError);
         assert_eq!(direct.error_class, ToolErrorClass::InternalError);
         assert!(!format!("{proxy:?}").contains("private daemon failure"));
@@ -1286,7 +1203,7 @@ mod observation_tests {
                     "structuredContent": {"code": code, "detail": "private detail"}
                 }),
             );
-            let observation = timer(true, true, StdioExecutionPath::InProcess).finish(&response);
+            let observation = timer(true, true, StdioExecutionPath::DirectDaemon).finish(&response);
             assert_eq!(observation.error_class, expected, "code={code}");
             let debug = format!("{observation:?}");
             assert!(!debug.contains("private prose"));
@@ -1310,7 +1227,7 @@ mod observation_tests {
         let timer = tool_observation_timer(
             &req,
             |name| name == "type_text",
-            StdioExecutionPath::InProcess,
+            StdioExecutionPath::DirectDaemon,
         )
         .unwrap();
         assert_eq!(timer.tool_name, "type_text");

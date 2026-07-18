@@ -147,7 +147,7 @@ fn http_tool_observation_timer(
     tool_observation_timer(
         &req,
         |name| name == "type_text_chars" || registry.get_def(name).is_some(),
-        StdioExecutionPath::InProcess,
+        StdioExecutionPath::DirectDaemon,
     )
 }
 

@@ -1,7 +1,7 @@
 //! cua-driver-rs — cross-platform background computer-use automation daemon.
 //!
-//! Runs as a MCP JSON-RPC 2.0 server over stdio.  The platform backend is
-//! selected at compile time via conditional compilation.
+//! Runs a daemon-backed MCP JSON-RPC 2.0 proxy over stdio. The platform
+//! backend lives in the `serve` daemon selected at compile time.
 //!
 //! Extra CLI flags (consumed here, not by MCP):
 //!   --cursor-icon  <path.svg|.ico|.png>   custom cursor shape
@@ -12,17 +12,9 @@
 //!   --dwell-ms     <f64>                  post-click dwell override
 //!   --idle-hide-ms <f64>                  idle-hide timeout override
 //!
-//! ## macOS threading model
-//!
-//! AppKit requires the main thread.  On macOS the entry-point is a plain
-//! `fn main()` that:
-//!  1. Initialises the cursor overlay channel synchronously (so
-//!     `run_on_main_thread` always finds it ready).
-//!  2. Spawns a background tokio thread for the MCP server.
-//!  3. Calls `platform_macos::cursor::overlay::run_on_main_thread()` which
-//!     starts `NSApplication.run()` and the 60 fps render loop.
-//!
-//! On all other platforms `#[tokio::main]` is used directly.
+//! On macOS, `serve` keeps AppKit work on the main thread while its socket loop
+//! runs in the background. MCP and CLI client processes never initialize the
+//! platform tool registry.
 
 mod autostart;
 mod bundle;
@@ -38,16 +30,7 @@ mod telemetry;
 mod updater;
 mod version_check;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-
-/// Set by the `Command::Mcp` arm when `--claude-code-computer-use-compat`
-/// is on argv. Read by `build_registry` / `build_registry_no_cursor` to
-/// pick which `screenshot` tool variant to register. Static keeps the
-/// thread of dependency arrows pointed away from the platform crates —
-/// they take `compat: bool` directly, but the binary crate decides what
-/// to pass without making every Command variant carry the flag.
-static CLAUDE_CODE_COMPAT: AtomicBool = AtomicBool::new(false);
 
 fn init_logging() {
     use tracing_subscriber::EnvFilter;
@@ -276,33 +259,7 @@ fn main() {
             screenshot_out_file,
             socket,
         } => {
-            // Register callbacks (needed if the tool does screenshots/recording).
-            cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-                if let Some(wid) = window_id {
-                    platform_macos::capture::screenshot_window_bytes(wid as u32).ok()
-                } else if let Some(p) = pid {
-                    platform_macos::windows::resolve_main_window_id(p as i32)
-                        .ok()
-                        .and_then(|wid| platform_macos::capture::screenshot_window_bytes(wid).ok())
-                } else {
-                    platform_macos::capture::screenshot_display_bytes().ok()
-                }
-            });
-            cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
-                platform_macos::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
-            });
-            cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
-                platform_macos::recording_hooks::app_state_json_for(window_id, pid)
-            });
-            cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
-                platform_macos::recording_hooks::element_window_local_xy(wid, pid, idx)
-            });
-            cua_driver_core::video::set_video_backend_factory(Box::new(
-                platform_macos::video_sckit::SckitVideoBackendFactory,
-            ));
-            let reg = Arc::new(build_macos_registry());
-            reg.init_self_weak();
-            cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
+            cli::run_call(&tool, json_args, screenshot_out_file, socket);
             return;
         }
         cli::Command::Serve {
@@ -364,13 +321,9 @@ fn main() {
 
             // Agent-cursor overlay. The DAEMON is the process that actually
             // performs clicks / AX presses, so the overlay NSWindow + render
-            // loop must run HERE — not only in the in-process `mcp` arm. In the
-            // daemon-proxy setup (`mcp` relaunches `open -n -g … serve` and
-            // proxies to it), the proxy never renders and, before this, neither
-            // did the daemon — so every cursor command was a silent no-op and
-            // the agent cursor never appeared. Init the channel before spawning
-            // the serve thread so `run_on_main_thread()` always finds it ready
-            // (mirrors the Mcp arm).
+            // loop must run HERE. The MCP proxy never renders, so the daemon
+            // owns every cursor command and window. Init the channel before spawning
+            // the serve thread so `run_on_main_thread()` always finds it ready.
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
             if cursor_cfg.enabled {
                 platform_macos::cursor::overlay::init(cursor_cfg.clone());
@@ -534,13 +487,11 @@ fn main() {
             return;
         }
         cli::Command::Diagnose => {
-            let reg = Arc::new(build_macos_registry());
-            cli::run_diagnose_cmd(reg);
+            cli::run_diagnose_cmd();
             return;
         }
         cli::Command::Permissions { subcommand, json } => {
-            let reg = Arc::new(build_macos_registry());
-            cli::run_permissions_cmd(reg, &subcommand, json);
+            cli::run_permissions_cmd(&subcommand, json);
             return;
         }
         cli::Command::Autostart { subcommand } => {
@@ -575,10 +526,7 @@ fn main() {
             value,
             socket,
         } => {
-            let reg = Arc::new(build_macos_registry());
-            reg.init_self_weak();
             cli::run_config_cmd(
-                reg,
                 subcommand.as_deref(),
                 key.as_deref(),
                 value.as_deref(),
@@ -587,135 +535,30 @@ fn main() {
             return;
         }
         cli::Command::Mcp {
-            no_daemon_relaunch,
             socket,
             claude_code_compat,
         } => {
             let startup_started = std::time::Instant::now();
-            CLAUDE_CODE_COMPAT.store(claude_code_compat, Ordering::SeqCst);
-            // Long-running MCP server — kick off the background update
-            // check before any TCC / daemon-proxy decisions so the
-            // banner can land on stderr in either dispatch path.
+            // Long-running MCP proxy — kick off the background update check
+            // before connecting to or launching the daemon.
             version_check::maybe_announce_update();
-            // TCC sidestep: if we're a shell-spawned bare binary that
-            // resolves into /Applications/CuaDriver.app, run the
-            // proxy path instead of the in-process MCP server. The
-            // proxy ensures a daemon is up under the bundle's TCC
-            // attribution and forwards stdio MCP through its socket.
-            // Issue #1525 / mirror of Swift PR #1479.
-            if cli::should_use_daemon_proxy(no_daemon_relaunch) {
-                if let Err(e) =
-                    cli::run_mcp_via_daemon_proxy(socket, claude_code_compat, |daemon, success| {
-                        telemetry::capture_mcp_startup_completed(
-                            "daemon_proxy",
-                            daemon.telemetry_value(),
-                            success,
-                            startup_started.elapsed(),
-                        )
-                    })
-                {
-                    eprintln!("cua-driver-rs: {e}");
-                    telemetry::flush_pending(std::time::Duration::from_millis(750));
-                    std::process::exit(1);
-                }
+            if let Err(e) =
+                cli::run_mcp_via_daemon_proxy(socket, claude_code_compat, |daemon, success| {
+                    telemetry::capture_mcp_startup_completed(
+                        "daemon_proxy",
+                        daemon.telemetry_value(),
+                        success,
+                        startup_started.elapsed(),
+                    )
+                })
+            {
+                eprintln!("cua-driver-rs: {e}");
                 telemetry::flush_pending(std::time::Duration::from_millis(750));
-                return;
+                std::process::exit(1);
             }
-            // Fall through to the in-process MCP server below. The
-            // `socket` flag is daemon-proxy-only; it has no meaning
-            // in the in-process path, so we drop it on the floor.
-            let _ = socket;
-            telemetry::capture_mcp_startup_completed(
-                "in_process",
-                "not_applicable",
-                true,
-                startup_started.elapsed(),
-            );
-        }
-    }
-
-    let cursor_cfg = cursor_overlay::CursorConfig::from_args();
-
-    tracing::info!(
-        version = env!("CARGO_PKG_VERSION"),
-        cursor_id = %cursor_cfg.cursor_id,
-        overlay_enabled = cursor_cfg.enabled,
-        has_custom_icon = cursor_cfg.shape.is_some(),
-        "cua-driver-rs starting (macOS)"
-    );
-
-    let enabled = cursor_cfg.enabled;
-
-    // Initialise overlay channel synchronously BEFORE spawning background
-    // thread.  This eliminates a race where run_on_main_thread() could be
-    // called before init() and find an empty channel.
-    if enabled {
-        platform_macos::cursor::overlay::init(cursor_cfg.clone());
-    }
-
-    // Spawn tokio + MCP server on a background thread so the main thread
-    // is free for AppKit.
-    // Register screenshot callback for recording (post-action screenshots).
-    cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-        if let Some(wid) = window_id {
-            platform_macos::capture::screenshot_window_bytes(wid as u32).ok()
-        } else if let Some(p) = pid {
-            platform_macos::windows::resolve_main_window_id(p as i32)
-                .ok()
-                .and_then(|wid| platform_macos::capture::screenshot_window_bytes(wid).ok())
-        } else {
-            platform_macos::capture::screenshot_display_bytes().ok()
-        }
-    });
-
-    // Register click-marker callback for recording (click.png with red crosshair).
-    cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
-        platform_macos::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
-    });
-    cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
-        platform_macos::recording_hooks::app_state_json_for(window_id, pid)
-    });
-    cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
-        platform_macos::recording_hooks::element_window_local_xy(wid, pid, idx)
-    });
-    cua_driver_core::video::set_video_backend_factory(Box::new(
-        platform_macos::video_sckit::SckitVideoBackendFactory,
-    ));
-    maybe_init_pip();
-
-    std::thread::Builder::new()
-        .name("cua-mcp".into())
-        .spawn(move || {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .expect("tokio runtime");
-            let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
-            rt.block_on(async move {
-                // Register tools; overlay init has already happened above.
-                let registry = Arc::new(build_macos_registry_with_compat(compat));
-                // Wire up replay tool's back-reference to the registry.
-                registry.init_self_weak();
-                if let Err(e) = cua_driver_core::server::run(registry).await {
-                    tracing::error!("MCP server error: {e}");
-                }
-            });
-            // MCP server exited (stdin closed / client disconnected).
-            // The main thread is blocked in NSApplication.run() and won't
-            // exit on its own — force-exit the process cleanly.
             telemetry::flush_pending(std::time::Duration::from_millis(750));
-            std::process::exit(0);
-        })
-        .expect("spawn mcp thread");
-
-    // Main thread: AppKit overlay (blocks until the process exits).
-    if enabled {
-        platform_macos::cursor::overlay::run_on_main_thread();
-    }
-    // Overlay disabled: park the main thread while the MCP background thread
-    // keeps running.
-    loop {
-        std::thread::park();
+            return;
+        }
     }
 }
 
@@ -771,14 +614,7 @@ fn main() -> anyhow::Result<()> {
             screenshot_out_file,
             socket,
         } => {
-            let reg = Arc::new(build_registry_no_cursor());
-            reg.init_self_weak();
-            // run_call builds its own tokio runtime; must run on a fresh thread.
-            std::thread::spawn(move || {
-                cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
-            })
-            .join()
-            .ok();
+            cli::run_call(&tool, json_args, screenshot_out_file, socket);
             return Ok(());
         }
         cli::Command::Serve {
@@ -797,13 +633,11 @@ fn main() -> anyhow::Result<()> {
             // The Rust permissions gate is macOS-only (TCC concept).
             // On Windows / Linux the flag is silently accepted for
             // CLI uniformity and ignored. The Claude-Code compat screenshot
-            // surface is likewise macOS-only (register_tools_with_compat),
-            // so the flag is accepted-and-ignored here for CLI uniformity.
+            // surface is accepted on every platform for CLI uniformity.
             let _ = no_permissions_gate;
-            let _ = claude_code_compat;
             // Serve mode needs the cursor overlay just like MCP mode.
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
-            let reg = Arc::new(build_registry(cursor_cfg));
+            let reg = Arc::new(build_registry(cursor_cfg, claude_code_compat));
             reg.init_self_weak();
             maybe_init_pip();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
@@ -859,13 +693,11 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         cli::Command::Diagnose => {
-            let reg = Arc::new(build_registry_no_cursor());
-            cli::run_diagnose_cmd(reg);
+            cli::run_diagnose_cmd();
             return Ok(());
         }
         cli::Command::Permissions { subcommand, json } => {
-            let reg = Arc::new(build_registry_no_cursor());
-            cli::run_permissions_cmd(reg, &subcommand, json);
+            cli::run_permissions_cmd(&subcommand, json);
             return Ok(());
         }
         cli::Command::Autostart { subcommand } => {
@@ -900,121 +732,49 @@ fn main() -> anyhow::Result<()> {
             value,
             socket,
         } => {
-            let reg = Arc::new(build_registry_no_cursor());
-            reg.init_self_weak();
-            std::thread::spawn(move || {
-                cli::run_config_cmd(
-                    reg,
-                    subcommand.as_deref(),
-                    key.as_deref(),
-                    value.as_deref(),
-                    socket.as_deref(),
-                );
-            })
-            .join()
-            .ok();
+            cli::run_config_cmd(
+                subcommand.as_deref(),
+                key.as_deref(),
+                value.as_deref(),
+                socket.as_deref(),
+            );
             return Ok(());
         }
         cli::Command::Mcp {
-            no_daemon_relaunch,
             socket,
             claude_code_compat,
         } => {
             let startup_started = std::time::Instant::now();
-            CLAUDE_CODE_COMPAT.store(claude_code_compat, Ordering::SeqCst);
-            // Long-running MCP server — kick off the background update
-            // check before any daemon-proxy decisions.
+            // Long-running MCP proxy — kick off the background update check
+            // before connecting to the daemon.
             version_check::maybe_announce_update();
-            // Daemon-proxy sidestep for Windows Session 0 attribution
-            // (and equivalent on Linux when a daemon is up): if a
-            // daemon is listening on the default socket, forward
-            // stdio MCP through it instead of running the server
-            // in-process. The proxy preserves the daemon's session
-            // identity (typically Session 1+ on Windows) so window /
-            // UIA / screen tools see the user's actual desktop —
-            // without this, an `cua-driver mcp` spawned by Claude
-            // Code over SSH lands in Session 0 and every desktop
-            // tool returns empty. See `cli::should_use_daemon_proxy`.
-            if cli::should_use_daemon_proxy(no_daemon_relaunch) {
-                if let Err(e) =
-                    cli::run_mcp_via_daemon_proxy(socket, claude_code_compat, |daemon, success| {
-                        telemetry::capture_mcp_startup_completed(
-                            "daemon_proxy",
-                            daemon.telemetry_value(),
-                            success,
-                            startup_started.elapsed(),
-                        )
-                    })
-                {
-                    eprintln!("cua-driver-rs: {e}");
-                    telemetry::flush_pending(std::time::Duration::from_millis(750));
-                    std::process::exit(1);
-                }
+            if let Err(e) =
+                cli::run_mcp_via_daemon_proxy(socket, claude_code_compat, |daemon, success| {
+                    telemetry::capture_mcp_startup_completed(
+                        "daemon_proxy",
+                        daemon.telemetry_value(),
+                        success,
+                        startup_started.elapsed(),
+                    )
+                })
+            {
+                eprintln!("cua-driver-rs: {e}");
                 telemetry::flush_pending(std::time::Duration::from_millis(750));
-                return Ok(());
+                std::process::exit(1);
             }
-            // Fall through to the in-process MCP server below. The
-            // `socket` flag is daemon-proxy-only; ignored on the
-            // in-process path (mirrors the macOS arm's drop-on-floor
-            // behaviour).
-            let _ = socket;
-            telemetry::capture_mcp_startup_completed(
-                "in_process",
-                "not_applicable",
-                true,
-                startup_started.elapsed(),
-            );
+            telemetry::flush_pending(std::time::Duration::from_millis(750));
+            return Ok(());
         }
     }
-
-    // MCP server mode: this needs a full async tokio runtime.
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime");
-    rt.block_on(async_main())?;
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-async fn async_main() -> anyhow::Result<()> {
-    let cursor_cfg = cursor_overlay::CursorConfig::from_args();
-
-    tracing::info!(
-        version = env!("CARGO_PKG_VERSION"),
-        os = std::env::consts::OS,
-        cursor_id = %cursor_cfg.cursor_id,
-        overlay_enabled = cursor_cfg.enabled,
-        has_custom_icon = cursor_cfg.shape.is_some(),
-        "cua-driver-rs starting"
-    );
-
-    let registry = Arc::new(build_registry(cursor_cfg));
-    registry.init_self_weak();
-    maybe_init_pip();
-    let result = cua_driver_core::server::run(registry).await;
-    if let Err(e) = &result {
-        tracing::error!("MCP server error: {e}");
-    }
-
-    // The stdio MCP server loop has ended — the client disconnected (stdin
-    // EOF) or a fatal I/O error occurred. The cursor overlay runs on its own
-    // detached thread with an independent Win32 message loop (and we raised the
-    // multimedia timer resolution via `timeBeginPeriod`), so simply returning
-    // is not guaranteed to tear it down promptly: that thread is never joined
-    // and would otherwise keep its render loop alive as an orphan, accumulating
-    // CPU after the client is gone (issue #1808). Force a clean process exit so
-    // the overlay thread dies with us the moment the transport closes — mirrors
-    // the macOS `std::process::exit(0)` after `server::run`.
-    telemetry::flush_pending(std::time::Duration::from_millis(750));
-    std::process::exit(if result.is_ok() { 0 } else { 1 });
 }
 
 // ── Registry builder (non-macOS) ──────────────────────────────────────────
 
 #[cfg(not(target_os = "macos"))]
-fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::tool::ToolRegistry {
-    let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
+fn build_registry(
+    cursor_cfg: cursor_overlay::CursorConfig,
+    compat: bool,
+) -> cua_driver_core::tool::ToolRegistry {
     #[cfg(target_os = "windows")]
     {
         cua_driver_core::recording::set_classified_screenshot_fn(|window_id, pid| {
@@ -1108,7 +868,7 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
 /// Used by CLI subcommands (list-tools / describe / call) that don't need the overlay.
 #[cfg(not(target_os = "macos"))]
 fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
-    let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
+    let compat = false;
     #[cfg(target_os = "windows")]
     {
         cua_driver_core::recording::set_classified_screenshot_fn(|window_id, pid| {

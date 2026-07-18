@@ -177,7 +177,7 @@ Routine telemetry excludes task text, prompts, tool arguments, tool response bod
 
 Tool-completion events retain only coarse result shape: text, image, mixed, empty, or unknown; a size bucket; a duration bucket; a fixed error class; and, for reviewed structured browser refusals, the fixed code above. The content itself never crosses the telemetry observer boundary. A proxy and daemon negotiate one completion-event owner. Mixed-version pairs retain proxy ownership, which prevents duplicate events during upgrades.
 
-A CLI `call` handled in-process reports `transport=cli`. When the same call is delegated to a running daemon, the daemon owns the completion event and reports `transport=daemon`; the event is still emitted only once.
+A CLI `call` is always delegated to the daemon. The daemon owns the completion event and reports `transport=daemon`, so the event is emitted only once.
 
 ## Region and deletion controls
 

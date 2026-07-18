@@ -1,6 +1,6 @@
 //! Linux identity and endpoint evidence for the first-class browser tools.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -107,28 +107,77 @@ fn parse_proc_net_loopback_listeners(text: &str) -> Vec<(u16, u64)> {
         .collect()
 }
 
-fn socket_inodes_for_pid(pid: i64) -> Result<HashSet<u64>, BrowserRefusal> {
-    let directory = std::fs::read_dir(format!("/proc/{pid}/fd")).map_err(|_| {
-        refusal(
+fn descendant_pids(root: i64, relationships: impl IntoIterator<Item = (i64, i64)>) -> HashSet<i64> {
+    let mut children = HashMap::<i64, Vec<i64>>::new();
+    for (pid, parent) in relationships {
+        children.entry(parent).or_default().push(pid);
+    }
+    let mut family = HashSet::from([root]);
+    let mut pending = VecDeque::from([root]);
+    while let Some(parent) = pending.pop_front() {
+        for child in children.get(&parent).into_iter().flatten() {
+            if family.insert(*child) {
+                pending.push_back(*child);
+            }
+        }
+    }
+    family
+}
+
+fn process_family_pids(root: i64) -> Result<HashSet<i64>, BrowserRefusal> {
+    if !std::path::Path::new(&format!("/proc/{root}")).exists() {
+        return Err(refusal(
             BrowserRefusalCode::BrowserBindingStale,
-            format!("browser process {pid} is no longer available"),
-        )
-    })?;
-    Ok(directory
+            format!("browser process {root} is no longer available"),
+        ));
+    }
+    let relationships = std::fs::read_dir("/proc")
+        .into_iter()
         .flatten()
-        .filter_map(|entry| std::fs::read_link(entry.path()).ok())
-        .filter_map(|target| {
-            let target = target.to_string_lossy();
-            target
-                .strip_prefix("socket:[")
-                .and_then(|value| value.strip_suffix(']'))
-                .and_then(|value| value.parse::<u64>().ok())
-        })
-        .collect())
+        .flatten()
+        .filter_map(|entry| {
+            let pid = entry.file_name().to_string_lossy().parse::<i64>().ok()?;
+            let status = std::fs::read_to_string(entry.path().join("status")).ok()?;
+            let parent = status
+                .lines()
+                .find_map(|line| line.strip_prefix("PPid:"))?
+                .trim()
+                .parse::<i64>()
+                .ok()?;
+            Some((pid, parent))
+        });
+    Ok(descendant_pids(root, relationships))
+}
+
+fn socket_inodes_for_process_tree(pid: i64) -> Result<HashSet<u64>, BrowserRefusal> {
+    let process_family = process_family_pids(pid)?;
+    let mut inodes = HashSet::new();
+    for owner_pid in process_family {
+        let Ok(directory) = std::fs::read_dir(format!("/proc/{owner_pid}/fd")) else {
+            continue;
+        };
+        inodes.extend(
+            directory
+                .flatten()
+                .filter_map(|entry| std::fs::read_link(entry.path()).ok())
+                .filter_map(|target| {
+                    let target = target.to_string_lossy();
+                    target
+                        .strip_prefix("socket:[")
+                        .and_then(|value| value.strip_suffix(']'))
+                        .and_then(|value| value.parse::<u64>().ok())
+                }),
+        );
+    }
+    Ok(inodes)
 }
 
 fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
-    let owned = socket_inodes_for_pid(pid)?;
+    // Chromium may delegate its DevTools listener to a utility child. Core's
+    // ownership contract explicitly accepts the approved browser PID or one
+    // of its children, so inspect the bounded descendant tree as well as the
+    // root process while still attributing the result to the approved root.
+    let owned = socket_inodes_for_process_tree(pid)?;
     let mut listeners = Vec::new();
     for path in ["/proc/net/tcp", "/proc/net/tcp6"] {
         if let Ok(text) = std::fs::read_to_string(path) {
@@ -904,6 +953,14 @@ mod tests {
         assert_eq!(
             parse_proc_net_loopback_listeners(input),
             vec![(9222, 12345)]
+        );
+    }
+
+    #[test]
+    fn process_family_contains_only_transitive_descendants() {
+        assert_eq!(
+            descendant_pids(10, [(11, 10), (12, 11), (20, 1), (21, 20)]),
+            HashSet::from([10, 11, 12])
         );
     }
 

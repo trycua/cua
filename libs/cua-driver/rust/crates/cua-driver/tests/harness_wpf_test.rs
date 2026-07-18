@@ -169,6 +169,15 @@ fn window_bounds(driver: &mut McpDriver, pid: u32, wid: u64) -> (f64, f64, f64, 
 }
 
 fn pixel_center(state: &ToolResponse, target_id: &str, window: (f64, f64, f64, f64)) -> (f64, f64) {
+    let (x, y, width, height) = pixel_frame(state, target_id, window);
+    (x + width / 2.0, y + height / 2.0)
+}
+
+fn pixel_frame(
+    state: &ToolResponse,
+    target_id: &str,
+    window: (f64, f64, f64, f64),
+) -> (f64, f64, f64, f64) {
     let target_index = ax::element_index_by_id(state.text(), target_id)
         .unwrap_or_else(|| panic!("missing PX target {target_id:?}: {}", state.text()));
     let elements = state.structured()["elements"]
@@ -196,11 +205,15 @@ fn pixel_center(state: &ToolResponse, target_id: &str, window: (f64, f64, f64, f
     let scale_y = screenshot_h / window_h;
     let x = (target["x"].as_f64().unwrap_or(0.0) + target_w / 2.0 - window_x) * scale_x;
     let y = (target["y"].as_f64().unwrap_or(0.0) + target_h / 2.0 - window_y) * scale_y;
+    let width = target_w * scale_x;
+    let height = target_h * scale_y;
+    let x = x - width / 2.0;
+    let y = y - height / 2.0;
     assert!(
-        x >= 0.0 && x < screenshot_w && y >= 0.0 && y < screenshot_h,
-        "WPF PX target center ({x:.1}, {y:.1}) is outside the capture ({screenshot_w:.1}x{screenshot_h:.1})"
+        x >= 0.0 && x + width <= screenshot_w && y >= 0.0 && y + height <= screenshot_h,
+        "WPF PX target frame ({x:.1}, {y:.1}, {width:.1}, {height:.1}) is outside the capture ({screenshot_w:.1}x{screenshot_h:.1})"
     );
-    (x, y)
+    (x, y, width, height)
 }
 
 fn wait_for_fixture_file_text(path: &std::path::Path, id: &str, expected: &str) {
@@ -1116,19 +1129,17 @@ fn harness_wpf_slider_drag() {
                 pre.text().contains("slider_value=0"),
                 "initial slider_value=0 missing"
             );
+            let (x, y, width, height) =
+                pixel_frame(&pre, "sld-value", window_bounds(driver, pid, wid));
 
             let resp = driver.call(
                 "drag",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": wid,
-                    // Window-local coords along the slider TRACK. The track row sits at
-                    // window-local y≈304 (verified on the VM: y=275 landed ~29px above
-                    // it, on empty GroupBox space, so the thumb never moved); the thumb
-                    // rests at the left (x≈44) at value=0. Dragging left→right advances
-                    // the value. (TODO: derive these from the `sld-value` element frame
-                    // in get_window_state for DPI/placement independence.)
-                    "from_x": 44.0, "from_y": 304.0,
-                    "to_x": 330.0, "to_y": 304.0,
+                    // Resolve the live UIA frame so fixture reordering and DPI
+                    // scaling cannot silently move this drag onto another control.
+                    "from_x": x + width * 0.05, "from_y": y + height / 2.0,
+                    "to_x": x + width * 0.90, "to_y": y + height / 2.0,
                     "duration_ms": 700, "steps": 40,
                     "delivery_mode": "foreground"
                 }),

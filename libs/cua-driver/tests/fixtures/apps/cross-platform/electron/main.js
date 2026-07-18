@@ -7,37 +7,11 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
-const { Worker } = require('worker_threads');
 const sentinelMode = process.env.CUA_E2E_SENTINEL === '1';
 const nativeWayland = process.platform === 'linux' && Boolean(process.env.WAYLAND_DISPLAY);
 const customCuaCompositor = process.env.CUA_E2E_WAYLAND_SESSION === 'cua-compositor';
 const fixtureJournalUrl = process.env.CUA_E2E_FIXTURE_JOURNAL_URL || '';
 const sentinelJournalPath = process.env.CUA_E2E_SENTINEL_JOURNAL || '';
-let compositorHeartbeatWorker;
-if (sentinelMode && customCuaCompositor && sentinelJournalPath) {
-  // The minimal compositor can leave Electron's UI thread blocked in a
-  // synchronous show/focus transition even after the committed renderer
-  // surface is visible. Start the process-liveness oracle before creating the
-  // window and keep it on an independent worker event loop.
-  compositorHeartbeatWorker = new Worker(
-    `
-      const fs = require('fs');
-      const { workerData } = require('worker_threads');
-      setInterval(() => {
-        fs.appendFileSync(
-          workerData,
-          JSON.stringify({
-            kind: 'heartbeat',
-            at_ms: Date.now(),
-            source: 'electron-worker',
-          }) + '\\n',
-          'utf8'
-        );
-      }, 100);
-    `,
-    { eval: true, workerData: sentinelJournalPath }
-  );
-}
 if (process.env.CUA_E2E_USER_DATA_DIR) {
   app.setPath('userData', process.env.CUA_E2E_USER_DATA_DIR);
 }
@@ -190,10 +164,6 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
-});
-
-app.on('before-quit', () => {
-  compositorHeartbeatWorker?.terminate();
 });
 
 app.on('window-all-closed', () => {

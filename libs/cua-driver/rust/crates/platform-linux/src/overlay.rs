@@ -1257,6 +1257,66 @@ mod tests {
     }
 
     #[test]
+    fn click_pulse_drained_after_maintenance_timeout_starts_at_zero_dt() {
+        let mut map = default_render_map();
+        let cursor = map.cursors.get_mut("default").unwrap();
+        cursor.core.pos = (20.0, 20.0);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(OverlayMsg::Cmd(KeyedOverlayCommand {
+            key: "default".to_owned(),
+            cmd: OverlayCommand::ClickPulse { x: 40.0, y: 50.0 },
+        }))
+        .unwrap();
+
+        let (arrived, had_msg) = process_render_wake(&mut map, None, &rx, 0.08, true, false);
+
+        assert!(arrived.is_empty());
+        assert!(had_msg);
+        let cursor = &map.cursors["default"].core;
+        assert_eq!(cursor.pos, (40.0, 50.0));
+        assert_eq!(cursor.click_t, Some(0.0));
+    }
+
+    #[test]
+    fn active_frame_replacement_does_not_return_stale_arrival() {
+        let mut map = default_render_map();
+        {
+            let cursor = map.cursors.get_mut("default").unwrap();
+            cursor.core.pos = (20.0, 20.0);
+            cursor.apply_command(OverlayCommand::MoveTo {
+                x: 80.0,
+                y: 80.0,
+                end_heading_radians: 0.0,
+            });
+            let old_path_len = cursor.core.path.as_ref().unwrap().length.max(1.0);
+            // The old path would finish on the next 16 ms tick if active-frame
+            // wakes were globally changed to tick before applying commands.
+            cursor.core.dist = old_path_len - 0.001;
+        }
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(OverlayMsg::Cmd(KeyedOverlayCommand {
+            key: "default".to_owned(),
+            cmd: OverlayCommand::MoveTo {
+                x: 250.0,
+                y: 150.0,
+                end_heading_radians: 0.0,
+            },
+        }))
+        .unwrap();
+
+        let (arrived, had_msg) = process_render_wake(&mut map, None, &rx, 0.016, false, true);
+
+        assert!(arrived.is_empty());
+        assert!(had_msg);
+        let cursor = &map.cursors["default"].core;
+        let replacement_path_len = cursor.path.as_ref().unwrap().length.max(1.0);
+        assert!(cursor.dist > 0.0);
+        assert!(cursor.dist < replacement_path_len);
+    }
+
+    #[test]
     fn idle_heartbeat_starts_fade_then_frames_return_to_quiescence() {
         let mut map = default_render_map();
         {

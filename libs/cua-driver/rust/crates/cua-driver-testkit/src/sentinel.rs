@@ -251,12 +251,22 @@ impl ForegroundSentinel {
         wait_for_event(&self.journal_path, "heartbeat", Duration::from_secs(2))?;
         reset_journal(&self.journal_path)?;
 
+        let canary_key = if std::env::var("CUA_E2E_WAYLAND_SESSION")
+            .is_ok_and(|session| session == "cua-compositor")
+        {
+            // The intentionally small injection protocol exposes navigation
+            // and control keys, not printable letters. Space still exercises
+            // the renderer keydown leak detector without broadening it.
+            "space"
+        } else {
+            "a"
+        };
         let leaked_key = driver.call(
             "press_key",
             serde_json::json!({
                 "pid": self.target.pid,
                 "window_id": self.target.native_id,
-                "key": "a",
+                "key": canary_key,
                 "delivery_mode": "foreground",
             }),
         );

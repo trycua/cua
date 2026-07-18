@@ -5,9 +5,9 @@
 //!   from XComposite.  The window covers the full display area.
 //! - A background thread renders frames at ~60 Hz using tiny-skia and XShmPutImage
 //!   (or XPutImage fallback) with XRender ARGB compositing.
-//! - XShape clips both input and visible pixels. The visible shape follows the
-//!   rendered alpha mask so bare X11 window managers do not show a black
-//!   full-screen ARGB window when no compositor is present.
+//! - XShape clips both input and visible pixels. On bare X11, the visible shape
+//!   quantizes the rendered alpha mask so translucent bloom pixels do not turn
+//!   into an opaque black disk when no compositor is present.
 //! - Z-ordering: `XRaiseWindow` every 80ms to stay above normal windows.
 //! - Wayland: when WAYLAND_DISPLAY is set but DISPLAY is also available (XWayland),
 //!   the X11 path is used.  Pure Wayland support is a TODO.
@@ -382,6 +382,8 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let root = screen.root;
     let scr_w = screen.width_in_pixels as u32;
     let scr_h = screen.height_in_pixels as u32;
+    let compositor_present = x11_compositor_present(&conn, screen_num);
+    tracing::debug!(compositor_present, "X11 overlay compositor state");
 
     // Update render state with screen size.
     {
@@ -524,7 +526,16 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         };
 
         if let Some(pm) = pixmap {
-            paint_x11(&conn, win, scr_w, scr_h, depth, visual_id, &pm);
+            paint_x11(
+                &conn,
+                win,
+                scr_w,
+                scr_h,
+                depth,
+                visual_id,
+                &pm,
+                compositor_present,
+            );
         }
 
         for key in &arrived {
@@ -621,8 +632,31 @@ fn find_argb_visual(
     None
 }
 
+#[cfg(target_os = "linux")]
+fn x11_compositor_present(conn: &impl x11rb::connection::Connection, screen_num: usize) -> bool {
+    use x11rb::protocol::xproto::ConnectionExt as XprotoConnectionExt;
+
+    let selection = format!("_NET_WM_CM_S{screen_num}");
+    let Ok(atom_cookie) = conn.intern_atom(false, selection.as_bytes()) else {
+        return false;
+    };
+    let Ok(atom_reply) = atom_cookie.reply() else {
+        return false;
+    };
+    let Ok(owner_cookie) = conn.get_selection_owner(atom_reply.atom) else {
+        return false;
+    };
+    owner_cookie
+        .reply()
+        .map(|reply| reply.owner != x11rb::NONE)
+        .unwrap_or(false)
+}
+
 /// Blit a tiny-skia pixmap to the X11 window using XPutImage (ZPixmap).
 /// The pixmap is premultiplied RGBA; X11 ARGB is premultiplied BGRA.
+#[cfg(target_os = "linux")]
+const NONCOMPOSITED_ALPHA_CUTOFF: u8 = 128;
+
 #[cfg(target_os = "linux")]
 fn paint_x11(
     conn: &impl x11rb::connection::Connection,
@@ -632,6 +666,7 @@ fn paint_x11(
     depth: u8,
     _visual_id: u32,
     pm: &tiny_skia::Pixmap,
+    compositor_present: bool,
 ) {
     use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
     use x11rb::protocol::xproto::{ConnectionExt as XprotoConnectionExt, CreateGCAux, ImageFormat};
@@ -650,12 +685,11 @@ fn paint_x11(
         return;
     }
 
-    let (bgra, visible_shape) = bgra_and_visible_shape(pm);
+    let (bgra, visible_shape) = bgra_and_visible_shape(pm, compositor_present);
 
     // A 32-bit ARGB window needs a compositor to blend transparent pixels.
-    // Without one, zero-alpha pixels display as opaque black. Clip the native
-    // window to the rendered non-zero alpha runs so the overlay remains usable
-    // under bare Openbox/i3/Xvfb sessions as well as composited desktops.
+    // Clip the native window to the rendered alpha runs; the converter below
+    // quantizes those runs when no compositor owns the screen selection.
     let _ = conn.shape_rectangles(
         SO::SET,
         SK::BOUNDING,
@@ -687,6 +721,7 @@ fn paint_x11(
 #[cfg(target_os = "linux")]
 fn bgra_and_visible_shape(
     pm: &tiny_skia::Pixmap,
+    compositor_present: bool,
 ) -> (Vec<u8>, Vec<x11rb::protocol::xproto::Rectangle>) {
     use x11rb::protocol::xproto::Rectangle;
 
@@ -701,9 +736,32 @@ fn bgra_and_visible_shape(
         for x in 0..width {
             let offset = (y * width + x) * 4;
             let pixel = &src[offset..offset + 4];
-            bgra.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
+            let alpha = pixel[3];
+            let visible = if compositor_present {
+                alpha != 0
+            } else {
+                // XShape has binary visibility and cannot reproduce the
+                // translucent bloom without a compositor. Drop low-alpha
+                // bloom pixels, then make retained premultiplied pixels opaque
+                // so they do not appear as a dark disk on bare X11.
+                alpha >= NONCOMPOSITED_ALPHA_CUTOFF
+            };
 
-            if pixel[3] != 0 {
+            if compositor_present || !visible {
+                bgra.extend_from_slice(&[pixel[2], pixel[1], pixel[0], alpha]);
+            } else {
+                let unpremultiply = |channel: u8| {
+                    (((channel as u32 * 255) + (alpha as u32 / 2)) / alpha as u32).min(255) as u8
+                };
+                bgra.extend_from_slice(&[
+                    unpremultiply(pixel[2]),
+                    unpremultiply(pixel[1]),
+                    unpremultiply(pixel[0]),
+                    255,
+                ]);
+            }
+
+            if visible {
                 run_start.get_or_insert(x);
             } else if let Some(start) = run_start.take() {
                 rectangles.push(Rectangle {
@@ -739,7 +797,7 @@ mod tests {
             2, 2, 0, 12, 22, 32, 255,
         ]);
 
-        let (bgra, rectangles) = bgra_and_visible_shape(&pixmap);
+        let (bgra, rectangles) = bgra_and_visible_shape(&pixmap, true);
 
         assert_eq!(&bgra[4..8], &[30, 20, 10, 255]);
         assert_eq!(rectangles.len(), 3);
@@ -754,6 +812,26 @@ mod tests {
         assert_eq!(
             (rectangles[2].x, rectangles[2].y, rectangles[2].width),
             (3, 1, 1)
+        );
+    }
+
+    #[test]
+    fn compositorless_shape_drops_bloom_and_unpremultiplies_visible_pixels() {
+        let mut pixmap = tiny_skia::Pixmap::new(4, 1).unwrap();
+        pixmap.data_mut().copy_from_slice(&[
+            25, 12, 6, 127, 64, 32, 16, 128, 30, 20, 10, 180, 120, 80, 40, 255,
+        ]);
+
+        let (bgra, rectangles) = bgra_and_visible_shape(&pixmap, false);
+
+        assert_eq!(&bgra[0..4], &[6, 12, 25, 127]);
+        assert_eq!(&bgra[4..8], &[32, 64, 128, 255]);
+        assert_eq!(&bgra[8..12], &[14, 28, 43, 255]);
+        assert_eq!(&bgra[12..16], &[40, 80, 120, 255]);
+        assert_eq!(rectangles.len(), 1);
+        assert_eq!(
+            (rectangles[0].x, rectangles[0].y, rectangles[0].width),
+            (1, 0, 3)
         );
     }
 }

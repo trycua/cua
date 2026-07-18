@@ -175,6 +175,22 @@ of Setup Assistant on its first display boot; see [issue #2155](https://github.c
 - [Discord](https://discord.com/invite/mVnXXpdE85) — Community support and discussions
 - [GitHub Issues](https://github.com/trycua/cua/issues) — Bug reports and feature requests
 
+## Citation
+
+If Cua supports your research, please cite the software:
+
+```bibtex
+@software{cua2025,
+  author  = {{Cua AI, Inc.}},
+  title   = {Cua},
+  year    = {2025},
+  url     = {https://github.com/trycua/cua},
+  license = {MIT}
+}
+```
+
+For reproducibility, include the Cua release or commit used in your experiments. Citation metadata is also available in [`CITATION.cff`](CITATION.cff).
+
 ## Contributing
 
 We welcome contributions! See our [Contributing Guidelines](CONTRIBUTING.md) for details.

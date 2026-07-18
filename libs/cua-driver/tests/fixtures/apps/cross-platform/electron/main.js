@@ -9,6 +9,7 @@ const http = require('http');
 const path = require('path');
 const sentinelMode = process.env.CUA_E2E_SENTINEL === '1';
 const nativeWayland = process.platform === 'linux' && Boolean(process.env.WAYLAND_DISPLAY);
+const customCuaCompositor = process.env.CUA_E2E_WAYLAND_SESSION === 'cua-compositor';
 const fixtureJournalUrl = process.env.CUA_E2E_FIXTURE_JOURNAL_URL || '';
 const sentinelJournalPath = process.env.CUA_E2E_SENTINEL_JOURNAL || '';
 if (process.env.CUA_E2E_USER_DATA_DIR) {
@@ -87,6 +88,9 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: !sentinelMode,
+      // The sentinel's heartbeat is an E2E oracle. It must keep ticking while
+      // the focus-loss canary deliberately places the window in the background.
+      backgroundThrottling: !sentinelMode,
       preload: path.join(__dirname, 'preload.js'),
     },
   });
@@ -125,11 +129,15 @@ function createWindow() {
           if (process.platform !== 'darwin' && !nativeWayland) {
             mainWindow.setAlwaysOnTop(true);
           }
-          if (process.platform === 'linux' && process.env.WAYLAND_DISPLAY) {
+          if (nativeWayland && !customCuaCompositor) {
             mainWindow.setFullScreen(true);
-          } else {
+          } else if (!customCuaCompositor) {
             mainWindow.maximize();
           }
+          // The minimal nested cua-compositor intentionally has no fullscreen
+          // policy implementation. Requesting fullscreen leaves Chromium
+          // waiting on a configure transition and stops the heartbeat oracle.
+          // Its 1280x900 sentinel already covers the smaller fixture at origin.
           mainWindow.show();
           mainWindow.focus();
         } else {

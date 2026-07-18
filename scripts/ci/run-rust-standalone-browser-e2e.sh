@@ -91,6 +91,11 @@ fi
 tests=(
   standalone_browser_background_type
   standalone_browser_dialogs
+)
+if [[ "${HOST_OS}" == Linux ]]; then
+  tests+=(standalone_browser_dialog_background_refusal)
+fi
+tests+=(
   standalone_browser_download
   standalone_browser_existing_profile
   standalone_browser_existing_profile_setup

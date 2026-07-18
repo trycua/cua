@@ -267,7 +267,11 @@ returned opaque `dialog_id`. A prompt response is allowed only with
 `action:"accept"` on a current prompt. Browser permission UI and native dialogs
 remain outside this tool. Creating Chromium's native modal can activate the
 browser; after the caller restores occlusion, inspecting and resolving the
-exact page-owned dialog do not require another activation.
+exact page-owned dialog do not require another activation on Windows and
+macOS. Resolution defaults to `delivery_mode:"background"`. Linux Chromium
+cannot resolve its native modal while preserving background posture, so the
+driver refuses that mode before dispatch; retry explicitly with
+`delivery_mode:"foreground"` when foreground activation is acceptable.
 
 ### File inputs
 

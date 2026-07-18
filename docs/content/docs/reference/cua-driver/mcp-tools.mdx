@@ -830,11 +830,12 @@ Type text into an exactly-bound tab via the Input domain. mode="insert_text" (de
 
 ### `browser_dialog`
 
-Inspect or resolve a page-owned JavaScript alert, confirm, prompt, or beforeunload dialog on one exactly-bound tab. This never handles browser permission UI, extension UI, native dialogs, or file pickers. Inspect returns an opaque dialog_id; accept/dismiss require that exact current id.
+Inspect or resolve a page-owned JavaScript alert, confirm, prompt, or beforeunload dialog on one exactly-bound tab. This never handles browser permission UI, extension UI, native dialogs, or file pickers. Inspect returns an opaque dialog_id; accept/dismiss require that exact current id. Resolution defaults to background delivery; Linux callers must explicitly request foreground delivery because Chromium's native modal cannot be resolved there without changing foreground posture.
 
 **Arguments:**
 
 - `action` (string, required)
+- `delivery_mode` (string, optional): Requested foreground posture for accept/dismiss. Linux Chromium requires foreground; inspect is read-only.
 - `dialog_id` (string, optional): Opaque current dialog generation returned by action=inspect.
 - `prompt_text` (string, optional): Sensitive response text, valid only when accepting a prompt dialog.
 - `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.

@@ -738,13 +738,17 @@ browser-wide setting, subscribe before triggering, correlate exact frame and
 opaque id events, restore defaults on every outcome, and remove only a proven
 direct partial file after failure.
 
-The real-browser harness adds separate background rows for dialogs, upload,
+The real-browser harness adds separate rows for dialogs, upload,
 hover/right-click/double-click/scroll/drag, and downloads. A fixed loopback
-attachment keeps download evidence deterministic. Every row uses the
+attachment keeps download evidence deterministic. Background rows use the
 foreground sentinel and fixture-owned state rather than treating a CDP reply
-as delivery. Trajectory recording redacts prompt text, upload paths, download
-directories, and internal approval markers; product telemetry retains only
-fixed operation and refusal categories.
+as delivery. Linux Chromium cannot resolve a native JavaScript modal without
+changing foreground posture, so its matrix records a no-dispatch background
+refusal and a separate explicit foreground delivery row. Windows and macOS
+retain strict background dialog resolution. Trajectory recording redacts
+prompt text, upload paths, download directories, and internal approval
+markers; product telemetry retains only fixed operation and refusal
+categories.
 
 The dialog design adapts the exact-target, no-replay security model introduced
 in PR #2166. Its contributor remains credited through a parsed

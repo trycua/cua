@@ -1422,7 +1422,7 @@ impl BrowserDialogTool {
         Self {
             def: ToolDef {
                 name: "browser_dialog".into(),
-                description: "Inspect or resolve a page-owned JavaScript alert, confirm, prompt, or beforeunload dialog on one exactly-bound tab. This never handles browser permission UI, extension UI, native dialogs, or file pickers. Inspect returns an opaque dialog_id; accept/dismiss require that exact current id.".into(),
+                description: "Inspect or resolve a page-owned JavaScript alert, confirm, prompt, or beforeunload dialog on one exactly-bound tab. This never handles browser permission UI, extension UI, native dialogs, or file pickers. Inspect returns an opaque dialog_id; accept/dismiss require that exact current id. Resolution defaults to background delivery; Linux callers must explicitly request foreground delivery because Chromium's native modal cannot be resolved there without changing foreground posture.".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -1431,7 +1431,13 @@ impl BrowserDialogTool {
                         "session": schema_session(),
                         "action": { "type": "string", "enum": ["inspect", "accept", "dismiss"] },
                         "dialog_id": { "type": "string", "description": "Opaque current dialog generation returned by action=inspect." },
-                        "prompt_text": { "type": "string", "description": "Sensitive response text, valid only when accepting a prompt dialog." }
+                        "prompt_text": { "type": "string", "description": "Sensitive response text, valid only when accepting a prompt dialog." },
+                        "delivery_mode": {
+                            "type": "string",
+                            "enum": ["background", "foreground"],
+                            "default": "background",
+                            "description": "Requested foreground posture for accept/dismiss. Linux Chromium requires foreground; inspect is read-only."
+                        }
                     },
                     "required": ["target_id", "tab_id", "action"],
                     "additionalProperties": true
@@ -1464,6 +1470,12 @@ impl Tool for BrowserDialogTool {
         if !matches!(action.as_str(), "inspect" | "accept" | "dismiss") {
             return ToolResult::error("action must be inspect, accept, or dismiss");
         }
+        let delivery_mode = args
+            .opt_str("delivery_mode")
+            .unwrap_or_else(|| "background".into());
+        if !matches!(delivery_mode.as_str(), "background" | "foreground") {
+            return ToolResult::error("delivery_mode must be background or foreground");
+        }
         let session = match require_explicit_session(&args) {
             Ok(session) => session,
             Err(error) => return error,
@@ -1484,12 +1496,18 @@ impl Tool for BrowserDialogTool {
             Ok(validated) => validated,
             Err(refusal) => return refusal.to_tool_result(),
         };
+        if cfg!(target_os = "linux") && action != "inspect" && delivery_mode == "background" {
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserInputTrustUnavailable,
+                "Chromium's native JavaScript modal cannot be resolved on Linux without changing foreground posture; retry with delivery_mode=\"foreground\"",
+            )
+            .with_detail(json!({ "supported_delivery_mode": "foreground" }))
+            .to_tool_result();
+        }
         let conn = &validated.conn;
         let cdp_session = validated.cdp_session.as_str();
         let cdp_target_id = validated.tab.cdp_target_id.as_str();
-        if conn.dialog_state(cdp_target_id).is_none()
-            && !conn.has_dialog_session(cdp_target_id)
-        {
+        if conn.dialog_state(cdp_target_id).is_none() && !conn.has_dialog_session(cdp_target_id) {
             // Register before Page.enable so an opening event delivered before
             // the command reply is still attributed to the exact target.
             conn.register_dialog_session(cdp_session, cdp_target_id);
@@ -1907,6 +1925,12 @@ mod tests {
         assert!(!prepare_properties.contains_key("consent"));
         assert!(!prepare_properties.contains_key("allow_restart"));
         assert!(!prepare_properties.contains_key(MCP_HOST_APPROVAL_ARG));
+
+        let dialog = BrowserDialogTool::new(e.clone());
+        assert_eq!(
+            dialog.def().input_schema["properties"]["delivery_mode"]["default"],
+            "background"
+        );
 
         for (def, name) in [
             (

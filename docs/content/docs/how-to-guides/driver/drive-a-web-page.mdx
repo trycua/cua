@@ -284,7 +284,11 @@ Only an accepted prompt may include `prompt_text`. This tool does not handle
 browser permission prompts, extension UI, native sheets, or file pickers.
 Creating a Chromium native modal can activate its browser window; once you
 restore the intended occlusion, inspecting and resolving that exact dialog do
-not activate it again.
+not activate it again on Windows and macOS. Resolution defaults to
+`delivery_mode:"background"`. Linux Chromium cannot resolve the native modal
+while preserving background posture, so the driver returns
+`browser_input_trust_unavailable` before dispatch. Retry with
+`delivery_mode:"foreground"` only when foreground activation is acceptable.
 
 ## Assign files without a picker
 

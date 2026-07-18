@@ -172,6 +172,12 @@ impl Tool for TypeTextTool {
         // cua_driver_core::text_sanitize docs for rationale.
         let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
+        // Fail before any element focus or pixel-click can redirect subsequent
+        // key events. The guard remains live until the delivery worker exits.
+        let _input_guard = match cua_driver_core::type_text_lock::try_acquire(pid as i64) {
+            Ok(guard) => guard,
+            Err(refusal) => return refusal,
+        };
         // Surface 6: element_token / element_index precedence resolution.
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);

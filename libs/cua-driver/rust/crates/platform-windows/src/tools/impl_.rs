@@ -3513,6 +3513,12 @@ impl Tool for TypeTextTool {
             Err(e) => return e,
         };
         let pid = raw_pid as u32;
+        // Fail before any element focus or pixel-click can redirect subsequent
+        // key events. The guard remains live until the delivery worker exits.
+        let _input_guard = match cua_driver_core::type_text_lock::try_acquire(raw_pid) {
+            Ok(guard) => guard,
+            Err(refusal) => return refusal,
+        };
         // Surface 6: element_token / element_index precedence resolution.
         let resolved = match cua_driver_core::element_token::resolve_element_args(
             pid as i32,

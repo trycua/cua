@@ -45,6 +45,7 @@ INCLUDES = r"""#include <stdint.h>
 #include <linux/input-event-codes.h>
 #include <wayland-server-protocol.h>
 #include <xkbcommon/xkbcommon.h>
+#include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
@@ -56,6 +57,7 @@ static struct cua_devstate cua_ptr[CUA_MAXDEV];
 static struct cua_devstate cua_kbd_state[CUA_MAXDEV];
 static int g_keymap_fd = -1;
 static size_t g_keymap_size = 0;
+static struct wlr_keyboard g_keyboard;
 static xkb_mod_mask_t g_shift_mask = 1;
 static xkb_mod_mask_t g_ctrl_mask = 0;
 static xkb_mod_mask_t g_alt_mask = 0;
@@ -353,7 +355,7 @@ static bool cua_axis(struct tinywl_server *server, struct tinywl_toplevel *t, in
 	}
 	return true;
 }
-static void cua_init_keymap(void) {
+static void cua_init_keymap(struct tinywl_server *server) {
 	struct xkb_context *ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	struct xkb_rule_names names = {0};
 	struct xkb_keymap *km = xkb_keymap_new_from_names(ctx, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
@@ -392,6 +394,13 @@ static void cua_init_keymap(void) {
 	/* Control characters used by the protocol map to dedicated keys. */
 	g_chartab['\n'] = (struct cua_keyent){ KEY_ENTER, 0, 1 };
 	g_chartab['\t'] = (struct cua_keyent){ KEY_TAB, 0, 1 };
+	/* A keyboard-capable seat must attach a real wlr_keyboard before clients
+	 * bind. wlroots then sends keymap + repeat-info before any enter event;
+	 * Chromium can stall if it receives an enter from a device-less seat. */
+	wlr_keyboard_init(&g_keyboard, NULL, "cua-virtual-keyboard");
+	wlr_keyboard_set_keymap(&g_keyboard, km);
+	wlr_keyboard_set_repeat_info(&g_keyboard, 25, 600);
+	wlr_seat_set_keyboard(server->seat, &g_keyboard);
 	xkb_keymap_unref(km); xkb_context_unref(ctx);
 	wlr_log(WLR_INFO, "[cua] xkb keymap + chartab ready (%zu bytes)", g_keymap_size);
 }
@@ -401,6 +410,13 @@ static struct wlr_seat_client *cua_kbd_enter(struct tinywl_server *server, struc
 	struct wlr_surface *surface = t->xdg_toplevel->base->surface;
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
 	if (!sc || wl_list_empty(&sc->keyboards)) return NULL;
+	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
+	if (focused && wlr_surface_get_root_surface(focused) == surface) {
+		/* Foreground delivery already has a protocol-complete seat enter. The
+		 * key path below uses wlr_seat_keyboard_notify_key for this target. */
+		cua_kbd_state[0].entered = surface;
+		return sc;
+	}
 	if (cua_kbd_state[0].entered != surface) {
 		struct wl_resource *res; struct wl_array keys; wl_array_init(&keys);
 		wl_resource_for_each(res, &sc->keyboards) {
@@ -661,6 +677,7 @@ static int cua_listen_cb(int fd, uint32_t mask, void *data) {
 	return 0;
 }
 static void cua_setup_control_socket(struct tinywl_server *server) {
+	cua_init_keymap(server);
 	const char *path = getenv("CUA_INJECT_SOCKET");
 	if (!path) { wlr_log(WLR_INFO, "[cua] no CUA_INJECT_SOCKET; injection disabled"); return; }
 	int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -671,7 +688,6 @@ static void cua_setup_control_socket(struct tinywl_server *server) {
 	if (bind(fd, (struct sockaddr *)&addr, sizeof addr) < 0 || listen(fd, 4) < 0) {
 		wlr_log(WLR_ERROR, "[cua] bind/listen %s: %s", path, strerror(errno)); close(fd); return;
 	}
-	cua_init_keymap();
 	wl_event_loop_add_fd(wl_display_get_event_loop(server->wl_display), fd,
 		WL_EVENT_READABLE, cua_listen_cb, server);
 	wlr_log(WLR_INFO, "[cua] injection control socket on %s", path);
@@ -798,6 +814,15 @@ src = repl(src,
     "\twl_display_run(server.wl_display);",
     "\tcua_setup_control_socket(&server);\n\twl_display_run(server.wl_display);",
     "control-socket-setup")
+src = repl(src,
+    "\twlr_backend_destroy(server.backend);\n"
+    "\twl_display_destroy(server.wl_display);\n"
+    "\treturn 0;",
+    "\twlr_backend_destroy(server.backend);\n"
+    "\twlr_keyboard_finish(&g_keyboard);\n"
+    "\twl_display_destroy(server.wl_display);\n"
+    "\treturn 0;",
+    "virtual-keyboard-cleanup")
 
 io.open(out, "w", encoding="utf-8").write(src)
 sys.stderr.write("cua-compositor.c written (%d bytes)\n" % len(src))

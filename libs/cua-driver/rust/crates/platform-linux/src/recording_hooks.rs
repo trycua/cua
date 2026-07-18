@@ -14,23 +14,17 @@ pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Ve
 #[cfg(target_os = "linux")]
 fn app_state_json_for_blocking(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
     let pid = u32::try_from(pid?).ok()?;
-    let window_id = if crate::wayland::is_inject_mode() {
-        // The compositor protocol already verified this action target. Avoid a
-        // second AT-SPI window enumeration before the bounded tree snapshot.
-        window_id?
-    } else {
-        resolve_window_for_recording(pid, window_id)?.xid
-    };
-    let result = if crate::wayland::is_inject_mode() {
-        // The nested compositor intentionally exercises blocked/background
-        // renderers. Keep trajectory evidence best-effort so one unresponsive
-        // AT-SPI tree cannot consume the complete daemon call deadline before
-        // the action is dispatched. Screenshots and video are captured by
-        // independent hooks and remain available for these turns.
-        crate::atspi::walk_tree_for_recording(pid, window_id, std::time::Duration::from_secs(2))
-    } else {
-        crate::atspi::walk_tree(pid, window_id, None)
-    };
+    if crate::wayland::is_inject_mode() {
+        // The custom-compositor lane deliberately addresses renderers that may
+        // be blocked or backgrounded. A synchronous AT-SPI evidence walk can
+        // perturb that renderer immediately before input dispatch, defeating
+        // the independent DOM canary the E2E suite is about to observe. The
+        // recorder still captures full-output before/after frames plus video;
+        // omit optional AX evidence in this lane instead of touching the app.
+        return None;
+    }
+    let window_id = resolve_window_for_recording(pid, window_id)?.xid;
+    let result = crate::atspi::walk_tree(pid, window_id, None);
     if result.nodes.is_empty() || result.tree_markdown.trim().is_empty() {
         return None;
     }

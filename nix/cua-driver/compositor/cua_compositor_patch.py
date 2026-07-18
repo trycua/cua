@@ -420,14 +420,31 @@ static void cua_kbd_key(struct wlr_seat_client *sc, uint32_t keycode, bool press
 		wl_keyboard_send_key(res, wlr_seat_client_next_serial(sc), tm, keycode,
 			pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
 }
+/* Preserve compositor-native keyboard delivery when the addressed surface is
+ * already the logical seat focus. Chromium relies on wlroots' focused-seat
+ * state for foreground keyboard events; sending a raw wl_keyboard.key to its
+ * resource can be acknowledged while never reaching the renderer. Background
+ * targets retain the direct resource path that makes focus-free input possible. */
+static void cua_kbd_key_target(struct tinywl_server *server, struct tinywl_toplevel *t,
+		struct wlr_seat_client *sc, uint32_t keycode, bool pressed) {
+	struct wlr_surface *target = wlr_surface_get_root_surface(t->xdg_toplevel->base->surface);
+	struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
+	struct wlr_surface *focused_root = focused ? wlr_surface_get_root_surface(focused) : NULL;
+	if (target == focused_root) {
+		wlr_seat_keyboard_notify_key(server->seat, cua_now_ms(), keycode,
+			pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
+	} else {
+		cua_kbd_key(sc, keycode, pressed);
+	}
+}
 static bool cua_type_cp(struct tinywl_server *server, struct tinywl_toplevel *t, uint32_t cp) {
 	if (cp >= 128 || !g_chartab[cp].valid) return false;
 	struct wlr_seat_client *sc = cua_kbd_enter(server, t);
 	if (!sc) return false;
 	struct cua_keyent e = g_chartab[cp];
 	if (e.shift) cua_kbd_mods(sc, g_shift_mask);
-	cua_kbd_key(sc, e.keycode, true);
-	cua_kbd_key(sc, e.keycode, false);
+	cua_kbd_key_target(server, t, sc, e.keycode, true);
+	cua_kbd_key_target(server, t, sc, e.keycode, false);
 	if (e.shift) cua_kbd_mods(sc, 0);
 	return true;
 }
@@ -468,8 +485,8 @@ static int cua_key_named(struct tinywl_server *server, struct tinywl_toplevel *t
 	if (!kc) return 0;
 	struct wlr_seat_client *sc = cua_kbd_enter(server, t);
 	if (!sc) return -1;
-	cua_kbd_key(sc, kc, true);
-	cua_kbd_key(sc, kc, false);
+	cua_kbd_key_target(server, t, sc, kc, true);
+	cua_kbd_key_target(server, t, sc, kc, false);
 	return 1;
 }
 static int cua_hotkey(struct tinywl_server *server, struct tinywl_toplevel *t, const char *mods, const char *key) {
@@ -493,8 +510,8 @@ static int cua_hotkey(struct tinywl_server *server, struct tinywl_toplevel *t, c
 	struct wlr_seat_client *sc = cua_kbd_enter(server, t);
 	if (!sc) return -1;
 	cua_kbd_mods(sc, mask);
-	cua_kbd_key(sc, kc, true);
-	cua_kbd_key(sc, kc, false);
+	cua_kbd_key_target(server, t, sc, kc, true);
+	cua_kbd_key_target(server, t, sc, kc, false);
 	cua_kbd_mods(sc, 0);
 	return 1;
 }

@@ -45,8 +45,8 @@ The Linux recordings below make that separation visible. Synthetic pointers act 
 
 <div className="not-prose my-8 grid gap-5 md:grid-cols-2">
   <VideoDemo
-    src="https://video.twimg.com/amplify_video/2067633339243401216/vid/avc1/1280x720/Azw9Hq-dT5lh2aSP.mp4?tag=28"
-    poster="https://pbs.twimg.com/amplify_video_thumb/2067633339243401216/img/YzbdaelkpEIDyck2.jpg"
+    src="https://trycua.github.io/assets/videos/cua-driver/linux-multi-pointers.mp4"
+    poster="https://trycua.github.io/assets/posters/cua-driver/linux-multi-pointers.jpg"
     title="Four pointers across two XFCE windows"
     sourceUrl="https://x.com/trycua/status/2067639340738761015"
   >
@@ -54,14 +54,27 @@ The Linux recordings below make that separation visible. Synthetic pointers act 
   </VideoDemo>
 
   <VideoDemo
-    src="https://video.twimg.com/amplify_video/2067633453122879488/vid/avc1/960x540/61AOnEQ5cj582y2R.mp4?tag=28"
-    poster="https://pbs.twimg.com/amplify_video_thumb/2067633453122879488/img/OqG5pYLLRaut2MPX.jpg"
+    src="https://trycua.github.io/assets/videos/cua-driver/linux-wayland-16-cursors.mp4"
+    poster="https://trycua.github.io/assets/posters/cua-driver/linux-wayland-16-cursors.jpg"
     title="Sixteen background windows on Wayland"
     sourceUrl="https://x.com/trycua/status/2067639344698179789"
   >
     Sixteen pointers draw in separate windows around a foreground window that Cua Driver does not operate.
   </VideoDemo>
 </div>
+
+The next recording shows the same background behavior during a complete development loop on macOS.
+The agent tests and fixes an app while the terminal remains in front.
+
+<VideoDemo
+  className="my-8"
+  src="https://trycua.github.io/assets/videos/cua-driver/macos-background-dev-loop.mp4"
+  poster="https://trycua.github.io/assets/posters/cua-driver/macos-background-dev-loop.jpg"
+  title="Fix and check an app without taking over the desktop"
+  sourceUrl="https://x.com/trycua/status/2047383205444251889"
+>
+  The terminal stays active while Cua Driver operates Chrome and a native task app behind it.
+</VideoDemo>
 
 ## How fallback works
 

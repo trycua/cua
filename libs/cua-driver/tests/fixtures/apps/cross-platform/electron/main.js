@@ -58,6 +58,7 @@ ipcMain.on('cua-e2e-sentinel-event', (_event, entry) => {
 });
 
 let mainWindow;
+let compositorHeartbeatTimer;
 
 function createWindow() {
   const fixedTitle = sentinelMode
@@ -126,6 +127,18 @@ function createWindow() {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setTitle(fixedTitle);
         if (sentinelMode) {
+          if (customCuaCompositor && !compositorHeartbeatTimer) {
+            // Chromium's renderer timer queue can pause under the deliberately
+            // minimal nested compositor even while the surface keeps painting.
+            // Drive the heartbeat over renderer IPC in that environment: the
+            // preload must still service the message before it reaches the
+            // journal, so this remains a renderer-responsiveness oracle.
+            compositorHeartbeatTimer = setInterval(() => {
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('cua-e2e-heartbeat');
+              }
+            }, 100);
+          }
           if (process.platform !== 'darwin' && !nativeWayland) {
             mainWindow.setAlwaysOnTop(true);
           }

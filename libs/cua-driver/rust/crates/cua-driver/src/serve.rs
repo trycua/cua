@@ -450,7 +450,7 @@ async fn invoke_daemon_tool(
                 operation,
                 known_tool,
                 true,
-                cua_driver_core::server::StdioExecutionPath::InProcess,
+                cua_driver_core::server::StdioExecutionPath::DirectDaemon,
             ),
             transport,
         )
@@ -550,10 +550,9 @@ async fn invoke_daemon_tool(
 /// whether a pipe instance is available **without consuming one**. The
 /// previous design (sending a `list` request) opened a pipe instance,
 /// then the immediately-following real `send_request` had to wait for the
-/// daemon to spin up its NEXT instance — that race caused real tool calls
+/// daemon to spin up its NEXT instance — that race made real tool calls
 /// (especially state-dependent ones like `click` that need the daemon's
-/// element_index cache) to fall through to the in-process path with a
-/// fresh empty cache. See the conversation around the
+/// element_index cache) miss the shared daemon state. See the conversation around the
 /// "Element 3 not in cache" bug for the diagnosis.
 ///
 /// `WaitNamedPipeW(name, 1)`:
@@ -837,8 +836,8 @@ pub async fn run_serve(
                                 //
                                 // `capabilities` is sourced from the centralised
                                 // `cua_driver_core::tool::default_capabilities_for`
-                                // name → tokens map so the daemon and in-process
-                                // paths emit identical capability arrays.
+                                // name → tokens map so daemon responses match the
+                                // core MCP capability contract.
                                 let tools: Vec<serde_json::Value> = reg.iter_defs()
                                     .map(|(name, def)| {
                                         let caps = cua_driver_core::tool::default_capabilities_for(name);
@@ -1141,8 +1140,8 @@ fn is_self_at_high_il() -> bool {
 /// #1630). Without this, the default UIPI rule "no write-up across IL
 /// boundaries" makes the High-IL daemon's pipe unreachable from a normal
 /// Medium-IL user shell — every `cua-driver <tool>` call from the CLI
-/// silently falls through to in-process execution with a fresh, empty
-/// `ToolState`, which breaks the element_index cache invariant
+/// fails to reach the daemon and its shared `ToolState`, which breaks the
+/// element_index cache invariant
 /// (`get_window_state` → `click(element_index)` stops working because
 /// the two calls land in different ToolState instances).
 ///
@@ -1216,8 +1215,8 @@ pub async fn run_serve(
     if security_attrs.is_none() {
         eprintln!(
             "cua-driver: failed to build cross-IL SECURITY_ATTRIBUTES; pipe will be \
-             High-IL exclusive. CLI calls from Medium-IL shells will fall through \
-             to in-process and break state-dependent tool sequences."
+             High-IL exclusive. CLI and MCP clients from Medium-IL processes \
+             will be unable to reach the daemon."
         );
     }
     // Hold the SD pointer alive for the lifetime of run_serve. We never

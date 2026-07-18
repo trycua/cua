@@ -110,15 +110,6 @@ Check these items before opening an issue:
 2. Run `cua-driver status` from SSH and confirm it reports a running daemon. If it does not, use `cua-driver autostart status` to see whether the Scheduled Task is registered.
 3. Run `query session` and confirm your user has a row in `Active` or `Disc` state.
 4. Run `cua-driver doctor` from RDP and confirm it reports `[ok] interactive session: session N has an attached interactive desktop`.
-5. Confirm that you did not pass `--no-daemon-relaunch` and that `CUA_DRIVER_RS_MCP_NO_RELAUNCH` is unset.
+5. Confirm that the MCP configuration points to the same daemon socket reported by `cua-driver status`.
 
-## Opt out of proxying
-
-To keep `cua-driver mcp` in the current process, such as in a CI runner that already owns an interactive session, use either opt-out:
-
-```powershell
-cua-driver mcp --no-daemon-relaunch          # per-invocation flag
-$env:CUA_DRIVER_RS_MCP_NO_RELAUNCH = "1"    # per-shell env var
-```
-
-With either form, tool calls run directly against the current session.
+There is no in-process opt-out. If the interactive-session daemon is unavailable, MCP startup fails instead of attempting GUI work from the SSH session.

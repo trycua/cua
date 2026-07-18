@@ -5,16 +5,13 @@ description: How the Cua Driver permission policy engine evaluates YAML and Rego
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Cua Driver's permission policy engine sits between an MCP client and the tool implementation. Before the driver executes any tool call it asks the policy engine whether the call is allowed. This page explains how the engine is structured, when it is active, and what guarantees it provides.
+Cua Driver's permission policy engine sits between daemon clients (MCP, CLI, or direct socket clients) and the tool implementation. Before the daemon executes any tool call it asks the policy engine whether the call is allowed. This page explains how the engine is structured, when it is active, and what guarantees it provides.
 
 ## The enforcement point
 
-Every MCP tool call passes through one of two dispatch paths:
+Every tool call reaches a running `cua-driver serve` daemon. A thin `cua-driver mcp` process proxies MCP calls over the local socket; `cua-driver call` sends its one request to the same daemon.
 
-- **In-process dispatch.** The MCP server receives the call directly, normalizes arguments, and executes the tool in the same process.
-- **Daemon-proxy dispatch.** A thin `cua-driver mcp` process proxies the call to a running `cua-driver serve` daemon over a Unix socket.
-
-The policy engine is invoked at the in-process MCP handler and at the proxy layer: once in the proxy before it forwards the call, and once in the daemon before it executes it. A policy denial at either point returns an error to the client; the tool implementation is never reached.
+The policy engine is always invoked in the daemon before tool execution. The MCP proxy also evaluates the policy when `CUA_DRIVER_POLICY_FILE` is present in its environment, providing an earlier defense-in-depth check. A denial at either point returns an error to the client; the tool implementation is never reached.
 
 ## Deny-by-default
 
@@ -24,7 +21,7 @@ The deny-by-default behavior applies only when a policy is active. When `CUA_DRI
 
 ## Process-lifetime snapshot
 
-The policy file is loaded once when the daemon or in-process server starts. All subsequent calls share the same immutable policy object for the lifetime of that process. There is no reload endpoint and no hot-swap path. Changing the policy takes effect only after the process restarts.
+The policy file is loaded once when the daemon starts. All subsequent calls share the same immutable policy object for the lifetime of that process. There is no reload endpoint and no hot-swap path. Changing the policy takes effect only after the daemon restarts.
 
 This makes the policy a reliable static contract: the same rule that was in effect when the daemon started will still be in effect when the last tool call of the session runs.
 
@@ -57,7 +54,7 @@ At evaluation time, the driver:
 3. Sets the input and evaluates `data.cua.policy.allow`.
 4. Maps the result: `true` → Allow, `false` or `undefined` → Deny, error → Error.
 
-Because Regorus runs fully in-process and does not spawn a subprocess, there is no IPC overhead for each call.
+Because Regorus runs inside the Cua Driver daemon and does not spawn a policy subprocess, there is no additional policy IPC per call.
 
 ## Argument sanitization before evaluation
 
@@ -87,4 +84,4 @@ For remote agents connecting through the daemon's network socket, the policy pro
 
 - [Restrict tool access with permission policies](/how-to-guides/driver/restrict-tool-access): step-by-step setup guide
 - [Permission policies](/reference/cua-driver/permission-policies): YAML schema and Rego input interface
-- [Process model](/reference/cua-driver/process-model): how the daemon and in-process MCP server relate
+- [Process model](/reference/cua-driver/process-model): how CLI and MCP clients reach the daemon

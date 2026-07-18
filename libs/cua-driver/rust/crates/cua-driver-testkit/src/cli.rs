@@ -1,7 +1,8 @@
-//! CLI transport: a stateless `cua-driver call <tool>` process per action.
+//! CLI transport: one `cua-driver call <tool>` process per action, all backed
+//! by a shared test-owned daemon.
 //!
-//! Each call is its own process — no state carries between calls (the property
-//! that makes `set_config` disk-persistence observable here but not over MCP).
+//! Each shell call is its own process, while tool state and enforcement live in
+//! the daemon just as they do in production.
 //! Args are piped via **stdin** rather than a positional arg, which the CLI
 //! accepts and which dodges PowerShell 5.1's quote-stripping on JSON (see #1637).
 
@@ -10,25 +11,41 @@ use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
+use crate::daemon::TestDaemon;
 use crate::driver::Driver;
 use crate::paths::driver_binary;
+use crate::reaper::ChildReaper;
 use crate::response::ToolResponse;
 
 /// Drives cua-driver over the stateless CLI surface.
 pub struct CliDriver {
     bin: std::path::PathBuf,
+    _reaper: Option<ChildReaper>,
+    daemon: Option<TestDaemon>,
 }
 
 impl CliDriver {
     pub fn new() -> Self {
+        let bin = driver_binary();
+        if !bin.exists() {
+            return CliDriver {
+                bin,
+                _reaper: None,
+                daemon: None,
+            };
+        }
+        let mut reaper = ChildReaper::new();
+        let daemon = TestDaemon::spawn(&bin, &mut reaper, &[]);
         CliDriver {
-            bin: driver_binary(),
+            bin,
+            _reaper: Some(reaper),
+            daemon,
         }
     }
 
     /// Whether the driver binary exists (caller should skip the test if not).
     pub fn available(&self) -> bool {
-        self.bin.exists()
+        self.bin.exists() && self.daemon.is_some()
     }
 }
 
@@ -40,9 +57,18 @@ impl Default for CliDriver {
 
 impl Driver for CliDriver {
     fn call(&mut self, tool: &str, args: Value) -> ToolResponse {
+        let Some(daemon) = &self.daemon else {
+            return ToolResponse::new(
+                "test daemon unavailable".into(),
+                Value::Null,
+                true,
+                Value::Null,
+            );
+        };
         let mut child = match Command::new(&self.bin)
             .arg("call")
             .arg(tool)
+            .args(["--socket", &daemon.socket])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

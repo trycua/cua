@@ -32,13 +32,11 @@ fn screen_recording_capturable() -> bool {
 ///
 /// macOS attributes Accessibility / Screen-Recording to the *responsible
 /// process* (the LaunchServices launching app), not the executable path.
-/// So `check_permissions` answered in-process reflects:
+/// So `check_permissions` answered by the daemon reflects:
 ///   - the **CuaDriver daemon** (`com.trycua.driver`) when this process is
 ///     its own responsible process — the real driver status.
-///   - the **calling app** otherwise — e.g. the terminal/IDE that spawned
-///     `cua-driver call …`. That grant is NOT the driver's, which is why a
-///     standalone check can read `true` while `tccutil … com.trycua.driver`
-///     reports no record.
+///   - the **embedding host** otherwise. That is intentional only when the
+///     host directly spawned `cua-driver serve --embedded`.
 fn permission_source() -> serde_json::Value {
     let pid = unsafe { libc::getpid() };
     let ppid = unsafe { libc::getppid() };

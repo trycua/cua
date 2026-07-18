@@ -5,7 +5,7 @@ description: YAML and Rego permission policy schema, environment variable, evalu
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Cua Driver evaluates a permission policy for every MCP tool call when `CUA_DRIVER_POLICY_FILE` is set. The policy is loaded once at process startup and applies to both in-process MCP dispatch and daemon-proxy dispatch. This page is the reference for the file format, evaluation rules, and Rego interface.
+Cua Driver evaluates a permission policy for every daemon tool call when `CUA_DRIVER_POLICY_FILE` is set. The daemon loads the policy once at process startup; the MCP proxy also evaluates the same policy when it is configured in the proxy environment. CLI and MCP calls therefore share the daemon enforcement point. This page is the reference for the file format, evaluation rules, and Rego interface.
 
 ---
 

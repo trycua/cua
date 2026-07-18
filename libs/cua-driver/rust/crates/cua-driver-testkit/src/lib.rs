@@ -8,12 +8,12 @@
 //!
 //! ## Two transports, one shape
 //! cua-driver is driven two ways, and a test should be able to target either:
-//!   - **MCP** ([`McpDriver`]) — one long-lived `cua-driver` server over stdio
-//!     JSON-RPC. State (e.g. `set_config`) persists for the connection.
+//!   - **MCP** ([`McpDriver`]) — one long-lived `cua-driver` stdio proxy backed
+//!     by a test-owned daemon. State persists in the daemon.
 //!     Returns the `{"result":{"content",…,"structuredContent"}}` envelope.
-//!   - **CLI** ([`CliDriver`]) — a stateless `cua-driver call <tool> <json>`
-//!     process per action. Prints `structuredContent` (or text) directly, NOT
-//!     the JSON-RPC envelope.
+//!   - **CLI** ([`CliDriver`]) — a fresh `cua-driver call <tool> <json>` process
+//!     per action, backed by the same test-owned daemon. Prints
+//!     `structuredContent` (or text) directly, NOT the JSON-RPC envelope.
 //!
 //! Both implement [`Driver`] and normalize their differing payloads into one
 //! [`ToolResponse`], so a scenario reads `resp.text()` / `resp.structured()` /
@@ -36,6 +36,7 @@
 pub mod ax;
 mod browser_fixture;
 mod cli;
+mod daemon;
 mod driver;
 pub mod e2e;
 mod journal;

@@ -49,9 +49,9 @@ Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots sti
 macOS attributes Accessibility and Screen Recording grants to a responsible app identity, not simply to an executable path. Use one of these supported launch modes:
 
 - **Standalone:** install `CuaDriver.app`, grant permissions to it, and start its daemon with `open -n -g -a CuaDriver --args serve`. The installed `cua-driver mcp` CLI may proxy through this daemon automatically.
-- **Embedded:** have the macOS app that owns the grants spawn the driver directly with `CUA_DRIVER_EMBEDDED=1` (or `--embedded`). This keeps the driver in that app's responsibility chain, so it inherits the app's grants. A gateway, terminal, or unrelated helper must not spawn it on the app's behalf.
+- **Embedded:** have the macOS app that owns the grants spawn `cua-driver serve --embedded` directly, wait for its private socket, then spawn `cua-driver mcp --embedded --socket <path>` as the stdio proxy. The daemon stays in the app's responsibility chain and inherits its grants. A gateway, terminal, or unrelated helper must not spawn the daemon on the app's behalf.
 
-Directly spawning a raw `cua-driver` binary outside `CuaDriver.app` without embedded mode is unsupported: it has no stable bundle identity for TCC attribution. Do not grant permissions to arbitrary binary paths or rely on that configuration in production. See [`rust/Skills/cua-driver/EMBEDDING.md`](rust/Skills/cua-driver/EMBEDDING.md) for the embedding contract and examples.
+Directly spawning a raw `cua-driver serve` outside `CuaDriver.app` without embedded mode is unsupported: it has no stable bundle identity for TCC attribution. Do not grant permissions to arbitrary binary paths or rely on that configuration in production. See [`rust/Skills/cua-driver/EMBEDDING.md`](rust/Skills/cua-driver/EMBEDDING.md) for the embedding contract and examples.
 
 ## Publishing the agent skill to ClawHub
 

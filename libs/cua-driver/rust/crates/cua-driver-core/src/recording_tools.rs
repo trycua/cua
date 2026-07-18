@@ -79,8 +79,8 @@ impl Tool for StartRecordingTool {
                 capture the main display to `<output_dir>/recording.mp4` (H.264 / \
                 30 fps) for the lifetime of the session. The recording is torn \
                 down automatically when the MCP client disconnects.\n\n\
-                **macOS uses native ScreenCaptureKit** (in-process SCStream + \
-                SCRecordingOutput) so video inherits Cua Driver's own Screen \
+                **macOS uses native ScreenCaptureKit** (daemon-owned SCStream + \
+                SCRecordingOutput) so video inherits the daemon's Screen \
                 Recording grant — no extra TCC prompt, no ffmpeg subprocess. \
                 Requires macOS 15.0+.\n\n\
                 **Windows + Linux use an ffmpeg subprocess** (`gdigrab` / \
@@ -89,7 +89,7 @@ impl Tool for StartRecordingTool {
                 fails on startup the per-turn capture (screenshots + \
                 action.json) still runs and the session's `last_error` field \
                 carries the diagnostic.\n\n\
-                State persists for the life of the daemon / MCP session; a restart \
+                State persists for the life of the daemon; a restart \
                 resets to disabled with no on-disk state. Call `stop_recording` to \
                 disable + finalize the mp4."
                 .into(),

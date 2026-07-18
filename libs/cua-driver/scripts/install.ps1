@@ -79,7 +79,7 @@ param(
     # Default-on: cua-driver-serve is what makes the agent flow work
     # across logon / reboot. Without the scheduled task the user has
     # to remember to run `cua-driver autostart kick` every time, and
-    # MCP-style flows go silently in-process. Opt out with
+    # CLI and MCP tool calls fail when no daemon is available. Opt out with
     # `-AutoStart:$false` or `-NoAutoStart` for CI / sandbox installs
     # that specifically don't want a scheduled task registered.
     [switch]$AutoStart = $true,

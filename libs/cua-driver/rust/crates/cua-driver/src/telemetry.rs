@@ -266,8 +266,8 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("execution_mode", Value::String(execution_mode().into())),
         ]),
         event::MCP_STARTUP_COMPLETED => bounded_properties(&[
-            ("path", Value::String("in_process".into())),
-            ("daemon", Value::String("not_applicable".into())),
+            ("path", Value::String("daemon_proxy".into())),
+            ("daemon", Value::String("already_running".into())),
             ("success", Value::Bool(true)),
             ("duration_bucket", Value::String("lt_100ms".into())),
             ("execution_mode", Value::String(execution_mode().into())),
@@ -870,7 +870,6 @@ pub(crate) fn capture_mcp_startup_completed(
     elapsed: Duration,
 ) {
     let path = match path {
-        "in_process" => "in_process",
         "daemon_proxy" => "daemon_proxy",
         _ => "unknown",
     };
@@ -2700,7 +2699,7 @@ mod tests {
         ));
         let mcp_start = inspect_event(event::MCP_STARTUP_COMPLETED).unwrap();
         assert_eq!(mcp_start["properties"]["transport"], "mcp_stdio");
-        assert_eq!(mcp_start["properties"]["path"], "in_process");
+        assert_eq!(mcp_start["properties"]["path"], "daemon_proxy");
         assert_eq!(
             mcp_start["properties"]["execution_mode"],
             tool["properties"]["execution_mode"]

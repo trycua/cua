@@ -1,24 +1,18 @@
 //! Stdio MCP proxy that forwards `tools/list` and `tools/call` through
 //! the running `cua-driver-rs serve` daemon over its Unix socket.
 //!
-//! This is the runtime half of the TCC auto-relaunch path (issue #1525,
-//! mirror of Swift PR #1479). When `cua-driver-rs mcp` is invoked from
-//! an IDE terminal — Claude Code, Cursor, VS Code, Warp — macOS TCC
-//! attributes the process to the calling terminal, not to
-//! `CuaDriver.app`. The MCP client side sees a normal stdio server,
-//! but every AX probe silently fails because the binary is running
-//! against the wrong bundle id.
+//! This is the only MCP execution path. The client side sees a normal stdio
+//! server, while the daemon remains the single owner of tool state, policy,
+//! and platform permission identity.
 //!
-//! The fix: detect that context (see `crate::bundle`), ensure a daemon
-//! is running under `LaunchServices` (which gives it the right TCC
-//! attribution), then proxy every MCP request through the daemon's
-//! socket. The MCP client never sees the redirection — same JSON-RPC
-//! envelope, same tool semantics.
+//! On macOS the CLI can ensure a daemon is running under `LaunchServices`
+//! (which gives it the right TCC attribution). Embedded hosts and other
+//! platforms start the daemon explicitly. The MCP client never sees that
+//! boundary — it receives the standard JSON-RPC envelope.
 //!
 //! Why this lives in `cua-driver` and not `mcp-server`:
-//!   `cua_driver_core::server::run` already speaks JSON-RPC over stdio
-//!   against an in-process `ToolRegistry`. The proxy speaks the same
-//!   protocol on the client side but the server side is the daemon's
+//!   `cua_driver_core::server` defines the shared JSON-RPC protocol. The
+//!   proxy speaks that protocol on the client side, while the server side is the daemon's
 //!   line-delimited JSON UDS protocol, owned by `crate::serve`.
 //!   Putting the proxy here avoids `mcp-server → cua-driver` reverse
 //!   coupling.
@@ -41,9 +35,8 @@ use crate::serve::{is_daemon_listening, send_request, DaemonRequest, ToolObserva
 /// `socket_path`, and writes the daemon's response back as a proper
 /// JSON-RPC envelope.
 ///
-/// Mirrors `cua_driver_core::server::run`'s control flow exactly — same
-/// EOF + parse-error + notification handling — only the per-method
-/// branches change.
+/// Implements the core protocol's EOF, parse-error, notification, and
+/// response rules while forwarding method dispatch to the daemon.
 ///
 /// Fails fast if the daemon isn't reachable, so MCP clients see a
 /// clear startup error instead of a "successful" handshake that
@@ -131,7 +124,7 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
                 Response::parse_error()
             }
             Ok(req) if req.is_notification() => {
-                // Notifications get dropped, same as `server::run`.
+                // Notifications are intentionally dropped by the stdio adapter.
                 continue;
             }
             Ok(req) => {
@@ -402,8 +395,7 @@ fn fetch_tools_list_from_daemon(
     // Reshape the daemon's `{name, description, input_schema, read_only,
     // ..., capabilities}` envelope into MCP's `{name, description,
     // inputSchema, annotations: {...}, capabilities}` shape. Same
-    // translation `ToolDef::to_list_entry` does for the in-process
-    // path so MCP clients see identical tools/list output either way.
+    // translation `ToolDef::to_list_entry` defines for the core protocol.
     //
     // `capabilities` is passed through verbatim when the daemon
     // provides it; older daemons that don't emit the field fall back
@@ -504,12 +496,12 @@ fn daemon_owns_tool_observation(result: &serde_json::Value) -> bool {
 /// JSON-RPC method dispatcher for the proxy. Mirrors
 /// `cua_driver_core::server::handle_request`:
 ///   - `initialize`     → static `initialize_result()` (same envelope
-///                        the in-process path returns; the daemon's
+///                        as the core protocol server; the daemon's
 ///                        identity is hidden from the MCP client).
 ///   - `tools/list`     → return the cached daemon tool list.
 ///   - `tools/call`     → forward to the daemon and reshape the
 ///                        response into MCP's `CallTool.Result`.
-///   - other            → method-not-found, same as in-process.
+///   - other            → method-not-found.
 async fn handle_proxy_request(
     req: Request,
     id: serde_json::Value,
@@ -579,8 +571,7 @@ async fn handle_proxy_request(
 /// Error mapping:
 ///   - Tool ran and reported failure (`!resp.ok`, including unknown
 ///     tool / bad params) → JSON-RPC success with `result.isError =
-///     true`. Mirrors the in-process `cua_driver_core::server` path so
-///     MCP clients see identical envelopes either way.
+///     true`. Mirrors the core protocol's tool-error envelope.
 ///   - Transport failure (UDS unreachable, decode error, blocking
 ///     task panic) → JSON-RPC error (`-32603`), because the MCP
 ///     client really does need to distinguish "tool said no" from
@@ -640,10 +631,8 @@ async fn forward_tool_call(
         // A non-`ok` daemon response means the tool call reached the
         // daemon and the daemon decided the tool returned an error
         // (or rejected the call). That's tool-level, not transport-
-        // level, so the in-process `cua_driver_core::server` would surface
-        // it as `Response::ok` with `isError: true`. Mirror that
-        // shape here so MCP clients see identical envelopes either
-        // way — CodeRabbit #2.
+        // level, so the core protocol surfaces it as `Response::ok` with
+        // `isError: true`. Mirror that shape here — CodeRabbit #2.
         let msg = resp
             .error
             .unwrap_or_else(|| "daemon reported failure".into());
@@ -669,7 +658,7 @@ async fn forward_tool_call(
 //
 // Unit-test only the JSON shape of the proxy's tool-error envelope.
 // The full proxy loop is exercised by the macOS integration test
-// (the CUA_DRIVER_RS_MCP_FORCE_PROXY harness); these tests just lock
+// (the daemon-backed integration harness); these tests just lock
 // in the per-branch reshape so a
 // regression to `Response::error` for tool-level failures would fail
 // fast in CI on every platform.

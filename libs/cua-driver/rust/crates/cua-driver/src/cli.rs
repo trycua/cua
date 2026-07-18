@@ -12,22 +12,14 @@
 //! Cursor-overlay flags (--cursor-id, --no-overlay, etc.) are consumed by
 //! `CursorConfig::from_args()` and are ignored here.
 
-use cua_driver_core::{protocol::Content, tool::ToolRegistry};
+use cua_driver_core::tool::ToolRegistry;
 use std::process;
 
 /// Which CLI command was requested.
 pub enum Command {
     Mcp {
-        /// Force in-process MCP execution — skip the TCC auto-relaunch
-        /// path that would spawn a daemon via `open -n -g -a CuaDriver
-        /// --args serve` and proxy stdio MCP requests through its Unix
-        /// socket. Useful when the calling context already has the right
-        /// TCC grants (CuaDriver.app launched us directly), or when
-        /// diagnosing in-process failures. Also toggleable via
-        /// `CUA_DRIVER_RS_MCP_NO_RELAUNCH=1`.
-        no_daemon_relaunch: bool,
         /// Override the daemon Unix socket path used by the proxy
-        /// fallback. Defaults to `serve::default_socket_path()`.
+        /// transport. Defaults to `serve::default_socket_path()`.
         socket: Option<String>,
         /// `--claude-code-computer-use-compat`: register the compat
         /// `screenshot` tool (window-scoped, JPEG @ 85%, pid + window_id
@@ -42,13 +34,9 @@ pub enum Command {
         tool: String,
         json_args: Option<serde_json::Value>,
         screenshot_out_file: Option<String>,
-        /// Override the daemon socket/pipe path used by the in-process
-        /// forwarding fallback (matches `--socket` semantics for `serve` /
-        /// `status` / `stop`). Defaults to `serve::default_socket_path()`
-        /// when None — i.e. `cua-driver call X` looks for the user's
-        /// default-path daemon. Surfaced to make integration tests able
-        /// to spin up a tempfile-socketed daemon and route calls
-        /// through it.
+        /// Override the required daemon socket/pipe path (matches `--socket`
+        /// semantics for `serve` / `status` / `stop`). Defaults to
+        /// `serve::default_socket_path()` when None.
         socket: Option<String>,
     },
     McpConfig {
@@ -62,11 +50,9 @@ pub enum Command {
         /// two opt-out signals.
         no_permissions_gate: bool,
         /// True when `--claude-code-computer-use-compat` is on argv. The MCP
-        /// proxy forwards this flag to the daemon it auto-launches (see
-        /// `launch_daemon_and_wait`) so the proxy path registers the compat
-        /// `screenshot` surface, not just the in-process path. Without it the
-        /// flag was a no-op for `cua-driver mcp --claude-code-computer-use-compat`,
-        /// which always routes through the proxy on an installed bundle.
+        /// proxy forwards this flag to a daemon it auto-launches (see
+        /// `launch_daemon_and_wait`) so that daemon registers the requested
+        /// compatibility surface.
         claude_code_compat: bool,
     },
     Stop {
@@ -457,19 +443,16 @@ pub fn parse_command() -> Command {
         println!("                                  --window-id <window_id> --session <session>");
         println!("                                  Approve attachment to one exact existing browser request.");
         println!();
-        println!("mcp options (macOS):");
-        println!(
-            "  --no-daemon-relaunch    Stay in-process; skip auto-launching the CuaDriver daemon."
-        );
-        println!("                          Also: CUA_DRIVER_RS_MCP_NO_RELAUNCH=1");
-        println!("  --embedded              Run embedded inside a host app (also: CUA_DRIVER_EMBEDDED=1).");
-        println!("                          Inherits the host's TCC grants; never prompts or relaunches.");
+        println!("mcp options:");
+        println!("  --embedded              Connect to a daemon spawned by the host app (also:");
+        println!("                          CUA_DRIVER_EMBEDDED=1). Embedded hosts must start");
+        println!("                          `cua-driver serve --embedded` before the MCP proxy.");
         println!("                          See Skills/cua-driver/EMBEDDING.md.");
         println!(
             "  --host-bundle-id <id>   Advisory host bundle id label for check_permissions output."
         );
         println!(
-            "  --socket <path>         Override the daemon UDS path used by the proxy fallback."
+            "  --socket <path>         Override the required daemon socket used by the proxy."
         );
         println!("  --claude-code-computer-use-compat");
         println!("                          Select the Claude Code computer-use compat surface.");
@@ -488,7 +471,7 @@ pub fn parse_command() -> Command {
         );
         println!("                          for any future compat-gated tool.");
         println!();
-        println!("agent cursor overlay (serve / mcp only — needs the daemon UI runloop):");
+        println!("agent cursor overlay (serve only — needs the daemon UI runloop):");
         println!("  The overlay is ON by default: every MCP session automatically gets its own");
         println!(
             "  cursor (keyed by session id) that shows where the agent acts without moving the"
@@ -513,8 +496,8 @@ pub fn parse_command() -> Command {
         );
         println!("                          diamond). Same vocabulary as MCP `cursor_icon`.");
         println!("  --cursor-palette <name> Pick a built-in colour palette for the cursor.");
-        println!("  (These are no-ops for one-shot CLI calls like `cua-driver call` — the overlay");
-        println!("   needs the long-lived AppKit runloop that only `serve` / `mcp` keep alive.)");
+        println!("  Set these on `cua-driver serve`; MCP and one-shot CLI processes are clients");
+        println!("  and do not own the daemon's overlay configuration or UI runloop.");
         println!();
         println!("manifest options:");
         println!("  cua-driver manifest             Emit a stable JSON description of this CLI's surface");
@@ -580,7 +563,6 @@ pub fn parse_command() -> Command {
         }
     }
 
-    let no_daemon_relaunch = args.iter().any(|a| a == "--no-daemon-relaunch");
     let claude_code_compat = args
         .iter()
         .any(|a| a == "--claude-code-computer-use-compat");
@@ -610,13 +592,11 @@ pub fn parse_command() -> Command {
                 std::process::exit(0);
             }
             Command::Mcp {
-                no_daemon_relaunch,
                 socket: socket.clone(),
                 claude_code_compat,
             }
         }
         Some("mcp") => Command::Mcp {
-            no_daemon_relaunch,
             socket: socket.clone(),
             claude_code_compat,
         },
@@ -1005,104 +985,6 @@ pub fn run_describe(registry: &ToolRegistry, name: &str) {
     }
 }
 
-/// Decide whether `mcp` should auto-launch a daemon and proxy MCP
-/// requests through its Unix socket instead of running in-process.
-///
-/// Mirrors Swift `MCPCommand.shouldUseDaemonProxy` in spirit:
-/// the trigger is "shell-spawned bare binary that resolves into an
-/// installed `CuaDriver.app` bundle, with a non-launchd parent".
-/// When any of those conditions fails — explicit opt-out, dev-mode
-/// `cargo run` invocation, already-relaunched-via-launchd — we stay
-/// in-process. The proxy path is purely additive.
-///
-/// `false` on non-macOS targets: TCC is a macOS-only concern and
-/// there's no `open -a` equivalent on Linux / Windows.
-#[cfg(target_os = "macos")]
-pub fn should_use_daemon_proxy(no_daemon_relaunch: bool) -> bool {
-    use crate::bundle::{is_env_truthy, is_executable_inside_cuadriver_app, parent_is_not_launchd};
-    // Embedded mode stays in-process: relaunching via `open -a CuaDriver`
-    // would leave the host's TCC responsibility chain and could prompt
-    // for com.trycua.driver.
-    if cua_driver_core::embedded_mode() {
-        return false;
-    }
-    if no_daemon_relaunch {
-        return false;
-    }
-    if is_env_truthy("CUA_DRIVER_RS_MCP_NO_RELAUNCH") {
-        return false;
-    }
-    // Hidden test/escape hook: force proxy mode without requiring the
-    // executable to live inside CuaDriver.app. Used by the
-    // integration test (which spawns a daemon manually) and by users
-    // who've wrapped the binary in a custom bundle. Skips the
-    // launch_daemon_and_wait `open -a` step too — caller is expected
-    // to have a daemon already running on the chosen socket.
-    if is_env_truthy("CUA_DRIVER_RS_MCP_FORCE_PROXY") {
-        return true;
-    }
-    if !is_executable_inside_cuadriver_app() {
-        // Raw `cargo run` / dev binary — no installed bundle to land
-        // in, so relaunching would fail. Stay in-process.
-        return false;
-    }
-    if !parent_is_not_launchd() {
-        // ppid == 1 — already running as the LaunchServices-spawned
-        // daemon. TCC context is already correct.
-        return false;
-    }
-    true
-}
-
-/// Non-macOS targets don't have TCC, but they DO have the equivalent
-/// problem of session attribution on Windows (Session 0 vs the user's
-/// interactive Session 1+). When the CLI is spawned via SSH or a
-/// Windows service, it lands in Session 0 where the desktop, window
-/// APIs, and UI Automation return empty. A daemon running in the
-/// interactive session (via `cua-driver autostart enable && kick`,
-/// or any other Session-1+ launch) can answer tool calls correctly —
-/// so when one is up, we proxy through it.
-///
-/// Behaviour:
-///   * `--no-daemon-relaunch` or `CUA_DRIVER_RS_MCP_NO_RELAUNCH=1`
-///     forces in-process (matches macOS opt-out).
-///   * `CUA_DRIVER_RS_MCP_FORCE_PROXY=1` always proxies, even with
-///     no daemon up — the caller is responsible for having one
-///     already.
-///   * Otherwise we probe `is_daemon_listening` on the default
-///     socket: a live daemon means proxy through it; nothing
-///     listening means run in-process (no autospawn equivalent on
-///     Linux/Windows — there's no `open -a CuaDriver` analog).
-#[cfg(not(target_os = "macos"))]
-pub fn should_use_daemon_proxy(no_daemon_relaunch: bool) -> bool {
-    use crate::bundle::is_env_truthy;
-    // Same rule as macOS: an embedded driver answers in-process.
-    if cua_driver_core::embedded_mode() {
-        return false;
-    }
-    if no_daemon_relaunch {
-        return false;
-    }
-    if is_env_truthy("CUA_DRIVER_RS_MCP_NO_RELAUNCH") {
-        return false;
-    }
-    if is_env_truthy("CUA_DRIVER_RS_MCP_FORCE_PROXY") {
-        return true;
-    }
-    // Either the regular daemon (`\\.\pipe\cua-driver`) OR the uiAccess'd
-    // worker (`\\.\pipe\cua-driver-uia`) is a valid proxy target on Windows:
-    // both speak the same line-delimited JSON protocol. Preferring proxy mode
-    // when only the uia worker is up means MCP tool calls land in a process
-    // that bypasses UIPI for UWP apps. See #1602 / the cua-driver-uia crate.
-    #[cfg(target_os = "windows")]
-    {
-        if crate::serve::is_daemon_listening(&crate::serve::default_uia_pipe_path()) {
-            return true;
-        }
-    }
-    crate::serve::is_daemon_listening(&crate::serve::default_socket_path())
-}
-
 /// Spawn `/usr/bin/open -n -g -a CuaDriver --args serve` to launch
 /// the daemon under `LaunchServices` (so it inherits the bundle's
 /// TCC attribution), then poll the socket for up to `timeout_secs`
@@ -1187,9 +1069,7 @@ pub fn launch_daemon_and_wait(
 
     let status = status.map_err(|error| LaunchDaemonError {
         kind: LaunchDaemonErrorKind::Failed,
-        message: format!(
-            "failed to exec `/usr/bin/open`: {error}. Pass --no-daemon-relaunch to bypass."
-        ),
+        message: format!("failed to exec `/usr/bin/open`: {error}"),
     })?;
 
     if !status.success() {
@@ -1197,8 +1077,7 @@ pub fn launch_daemon_and_wait(
             kind: LaunchDaemonErrorKind::Failed,
             message: format!(
                 "`open -n -g -a CuaDriver --args serve{}` exited {:?}. \
-             Check that `/Applications/CuaDriver.app` is installed, or \
-             pass --no-daemon-relaunch to bypass.",
+             Check that `/Applications/CuaDriver.app` is installed.",
                 if pass_socket {
                     format!(" --socket {socket_path}")
                 } else {
@@ -1224,8 +1103,7 @@ pub fn launch_daemon_and_wait(
         message: format!(
             "daemon did not appear on {socket_path} within {timeout_secs}s. If this \
          is the first launch, grant Accessibility + Screen Recording to \
-         CuaDriver.app in System Settings and retry. Pass --no-daemon-relaunch \
-         to stay in-process."
+         CuaDriver.app in System Settings and retry."
         ),
     })
 }
@@ -1292,19 +1170,16 @@ where
     let already_running = crate::serve::is_daemon_listening(&socket_path);
     let mut daemon = McpDaemonStartup::AlreadyRunning;
     if !already_running {
-        // CUA_DRIVER_RS_MCP_FORCE_PROXY callers (test harness, custom
-        // bundle setups) supply their own daemon — skip the auto-
-        // launch step, since they don't have an installed
-        // CuaDriver.app to relaunch into. Fail fast if no daemon is
-        // up at this point.
-        if crate::bundle::is_env_truthy("CUA_DRIVER_RS_MCP_FORCE_PROXY") {
+        // Never replace an embedded host's TCC identity by launching the
+        // standalone CuaDriver.app daemon.
+        if cua_driver_core::embedded_mode() {
             if let Some(on_startup) = on_startup.take() {
                 on_startup(McpDaemonStartup::Unreachable, false);
             }
             anyhow::bail!(
-                "CUA_DRIVER_RS_MCP_FORCE_PROXY=1 but no daemon listening on \
-                 {socket_path}. Start one with `cua-driver serve --socket {socket_path}` \
-                 and retry."
+                "no Cua Driver daemon listening on {socket_path}. Start one with \
+                 `cua-driver serve --socket {socket_path}` and retry. Embedded hosts \
+                 must spawn `cua-driver serve --embedded` before starting the MCP proxy."
             );
         }
         #[cfg(target_os = "macos")]
@@ -1317,7 +1192,7 @@ where
             eprintln!(
                 "cua-driver-rs: mcp launched without CuaDriver.app's TCC grants; \
                  auto-launching the daemon via `open -n -g -a CuaDriver --args serve{socket_suffix}` \
-                 and proxying MCP requests through it. Pass --no-daemon-relaunch to stay in-process."
+                 and proxying MCP requests through it."
             );
             if let Err(error) = launch_daemon_and_wait(&socket_path, 10, claude_code_compat) {
                 if let Some(on_startup) = on_startup.take() {
@@ -1338,12 +1213,8 @@ where
         let _ = claude_code_compat;
         // On Linux / Windows there's no equivalent `open -a CuaDriver`
         // mechanism to spawn a daemon attributed to the user's
-        // interactive session. The caller is expected to have one
-        // running already (e.g. via `cua-driver autostart enable && kick`
-        // on Windows). Bail with an actionable error rather than
-        // silently falling back to an in-process server that would
-        // be attributed to whatever session spawned us (typically
-        // Session 0 over SSH).
+        // interactive session. The caller is expected to have one running
+        // already (e.g. via `cua-driver autostart enable && kick` on Windows).
         #[cfg(not(target_os = "macos"))]
         {
             if let Some(on_startup) = on_startup.take() {
@@ -1354,9 +1225,7 @@ where
                  your interactive session — on Windows run \
                  `cua-driver autostart enable && cua-driver autostart kick`; \
                  on Linux run `cua-driver serve &` in the user's session. \
-                 Then re-run `cua-driver mcp`. To skip the proxy and run \
-                 in-process anyway (Session 0 attribution, GUI tools will \
-                 return empty), pass --no-daemon-relaunch."
+                 Then re-run `cua-driver mcp`."
             );
         }
     }
@@ -1421,12 +1290,11 @@ pub fn build_manifest() -> serde_json::Value {
         // consumer can render uniformly.
         "subcommands": [
             { "name": "mcp",
-              "description": "Run the MCP JSON-RPC server over stdio (the default invocation).",
+              "description": "Run the MCP stdio proxy backed by the required Cua Driver daemon (the default invocation).",
               "args": [
-                  { "name": "--no-daemon-relaunch", "type": "flag", "description": "Skip the bundle-based TCC auto-relaunch and stay in-process." },
-                  { "name": "--socket", "type": "string", "description": "Override the daemon proxy UDS path." },
+                  { "name": "--socket", "type": "string", "description": "Override the required daemon socket path." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Select the Claude Code computer-use compat tool surface." },
-                  { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
+                  { "name": "--embedded", "type": "flag", "description": "Require a daemon spawned by the embedding host instead of auto-launching the standalone app." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
               ] },
             { "name": "serve",
@@ -1451,12 +1319,12 @@ pub fn build_manifest() -> serde_json::Value {
               "description": "Print a single tool's full description + JSON input schema.",
               "args": [ { "name": "tool", "type": "positional-string", "description": "Tool name." } ] },
             { "name": "call",
-              "description": "Invoke a single tool one-shot — proxies to a running daemon when one is up, otherwise runs in-process.",
+              "description": "Invoke a single tool through the required running daemon.",
               "args": [
                   { "name": "tool", "type": "positional-string", "description": "Tool name." },
                   { "name": "json-args", "type": "positional-json", "description": "Tool input JSON (or read from stdin)." },
                   { "name": "--screenshot-out-file", "type": "string", "description": "Write image content to this path instead of emitting base64." },
-                  { "name": "--socket", "type": "string", "description": "Override the daemon socket path used by the in-process forwarding fallback." }
+                  { "name": "--socket", "type": "string", "description": "Override the required daemon socket path." }
               ] },
             { "name": "mcp-config",
               "description": "Print the MCP server config snippet or a client-specific install command.",
@@ -1749,22 +1617,21 @@ pub fn run_mcp_config(client: Option<&str>) {
     }
 }
 
-/// Invoke a tool, forwarding to a running daemon if one is reachable;
-/// otherwise runs in-process. Prints result to stdout on success, error
-/// to stderr on failure. Exits 1 if the tool returned an error result.
+/// Invoke a tool through the required running daemon. Prints result to stdout
+/// on success and stderr on failure. Exits non-zero when the daemon is absent,
+/// unreachable, or the tool returns an error.
 /// When `screenshot_out_file` is provided, image content is written there
 /// instead of emitted as base64 on stdout.
 ///
 /// `socket` — override the daemon socket path (from --socket flag).
 pub fn run_call(
-    registry: std::sync::Arc<ToolRegistry>,
     tool: &str,
     json_args: Option<serde_json::Value>,
     screenshot_out_file: Option<String>,
     socket_override: Option<String>,
 ) {
-    // Daemon forwarding: if a daemon is listening, proxy the request
-    // through it so AppStateEngine's element_index cache is shared.
+    // All public tool execution is daemon-backed so policy, session state,
+    // AppStateEngine caches, and platform identity have one enforcement point.
     //
     // On Windows, prefer the uiAccess-elevated worker (cua-driver-uia.exe) when
     // present — it runs at UIAccess integrity and bypasses UIPI for UWP apps
@@ -1792,42 +1659,15 @@ pub fn run_call(
             crate::serve::default_socket_path()
         }
     };
-    // macOS: `check_permissions` with prompt:true raises a TCC dialog. Run
-    // in-process from a terminal, that dialog attributes to the *terminal*
-    // (LaunchServices' "responsible" process), not to com.trycua.driver —
-    // so the grant lands on the wrong app and never sticks for the driver.
-    // When we're a bundle CLI spawned from a terminal (should_use_daemon_proxy)
-    // and there's no daemon to route through, DON'T raise the mis-attributed
-    // prompt: degrade to report-only and tell the user the one launch that
-    // grants correctly (`open … CuaDriver --args serve`, which raises the
-    // dialog as CuaDriver and waits for the grant). We deliberately do NOT
-    // auto-spawn that daemon here — a `call` shouldn't leave a background
-    // daemon behind, and the first-launch gate can lag socket creation.
-    #[cfg(target_os = "macos")]
-    let json_args = {
-        let mut effective = json_args;
-        let wants_prompt = effective
-            .as_ref()
-            .and_then(|v| v.get("prompt"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true); // check_permissions defaults prompt:true
-        if tool == "check_permissions"
-            && wants_prompt
-            && !crate::serve::is_daemon_listening(&socket_path)
-            && should_use_daemon_proxy(false)
-        {
-            eprintln!(
-                "cua-driver-rs: reporting permission status only. A prompt raised from \
-                 this terminal would attribute to the terminal, not CuaDriver, so the \
-                 grant wouldn't apply to the driver. To grant correctly, launch the \
-                 driver as its own app:\n  open -n -g -a CuaDriver --args serve\n\
-                 then approve the CuaDriver dialog in System Settings."
-            );
-            effective = Some(serde_json::json!({ "prompt": false }));
-        }
-        effective
-    };
-    if crate::serve::is_daemon_listening(&socket_path) {
+    if !crate::serve::is_daemon_listening(&socket_path) {
+        eprintln!(
+            "Cua Driver daemon is not running on {socket_path}.\n\
+             Start it first with: cua-driver serve --socket {socket_path}"
+        );
+        process::exit(1);
+    }
+
+    {
         let mut args_for_daemon = json_args
             .clone()
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
@@ -1885,9 +1725,8 @@ pub fn run_call(
                             }
                         }
                         if let Some(sc) = result.get("structuredContent") {
-                            // Merge image data into the structured payload
-                            // (matches in-process behaviour at the bottom of
-                            // this fn) so `cua-driver call screenshot` over
+                            // Merge image data into the structured payload so
+                            // `cua-driver call screenshot` over
                             // the daemon socket still emits
                             // `screenshot_png_b64`. Previously this path
                             // dropped the image entirely when no
@@ -1935,136 +1774,10 @@ pub fn run_call(
                 }
             }
             Err(e) => {
-                // Daemon became unreachable mid-call — fall through to in-process.
-                // Promoted from `tracing::debug!` to `eprintln!` so callers see
-                // the degradation: in-process execution gets a FRESH ToolState,
-                // which means state-dependent tools (`click`, `type_text`,
-                // `set_value` — anything that reads the element_index cache)
-                // will fail with "Element N not in cache" even when a prior
-                // `get_window_state` populated the daemon's cache, because the
-                // daemon's cache and the in-process cache are different.
-                eprintln!(
-                    "[cua-driver] WARNING: daemon proxy to {socket_path} failed ({e}); \
-                     running '{tool}' in-process. State-dependent tools may misbehave."
-                );
+                eprintln!("Cua Driver daemon request on {socket_path} failed: {e}");
+                process::exit(1);
             }
         }
-    }
-    if registry.get_def(tool).is_none() {
-        eprintln!("Unknown tool: {tool}");
-        eprintln!("Run `cua-driver list-tools` to see available tools.");
-        process::exit(64);
-    }
-
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime");
-
-    let mut args = json_args.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-    cua_driver_core::tool_args::sanitize_reserved_args(&mut args);
-    let session_context = cua_driver_core::session::begin_tool_call(
-        tool,
-        &args,
-        true,
-        cua_driver_core::session::SessionTransport::Cli,
-    );
-    let operation = cua_driver_core::server::tool_operation(tool, Some(&args));
-    let observation_timer = cua_driver_core::server::ToolObservationTimer::start_with_operation(
-        tool.to_owned(),
-        operation,
-        true,
-        true,
-        cua_driver_core::server::StdioExecutionPath::InProcess,
-    );
-    let tool_name = tool.to_string();
-    let out_path = screenshot_out_file;
-    let is_error = rt.block_on(async move {
-        let result = registry.invoke(&tool_name, args).await;
-        let is_err = result.is_error.unwrap_or(false);
-        if let Ok(value) = serde_json::to_value(&result) {
-            let response = cua_driver_core::protocol::Response::ok(serde_json::Value::Null, value);
-            let outcome = observation_timer.finish(&response);
-            if let Some(context) = session_context {
-                context.complete(&outcome);
-            }
-            crate::telemetry::capture_tool_completed(outcome, crate::telemetry::Transport::Cli);
-        }
-
-        // Emit content.
-        let mut has_printed = false;
-        let mut image_b64: Option<(String, String)> = None; // (base64, mime)
-        for item in &result.content {
-            match item {
-                Content::Text { text, .. } => {
-                    if is_err {
-                        eprintln!("{text}");
-                    } else {
-                        // Only print text when there is no structuredContent
-                        // (structuredContent path prints below).
-                        if result.structured_content.is_none() {
-                            println!("{text}");
-                            has_printed = true;
-                        }
-                    }
-                }
-                Content::Image {
-                    data, mime_type, ..
-                } => {
-                    image_b64 = Some((data.clone(), mime_type.clone()));
-                }
-            }
-        }
-
-        // If --screenshot-out-file was provided, write the image there
-        // and suppress it from the JSON output (same as Swift reference).
-        if let Some(ref path) = out_path {
-            if let Some((b64, _mime)) = image_b64.take() {
-                use base64::Engine as _;
-                match base64::engine::general_purpose::STANDARD.decode(&b64) {
-                    Ok(bytes) => {
-                        if let Err(e) = std::fs::write(path, &bytes) {
-                            eprintln!("--screenshot-out-file: failed to write {path}: {e}");
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("--screenshot-out-file: base64 decode failed: {e}");
-                    }
-                }
-            } else {
-                eprintln!(
-                    "--screenshot-out-file: no image content in tool response; file not written"
-                );
-            }
-        }
-
-        // If there's structuredContent, print it as JSON (with image merged in if no out_path).
-        if let Some(sc) = &result.structured_content {
-            if !is_err {
-                let mut obj = sc.clone();
-                if out_path.is_none() {
-                    if let Some((b64, mime)) = image_b64 {
-                        if let serde_json::Value::Object(ref mut map) = obj {
-                            map.insert("screenshot_png_b64".into(), serde_json::Value::String(b64));
-                            map.insert(
-                                "screenshot_mime_type".into(),
-                                serde_json::Value::String(mime),
-                            );
-                        }
-                    }
-                }
-                let pretty = serde_json::to_string_pretty(&obj).unwrap_or_else(|_| obj.to_string());
-                println!("{pretty}");
-                has_printed = true;
-            }
-        }
-
-        let _ = has_printed;
-        is_err
-    });
-
-    if is_error {
-        process::exit(1);
     }
 }
 
@@ -2073,7 +1786,7 @@ pub fn run_call(
 /// on the running daemon.
 ///
 /// Requires a running daemon (`cua-driver serve`) because recording
-/// state lives in-process.
+/// state lives in the daemon.
 pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>) {
     // `render` is pure file-to-file work that doesn't need the daemon;
     // dispatch it before the daemon-running check so it works without
@@ -2418,7 +2131,7 @@ pub fn run_update_cmd(apply: bool, json: bool) {
 }
 
 /// `cua-driver permissions status|grant`.
-pub fn run_permissions_cmd(_registry: std::sync::Arc<ToolRegistry>, subcommand: &str, json: bool) {
+pub fn run_permissions_cmd(subcommand: &str, json: bool) {
     match subcommand {
         "status" => run_permissions_status(json),
         "grant" => run_permissions_grant(),
@@ -2709,17 +2422,16 @@ fn cli_docs_json() -> serde_json::Value {
         "commands": [
             {
                 "name": "mcp",
-                "abstract": "Run the stdio MCP server.",
-                "discussion": "On macOS, shell-spawned MCP processes can auto-launch and proxy through a CuaDriver.app daemon so TCC grants attach to the bundle. On Windows and Linux, MCP proxies through an already-running daemon when one is listening.",
+                "abstract": "Run the daemon-backed stdio MCP proxy.",
+                "discussion": "Every MCP tool call is forwarded to a Cua Driver daemon. On macOS the proxy can auto-launch CuaDriver.app; on Windows and Linux the daemon must already be running.",
                 "arguments": no_args,
                 "options": [
-                    {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path used by the proxy fallback.","type":"String","default_value":null,"is_optional":true},
+                    {"name":"socket","short_name":null,"help":"Override the required daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},
                     {"name":"host-bundle-id","short_name":null,"help":"Advisory host bundle id label echoed in check_permissions output (embedded mode).","type":"String","default_value":null,"is_optional":true}
                 ],
                 "flags": [
-                    {"name":"no-daemon-relaunch","short_name":null,"help":"Stay in-process instead of proxying through a daemon.","default_value":false},
                     {"name":"claude-code-computer-use-compat","short_name":null,"help":"Expose the Claude Code computer-use compatibility screenshot surface.","default_value":false},
-                    {"name":"embedded","short_name":null,"help":"Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.","default_value":false}
+                    {"name":"embedded","short_name":null,"help":"Require a daemon spawned by the embedding host instead of auto-launching the standalone app.","default_value":false}
                 ],
                 "subcommands": no_subcommands
             },
@@ -2743,8 +2455,8 @@ fn cli_docs_json() -> serde_json::Value {
             },
             {
                 "name": "call",
-                "abstract": "Invoke an MCP tool directly from the shell.",
-                "discussion": "Runs the same handler the MCP server uses. JSON arguments may be passed as a positional JSON object or through stdin.",
+                "abstract": "Invoke an MCP tool through the running daemon.",
+                "discussion": "Requires a Cua Driver daemon. JSON arguments may be passed as a positional JSON object or through stdin.",
                 "arguments": [
                     {"name":"tool-name","help":"Name of the MCP tool to invoke.","type":"String","is_optional":false},
                     {"name":"json-args","help":"JSON object for the tool input schema. If omitted, stdin is read when piped.","type":"String","is_optional":true}
@@ -2805,7 +2517,7 @@ fn cli_docs_json() -> serde_json::Value {
             {
                 "name": "recording",
                 "abstract": "Control trajectory recording on a running daemon.",
-                "discussion": "Recording state lives in-process, so use a daemon for multi-call sessions.",
+                "discussion": "Recording state lives in the required daemon and survives client reconnects.",
                 "arguments": no_args,
                 "options": [{"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true}],
                 "flags": no_flags,
@@ -3014,11 +2726,11 @@ pub fn run_dump_docs_with_type(registry: &ToolRegistry, pretty: bool, doc_type: 
 ///   - install layout (/Applications/CuaDriver.app, ~/.local/bin/cua-driver)
 ///   - TCC DB rows for com.trycua.driver (sqlite3, best-effort)
 ///   - config + state paths with existence booleans
-pub fn run_diagnose_cmd(registry: std::sync::Arc<ToolRegistry>) {
+pub fn run_diagnose_cmd() {
     let sections = [
         diagnose_runtime_section(),
         diagnose_signature_section(),
-        diagnose_tcc_section(registry),
+        diagnose_tcc_section(),
         diagnose_install_layout_section(),
         diagnose_tcc_db_section(),
         diagnose_config_paths_section(),
@@ -3084,43 +2796,36 @@ fn diagnose_signature_section() -> String {
     )
 }
 
-fn diagnose_tcc_section(registry: std::sync::Arc<ToolRegistry>) -> String {
-    // Call check_permissions in-process (quick, read-only).
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build();
-
-    let (ax, sr) = if let Ok(rt) = rt {
-        rt.block_on(async {
-            let result = registry
-                .invoke(
-                    "check_permissions",
-                    serde_json::Value::Object(Default::default()),
-                )
-                .await;
-            if let Some(sc) = &result.structured_content {
-                let ax = sc
-                    .get("accessibility")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let sr = sc
-                    .get("screen_recording")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                (ax, sr)
-            } else {
-                (false, false)
-            }
+fn diagnose_tcc_section() -> String {
+    let socket = crate::serve::default_socket_path();
+    let status = crate::serve::is_daemon_listening(&socket)
+        .then(|| crate::serve::DaemonRequest {
+            method: "call".into(),
+            name: Some("check_permissions".into()),
+            args: Some(serde_json::json!({ "prompt": false })),
+            session_id: None,
+            observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
         })
-    } else {
-        (false, false)
+        .and_then(|request| crate::serve::send_request(&socket, &request).ok())
+        .filter(|response| response.ok)
+        .and_then(|response| response.result)
+        .and_then(|result| result.get("structuredContent").cloned());
+    let display = |key: &str| {
+        status
+            .as_ref()
+            .and_then(|value| value.get(key))
+            .and_then(serde_json::Value::as_bool)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown (daemon unavailable)".to_owned())
     };
+    let ax = display("accessibility");
+    let sr = display("screen_recording");
 
     format!(
-        "## tcc probes (live process)\n\
+        "## tcc probes (daemon)\n\
          accessibility     (AXIsProcessTrusted): {ax}\n\
          screen recording  (SCShareableContent):  {sr}\n\n\
-         if the UI disagrees with these booleans the live process is fine —\n\
+         if the UI disagrees with these booleans the daemon is fine —\n\
          the issue is elsewhere (wrong bundle granted, stale cdhash, etc)."
     )
 }
@@ -3244,42 +2949,10 @@ fn diagnose_config_paths_section() -> String {
     lines.join("\n")
 }
 
-/// Path to the persistent JSON config file (`~/.cua-driver/config.json`).
-fn config_file_path() -> std::path::PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    std::path::PathBuf::from(format!("{home}/.cua-driver/config.json"))
-}
-
-/// Read persisted config from disk.  Returns an empty object if absent/unreadable.
-fn read_config_file() -> serde_json::Value {
-    let path = config_file_path();
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}))
-}
-
-/// Write a single key/value into the persisted config file.
-fn write_config_file(key: &str, value: &serde_json::Value) {
-    let path = config_file_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let mut cfg = read_config_file();
-    if let serde_json::Value::Object(ref mut map) = cfg {
-        map.insert(key.to_owned(), value.clone());
-    }
-    if let Ok(json) = serde_json::to_string_pretty(&cfg) {
-        let _ = std::fs::write(&path, json);
-    }
-}
-
 /// `cua-driver config [show|get|set|reset] [key] [value]`
 ///
-/// Thin wrapper around the `get_config` / `set_config` MCP tools.
-/// Forwards to the daemon when one is reachable, otherwise runs in-process.
+/// Thin daemon-only wrapper around the `get_config` / `set_config` tools.
 pub fn run_config_cmd(
-    registry: std::sync::Arc<ToolRegistry>,
     subcommand: Option<&str>,
     key: Option<&str>,
     value: Option<&str>,
@@ -3289,25 +2962,56 @@ pub fn run_config_cmd(
         .map(str::to_owned)
         .unwrap_or_else(crate::serve::default_socket_path);
 
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime");
+    if !crate::serve::is_daemon_listening(&socket_path) {
+        eprintln!(
+            "Cua Driver daemon is not running on {socket_path}.\n\
+             Start it first with: cua-driver serve --socket {socket_path}"
+        );
+        process::exit(1);
+    }
+
+    let call = |tool: &str, args: serde_json::Value| -> serde_json::Value {
+        let req = crate::serve::DaemonRequest {
+            method: "call".into(),
+            name: Some(tool.to_owned()),
+            args: Some(args),
+            session_id: None,
+            observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+        };
+        let response = crate::serve::send_request(&socket_path, &req).unwrap_or_else(|error| {
+            eprintln!("Cua Driver daemon request on {socket_path} failed: {error}");
+            process::exit(1);
+        });
+        if !response.ok {
+            eprintln!(
+                "{}",
+                response
+                    .error
+                    .unwrap_or_else(|| format!("daemon rejected {tool}"))
+            );
+            process::exit(response.exit_code.unwrap_or(1));
+        }
+        response.result.unwrap_or_else(|| {
+            eprintln!("{tool}: daemon returned no result");
+            process::exit(1);
+        })
+    };
+
+    let get_config = || -> serde_json::Value {
+        let result = call("get_config", serde_json::json!({}));
+        result.get("structuredContent").cloned().unwrap_or_else(|| {
+            eprintln!("get_config: no structured content returned");
+            process::exit(1);
+        })
+    };
 
     match subcommand.unwrap_or("show") {
         "show" | "" => {
-            // Print full config as pretty JSON.
-            let config =
-                rt.block_on(async { registry.invoke("get_config", serde_json::json!({})).await });
-            if let Some(sc) = config.structured_content {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&sc).unwrap_or_else(|_| sc.to_string())
-                );
-            } else {
-                eprintln!("get_config: no structured content returned");
-                process::exit(1);
-            }
+            let config = get_config();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&config).unwrap_or_else(|_| config.to_string())
+            );
         }
 
         "get" => {
@@ -3325,58 +3029,18 @@ pub fn run_config_cmd(
                 );
                 process::exit(64);
             }
-            // Try daemon first.
-            if crate::serve::is_daemon_listening(&socket_path) {
-                let req = crate::serve::DaemonRequest {
-                    method: "call".into(),
-                    name: Some("get_config".into()),
-                    args: Some(serde_json::json!({})),
-                    // CLI `config get` reads the persisted global (anonymous).
-                    session_id: None,
-                    observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
-                };
-                if let Ok(resp) = crate::serve::send_request(&socket_path, &req) {
-                    if resp.ok {
-                        if let Some(result) = resp.result {
-                            if let Some(sc) = result.get("structuredContent") {
-                                if let Some(v) = sc.get(key) {
-                                    println!("{v}");
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            // In-process: merge persisted file config over in-memory defaults.
-            let config =
-                rt.block_on(async { registry.invoke("get_config", serde_json::json!({})).await });
-            let mut sc = match config.structured_content {
-                Some(v) => v,
-                None => {
-                    eprintln!("get_config: no structured content returned");
-                    process::exit(1);
-                }
-            };
-            // Overlay persisted values from the config file.
-            let file_cfg = read_config_file();
-            if let (serde_json::Value::Object(sc_map), serde_json::Value::Object(file_map)) =
-                (&mut sc, file_cfg)
-            {
-                for (k, v) in file_map {
-                    if k != "capture_scope" {
-                        sc_map.insert(k, v);
-                    }
-                }
-            }
+            let config = get_config();
             // Support dotted key paths like "agent_cursor.enabled".
             let v = if key.contains('.') {
                 let mut parts = key.splitn(2, '.');
                 let parent = parts.next().unwrap();
                 let child = parts.next().unwrap();
-                sc.get(parent).and_then(|obj| obj.get(child)).cloned()
+                config
+                    .get(parent)
+                    .and_then(|object| object.get(child))
+                    .cloned()
             } else {
-                sc.get(key).cloned()
+                config.get(key).cloned()
             };
             if let Some(v) = v {
                 println!(
@@ -3417,68 +3081,13 @@ pub fn run_config_cmd(
             // Parse value: try JSON, fall back to string.
             let parsed_value: serde_json::Value = serde_json::from_str(value)
                 .unwrap_or_else(|_| serde_json::Value::String(value.to_owned()));
-            let args = serde_json::json!({ key: parsed_value });
-
-            // Try daemon first.
-            if crate::serve::is_daemon_listening(&socket_path) {
-                let req = crate::serve::DaemonRequest {
-                    method: "call".into(),
-                    name: Some("set_config".into()),
-                    args: Some(args.clone()),
-                    // CLI `config set` is anonymous → writes the persisted
-                    // global default (the only writer of the on-disk config).
-                    session_id: None,
-                    observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
-                };
-                if let Ok(resp) = crate::serve::send_request(&socket_path, &req) {
-                    if resp.ok {
-                        println!("Config updated.");
-                        // Show current state.
-                        let req2 = crate::serve::DaemonRequest {
-                            method: "call".into(),
-                            name: Some("get_config".into()),
-                            args: Some(serde_json::json!({})),
-                            session_id: None,
-                            observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
-                        };
-                        if let Ok(r2) = crate::serve::send_request(&socket_path, &req2) {
-                            if let Some(result) = r2.result {
-                                if let Some(sc) = result.get("structuredContent") {
-                                    println!(
-                                        "{}",
-                                        serde_json::to_string_pretty(sc).unwrap_or_default()
-                                    );
-                                }
-                            }
-                        }
-                        return;
-                    } else if let Some(e) = resp.error {
-                        eprintln!("{e}");
-                        process::exit(1);
-                    }
-                }
-            }
-            // In-process.
-            let result = rt.block_on(async { registry.invoke("set_config", args).await });
-            if result.is_error.unwrap_or(false) {
-                for item in &result.content {
-                    if let cua_driver_core::protocol::Content::Text { text, .. } = item {
-                        eprintln!("{text}");
-                    }
-                }
-                process::exit(1);
-            }
-            // Persist the value to disk so future CLI invocations can read it.
-            write_config_file(key, &parsed_value);
-            // Print updated config.
-            let config =
-                rt.block_on(async { registry.invoke("get_config", serde_json::json!({})).await });
-            if let Some(sc) = config.structured_content {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&sc).unwrap_or_else(|_| sc.to_string())
-                );
-            }
+            call("set_config", serde_json::json!({ key: parsed_value }));
+            println!("Config updated.");
+            let config = get_config();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&config).unwrap_or_else(|_| config.to_string())
+            );
         }
 
         "reset" => {
@@ -3489,20 +3098,13 @@ pub fn run_config_cmd(
                 "capture_mode": "ax",
                 "max_image_dimension": 0
             });
-            let result = rt.block_on(async { registry.invoke("set_config", defaults).await });
-            if result.is_error.unwrap_or(false) {
-                eprintln!("config reset failed");
-                process::exit(1);
-            }
+            call("set_config", defaults);
             println!("Config reset to defaults.");
-            let config =
-                rt.block_on(async { registry.invoke("get_config", serde_json::json!({})).await });
-            if let Some(sc) = config.structured_content {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&sc).unwrap_or_else(|_| sc.to_string())
-                );
-            }
+            let config = get_config();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&config).unwrap_or_else(|_| config.to_string())
+            );
         }
 
         other => {

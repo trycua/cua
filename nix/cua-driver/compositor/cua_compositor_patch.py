@@ -79,10 +79,22 @@ FUNCS = r"""
 /* v1 control-protocol banner: the client sends this line, the compositor echoes
  * it to confirm both speak v1. Any other first line is refused. */
 #define CUA_PROTO_HELLO "cua-inject v1"
+static void cua_focus_toplevel(struct tinywl_toplevel *toplevel) {
+	focus_toplevel(toplevel);
+	/* tinywl only notifies seat keyboard focus when a physical wlr_keyboard is
+	 * attached. Headless CI has none, so explicit activation establishes the
+	 * logical focus without coupling it to the initial map/configure handshake. */
+	struct wlr_surface *surface = toplevel->xdg_toplevel->base->surface;
+	if (toplevel->server->seat->keyboard_state.focused_surface != surface) {
+		struct wlr_keyboard_modifiers modifiers = {0};
+		wlr_seat_keyboard_notify_enter(
+			toplevel->server->seat, surface, NULL, 0, &modifiers);
+	}
+}
 static void cua_ftl_request_activate(struct wl_listener *listener, void *data) {
 	(void)data;
 	struct tinywl_toplevel *t = wl_container_of(listener, t, ftl_request_activate);
-	focus_toplevel(t);
+	cua_focus_toplevel(t);
 }
 static uint32_t cua_now_ms(void) {
 	struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -186,7 +198,7 @@ static const char *cua_activate_pid(struct tinywl_server *server, pid_t target_p
 	}
 	if (matches == 0) return "unknown-pid";
 	if (matches > 1) return "ambiguous-pid";
-	focus_toplevel(found);
+	cua_focus_toplevel(found);
 	return NULL;
 }
 /* Independent observer query used only by the Rust E2E testkit. The target is
@@ -713,19 +725,6 @@ src = repl(src,
     "\t\ttoplevel->cua_initial_activation_sent = true;\n"
     "\t}\n",
     "headless-initial-activation")
-src = repl(src,
-    "\tif (keyboard != NULL) {\n"
-    "\t\twlr_seat_keyboard_notify_enter(seat, surface,\n"
-    "\t\t\tkeyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);\n"
-    "\t}\n",
-    "\tif (keyboard != NULL) {\n"
-    "\t\twlr_seat_keyboard_notify_enter(seat, surface,\n"
-    "\t\t\tkeyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);\n"
-    "\t} else {\n"
-    "\t\tstruct wlr_keyboard_modifiers modifiers = {0};\n"
-    "\t\twlr_seat_keyboard_notify_enter(seat, surface, NULL, 0, &modifiers);\n"
-    "\t}\n",
-    "headless-seat-focus")
 src = repl(src,
     "\tstruct wlr_xdg_toplevel *xdg_toplevel;\n",
     STRUCT_FIELD, "ftl-field")

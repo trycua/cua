@@ -6,12 +6,14 @@ on:
       - ".github/scripts/**"
       - ".github/release-attribution-config.json"
       - ".github/release-manifest.schema.json"
+      - ".github/release-backfill/**"
       - ".github/workflows/cd-rust-cua-driver.yml"
       - ".github/workflows/cd-swift-lume.yml"
       - ".github/workflows/release-please.yml"
       - ".release-please-manifest.json"
       - "release-please-config.json"
       - ".github/workflows/ci-test-scripts.yml"
+      - "docs/release-backfill-runbook.md"
 
 jobs:
   test:
@@ -35,3 +37,6 @@ jobs:
         run: |
           cd .github/scripts
           pytest tests/ -v
+
+      - name: Validate historical release backfill
+        run: python3 .github/scripts/release_backfill.py validate

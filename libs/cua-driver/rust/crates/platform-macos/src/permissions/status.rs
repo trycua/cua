@@ -76,11 +76,8 @@ pub fn request_accessibility() -> bool {
 
     let key = CFString::new("AXTrustedCheckOptionPrompt");
     let val = CFBoolean::true_value();
-    let options =
-        CFDictionary::from_CFType_pairs(&[(key.as_CFType(), val.as_CFType())]);
-    unsafe {
-        crate::ax::bindings::AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef())
-    }
+    let options = CFDictionary::from_CFType_pairs(&[(key.as_CFType(), val.as_CFType())]);
+    unsafe { crate::ax::bindings::AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef()) }
 }
 
 /// Raise the Screen Recording TCC prompt if not yet granted.

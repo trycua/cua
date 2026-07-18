@@ -51,9 +51,9 @@
 //! it won't in practice — u32 wraps after 4 billion calls).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 /// LRU cap of valid snapshots retained per pid. Past this point the
 /// oldest entry for the pid is evicted and its tokens go stale.
@@ -98,7 +98,9 @@ pub struct TokenRegistry {
 
 impl TokenRegistry {
     fn new() -> Self {
-        Self { by_pid: Mutex::new(HashMap::new()) }
+        Self {
+            by_pid: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Record a fresh snapshot for `pid` / `window_id`. Returns the
@@ -113,12 +115,7 @@ impl TokenRegistry {
     /// Side effect: if this pid already has [`LRU_CAP_PER_PID`] snapshots
     /// in its lane, the oldest is evicted and any token that referenced
     /// it becomes stale — that's the contract.
-    pub fn register_snapshot(
-        &self,
-        pid: i32,
-        window_id: u32,
-        element_count: usize,
-    ) -> u32 {
+    pub fn register_snapshot(&self, pid: i32, window_id: u32, element_count: usize) -> u32 {
         // Truncate to the 16-bit space the token format actually
         // surfaces. The full u32 still increments monotonically — we
         // just don't widen the on-the-wire token namespace beyond what
@@ -153,10 +150,11 @@ impl TokenRegistry {
     /// - `"element_token element_index out of range"` — the index in
     ///   the token is past the max recorded for the snapshot.
     pub fn resolve(&self, pid: i32, token: &str) -> Result<(u32, usize), String> {
-        let (sid, idx) = parse_token(token)
-            .ok_or_else(|| "element_token has invalid format".to_string())?;
+        let (sid, idx) =
+            parse_token(token).ok_or_else(|| "element_token has invalid format".to_string())?;
         let by_pid = self.by_pid.lock().unwrap();
-        let lane = by_pid.get(&pid)
+        let lane = by_pid
+            .get(&pid)
             .ok_or_else(|| STALE_TOKEN_ERROR.to_string())?;
         let entry = lane
             .iter()
@@ -183,7 +181,12 @@ impl TokenRegistry {
     /// unit test to assert the cap was honoured.
     #[cfg(test)]
     fn snapshot_count(&self, pid: i32) -> usize {
-        self.by_pid.lock().unwrap().get(&pid).map(|v| v.len()).unwrap_or(0)
+        self.by_pid
+            .lock()
+            .unwrap()
+            .get(&pid)
+            .map(|v| v.len())
+            .unwrap_or(0)
     }
 
     /// Test-only: clear all state. Lets parallel unit tests start clean
@@ -454,7 +457,9 @@ mod tests {
         let s1 = reg.register_snapshot(pid, 1, 5);
         let s2 = reg.register_snapshot(pid, 1, 5);
         // Both should still resolve.
-        let _ = reg.resolve(pid, &format_token(s1, 0)).expect("s1 still in LRU");
+        let _ = reg
+            .resolve(pid, &format_token(s1, 0))
+            .expect("s1 still in LRU");
         let _ = reg.resolve(pid, &format_token(s2, 0)).expect("s2 fresh");
     }
 
@@ -552,10 +557,17 @@ mod tests {
         )
         .expect("element_index-only must succeed");
         match resolved {
-            ResolvedElement::Element { window_id, element_index, via_token } => {
+            ResolvedElement::Element {
+                window_id,
+                element_index,
+                via_token,
+            } => {
                 assert_eq!(window_id, Some(99));
                 assert_eq!(element_index, 7);
-                assert!(!via_token, "element_index-only path must NOT report via_token");
+                assert!(
+                    !via_token,
+                    "element_index-only path must NOT report via_token"
+                );
             }
             _ => panic!("expected Element, got {resolved:?}"),
         }
@@ -581,7 +593,11 @@ mod tests {
         )
         .expect("token-only must succeed");
         match resolved {
-            ResolvedElement::Element { window_id, element_index, via_token } => {
+            ResolvedElement::Element {
+                window_id,
+                element_index,
+                via_token,
+            } => {
                 assert_eq!(window_id, Some(555), "window_id comes from the snapshot");
                 assert_eq!(element_index, 2);
                 assert!(via_token, "token path must report via_token=true");
@@ -609,7 +625,11 @@ mod tests {
         )
         .expect("disagreement still resolves; token wins");
         match resolved {
-            ResolvedElement::Element { window_id, element_index, via_token } => {
+            ResolvedElement::Element {
+                window_id,
+                element_index,
+                via_token,
+            } => {
                 assert_eq!(window_id, Some(777));
                 assert_eq!(element_index, 3, "token's idx wins over the integer arg");
                 assert!(via_token);
@@ -625,14 +645,7 @@ mod tests {
         let pid = 0x7fff_0003_i32;
         // Token references a snapshot that was never registered → stale.
         let token = format_token(0xdead, 0);
-        let err = resolve_element_args(
-            pid,
-            Some(0),
-            Some(&token),
-            Some(1),
-            "click",
-        )
-        .unwrap_err();
+        let err = resolve_element_args(pid, Some(0), Some(&token), Some(1), "click").unwrap_err();
         // ToolResult::error wraps the message in a Content::Text — the
         // assertion uses the protocol-level error_text accessor.
         assert!(

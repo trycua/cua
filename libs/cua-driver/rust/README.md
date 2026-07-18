@@ -31,6 +31,22 @@ The Python wrapper and install scripts expect the built binary at
 `target/<profile>/cua-driver` (or `cua-driver.exe` on Windows), unless
 `CUA_DRIVER_BINARY` is set.
 
+## Formatting
+
+The supported Rust toolchain and `rustfmt` component are pinned in
+`rust-toolchain.toml`. Install [rustup](https://rustup.rs/) and run the
+canonical formatting check from this directory:
+
+```bash
+cargo fmt --all -- --check
+```
+
+To apply formatting, omit `--check`:
+
+```bash
+cargo fmt --all
+```
+
 ## Tests
 
 Default tests should be headless and safe for CI:

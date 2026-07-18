@@ -400,7 +400,10 @@ fn update_behavior_video_status(output_dir: &std::path::Path, status: &str) {
     if let Some(field) = timestamp_field {
         manifest["behavior_video"][field] = Value::from(unix_ms());
     }
-    let _ = std::fs::write(path, serde_json::to_vec_pretty(&manifest).unwrap_or_default());
+    let _ = std::fs::write(
+        path,
+        serde_json::to_vec_pretty(&manifest).unwrap_or_default(),
+    );
 }
 
 fn mark_behavior_video_baseline_ready(output_dir: &std::path::Path) {
@@ -412,7 +415,10 @@ fn mark_behavior_video_baseline_ready(output_dir: &std::path::Path) {
         return;
     };
     manifest["behavior_video"]["baseline_ready_at_unix_ms"] = Value::from(unix_ms());
-    let _ = std::fs::write(path, serde_json::to_vec_pretty(&manifest).unwrap_or_default());
+    let _ = std::fs::write(
+        path,
+        serde_json::to_vec_pretty(&manifest).unwrap_or_default(),
+    );
 }
 
 fn unix_ms() -> u64 {

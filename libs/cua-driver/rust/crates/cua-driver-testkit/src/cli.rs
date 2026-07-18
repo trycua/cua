@@ -21,7 +21,9 @@ pub struct CliDriver {
 
 impl CliDriver {
     pub fn new() -> Self {
-        CliDriver { bin: driver_binary() }
+        CliDriver {
+            bin: driver_binary(),
+        }
     }
 
     /// Whether the driver binary exists (caller should skip the test if not).

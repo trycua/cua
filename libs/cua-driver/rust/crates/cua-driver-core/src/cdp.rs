@@ -28,11 +28,7 @@ fn legacy_pool() -> &'static CdpPool {
 /// Returns the formatted result (or `exception: ...` if the evaluated code
 /// raised). Caller is responsible for prefixing the human-readable label
 /// (e.g. `"cdp.runtime.evaluate.user_gesture: ..."`).
-pub async fn evaluate(
-    port: u16,
-    expression: &str,
-    await_promise: bool,
-) -> anyhow::Result<String> {
+pub async fn evaluate(port: u16, expression: &str, await_promise: bool) -> anyhow::Result<String> {
     evaluate_targeted(port, expression, await_promise, None).await
 }
 
@@ -59,20 +55,16 @@ async fn cdp_evaluate(
 ) -> anyhow::Result<Value> {
     // A listener can be reachable before Chromium publishes its first page
     // target. Bound both that readiness interval and the HTTP roundtrip.
-    let pages = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        cdp_wait_for_page(port),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("CDP /json discovery on port {port} timed out after 10 s"))??;
+    let pages = tokio::time::timeout(std::time::Duration::from_secs(10), cdp_wait_for_page(port))
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!("CDP /json discovery on port {port} timed out after 10 s")
+        })??;
 
-    let page = pick_page(&pages, target_url_contains)
-        .ok_or_else(|| match target_url_contains {
-            Some(hint) => anyhow::anyhow!(
-                "No unique CDP page URL contains {hint:?} on port {port}"
-            ),
-            None => anyhow::anyhow!("No CDP page tabs found on port {port}"),
-        })?;
+    let page = pick_page(&pages, target_url_contains).ok_or_else(|| match target_url_contains {
+        Some(hint) => anyhow::anyhow!("No unique CDP page URL contains {hint:?} on port {port}"),
+        None => anyhow::anyhow!("No CDP page tabs found on port {port}"),
+    })?;
     let ws_url = page
         .get("webSocketDebuggerUrl")
         .and_then(|u| u.as_str())
@@ -166,9 +158,7 @@ async fn cdp_list_pages(port: u16) -> anyhow::Result<Vec<Value>> {
     // forever. Parse Content-Length / Transfer-Encoding: chunked from the
     // response headers and read exactly that many body bytes, leaving the
     // socket open (it's torn down when we drop the stream).
-    let req = format!(
-        "GET /json HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
-    );
+    let req = format!("GET /json HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
     stream.write_all(req.as_bytes()).await?;
 
     let mut reader = BufReader::new(stream);
@@ -178,8 +168,12 @@ async fn cdp_list_pages(port: u16) -> anyhow::Result<Vec<Value>> {
     loop {
         header_line.clear();
         let n = reader.read_line(&mut header_line).await?;
-        if n == 0 { anyhow::bail!("CDP /json: EOF in headers"); }
-        if header_line == "\r\n" { break; }
+        if n == 0 {
+            anyhow::bail!("CDP /json: EOF in headers");
+        }
+        if header_line == "\r\n" {
+            break;
+        }
         let lower = header_line.to_ascii_lowercase();
         if let Some(v) = lower.strip_prefix("content-length:") {
             content_length = v.trim().parse::<usize>().ok();
@@ -200,7 +194,9 @@ async fn cdp_list_pages(port: u16) -> anyhow::Result<Vec<Value>> {
             reader.read_line(&mut size_line).await?;
             let size = usize::from_str_radix(size_line.trim_end(), 16)
                 .map_err(|_| anyhow::anyhow!("CDP /json: bad chunk size {size_line:?}"))?;
-            if size == 0 { break; }
+            if size == 0 {
+                break;
+            }
             let mut chunk = vec![0u8; size];
             reader.read_exact(&mut chunk).await?;
             out.extend_from_slice(&chunk);
@@ -220,8 +216,8 @@ async fn cdp_list_pages(port: u16) -> anyhow::Result<Vec<Value>> {
     let body = std::str::from_utf8(&body_bytes)
         .map_err(|_| anyhow::anyhow!("CDP /json response is not valid UTF-8"))?;
 
-    let all: Value = serde_json::from_str(body)
-        .map_err(|e| anyhow::anyhow!("CDP /json parse error: {e}"))?;
+    let all: Value =
+        serde_json::from_str(body).map_err(|e| anyhow::anyhow!("CDP /json parse error: {e}"))?;
 
     let pages = all
         .as_array()
@@ -270,8 +266,7 @@ mod tests {
     fn omitted_page_hint_preserves_first_page_behavior() {
         let pages = pages();
         assert_eq!(
-            pick_page(&pages, None)
-                .and_then(|page| page["webSocketDebuggerUrl"].as_str()),
+            pick_page(&pages, None).and_then(|page| page["webSocketDebuggerUrl"].as_str()),
             Some("ws://a")
         );
     }

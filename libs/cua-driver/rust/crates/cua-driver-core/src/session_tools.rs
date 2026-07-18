@@ -74,7 +74,7 @@ impl Tool for StartSessionTool {
                  with the same id just refreshes its idle-TTL. End it with `end_session` \
                  (or let the idle-TTL reclaim it). Concurrent runs/subagents each pass \
                  their own `session` to get their own cursor."
-                    .into(),
+                .into(),
             input_schema: json!({
                 "type": "object",
                 "required": ["session"],
@@ -355,11 +355,7 @@ mod tests {
     use super::*;
 
     fn result_code(result: &ToolResult) -> Option<&str> {
-        result
-            .structured_content
-            .as_ref()?
-            .get("code")?
-            .as_str()
+        result.structured_content.as_ref()?.get("code")?.as_str()
     }
 
     #[test]

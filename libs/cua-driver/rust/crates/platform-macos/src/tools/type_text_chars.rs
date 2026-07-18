@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -10,7 +13,9 @@ pub struct TypeTextCharsTool {
 }
 
 impl TypeTextCharsTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -44,12 +49,20 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for TypeTextCharsTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
-        let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        let pid = match args.require_i32("pid") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let text_raw = match args.require_str("text") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         // Same trailing-protocol-tag scrub as TypeTextTool — see
         // cua_driver_core::text_sanitize for rationale.
         let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
@@ -57,7 +70,7 @@ impl Tool for TypeTextCharsTool {
         let delay_ms = args.u64_or("delay_ms", 30);
         // Surface 6: element_token / element_index precedence resolution.
         let element_token_arg = args.opt_str("element_token");
-        let window_id_arg     = args.opt_u64("window_id").map(|v| v as u32);
+        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
         let resolved = match cua_driver_core::element_token::resolve_element_args(
             pid,
@@ -72,7 +85,9 @@ impl Tool for TypeTextCharsTool {
         let (element_index, window_id) = match resolved {
             cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
             cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid, element_index: idx, via_token: _,
+                window_id: wid,
+                element_index: idx,
+                via_token: _,
             } => (Some(idx), wid),
         };
         let type_chars_only = args.bool_or("type_chars_only", false);
@@ -83,11 +98,14 @@ impl Tool for TypeTextCharsTool {
                 // Retain so a concurrent get_window_state can't free the element
                 // during the focus call (use-after-free → daemon crash). The
                 // guard outlives the awaited spawn_blocking below.
-                if let Some(element_guard) = self.state.element_cache.get_element_retained(pid, wid, idx) {
+                if let Some(element_guard) =
+                    self.state.element_cache.get_element_retained(pid, wid, idx)
+                {
                     let element_ptr = element_guard.as_ptr();
                     let _ = tokio::task::spawn_blocking(move || {
                         crate::input::ax_actions::focus_element(element_ptr)
-                    }).await;
+                    })
+                    .await;
                     drop(element_guard);
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
@@ -97,10 +115,13 @@ impl Tool for TypeTextCharsTool {
         let text_len = text.chars().count();
         let result = tokio::task::spawn_blocking(move || {
             crate::input::keyboard::type_text_with_delay(pid, &text, delay_ms)
-        }).await;
+        })
+        .await;
 
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Typed {text_len} character(s) with {delay_ms}ms delay.")),
+            Ok(Ok(())) => ToolResult::text(format!(
+                "Typed {text_len} character(s) with {delay_ms}ms delay."
+            )),
             Ok(Err(e)) => ToolResult::error(format!("Type text chars failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

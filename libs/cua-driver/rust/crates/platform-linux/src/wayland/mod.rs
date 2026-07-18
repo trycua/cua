@@ -1437,12 +1437,7 @@ pub fn scroll_at(
 }
 
 /// Scroll at a desktop-absolute point without activating a named toplevel.
-pub fn scroll_desktop(
-    x: i32,
-    y: i32,
-    direction: &str,
-    amount: u32,
-) -> anyhow::Result<()> {
+pub fn scroll_desktop(x: i32, y: i32, direction: &str, amount: u32) -> anyhow::Result<()> {
     let direction = direction.to_string();
     with_libei_fallback(
         || scroll_vptr(None, Some((x, y)), &direction, amount),

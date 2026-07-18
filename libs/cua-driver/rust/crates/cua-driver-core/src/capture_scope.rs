@@ -263,8 +263,7 @@ fn tool_scope(tool_name: &str, args: &Value) -> ToolScope {
             | "screenshot_compat"
             | "zoom"
             | "page"
-    )
-        || tool_name == "get_browser_state"
+    ) || tool_name == "get_browser_state"
         || (tool_name.starts_with("browser_")
             && !matches!(tool_name, "browser_prepare" | "browser_download"))
     {

@@ -66,10 +66,10 @@ use windows::Win32::System::Com::{
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationValuePattern, TreeScope_Children, TreeScope_Descendants, TreeScope_Subtree,
-    UIA_ButtonControlTypeId, UIA_ControlTypePropertyId, UIA_EditControlTypeId,
-    UIA_InvokePatternId, UIA_ListItemControlTypeId, UIA_MenuItemControlTypeId,
-    UIA_NamePropertyId, UIA_TabItemControlTypeId, UIA_ToolBarControlTypeId,
-    UIA_ValuePatternId, UIA_WindowControlTypeId,
+    UIA_ButtonControlTypeId, UIA_ControlTypePropertyId, UIA_EditControlTypeId, UIA_InvokePatternId,
+    UIA_ListItemControlTypeId, UIA_MenuItemControlTypeId, UIA_NamePropertyId,
+    UIA_TabItemControlTypeId, UIA_ToolBarControlTypeId, UIA_ValuePatternId,
+    UIA_WindowControlTypeId,
 };
 use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
@@ -108,11 +108,7 @@ mod budget {
 /// and not summonable, bookmark creation pre-conditions not met, title
 /// poll exceeds [`budget::TITLE_RESULT`]) returns `Err` so the caller
 /// can fall back to CDP.
-pub async fn try_bookmark_exec(
-    pid: i32,
-    window_id: u32,
-    javascript: &str,
-) -> Result<String> {
+pub async fn try_bookmark_exec(pid: i32, window_id: u32, javascript: &str) -> Result<String> {
     if javascript.is_empty() {
         bail!("javascript expression is empty");
     }
@@ -176,11 +172,7 @@ setTimeout(function(){{ document.title = _orig; }}, 500);\
 
 // ── blocking implementation ───────────────────────────────────────────────
 
-unsafe fn try_bookmark_exec_blocking(
-    pid: i32,
-    window_id: u32,
-    javascript: &str,
-) -> Result<String> {
+unsafe fn try_bookmark_exec_blocking(pid: i32, window_id: u32, javascript: &str) -> Result<String> {
     let automation = init_uia()?;
     let hwnd_raw = window_id as u64;
 
@@ -273,9 +265,8 @@ unsafe fn try_bookmark_exec_blocking(
     // we log at trace level and continue — the brief activation is
     // unavoidable without forking Chromium, but the dwell time on the
     // browser is < ~150 ms instead of "until next user action".
-    let prev_fg_for_invoke = unsafe {
-        windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow()
-    };
+    let prev_fg_for_invoke =
+        unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
     invoke_element(&bookmark).context("InvokePattern.Invoke on bookmark failed")?;
     // Restore in a tight loop — at this point the bookmark URL is firing
     // and Chromium is about to activate. Poll for ~600 ms; once we see
@@ -283,10 +274,7 @@ unsafe fn try_bookmark_exec_blocking(
     // (not via tokio::spawn) because we WANT to block the poll-marker
     // step below until the foreground is restored — otherwise a slow
     // restore leaves the browser frontmost while we read the title.
-    restore_foreground_after_browser_activation(
-        prev_fg_for_invoke,
-        pid as u32,
-    );
+    restore_foreground_after_browser_activation(prev_fg_for_invoke, pid as u32);
 
     // 7) Poll the active tab's title until it starts with CUA: / CUA_ERR:
     let result = poll_for_marker(&automation, &edge_window, &original_title)?;
@@ -331,9 +319,7 @@ unsafe fn root_for_window(
     let mut actual_pid: u32 = 0;
     let _ = GetWindowThreadProcessId(hwnd, Some(&mut actual_pid));
     if actual_pid as i32 != expected_pid {
-        bail!(
-            "hwnd 0x{hwnd_raw:x} belongs to pid {actual_pid}, not the expected {expected_pid}"
-        );
+        bail!("hwnd 0x{hwnd_raw:x} belongs to pid {actual_pid}, not the expected {expected_pid}");
     }
     automation
         .ElementFromHandle(hwnd)
@@ -350,10 +336,7 @@ unsafe fn find_favorites_bar(
     // Cheap path: a single Name lookup. Chromium has used "Favorites bar"
     // as the bar's Name for years across Edge/Chrome.
     let name_cond = automation
-        .CreatePropertyCondition(
-            UIA_NamePropertyId,
-            &BSTR::from("Favorites bar").into(),
-        )
+        .CreatePropertyCondition(UIA_NamePropertyId, &BSTR::from("Favorites bar").into())
         .ok()?;
     if let Ok(bar) = root.FindFirst(TreeScope_Subtree, &name_cond) {
         return Some(bar);
@@ -373,7 +356,9 @@ unsafe fn find_favorites_bar(
             Err(_) => continue,
         };
         if let Some(name) = read_name(&elem) {
-            if name.eq_ignore_ascii_case("favorites bar") || name.eq_ignore_ascii_case("bookmarks bar") {
+            if name.eq_ignore_ascii_case("favorites bar")
+                || name.eq_ignore_ascii_case("bookmarks bar")
+            {
                 return Some(elem);
             }
         }
@@ -482,9 +467,8 @@ unsafe fn set_bookmark_url(
     // popup windows, not children of the bookmark in the UIA tree).
     // Edge labels this "Edit"; Chrome labels it "Edit..." (and may show
     // additional context depending on profile state). Match either.
-    let edit_item =
-        wait_for_menu_item(automation, &["Edit", "Edit..."], budget::DIALOG_APPEAR)
-            .context("Edit menu item did not appear after right-click on bookmark")?;
+    let edit_item = wait_for_menu_item(automation, &["Edit", "Edit..."], budget::DIALOG_APPEAR)
+        .context("Edit menu item did not appear after right-click on bookmark")?;
     invoke_element(&edit_item).context("InvokePattern.Invoke on Edit menu item failed")?;
 
     // The Edit dialog is a top-level UIA Window. Edge 148 names it
@@ -565,7 +549,9 @@ unsafe fn wait_for_menu_item(
         }
         std::thread::sleep(Duration::from_millis(60));
     }
-    Err(anyhow!("MenuItem matching {accepted_names:?} not found within {budget:?}"))
+    Err(anyhow!(
+        "MenuItem matching {accepted_names:?} not found within {budget:?}"
+    ))
 }
 
 unsafe fn wait_for_window(
@@ -603,7 +589,9 @@ unsafe fn wait_for_window(
         }
         std::thread::sleep(Duration::from_millis(80));
     }
-    Err(anyhow!("Window matching {accepted_names:?} not found within {budget:?}"))
+    Err(anyhow!(
+        "Window matching {accepted_names:?} not found within {budget:?}"
+    ))
 }
 
 unsafe fn find_edit_in_dialog(
@@ -612,10 +600,7 @@ unsafe fn find_edit_in_dialog(
     accepted_names: &[&str],
 ) -> Result<IUIAutomationElement> {
     let cond = automation
-        .CreatePropertyCondition(
-            UIA_ControlTypePropertyId,
-            &(UIA_EditControlTypeId.0).into(),
-        )
+        .CreatePropertyCondition(UIA_ControlTypePropertyId, &(UIA_EditControlTypeId.0).into())
         .map_err(|e| anyhow!("CreatePropertyCondition(Edit) failed: {e}"))?;
     let edits = dialog
         .FindAll(TreeScope_Descendants, &cond)
@@ -627,10 +612,10 @@ unsafe fn find_edit_in_dialog(
             Err(_) => continue,
         };
         let name = read_name(&elem).unwrap_or_default();
-        if accepted_names
-            .iter()
-            .any(|n| name.eq_ignore_ascii_case(n) || name.to_ascii_lowercase().contains(&n.to_ascii_lowercase()))
-        {
+        if accepted_names.iter().any(|n| {
+            name.eq_ignore_ascii_case(n)
+                || name.to_ascii_lowercase().contains(&n.to_ascii_lowercase())
+        }) {
             return Ok(elem);
         }
         // Edge 148: the URL edit's AutomationId is sometimes "control".
@@ -965,18 +950,9 @@ mod tests {
     #[test]
     fn extract_marker_strips_chromium_suffix() {
         assert_eq!(extract_marker("CUA:42", "CUA:"), "CUA:42");
-        assert_eq!(
-            extract_marker("CUA:42 - Microsoft Edge", "CUA:"),
-            "CUA:42"
-        );
-        assert_eq!(
-            extract_marker("CUA:42 - Google Chrome", "CUA:"),
-            "CUA:42"
-        );
-        assert_eq!(
-            extract_marker("Foo CUA:42 - Edge", "CUA:"),
-            "CUA:42"
-        );
+        assert_eq!(extract_marker("CUA:42 - Microsoft Edge", "CUA:"), "CUA:42");
+        assert_eq!(extract_marker("CUA:42 - Google Chrome", "CUA:"), "CUA:42");
+        assert_eq!(extract_marker("Foo CUA:42 - Edge", "CUA:"), "CUA:42");
         assert_eq!(
             extract_marker("CUA_ERR:not defined - Edge", "CUA_ERR:"),
             "CUA_ERR:not defined"

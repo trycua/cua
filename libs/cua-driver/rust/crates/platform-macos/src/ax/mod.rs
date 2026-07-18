@@ -17,8 +17,10 @@
 //! - 2-space indent per depth level
 
 pub mod bindings;
-pub mod tree;
 pub mod cache;
+pub mod tree;
 
-pub use tree::{walk_tree, walk_tree_bounded, AXNode, TreeWalkResult, DEFAULT_MAX_ELEMENTS, DEFAULT_MAX_DEPTH};
 pub use cache::ElementCache;
+pub use tree::{
+    walk_tree, walk_tree_bounded, AXNode, TreeWalkResult, DEFAULT_MAX_DEPTH, DEFAULT_MAX_ELEMENTS,
+};

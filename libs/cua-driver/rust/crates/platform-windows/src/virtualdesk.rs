@@ -110,72 +110,78 @@ mod tests {
                 // The reporter's setup: secondary to the LEFT of primary, both 1920x1080.
                 // Primary occupies (0..1920, 0..1080); secondary occupies (-1920..0, 0..1080).
                 "secondary-left-of-primary",
-                -1920, 0, 3840, 1080,
+                -1920,
+                0,
+                3840,
+                1080,
                 vec![
-                    (-1920, 0),       // top-left of virtual desk (top-left of secondary)
-                    (1919, 1079),     // bottom-right of virtual desk (bottom-right of primary)
-                    (-1, 0),          // last pixel of secondary on the X seam
-                    (0, 0),           // first pixel of primary on the X seam
-                    (-1795, 383),     // the exact pixel from issue #1979
-                    (-1198, 292),     // the second pixel from issue #1979
+                    (-1920, 0),   // top-left of virtual desk (top-left of secondary)
+                    (1919, 1079), // bottom-right of virtual desk (bottom-right of primary)
+                    (-1, 0),      // last pixel of secondary on the X seam
+                    (0, 0),       // first pixel of primary on the X seam
+                    (-1795, 383), // the exact pixel from issue #1979
+                    (-1198, 292), // the second pixel from issue #1979
                 ],
             ),
             (
                 // Secondary to the RIGHT of primary. Virt origin at (0, 0), width 3840.
                 "secondary-right-of-primary",
-                0, 0, 3840, 1080,
+                0,
+                0,
+                3840,
+                1080,
                 vec![
                     (0, 0),
                     (3839, 1079),
-                    (1919, 0),        // last pixel of primary on seam
-                    (1920, 0),        // first pixel of secondary on seam
-                    (2125, 383),      // mirror of the reporter's pixel onto the right layout
+                    (1919, 0),   // last pixel of primary on seam
+                    (1920, 0),   // first pixel of secondary on seam
+                    (2125, 383), // mirror of the reporter's pixel onto the right layout
                 ],
             ),
             (
                 // Secondary ABOVE primary. Virt origin at (0, -1080), height 2160.
                 "secondary-above-primary",
-                0, -1080, 1920, 2160,
-                vec![
-                    (0, -1080),
-                    (1919, 1079),
-                    (0, -1),
-                    (0, 0),
-                    (960, -540),
-                ],
+                0,
+                -1080,
+                1920,
+                2160,
+                vec![(0, -1080), (1919, 1079), (0, -1), (0, 0), (960, -540)],
             ),
             (
                 // Secondary BELOW primary. Virt origin at (0, 0), height 2160.
                 "secondary-below-primary",
-                0, 0, 1920, 2160,
-                vec![
-                    (0, 0),
-                    (1919, 2159),
-                    (0, 1079),
-                    (0, 1080),
-                    (960, 1620),
-                ],
+                0,
+                0,
+                1920,
+                2160,
+                vec![(0, 0), (1919, 2159), (0, 1079), (0, 1080), (960, 1620)],
             ),
             (
                 // Three horizontal monitors: [-1920..0, 0..1920, 1920..3840], all 1080 tall.
                 // virt rect (-1920, 0, 5760, 1080).
                 "three-horiz-mixed-signs",
-                -1920, 0, 5760, 1080,
+                -1920,
+                0,
+                5760,
+                1080,
                 vec![
-                    (-1920, 0), (-1, 0), (0, 0), (1919, 0), (1920, 0), (3839, 1079),
-                    (-1795, 383),       // reporter's pixel still on leftmost monitor
+                    (-1920, 0),
+                    (-1, 0),
+                    (0, 0),
+                    (1919, 0),
+                    (1920, 0),
+                    (3839, 1079),
+                    (-1795, 383), // reporter's pixel still on leftmost monitor
                 ],
             ),
             (
                 // Single monitor — the baseline. No offsets.
                 "single-monitor-1920x1080",
-                0, 0, 1920, 1080,
-                vec![
-                    (0, 0),
-                    (1919, 1079),
-                    (960, 540),
-                    (1, 1),
-                ],
+                0,
+                0,
+                1920,
+                1080,
+                vec![(0, 0), (1919, 1079), (960, 540), (1, 1)],
             ),
             (
                 // HiDPI secondary. cua-driver runs Per-Monitor-V2 DPI-aware (see
@@ -189,10 +195,13 @@ mod tests {
                 // (-2560..0, 0..1440), primary occupies (0..1920, 0..1080) inside
                 // the same virt height band.
                 "hidpi-secondary-left-2560x1440",
-                -2560, 0, 4480, 1440,
+                -2560,
+                0,
+                4480,
+                1440,
                 vec![
                     (-2560, 0),
-                    (4479 - 2560, 1439),  // bottom-right of virtual desk
+                    (4479 - 2560, 1439), // bottom-right of virtual desk
                     (-1, 0),
                     (0, 0),
                     (-2000, 720),
@@ -204,7 +213,10 @@ mod tests {
                 // below, mixed with one to the right of primary. Just a sanity
                 // case for a virt rect spanning both positive and negative.
                 "mixed-vertical-and-horizontal",
-                -1920, -1080, 3840, 2160,
+                -1920,
+                -1080,
+                3840,
+                2160,
                 vec![
                     (-1920, -1080),
                     (1919, 1079),
@@ -288,8 +300,7 @@ mod tests {
             let (tl_x, tl_y) = to_virtualdesk_absolute(vx, vy, vx, vy, vw, vh);
             assert_eq!(tl_x, 0, "{label}: top-left x ≠ 0 (got {tl_x})");
             assert_eq!(tl_y, 0, "{label}: top-left y ≠ 0 (got {tl_y})");
-            let (br_x, br_y) =
-                to_virtualdesk_absolute(vx + vw - 1, vy + vh - 1, vx, vy, vw, vh);
+            let (br_x, br_y) = to_virtualdesk_absolute(vx + vw - 1, vy + vh - 1, vx, vy, vw, vh);
             assert_eq!(br_x, 65535, "{label}: bottom-right x ≠ 65535 (got {br_x})");
             assert_eq!(br_y, 65535, "{label}: bottom-right y ≠ 65535 (got {br_y})");
         }
@@ -319,7 +330,10 @@ mod tests {
         );
         // Round-trip recovers the input within ±1 (the strongest guarantee).
         let (rx, ry) = from_virtualdesk_absolute(dx, dy, -1920, 0, 3840, 1080);
-        assert!((rx - (-1795)).abs() <= 1, "round-trip x drift: {rx} vs -1795");
+        assert!(
+            (rx - (-1795)).abs() <= 1,
+            "round-trip x drift: {rx} vs -1795"
+        );
         assert!((ry - 383).abs() <= 1, "round-trip y drift: {ry} vs 383");
     }
 

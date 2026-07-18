@@ -44,7 +44,10 @@ fn cli_set_config_persists_to_disk_across_invocations() {
     // Save the current value so we can restore it.
     let original = config_max_dim(cli.call("get_config", serde_json::json!({})).structured());
 
-    let set = cli.call("set_config", serde_json::json!({ "key": KEY, "value": PROBE }));
+    let set = cli.call(
+        "set_config",
+        serde_json::json!({ "key": KEY, "value": PROBE }),
+    );
     assert!(!set.is_error(), "CLI set_config errored: {}", set.text());
 
     // A fresh process must see the persisted value.
@@ -58,7 +61,10 @@ fn cli_set_config_persists_to_disk_across_invocations() {
 
     // Restore.
     if let Some(orig) = original {
-        let _ = cli.call("set_config", serde_json::json!({ "key": KEY, "value": orig }));
+        let _ = cli.call(
+            "set_config",
+            serde_json::json!({ "key": KEY, "value": orig }),
+        );
     }
 }
 
@@ -67,11 +73,20 @@ fn cli_set_config_persists_to_disk_across_invocations() {
 #[test]
 #[ignore]
 fn mcp_set_config_visible_within_session() {
-    let Some(mut driver) = McpDriver::spawn() else { return };
+    let Some(mut driver) = McpDriver::spawn() else {
+        return;
+    };
 
-    let original = config_max_dim(driver.call("get_config", serde_json::json!({})).structured());
+    let original = config_max_dim(
+        driver
+            .call("get_config", serde_json::json!({}))
+            .structured(),
+    );
 
-    let set = driver.call("set_config", serde_json::json!({ "key": KEY, "value": PROBE }));
+    let set = driver.call(
+        "set_config",
+        serde_json::json!({ "key": KEY, "value": PROBE }),
+    );
     assert!(!set.is_error(), "MCP set_config errored: {}", set.text());
 
     let after = driver.call("get_config", serde_json::json!({}));
@@ -83,6 +98,9 @@ fn mcp_set_config_visible_within_session() {
     );
 
     if let Some(orig) = original {
-        let _ = driver.call("set_config", serde_json::json!({ "key": KEY, "value": orig }));
+        let _ = driver.call(
+            "set_config",
+            serde_json::json!({ "key": KEY, "value": orig }),
+        );
     }
 }

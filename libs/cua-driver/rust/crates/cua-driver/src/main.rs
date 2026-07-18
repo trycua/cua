@@ -311,9 +311,8 @@ fn main() {
             claude_code_compat,
         } => {
             responsibility::reexec_disclaimed_if_needed();
-            let gate_opts = platform_macos::permissions::GateOpts::from_env_and_flag(
-                no_permissions_gate,
-            );
+            let gate_opts =
+                platform_macos::permissions::GateOpts::from_env_and_flag(no_permissions_gate);
             if let Some((progress, context)) =
                 platform_macos::permissions::gate::prepare_telemetry_context(gate_opts.opt_out)
             {
@@ -605,16 +604,16 @@ fn main() {
             // attribution and forwards stdio MCP through its socket.
             // Issue #1525 / mirror of Swift PR #1479.
             if cli::should_use_daemon_proxy(no_daemon_relaunch) {
-                if let Err(e) = cli::run_mcp_via_daemon_proxy(
-                    socket,
-                    claude_code_compat,
-                    |daemon, success| telemetry::capture_mcp_startup_completed(
-                        "daemon_proxy",
-                        daemon.telemetry_value(),
-                        success,
-                        startup_started.elapsed(),
-                    ),
-                ) {
+                if let Err(e) =
+                    cli::run_mcp_via_daemon_proxy(socket, claude_code_compat, |daemon, success| {
+                        telemetry::capture_mcp_startup_completed(
+                            "daemon_proxy",
+                            daemon.telemetry_value(),
+                            success,
+                            startup_started.elapsed(),
+                        )
+                    })
+                {
                     eprintln!("cua-driver-rs: {e}");
                     telemetry::flush_pending(std::time::Duration::from_millis(750));
                     std::process::exit(1);
@@ -937,16 +936,16 @@ fn main() -> anyhow::Result<()> {
             // Code over SSH lands in Session 0 and every desktop
             // tool returns empty. See `cli::should_use_daemon_proxy`.
             if cli::should_use_daemon_proxy(no_daemon_relaunch) {
-                if let Err(e) = cli::run_mcp_via_daemon_proxy(
-                    socket,
-                    claude_code_compat,
-                    |daemon, success| telemetry::capture_mcp_startup_completed(
-                        "daemon_proxy",
-                        daemon.telemetry_value(),
-                        success,
-                        startup_started.elapsed(),
-                    ),
-                ) {
+                if let Err(e) =
+                    cli::run_mcp_via_daemon_proxy(socket, claude_code_compat, |daemon, success| {
+                        telemetry::capture_mcp_startup_completed(
+                            "daemon_proxy",
+                            daemon.telemetry_value(),
+                            success,
+                            startup_started.elapsed(),
+                        )
+                    })
+                {
                     eprintln!("cua-driver-rs: {e}");
                     telemetry::flush_pending(std::time::Duration::from_millis(750));
                     std::process::exit(1);

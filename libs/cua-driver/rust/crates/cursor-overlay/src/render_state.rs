@@ -138,8 +138,7 @@ impl RenderStateCore {
         if let Some(ref p) = self.path {
             let path_len = p.length.max(1.0);
             let path_frac = (self.dist / path_len).clamp(0.0, 1.0);
-            let profile =
-                16.0 * path_frac * path_frac * (1.0 - path_frac) * (1.0 - path_frac);
+            let profile = 16.0 * path_frac * path_frac * (1.0 - path_frac) * (1.0 - path_frac);
             let floor = if path_frac < 0.5 {
                 self.motion.min_start_speed
             } else {
@@ -251,7 +250,11 @@ impl RenderStateCore {
 
             // Smootherstep speed profile (normalised: peak = 1.0).
             let profile = (30.0 * u * u * (1.0 - u) * (1.0 - u)) / 1.875;
-            let floor_speed = if u < 0.5 { MIN_START_SPEED } else { MIN_END_SPEED };
+            let floor_speed = if u < 0.5 {
+                MIN_START_SPEED
+            } else {
+                MIN_END_SPEED
+            };
             let speed_based = floor_speed + (PEAK_SPEED - floor_speed) * profile;
             // Fixed-duration override: when `glide_duration_ms > 0` the move
             // takes exactly that long regardless of distance, so an orchestrator
@@ -337,8 +340,7 @@ impl RenderStateCore {
     fn tick_idle(&mut self, dt: f64) {
         let idle_hide_ms = self.motion.idle_hide_ms;
         if idle_hide_ms > 0.0 {
-            let moving =
-                self.path.is_some() || self.spring.is_some() || self.click_t.is_some();
+            let moving = self.path.is_some() || self.spring.is_some() || self.click_t.is_some();
             if moving {
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
@@ -402,16 +404,8 @@ impl RenderStateCore {
                 let (x0, y0) = self.pos;
                 let th0 = self.heading + std::f64::consts::PI;
                 let th1 = end_heading_radians + std::f64::consts::PI;
-                let plan = PathPlanner::plan(
-                    x0,
-                    y0,
-                    th0,
-                    tx,
-                    ty,
-                    th1,
-                    end_heading_radians,
-                    turn_radius,
-                );
+                let plan =
+                    PathPlanner::plan(x0, y0, th0, tx, ty, th1, end_heading_radians, turn_radius);
                 self.path = Some(plan);
                 self.dist = 0.0;
                 self.spring = None;
@@ -539,8 +533,8 @@ pub fn render_frame(
 ) -> tiny_skia::Pixmap {
     let w = width.max(1);
     let h = height.max(1);
-    let mut pm = tiny_skia::Pixmap::new(w, h)
-        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+    let mut pm =
+        tiny_skia::Pixmap::new(w, h).unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
     paint_cursor(&mut pm, core, origin_x, origin_y, focus_rect, backing_scale);
     pm
 }
@@ -638,8 +632,7 @@ pub fn paint_cursor(
 
     if core.pressed {
         let [pr, pg, pb, _] = core.palette.cursor_mid;
-        let ring_color =
-            tiny_skia::Color::from_rgba8(pr, pg, pb, (210.0 * alpha_scale) as u8);
+        let ring_color = tiny_skia::Color::from_rgba8(pr, pg, pb, (210.0 * alpha_scale) as u8);
         let mut ring_paint = tiny_skia::Paint::default();
         ring_paint.shader = tiny_skia::Shader::SolidColor(ring_color);
         ring_paint.anti_alias = true;
@@ -647,8 +640,7 @@ pub fn paint_cursor(
             width: 3.0 * sf,
             ..Default::default()
         };
-        let core_fill =
-            tiny_skia::Color::from_rgba8(pr, pg, pb, (110.0 * alpha_scale) as u8);
+        let core_fill = tiny_skia::Color::from_rgba8(pr, pg, pb, (110.0 * alpha_scale) as u8);
         let mut fill_paint = tiny_skia::Paint::default();
         fill_paint.shader = tiny_skia::Shader::SolidColor(core_fill);
         fill_paint.anti_alias = true;
@@ -695,16 +687,14 @@ pub fn paint_cursor(
         ) {
             // Faint fill
             let mut fill_paint = tiny_skia::Paint::default();
-            fill_paint.shader = tiny_skia::Shader::SolidColor(
-                tiny_skia::Color::from_rgba8(cr, cg, cb, fill_a),
-            );
+            fill_paint.shader =
+                tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(cr, cg, cb, fill_a));
             pm.fill_rect(rect, &fill_paint, tiny_skia::Transform::identity(), None);
 
             // Border stroke (2px glow)
             let mut border_paint = tiny_skia::Paint::default();
-            border_paint.shader = tiny_skia::Shader::SolidColor(
-                tiny_skia::Color::from_rgba8(cr, cg, cb, border_a),
-            );
+            border_paint.shader =
+                tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(cr, cg, cb, border_a));
             border_paint.anti_alias = true;
             let stroke = tiny_skia::Stroke {
                 width: 2.5 * sf,
@@ -802,9 +792,7 @@ pub fn paint_cursor(
     // instead of upsampling a logical-pixel pixmap.
     let display_size = 26.0_f32 * sf;
     let scale = display_size / shape.width as f32;
-    if let Some(pix) =
-        tiny_skia::PixmapRef::from_bytes(&shape.pixels, shape.width, shape.height)
-    {
+    if let Some(pix) = tiny_skia::PixmapRef::from_bytes(&shape.pixels, shape.width, shape.height) {
         // T = Translate(px, py) * Rotate(angle) * Scale(s) * Translate(-w/2, -h/2)
         // Centres the source on its own origin, scales to display_size, rotates
         // around the scaled centre, lands the centre at (px, py).
@@ -850,9 +838,8 @@ pub fn draw_default_arrow(
     // Rotate by (heading + π) so tip points in the motion direction.
     let angle = heading + std::f64::consts::PI as f32;
     let (sa, ca) = (angle.sin(), angle.cos());
-    let transform_pt = |(vx, vy): (f32, f32)| -> (f32, f32) {
-        (px + ca * vx - sa * vy, py + sa * vx + ca * vy)
-    };
+    let transform_pt =
+        |(vx, vy): (f32, f32)| -> (f32, f32) { (px + ca * vx - sa * vy, py + sa * vx + ca * vy) };
 
     let pts: Vec<(f32, f32)> = verts.iter().map(|&v| transform_pt(v)).collect();
 
@@ -870,24 +857,20 @@ pub fn draw_default_arrow(
     // Gradient fill: start color at tip, end color at tail.
     // Use runtime overrides when available, otherwise fall back to palette.
     let tip = pts[0];
-    let tail = (
-        (pts[1].0 + pts[3].0) / 2.0,
-        (pts[1].1 + pts[3].1) / 2.0,
-    );
+    let tail = ((pts[1].0 + pts[3].0) / 2.0, (pts[1].1 + pts[3].1) / 2.0);
     let (r0, g0, b0) = if let Some(g) = gradient_override.and_then(|g| g.first()) {
         (g[0], g[1], g[2])
     } else {
         let [r, g, b, _] = palette.cursor_start;
         (r, g, b)
     };
-    let (r1, g1, b1) = if let Some(g) =
-        gradient_override.and_then(|g| g.get(1).or_else(|| g.first()))
-    {
-        (g[0], g[1], g[2])
-    } else {
-        let [r, g, b, _] = palette.cursor_mid;
-        (r, g, b)
-    };
+    let (r1, g1, b1) =
+        if let Some(g) = gradient_override.and_then(|g| g.get(1).or_else(|| g.first())) {
+            (g[0], g[1], g[2])
+        } else {
+            let [r, g, b, _] = palette.cursor_mid;
+            (r, g, b)
+        };
     let (r2, g2, b2) = if let Some(g) = gradient_override.and_then(|g| g.last()) {
         (g[0], g[1], g[2])
     } else {
@@ -909,9 +892,9 @@ pub fn draw_default_arrow(
             tiny_skia::SpreadMode::Pad,
             tiny_skia::Transform::identity(),
         )
-        .unwrap_or(tiny_skia::Shader::SolidColor(
-            tiny_skia::Color::from_rgba8(r1, g1, b1, a),
-        ));
+        .unwrap_or(tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(
+            r1, g1, b1, a,
+        )));
         p.anti_alias = true;
         p
     };
@@ -956,14 +939,22 @@ mod glide_duration_tests {
         core.motion.idle_hide_ms = 0.0;
         core.pos = (0.0, 0.0);
         // Aligned headings → an effectively straight path of length ~dist_pts.
-        core.path = Some(PathPlanner::plan(0.0, 0.0, 0.0, dist_pts, 0.0, 0.0, 0.0, 80.0));
+        core.path = Some(PathPlanner::plan(
+            0.0, 0.0, 0.0, dist_pts, 0.0, 0.0, 0.0, 80.0,
+        ));
         core.dist = 0.0;
         let dt = 1.0 / 240.0;
         let mut t = 0.0;
         for _ in 0..200_000 {
-            let arrived = if swift { core.tick_swift_constants(dt) } else { core.tick_motion(dt) };
+            let arrived = if swift {
+                core.tick_swift_constants(dt)
+            } else {
+                core.tick_motion(dt)
+            };
             t += dt;
-            if arrived { break; }
+            if arrived {
+                break;
+            }
         }
         t
     }
@@ -986,7 +977,10 @@ mod glide_duration_tests {
         for swift in [false, true] {
             let short = arrival_secs(0.0, 120.0, swift);
             let long = arrival_secs(0.0, 1400.0, swift);
-            assert!(long > short + 0.2, "swift={swift} short={short} long={long}");
+            assert!(
+                long > short + 0.2,
+                "swift={swift} short={short} long={long}"
+            );
         }
     }
 }
@@ -999,10 +993,7 @@ mod backing_scale_tests {
     /// Count opaque (alpha > 0) pixels in the pixmap — a proxy for the
     /// cursor's on-pixmap footprint that's independent of palette / gradient.
     fn opaque_pixel_count(pm: &tiny_skia::Pixmap) -> u32 {
-        pm.data()
-            .chunks_exact(4)
-            .filter(|px| px[3] > 0)
-            .count() as u32
+        pm.data().chunks_exact(4).filter(|px| px[3] > 0).count() as u32
     }
 
     fn render_at(backing_scale: f32, logical_size: u32) -> tiny_skia::Pixmap {

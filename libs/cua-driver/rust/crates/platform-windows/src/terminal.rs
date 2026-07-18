@@ -76,7 +76,7 @@ mod tests {
         // Real-world class names observed in the wild.
         for name in [
             "CASCADIA_HOSTING_WINDOW_CLASS",
-            "CASCADIA_HOSTING_WINDOW_CLASS_0",   // suffixed instance
+            "CASCADIA_HOSTING_WINDOW_CLASS_0", // suffixed instance
             "mintty",
             "mintty_window",
             "ConsoleWindowClass",
@@ -97,8 +97,8 @@ mod tests {
             "Chrome_WidgetWin_1",
             "Notepad",
             "WordPadClass",
-            "HwndWrapper[default;;abc-123]",  // WPF
-            "gdkWindowToplevel",              // GTK
+            "HwndWrapper[default;;abc-123]", // WPF
+            "gdkWindowToplevel",             // GTK
             "Edit",
             "Static",
             "",

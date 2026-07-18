@@ -37,8 +37,7 @@ fn policies_are_isolated_immutable_and_enforced_over_mcp() {
             json!({"session": session, "capture_scope": scope}),
         );
         assert_eq!(
-            response["result"]["structuredContent"]["capture_scope"],
-            scope,
+            response["result"]["structuredContent"]["capture_scope"], scope,
             "start_session failed: {response}"
         );
     }

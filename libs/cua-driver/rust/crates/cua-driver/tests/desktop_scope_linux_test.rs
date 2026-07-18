@@ -189,7 +189,11 @@ fn desktop_scope_windowless_click_lands_on_control() {
             "bring_to_front",
             serde_json::json!({"session": window_session, "pid": pid as i64, "window_id": wid}),
         );
-        assert!(!posture.is_error(), "could not foreground GTK3 fixture: {}", posture.text());
+        assert!(
+            !posture.is_error(),
+            "could not foreground GTK3 fixture: {}",
+            posture.text()
+        );
         std::thread::sleep(Duration::from_millis(300));
         driver.start_behavior_recording();
 
@@ -205,9 +209,12 @@ fn desktop_scope_windowless_click_lands_on_control() {
             let mut post = pre;
             let mut first_text = String::new();
             for attempt in 0..12 {
-                let clicked = driver.call("click", serde_json::json!({
-                    "session": desktop_session, "scope": "desktop", "x": cx, "y": cy
-                }));
+                let clicked = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "session": desktop_session, "scope": "desktop", "x": cx, "y": cy
+                    }),
+                );
                 if attempt == 0 {
                     first_text = clicked.text().to_string();
                     assert!(
@@ -259,12 +266,14 @@ fn window_scope_rejects_windowless_click() {
         *evidence = recording_evidence(driver.recording_dir());
         start_scope(&mut driver, cell_id, "window");
         driver.start_behavior_recording();
-        let r = driver.call("click", serde_json::json!({
-            "session": cell_id, "scope": "desktop", "x": 100, "y": 100
-        }));
+        let r = driver.call(
+            "click",
+            serde_json::json!({
+                "session": cell_id, "scope": "desktop", "x": 100, "y": 100
+            }),
+        );
         assert!(
-            r.is_error()
-                && r.structured()["code"].as_str() == Some("desktop_scope_disabled"),
+            r.is_error() && r.structured()["code"].as_str() == Some("desktop_scope_disabled"),
             "window-scope window-less click was NOT rejected: {}",
             r.text()
         );

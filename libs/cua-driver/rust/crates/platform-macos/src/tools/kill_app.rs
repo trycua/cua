@@ -11,7 +11,10 @@
 //! agent can't interact with.
 
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 
 pub struct KillAppTool;
@@ -21,8 +24,7 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "kill_app".into(),
-        description:
-            "Force-terminate a process by pid (kill -9 equivalent on macOS / Linux; \
+        description: "Force-terminate a process by pid (kill -9 equivalent on macOS / Linux; \
              taskkill /F equivalent on Windows). Use as escalation when the cooperative \
              close path (hotkey cmd+q on macOS, click-the-X on Windows) failed to make \
              the process exit. Unsaved state is lost — prefer the cooperative path first."
@@ -44,13 +46,21 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for KillAppTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let pid_i = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(p) if p > 0 && p <= i32::MAX as i64 => p as i32,
-            Some(_) => return ToolResult::error("kill_app: `pid` must be a positive integer".to_string()),
-            None => return ToolResult::error("kill_app: missing required integer field `pid`".to_string()),
+            Some(_) => {
+                return ToolResult::error("kill_app: `pid` must be a positive integer".to_string())
+            }
+            None => {
+                return ToolResult::error(
+                    "kill_app: missing required integer field `pid`".to_string(),
+                )
+            }
         };
 
         // libc::kill is fast and synchronous; no need to spawn_blocking.

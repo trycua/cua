@@ -16,10 +16,10 @@
 //! If anything fails to resolve the functions return `false` and callers
 //! fall back to the public `CGEvent::post_to_pid`.
 
-use std::ffi::{CStr, c_void};
-use std::os::raw::{c_int, c_uint, c_char};
-use std::sync::OnceLock;
 use libc::pid_t;
+use std::ffi::{c_void, CStr};
+use std::os::raw::{c_char, c_int, c_uint};
+use std::sync::OnceLock;
 
 // ── Function-pointer typedefs ──────────────────────────────────────────────
 
@@ -87,7 +87,10 @@ fn ensure_skylight_loaded() {
     LOADED.get_or_init(|| {
         let path = b"/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight\0";
         unsafe {
-            libc::dlopen(path.as_ptr() as *const c_char, libc::RTLD_LAZY | libc::RTLD_GLOBAL);
+            libc::dlopen(
+                path.as_ptr() as *const c_char,
+                libc::RTLD_LAZY | libc::RTLD_GLOBAL,
+            );
         }
     });
 }
@@ -96,10 +99,12 @@ fn ensure_skylight_loaded() {
 /// Returns `None` when the symbol doesn't resolve.
 fn find_sym(name: &[u8]) -> Option<*mut c_void> {
     ensure_skylight_loaded();
-    let ptr = unsafe {
-        libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr() as *const c_char)
-    };
-    if ptr.is_null() { None } else { Some(ptr) }
+    let ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr() as *const c_char) };
+    if ptr.is_null() {
+        None
+    } else {
+        Some(ptr)
+    }
 }
 
 /// Reinterpret a raw symbol pointer as a function pointer of type `T`.
@@ -220,8 +225,8 @@ fn class_responds_to_selector(cls: *mut c_void, sel: *mut c_void) -> bool {
     }
     type RespondsToFn = unsafe extern "C" fn(*mut c_void, *mut c_void) -> bool;
     static SYM: OnceLock<Option<RespondsToFn>> = OnceLock::new();
-    let f = *SYM
-        .get_or_init(|| find_sym(b"class_respondsToSelector\0").map(|p| unsafe { as_fn(p) }));
+    let f =
+        *SYM.get_or_init(|| find_sym(b"class_respondsToSelector\0").map(|p| unsafe { as_fn(p) }));
     match f {
         Some(f) => unsafe { f(cls, sel) },
         None => false,
@@ -238,9 +243,7 @@ fn class_responds_to_selector(cls: *mut c_void, sel: *mut c_void) -> bool {
 /// We probe offsets 24, 32, 16 for resilience across OS versions (same as Swift).
 unsafe fn extract_event_record(event_ptr: *mut c_void) -> *mut c_void {
     for &offset in &[24usize, 32, 16] {
-        let slot = (event_ptr as *const u8)
-            .add(offset)
-            .cast::<*mut c_void>();
+        let slot = (event_ptr as *const u8).add(offset).cast::<*mut c_void>();
         let p = std::ptr::read_unaligned(slot);
         if !p.is_null() {
             return p;
@@ -301,7 +304,10 @@ pub fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_message: bool
 /// `CGEventSetWindowLocation` SPI. Returns `true` when the SPI resolved.
 pub fn set_window_location(event_ptr: *mut c_void, x: f64, y: f64) -> bool {
     match set_window_loc_fn() {
-        Some(f) => { unsafe { f(event_ptr, x, y) }; true }
+        Some(f) => {
+            unsafe { f(event_ptr, x, y) };
+            true
+        }
         None => false,
     }
 }
@@ -310,7 +316,10 @@ pub fn set_window_location(event_ptr: *mut c_void, x: f64, y: f64) -> bool {
 /// `SLEventSetIntegerValueField`. Returns `false` when SPI absent.
 pub fn set_integer_field(event_ptr: *mut c_void, field: u32, value: i64) -> bool {
     match set_int_field_fn() {
-        Some(f) => { unsafe { f(event_ptr, field, value) }; true }
+        Some(f) => {
+            unsafe { f(event_ptr, field, value) };
+            true
+        }
         None => false,
     }
 }
@@ -357,10 +366,14 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
     let mut target_psn = [0u8; 8];
 
     let ok_prev = unsafe { get_front(prev_psn.as_mut_ptr() as *mut c_void) } == 0;
-    if !ok_prev { return false; }
+    if !ok_prev {
+        return false;
+    }
 
     let ok_target = unsafe { get_pid_psn(target_pid, target_psn.as_mut_ptr() as *mut c_void) } == 0;
-    if !ok_target { return false; }
+    if !ok_target {
+        return false;
+    }
 
     // Build the 248-byte event buffer.
     let mut buf = [0u8; 0xF8];
@@ -374,15 +387,11 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
 
     // Step 3: defocus previous front.
     buf[0x8A] = 0x02;
-    let defocus_ok = unsafe {
-        post_fn(prev_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0
-    };
+    let defocus_ok = unsafe { post_fn(prev_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
 
     // Step 4: focus target.
     buf[0x8A] = 0x01;
-    let focus_ok = unsafe {
-        post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0
-    };
+    let focus_ok = unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
 
     defocus_ok && focus_ok
 }
@@ -394,15 +403,19 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
 /// Falls back to `GetProcessForPID(pid)` when the SkyLight path fails.
 pub fn get_process_psn_for_window(window_id: u32, pid: libc::pid_t, out_psn: &mut [u8; 8]) -> bool {
     // Try modern path: CGSMainConnectionID → SLSGetWindowOwner → SLSGetConnectionPSN
-    if let (Some(get_owner), Some(get_psn), Some(conn_id_fn)) =
-        (get_window_owner_fn(), get_connection_psn_fn(), connection_id_fn())
-    {
+    if let (Some(get_owner), Some(get_psn), Some(conn_id_fn)) = (
+        get_window_owner_fn(),
+        get_connection_psn_fn(),
+        connection_id_fn(),
+    ) {
         let main_cid = unsafe { conn_id_fn() };
         let mut owner_cid: u32 = 0;
         let ok = unsafe { get_owner(main_cid, window_id, &mut owner_cid) } == 0;
         if ok && owner_cid != 0 {
             let psn_ok = unsafe { get_psn(owner_cid, out_psn.as_mut_ptr() as *mut c_void) } == 0;
-            if psn_ok { return true; }
+            if psn_ok {
+                return true;
+            }
         }
     }
     // Fallback: GetProcessForPID

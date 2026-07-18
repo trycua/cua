@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -10,7 +13,9 @@ pub struct SetConfigTool {
 }
 
 impl SetConfigTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -63,7 +68,9 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for SetConfigTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
@@ -92,31 +99,46 @@ impl Tool for SetConfigTool {
             .opt_str("key")
             .and_then(|k| args.get("value").map(|v| (k, v.clone())));
         let kv_u64 = |name: &str| -> Option<u64> {
-            kv.as_ref().filter(|(k, _)| k == name).and_then(|(_, v)| v.as_u64())
+            kv.as_ref()
+                .filter(|(k, _)| k == name)
+                .and_then(|(_, v)| v.as_u64())
         };
 
         // Validate max_image_dimension up front so both branches share the
         // u32 check and we never half-apply.
-        let max_dim: Option<u32> = match args.opt_u64("max_image_dimension").or_else(|| kv_u64("max_image_dimension")) {
+        let max_dim: Option<u32> = match args
+            .opt_u64("max_image_dimension")
+            .or_else(|| kv_u64("max_image_dimension"))
+        {
             Some(dim) => match u32::try_from(dim) {
                 Ok(d) => Some(d),
-                Err(_) => return ToolResult::error(format!("max_image_dimension {dim} exceeds u32::MAX")),
+                Err(_) => {
+                    return ToolResult::error(format!("max_image_dimension {dim} exceeds u32::MAX"))
+                }
             },
             None => None,
         };
 
         let effective_dim = if let Some(sid) = session_id.as_deref() {
             // Session-scoped override: in-memory only, no global write, no disk.
-            self.state.session_config.set(sid, ConfigOverrides {
-                max_image_dimension: max_dim,
-            });
-            self.state.session_config.effective_max_image_dimension(Some(sid), &self.state.config.read().unwrap())
+            self.state.session_config.set(
+                sid,
+                ConfigOverrides {
+                    max_image_dimension: max_dim,
+                },
+            );
+            self.state
+                .session_config
+                .effective_max_image_dimension(Some(sid), &self.state.config.read().unwrap())
         } else {
             // Anonymous/global session: write the shared global + persist.
             let mut cfg = self.state.config.write().unwrap();
             if let Some(dim32) = max_dim {
                 cfg.max_image_dimension = dim32;
-                if let Err(e) = write_driver_config_key("max_image_dimension", &Value::Number(u64::from(dim32).into())) {
+                if let Err(e) = write_driver_config_key(
+                    "max_image_dimension",
+                    &Value::Number(u64::from(dim32).into()),
+                ) {
                     tracing::warn!("set_config: failed to persist max_image_dimension: {e}");
                 }
             }
@@ -126,10 +148,12 @@ impl Tool for SetConfigTool {
         // next daemon restart — the backend is initialised once at startup.
         let mut pip_note = String::new();
         if let Some(enabled) = args.get("experimental_pip").and_then(|v| v.as_bool()) {
-            if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(enabled)) {
+            if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(enabled))
+            {
                 return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
             }
-            pip_note = format!(" — restart cua-driver for experimental_pip={enabled} to take effect");
+            pip_note =
+                format!(" — restart cua-driver for experimental_pip={enabled} to take effect");
         }
         if let Some(geom) = args.opt_str("experimental_pip_geometry") {
             // Validate before persisting so the user gets an immediate error.
@@ -138,11 +162,18 @@ impl Tool for SetConfigTool {
                     "experimental_pip_geometry `{geom}` is not a valid WxH or WxH+X+Y string"
                 ));
             }
-            if let Err(e) = pip_preview::write_config_key("experimental_pip_geometry", Value::String(geom.clone())) {
-                return ToolResult::error(format!("failed to persist experimental_pip_geometry: {e}"));
+            if let Err(e) = pip_preview::write_config_key(
+                "experimental_pip_geometry",
+                Value::String(geom.clone()),
+            ) {
+                return ToolResult::error(format!(
+                    "failed to persist experimental_pip_geometry: {e}"
+                ));
             }
             if pip_note.is_empty() {
-                pip_note = format!(" — restart cua-driver for experimental_pip_geometry={geom} to take effect");
+                pip_note = format!(
+                    " — restart cua-driver for experimental_pip_geometry={geom} to take effect"
+                );
             }
         }
         let scope_note = if session_id.is_some() {

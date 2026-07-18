@@ -143,7 +143,13 @@ fn tools_list_schema_shape() {
         "persistent set_config.capture_scope must remain retired"
     );
     for action in [
-        "click", "type_text", "press_key", "hotkey", "scroll", "drag", "move_cursor",
+        "click",
+        "type_text",
+        "press_key",
+        "hotkey",
+        "scroll",
+        "drag",
+        "move_cursor",
     ] {
         let scope = &properties(action)["scope"];
         assert!(

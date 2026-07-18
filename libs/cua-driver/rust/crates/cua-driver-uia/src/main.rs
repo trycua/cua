@@ -49,10 +49,20 @@ struct PipeResponse {
 #[cfg(target_os = "windows")]
 impl PipeResponse {
     fn ok(result: serde_json::Value) -> Self {
-        Self { ok: true, result: Some(result), error: None, exit_code: None }
+        Self {
+            ok: true,
+            result: Some(result),
+            error: None,
+            exit_code: None,
+        }
     }
     fn err(msg: impl Into<String>, code: i32) -> Self {
-        Self { ok: false, result: None, error: Some(msg.into()), exit_code: Some(code) }
+        Self {
+            ok: false,
+            result: None,
+            error: Some(msg.into()),
+            exit_code: Some(code),
+        }
     }
 }
 
@@ -90,7 +100,9 @@ async fn async_main() -> anyhow::Result<()> {
             .create(PIPE_PATH)
             .map_err(|e| anyhow::anyhow!("create named pipe {PIPE_PATH}: {e}"))?;
 
-        server.connect().await
+        server
+            .connect()
+            .await
             .map_err(|e| anyhow::anyhow!("named pipe connect: {e}"))?;
 
         let reg = registry.clone();
@@ -105,9 +117,12 @@ async fn async_main() -> anyhow::Result<()> {
                         let _ = writer
                             .write_all(
                                 (serde_json::to_string(&PipeResponse::err(
-                                    format!("JSON parse error: {e}"), 65,
-                                )).unwrap() + "\n")
-                                .as_bytes(),
+                                    format!("JSON parse error: {e}"),
+                                    65,
+                                ))
+                                .unwrap()
+                                    + "\n")
+                                    .as_bytes(),
                             )
                             .await;
                         continue;
@@ -130,16 +145,19 @@ async fn handle_request(
 ) -> PipeResponse {
     match req.method.as_str() {
         "list" => {
-            let tools: Vec<serde_json::Value> = reg.iter_defs()
-                .map(|(name, def)| serde_json::json!({
-                    "name": name,
-                    "description": def.description,
-                    "input_schema": def.input_schema,
-                    "read_only": def.read_only,
-                    "destructive": def.destructive,
-                    "idempotent": def.idempotent,
-                    "open_world": def.open_world,
-                }))
+            let tools: Vec<serde_json::Value> = reg
+                .iter_defs()
+                .map(|(name, def)| {
+                    serde_json::json!({
+                        "name": name,
+                        "description": def.description,
+                        "input_schema": def.input_schema,
+                        "read_only": def.read_only,
+                        "destructive": def.destructive,
+                        "idempotent": def.idempotent,
+                        "open_world": def.open_world,
+                    })
+                })
                 .collect();
             PipeResponse::ok(serde_json::json!({ "tools": tools }))
         }
@@ -156,29 +174,48 @@ async fn handle_request(
         }
         "call" => {
             let raw = req.name.as_deref().unwrap_or("").to_owned();
-            let tool_name = if raw == "type_text_chars" { "type_text".to_owned() } else { raw };
-            let args = req.args.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+            let tool_name = if raw == "type_text_chars" {
+                "type_text".to_owned()
+            } else {
+                raw
+            };
+            let args = req
+                .args
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
             if reg.get_def(&tool_name).is_none() {
                 return PipeResponse::err(format!("Unknown tool: {tool_name}"), 64);
             }
             let result = reg.invoke(&tool_name, args).await;
             let is_err = result.is_error.unwrap_or(false);
-            let content: Vec<serde_json::Value> = result.content.iter().map(|c| match c {
-                cua_driver_core::protocol::Content::Text { text, .. } =>
-                    serde_json::json!({"type":"text","text":text}),
-                cua_driver_core::protocol::Content::Image { data, mime_type, .. } =>
-                    serde_json::json!({"type":"image","data":data,"mimeType":mime_type}),
-            }).collect();
+            let content: Vec<serde_json::Value> = result
+                .content
+                .iter()
+                .map(|c| match c {
+                    cua_driver_core::protocol::Content::Text { text, .. } => {
+                        serde_json::json!({"type":"text","text":text})
+                    }
+                    cua_driver_core::protocol::Content::Image {
+                        data, mime_type, ..
+                    } => serde_json::json!({"type":"image","data":data,"mimeType":mime_type}),
+                })
+                .collect();
             let mut result_obj = serde_json::json!({"content": content, "isError": is_err});
             if let Some(sc) = result.structured_content {
                 result_obj["structuredContent"] = sc;
             }
             if is_err {
-                let msg = result.content.iter()
-                    .filter_map(|c| if let cua_driver_core::protocol::Content::Text { text, .. } = c {
-                        Some(text.as_str())
-                    } else { None })
-                    .collect::<Vec<_>>().join("\n");
+                let msg = result
+                    .content
+                    .iter()
+                    .filter_map(|c| {
+                        if let cua_driver_core::protocol::Content::Text { text, .. } = c {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 PipeResponse::err(msg, 1)
             } else {
                 PipeResponse::ok(result_obj)
@@ -188,7 +225,9 @@ async fn handle_request(
             // Worker shutdown is unsupported in the prototype — restarting requires
             // ShellExecute which the main daemon doesn't have a clean path to. Treat
             // as a no-op for now; the supervising launcher can taskkill the process.
-            PipeResponse::ok(serde_json::json!({"shutdown": false, "reason": "uia worker ignores shutdown"}))
+            PipeResponse::ok(
+                serde_json::json!({"shutdown": false, "reason": "uia worker ignores shutdown"}),
+            )
         }
         other => PipeResponse::err(format!("Unknown method: {other}"), 65),
     }

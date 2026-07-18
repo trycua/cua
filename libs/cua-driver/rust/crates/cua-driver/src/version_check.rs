@@ -65,8 +65,7 @@ pub const RELEASE_TAG_PREFIX: &str = "cua-driver-rs-v";
 /// GitHub releases API endpoint. Paginates newest-first; 40 entries is
 /// plenty of headroom past the most recent stable release even when
 /// pre-releases are sprinkled in between.
-const RELEASES_URL: &str =
-    "https://api.github.com/repos/trycua/cua/releases?per_page=40";
+const RELEASES_URL: &str = "https://api.github.com/repos/trycua/cua/releases?per_page=40";
 
 // ── Public API ───────────────────────────────────────────────────────────
 
@@ -383,8 +382,7 @@ fn is_enabled() -> bool {
 /// the `cua-driver config set` subcommand writes to. Returns `None` when
 /// the file is missing, unreadable, or doesn't have the key.
 fn read_config_flag() -> Option<bool> {
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))?;
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
     let path = PathBuf::from(home).join(".cua-driver").join("config.json");
     let raw = std::fs::read_to_string(&path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
@@ -420,8 +418,12 @@ pub(crate) fn is_prerelease(version: &str) -> bool {
 /// available" banner. We'd rather miss a real update than nag the user
 /// about a phantom one.
 pub fn is_newer(latest: &str, current: &str) -> bool {
-    let Ok(l) = semver::Version::parse(latest) else { return false; };
-    let Ok(c) = semver::Version::parse(current) else { return false; };
+    let Ok(l) = semver::Version::parse(latest) else {
+        return false;
+    };
+    let Ok(c) = semver::Version::parse(current) else {
+        return false;
+    };
     l > c
 }
 
@@ -472,9 +474,12 @@ fn write_cache(cache: &VersionCache) -> std::io::Result<()> {
 }
 
 fn cache_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))?;
-    Some(PathBuf::from(home).join(HOME_SUBDIRECTORY).join(CACHE_FILE_NAME))
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    Some(
+        PathBuf::from(home)
+            .join(HOME_SUBDIRECTORY)
+            .join(CACHE_FILE_NAME),
+    )
 }
 
 // ── HTTP fetch (shared with the `update` subcommand) ─────────────────────
@@ -504,7 +509,10 @@ pub fn fetch_latest_version() -> Result<String, String> {
     let response = agent
         .get(RELEASES_URL)
         .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", concat!("cua-driver-rs/", env!("CARGO_PKG_VERSION")))
+        .header(
+            "User-Agent",
+            concat!("cua-driver-rs/", env!("CARGO_PKG_VERSION")),
+        )
         .call()
         .map_err(|e| format!("HTTP error: {e}"))?;
 
@@ -595,18 +603,30 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let saved_home = std::env::var_os("HOME");
         let saved_userprofile = std::env::var_os("USERPROFILE");
-        unsafe { std::env::set_var("HOME", tmp.path()); }
-        unsafe { std::env::set_var("USERPROFILE", tmp.path()); }
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+        unsafe {
+            std::env::set_var("USERPROFILE", tmp.path());
+        }
 
         let result = f(tmp.path());
 
         match saved_home {
-            Some(s) => unsafe { std::env::set_var("HOME", s); },
-            None => unsafe { std::env::remove_var("HOME"); },
+            Some(s) => unsafe {
+                std::env::set_var("HOME", s);
+            },
+            None => unsafe {
+                std::env::remove_var("HOME");
+            },
         }
         match saved_userprofile {
-            Some(s) => unsafe { std::env::set_var("USERPROFILE", s); },
-            None => unsafe { std::env::remove_var("USERPROFILE"); },
+            Some(s) => unsafe {
+                std::env::set_var("USERPROFILE", s);
+            },
+            None => unsafe {
+                std::env::remove_var("USERPROFILE");
+            },
         }
         result
     }
@@ -821,27 +841,37 @@ mod tests {
         let _g = ENV_LOCK.lock().unwrap();
         let saved = std::env::var_os(ENV_UPDATE_CHECK);
 
-        unsafe { std::env::set_var(ENV_UPDATE_CHECK, "false"); }
+        unsafe {
+            std::env::set_var(ENV_UPDATE_CHECK, "false");
+        }
         // Use a separately-redirected HOME so any config file present on
         // the developer's machine can't influence the result.
         with_isolated_home(|_| {
             assert!(!is_enabled(), "explicit false env var must disable");
         });
 
-        unsafe { std::env::set_var(ENV_UPDATE_CHECK, "0"); }
+        unsafe {
+            std::env::set_var(ENV_UPDATE_CHECK, "0");
+        }
         with_isolated_home(|_| {
             assert!(!is_enabled(), "0 must disable");
         });
 
-        unsafe { std::env::set_var(ENV_UPDATE_CHECK, "off"); }
+        unsafe {
+            std::env::set_var(ENV_UPDATE_CHECK, "off");
+        }
         with_isolated_home(|_| {
             assert!(!is_enabled(), "off must disable");
         });
 
         // Restore.
         match saved {
-            Some(s) => unsafe { std::env::set_var(ENV_UPDATE_CHECK, s); },
-            None => unsafe { std::env::remove_var(ENV_UPDATE_CHECK); },
+            Some(s) => unsafe {
+                std::env::set_var(ENV_UPDATE_CHECK, s);
+            },
+            None => unsafe {
+                std::env::remove_var(ENV_UPDATE_CHECK);
+            },
         }
     }
 
@@ -849,7 +879,9 @@ mod tests {
     fn config_flag_disables_check() {
         let _g = ENV_LOCK.lock().unwrap();
         let saved = std::env::var_os(ENV_UPDATE_CHECK);
-        unsafe { std::env::remove_var(ENV_UPDATE_CHECK); }
+        unsafe {
+            std::env::remove_var(ENV_UPDATE_CHECK);
+        }
 
         with_isolated_home(|home| {
             // Write a config that disables the check.
@@ -858,18 +890,25 @@ mod tests {
             std::fs::write(
                 cfg_dir.join("config.json"),
                 r#"{"update_check_enabled": false}"#,
-            ).unwrap();
+            )
+            .unwrap();
 
             // Build version is a normal release (this crate's pkg version
             // ships as "0.1.3", a stable release — see workspace Cargo.toml).
             // The env var is unset, so the config flag is the only signal.
-            assert!(!is_enabled(),
-                "persisted update_check_enabled=false must disable the check");
+            assert!(
+                !is_enabled(),
+                "persisted update_check_enabled=false must disable the check"
+            );
         });
 
         match saved {
-            Some(s) => unsafe { std::env::set_var(ENV_UPDATE_CHECK, s); },
-            None => unsafe { std::env::remove_var(ENV_UPDATE_CHECK); },
+            Some(s) => unsafe {
+                std::env::set_var(ENV_UPDATE_CHECK, s);
+            },
+            None => unsafe {
+                std::env::remove_var(ENV_UPDATE_CHECK);
+            },
         }
     }
 
@@ -877,13 +916,17 @@ mod tests {
     fn config_flag_true_or_missing_leaves_check_on() {
         let _g = ENV_LOCK.lock().unwrap();
         let saved = std::env::var_os(ENV_UPDATE_CHECK);
-        unsafe { std::env::remove_var(ENV_UPDATE_CHECK); }
+        unsafe {
+            std::env::remove_var(ENV_UPDATE_CHECK);
+        }
 
         with_isolated_home(|home| {
             // Case A: no config file at all → enabled.
             // CARGO_PKG_VERSION is "0.1.3" (stable), env unset, no config file.
-            assert!(is_enabled(),
-                "no config file + stable version + no env opt-out → enabled");
+            assert!(
+                is_enabled(),
+                "no config file + stable version + no env opt-out → enabled"
+            );
 
             // Case B: config file present but flag = true → still enabled.
             let cfg_dir = home.join(".cua-driver");
@@ -891,14 +934,21 @@ mod tests {
             std::fs::write(
                 cfg_dir.join("config.json"),
                 r#"{"update_check_enabled": true, "other_key": 42}"#,
-            ).unwrap();
-            assert!(is_enabled(),
-                "explicit update_check_enabled=true must leave check on");
+            )
+            .unwrap();
+            assert!(
+                is_enabled(),
+                "explicit update_check_enabled=true must leave check on"
+            );
         });
 
         match saved {
-            Some(s) => unsafe { std::env::set_var(ENV_UPDATE_CHECK, s); },
-            None => unsafe { std::env::remove_var(ENV_UPDATE_CHECK); },
+            Some(s) => unsafe {
+                std::env::set_var(ENV_UPDATE_CHECK, s);
+            },
+            None => unsafe {
+                std::env::remove_var(ENV_UPDATE_CHECK);
+            },
         }
     }
 
@@ -908,15 +958,19 @@ mod tests {
     fn banner_contains_required_lines() {
         let banner = format_banner("0.1.4", "0.1.3");
         // Headline.
-        assert!(banner.contains("cua-driver v0.1.4 is available"), "got: {banner:?}");
+        assert!(
+            banner.contains("cua-driver v0.1.4 is available"),
+            "got: {banner:?}"
+        );
         assert!(banner.contains("you have v0.1.3"), "got: {banner:?}");
         // Update instruction.
-        assert!(banner.contains("Update with: cua-driver update"), "got: {banner:?}");
+        assert!(
+            banner.contains("Update with: cua-driver update"),
+            "got: {banner:?}"
+        );
         // Release notes URL uses the correct tag prefix.
         assert!(
-            banner.contains(
-                "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.1.4"
-            ),
+            banner.contains("https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.1.4"),
             "got: {banner:?}",
         );
     }

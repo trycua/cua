@@ -33,20 +33,13 @@ use std::time::Duration;
 
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2_app_kit::{
-    NSRunningApplication, NSWorkspace, NSWorkspaceOpenConfiguration,
-};
-use objc2_foundation::{
-    NSAppleEventDescriptor, NSArray, NSDictionary, NSError, NSString, NSURL,
-};
+use objc2_app_kit::{NSRunningApplication, NSWorkspace, NSWorkspaceOpenConfiguration};
+use objc2_foundation::{NSAppleEventDescriptor, NSArray, NSDictionary, NSError, NSString, NSURL};
 
 /// FourCharCode helper — packs a 4-byte ASCII tag into a `u32` the same way
 /// Apple's CoreServices headers do (`kCoreEventClass = 'aevt'` etc).
 const fn fourcc(s: &[u8; 4]) -> u32 {
-    ((s[0] as u32) << 24)
-        | ((s[1] as u32) << 16)
-        | ((s[2] as u32) << 8)
-        | (s[3] as u32)
+    ((s[0] as u32) << 24) | ((s[1] as u32) << 16) | ((s[2] as u32) << 8) | (s[3] as u32)
 }
 
 const K_CORE_EVENT_CLASS: u32 = fourcc(b"aevt"); // kCoreEventClass
@@ -129,11 +122,7 @@ pub fn open_application(
         ?app_url, "calling openApplicationAtURL");
 
     unsafe {
-        ws.openApplicationAtURL_configuration_completionHandler(
-            &url,
-            &config,
-            Some(&block),
-        );
+        ws.openApplicationAtURL_configuration_completionHandler(&url, &config, Some(&block));
     }
 
     wait_for_completion(rx)
@@ -344,8 +333,8 @@ fn wait_for_completion(
 /// is not exposed by `objc2-foundation 0.2.2`.
 mod apple_event {
     use super::{
-        NSAppleEventDescriptor, NSString, Retained, K_AE_OPEN_APPLICATION,
-        K_ANY_TRANSACTION_ID, K_AUTO_GENERATE_RETURN_ID, K_CORE_EVENT_CLASS,
+        NSAppleEventDescriptor, NSString, Retained, K_AE_OPEN_APPLICATION, K_ANY_TRANSACTION_ID,
+        K_AUTO_GENERATE_RETURN_ID, K_CORE_EVENT_CLASS,
     };
     use objc2::msg_send_id;
     use objc2::rc::Allocated;
@@ -354,13 +343,11 @@ mod apple_event {
     /// Build an `aevt/oapp` AppleEvent addressed to the bundle id `bid`.
     pub fn open_application_event(bid: &str) -> Retained<NSAppleEventDescriptor> {
         let target_string = NSString::from_str(bid);
-        let target: Retained<NSAppleEventDescriptor> = unsafe {
-            NSAppleEventDescriptor::descriptorWithBundleIdentifier(&target_string)
-        };
+        let target: Retained<NSAppleEventDescriptor> =
+            unsafe { NSAppleEventDescriptor::descriptorWithBundleIdentifier(&target_string) };
 
         unsafe {
-            let alloc: Allocated<NSAppleEventDescriptor> =
-                NSAppleEventDescriptor::alloc();
+            let alloc: Allocated<NSAppleEventDescriptor> = NSAppleEventDescriptor::alloc();
             // initWithEventClass:eventID:targetDescriptor:returnID:transactionID:
             let event: Retained<NSAppleEventDescriptor> = msg_send_id![
                 alloc,
@@ -374,4 +361,3 @@ mod apple_event {
         }
     }
 }
-

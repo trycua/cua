@@ -21,6 +21,7 @@
 use std::cell::RefCell;
 
 use anyhow::{bail, Context};
+use windows::core::{Interface, BSTR};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::System::Com::{
@@ -30,12 +31,11 @@ use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationTogglePattern, TreeScope_Children, TreeScope_Subtree,
     UIA_AcceleratorKeyPropertyId, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
-    UIA_CONTROLTYPE_ID, UIA_HyperlinkControlTypeId, UIA_InvokePatternId,
-    UIA_ListItemControlTypeId, UIA_MenuItemControlTypeId, UIA_PROPERTY_ID,
-    UIA_RadioButtonControlTypeId, UIA_SplitButtonControlTypeId, UIA_TabItemControlTypeId,
-    UIA_TogglePatternId, UIA_TreeItemControlTypeId,
+    UIA_HyperlinkControlTypeId, UIA_InvokePatternId, UIA_ListItemControlTypeId,
+    UIA_MenuItemControlTypeId, UIA_RadioButtonControlTypeId, UIA_SplitButtonControlTypeId,
+    UIA_TabItemControlTypeId, UIA_TogglePatternId, UIA_TreeItemControlTypeId, UIA_CONTROLTYPE_ID,
+    UIA_PROPERTY_ID,
 };
-use windows::core::{BSTR, Interface};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
 };
@@ -265,9 +265,7 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
             // returned ✅ but the menu never opened.)
             let has_invoke = elem.GetCurrentPattern(UIA_InvokePatternId).is_ok();
             let has_expand = elem
-                .GetCurrentPattern(
-                    windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
-                )
+                .GetCurrentPattern(windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId)
                 .is_ok();
             if !has_invoke && !has_expand {
                 continue;
@@ -314,9 +312,7 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
         // in that case. Pure-Invoke leaves (buttons, links, etc.) go
         // through Invoke as before.
         let winner_has_expand = winner
-            .GetCurrentPattern(
-                windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
-            )
+            .GetCurrentPattern(windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId)
             .is_ok();
         let winner_has_invoke = winner.GetCurrentPattern(UIA_InvokePatternId).is_ok();
         // UWP foreground-steal bypass: gate the entire activation block on
@@ -375,10 +371,7 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
 /// their keyboard accelerators are surfaced through UI Automation instead.
 /// This helper keeps that routing narrow by requiring an advertised
 /// AcceleratorKey match before invoking anything.
-pub fn try_invoke_accelerator_in_window(
-    hwnd: isize,
-    combo: &str,
-) -> anyhow::Result<(bool, usize)> {
+pub fn try_invoke_accelerator_in_window(hwnd: isize, combo: &str) -> anyhow::Result<(bool, usize)> {
     if hwnd == 0 {
         bail!("invalid target hwnd 0");
     }
@@ -412,14 +405,17 @@ pub fn try_invoke_accelerator_in_window(
             };
             // Primary match: the UIA AcceleratorKey property — the conventional
             // place a WinUI / XAML control advertises its shortcut.
-            let mut accelerator: Option<String> = read_current_bstr(&elem, UIA_AcceleratorKeyPropertyId);
+            let mut accelerator: Option<String> =
+                read_current_bstr(&elem, UIA_AcceleratorKeyPropertyId);
             // Fallback match: many shipping XAML apps (e.g. modern Notepad)
             // don't set AcceleratorKey at all and instead encode the shortcut
             // in the visible element name as a parenthetical hint like
             // "Bold (Ctrl+B)". Scan the Name property for that pattern so
             // toolbar buttons remain reachable via hotkey.
             if accelerator.is_none() {
-                if let Some(name) = read_current_bstr(&elem, windows::Win32::UI::Accessibility::UIA_NamePropertyId) {
+                if let Some(name) =
+                    read_current_bstr(&elem, windows::Win32::UI::Accessibility::UIA_NamePropertyId)
+                {
                     if let Some(extracted) = extract_shortcut_from_name(&name) {
                         accelerator = Some(extracted);
                     }
@@ -603,9 +599,10 @@ fn extract_shortcut_from_name(name: &str) -> Option<String> {
     // parentheticals (e.g. "(2)" or "(beta)").
     let has_modifier = inner.split('+').any(|tok| {
         let t = tok.trim().to_ascii_lowercase();
-        matches!(t.as_str(),
-            "ctrl" | "control" | "shift" | "alt" |
-            "win" | "windows" | "meta" | "cmd" | "command")
+        matches!(
+            t.as_str(),
+            "ctrl" | "control" | "shift" | "alt" | "win" | "windows" | "meta" | "cmd" | "command"
+        )
     });
     if has_modifier {
         Some(inner.to_owned())
@@ -690,6 +687,11 @@ fn window_bounds(hwnd: HWND) -> (i32, i32, i32, i32) {
         if ok.is_err() {
             let _ = GetWindowRect(hwnd, &mut rect);
         }
-        (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+        (
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+        )
     }
 }

@@ -86,7 +86,9 @@ fn map_ashpd_err<E: std::fmt::Display>(e: E) -> anyhow::Error {
     if msg.contains("ServiceUnknown") || msg.contains("NotFound") {
         anyhow::anyhow!("xdg-desktop-portal is not running on this session ({msg}). Install xdg-desktop-portal-gnome / xdg-desktop-portal-kde / xdg-desktop-portal-wlr for your compositor.")
     } else if msg.contains("Cancelled") || msg.contains("denied") {
-        anyhow::anyhow!("xdg-desktop-portal Screenshot consent dialog was cancelled or denied: {msg}")
+        anyhow::anyhow!(
+            "xdg-desktop-portal Screenshot consent dialog was cancelled or denied: {msg}"
+        )
     } else {
         anyhow::anyhow!(msg)
     }
@@ -124,8 +126,11 @@ pub fn probe_portal() -> anyhow::Result<bool> {
             .await
             .map_err(|e| anyhow::anyhow!("dbus proxy creation failed: {e}"))?;
         let has_owner = proxy
-            .name_has_owner("org.freedesktop.portal.Desktop".try_into()
-                .map_err(|e| anyhow::anyhow!("bus name parse failed: {e}"))?)
+            .name_has_owner(
+                "org.freedesktop.portal.Desktop"
+                    .try_into()
+                    .map_err(|e| anyhow::anyhow!("bus name parse failed: {e}"))?,
+            )
             .await
             .map_err(|e| anyhow::anyhow!("name_has_owner failed: {e}"))?;
         Ok(has_owner)

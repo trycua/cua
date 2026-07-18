@@ -10,8 +10,10 @@ use std::process::Command;
 #[cfg(target_os = "windows")]
 fn main() {
     let exe = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
-        .parent().unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
         .join("target/debug/cua-driver.exe");
     let out = Command::new(&exe)
         .arg("list-tools")
@@ -26,27 +28,53 @@ fn main() {
     let names: Vec<&str> = lines.iter().map(|l| l.split(':').next().unwrap()).collect();
     let mut sorted = names.clone();
     sorted.sort();
-    assert_eq!(names, sorted, "tools are not sorted alphabetically (Swift parity)");
+    assert_eq!(
+        names, sorted,
+        "tools are not sorted alphabetically (Swift parity)"
+    );
 
     // All core tools are present.
     let expected = [
-        "click", "double_click", "right_click", "type_text", "press_key", "hotkey",
-        "scroll", "screenshot", "list_apps", "list_windows", "get_cursor_position",
-        "get_screen_size", "launch_app", "move_cursor", "set_agent_cursor_enabled",
-        "set_agent_cursor_motion", "get_agent_cursor_state", "set_value",
-        "get_config", "set_config", "check_permissions", "get_recording_state",
-        "start_recording", "stop_recording",
+        "click",
+        "double_click",
+        "right_click",
+        "type_text",
+        "press_key",
+        "hotkey",
+        "scroll",
+        "screenshot",
+        "list_apps",
+        "list_windows",
+        "get_cursor_position",
+        "get_screen_size",
+        "launch_app",
+        "move_cursor",
+        "set_agent_cursor_enabled",
+        "set_agent_cursor_motion",
+        "get_agent_cursor_state",
+        "set_value",
+        "get_config",
+        "set_config",
+        "check_permissions",
+        "get_recording_state",
+        "start_recording",
+        "stop_recording",
     ];
     for tool in expected {
-        assert!(names.iter().any(|n| *n == tool), "missing tool `{tool}` in list-tools output");
+        assert!(
+            names.iter().any(|n| *n == tool),
+            "missing tool `{tool}` in list-tools output"
+        );
     }
 
     // Each non-empty line should have `name: <summary>` shape OR just `name`.
     for line in &lines {
         if line.contains(':') {
             let after = line.split_once(':').unwrap().1;
-            assert!(after.trim_start().chars().next().is_some(),
-                "empty description after colon in line: {line:?}");
+            assert!(
+                after.trim_start().chars().next().is_some(),
+                "empty description after colon in line: {line:?}"
+            );
         }
     }
 

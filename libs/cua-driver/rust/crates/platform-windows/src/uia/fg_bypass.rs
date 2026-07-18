@@ -31,7 +31,7 @@
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
-use windows::Win32::UI::WindowsAndMessaging::{GA_ROOT, GetAncestor};
+use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
 
 /// RAII guard that disables a window on construction and restores its
 /// previous enabled-state on Drop. Always re-arms on Drop even if the
@@ -46,13 +46,21 @@ impl DisabledHwndGuard {
     /// Disable `hwnd` for the lifetime of the guard. No-op for null HWND.
     pub fn disable(hwnd: HWND) -> Self {
         if hwnd.0.is_null() {
-            return Self { hwnd, was_enabled: false, armed: false };
+            return Self {
+                hwnd,
+                was_enabled: false,
+                armed: false,
+            };
         }
         // `EnableWindow` returns nonzero iff the window was *previously
         // disabled* — invert to get the "was enabled" state we want to
         // restore at Drop time.
         let was_disabled = unsafe { EnableWindow(hwnd, false).as_bool() };
-        Self { hwnd, was_enabled: !was_disabled, armed: true }
+        Self {
+            hwnd,
+            was_enabled: !was_disabled,
+            armed: true,
+        }
     }
 }
 

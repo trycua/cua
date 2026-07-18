@@ -8,22 +8,24 @@
 //! - `CursorShape` — loaded and rasterised custom SVG / ICO / PNG asset
 //! - `OverlayCommand` — messages sent from MCP tools to the overlay thread
 
-pub mod palette;
-pub mod motion;
 pub mod bezier;
-pub mod path_planner;
-pub mod shape;
 pub mod capture_utils;
-pub mod util;
+pub mod motion;
+pub mod palette;
+pub mod path_planner;
 pub mod render_state;
+pub mod shape;
+pub mod util;
 pub mod z_order;
 
-pub use palette::Palette;
-pub use motion::{MotionConfig, Spring};
 pub use bezier::CubicBezier;
-pub use path_planner::{PathPlanner, PlannedPath, PathState};
+pub use motion::{MotionConfig, Spring};
+pub use palette::Palette;
+pub use path_planner::{PathPlanner, PathState, PlannedPath};
+pub use render_state::{
+    draw_default_arrow, paint_cursor, render_frame, FocusRect, RenderStateCore,
+};
 pub use shape::{resolve_cursor_icon, BuiltinShape, CursorIconResolution, CursorShape};
-pub use render_state::{RenderStateCore, FocusRect, render_frame, paint_cursor, draw_default_arrow};
 pub use z_order::ZOrderEnforcer;
 
 /// Configuration assembled from CLI arguments and passed to every
@@ -204,22 +206,32 @@ pub struct CursorRegistry {
 impl CursorRegistry {
     pub fn new() -> Self {
         let mut map = HashMap::new();
-        map.insert("default".into(), CursorInstanceState {
-            config: CursorInstanceConfig::default(),
-            x: None,
-            y: None,
-        });
-        Self { inner: Mutex::new(map) }
+        map.insert(
+            "default".into(),
+            CursorInstanceState {
+                config: CursorInstanceConfig::default(),
+                x: None,
+                y: None,
+            },
+        );
+        Self {
+            inner: Mutex::new(map),
+        }
     }
 
     pub fn get_or_create(&self, cursor_id: &str) -> CursorInstanceState {
         let mut inner = self.inner.lock().unwrap();
-        inner.entry(cursor_id.to_owned()).or_insert_with(|| CursorInstanceState {
-            config: CursorInstanceConfig {
-                cursor_id: cursor_id.to_owned(), ..Default::default()
-            },
-            x: None, y: None,
-        }).clone()
+        inner
+            .entry(cursor_id.to_owned())
+            .or_insert_with(|| CursorInstanceState {
+                config: CursorInstanceConfig {
+                    cursor_id: cursor_id.to_owned(),
+                    ..Default::default()
+                },
+                x: None,
+                y: None,
+            })
+            .clone()
     }
 
     /// Read one cursor without materializing a new registry entry.
@@ -229,29 +241,47 @@ impl CursorRegistry {
 
     pub fn update_position(&self, cursor_id: &str, x: f64, y: f64) {
         let mut inner = self.inner.lock().unwrap();
-        let state = inner.entry(cursor_id.to_owned()).or_insert_with(|| CursorInstanceState {
-            config: CursorInstanceConfig { cursor_id: cursor_id.to_owned(), ..Default::default() },
-            x: None, y: None,
-        });
+        let state = inner
+            .entry(cursor_id.to_owned())
+            .or_insert_with(|| CursorInstanceState {
+                config: CursorInstanceConfig {
+                    cursor_id: cursor_id.to_owned(),
+                    ..Default::default()
+                },
+                x: None,
+                y: None,
+            });
         state.x = Some(x);
         state.y = Some(y);
     }
 
     pub fn set_enabled(&self, cursor_id: &str, enabled: bool) {
         let mut inner = self.inner.lock().unwrap();
-        let state = inner.entry(cursor_id.to_owned()).or_insert_with(|| CursorInstanceState {
-            config: CursorInstanceConfig { cursor_id: cursor_id.to_owned(), ..Default::default() },
-            x: None, y: None,
-        });
+        let state = inner
+            .entry(cursor_id.to_owned())
+            .or_insert_with(|| CursorInstanceState {
+                config: CursorInstanceConfig {
+                    cursor_id: cursor_id.to_owned(),
+                    ..Default::default()
+                },
+                x: None,
+                y: None,
+            });
         state.config.enabled = enabled;
     }
 
     pub fn update_config(&self, cursor_id: &str, f: impl FnOnce(&mut CursorInstanceConfig)) {
         let mut inner = self.inner.lock().unwrap();
-        let state = inner.entry(cursor_id.to_owned()).or_insert_with(|| CursorInstanceState {
-            config: CursorInstanceConfig { cursor_id: cursor_id.to_owned(), ..Default::default() },
-            x: None, y: None,
-        });
+        let state = inner
+            .entry(cursor_id.to_owned())
+            .or_insert_with(|| CursorInstanceState {
+                config: CursorInstanceConfig {
+                    cursor_id: cursor_id.to_owned(),
+                    ..Default::default()
+                },
+                x: None,
+                y: None,
+            });
         f(&mut state.config);
     }
 
@@ -271,7 +301,9 @@ impl CursorRegistry {
 }
 
 impl Default for CursorRegistry {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Identifier for one owned cursor in the keyed render collection.
@@ -308,9 +340,17 @@ pub enum OverlayMsg {
 #[derive(Debug, Clone)]
 pub enum OverlayCommand {
     /// Animate the cursor to a new screen position.
-    MoveTo { x: f64, y: f64, end_heading_radians: f64 },
+    MoveTo {
+        x: f64,
+        y: f64,
+        end_heading_radians: f64,
+    },
     /// Snap the cursor immediately to a screen position, optionally updating heading.
-    SnapTo { x: f64, y: f64, heading_radians: Option<f64> },
+    SnapTo {
+        x: f64,
+        y: f64,
+        heading_radians: Option<f64>,
+    },
     /// Start the click-press visual.
     ClickPulse { x: f64, y: f64 },
     /// Toggle the held-button visual state.

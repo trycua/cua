@@ -240,10 +240,7 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
             // happens INSIDE the elevated process (where it'll succeed on
             // the first attempt and not re-enter this branch). -Wait so we
             // can capture the child's exit code.
-            let inner = format!(
-                "& \"{}\" autostart enable",
-                exe.replace('"', "`\"")
-            );
+            let inner = format!("& \"{}\" autostart enable", exe.replace('"', "`\""));
             let outer = format!(
                 "$p = Start-Process -FilePath '{}' -ArgumentList @('-NoProfile','-NonInteractive','-Command',{}) -Verb RunAs -Wait -PassThru; exit $p.ExitCode",
                 "powershell.exe",
@@ -353,8 +350,7 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
 mod platform {
     use super::*;
 
-    const NOT_YET: &str =
-        "cua-driver autostart is currently Windows-only. macOS users: see \
+    const NOT_YET: &str = "cua-driver autostart is currently Windows-only. macOS users: see \
          libs/cua-driver/scripts/install-local.sh --autostart for the \
          LaunchAgent recipe. Linux users: same script registers a systemd \
          --user unit. A cross-platform impl is tracked as a follow-up.";
@@ -380,13 +376,17 @@ mod platform {
 /// (main) doesn't need to plumb back an exit code for every subcommand.
 pub fn run_autostart_cmd(subcommand: &str) {
     let (verb_result, success_text): (Result<()>, String) = match subcommand {
-        "enable" => (enable(), format!(
-            "Registered autostart entry '{TASK_NAME}'.\n  \
+        "enable" => (
+            enable(),
+            format!(
+                "Registered autostart entry '{TASK_NAME}'.\n  \
              cua-driver serve will start at every interactive logon."
-        )),
-        "disable" => (disable(), format!(
-            "Removed autostart entry '{TASK_NAME}' (no-op if it was already absent)."
-        )),
+            ),
+        ),
+        "disable" => (
+            disable(),
+            format!("Removed autostart entry '{TASK_NAME}' (no-op if it was already absent)."),
+        ),
         "status" => match status() {
             Ok(s) => {
                 println!("{}", s.tag());
@@ -397,9 +397,10 @@ pub fn run_autostart_cmd(subcommand: &str) {
                 std::process::exit(1);
             }
         },
-        "kick" => (kick(), format!(
-            "Started autostart entry '{TASK_NAME}' for the current session."
-        )),
+        "kick" => (
+            kick(),
+            format!("Started autostart entry '{TASK_NAME}' for the current session."),
+        ),
         other => {
             eprintln!("Unknown autostart subcommand: {other:?}");
             eprintln!("Usage: cua-driver autostart {{enable|disable|status|kick}}");

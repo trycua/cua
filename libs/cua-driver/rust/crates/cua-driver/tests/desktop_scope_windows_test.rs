@@ -167,7 +167,11 @@ fn run_desktop_fixture_case(
             "bring_to_front",
             serde_json::json!({"session": window_session, "pid": pid as i64, "window_id": wid}),
         );
-        assert!(!posture.is_error(), "could not foreground WPF fixture: {}", posture.text());
+        assert!(
+            !posture.is_error(),
+            "could not foreground WPF fixture: {}",
+            posture.text()
+        );
         std::thread::sleep(Duration::from_millis(300));
         driver.start_behavior_recording();
         test(pid, wid, &window_session, &desktop_session, &mut driver);
@@ -201,10 +205,7 @@ fn desktop_scope_capture_returns_screen_dims() {
         let session = "windows-desktop-state-px-not-applicable-desktop";
         start_scope(&mut driver, session, "desktop");
         driver.start_behavior_recording();
-        let response = driver.call(
-            "get_desktop_state",
-            serde_json::json!({"session": session}),
-        );
+        let response = driver.call("get_desktop_state", serde_json::json!({"session": session}));
         assert!(
             !response.is_error(),
             "get_desktop_state errored: {}",
@@ -231,9 +232,12 @@ fn desktop_scope_windowless_click_lands_on_control() {
         |pid, wid, window_session, desktop_session, driver| {
             let pre = snapshot(driver, window_session, pid, wid);
             let (x, y) = element_center(&pre, "border-click-target");
-            let response = driver.call("click", serde_json::json!({
-                "session": desktop_session, "scope": "desktop", "x": x, "y": y
-            }));
+            let response = driver.call(
+                "click",
+                serde_json::json!({
+                    "session": desktop_session, "scope": "desktop", "x": x, "y": y
+                }),
+            );
             assert!(
                 !response.is_error(),
                 "desktop click failed: {}",
@@ -310,9 +314,12 @@ fn window_scope_rejects_windowless_click() {
         let session = "windows-window-scope-gate-px-not-applicable";
         start_scope(&mut driver, session, "window");
         driver.start_behavior_recording();
-        let response = driver.call("click", serde_json::json!({
-            "session": session, "scope": "desktop", "x": 100, "y": 100
-        }));
+        let response = driver.call(
+            "click",
+            serde_json::json!({
+                "session": session, "scope": "desktop", "x": 100, "y": 100
+            }),
+        );
         assert!(
             response.is_error()
                 && response.structured()["code"].as_str() == Some("desktop_scope_disabled"),

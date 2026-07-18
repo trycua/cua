@@ -23,16 +23,16 @@
 ///
 /// Add new terminals here. Keep alphabetical so diffs stay sane.
 pub const TERMINAL_BUNDLE_IDS: &[&str] = &[
-    "co.zeit.hyper",            // Hyper
-    "com.apple.Terminal",       // Apple Terminal.app
-    "com.github.wez.wezterm",   // WezTerm
-    "com.googlecode.iterm2",    // iTerm2
-    "com.mitchellh.ghostty",    // Ghostty
-    "dev.warp.Warp-Stable",     // Warp
-    "dev.zed.Zed.Helper",       // Zed's embedded terminal helper
-    "io.alacritty",             // Alacritty (newer bundle id)
-    "net.kovidgoyal.kitty",     // kitty
-    "org.alacritty",            // Alacritty (older bundle id)
+    "co.zeit.hyper",          // Hyper
+    "com.apple.Terminal",     // Apple Terminal.app
+    "com.github.wez.wezterm", // WezTerm
+    "com.googlecode.iterm2",  // iTerm2
+    "com.mitchellh.ghostty",  // Ghostty
+    "dev.warp.Warp-Stable",   // Warp
+    "dev.zed.Zed.Helper",     // Zed's embedded terminal helper
+    "io.alacritty",           // Alacritty (newer bundle id)
+    "net.kovidgoyal.kitty",   // kitty
+    "org.alacritty",          // Alacritty (older bundle id)
 ];
 
 /// Returns `true` when `bundle_id` matches a known terminal emulator

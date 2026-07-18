@@ -1,47 +1,44 @@
 //! MCP tool implementations for macOS.
 
-mod list_apps;
-mod list_windows;
-mod get_window_state;
-mod launch_app;
-mod kill_app;
 mod bring_to_front;
 mod click;
 mod double_click;
-mod right_click;
 mod drag;
-mod type_text;
-mod press_key;
+mod get_window_state;
 mod hotkey;
-mod set_value;
+mod kill_app;
+mod launch_app;
+mod list_apps;
+mod list_windows;
+mod press_key;
+mod right_click;
 mod scroll;
+mod set_value;
+mod type_text;
 // `screenshot` / `screenshot_compat` modules removed in PR #1692 —
 // `get_window_state` capture_mode:"vision" is the canonical screenshot
 // path. The capture functions they wrapped (ScreenCaptureKit, CGWindow,
 // etc.) live elsewhere under CuaDriverCore::Capture and are reached
 // through GetWindowStateTool.
-pub(crate) mod get_screen_size;
-mod get_desktop_state;
-mod get_cursor_position;
-mod move_cursor;
-mod cursor_tools;
 mod check_permissions;
-mod get_config;
-mod set_config;
+mod cursor_tools;
 mod get_accessibility_tree;
+mod get_config;
+mod get_cursor_position;
+mod get_desktop_state;
+pub(crate) mod get_screen_size;
 mod health_report;
-mod zoom;
-mod type_text_chars;
+mod move_cursor;
 mod page;
+mod set_config;
+mod type_text_chars;
+mod zoom;
 
 use cua_driver_core::tool::ToolRegistry;
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::{
-    ax::cache::ElementCache,
-    cursor::state::CursorRegistry,
-};
+use crate::{ax::cache::ElementCache, cursor::state::CursorRegistry};
 
 /// Per-process zoom context — stores the padded crop origin and resize scale
 /// from the most recent `zoom` call, so `click(from_zoom=true)` can translate
@@ -93,7 +90,9 @@ impl DeliveryMode {
         }
     }
 
-    pub fn is_foreground(self) -> bool { matches!(self, Self::Foreground) }
+    pub fn is_foreground(self) -> bool {
+        matches!(self, Self::Foreground)
+    }
 }
 
 /// px-focus for the keyboard family (type_text / press_key / hotkey): pixel-click
@@ -119,11 +118,21 @@ pub(crate) async fn focus_by_pixel(
         "delivery_mode": if foreground { "foreground" } else { "background" },
         "action": if foreground { "press" } else { "focus" },
     });
-    if let Some(wid) = window_id { click_args["window_id"] = serde_json::json!(wid); }
-    if let Some(s) = session { click_args["session"] = serde_json::json!(s); }
-    if let Some(s) = session_id { click_args["_session_id"] = serde_json::json!(s); }
-    if from_zoom { click_args["from_zoom"] = serde_json::json!(true); }
-    let focus = click::ClickTool::new(state.clone()).invoke(click_args).await;
+    if let Some(wid) = window_id {
+        click_args["window_id"] = serde_json::json!(wid);
+    }
+    if let Some(s) = session {
+        click_args["session"] = serde_json::json!(s);
+    }
+    if let Some(s) = session_id {
+        click_args["_session_id"] = serde_json::json!(s);
+    }
+    if from_zoom {
+        click_args["from_zoom"] = serde_json::json!(true);
+    }
+    let focus = click::ClickTool::new(state.clone())
+        .invoke(click_args)
+        .await;
     if focus.is_error == Some(true) {
         return Err(cua_driver_core::protocol::ToolResult::error(format!(
             "focus pixel-click at ({x:.0},{y:.0}) failed."
@@ -140,7 +149,11 @@ pub struct ZoomRegistry {
 }
 
 impl ZoomRegistry {
-    pub fn new() -> Self { Self { inner: std::sync::Mutex::new(HashMap::new()) } }
+    pub fn new() -> Self {
+        Self {
+            inner: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
 
     pub fn set(&self, pid: i32, ctx: ZoomContext) {
         self.inner.lock().unwrap().insert(pid, ctx);
@@ -161,7 +174,11 @@ pub struct ResizeRegistry {
 }
 
 impl ResizeRegistry {
-    pub fn new() -> Self { Self { inner: std::sync::Mutex::new(HashMap::new()) } }
+    pub fn new() -> Self {
+        Self {
+            inner: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
 
     /// Record that pid's screenshot was downscaled by `ratio`.
     pub fn set_ratio(&self, pid: i32, ratio: f64) {
@@ -210,11 +227,11 @@ pub fn load_driver_config() -> DriverConfig {
     let path = config_file_path();
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
-        Err(_) => return cfg,  // no file yet — use defaults
+        Err(_) => return cfg, // no file yet — use defaults
     };
     let json: serde_json::Value = match serde_json::from_str(&text) {
         Ok(v) => v,
-        Err(_) => return cfg,  // malformed file — use defaults
+        Err(_) => return cfg, // malformed file — use defaults
     };
     // `capture_mode` is per-call now; old on-disk `capture_mode` and
     // `capture_scope` keys are intentionally inert.
@@ -288,7 +305,11 @@ pub struct SessionConfigRegistry {
 }
 
 impl SessionConfigRegistry {
-    pub fn new() -> Self { Self { inner: std::sync::Mutex::new(HashMap::new()) } }
+    pub fn new() -> Self {
+        Self {
+            inner: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
 
     /// Merge `delta` into `session`'s overrides (only the `Some` fields of
     /// `delta` overwrite; existing overrides for unset fields are preserved).
@@ -312,7 +333,11 @@ impl SessionConfigRegistry {
     /// Resolve the effective `max_image_dimension` for `session`, layering its
     /// override over the global `DriverConfig`. `session = None` (anonymous)
     /// returns the global value verbatim.
-    pub fn effective_max_image_dimension(&self, session: Option<&str>, global: &DriverConfig) -> u32 {
+    pub fn effective_max_image_dimension(
+        &self,
+        session: Option<&str>,
+        global: &DriverConfig,
+    ) -> u32 {
         let ov = session.and_then(|s| self.inner.lock().unwrap().get(s).cloned());
         match ov {
             Some(ov) => ov.max_image_dimension.unwrap_or(global.max_image_dimension),
@@ -328,7 +353,9 @@ impl SessionConfigRegistry {
 }
 
 impl Default for SessionConfigRegistry {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Shared state passed to all tools.
@@ -433,7 +460,9 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
 
     registry.register(Box::new(list_apps::ListAppsTool));
     registry.register(Box::new(list_windows::ListWindowsTool));
-    registry.register(Box::new(get_window_state::GetWindowStateTool::new(state.clone())));
+    registry.register(Box::new(get_window_state::GetWindowStateTool::new(
+        state.clone(),
+    )));
     registry.register(Box::new(launch_app::LaunchAppTool));
     registry.register(Box::new(kill_app::KillAppTool));
     registry.register(Box::new(bring_to_front::BringToFrontTool));
@@ -459,22 +488,36 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     registry.register(Box::new(get_desktop_state::GetDesktopStateTool));
     registry.register(Box::new(get_cursor_position::GetCursorPositionTool));
     registry.register(Box::new(move_cursor::MoveCursorTool::new(state.clone())));
-    registry.register(Box::new(cursor_tools::SetAgentCursorEnabledTool::new(state.clone())));
-    registry.register(Box::new(cursor_tools::SetAgentCursorMotionTool::new(state.clone())));
-    registry.register(Box::new(cursor_tools::SetAgentCursorStyleTool::new(state.clone())));
-    registry.register(Box::new(cursor_tools::GetAgentCursorStateTool::new(state.clone())));
+    registry.register(Box::new(cursor_tools::SetAgentCursorEnabledTool::new(
+        state.clone(),
+    )));
+    registry.register(Box::new(cursor_tools::SetAgentCursorMotionTool::new(
+        state.clone(),
+    )));
+    registry.register(Box::new(cursor_tools::SetAgentCursorStyleTool::new(
+        state.clone(),
+    )));
+    registry.register(Box::new(cursor_tools::GetAgentCursorStateTool::new(
+        state.clone(),
+    )));
     registry.register(Box::new(check_permissions::CheckPermissionsTool));
     // `health_report` — single-call end-to-end diagnostics. Stable
     // schema_version="1" contract aimed at downstream consumers who must
     // not have to know cua-driver internals. Provider is platform-specific; tool plumbing is in
     // `cua_driver_core::health_report`.
-    registry.register(Box::new(cua_driver_core::health_report::HealthReportTool::new(
-        Arc::new(health_report::MacosHealthProvider),
-    )));
+    registry.register(Box::new(
+        cua_driver_core::health_report::HealthReportTool::new(Arc::new(
+            health_report::MacosHealthProvider,
+        )),
+    ));
     registry.register(Box::new(get_config::GetConfigTool::new(state.clone())));
     registry.register(Box::new(set_config::SetConfigTool::new(state.clone())));
-    registry.register(Box::new(get_accessibility_tree::GetAccessibilityTreeTool::new(state.clone())));
-    registry.register(Box::new(zoom::ZoomTool { state: state.clone() }));
+    registry.register(Box::new(
+        get_accessibility_tree::GetAccessibilityTreeTool::new(state.clone()),
+    ));
+    registry.register(Box::new(zoom::ZoomTool {
+        state: state.clone(),
+    }));
     // `type_text_chars` is intentionally NOT registered — Swift treats it as
     // a deprecated alias for `type_text` resolved at invoke time in
     // mcp-server's `ToolRegistry::invoke`. Keeping it out of the registry
@@ -482,12 +525,13 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     // ToolRegistry.swift (`type_text_chars` not in `handlers`) and the
     // platform-windows::build_registry which uses the same convention.
     // Touch the struct so it stays in this crate for the alias resolver.
-    let _: &type_text_chars::TypeTextCharsTool = &type_text_chars::TypeTextCharsTool::new(state.clone());
+    let _: &type_text_chars::TypeTextCharsTool =
+        &type_text_chars::TypeTextCharsTool::new(state.clone());
     // Cross-platform `page` tool definition lives in mcp-server; macOS plugs in
     // its Apple-Events / CDP / AX-tree backend here.
-    registry.register(Box::new(cua_driver_core::page::PageTool::new(
-        Arc::new(page::MacOsPageBackend::new(state.clone())),
-    )));
+    registry.register(Box::new(cua_driver_core::page::PageTool::new(Arc::new(
+        page::MacOsPageBackend::new(state.clone()),
+    ))));
     let browser_engine = cua_driver_core::browser::BrowserEngine::new(Arc::new(
         crate::browser::MacOsBrowserPlatform,
     ));
@@ -503,7 +547,9 @@ mod session_config_guard_tests {
     use cua_driver_core::session::fire_session_end;
 
     fn overrides(max_dim: u32) -> ConfigOverrides {
-        ConfigOverrides { max_image_dimension: Some(max_dim) }
+        ConfigOverrides {
+            max_image_dimension: Some(max_dim),
+        }
     }
 
     #[test]
@@ -519,7 +565,10 @@ mod session_config_guard_tests {
 
         reg.set(sid, overrides(800));
         let dim = reg.effective_max_image_dimension(Some(sid), &global);
-        assert_eq!(dim, global.max_image_dimension, "ended session must not get an override entry");
+        assert_eq!(
+            dim, global.max_image_dimension,
+            "ended session must not get an override entry"
+        );
     }
 
     #[test]
@@ -556,7 +605,10 @@ mod recording_start_guard_tests {
         let dir = std::env::temp_dir().join("wb-rec-ended");
         let err = rec.start(dir.to_str().unwrap(), false, Some(sid));
         assert!(err.is_err(), "start for an ended session owner must error");
-        assert!(!rec.current_state().enabled, "no recording may start for a dead session");
+        assert!(
+            !rec.current_state().enabled,
+            "no recording may start for a dead session"
+        );
     }
 
     #[test]

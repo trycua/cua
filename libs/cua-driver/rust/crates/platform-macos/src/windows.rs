@@ -69,17 +69,15 @@ pub fn visible_windows() -> Vec<WindowInfo> {
 fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
     use core_foundation::{
         array::CFArray,
-        base::{CFGetTypeID, TCFType, CFTypeRef},
-        dictionary::CFDictionary,
-        string::CFString,
-        number::CFNumber,
+        base::{CFGetTypeID, CFTypeRef, TCFType},
         boolean::CFBoolean,
+        dictionary::CFDictionary,
+        number::CFNumber,
+        string::CFString,
     };
     use std::os::raw::c_void;
 
-    let raw_ref = unsafe {
-        CGWindowListCopyWindowInfo(options, kCGNullWindowID)
-    };
+    let raw_ref = unsafe { CGWindowListCopyWindowInfo(options, kCGNullWindowID) };
     if raw_ref.is_null() {
         return vec![];
     }
@@ -96,9 +94,8 @@ fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
             continue;
         }
 
-        let dict: CFDictionary<*const c_void, *const c_void> = unsafe {
-            CFDictionary::wrap_under_get_rule(item as _)
-        };
+        let dict: CFDictionary<*const c_void, *const c_void> =
+            unsafe { CFDictionary::wrap_under_get_rule(item as _) };
 
         // Helper: get number from dict by key string.
         let get_num = |key: &str| -> i64 {
@@ -108,7 +105,9 @@ fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
                     let v = *v;
                     if CFGetTypeID(v) == CFNumber::type_id() {
                         CFNumber::wrap_under_get_rule(v as _).to_i64()
-                    } else { None }
+                    } else {
+                        None
+                    }
                 })
                 .unwrap_or(0)
         };
@@ -120,7 +119,9 @@ fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
                     let v = *v;
                     if CFGetTypeID(v) == CFString::type_id() {
                         Some(CFString::wrap_under_get_rule(v as _).to_string())
-                    } else { None }
+                    } else {
+                        None
+                    }
                 })
                 .unwrap_or_default()
         };
@@ -132,7 +133,9 @@ fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
                     let v = *v;
                     if CFGetTypeID(v) == CFBoolean::type_id() {
                         bool::from(CFBoolean::wrap_under_get_rule(v as _))
-                    } else { false }
+                    } else {
+                        false
+                    }
                 })
                 .unwrap_or(false)
         };
@@ -145,7 +148,9 @@ fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
         let is_on_screen = get_bool("kCGWindowIsOnscreen");
 
         // Only include layer-0 windows.
-        if layer != 0 { continue; }
+        if layer != 0 {
+            continue;
+        }
 
         // Parse bounds dict.
         let bounds = {
@@ -160,10 +165,22 @@ fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
                         let y = get_bounds_num(&bd, "Y");
                         let w = get_bounds_num(&bd, "Width");
                         let h = get_bounds_num(&bd, "Height");
-                        Some(WindowBounds { x, y, width: w, height: h })
-                    } else { None }
+                        Some(WindowBounds {
+                            x,
+                            y,
+                            width: w,
+                            height: h,
+                        })
+                    } else {
+                        None
+                    }
                 })
-                .unwrap_or(WindowBounds { x: 0., y: 0., width: 0., height: 0. })
+                .unwrap_or(WindowBounds {
+                    x: 0.,
+                    y: 0.,
+                    width: 0.,
+                    height: 0.,
+                })
         };
 
         // z_index: CGWindowList front-to-back → assign reverse index.
@@ -187,7 +204,10 @@ fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
 }
 
 fn get_bounds_num(
-    dict: &core_foundation::dictionary::CFDictionary<*const std::os::raw::c_void, *const std::os::raw::c_void>,
+    dict: &core_foundation::dictionary::CFDictionary<
+        *const std::os::raw::c_void,
+        *const std::os::raw::c_void,
+    >,
     key: &str,
 ) -> f64 {
     use core_foundation::{
@@ -203,7 +223,9 @@ fn get_bounds_num(
             let v = *v;
             if CFGetTypeID(v) == CFNumber::type_id() {
                 CFNumber::wrap_under_get_rule(v as _).to_f64()
-            } else { None }
+            } else {
+                None
+            }
         })
         .unwrap_or(0.0)
 }
@@ -234,7 +256,9 @@ pub fn resolve_main_window_id(pid: i32) -> anyhow::Result<u32> {
     let largest = pid_windows.iter().max_by(|a, b| {
         let area_a = a.bounds.width * a.bounds.height;
         let area_b = b.bounds.width * b.bounds.height;
-        area_a.partial_cmp(&area_b).unwrap_or(std::cmp::Ordering::Equal)
+        area_a
+            .partial_cmp(&area_b)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     Ok(largest.unwrap().window_id)
 }

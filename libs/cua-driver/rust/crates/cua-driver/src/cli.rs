@@ -233,7 +233,10 @@ fn positional_args(args: &[String]) -> Vec<&str> {
 }
 
 fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
-    if args.iter().any(|arg| matches!(arg.as_str(), "--help" | "-h" | "--version" | "-V")) {
+    if args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "--help" | "-h" | "--version" | "-V"))
+    {
         return None;
     }
     let positionals = positional_args(args);
@@ -864,7 +867,9 @@ pub fn run_browser_approve(
         eprintln!("  browser pid: {pid}");
         eprintln!("  native window id: {window_id}");
         eprintln!("  caller session: {session}");
-        eprintln!("This grant stays in daemon memory, expires, and never authorizes arbitrary dialogs.");
+        eprintln!(
+            "This grant stays in daemon memory, expires, and never authorizes arbitrary dialogs."
+        );
         eprint!("Type APPROVE to continue: ");
         let _ = std::io::stderr().flush();
         let mut confirmation = String::new();
@@ -3669,22 +3674,52 @@ mod tests {
 
     #[test]
     fn finite_operations_are_closed_and_ignore_values() {
-        assert_eq!(finite_operation_from_args(&args(&["recording", "start", "/private/path"])), "start");
-        assert_eq!(finite_operation_from_args(&args(&["config", "set", "private.key", "private-value"])), "set");
+        assert_eq!(
+            finite_operation_from_args(&args(&["recording", "start", "/private/path"])),
+            "start"
+        );
+        assert_eq!(
+            finite_operation_from_args(&args(&["config", "set", "private.key", "private-value"])),
+            "set"
+        );
         assert_eq!(finite_operation_from_args(&args(&["skills"])), "status");
-        assert_eq!(finite_operation_from_args(&args(&["update", "--apply"])), "apply");
+        assert_eq!(
+            finite_operation_from_args(&args(&["update", "--apply"])),
+            "apply"
+        );
         assert_eq!(finite_operation_from_args(&args(&["update"])), "check_only");
-        assert_eq!(finite_operation_from_args(&args(&["doctor", "private-value"])), "not_applicable");
-        assert_eq!(finite_operation_from_args(&args(&["recording", "private-value"])), "other");
+        assert_eq!(
+            finite_operation_from_args(&args(&["doctor", "private-value"])),
+            "not_applicable"
+        );
+        assert_eq!(
+            finite_operation_from_args(&args(&["recording", "private-value"])),
+            "other"
+        );
     }
 
     #[test]
     fn finite_mcp_config_clients_are_closed_before_worker_handoff() {
-        assert_eq!(finite_client_kind_from_args(&args(&["mcp-config"])), "generic");
-        assert_eq!(finite_client_kind_from_args(&args(&["mcp-config", "--client", "claude-code"])), "claude_code");
-        assert_eq!(finite_client_kind_from_args(&args(&["mcp-config", "--client", "antigravity"])), "antigravity");
-        assert_eq!(finite_client_kind_from_args(&args(&["mcp-config", "--client", "/private/client"])), "other");
-        assert_eq!(finite_client_kind_from_args(&args(&["doctor", "--client", "claude"])), "not_applicable");
+        assert_eq!(
+            finite_client_kind_from_args(&args(&["mcp-config"])),
+            "generic"
+        );
+        assert_eq!(
+            finite_client_kind_from_args(&args(&["mcp-config", "--client", "claude-code"])),
+            "claude_code"
+        );
+        assert_eq!(
+            finite_client_kind_from_args(&args(&["mcp-config", "--client", "antigravity"])),
+            "antigravity"
+        );
+        assert_eq!(
+            finite_client_kind_from_args(&args(&["mcp-config", "--client", "/private/client"])),
+            "other"
+        );
+        assert_eq!(
+            finite_client_kind_from_args(&args(&["doctor", "--client", "claude"])),
+            "not_applicable"
+        );
     }
 
     #[test]

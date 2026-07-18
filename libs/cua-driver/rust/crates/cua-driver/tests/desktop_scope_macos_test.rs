@@ -195,7 +195,11 @@ fn desktop_scope_windowless_click_lands_on_control() {
                 "start_session",
                 serde_json::json!({"session": session, "capture_scope": capture_scope}),
             );
-            assert!(!started.is_error(), "start_session failed: {}", started.text());
+            assert!(
+                !started.is_error(),
+                "start_session failed: {}",
+                started.text()
+            );
         }
         let (pid, wid) = launch(&mut driver).expect("required AppKit harness did not launch");
 
@@ -271,7 +275,11 @@ fn window_scope_rejects_windowless_click() {
             "start_session",
             serde_json::json!({"session": cell_id, "capture_scope": "window"}),
         );
-        assert!(!started.is_error(), "start_session failed: {}", started.text());
+        assert!(
+            !started.is_error(),
+            "start_session failed: {}",
+            started.text()
+        );
         driver.start_behavior_recording();
         let r = driver.call(
             "click",

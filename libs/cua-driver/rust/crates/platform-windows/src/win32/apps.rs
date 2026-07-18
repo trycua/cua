@@ -5,8 +5,7 @@
 
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
-    TH32CS_SNAPPROCESS,
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 
 #[derive(Debug, Clone)]
@@ -124,10 +123,16 @@ fn strip_version_suffix(basename: &str) -> String {
     let mut cut = bytes.len();
     while cut > 0 {
         let c = bytes[cut - 1] as char;
-        if c.is_ascii_digit() || c == '.' || c == '-' { cut -= 1; } else { break; }
+        if c.is_ascii_digit() || c == '.' || c == '-' {
+            cut -= 1;
+        } else {
+            break;
+        }
     }
     // Avoid stripping an entire name (e.g. "7z" → "" would lose information).
     // If everything past cut is purely digits/dots/dashes AND cut > 0, accept.
-    if cut == 0 { return s; }
+    if cut == 0 {
+        return s;
+    }
     s[..cut].to_string()
 }

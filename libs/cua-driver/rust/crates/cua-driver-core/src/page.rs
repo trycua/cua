@@ -401,17 +401,10 @@ impl Tool for PageTool {
                     Ok(value) => value,
                     Err(error) => return ToolResult::error(error),
                 };
-                let target_url_contains =
-                    args.get("target_url_contains").and_then(|v| v.as_str());
+                let target_url_contains = args.get("target_url_contains").and_then(|v| v.as_str());
                 match self
                     .backend
-                    .execute_javascript_targeted(
-                        pid,
-                        window_id,
-                        &js,
-                        cdp_port,
-                        target_url_contains,
-                    )
+                    .execute_javascript_targeted(pid, window_id, &js, cdp_port, target_url_contains)
                     .await
                 {
                     Ok(result) => ToolResult::text(result),
@@ -429,16 +422,13 @@ impl Tool for PageTool {
                 // fail fast at the input boundary rather than blowing up
                 // inside the backend's JS payload (`querySelector("   ")`
                 // returns null and the error there is much less specific).
-                let selector = match args
-                    .get("selector")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                {
-                    Some(s) if !s.is_empty() => s.to_owned(),
-                    _ => return ToolResult::error(
-                        "Missing required parameter: selector (CSS selector for click_element)"
-                    ),
-                };
+                let selector =
+                    match args.get("selector").and_then(|v| v.as_str()).map(str::trim) {
+                        Some(s) if !s.is_empty() => s.to_owned(),
+                        _ => return ToolResult::error(
+                            "Missing required parameter: selector (CSS selector for click_element)",
+                        ),
+                    };
                 match self.backend.click_element(pid, window_id, &selector).await {
                     Ok(res) => {
                         let structured = serde_json::json!({
@@ -464,7 +454,11 @@ impl Tool for PageTool {
                     Err(error) => return ToolResult::error(error),
                 };
                 let target_url_contains = args.get("target_url_contains").and_then(|v| v.as_str());
-                match self.backend.insert_text(pid, window_id, &text, cdp_port, target_url_contains).await {
+                match self
+                    .backend
+                    .insert_text(pid, window_id, &text, cdp_port, target_url_contains)
+                    .await
+                {
                     Ok(msg) => ToolResult::text(msg),
                     Err(e) => ToolResult::error(format!("insert_text failed: {e}")),
                 }
@@ -480,7 +474,11 @@ impl Tool for PageTool {
                     Err(error) => return ToolResult::error(error),
                 };
                 let target_url_contains = args.get("target_url_contains").and_then(|v| v.as_str());
-                match self.backend.type_keystrokes(pid, window_id, &text, cdp_port, target_url_contains).await {
+                match self
+                    .backend
+                    .type_keystrokes(pid, window_id, &text, cdp_port, target_url_contains)
+                    .await
+                {
                     Ok(msg) => ToolResult::text(msg),
                     Err(e) => ToolResult::error(format!("type_keystrokes failed: {e}")),
                 }
@@ -520,9 +518,9 @@ fn optional_cdp_port(args: &Value) -> Result<Option<u16>, String> {
     let Some(value) = args.get("cdp_port") else {
         return Ok(None);
     };
-    let raw = value
-        .as_u64()
-        .ok_or_else(|| "Invalid parameter: cdp_port must be an integer from 1 to 65535".to_owned())?;
+    let raw = value.as_u64().ok_or_else(|| {
+        "Invalid parameter: cdp_port must be an integer from 1 to 65535".to_owned()
+    })?;
     let port = u16::try_from(raw)
         .ok()
         .filter(|port| *port > 0)

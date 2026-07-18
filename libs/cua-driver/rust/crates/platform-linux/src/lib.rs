@@ -12,10 +12,10 @@
 
 use cua_driver_core::tool::ToolRegistry;
 
-pub mod tools;
+pub mod health_report;
 pub mod overlay;
 pub mod pip;
-pub mod health_report;
+pub mod tools;
 
 #[cfg(target_os = "linux")]
 pub mod x11;

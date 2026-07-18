@@ -35,11 +35,11 @@
 
 pub mod ax;
 mod browser_fixture;
+mod cli;
 mod driver;
 pub mod e2e;
 mod journal;
 mod mcp;
-mod cli;
 pub mod observer;
 mod paths;
 mod raw;
@@ -48,13 +48,13 @@ mod response;
 pub mod sentinel;
 mod windows_setup;
 
-pub use driver::{BehaviorRecording, Driver};
 pub use browser_fixture::BrowserFixtureServer;
+pub use cli::CliDriver;
+pub use driver::{BehaviorRecording, Driver};
 pub use journal::FixtureJournal;
 pub use mcp::McpDriver;
-pub use raw::RawDriver;
-pub use cli::CliDriver;
 pub use paths::{driver_binary, harness_app, workspace_root};
+pub use raw::RawDriver;
 pub use reaper::{spawn_in_job, ChildReaper};
 pub use response::ToolResponse;
 

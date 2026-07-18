@@ -676,10 +676,11 @@ def repl(s, old, new, label, count=1):
 # 1) includes + globals + a foreign-toplevel handle field on the toplevel.
 src = repl(src, "struct tinywl_server {", INCLUDES + "struct tinywl_server {", "includes")
 # tinywl's desktop-oriented focus helper toggles xdg_toplevel activation on
-# every focus transition. Chromium needs one initial activated configure to
-# finish renderer startup, but can stop scheduling frames after later toggles in
-# this minimal headless compositor. Send the startup configure once per
-# toplevel; seat focus plus scene stacking are authoritative after that.
+# every focus transition. Chromium needs one coherent transition (deactivate
+# the old surface, activate the new one) to finish renderer startup, but can
+# stop scheduling frames after later toggles in this minimal headless
+# compositor. Send that startup transition once per toplevel; seat focus plus
+# scene stacking are authoritative after that.
 src = repl(src,
     "\tif (prev_surface) {\n"
     "\t\t/*\n"
@@ -693,7 +694,14 @@ src = repl(src,
     "\t\t\twlr_xdg_toplevel_set_activated(prev_toplevel, false);\n"
     "\t\t}\n"
     "\t}\n",
-    "", "headless-skip-deactivation")
+    "\tif (!toplevel->cua_initial_activation_sent && prev_surface) {\n"
+    "\t\tstruct wlr_xdg_toplevel *prev_toplevel =\n"
+    "\t\t\twlr_xdg_toplevel_try_from_wlr_surface(prev_surface);\n"
+    "\t\tif (prev_toplevel != NULL) {\n"
+    "\t\t\twlr_xdg_toplevel_set_activated(prev_toplevel, false);\n"
+    "\t\t}\n"
+    "\t}\n",
+    "headless-startup-deactivation")
 src = repl(src,
     "\t/* Activate the new surface */\n"
     "\twlr_xdg_toplevel_set_activated(toplevel->xdg_toplevel, true);\n",

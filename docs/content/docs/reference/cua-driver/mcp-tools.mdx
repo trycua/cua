@@ -67,7 +67,7 @@ Always returns BOTH the element tree AND a screenshot — ground on both and cro
 
 Optional `query` filters the tree_markdown to matching lines plus their ancestor chain (case-insensitive substring). The element_index values are unchanged — filtering only trims the rendered Markdown.
 
-Optional `max_elements` / `max_depth` bound the AX walk to mitigate context-window blow-up on Electron / Obsidian / large web apps that produce 10k+ element trees. When applied, BOTH the markdown and the structured elements are truncated identically. Omit both for current default behaviour (≤2 000 elements, depth ≤25).
+Optional `max_elements` / `max_depth` bound the AX walk to mitigate context-window blow-up on Electron / Obsidian / large web apps that produce 10k+ element trees. The pre-order depth-first budget counts visited nodes, including containers omitted from the output; `query` filters only after traversal. When applied, BOTH the markdown and the structured elements are truncated identically. Omit both for current default behaviour (≤2 000 visited nodes, depth ≤25).
 
 **Arguments:**
 

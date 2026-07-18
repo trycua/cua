@@ -839,9 +839,11 @@ impl Tool for GetWindowStateTool {
                 timing out at 4s with per-property RPCs).\n\n\
                 Optional `max_elements` / `max_depth` bound the UIA walk to mitigate \
                 context-window blow-up on Electron / large web apps that produce 10k+ \
-                element trees. When applied, BOTH the markdown and the structured \
-                elements are truncated identically. Omit both for current default behaviour \
-                (≤5 000 elements, depth ≤25).\n\n\
+                element trees. The pre-order depth-first budget counts visited nodes, \
+                including containers omitted from the output; `query` filters only after \
+                traversal. When applied, BOTH the markdown and the structured elements are \
+                truncated identically. Omit both for current default behaviour \
+                (≤5 000 visited nodes, depth ≤25).\n\n\
                 Windows requires no special permissions.".into(),
             input_schema: json!({"type":"object","required":["pid","window_id"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
@@ -910,7 +912,7 @@ impl Tool for GetWindowStateTool {
         let query = args.opt_str("query");
         let screenshot_out_file = args.opt_str("screenshot_out_file");
         // Optional caps — when omitted, fall back to the walker's built-in
-        // defaults (#22865). minimum:1 enforced in the schema, but defend
+        // defaults. minimum:1 is enforced in the schema, but defend
         // against 0 here too.
         let max_elements = args
             .get("max_elements")
@@ -1107,7 +1109,7 @@ impl Tool for GetWindowStateTool {
                     structured["_note"] = json!(
                         "Prefer `elements` — `tree_markdown` will continue to work \
                          but new fields will only be added to the structured side. \
-                         Issue #22865: use `max_elements` / `max_depth` to bound the \
+                         Use `max_elements` / `max_depth` to bound the \
                          UIA walk on apps with very large trees."
                     );
                     // Best-effort-background ladder: a UIA walk that ran but found
@@ -5259,9 +5261,9 @@ impl Tool for ScrollTool {
     }
 }
 
-// `ScreenshotTool` and `ScreenshotCompatTool` were removed in PR #1692 —
-// `get_window_state` (which now always returns a screenshot) is the single
-// canonical screenshot path. The underlying capture functions
+// The standalone screenshot tools were removed in PR #1692.
+// `get_window_state` is the canonical window-capture path and
+// `get_desktop_state` handles full-display capture. The underlying functions
 // (`crate::capture::screenshot_window_bytes_with_occlusion`,
 // `screenshot_display_bytes`, etc.) and the WGC backend
 // (`crate::wgc::screenshot_window_via_wgc`) are still in use by
@@ -8482,9 +8484,9 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(ScrollTool {
         state: state.clone(),
     }));
-    // `screenshot` / `ScreenshotCompatTool` removed from the tool surface
-    // — `get_window_state` (which now always returns a screenshot) is the
-    // single canonical path for getting a window screenshot. Reasons:
+    // The standalone screenshot tools were removed from the tool surface.
+    // `get_window_state` is the canonical path for a window screenshot and
+    // `get_desktop_state` handles explicit full-display capture. Reasons:
     //   1. One entry point means callers always have a window_id context,
     //      which `screenshot` made ambiguous (whole-display fallback
     //      always picked the wrong thing for headless agent workflows).
@@ -8494,12 +8496,8 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     //   3. Claude Code's vision pipeline can be retargeted at
     //      `get_window_state` via its tool-anchor config — no need for
     //      a dedicated "screenshot" name.
-    // The `ScreenshotTool` and `ScreenshotCompatTool` structs are kept in
-    // this file for now as private impl helpers — the `capture::*`
-    // functions they wrap are still the actual screenshot machinery.
-    // Delete the structs in a follow-up after confirming no callers
-    // depend on them via `Tool` trait reflection.
-    let _ = compat; // formerly drove the ScreenshotCompatTool branch
+    // The `capture::*` functions remain the underlying screenshot machinery.
+    let _ = compat; // legacy flag; no current tool-surface effect
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetDesktopStateTool));
     r.register(Box::new(GetCursorPositionTool));
@@ -8970,6 +8968,26 @@ mod desktop_scope_tests {
         assert!(props.contains_key("session"));
         assert!(props.contains_key("screenshot_out_file"));
         assert_eq!(d.input_schema["additionalProperties"], json!(false));
+    }
+}
+
+#[cfg(test)]
+mod registry_surface_tests {
+    use super::*;
+
+    #[test]
+    fn default_and_legacy_compat_surfaces_have_no_screenshot_tool() {
+        let default = build_registry(false)
+            .tool_names()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let compat = build_registry(true)
+            .tool_names()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert!(!default.iter().any(|name| name == "screenshot"));
+        assert!(!compat.iter().any(|name| name == "screenshot"));
+        assert_eq!(default, compat, "legacy compat flag must remain surface-neutral");
     }
 }
 

@@ -31,7 +31,7 @@ fn main() {
     // All core tools are present.
     let expected = [
         "click", "double_click", "right_click", "type_text", "press_key", "hotkey",
-        "scroll", "screenshot", "list_apps", "list_windows", "get_cursor_position",
+        "scroll", "list_apps", "list_windows", "get_cursor_position",
         "get_screen_size", "launch_app", "move_cursor", "set_agent_cursor_enabled",
         "set_agent_cursor_motion", "get_agent_cursor_state", "set_value",
         "get_config", "set_config", "check_permissions", "get_recording_state",

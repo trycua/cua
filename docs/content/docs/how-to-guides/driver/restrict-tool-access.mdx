@@ -21,8 +21,8 @@ Create a file, for example `~/.cua-driver/policy.yaml`, that lists the tools you
 ```yaml
 allow:
   tools:
-    - screenshot
     - get_window_state
+    - get_desktop_state
     - list_apps
     - list_windows
     - click
@@ -45,8 +45,8 @@ Use `allow.rules` to permit a tool only when its arguments satisfy bounds, lengt
 ```yaml
 allow:
   tools:
-    - screenshot
     - get_window_state
+    - get_desktop_state
   rules:
     - tool: type_text
       constraints:
@@ -87,8 +87,8 @@ import rego.v1
 
 # Tools that are always allowed.
 safe_tools := {
-    "screenshot",
     "get_window_state",
+    "get_desktop_state",
     "list_apps",
     "list_windows",
     "click",
@@ -170,8 +170,8 @@ cua-driver call shell_execute '{"command":"echo hello"}'
 Make a call that should be allowed:
 
 ```bash
-cua-driver call screenshot '{}'
-# ✅ ...
+cua-driver call list_apps '{}'
+# returns the running regular-ui applications
 ```
 
 ## Add the policy to autostart (macOS launchd)

@@ -51,7 +51,8 @@ jobs:
         working-directory: libs/cua-driver/rust
 
       - name: Regenerate reference docs
-        run: npx tsx scripts/docs-generators/runner.ts --library cua-driver
+        run: pnpm docs:generate:cua-driver
+        working-directory: docs
 
       - name: Generate GitHub App token
         id: app-token

@@ -41,12 +41,10 @@ mod version_check;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-/// Set by the `Command::Mcp` arm when `--claude-code-computer-use-compat`
-/// is on argv. Read by `build_registry` / `build_registry_no_cursor` to
-/// pick which `screenshot` tool variant to register. Static keeps the
-/// thread of dependency arrows pointed away from the platform crates —
-/// they take `compat: bool` directly, but the binary crate decides what
-/// to pass without making every Command variant carry the flag.
+/// Set by the `Command::Mcp` arm when the legacy
+/// `--claude-code-computer-use-compat` flag is on argv. Platform registry
+/// builders still accept the flag for launch compatibility, although it has
+/// no current tool-surface effect.
 static CLAUDE_CODE_COMPAT: AtomicBool = AtomicBool::new(false);
 
 fn init_logging() {
@@ -378,8 +376,8 @@ fn main() {
             // Honour the compat flag forwarded by the MCP proxy
             // (launch_daemon_and_wait passes `serve
             // --claude-code-computer-use-compat`). The Serve arm is the daemon
-            // the proxy talks to, so without this the proxy path always served
-            // the full screenshot tool regardless of the client's request.
+            // the proxy talks to. The flag is currently surface-neutral but
+            // remains forwarded for compatibility with existing launch configs.
             let reg = Arc::new(build_macos_registry_with_compat(claude_code_compat));
             reg.init_self_weak();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
@@ -794,10 +792,8 @@ fn main() -> anyhow::Result<()> {
             // before any blocking work so the banner can land on stderr.
             version_check::maybe_announce_update();
             // The Rust permissions gate is macOS-only (TCC concept).
-            // On Windows / Linux the flag is silently accepted for
-            // CLI uniformity and ignored. The Claude-Code compat screenshot
-            // surface is likewise macOS-only (register_tools_with_compat),
-            // so the flag is accepted-and-ignored here for CLI uniformity.
+            // On Windows / Linux the flag is accepted for CLI uniformity and
+            // ignored. It has no current tool-surface effect on any platform.
             let _ = no_permissions_gate;
             let _ = claude_code_compat;
             // Serve mode needs the cursor overlay just like MCP mode.

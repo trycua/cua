@@ -2,16 +2,11 @@
 
 Every tool call returns a ✅ checkmark + concise summary. No structured JSON output.
 
-## screenshot
-```
-✅ Screenshot — 1920x1080 png
+## screenshot capture
 
-On-screen windows:
-- Terminal (pid 7476) "cua — Claude Code" [window_id: 2102]
-- Blender (pid 6808) "* Untitled - Blender 5.1.1" [window_id: 2129]
-- Google Chrome (pid 13313) "Download — Blender" [window_id: 1941]
-→ Call get_window_state(pid, window_id) to inspect a window's UI.
-```
+There is no standalone screenshot tool. `get_window_state` returns a
+window screenshot alongside its accessibility tree, `get_desktop_state`
+returns a full-display screenshot, and `zoom` returns a cropped region.
 
 ## get_window_state
 ```

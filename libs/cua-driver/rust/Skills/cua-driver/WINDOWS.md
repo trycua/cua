@@ -359,7 +359,7 @@ gone wrong — re-read "The no-foreground contract" above.
 | Enumerate an app's windows | `list_windows({pid})` — or read the `windows` array `launch_app` already returns | `Get-Process \| Where-Object { $_.MainWindowHandle }` |
 | Click / type / scroll / keys | `click`, `type_text`, `scroll`, `press_key`, `hotkey` | `SendInput`, `cliclick`-style C# add-types, AutoHotkey scripts |
 | Drag / drag-and-drop | `drag({pid, from_x, from_y, to_x, to_y})` | `SendInput` with `MOUSEEVENTF_MOVE`, mouse_event |
-| Screenshot | `screenshot` or the PNG in `get_window_state` | `[System.Windows.Forms.Screen]::CopyFromScreen`, `nircmd savescreenshot` |
+| Capture a window | the PNG in `get_window_state({pid, window_id})`; use `screenshot_out_file` to write it to disk | `[System.Windows.Forms.Screen]::CopyFromScreen`, `nircmd savescreenshot` |
 | Quit an app | ask the user first, then `hotkey({pid, keys:["alt","f4"]})` | `taskkill /F`, `Stop-Process -Force`, `Get-Process \| Stop-Process` |
 | Hand a file/URL to an app | `launch_app({urls:[<path>]})` (default app) or `{path: "...exe", args:[<file>]}` (specific app) | `& "app.exe" "file"`, `Invoke-Item`, shell associations |
 
@@ -780,12 +780,10 @@ typed browser tools yet.
   materialized yet. Re-call `list_windows({pid: N})` after 500ms;
   for chronic cases, key off the app name in `list_windows({})`
   output.
-- **JPEG screenshot has more compression than expected** — default
-  quality on the MCP screenshot compat path is 85; for raw
-  `cua-driver call screenshot`, defaults to PNG (no compression).
-  Pass `{format: "jpeg", quality: 70}` to opt into compressed
-  screenshots. The `max_image_dimension` config (default 2048)
-  downscales via Lanczos3 before encoding.
+- **Window screenshot is larger than expected** — `get_window_state`
+  returns PNG. Lower `max_image_dimension` to downscale the long edge,
+  or pass `screenshot_out_file` to keep the image out of the inline
+  response.
 
 ## Diagnostics
 

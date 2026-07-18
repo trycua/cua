@@ -22,14 +22,13 @@ Next steps:
   4. As an MCP server — run the one matching your client. Each is also
      available via '{{BINARY}} mcp-config --client <name>':
 
-     • Claude Code (computer-use compatibility mode):
+     • Claude Code:
          {{BINARY}} mcp-config --client claude
-       Copy-paste the printed command into your shell — it uses
-       `claude mcp add-json` (not bare `--`) so the long flag travels
-       through PowerShell's arg parser intact. This mode grounds Claude
-       Code's vision/computer-use-style flow on CuaDriver window
-       screenshots — it keeps the normal CuaDriver tools and changes
-       only the screenshot tool.
+       Copy-paste the printed command into your shell. It uses
+       `claude mcp add-json` so the configuration survives PowerShell's
+       argument parsing and exposes the normal CuaDriver tool set. There
+       is no standalone screenshot tool: use `get_window_state` for a
+       window, `get_desktop_state` for the display, or `zoom` for a region.
 
      • Codex (OpenAI):
          codex mcp add cua-driver -- {{BINARY}} mcp

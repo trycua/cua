@@ -90,30 +90,15 @@ Every reference to `click(...)`, `get_window_state(...)` etc. in this
 skill means `cua-driver click '{...}'` — translate to MCP form only
 when MCP is requested.
 
-### Claude Code computer-use compatibility mode
+### Claude Code compatibility flag
 
-For normal Claude Code use, keep the default CLI or `cua-driver` MCP
-server path above. If the user explicitly wants Claude Code's
-vision/computer-use-style flow, they can register:
-
-```bash
-cua-driver mcp-config --client claude   # then paste + run the printed line
-```
-
-Observation: Claude Code vision flows appear to treat a screenshot
-MCP tool as the image-grounding anchor. This compatibility mode keeps
-the normal CuaDriver tools and changes only `screenshot`. The
-compatibility `screenshot` requires `pid` and `window_id`, captures
-only that target window, and returns the window-local pixel
-coordinate frame. Start with `launch_app` or `list_windows`, then
-call `screenshot({pid, window_id})`; do not assume desktop
-coordinates or a full-screen capture.
-
-Use MCP for this Claude Code vision/computer-use-style path. Do not
-shell out to `cua-driver screenshot` as a substitute: CLI screenshots
-still work as CuaDriver calls, but they do not expose the
-`mcp__cua-computer-use__screenshot` tool name that Claude Code
-appears to use as the image-grounding cue.
+For Claude Code use, keep the default CLI or `cua-driver` MCP server
+path above. The legacy `--claude-code-computer-use-compat` flag is
+still accepted so existing configurations keep starting, but it
+currently has no tool-surface effect and does not register a
+standalone screenshot tool. Use `get_window_state` for a window tree
+plus screenshot, `get_desktop_state` for a full-display screenshot,
+and `zoom` for a cropped region.
 
 ## Using cua-driver from the shell
 
@@ -251,8 +236,24 @@ capture, no mode flip.
 > effect** — both the tree and the screenshot come back regardless of
 > what you pass (`ax`, `vision`, `som`, anything). There is no
 > `ax`/`vision`/`som` capture choice anymore. Drop the word "vision"
-> for perception entirely. (The tool named `screenshot` is separate —
-> raw PNG, no AX walk — and unrelated.)
+> for perception entirely.
+
+### Bounding large accessibility trees
+
+`get_window_state` accepts `max_elements` and `max_depth`. Defaults
+are platform-specific: macOS visits at most 2,000 nodes to depth 25;
+Windows visits at most 5,000 nodes to depth 25; Linux visits at most
+5,000 nodes with no default depth cap. The traversal is pre-order and
+depth-first, and the element budget counts every visited node,
+including layout containers that may not appear in the returned
+`elements` array. An early menu, browser-chrome, or retained subtree
+can therefore consume the budget before later page content is reached.
+
+`query` filters the rendered tree only after traversal; it cannot
+recover a matching node omitted by either cap. Lower bounds reduce
+latency and context size but may hide later branches, so treat a
+truncated snapshot as partial and use the screenshot or a better
+scoped surface when the target is missing.
 
 ### The modality is chosen at ACTION time — `ax` vs `px`
 

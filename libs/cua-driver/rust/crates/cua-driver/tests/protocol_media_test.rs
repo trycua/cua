@@ -1,7 +1,7 @@
 //! Image / capture / recording tool tests.
 //!
-//! screenshot (full-display + JPEG), zoom + the zoom→from_zoom click round
-//! trip, the recording session lifecycle (start/stop + action.json), recording
+//! Zoom + the zoom→from_zoom click round trip, the recording session lifecycle
+//! (start/stop + action.json), recording
 //! screenshot capture, the `record_video` flag, trajectory replay, click
 //! `debug_image_out`, and the `set_config` screenshot-resize pipeline. Split
 //! out of the old monolithic `mcp_protocol_test.rs`; mac/windows pairs merge
@@ -10,131 +10,6 @@
 #![cfg(any(target_os = "macos", target_os = "windows"))]
 
 use cua_driver_testkit::RawDriver;
-
-#[test]
-#[cfg(target_os = "windows")]
-fn screenshot() {
-    let Some(mut d) = RawDriver::spawn() else {
-        return;
-    };
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-
-    // Full-display screenshot (no window_id).
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"screenshot","arguments":{}}
-    }));
-    let resp = d.recv();
-    assert!(resp["error"].is_null(), "Protocol error: {resp:?}");
-    let content = resp["result"]["content"].as_array().expect("content array");
-    assert!(!content.is_empty(), "screenshot returned empty content");
-
-    // JPEG format.
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":3,"method":"tools/call",
-        "params":{"name":"screenshot","arguments":{"format":"jpeg","quality":70}}
-    }));
-    let resp = d.recv();
-    assert!(
-        resp["error"].is_null(),
-        "Protocol error from screenshot jpeg: {resp:?}"
-    );
-    if !resp["result"]["isError"].as_bool().unwrap_or(false) {
-        let content = resp["result"]["content"].as_array().expect("content array");
-        let has_jpeg = content.iter().any(|c| {
-            c["type"] == "image"
-                && c["mimeType"].as_str().unwrap_or("") == "image/jpeg"
-                && c["data"].as_str().map(|s| s.len() > 10).unwrap_or(false)
-        });
-        assert!(
-            has_jpeg,
-            "Expected image/jpeg in screenshot response: {content:?}"
-        );
-        let sc = &resp["result"]["structuredContent"];
-        assert!(sc["width"].as_f64().unwrap_or(0.0) > 0.0);
-        assert!(sc["height"].as_f64().unwrap_or(0.0) > 0.0);
-        assert_eq!(sc["format"].as_str().unwrap_or(""), "jpeg");
-    }
-}
-
-#[test]
-#[cfg(target_os = "macos")]
-fn screenshot_no_window_id() {
-    //! Call screenshot without window_id — should capture the full display and return image content.
-    let Some(mut d) = RawDriver::spawn() else {
-        return;
-    };
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"screenshot","arguments":{}}
-    }));
-    let resp = d.recv();
-    assert!(
-        resp["error"].is_null(),
-        "Protocol error from screenshot: {resp:?}"
-    );
-    let content = resp["result"]["content"].as_array().expect("content array");
-    assert!(
-        !content.is_empty(),
-        "screenshot should return at least one content item"
-    );
-}
-
-#[test]
-#[cfg(target_os = "macos")]
-fn screenshot_jpeg_format() {
-    //! Call screenshot with format=jpeg — should return a JPEG image.
-    let Some(mut d) = RawDriver::spawn() else {
-        return;
-    };
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"screenshot","arguments":{"format":"jpeg","quality":70}}
-    }));
-    let resp = d.recv();
-    assert!(
-        resp["error"].is_null(),
-        "Protocol error from screenshot: {resp:?}"
-    );
-    let content = resp["result"]["content"].as_array().expect("content array");
-    let is_error = resp["result"]["isError"].as_bool().unwrap_or(false);
-    if !is_error {
-        let has_jpeg = content.iter().any(|c| {
-            c["type"] == "image"
-                && c["mimeType"].as_str().unwrap_or("") == "image/jpeg"
-                && c["data"].as_str().map(|s| s.len() > 10).unwrap_or(false)
-        });
-        assert!(
-            has_jpeg,
-            "Expected image/jpeg in screenshot response, got: {content:?}"
-        );
-        // Verify structured content has width and height.
-        let sc = &resp["result"]["structuredContent"];
-        assert!(
-            sc["width"].as_f64().unwrap_or(0.0) > 0.0,
-            "Expected positive width in structuredContent"
-        );
-        assert!(
-            sc["height"].as_f64().unwrap_or(0.0) > 0.0,
-            "Expected positive height in structuredContent"
-        );
-        assert_eq!(
-            sc["format"].as_str().unwrap_or(""),
-            "jpeg",
-            "Expected format=jpeg"
-        );
-    }
-}
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -691,8 +566,8 @@ fn click_debug_image_out() {
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn set_config_screenshot_resize() {
-    //! set_config(max_image_dimension=200) then screenshot — returned image must
-    //! have both dimensions ≤ 200. Verifies the ResizeRegistry pipeline end-to-end.
+    //! set_config(max_image_dimension=200) then get_window_state — the returned
+    //! window image must have both dimensions ≤ 200.
     let Some(mut d) = RawDriver::spawn() else {
         return;
     };
@@ -700,7 +575,7 @@ fn set_config_screenshot_resize() {
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
 
-    // Set a tiny max_image_dimension so the full display screenshot will be resized.
+    // Set a tiny max_image_dimension so the window screenshot will be resized.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":2,"method":"tools/call",
         "params":{"name":"set_config","arguments":{"max_image_dimension":200}}
@@ -712,40 +587,95 @@ fn set_config_screenshot_resize() {
         "set_config returned error: {resp:?}"
     );
 
-    // Capture full display; must be ≤ 200 px in both dimensions.
+    // Find a visible window to capture through the canonical state tool.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
-        "params":{"name":"screenshot","arguments":{}}
+        "params":{"name":"list_windows","arguments":{}}
     }));
-    let resp = d.recv();
-    assert!(resp["error"].is_null(), "screenshot failed: {resp:?}");
-    // A screenshot can be unavailable in a non-interactive session (Session 0 on
-    // Windows, no display) — there's nothing to resize, so skip rather than fail.
-    // (The old Windows mirror lacked this skip and asserted unconditionally; it
-    // had never been run in such an environment.)
-    if resp["result"]["isError"].as_bool().unwrap_or(false) {
-        eprintln!("screenshot unavailable — skipping resize assertion: {resp:?}");
-        return;
+    let listed = d.recv();
+    let windows = listed["result"]["structuredContent"]["windows"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let mut tried = 0usize;
+    let mut capture_errors = Vec::new();
+    let mut captured = false;
+    for target in windows
+        .iter()
+        .filter(|window| window["is_on_screen"].as_bool() == Some(true))
+        .take(5)
+    {
+        let (Some(pid), Some(window_id)) = (target["pid"].as_u64(), target["window_id"].as_u64())
+        else {
+            continue;
+        };
+        tried += 1;
+        d.send(&serde_json::json!({
+            "jsonrpc":"2.0","id":3 + tried as u64,"method":"tools/call",
+            "params":{"name":"get_window_state","arguments":{
+                "pid":pid,"window_id":window_id,"max_elements":10,"max_depth":2
+            }}
+        }));
+        let state = d.recv();
+        let structured = &state["result"]["structuredContent"];
+        match (
+            structured["screenshot_width"].as_u64(),
+            structured["screenshot_height"].as_u64(),
+        ) {
+            (Some(w), Some(h)) => {
+                assert!(
+                    !state["result"]["isError"].as_bool().unwrap_or(false),
+                    "get_window_state returned image dimensions with an error: {state:?}"
+                );
+                assert!(
+                    w > 0 && w <= 200,
+                    "screenshot width {w} should be in 1..=200"
+                );
+                assert!(
+                    h > 0 && h <= 200,
+                    "screenshot height {h} should be in 1..=200"
+                );
+                captured = true;
+                break;
+            }
+            _ => {
+                let error = structured["screenshot_error"]
+                    .as_str()
+                    .or_else(|| {
+                        state["result"]["content"]
+                            .as_array()
+                            .and_then(|items| items.iter().find_map(|item| item["text"].as_str()))
+                    })
+                    .unwrap_or("response omitted screenshot dimensions");
+                capture_errors.push(format!("window_id={window_id}: {error}"));
+            }
+        }
     }
-    let (Some(w), Some(h)) = (
-        resp["result"]["structuredContent"]["width"].as_u64(),
-        resp["result"]["structuredContent"]["height"].as_u64(),
-    ) else {
-        eprintln!("screenshot returned no dimensions — skipping resize assertion: {resp:?}");
-        return;
-    };
-    assert!(
-        w <= 200,
-        "screenshot width {w} should be ≤ 200 after max_image_dimension=200"
-    );
-    assert!(
-        h <= 200,
-        "screenshot height {h} should be ≤ 200 after max_image_dimension=200"
-    );
 
-    // get_config should reflect the updated value.
+    if tried == 0 {
+        eprintln!("No on-screen windows found — skipping resize assertion");
+    } else if !captured
+        && cfg!(target_os = "macos")
+        && !capture_errors.is_empty()
+        && capture_errors
+            .iter()
+            .all(|error| error.contains("screencapture failed"))
+    {
+        eprintln!(
+            "No visible windows were capturable by the raw unbundled test process — skipping resize assertion. Errors: {}",
+            capture_errors.join(" | ")
+        );
+    } else {
+        assert!(
+            captured,
+            "Expected a capturable window with resized image dimensions. Errors: {}",
+            capture_errors.join(" | ")
+        );
+    }
+
+    // get_config should reflect the updated value even in a headless session.
     d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":4,"method":"tools/call",
+        "jsonrpc":"2.0","id":100,"method":"tools/call",
         "params":{"name":"get_config","arguments":{}}
     }));
     let resp = d.recv();

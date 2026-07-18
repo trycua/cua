@@ -26,23 +26,19 @@ Contributor documentation:
 - `docs/linux-desktop-validation.md` covers representative Linux sessions.
 - `docs/linux-support-completion-plan.md` preserves the historical Linux plan.
 
-## Claude Code computer-use compatibility
+## Claude Code registration
 
-Standard Claude Code MCP registration:
+Register the standard MCP server:
 
 ```bash
 claude mcp add --transport stdio cua-driver -- cua-driver mcp
 ```
 
-If you want Claude Code's vision/computer-use-style flow to ground on CuaDriver window screenshots, register the compatibility mode:
-
-```bash
-claude mcp add --transport stdio cua-computer-use -- cua-driver mcp --claude-code-computer-use-compat
-```
-
-This keeps CuaDriver's normal MCP tools and changes only `screenshot`, which requires `pid` and `window_id` and captures that window only.
-
-Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots still work as CuaDriver calls, but they do not expose the `mcp__cua-computer-use__screenshot` tool name that Claude Code appears to use as the image-grounding cue.
+The legacy `--claude-code-computer-use-compat` flag is still accepted so old
+configurations keep starting, but it currently has no tool-surface effect and
+does not register a standalone `screenshot` tool. Use `get_window_state` for a
+window tree plus screenshot, `get_desktop_state` for a full-display screenshot,
+and `zoom` for a cropped region.
 
 ## macOS process identity and permissions
 

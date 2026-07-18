@@ -72,7 +72,7 @@ calls through `allow.rules`, and explicit overrides through `deny.tools`:
 
 ```yaml
 allow:
-  tools: [screenshot, scroll, wait]
+  tools: [get_window_state, get_desktop_state, scroll, wait]
   rules:
     - tool: click
       constraints:

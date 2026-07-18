@@ -29,11 +29,9 @@ pub enum Command {
         /// Override the daemon Unix socket path used by the proxy
         /// fallback. Defaults to `serve::default_socket_path()`.
         socket: Option<String>,
-        /// `--claude-code-computer-use-compat`: register the compat
-        /// `screenshot` tool (window-scoped, JPEG @ 85%, pid + window_id
-        /// both required) instead of the full-featured one. Used when
-        /// the MCP server is wired up as `cua-computer-use` in Claude
-        /// Code, where this is the documented best-practice install.
+        /// `--claude-code-computer-use-compat`: legacy compatibility flag.
+        /// It currently has no tool-surface effect and remains accepted so
+        /// existing Claude Code launch configurations keep working.
         claude_code_compat: bool,
     },
     ListTools,
@@ -62,11 +60,9 @@ pub enum Command {
         /// two opt-out signals.
         no_permissions_gate: bool,
         /// True when `--claude-code-computer-use-compat` is on argv. The MCP
-        /// proxy forwards this flag to the daemon it auto-launches (see
-        /// `launch_daemon_and_wait`) so the proxy path registers the compat
-        /// `screenshot` surface, not just the in-process path. Without it the
-        /// flag was a no-op for `cua-driver mcp --claude-code-computer-use-compat`,
-        /// which always routes through the proxy on an installed bundle.
+        /// proxy forwards this legacy flag to the daemon it auto-launches so
+        /// existing launch configurations remain stable. It currently has no
+        /// tool-surface effect.
         claude_code_compat: bool,
     },
     Stop {
@@ -447,21 +443,9 @@ pub fn parse_command() -> Command {
             "  --socket <path>         Override the daemon UDS path used by the proxy fallback."
         );
         println!("  --claude-code-computer-use-compat");
-        println!("                          Select the Claude Code computer-use compat surface.");
-        println!(
-            "                          Now forwarded to the proxy-launched daemon (was a no-op"
-        );
-        println!(
-            "                          on the proxy path — the path you actually run — because"
-        );
-        println!("                          the daemon hardcoded compat=false). Note: the compat");
-        println!(
-            "                          screenshot tool itself was removed in #1692, so the flag"
-        );
-        println!(
-            "                          has no tool-surface effect today; the wiring is in place"
-        );
-        println!("                          for any future compat-gated tool.");
+        println!("                          Legacy compatibility flag retained for existing launch configs.");
+        println!("                          It currently has no tool-surface effect and does not add a");
+        println!("                          standalone screenshot tool.");
         println!();
         println!("agent cursor overlay (serve / mcp only — needs the daemon UI runloop):");
         println!("  The overlay is ON by default: every MCP session automatically gets its own");
@@ -1131,17 +1115,9 @@ pub fn launch_daemon_and_wait(
         open_args.push("--socket");
         open_args.push(socket_path);
     }
-    // Thread the Claude-Code compat flag through to the daemon. Without this
-    // the proxy-spawned daemon always called build_macos_registry() (compat
-    // hardcoded false), so `cua-driver mcp --claude-code-computer-use-compat`
-    // SILENTLY DROPPED the flag on the proxy path — the path users actually
-    // run on an installed bundle. Today this is latent: the compat screenshot
-    // tool was removed in #1692, so `register_all(compat)` ignores the flag and
-    // the served surface is identical either way. But the flag was being lost
-    // before reaching the daemon at all, so the moment any compat-gated tool is
-    // re-introduced the proxy path would not honour it. This makes the flag
-    // travel end-to-end. Only honoured on a freshly-launched daemon — a
-    // pre-existing daemon keeps whatever surface it launched with.
+    // Keep forwarding the legacy compatibility flag so existing launch
+    // configurations behave consistently across proxy and in-process paths.
+    // It currently has no tool-surface effect.
     if claude_code_compat {
         open_args.push("--claude-code-computer-use-compat");
     }
@@ -1398,7 +1374,7 @@ pub fn build_manifest() -> serde_json::Value {
               "args": [
                   { "name": "--no-daemon-relaunch", "type": "flag", "description": "Skip the bundle-based TCC auto-relaunch and stay in-process." },
                   { "name": "--socket", "type": "string", "description": "Override the daemon proxy UDS path." },
-                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Select the Claude Code computer-use compat tool surface." },
+                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Legacy compatibility flag with no current tool-surface effect." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
               ] },
@@ -1860,8 +1836,7 @@ pub fn run_call(
                         if let Some(sc) = result.get("structuredContent") {
                             // Merge image data into the structured payload
                             // (matches in-process behaviour at the bottom of
-                            // this fn) so `cua-driver call screenshot` over
-                            // the daemon socket still emits
+                            // this fn) so a daemon-routed image response still emits
                             // `screenshot_png_b64`. Previously this path
                             // dropped the image entirely when no
                             // --screenshot-out-file was given.
@@ -2535,7 +2510,7 @@ fn run_permissions_grant() {
                 "A dialog titled \u{201c}Cua Driver\u{201d} will appear — approve Accessibility \
                  and Screen Recording in System Settings, then this command continues."
             );
-            // Permissions-grant launch never needs the compat screenshot surface.
+            // Permissions-grant launch never needs the legacy compatibility flag.
             if let Err(e) = launch_daemon_and_wait(&socket, 180, false) {
                 eprintln!("\nDidn't detect the CuaDriver daemon: {e}");
                 eprintln!(
@@ -2691,7 +2666,7 @@ fn cli_docs_json() -> serde_json::Value {
                 ],
                 "flags": [
                     {"name":"no-daemon-relaunch","short_name":null,"help":"Stay in-process instead of proxying through a daemon.","default_value":false},
-                    {"name":"claude-code-computer-use-compat","short_name":null,"help":"Expose the Claude Code computer-use compatibility screenshot surface.","default_value":false},
+                    {"name":"claude-code-computer-use-compat","short_name":null,"help":"Legacy compatibility flag with no current tool-surface effect.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.","default_value":false}
                 ],
                 "subcommands": no_subcommands

@@ -47,9 +47,11 @@ fn def() -> &'static ToolDef {
             filtering only trims the rendered Markdown.\n\n\
             Optional `max_elements` / `max_depth` bound the AX walk to mitigate \
             context-window blow-up on Electron / Obsidian / large web apps that \
-            produce 10k+ element trees. When applied, BOTH the markdown \
-            and the structured elements are truncated identically. Omit both for \
-            current default behaviour (≤2 000 elements, depth ≤25).".into(),
+            produce 10k+ element trees. The pre-order depth-first budget counts \
+            visited nodes, including containers omitted from the output; `query` \
+            filters only after traversal. When applied, BOTH the markdown and the \
+            structured elements are truncated identically. Omit both for current \
+            default behaviour (≤2 000 visited nodes, depth ≤25).".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["pid", "window_id"],
@@ -127,7 +129,7 @@ impl Tool for GetWindowStateTool {
         let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
         let should_capture = include_screenshot != Some(false) || screenshot_out_file.is_some();
         // Optional caps — when omitted, fall back to the defaults baked into
-        // the AX walker (#22865). minimum:1 keyed in the schema, but defend
+        // the AX walker. minimum:1 is keyed in the schema, but defend
         // against 0 here as well so a misbehaving client can't disable the
         // walk entirely.
         let max_elements = args
@@ -304,7 +306,7 @@ impl Tool for GetWindowStateTool {
                 .to_string(),
             "_note": "Prefer `elements` — `tree_markdown` will continue to work \
                 but new fields will only be added to the structured side. \
-                Issue #22865: use `max_elements` / `max_depth` to bound the \
+                Use `max_elements` / `max_depth` to bound the \
                 AX walk on apps with very large trees."
         });
         // Best-effort-background ladder, rung (2): an AX walk that ran but found
@@ -605,7 +607,7 @@ mod tests {
 
     #[test]
     fn walk_tree_bounded_signature_accepts_caps_no_panic() {
-        // Regression guard for #22865: the bounded variant must accept
+        // Regression guard: the bounded variant must accept
         // arbitrary cap values without panicking, even against a pid that
         // has no AX tree to walk. Returns a TreeWalkResult either way.
         // Use pid that won't be a real process. Don't assume tree is empty

@@ -2553,7 +2553,10 @@ fn inject_target_for_window_with_pid(
 ) -> anyhow::Result<String> {
     if let Some(pid) = target_pid {
         anyhow::ensure!(pid > 0, "cua-compositor target pid must be positive");
-        return Ok(format!("pid:{pid}"));
+        // Electron/Chromium may create the xdg_toplevel from a renderer child
+        // rather than the public tool target. The compositor verifies the
+        // wl_client owner is this process or one of its descendants.
+        return Ok(format!("root:{pid}"));
     }
     let atspi = crate::atspi::list_windows(None);
     let direct_pid = atspi
@@ -3207,7 +3210,7 @@ mod tests {
     fn inject_target_prefers_explicit_positive_pid() {
         assert_eq!(
             inject_target_for_window_with_pid(99, Some(123)).unwrap(),
-            "pid:123"
+            "root:123"
         );
         assert!(inject_target_for_window_with_pid(99, Some(0)).is_err());
     }

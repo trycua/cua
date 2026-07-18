@@ -106,6 +106,28 @@ static void cua_pframe(struct wl_resource *res) {
 		wl_pointer_send_frame(res);
 }
 static pid_t cua_toplevel_pid(struct tinywl_toplevel *t);
+static bool cua_pid_in_family(pid_t pid, pid_t root_pid) {
+	if (pid <= 0 || root_pid <= 0) return false;
+	for (int depth = 0; depth < 64 && pid > 1; depth++) {
+		if (pid == root_pid) return true;
+		char path[64], stat[4096];
+		snprintf(path, sizeof path, "/proc/%d/stat", (int)pid);
+		FILE *file = fopen(path, "r");
+		if (!file) return false;
+		size_t n = fread(stat, 1, sizeof stat - 1, file);
+		fclose(file);
+		if (!n) return false;
+		stat[n] = '\0';
+		/* comm is parenthesized and may contain spaces or ')', so parse the
+		 * state + parent pid after its final closing parenthesis. */
+		char *close = strrchr(stat, ')'), state = '\0';
+		long parent = 0;
+		if (!close || sscanf(close + 2, "%c %ld", &state, &parent) != 2 ||
+			parent <= 0 || parent == pid) return false;
+		pid = (pid_t)parent;
+	}
+	return pid == root_pid;
+}
 /* Resolve a target window by its xdg app_id, refusing missing and ambiguous
  * matches so a command never silently drives the wrong window. In v1 duplicate
  * app_ids are simply not addressable. On failure returns NULL and points *err
@@ -113,6 +135,17 @@ static pid_t cua_toplevel_pid(struct tinywl_toplevel *t);
 static struct tinywl_toplevel *cua_resolve_target(struct tinywl_server *server, const char *app_id, const char **err) {
 	struct tinywl_toplevel *t, *found = NULL;
 	int matches = 0;
+	if (!strncmp(app_id, "root:", 5)) {
+		char *end = NULL;
+		long pid = strtol(app_id + 5, &end, 10);
+		if (pid <= 0 || !end || *end) { *err = "bad-root-pid"; return NULL; }
+		wl_list_for_each(t, &server->toplevels, link) {
+			if (cua_pid_in_family(cua_toplevel_pid(t), (pid_t)pid)) { found = t; matches++; }
+		}
+		if (matches == 0) { *err = "unknown-root-pid"; return NULL; }
+		if (matches > 1) { *err = "ambiguous-root-pid"; return NULL; }
+		return found;
+	}
 	if (!strncmp(app_id, "pid:", 4)) {
 		char *end = NULL;
 		long pid = strtol(app_id + 4, &end, 10);

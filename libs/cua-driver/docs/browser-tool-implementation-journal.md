@@ -747,7 +747,8 @@ directories, and internal approval markers; product telemetry retains only
 fixed operation and refusal categories.
 
 The dialog design adapts the exact-target, no-replay security model introduced
-in PR #2166. Its contributor remains credited through `Co-authored-by` and
-`Salvaged from #2166` in the adapting commit even though this implementation
-supersedes that earlier code shape. Issue authors remain reporter-attributed
-when the landing PR closes their linked issues.
+in PR #2166. Its contributor remains credited through a parsed
+`Co-authored-by` trailer in the landing history and `Salvaged from #2166` in
+the pull request body even though this implementation supersedes that earlier
+code shape. Issue authors remain reporter-attributed when the landing PR
+closes their linked issues.

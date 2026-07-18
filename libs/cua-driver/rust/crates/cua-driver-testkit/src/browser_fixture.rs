@@ -13,6 +13,7 @@ use std::time::Duration;
 pub struct BrowserFixtureServer {
     page_url: String,
     journal_url: String,
+    download_url: String,
     latest: Arc<Mutex<serde_json::Value>>,
     observed: Arc<Mutex<Vec<serde_json::Value>>>,
     stop: Arc<AtomicBool>,
@@ -30,6 +31,7 @@ impl BrowserFixtureServer {
             .expect("read browser fixture server address");
         let page_url = format!("http://{address}/fixture");
         let journal_url = format!("http://{address}/state");
+        let download_url = format!("http://{address}/download");
         let journal_script = format!(
             "<script>window.__CUA_E2E_FIXTURE_JOURNAL_URL={};</script>",
             serde_json::to_string(&journal_url).expect("serialize fixture journal URL")
@@ -73,6 +75,7 @@ impl BrowserFixtureServer {
         Self {
             page_url,
             journal_url,
+            download_url,
             latest,
             observed,
             stop,
@@ -98,6 +101,11 @@ impl BrowserFixtureServer {
 
     pub fn journal_url(&self) -> &str {
         &self.journal_url
+    }
+
+    /// Fixed loopback attachment used by browser download E2E rows.
+    pub fn download_url(&self) -> &str {
+        &self.download_url
     }
 
     pub fn contains(&self, marker: &str) -> bool {
@@ -214,6 +222,14 @@ fn handle_connection(
         );
         let _ = stream.write_all(headers.as_bytes());
         let _ = stream.write_all(page);
+    } else if request_line.starts_with("GET /download ") {
+        const DOWNLOAD: &[u8] = b"CUA_DRIVER_BROWSER_DOWNLOAD_FIXTURE_V1\n";
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=fixture.txt\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+            DOWNLOAD.len()
+        );
+        let _ = stream.write_all(headers.as_bytes());
+        let _ = stream.write_all(DOWNLOAD);
     } else if request_line.starts_with("POST /state ") {
         if let Some((body_start, content_len)) = body_range {
             if let Some(body) = request.get(body_start..body_start + content_len) {
@@ -261,10 +277,12 @@ mod tests {
     #[test]
     fn serves_fixture_and_receives_external_state() {
         let server = BrowserFixtureServer::start("<html><head></head><body>marker</body></html>");
-        let address = address(server.page_url(), "/fixture");
-        let mut stream = TcpStream::connect(&address).expect("connect browser fixture");
+        let fixture_address = address(server.page_url(), "/fixture");
+        let mut stream = TcpStream::connect(&fixture_address).expect("connect browser fixture");
         stream
-            .write_all(format!("GET /fixture HTTP/1.1\r\nHost: {address}\r\n\r\n").as_bytes())
+            .write_all(
+                format!("GET /fixture HTTP/1.1\r\nHost: {fixture_address}\r\n\r\n").as_bytes(),
+            )
             .expect("request browser fixture");
         let mut response = String::new();
         stream
@@ -274,12 +292,27 @@ mod tests {
         assert!(response.contains("marker"));
         assert!(response.contains(server.journal_url()));
 
+        let download_address = address(server.download_url(), "/download");
+        let mut stream =
+            TcpStream::connect(&download_address).expect("connect browser download fixture");
+        stream
+            .write_all(
+                format!("GET /download HTTP/1.1\r\nHost: {download_address}\r\n\r\n").as_bytes(),
+            )
+            .expect("request browser download fixture");
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("read browser download fixture");
+        assert!(response.contains("Content-Disposition: attachment"));
+        assert!(response.contains("CUA_DRIVER_BROWSER_DOWNLOAD_FIXTURE_V1"));
+
         let body = r#"{"status":{"text":"last_action=left_click"}}"#;
-        let mut stream = TcpStream::connect(&address).expect("connect browser journal");
+        let mut stream = TcpStream::connect(&fixture_address).expect("connect browser journal");
         stream
             .write_all(
                 format!(
-                    "POST /state HTTP/1.1\r\nHost: {address}\r\nContent-Length: {}\r\n\r\n{body}",
+                    "POST /state HTTP/1.1\r\nHost: {fixture_address}\r\nContent-Length: {}\r\n\r\n{body}",
                     body.len()
                 )
                 .as_bytes(),

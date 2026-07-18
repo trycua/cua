@@ -70,6 +70,7 @@ static void cua_ftl_request_activate(struct wl_listener *listener, void *data);
 # A foreign-toplevel handle pointer on each toplevel (for list_windows).
 STRUCT_FIELD = (
     "\tstruct wlr_xdg_toplevel *xdg_toplevel;\n"
+    "\tbool cua_initial_activation_sent;\n"
     "\tstruct wlr_foreign_toplevel_handle_v1 *ftl;\n"
     "\tstruct wl_listener ftl_request_activate;\n"
 )
@@ -674,11 +675,11 @@ def repl(s, old, new, label, count=1):
 
 # 1) includes + globals + a foreign-toplevel handle field on the toplevel.
 src = repl(src, "struct tinywl_server {", INCLUDES + "struct tinywl_server {", "includes")
-# tinywl's desktop-oriented focus helper sends xdg_toplevel activation
-# configures on every focus transition. Chromium can stop scheduling renderer
-# frames after that configure in this minimal headless compositor. The private
-# compositor uses seat focus plus scene stacking as its source of truth, so keep
-# those semantics without advertising xdg-shell activation state.
+# tinywl's desktop-oriented focus helper toggles xdg_toplevel activation on
+# every focus transition. Chromium needs one initial activated configure to
+# finish renderer startup, but can stop scheduling frames after later toggles in
+# this minimal headless compositor. Send the startup configure once per
+# toplevel; seat focus plus scene stacking are authoritative after that.
 src = repl(src,
     "\tif (prev_surface) {\n"
     "\t\t/*\n"
@@ -696,9 +697,14 @@ src = repl(src,
 src = repl(src,
     "\t/* Activate the new surface */\n"
     "\twlr_xdg_toplevel_set_activated(toplevel->xdg_toplevel, true);\n",
-    "\t/* Seat focus and scene stacking are authoritative in the private\n"
-    "\t * headless compositor; avoid an xdg activation configure here. */\n",
-    "headless-skip-activation")
+    "\t/* Chromium needs one activated configure to complete renderer startup.\n"
+    "\t * Later focus changes use the seat and scene only, avoiding activation\n"
+    "\t * toggles that can stall it in this private headless compositor. */\n"
+    "\tif (!toplevel->cua_initial_activation_sent) {\n"
+    "\t\twlr_xdg_toplevel_set_activated(toplevel->xdg_toplevel, true);\n"
+    "\t\ttoplevel->cua_initial_activation_sent = true;\n"
+    "\t}\n",
+    "headless-initial-activation")
 src = repl(src,
     "\tif (keyboard != NULL) {\n"
     "\t\twlr_seat_keyboard_notify_enter(seat, surface,\n"

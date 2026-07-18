@@ -139,7 +139,13 @@ function createWindow() {
           // waiting on a configure transition and stops the heartbeat oracle.
           // Its 1280x900 sentinel already covers the smaller fixture at origin.
           mainWindow.show();
-          mainWindow.focus();
+          // cua-compositor focuses every newly mapped toplevel itself. Asking
+          // Chromium to focus the just-mapped window again can wedge its
+          // renderer in a second configure/focus transition before the green
+          // sentinel frame is painted or preload input listeners can run.
+          if (!customCuaCompositor) {
+            mainWindow.focus();
+          }
         } else {
           // Xvfb/Openbox can keep a showInactive window inspectable through
           // AT-SPI while never mapping it onto the captured root desktop.

@@ -51,12 +51,33 @@ on:
         type: string
         default: "main"
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
-  bump-version:
+  authorize:
+    name: Authorize version bump
     runs-on: ubuntu-latest
+    steps:
+      - name: Allow only the release owner or trusted automation
+        env:
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          case "$ACTOR:$TRIGGERING_ACTOR" in
+            "f-trycua:f-trycua"|"cua-release-bot[bot]:cua-release-bot[bot]")
+              echo "Version bump authorized for $ACTOR."
+              ;;
+            *)
+              echo "::error::Only f-trycua may manually bump package versions."
+              exit 1
+              ;;
+          esac
+
+  bump-version:
+    needs: authorize
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Set package directory and type
         id: package

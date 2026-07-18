@@ -10,6 +10,8 @@ on:
       - ".github/workflows/cd-rust-cua-driver.yml"
       - ".github/workflows/cd-swift-lume.yml"
       - ".github/workflows/release-please.yml"
+      - ".github/workflows/release-bump-version.yml"
+      - ".github/workflows/release-on-merge.yml"
       - ".release-please-manifest.json"
       - "release-please-config.json"
       - ".github/workflows/ci-test-scripts.yml"

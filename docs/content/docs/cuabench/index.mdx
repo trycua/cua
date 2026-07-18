@@ -1,0 +1,60 @@
+---
+title: What is Cua-Bench?
+description: Understand how Cua-Bench defines, runs, and scores verifiable computer-use tasks.
+---
+
+# What is Cua-Bench?
+
+Cua-Bench is an MIT-licensed framework for computer-use benchmarks and reinforcement-learning
+environments. It packages the task, starting state, agent interface, and evaluator needed to run a
+repeatable experiment across Linux, Windows, Android, browser, or simulated environments.
+
+<VideoDemo
+  className="my-8"
+  src="https://trycua.github.io/assets/videos/cua-bench/open-source-overview.mp4"
+  poster="https://trycua.github.io/assets/posters/cua-bench/open-source-overview.jpg"
+  title="An open-source registry and runner for computer-use tasks"
+  sourceUrl="https://x.com/trycua/status/2014406820887183512"
+>
+  The overview follows a task from the registry through variations, agent adapters, the CLI runner,
+  and self-hosted execution.
+</VideoDemo>
+
+## Why tasks are environments
+
+A computer-use score is meaningful only when the starting state and success condition are
+repeatable. A Cua-Bench task therefore defines more than a prompt. It prepares an environment,
+exposes observations and actions to an agent, and evaluates the final state with task-specific
+checks.
+
+Task variations test whether an agent can solve the same objective from different inputs or
+starting conditions. Datasets group related tasks so a run can use one agent configuration and
+produce comparable traces and scores.
+
+## How the pieces fit
+
+- **Tasks** define the prompt, setup, variations, and evaluator.
+- **Providers** supply the browser, simulated surface, container, VM, or hosted computer where the
+  task runs.
+- **Agent adapters** connect a model or agent implementation to the environment interface.
+- **The runner** executes one task or a dataset, records traces, and supports parallel workers.
+
+This separation lets the same task definition run against different agents and infrastructure. It
+also keeps evaluation logic independent from the model being tested.
+
+## Relationship to the rest of Cua
+
+Cua-Bench supplies the task and evaluation layer. Cua computer and sandbox components supply
+machine environments, while agent adapters translate model output into computer actions. The
+resulting trajectory can be inspected, scored, or used as training data.
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+<Cards>
+  <Card title="Browse the source" href="https://github.com/trycua/cua/tree/main/libs/cua-bench">
+    Read the package, task examples, CLI implementation, and test suite.
+  </Card>
+  <Card title="Browse the task registry" href="https://cuabench.ai/registry">
+    Explore published tasks and the applications they cover.
+  </Card>
+</Cards>

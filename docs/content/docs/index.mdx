@@ -3,7 +3,7 @@ title: 'Cua documentation'
 description: 'Open-source computer-use automation for real machines and disposable cloud desktops.'
 ---
 
-Cua is an open-source MIT-licensed platform ([github.com/trycua/cua](https://github.com/trycua/cua)) for **computer-use automation**: letting AI agents operate real computers by clicking, typing, and reading the screen and accessibility tree. What we refer to as **Computer-Use 2.0** treats the GUI as one tool surface in an agent loop, alongside code, shell, files, and APIs. The main decision is whether to drive a machine you already have with Cua Driver, or spin up a fresh, isolated cloud desktop with Cua Sandbox.
+Cua is an open-source MIT-licensed platform ([github.com/trycua/cua](https://github.com/trycua/cua)) for **computer-use automation**: letting AI agents operate computers by clicking, typing, and reading the screen and accessibility tree. What we refer to as **Computer-Use 2.0** treats the GUI as one tool surface in an agent loop, alongside code, shell, files, and APIs. Use Cua Driver to drive a machine you already have, Cua Sandbox to start an isolated cloud desktop, or Cua-Bench to evaluate computer-use agents.
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
 
@@ -17,6 +17,10 @@ import { Card, Cards } from 'fumadocs-ui/components/card';
     Start disposable full Linux, Windows, or macOS VMs with a GUI for an agent to drive when you
     want a fresh, isolated computer in the cloud instead of your own machine.
   </Card>
+  <Card title="Evaluate agents with Cua-Bench" href="/cuabench">
+    Define verifiable computer-use tasks, run agents across local or hosted environments, and score
+    the resulting trajectories.
+  </Card>
 </Cards>
 
 ## Cua Driver in action
@@ -25,36 +29,17 @@ These recordings show agents operating desktop apps while the user's active wind
 
 <div className="not-prose my-8 grid gap-5 md:grid-cols-2">
   <VideoDemo
-    src="https://video.twimg.com/amplify_video/2047379829042065408/vid/avc1/1280x720/te2UgRiP_4gm8Giu.mp4?tag=21"
-    poster="https://pbs.twimg.com/amplify_video_thumb/2047379829042065408/img/CI-tPdl5xpLrT6du.jpg"
-    title="Play media in a background Chrome window on macOS"
-    sourceUrl="https://x.com/trycua/status/2047383209244287350"
+    src="https://trycua.github.io/assets/videos/cua-driver/windows-wpf-agent-qa.mp4"
+    poster="https://trycua.github.io/assets/posters/cua-driver/windows-wpf-agent-qa.jpg"
+    title="Build and check a WPF app on Windows"
+    sourceUrl="https://x.com/trycua/status/2059688966085853245"
   >
-    Claude Code starts playback in Chrome while its terminal remains in front.
+    Claude Code builds a WPF CRM, runs it, patches the code, and checks the app again.
   </VideoDemo>
 
-<VideoDemo
-  src="https://video.twimg.com/amplify_video/2059682762781560834/vid/avc1/1280x720/GTmf25E5B9XqbXkc.mp4?tag=27"
-  poster="https://pbs.twimg.com/amplify_video_thumb/2059682762781560834/img/XxaxS_qC4z3Gbwko.jpg"
-  title="Build and check a WPF app on Windows"
-  sourceUrl="https://x.com/trycua/status/2059688966085853245"
->
-  Claude Code builds a WPF CRM, runs it, patches the code, and checks the app again.
-</VideoDemo>
-
-<VideoDemo
-  src="https://video.twimg.com/amplify_video/2067633385477111809/vid/avc1/1100x618/-Zg-HqPeUdErYRdB.mp4?tag=28"
-  poster="https://pbs.twimg.com/amplify_video_thumb/2067633385477111809/img/7Q_qNkKr3XqBe13V.jpg"
-  title="Check a calculator app on Linux"
-  sourceUrl="https://x.com/trycua/status/2067639342944985586"
->
-  Claude Code builds a calculator, drives it to 42, and reads the result while the terminal stays in
-  front.
-</VideoDemo>
-
   <VideoDemo
-    src="https://video.twimg.com/amplify_video/2067635305172336640/vid/avc1/1600x1000/1vqaHBn2lqWK1DT5.mp4?tag=28"
-    poster="https://pbs.twimg.com/amplify_video_thumb/2067635305172336640/img/62bV-2E7LuEyYIAt.jpg"
+    src="https://trycua.github.io/assets/videos/cua-driver/linux-headless-spreadsheet.mp4"
+    poster="https://trycua.github.io/assets/posters/cua-driver/linux-headless-spreadsheet.jpg"
     title="Fill a Linux spreadsheet over SSH"
     sourceUrl="https://x.com/trycua/status/2067639346719826213"
   >
@@ -67,6 +52,8 @@ These recordings show agents operating desktop apps while the user's active wind
 Tutorials: learn by doing. Start with [Tutorials](/tutorials).
 
 Concepts: understand how and why Cua works. Start with [Concepts](/concepts).
+
+Cua-Bench: define tasks and evaluate agents. Start with [Cua-Bench](/cuabench).
 
 How-to guides: recipes for a goal. Start with [How-to guides](/how-to-guides).
 

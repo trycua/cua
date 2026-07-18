@@ -64,6 +64,7 @@ Every schema-v3 client event has this fixed envelope:
 | `os_major`                 | Major operating-system version only                       |
 | `arch`                     | Bounded CPU architecture                                  |
 | `is_ci`                    | Whether a recognized CI environment is present            |
+| `is_synthetic`             | Explicit Cua-owned test marker; `false` by default         |
 | `transport`                | `cli`, `daemon`, `mcp_stdio`, `mcp_http`, or `unknown`    |
 | `process_session_id`       | Random ID created once per process and never persisted    |
 | `id_persisted`             | Whether the installation ID came from durable local state |
@@ -79,10 +80,10 @@ The client does not send an IP address as an event property. PostHog derives a c
 | `cua_driver_installation_registered`     | `install_channel`                                                                                                                                           |
 | `cua_driver_release_installed`           | `install_channel`, `product_version`                                                                                                                        |
 | `cua_driver_serve`                       | None. Transitional process-start event for `cua-driver serve`; `transport` is `daemon`                                                                      |
-| `cua_driver_cli_completed`               | Fixed `command`, allowlisted tool for `call`, bounded `operation`, bounded MCP `client_kind`, `success`, `exit_class`, and `duration_bucket`                  |
+| `cua_driver_cli_completed`               | Fixed `command`, allowlisted tool for `call`, bounded `operation`, `computer_action`, bounded MCP `client_kind`, `success`, `exit_class`, and `duration_bucket` |
 | `cua_driver_mcp_startup_completed`       | execution path, bounded daemon state, success, duration bucket, and `execution_mode`                                                                         |
 | `cua_driver_mcp_session_started`         | normalized MCP client and protocol, capability booleans, optional reported agent context, and `execution_mode`                                              |
-| `cua_driver_mcp_tool_completed`          | allowlisted tool, bounded `operation`, protocol success, error class, structured-refusal code, duration bucket, output shape and size buckets, and `execution_mode` |
+| `cua_driver_mcp_tool_completed`          | allowlisted tool, bounded compound-tool `operation`, `computer_action`, protocol success, error class, structured-refusal code, duration bucket, output shape and size buckets, and `execution_mode` |
 | `cua_driver_agent_session_started`       | declaration kind, revival flag, concurrent-session bucket, entry transport, and `execution_mode`                                                            |
 | `cua_driver_agent_session_ended`         | end reason, duration and count buckets, browser-refusal bucket, success flags, feature-family flags, multi-transport flag, and `execution_mode`              |
 | `cua_driver_permissions_gate_started`    | missing-permission booleans                                                                                                                                  |
@@ -125,6 +126,8 @@ The end event is emitted for `end_session` and idle eviction. It contains aggreg
 Computer-action success covers fixed pointer and keyboard capabilities, app launch and kill, window activation, state-changing `page` operations, and successful `browser_navigate`, `browser_click`, and `browser_type` calls. A structured browser refusal does not count as a completed computer action. `get_browser_state` is a read, and `browser_prepare` is tracked as browser use rather than a computer action because preparation may either reuse an endpoint or produce an approved visible side effect.
 
 The end event includes `used_browser` and a bounded `browser_refusal_count_bucket`. It does not include browser targets, pages, profiles, or per-site information.
+
+Per-call `computer_action` is derived from the same fixed classifier used by the session aggregate. It describes the tool category; combine it with `success=true` when measuring value. Cua-owned automated tests can set `CUA_DRIVER_TELEMETRY_SYNTHETIC=true`. This marks every event from that process with `is_synthetic=true` so product metrics can exclude test traffic without relying on installation IDs. Third-party CI remains independently identified by `is_ci`.
 
 For finite CLI commands, `operation` distinguishes only reviewed verbs for recording, permissions, config, autostart, skills, and update. `client_kind` is populated only for `mcp-config`. Unknown values become `other`; commands without a meaningful sub-operation use `not_applicable`.
 

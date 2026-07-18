@@ -210,35 +210,6 @@ fn is_trackable(id: &str) -> bool {
     !id.is_empty() && id != "default"
 }
 
-fn is_computer_action(tool_name: &str, args: &serde_json::Value) -> bool {
-    if tool_name == "page" {
-        return matches!(
-            args.get("action").and_then(serde_json::Value::as_str),
-            Some(
-                "click_element"
-                    | "insert_text"
-                    | "type_keystrokes"
-                    | "enable_javascript_apple_events"
-            )
-        );
-    }
-    crate::tool::default_capabilities_for(tool_name)
-        .iter()
-        .any(|capability| {
-            capability.starts_with("input.pointer.")
-                || capability.starts_with("input.keyboard.")
-                || matches!(
-                    capability.as_str(),
-                    "app.launch"
-                        | "app.kill"
-                        | "window.activate"
-                        | "browser.navigate"
-                        | "browser.input.click"
-                        | "browser.input.type"
-                )
-        })
-}
-
 /// Begin bounded observation for a known tool call carrying a public,
 /// caller-declared `session`. Reserved `_session_id` fallbacks and anonymous
 /// identities are deliberately ignored.
@@ -283,7 +254,10 @@ pub fn begin_tool_call(
     SESSION_OBSERVER.get().map(|_| SessionToolContext {
         session_id: session_id.to_owned(),
         transport,
-        computer_action: is_computer_action(tool_name, args),
+        computer_action: crate::server::is_computer_action(
+            tool_name,
+            crate::server::tool_operation(tool_name, Some(args)),
+        ),
     })
 }
 
@@ -479,10 +453,18 @@ mod tests {
     fn browser_mutations_are_computer_actions_but_reads_and_prepare_are_not() {
         let args = serde_json::json!({"session": "test-session"});
         for tool_name in ["browser_navigate", "browser_click", "browser_type"] {
-            assert!(is_computer_action(tool_name, &args), "tool={tool_name}");
+            let operation = crate::server::tool_operation(tool_name, Some(&args));
+            assert!(
+                crate::server::is_computer_action(tool_name, operation),
+                "tool={tool_name}"
+            );
         }
         for tool_name in ["get_browser_state", "browser_prepare"] {
-            assert!(!is_computer_action(tool_name, &args), "tool={tool_name}");
+            let operation = crate::server::tool_operation(tool_name, Some(&args));
+            assert!(
+                !crate::server::is_computer_action(tool_name, operation),
+                "tool={tool_name}"
+            );
         }
     }
 

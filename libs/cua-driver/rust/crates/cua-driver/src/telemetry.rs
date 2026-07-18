@@ -42,11 +42,13 @@ const RELEASE_RECORDED_DIRECTORY: &str = ".release_installed";
 pub const ENV_TELEMETRY_ENABLED: &str = "CUA_DRIVER_RS_TELEMETRY_ENABLED";
 const ENV_TELEMETRY_ENABLED_COMPAT: &str = "CUA_TELEMETRY_ENABLED";
 const ENV_TELEMETRY_DEBUG: &str = "CUA_DRIVER_RS_TELEMETRY_DEBUG";
+const ENV_TELEMETRY_SYNTHETIC: &str = "CUA_DRIVER_TELEMETRY_SYNTHETIC";
 const ENV_TELEMETRY_HOME: &str = "CUA_DRIVER_TELEMETRY_HOME";
 const ENV_CLI_WRAPPED_CHILD: &str = "CUA_DRIVER_CLI_TELEMETRY_CHILD";
 const ENV_CLI_COMPLETION_WORKER: &str = "CUA_DRIVER_CLI_TELEMETRY_WORKER";
 const ENV_CLI_COMPLETION_COMMAND: &str = "CUA_DRIVER_CLI_TELEMETRY_COMMAND";
 const ENV_CLI_COMPLETION_TOOL: &str = "CUA_DRIVER_CLI_TELEMETRY_TOOL";
+const ENV_CLI_COMPLETION_COMPUTER_ACTION: &str = "CUA_DRIVER_CLI_TELEMETRY_COMPUTER_ACTION";
 const ENV_CLI_COMPLETION_OPERATION: &str = "CUA_DRIVER_CLI_TELEMETRY_OPERATION";
 const ENV_CLI_COMPLETION_CLIENT_KIND: &str = "CUA_DRIVER_CLI_TELEMETRY_CLIENT_KIND";
 const ENV_CLI_COMPLETION_EXIT_CODE: &str = "CUA_DRIVER_CLI_TELEMETRY_EXIT_CODE";
@@ -225,6 +227,7 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("command", Value::String("other".into())),
             ("tool_name", Value::String("not_applicable".into())),
             ("operation", Value::String("not_applicable".into())),
+            ("computer_action", Value::Bool(false)),
             ("client_kind", Value::String("not_applicable".into())),
             ("success", Value::Bool(true)),
             ("exit_class", Value::String("success".into())),
@@ -249,6 +252,7 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
         event::MCP_TOOL_COMPLETED => bounded_properties(&[
             ("tool_name", Value::String("other".into())),
             ("operation", Value::String("not_applicable".into())),
+            ("computer_action", Value::Bool(false)),
             ("success", Value::Bool(true)),
             ("error_class", Value::String("none".into())),
             ("refusal_code", Value::String("none".into())),
@@ -773,6 +777,7 @@ fn tool_completion_properties(
     bounded_properties(&[
         ("tool_name", Value::String(tool_name)),
         ("operation", Value::String(outcome.operation.as_str().into())),
+        ("computer_action", Value::Bool(outcome.computer_action)),
         ("success", Value::Bool(outcome.success)),
         ("error_class", Value::String(error_class.into())),
         ("refusal_code", Value::String(outcome.refusal_code.as_str().into())),
@@ -1164,6 +1169,7 @@ pub(crate) fn capture_bounded(
 pub(crate) fn capture_cli_completed(
     command: &'static str,
     tool_name: Option<&str>,
+    computer_action: bool,
     operation: &str,
     client_kind: &str,
     exit_code: i32,
@@ -1215,6 +1221,7 @@ pub(crate) fn capture_cli_completed(
             ("command", Value::String(command.into())),
             ("tool_name", Value::String(tool_name.into())),
             ("operation", Value::String(operation.into())),
+            ("computer_action", Value::Bool(command == "call" && computer_action)),
             ("client_kind", Value::String(client_kind.into())),
             ("success", Value::Bool(success)),
             ("exit_class", Value::String(exit_class.into())),
@@ -1255,11 +1262,13 @@ pub(crate) fn run_cli_completion_worker_if_requested() -> bool {
         .unwrap_or_default();
     let command = fixed_cli_command(&command);
     let tool_name = std::env::var(ENV_CLI_COMPLETION_TOOL).ok();
+    let computer_action = parse_env_bool(ENV_CLI_COMPLETION_COMPUTER_ACTION).unwrap_or(false);
     let operation = std::env::var(ENV_CLI_COMPLETION_OPERATION).unwrap_or_default();
     let client_kind = std::env::var(ENV_CLI_COMPLETION_CLIENT_KIND).unwrap_or_default();
     capture_cli_completed(
         command,
         tool_name.as_deref(),
+        computer_action,
         &operation,
         &client_kind,
         exit_code,
@@ -1271,6 +1280,7 @@ pub(crate) fn run_cli_completion_worker_if_requested() -> bool {
 pub(crate) fn spawn_cli_completion_worker(
     command: &'static str,
     tool_name: Option<&str>,
+    computer_action: bool,
     operation: &str,
     client_kind: &str,
     exit_code: i32,
@@ -1284,6 +1294,7 @@ pub(crate) fn spawn_cli_completion_worker(
     worker
         .env(ENV_CLI_COMPLETION_WORKER, "1")
         .env(ENV_CLI_COMPLETION_COMMAND, fixed_cli_command(command))
+        .env(ENV_CLI_COMPLETION_COMPUTER_ACTION, if computer_action { "1" } else { "0" })
         .env(ENV_CLI_COMPLETION_OPERATION, fixed_cli_operation(command, operation))
         .env(ENV_CLI_COMPLETION_CLIENT_KIND, fixed_cli_client_kind(command, client_kind))
         .env(ENV_CLI_COMPLETION_EXIT_CODE, exit_code.to_string())
@@ -1414,6 +1425,10 @@ fn build_payload(
     event_properties.insert("os_major".into(), Value::String(os_major()));
     event_properties.insert("arch".into(), Value::String(arch().into()));
     event_properties.insert("is_ci".into(), Value::Bool(is_ci()));
+    event_properties.insert(
+        "is_synthetic".into(),
+        Value::Bool(parse_env_bool(ENV_TELEMETRY_SYNTHETIC).unwrap_or(false)),
+    );
     event_properties.insert("transport".into(), Value::String(transport.as_str().into()));
     event_properties.insert("process_session_id".into(), Value::String(process_session_id()));
     event_properties.insert("id_persisted".into(), Value::Bool(identity.persisted));
@@ -2269,13 +2284,14 @@ mod tests {
         let properties = payload["properties"].as_object().unwrap();
         for required in [
             "telemetry_schema_version", "product_version", "os_family", "os_major",
-            "arch", "is_ci", "transport", "process_session_id", "id_persisted",
+            "arch", "is_ci", "is_synthetic", "transport", "process_session_id", "id_persisted",
             "$process_person_profile", "$lib", "$lib_version",
             "tool_name", "success",
         ] {
             assert!(properties.contains_key(required), "missing {required}");
         }
         assert_eq!(properties["telemetry_schema_version"], 3);
+        assert_eq!(properties["is_synthetic"], false);
         assert!(!properties.contains_key("$geoip_disable"));
         assert!(!properties.contains_key("$ip"));
         let serialized = serde_json::to_string(&payload).unwrap().to_ascii_lowercase();
@@ -2285,6 +2301,23 @@ mod tests {
             "url", "raw_error", "stack_trace", "initialize_payload",
         ] {
             assert!(!serialized.contains(forbidden), "payload contains {forbidden}: {serialized}");
+        }
+    }
+
+    #[test]
+    fn synthetic_marker_is_explicit_and_common_to_all_events() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original = std::env::var_os(ENV_TELEMETRY_SYNTHETIC);
+        unsafe {
+            std::env::set_var(ENV_TELEMETRY_SYNTHETIC, "true");
+        }
+        let payload = inspect_event(event::MCP_TOOL_COMPLETED).unwrap();
+        assert_eq!(payload["properties"]["is_synthetic"], true);
+        unsafe {
+            match original {
+                Some(value) => std::env::set_var(ENV_TELEMETRY_SYNTHETIC, value),
+                None => std::env::remove_var(ENV_TELEMETRY_SYNTHETIC),
+            }
         }
     }
 
@@ -2306,6 +2339,7 @@ mod tests {
         assert_eq!(tool["properties"]["duration_bucket"], "lt_10ms");
         assert_eq!(tool["properties"]["operation"], "not_applicable");
         assert_eq!(tool["properties"]["refusal_code"], "none");
+        assert_eq!(tool["properties"]["computer_action"], false);
         assert!(matches!(
             tool["properties"]["execution_mode"].as_str(),
             Some("embedded" | "standalone")
@@ -2426,6 +2460,7 @@ mod tests {
             &ToolCompletionObservation {
                 tool_name: "click".into(),
                 operation: cua_driver_core::server::ToolOperation::NotApplicable,
+                computer_action: true,
                 success: true,
                 error_class: ToolErrorClass::None,
                 refusal_code: cua_driver_core::server::ToolRefusalCode::None,
@@ -2440,6 +2475,7 @@ mod tests {
             &ToolCompletionObservation {
                 tool_name: "page".into(),
                 operation: cua_driver_core::server::ToolOperation::QueryDom,
+                computer_action: false,
                 success: false,
                 error_class: ToolErrorClass::InternalError,
                 refusal_code: cua_driver_core::server::ToolRefusalCode::None,
@@ -2501,6 +2537,7 @@ mod tests {
         let outcome = ToolCompletionObservation {
             tool_name: "browser_click".into(),
             operation: ToolOperation::BrowserClickTrusted,
+            computer_action: true,
             success: true,
             error_class: ToolErrorClass::None,
             refusal_code: ToolRefusalCode::BrowserInputTrustUnavailable,
@@ -2590,6 +2627,7 @@ mod tests {
                 ToolCompletionObservation {
                     tool_name: "browser_prepare".into(),
                     operation: ToolOperation::BrowserPrepareExistingProfile,
+                    computer_action: false,
                     success: true,
                     error_class: ToolErrorClass::None,
                     refusal_code: ToolRefusalCode::BrowserConsentRevoked,
@@ -2618,6 +2656,7 @@ mod tests {
         let properties = tool_completion_properties(ToolCompletionObservation {
             tool_name: "click".into(),
             operation: cua_driver_core::server::ToolOperation::NotApplicable,
+            computer_action: true,
             success: true,
             error_class: ToolErrorClass::None,
             refusal_code: cua_driver_core::server::ToolRefusalCode::None,
@@ -2638,6 +2677,7 @@ mod tests {
         assert_eq!(payload["properties"]["transport"], "mcp_http");
         assert_eq!(payload["properties"]["tool_name"], "click");
         assert_eq!(payload["properties"]["operation"], "not_applicable");
+        assert_eq!(payload["properties"]["computer_action"], true);
         assert_eq!(payload["properties"]["success"], true);
     }
 
@@ -2650,6 +2690,7 @@ mod tests {
         let properties = tool_completion_properties(ToolCompletionObservation {
             tool_name: "page".into(),
             operation: ToolOperation::InsertText,
+            computer_action: true,
             success: true,
             error_class: ToolErrorClass::None,
             refusal_code: cua_driver_core::server::ToolRefusalCode::None,
@@ -2658,6 +2699,7 @@ mod tests {
             output_size_bucket: OutputSizeBucket::Under1KiB,
         });
         assert_eq!(properties["operation"], "insert_text");
+        assert_eq!(properties["computer_action"], true);
         let serialized = serde_json::to_string(&properties).unwrap();
         for forbidden in ["selector", "private typed text", "script"] {
             assert!(!serialized.contains(forbidden));

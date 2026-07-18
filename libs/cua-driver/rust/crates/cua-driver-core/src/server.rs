@@ -231,6 +231,10 @@ pub struct ToolCompletionObservation {
     /// this through the registry allowlist and use an `unknown` fallback.
     pub tool_name: String,
     pub operation: ToolOperation,
+    /// Whether the fixed tool/operation category can change computer state.
+    /// This is derived before argument content is discarded; no argument
+    /// value is retained in the observation.
+    pub computer_action: bool,
     pub success: bool,
     pub error_class: ToolErrorClass,
     pub refusal_code: ToolRefusalCode,
@@ -347,6 +351,38 @@ pub fn tool_operation(tool_name: &str, args: Option<&serde_json::Value>) -> Tool
         }
         _ => ToolOperation::NotApplicable,
     }
+}
+
+/// Classify a tool and its already-bounded operation as a computer action.
+///
+/// Keeping this at the dispatch boundary gives session aggregates and
+/// per-call telemetry one definition without retaining selectors, text, URLs,
+/// or any other tool argument.
+pub fn is_computer_action(tool_name: &str, operation: ToolOperation) -> bool {
+    if tool_name == "page" {
+        return matches!(
+            operation,
+            ToolOperation::ClickElement
+                | ToolOperation::InsertText
+                | ToolOperation::TypeKeystrokes
+                | ToolOperation::EnableJavascriptAppleEvents
+        );
+    }
+    crate::tool::default_capabilities_for(tool_name)
+        .iter()
+        .any(|capability| {
+            capability.starts_with("input.pointer.")
+                || capability.starts_with("input.keyboard.")
+                || matches!(
+                    capability.as_str(),
+                    "app.launch"
+                        | "app.kill"
+                        | "window.activate"
+                        | "browser.navigate"
+                        | "browser.input.click"
+                        | "browser.input.type"
+                )
+        })
 }
 
 /// Which stdio execution path produced a response. This only affects the
@@ -632,6 +668,7 @@ fn classify_tool_completion(
         .unwrap_or(OutputSizeBucket::Empty);
 
     ToolCompletionObservation {
+        computer_action: is_computer_action(&timer.tool_name, timer.operation),
         tool_name: timer.tool_name,
         operation: timer.operation,
         success,
@@ -873,18 +910,19 @@ mod observation_tests {
 
     #[test]
     fn page_operation_is_closed_and_retains_no_argument_content() {
-        for (action, expected) in [
-            ("execute_javascript", ToolOperation::ExecuteJavascript),
-            ("get_text", ToolOperation::GetText),
-            ("query_dom", ToolOperation::QueryDom),
-            ("click_element", ToolOperation::ClickElement),
-            ("insert_text", ToolOperation::InsertText),
-            ("type_keystrokes", ToolOperation::TypeKeystrokes),
+        for (action, expected, computer_action) in [
+            ("execute_javascript", ToolOperation::ExecuteJavascript, false),
+            ("get_text", ToolOperation::GetText, false),
+            ("query_dom", ToolOperation::QueryDom, false),
+            ("click_element", ToolOperation::ClickElement, true),
+            ("insert_text", ToolOperation::InsertText, true),
+            ("type_keystrokes", ToolOperation::TypeKeystrokes, true),
             (
                 "enable_javascript_apple_events",
                 ToolOperation::EnableJavascriptAppleEvents,
+                true,
             ),
-            ("private-custom-action", ToolOperation::Other),
+            ("private-custom-action", ToolOperation::Other, false),
         ] {
             let args = serde_json::json!({
                 "action": action,
@@ -894,6 +932,7 @@ mod observation_tests {
             });
             let operation = tool_operation("page", Some(&args));
             assert_eq!(operation, expected);
+            assert_eq!(is_computer_action("page", operation), computer_action);
             let debug = format!("{operation:?}");
             for forbidden in ["private selector", "private script", "private typed text"] {
                 assert!(!debug.contains(forbidden));
@@ -903,6 +942,11 @@ mod observation_tests {
             tool_operation("click", Some(&serde_json::json!({"action": "private"}))),
             ToolOperation::NotApplicable
         );
+        assert!(is_computer_action("click", ToolOperation::NotApplicable));
+        assert!(!is_computer_action(
+            "get_window_state",
+            ToolOperation::NotApplicable
+        ));
     }
 
     #[test]

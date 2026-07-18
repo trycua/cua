@@ -268,6 +268,28 @@ pub fn finite_tool_name_from_argv() -> Option<String> {
     finite_tool_name_from_args(&args)
 }
 
+/// Return whether a finite `call` targets a fixed computer-action category.
+/// JSON is inspected only long enough to classify the closed `page.action`
+/// vocabulary and is never retained or passed to telemetry.
+pub fn finite_computer_action_from_argv() -> bool {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    finite_computer_action_from_args(&args)
+}
+
+fn finite_computer_action_from_args(args: &[String]) -> bool {
+    let Some(tool_name) = finite_tool_name_from_args(args) else {
+        return false;
+    };
+    let positionals = positional_args(args);
+    let json_arg = match positionals.as_slice() {
+        ["call", _, json, ..] | [_, json, ..] => Some(*json),
+        _ => None,
+    };
+    let parsed_args = json_arg.and_then(|json| serde_json::from_str(json).ok());
+    let operation = cua_driver_core::server::tool_operation(&tool_name, parsed_args.as_ref());
+    cua_driver_core::server::is_computer_action(&tool_name, operation)
+}
+
 /// Return the bounded sub-operation for a finite command. This classifier
 /// reads only the command verb, a reviewed subcommand, and the presence of
 /// `--apply`; arbitrary values never leave this function.
@@ -3607,6 +3629,28 @@ mod tests {
             None
         );
         assert_eq!(finite_tool_name_from_args(&args(&["mcp"])), None);
+    }
+
+    #[test]
+    fn finite_computer_action_discards_arguments_after_fixed_classification() {
+        assert!(finite_computer_action_from_args(&args(&[
+            "call",
+            "click",
+            r#"{"x":1,"private":"discarded"}"#,
+        ])));
+        assert!(finite_computer_action_from_args(&args(&[
+            "call",
+            "page",
+            r#"{"action":"insert_text","text":"private"}"#,
+        ])));
+        assert!(!finite_computer_action_from_args(&args(&[
+            "call",
+            "page",
+            r#"{"action":"query_dom","selector":"private"}"#,
+        ])));
+        assert!(!finite_computer_action_from_args(&args(&[
+            "call", "page", "not-json",
+        ])));
     }
 
     #[test]

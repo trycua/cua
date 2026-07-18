@@ -50,13 +50,6 @@ type fakeK8s struct {
 }
 
 func newFakeK8s(status int, respBody string) *fakeK8s {
-	return newFakeK8sHandler(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(respBody))
-	})
-}
-
-func newFakeK8sHandler(handler http.HandlerFunc) *fakeK8s {
 	fk := &fakeK8s{}
 	fk.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fk.method = r.Method
@@ -64,7 +57,6 @@ func newFakeK8sHandler(handler http.HandlerFunc) *fakeK8s {
 		fk.rawQuery = r.URL.RawQuery
 		fk.headers = r.Header.Clone()
 		fk.body, _ = io.ReadAll(r.Body)
-		r.Body = io.NopCloser(bytes.NewReader(fk.body))
 		fk.requests = append(fk.requests, recordedReq{
 			method:   fk.method,
 			path:     fk.path,
@@ -72,7 +64,8 @@ func newFakeK8sHandler(handler http.HandlerFunc) *fakeK8s {
 			headers:  fk.headers,
 			body:     fk.body,
 		})
-		handler(w, r)
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(respBody))
 	}))
 	return fk
 }
@@ -115,44 +108,8 @@ func nsCreatedResponse(name string) string {
 	return string(b)
 }
 
-func existingPersonalTenantResponse(userSub string) string {
-	tenant := desiredPersonalTenant(context.Background(), userSub)
-	tenant.Status = &capsuleTenantStatus{Owners: []capsuleTenantOwner{
-		tenant.Spec.Owners[0],
-	}}
-	b, _ := json.Marshal(tenant)
-	return string(b)
-}
-
-func pendingPersonalTenantResponse(userSub string) string {
-	b, _ := json.Marshal(desiredPersonalTenant(context.Background(), userSub))
-	return string(b)
-}
-
-func newNamespaceCreateK8s(userSub string, status int, respBody string) *fakeK8s {
-	tenantPath := capsuleTenantCollectionPath + "/user-" + userSub
-	return newFakeK8sHandler(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == tenantPath:
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(existingPersonalTenantResponse(userSub)))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/namespaces":
-			w.WriteHeader(status)
-			_, _ = w.Write([]byte(respBody))
-		case r.Method == http.MethodGet && strings.HasPrefix(
-			r.URL.Path, "/apis/rbac.authorization.k8s.io/v1/namespaces/",
-		):
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"items":[]}`))
-		default:
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error":"unexpected test request"}`))
-		}
-	})
-}
-
 func TestCreateNamespace_ValidName(t *testing.T) {
-	fk := newNamespaceCreateK8s("test-uuid", http.StatusCreated, nsCreatedResponse("my-workspace"))
+	fk := newFakeK8s(http.StatusCreated, nsCreatedResponse("my-workspace"))
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
 
@@ -168,12 +125,12 @@ func TestCreateNamespace_ValidName(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusCreated, w.Body.String())
 	}
 
-	// The handler validates the Tenant, creates the namespace, then probes for
-	// adoption; inspect the namespace POST explicitly.
-	if len(fk.requests) < 3 {
-		t.Fatalf("expected tenant GET + namespace POST + adoption probe GET, got %d request(s)", len(fk.requests))
+	// The handler issues the create POST followed by the adoption-wait GET
+	// probe; inspect the POST explicitly.
+	if len(fk.requests) < 2 {
+		t.Fatalf("expected create POST + adoption probe GET, got %d request(s)", len(fk.requests))
 	}
-	post := fk.requests[1]
+	post := fk.requests[0]
 
 	// Verify impersonation headers sent to k8s proxy.
 	if got := post.headers.Get("Impersonate-User"); got != "oidc:test-uuid" {
@@ -196,6 +153,10 @@ func TestCreateNamespace_ValidName(t *testing.T) {
 	meta, _ := nsObj["metadata"].(map[string]any)
 	if meta["name"] != "my-workspace" {
 		t.Fatalf("upstream ns name = %v, want my-workspace", meta["name"])
+	}
+	labels, _ := meta["labels"].(map[string]any)
+	if got, want := labels["capsule.clastix.io/tenant"], "user-test-uuid"; got != want {
+		t.Fatalf("tenant label = %v, want %q", got, want)
 	}
 
 	// Verify the adoption probe: an impersonated RoleBinding LIST in the new
@@ -302,7 +263,7 @@ func TestCreateNamespace_MissingUser(t *testing.T) {
 }
 
 func TestCreateNamespace_CreatesTracingSpan(t *testing.T) {
-	fk := newNamespaceCreateK8s("test-uuid", http.StatusCreated, nsCreatedResponse("my-workspace"))
+	fk := newFakeK8s(http.StatusCreated, nsCreatedResponse("my-workspace"))
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
 

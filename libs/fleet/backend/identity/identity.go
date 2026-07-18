@@ -1,7 +1,7 @@
 // Package identity resolves the cross-service identity prefixes (Keycloak
 // group / Capsule tenant prefix and the OIDC username/groups prefixes) from
-// OpenFeature, so the cyclops-cs backend's Tenant lifecycle and impersonation
-// headers stay aligned with the k3s apiserver flags instead of hardcoding
+// OpenFeature, so backend impersonation and the standalone Tenant controller
+// stay aligned with the k3s apiserver flags instead of hardcoding
 // separate copies — the drift that previously broke tenant RBAC.
 //
 // Flag keys (SSM Parameter Store paths):
@@ -55,8 +55,8 @@ var (
 	clientOnce sync.Once
 	client     *openfeature.Client
 
-	mu     sync.Mutex
-	cache  = map[string]cached{}
+	mu    sync.Mutex
+	cache = map[string]cached{}
 )
 
 type cached struct {

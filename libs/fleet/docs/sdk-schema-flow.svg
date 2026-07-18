@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1080" viewBox="0 0 1600 1080" role="img" aria-labelledby="title desc">
+  <title id="title">Cyclops multi-language SDK schema and runtime flow</title>
+  <desc id="desc">Kubernetes CRDs generate shared plumbing types for WIT, Rust, TypeScript, Python, and Go. Handwritten porcelain operations use those types. Language bindings call the Rust core, which constructs Kubernetes resources, authenticates requests, and waits for claims to bind into sandboxes.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f7f1e6"/><stop offset="0.56" stop-color="#edf3e8"/><stop offset="1" stop-color="#e7eff0"/></linearGradient>
+    <linearGradient id="sourceFill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#182724"/><stop offset="1" stop-color="#29483f"/></linearGradient>
+    <linearGradient id="coreFill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#d9633b"/><stop offset="1" stop-color="#bd3f2a"/></linearGradient>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><path d="M 28 0 L 0 0 0 28" fill="none" stroke="#17352f" stroke-opacity="0.05" stroke-width="1"/></pattern>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#18332e" flood-opacity="0.13"/></filter>
+    <marker id="arrowDark" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#24433b"/></marker>
+    <marker id="arrowOrange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#cf5335"/></marker>
+    <style>
+      .display { font-family: Georgia, 'Times New Roman', serif; }
+      .sans { font-family: 'Trebuchet MS', 'Segoe UI', sans-serif; }
+      .mono { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; }
+      .eyebrow { font-size: 14px; font-weight: 700; }
+      .section { font-size: 14px; font-weight: 700; }
+      .card-title { font-size: 23px; font-weight: 700; }
+      .body { font-size: 16px; }
+      .small { font-size: 14px; }
+      .tiny { font-size: 12px; }
+      .muted { fill: #60716c; }
+      .ink { fill: #182724; }
+      .cream { fill: #fffaf1; }
+      .line { fill: none; stroke: #24433b; stroke-width: 3; marker-end: url(#arrowDark); }
+      .line-orange { fill: none; stroke: #cf5335; stroke-width: 3; marker-end: url(#arrowOrange); }
+      .dash { stroke-dasharray: 8 8; }
+    </style>
+  </defs>
+  <rect width="1600" height="1080" fill="url(#background)"/><rect width="1600" height="1080" fill="url(#grid)"/>
+  <circle cx="1480" cy="104" r="190" fill="#d9633b" opacity="0.08"/><circle cx="92" cy="990" r="220" fill="#497b68" opacity="0.08"/>
+  <g class="sans">
+    <text x="76" y="62" class="eyebrow" fill="#bd4c31">Cyclops SDK architecture</text>
+    <text x="76" y="118" class="display ink" font-size="46" font-weight="700">One schema. Many languages. One core.</text>
+    <text x="78" y="151" class="body muted">Generated plumbing stays synchronized with Kubernetes; handwritten porcelain owns behavior.</text>
+    <g transform="translate(1258 55)"><rect width="266" height="88" rx="20" fill="#fffaf1" stroke="#d6cbbc"/><circle cx="35" cy="31" r="8" fill="#d9633b"/><text x="55" y="36" class="small ink" font-weight="700">Generated plumbing</text><line x1="27" y1="62" x2="43" y2="62" stroke="#24433b" stroke-width="3" stroke-dasharray="5 4"/><text x="55" y="67" class="small muted">Handwritten porcelain</text></g>
+    <text x="76" y="216" class="section" fill="#526660">Build time · schema flow</text><line x1="76" y1="229" x2="1524" y2="229" stroke="#72847e" stroke-opacity="0.35"/>
+    <g transform="translate(76 262)"><rect width="292" height="248" rx="26" fill="url(#sourceFill)"/><rect x="22" y="22" width="132" height="28" rx="14" fill="#f1b14d"/><text x="88" y="41" class="tiny" text-anchor="middle" fill="#182724" font-weight="700">SOURCE OF TRUTH</text><text x="24" y="87" class="card-title cream">Kubernetes CRDs</text><text x="24" y="119" class="mono small" fill="#d4e3dc">clusters/base/osgym/</text><text x="24" y="141" class="mono small" fill="#d4e3dc">crd.yaml</text><line x1="24" y1="164" x2="268" y2="164" stroke="#fffaf1" stroke-opacity="0.2"/><text x="24" y="194" class="small" fill="#fffaf1">Pool <tspan fill="#91c5ae">spec schema</tspan></text><text x="24" y="219" class="small" fill="#fffaf1">Claim <tspan fill="#91c5ae">spec schema</tspan></text></g>
+    <path d="M 368 386 C 402 386, 414 386, 444 386" class="line-orange"/><text x="406" y="368" class="tiny" text-anchor="middle" fill="#bd4c31" font-weight="700">READ</text>
+    <g transform="translate(444 283)"><rect width="286" height="206" rx="26" fill="#fffaf1" stroke="#d6cbbc"/><rect x="22" y="20" width="104" height="28" rx="14" fill="#f2d28f"/><text x="74" y="39" class="tiny ink" text-anchor="middle" font-weight="700">GENERATOR</text><text x="24" y="82" class="card-title ink">Schema generator</text><text x="24" y="111" class="mono small muted">sdk-schema-generator</text><text x="24" y="146" class="small ink">Parses OpenAPI v3 schema</text><text x="24" y="171" class="small ink">Preserves fields, enums, lists, maps</text></g>
+    <path d="M 730 386 C 765 386, 770 386, 800 386" class="line-orange"/><text x="765" y="368" class="tiny" text-anchor="middle" fill="#bd4c31" font-weight="700">EMIT</text>
+    <g transform="translate(800 251)"><rect width="724" height="270" rx="26" fill="#fffaf1" stroke="#d6cbbc"/><text x="26" y="48" class="card-title ink">Generated plumbing</text><text x="26" y="73" class="small muted">The same PoolSpec and ClaimSpec shape everywhere.</text>
+      <g transform="translate(26 96)"><rect width="206" height="139" rx="18" fill="#e3eee8" stroke="#a9c5b7"/><text x="18" y="31" class="small ink" font-weight="700">WIT types</text><text x="18" y="58" class="mono tiny muted">generated-crd.wit</text><text x="18" y="90" class="mono small ink">pool-spec</text><text x="18" y="115" class="mono small ink">claim-spec</text></g>
+      <g transform="translate(252 96)"><rect width="210" height="139" rx="18" fill="#eef1dc" stroke="#c7cc9d"/><text x="18" y="31" class="small ink" font-weight="700">Rust core models</text><text x="18" y="58" class="mono tiny muted">generated_crd.rs</text><text x="18" y="90" class="mono tiny muted">generated_crd_</text><text x="18" y="110" class="mono tiny muted">component.rs</text></g>
+      <g transform="translate(482 96)"><rect width="216" height="139" rx="18" fill="#f7e3d8" stroke="#dfb7a4"/><text x="18" y="31" class="small ink" font-weight="700">Language types</text><text x="18" y="61" class="small ink">TypeScript</text><text x="18" y="86" class="small ink">Python</text><text x="18" y="111" class="small ink">Go</text></g>
+    </g>
+    <g transform="translate(76 550)"><rect width="1448" height="88" rx="22" fill="#fffaf1" fill-opacity="0.72" stroke="#b8c5bd" stroke-dasharray="8 8"/><text x="24" y="35" class="section" fill="#526660">Handwritten porcelain WIT</text><text x="24" y="62" class="mono small ink">create-pool({ namespace, spec }) · create-claim({ pool, spec? }) · CRUD · wait-claim</text><text x="1418" y="51" class="small" text-anchor="end" fill="#60716c">Stable intent, generated data</text></g>
+    <text x="76" y="696" class="section" fill="#526660">Runtime · request flow</text><line x1="76" y1="709" x2="1524" y2="709" stroke="#72847e" stroke-opacity="0.35"/>
+    <g transform="translate(76 749)"><rect width="250" height="226" rx="26" fill="#fffaf1" stroke="#d6cbbc"/><text x="24" y="42" class="card-title ink">Your application</text><text x="24" y="74" class="small muted">Choose any binding</text><g transform="translate(24 96)"><rect width="89" height="36" rx="18" fill="#dce9e2"/><text x="44.5" y="23" class="small ink" text-anchor="middle">Python</text><rect x="99" width="103" height="36" rx="18" fill="#f3e2c2"/><text x="150.5" y="23" class="small ink" text-anchor="middle">TypeScript</text><rect y="48" width="89" height="36" rx="18" fill="#e4ebcd"/><text x="44.5" y="71" class="small ink" text-anchor="middle">Go</text><rect x="99" y="48" width="103" height="36" rx="18" fill="#f2d9ce"/><text x="150.5" y="71" class="small ink" text-anchor="middle">Rust</text></g><text x="24" y="202" class="mono tiny muted">PoolSpec / ClaimSpec</text></g>
+    <path d="M 326 862 C 352 862, 363 862, 387 862" class="line"/><text x="356" y="843" class="tiny" text-anchor="middle" fill="#526660" font-weight="700">CALL</text>
+    <g transform="translate(387 749)"><rect width="410" height="226" rx="26" fill="url(#coreFill)"/><text x="24" y="42" class="card-title cream">Rust core · porcelain</text><text x="24" y="72" class="small" fill="#ffe6da">Native runner or WASM component</text><line x1="24" y1="91" x2="386" y2="91" stroke="#fffaf1" stroke-opacity="0.25"/><text x="24" y="122" class="small cream">Adds apiVersion, kind, metadata</text><text x="24" y="148" class="small cream">Derives claim namespace + template ref</text><text x="24" y="174" class="small cream">Builds URLs · OAuth · 401 retry</text><text x="24" y="200" class="small cream">CRUD + claim polling</text></g>
+    <path d="M 797 862 C 823 862, 834 862, 858 862" class="line"/><text x="827" y="843" class="tiny" text-anchor="middle" fill="#526660" font-weight="700">HTTP</text>
+    <g transform="translate(858 749)"><rect width="274" height="226" rx="26" fill="#fffaf1" stroke="#d6cbbc"/><text x="24" y="42" class="card-title ink">Cyclops API</text><text x="24" y="73" class="mono small muted">/api/k8s/{path}</text><line x1="24" y1="93" x2="250" y2="93" stroke="#d6cbbc"/><text x="24" y="124" class="small ink">Authenticated proxy</text><text x="24" y="150" class="small ink">Resource CRUD</text><text x="24" y="176" class="small ink">Returns live status</text><rect x="24" y="191" width="127" height="23" rx="11" fill="#e3eee8"/><text x="87.5" y="207" class="tiny ink" text-anchor="middle">generic endpoint</text></g>
+    <path d="M 1132 862 C 1157 862, 1169 862, 1193 862" class="line"/>
+    <g transform="translate(1193 749)"><rect width="331" height="226" rx="26" fill="#203a34"/><text x="24" y="42" class="card-title cream">Kubernetes + OSGym</text><g transform="translate(24 72)"><rect width="283" height="43" rx="14" fill="#31554a"/><text x="16" y="27" class="small cream">OSGymWorkspacePool</text><rect y="54" width="283" height="43" rx="14" fill="#31554a"/><text x="16" y="81" class="small cream">OSGymSandboxClaim</text><path d="M 142 102 L 142 121" stroke="#f1b14d" stroke-width="3" marker-end="url(#arrowOrange)"/><rect y="127" width="283" height="43" rx="14" fill="#f1b14d"/><text x="141.5" y="154" class="small ink" text-anchor="middle" font-weight="700">Bound → Sandbox</text></g></g>
+    <path d="M 1340 986 C 1340 1024, 592 1034, 592 986" class="line-orange dash"/><rect x="797" y="1005" width="337" height="36" rx="18" fill="#fffaf1" stroke="#dfb7a4"/><text x="965.5" y="1028" class="small" text-anchor="middle" fill="#9d3c28" font-weight="700">wait_claim polls until status.phase = Bound</text>
+    <text x="76" y="1043" class="tiny muted">Generated files are checked for drift in CI. Edit the CRDs, rerun the generator, and every language follows.</text><text x="1524" y="1043" class="tiny muted" text-anchor="end">Protocol v5</text>
+  </g>
+</svg>

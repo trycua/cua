@@ -15,7 +15,6 @@ these files.
 | `skip-ledger.json` | One reason for every release that has no candidate. |
 | `rendered.json` | Exact managed blocks and final release bodies accepted for application. |
 | `candidates.md` | Human-readable candidate review file. |
-| `dry-run-report.md` | Coverage, range, path-era, and hash report for the full backfill. |
 | `*.schema.json` | JSON Schema contracts for the catalog, evidence, candidates, skip ledger, and rendered payload. |
 
 ## Command reference
@@ -56,13 +55,14 @@ the repository. `BACKFILL_CLAUDE_MODEL` selects the model.
 ### `render`
 
 Validates candidate claims against their release evidence, renders managed
-blocks, and writes the exact final bodies and review reports.
+blocks, and writes the exact final bodies and human-readable candidate review.
 
 ### `validate`
 
-Rebuilds the accepted output from the catalog, evidence, candidates, and skip
-ledger. It fails when checked-in rendered files differ, coverage is incomplete,
-or any hash or evidence reference is invalid.
+Validates every JSON artifact against its checked-in schema, then rebuilds the
+accepted output from the catalog, evidence, candidates, and skip ledger. It
+fails when rendered files differ, coverage is incomplete, or any schema, hash,
+or evidence reference is invalid.
 
 ### `apply`
 

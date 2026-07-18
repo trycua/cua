@@ -219,8 +219,8 @@ rollback from overwriting it.
    skips before AI authoring.
 3. Generate candidates in bounded, checkpointed batches. Record the model ID,
    prompt version, prompt hash, evidence hash, output hash, and generation time.
-4. Render exact managed blocks and final bodies. Produce a full dry-run report
-   with one candidate or skip for all 182 releases.
+4. Render exact managed blocks and final bodies. Produce a human-readable
+   candidate review with one candidate or skip for all 182 releases.
 5. Review every minor and milestone release and sample patch releases across
    both products and every path era.
 6. Run a read-only Claude Code Fable audit of adjacency, identity handling,

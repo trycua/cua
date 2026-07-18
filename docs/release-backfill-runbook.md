@@ -14,6 +14,7 @@ forward Release Please and attribution workflow.
   windows.
 - Fetch `origin/main` and every tag.
 - Use a clean branch based on current `origin/main` for generation.
+- Install the validator dependency with `python3 -m pip install jsonschema`.
 - Export `GH_TOKEN` with repository read access. The apply step also needs
   release write access.
 - Keep journals and Claude stream logs outside the repository.
@@ -79,7 +80,6 @@ python3 .github/scripts/release_backfill.py validate
 Review these files:
 
 - `candidates.md` for the proposed retrospective notes;
-- `dry-run-report.md` for coverage, ranges, skips, and hashes;
 - `skip-ledger.json` for every omitted release;
 - `rendered.json` for the exact apply payload.
 

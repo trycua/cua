@@ -88,6 +88,31 @@ def read_json(path: Path) -> Any:
     return json.loads(path.read_text())
 
 
+def validate_json_schema(document: Any, schema_path: Path, label: str) -> None:
+    try:
+        from jsonschema import Draft202012Validator, FormatChecker
+        from jsonschema.exceptions import SchemaError
+    except ModuleNotFoundError as error:
+        raise BackfillError(
+            "validate requires the jsonschema package; install it with "
+            "`python3 -m pip install jsonschema`"
+        ) from error
+    schema = read_json(schema_path)
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as error:
+        raise BackfillError(f"{label} schema is invalid: {error.message}") from error
+    validator = Draft202012Validator(schema, format_checker=FormatChecker())
+    errors = sorted(
+        validator.iter_errors(document),
+        key=lambda error: tuple(str(item) for item in error.absolute_path),
+    )
+    if errors:
+        error = errors[0]
+        location = ".".join(str(item) for item in error.absolute_path) or "<root>"
+        raise BackfillError(f"{label} schema validation failed at {location}: {error.message}")
+
+
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
@@ -1241,45 +1266,6 @@ def rendered_markdown(catalog: Mapping[str, Any], rendered: Sequence[Mapping[str
     return "\n".join(lines).rstrip() + "\n"
 
 
-def dry_run_report(
-    catalog: Mapping[str, Any],
-    rendered: Sequence[Mapping[str, Any]],
-    skips: Mapping[str, Any],
-) -> str:
-    release_by_key = {str(item["key"]): item for item in catalog["releases"]}
-    lines = [
-        "# Historical release backfill dry run",
-        "",
-        f"Catalog releases: {len(catalog['releases'])}",
-        f"Accepted candidates: {len(rendered)}",
-        f"Skipped releases: {len(skips['skips'])}",
-        "",
-        "## Skips",
-        "",
-    ]
-    if skips["skips"]:
-        for skip in skips["skips"]:
-            lines.append(f"- `{skip['key']}`: `{skip['reason']}`. {skip['details']}")
-    else:
-        lines.append("No releases were skipped.")
-    lines.extend(["", "## Accepted releases", ""])
-    for item in rendered:
-        release = release_by_key[str(item["key"])]
-        lines.extend(
-            [
-                f"### {release['displayName']} {release['version']}",
-                "",
-                f"- Tag range: `{release.get('previousTag') or 'initial'}..{release['tag']}`",
-                f"- Path eras: `{', '.join(release['pathEraIds'])}`",
-                f"- Original body: `{release['bodySha256']}`",
-                f"- Managed block: `{item['managedBlockSha256']}`",
-                f"- Final body: `{item['finalBodySha256']}`",
-                "",
-            ]
-        )
-    return "\n".join(lines).rstrip() + "\n"
-
-
 def live_release_snapshot(
     api: BackfillGitHub, repository: str, catalog_release: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -1593,7 +1579,6 @@ def command_render(args: argparse.Namespace) -> None:
     }
     write_json(args.rendered_output, rendered_document)
     args.markdown_output.write_text(rendered_markdown(catalog, rendered))
-    args.report_output.write_text(dry_run_report(catalog, rendered, skips))
     print(f"rendered {len(rendered)} accepted release candidates")
 
 
@@ -1603,14 +1588,20 @@ def command_validate(args: argparse.Namespace) -> None:
     evidence = read_json(args.evidence)
     candidates = read_json(args.candidates)
     skips = read_json(args.skips)
-    expected = validate_documents(config, catalog, evidence, candidates, skips)
     rendered_document = read_json(args.rendered)
+    for label, document, schema_name in (
+        ("catalog", catalog, "catalog.schema.json"),
+        ("evidence", evidence, "evidence.schema.json"),
+        ("candidates", candidates, "candidates.schema.json"),
+        ("skip ledger", skips, "skip-ledger.schema.json"),
+        ("rendered payload", rendered_document, "rendered.schema.json"),
+    ):
+        validate_json_schema(document, args.schema_dir / schema_name, label)
+    expected = validate_documents(config, catalog, evidence, candidates, skips)
     if rendered_document.get("releases") != expected:
         raise BackfillError("checked-in rendered release payloads are stale")
     if args.markdown.read_text() != rendered_markdown(catalog, expected):
         raise BackfillError("checked-in rendered Markdown is stale")
-    if args.report.read_text() != dry_run_report(catalog, expected, skips):
-        raise BackfillError("checked-in dry-run report is stale")
     print(f"validated {len(expected)} candidates and {len(skips['skips'])} explicit skips")
 
 
@@ -1737,11 +1728,6 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path(".github/release-backfill/candidates.md"),
     )
-    render.add_argument(
-        "--report-output",
-        type=Path,
-        default=Path(".github/release-backfill/dry-run-report.md"),
-    )
 
     validate = commands.add_parser("validate")
     common_files(validate)
@@ -1760,9 +1746,7 @@ def parser() -> argparse.ArgumentParser:
     validate.add_argument(
         "--markdown", type=Path, default=Path(".github/release-backfill/candidates.md")
     )
-    validate.add_argument(
-        "--report", type=Path, default=Path(".github/release-backfill/dry-run-report.md")
-    )
+    validate.add_argument("--schema-dir", type=Path, default=Path(".github/release-backfill"))
 
     for name in ("apply", "rollback"):
         mutation = commands.add_parser(name)

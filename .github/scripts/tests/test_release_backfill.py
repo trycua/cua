@@ -4,8 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-from jsonschema import Draft202012Validator
-
 from release_backfill import (
     BackfillError,
     agent_environment,
@@ -24,6 +22,7 @@ from release_backfill import (
     snapshot_payload,
     validate_agent_content,
     validate_documents,
+    validate_json_schema,
     verify_execution_source,
 )
 from release_backfill_claude import claude_command
@@ -513,16 +512,25 @@ def test_execute_requires_exact_clean_approved_commit(tmp_path: Path):
         verify_execution_source(tmp_path, head, True)
 
 
-def test_checked_in_backfill_schemas_are_valid_json_schemas():
-    for name in (
-        "catalog.schema.json",
-        "evidence.schema.json",
-        "candidates.schema.json",
-        "skip-ledger.schema.json",
-        "rendered.schema.json",
-    ):
-        schema = json.loads((REPO_ROOT / ".github/release-backfill" / name).read_text())
-        Draft202012Validator.check_schema(schema)
+def test_checked_in_backfill_artifacts_match_their_schemas():
+    root = REPO_ROOT / ".github/release-backfill"
+    for name in ("catalog", "evidence", "candidates", "skip-ledger", "rendered"):
+        validate_json_schema(
+            json.loads((root / f"{name}.json").read_text()),
+            root / f"{name}.schema.json",
+            name,
+        )
+
+
+def test_schema_validation_rejects_an_unexpected_artifact_field():
+    _config, catalog, _evidence, _candidates, _skips = fixture_documents()
+    catalog["unexpected"] = True
+    with pytest.raises(BackfillError, match="catalog schema validation failed"):
+        validate_json_schema(
+            catalog,
+            REPO_ROOT / ".github/release-backfill/catalog.schema.json",
+            "catalog",
+        )
 
 
 def test_catalog_snapshot_hash_excludes_only_its_hash_field():

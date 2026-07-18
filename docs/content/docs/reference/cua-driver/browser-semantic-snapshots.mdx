@@ -97,9 +97,11 @@ Entries in `refs` declare their supported action kinds:
 }
 ```
 
-`browser_click` and `browser_type` reject a semantic ref when the requested
-action is absent from `actions`, returning `browser_action_unavailable` before
-delivery. Legacy `dom_refs_v1` refs retain their existing behavior.
+The closed action vocabulary is `click`, `type`, and `upload`.
+`browser_click`, `browser_type`, `browser_set_input_files`, and
+`browser_download` reject a semantic ref when the required action is absent,
+returning `browser_action_unavailable` before delivery. A file input declares
+`upload`, not `type`. Legacy `dom_refs_v1` refs retain their existing behavior.
 
 ## Content refs
 

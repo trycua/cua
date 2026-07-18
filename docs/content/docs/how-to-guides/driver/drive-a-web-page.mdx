@@ -154,9 +154,13 @@ get_browser_state({
 })
 ```
 
-Keep the returned opaque `target_id` and the `tab_id` whose `active` field is
-`true`. Mutation is available only when `binding_quality` is `exact`. A
-heuristic or ambiguous match is refused.
+Keep the returned opaque `target_id`. Use the `tab_id` whose `active` field is
+`true` only when selection is uniquely proven. `active: false` is proven
+unselected; `active: null` means the native window cannot distinguish tabs,
+such as two tabs with the same title. In that case, select an explicit tab by
+its returned metadata and never infer selection from list order. Mutation is
+available only when `binding_quality` is `exact`. A heuristic or ambiguous
+window match is refused.
 
 ## Snapshot the tab
 
@@ -248,6 +252,57 @@ browser_type({
 
 The default `insert_text` mode is efficient for ordinary text. Use
 `mode: "keystrokes"` when the page depends on per-character keyboard events.
+
+## Use extended pointer actions
+
+`browser_pointer` supports `hover`, `right_click`, `double_click`, `scroll`,
+and `drag`. Use the trusted route when genuine browser input semantics are
+required and the platform reports that it can preserve posture. Use the
+explicit synthetic route with current refs when DOM event semantics are
+acceptable:
+
+```jsonc
+browser_pointer({
+  "target_id": "<target_id>",
+  "tab_id": "<tab_id>",
+  "ref": "p3:4",
+  "action": "scroll",
+  "input_route": "dom_event",
+  "delta_y": 240,
+  "session": "research-1"
+})
+```
+
+For drag, pass `destination_ref` from the same exact frame. The driver refuses
+mixed-frame or stale destinations instead of translating them approximately.
+
+## Handle a page-owned dialog
+
+Prime and inspect the exact tab with `browser_dialog({action:"inspect"})`.
+When `present` is true, pass the returned `dialog_id` to `accept` or `dismiss`.
+Only an accepted prompt may include `prompt_text`. This tool does not handle
+browser permission prompts, extension UI, native sheets, or file pickers.
+Creating a Chromium native modal can activate its browser window; once you
+restore the intended occlusion, inspecting and resolving that exact dialog do
+not activate it again.
+
+## Assign files without a picker
+
+Take a semantic snapshot and choose a file-input ref whose `actions` contains
+`upload`. Call `browser_set_input_files` with absolute paths to direct regular
+files. Symlinks, directories, missing paths, and more than 32 files are
+refused. Verify the page's uploaded-file state afterward; the tool response
+contains only a count and never echoes the local paths.
+
+## Download into an approved directory
+
+Choose a current ref that activates the download and call `browser_download`
+through an MCP host that presents its destructive-tool approval. Pass an
+existing canonical absolute `destination_root`. The tool temporarily scopes
+Chromium's browser-wide download behavior, correlates the exact frame and
+opaque download id, restores the default on every outcome, and returns only
+the final byte count and opaque id. It does not return a filename, URL, or
+local path. A direct raw call without host approval is refused.
 
 ## Navigate
 

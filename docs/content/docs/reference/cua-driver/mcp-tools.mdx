@@ -12,7 +12,7 @@ description: Reference for every MCP tool Cua Driver exposes
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`cua-driver` exposes 43 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 47 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -425,7 +425,7 @@ Mapping: by='page' → larger step; by='line' → smaller step; amount = number 
 - `y` (number, optional): Window-local screenshot Y. See `x`.
 
 ```json
-{"direction":"down"}
+{"direction":"up"}
 ```
 
 ### `move_cursor`
@@ -493,7 +493,7 @@ Actions:
 - `window_id` (integer, optional): Target window ID from list_windows.
 
 ```json
-{"action":"get_text"}
+{"action":"execute_javascript"}
 ```
 
 ## Recording tools
@@ -826,4 +826,77 @@ Type text into an exactly-bound tab via the Input domain. mode="insert_text" (de
 
 ```json
 {"ref":"example","tab_id":"example","target_id":"example","text":"hello"}
+```
+
+### `browser_dialog`
+
+Inspect or resolve a page-owned JavaScript alert, confirm, prompt, or beforeunload dialog on one exactly-bound tab. This never handles browser permission UI, extension UI, native dialogs, or file pickers. Inspect returns an opaque dialog_id; accept/dismiss require that exact current id.
+
+**Arguments:**
+
+- `action` (string, required)
+- `dialog_id` (string, optional): Opaque current dialog generation returned by action=inspect.
+- `prompt_text` (string, optional): Sensitive response text, valid only when accepting a prompt dialog.
+- `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.
+- `tab_id` (string, required): Opaque tab id from get_browser_state (session-scoped).
+- `target_id` (string, required): Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).
+
+```json
+{"action":"inspect","tab_id":"example","target_id":"example"}
+```
+
+### `browser_set_input_files`
+
+Assign one or more explicit absolute local files to an exact live &lt;input type=file&gt; ref through CDP. This bypasses native file pickers, rejects symlinks and non-regular files, and never returns local paths.
+
+**Arguments:**
+
+- `files` (array of string, required)
+- `ref` (string, required): Page element ref in the p&lt;snapshot&gt;:&lt;index&gt; namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.
+- `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.
+- `tab_id` (string, required): Opaque tab id from get_browser_state (session-scoped).
+- `target_id` (string, required): Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).
+
+```json
+{"files":["example"],"ref":"example","tab_id":"example","target_id":"example"}
+```
+
+### `browser_download`
+
+Trigger one download through an exact live browser ref and save it inside an explicitly approved directory. Requires MCP-host destructive-tool approval, refuses ambiguous or stale capabilities, and never returns the source URL, filename, or destination path.
+
+**Arguments:**
+
+- `destination_root` (string, required): Absolute, existing, canonical directory approved to receive the download.
+- `ref` (string, required): Live page ref whose activation initiates the download.
+- `session` (string, required): Explicit caller session owning the browser capabilities.
+- `tab_id` (string, required): Opaque exact tab id from get_browser_state.
+- `target_id` (string, required): Opaque exact browser target id from get_browser_state.
+
+```json
+{"destination_root":"example","ref":"example","session":"example","tab_id":"example","target_id":"example"}
+```
+
+### `browser_pointer`
+
+Perform hover, right-click, double-click, scroll, or drag in an exactly-bound browser tab. The trusted route uses CDP Input events and refuses if standalone background posture cannot be preserved. The explicit dom_event route requires a page ref and synthesizes full-background DOM events. Never activates or brings a tab to the foreground.
+
+**Arguments:**
+
+- `action` (string, required)
+- `delta_x` (number, optional): Horizontal scroll delta in CSS pixels.
+- `delta_y` (number, optional): Vertical scroll delta in CSS pixels.
+- `destination_ref` (string, optional): Drag destination page ref in the exact same frame.
+- `input_route` (string, optional)
+- `ref` (string, optional): Origin page ref. Alternative to x/y.
+- `session` (string, required): Explicit caller session owning the browser capabilities.
+- `tab_id` (string, required): Opaque tab id minted by get_browser_state.
+- `target_id` (string, required): Opaque target id minted by get_browser_state.
+- `to_x` (number, optional): Drag destination viewport x in CSS pixels.
+- `to_y` (number, optional): Drag destination viewport y in CSS pixels.
+- `x` (number, optional): Origin viewport x in CSS pixels.
+- `y` (number, optional): Origin viewport y in CSS pixels.
+
+```json
+{"action":"hover","session":"example","tab_id":"example","target_id":"example"}
 ```

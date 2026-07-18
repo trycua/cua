@@ -123,7 +123,7 @@ The start event is emitted for a successful `start_session` declaration or the f
 
 The end event is emitted for `end_session` and idle eviction. It contains aggregate counters and booleans. When the platform has a cursor entry for that session, it also includes bounded cursor categories: enabled state, built-in/default/custom icon class, automatic/custom color source, label presence, motion customization, and an active-cursor count bucket. `cursor_outcome_observed=false` distinguishes sessions with no readable cursor entry from a disabled or default cursor. Cua Driver uses the caller session string only as a process-local map key. The string, a hash of it, and a replacement join token are absent from telemetry payloads.
 
-Computer-action success covers fixed pointer and keyboard capabilities, app launch and kill, window activation, state-changing `page` operations, and successful `browser_navigate`, `browser_click`, and `browser_type` calls. A structured browser refusal does not count as a completed computer action. `get_browser_state` is a read, and `browser_prepare` is tracked as browser use rather than a computer action because preparation may either reuse an endpoint or produce an approved visible side effect.
+Computer-action success covers fixed pointer and keyboard capabilities, app launch and kill, window activation, state-changing `page` operations, and successful browser navigation, click, type, pointer, file-assignment, download, or dialog-resolution calls. A structured browser refusal does not count as a completed computer action. `get_browser_state` and `browser_dialog` inspection are reads for this classifier, and `browser_prepare` is tracked as browser use rather than a computer action because preparation may either reuse an endpoint or produce an approved visible side effect.
 
 The end event includes `used_browser` and a bounded `browser_refusal_count_bucket`. It does not include browser targets, pages, profiles, or per-site information.
 
@@ -141,6 +141,10 @@ Typed browser tools use these reviewed operation values:
 | `browser_prepare` | `browser_prepare_isolated`, `browser_prepare_existing_profile`, or `other` |
 | `browser_click` | `browser_click_trusted`, `browser_click_dom_event`, or `other` |
 | `browser_type` | `browser_type_insert_text`, `browser_type_keystrokes`, or `other` |
+| `browser_dialog` | `browser_dialog_inspect`, `browser_dialog_accept`, `browser_dialog_dismiss`, or `other` |
+| `browser_set_input_files` | `browser_set_input_files` |
+| `browser_download` | `browser_download` |
+| `browser_pointer` | Action-and-route values such as `browser_pointer_scroll_trusted` or `browser_pointer_drag_dom_event`; invalid combinations become `other` |
 | `browser_navigate` | `not_applicable`; the tool name already identifies the operation |
 
 ### Structured browser refusals

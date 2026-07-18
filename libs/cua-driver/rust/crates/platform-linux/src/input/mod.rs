@@ -1797,13 +1797,18 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     let root = conn.setup().roots[0].root;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
 
-    for ch in text.chars() {
+    for (index, ch) in text.chars().enumerate() {
         // Resolve the keycode and whether Shift must be held — without it,
         // uppercase and shifted symbols would otherwise type their unshifted
-        // form (e.g. "A" arriving as "a").
-        let Some((keycode, needs_shift)) = char_to_keycode_shift(&mapping, ch as u32) else {
-            continue;
-        };
+        // form (e.g. "A" arriving as "a"). Non-Latin characters (Cyrillic, CJK,
+        // emoji, ...) whose keysym is absent from the server's keyboard map are
+        // delivered by borrowing a spare keycode and remapping it. The guard is
+        // held only for THIS iteration: `remap_spare_keycode` scans the same
+        // `mapping` snapshot every call, so accumulating guards across chars
+        // would re-borrow the same spare keycode and overwrite the live remap.
+        // Drop it after the per-char round-trip so the next char gets a clean
+        // borrow.
+        let (keycode, needs_shift, guard) = char_to_keycode(&conn, &mapping, ch, index)?;
         let state = if needs_shift {
             KeyButMask::SHIFT
         } else {
@@ -1845,6 +1850,15 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
         sleep(Duration::from_millis(KEY_DELAY_MS));
         conn.send_event(false, window, EventMask::KEY_RELEASE, &release)?;
         conn.flush()?;
+        // Round-trip per char so the server routes the events under the
+        // (possibly remapped) mapping before the guard drops and restores it.
+        let _ = conn.get_input_focus()?.reply();
+        if guard.is_some() {
+            // Give the target a beat to translate the events under the
+            // temporary mapping before the guard restores the original one.
+            sleep(Duration::from_millis(KEY_DELAY_MS));
+        }
+        drop(guard);
         if inter_char_ms > 0 {
             sleep(Duration::from_millis(inter_char_ms));
         }
@@ -1871,15 +1885,15 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         .get(..kpm)
         .and_then(|s| s.iter().copied().find(|&k| k != 0))
         .unwrap_or(50);
-    for ch in text.chars() {
-        let cp = match ch {
-            '\n' => 0xff0d, // XK_Return
-            '\t' => 0xff09, // XK_Tab
-            c => c as u32,
-        };
-        let Some((keycode, needs_shift)) = char_to_keycode_shift(&mapping, cp) else {
-            continue;
-        };
+    for (index, ch) in text.chars().enumerate() {
+        // `char_to_keycode` maps `\n`/`\t` to XK_Return/XK_Tab and non-Latin
+        // codepoints to Unicode keysyms, then falls back to a spare-keycode
+        // remap when the keysym is absent from the map. The guard is held only
+        // for THIS iteration: `remap_spare_keycode` scans the same `mapping`
+        // snapshot every call, so accumulating guards would re-borrow the same
+        // spare keycode and overwrite the live remap. Drop after the per-char
+        // round-trip so the next char gets a clean borrow.
+        let (keycode, needs_shift, guard) = char_to_keycode(&conn, &mapping, ch, index)?;
         if needs_shift {
             conn.xtest_fake_input(KEY_PRESS_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
         }
@@ -1889,12 +1903,15 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
             conn.xtest_fake_input(KEY_RELEASE_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
         }
         conn.flush()?;
+        // Round-trip per char so the server delivers the events under the
+        // (possibly remapped) mapping before the guard drops and restores it.
+        let _ = conn.get_input_focus()?.reply();
+        if guard.is_some() {
+            sleep(Duration::from_millis(KEY_DELAY_MS));
+        }
+        drop(guard);
         sleep(Duration::from_millis(KEY_DELAY_MS));
     }
-    // Round-trip so the server delivers the final character's key events before
-    // this short-lived connection drops (see send_key_xtest — keyboard XTEST
-    // events queued on a connection that closes immediately can be lost).
-    let _ = conn.get_input_focus()?.reply();
     Ok(())
 }
 
@@ -2223,6 +2240,25 @@ fn send_key_to_target(
 /// keysym sits in the shifted column of the keyboard map). Prefers the
 /// unshifted column when a keysym appears in both. Keysym for ASCII / Latin-1
 /// is just the codepoint.
+///
+/// Map a Unicode character to its X11 keysym.
+///
+/// X11 keysyms in the Latin-1 range (U+0020–U+00FF) are identical to the
+/// Unicode codepoint, so they can be looked up directly in the server's
+/// keyboard mapping. Every other character (Cyrillic, CJK, emoji, etc.)
+/// uses the Unicode-keysym convention from X11 protocol §2.2:
+/// `0x0100_0000 | codepoint`. Control characters `\n` and `\t` map to
+/// XK_Return and XK_Tab respectively so typing them produces the expected
+/// editing keys, not the raw Linefeed/Horizontal-Tab keysyms.
+fn char_to_keysym(ch: char) -> u32 {
+    let cp = ch as u32;
+    match ch {
+        '\n' => 0xff0d, // XK_Return
+        '\t' => 0xff09, // XK_Tab
+        _ if (0x20..=0xff).contains(&cp) => cp,
+        _ => 0x0100_0000 | cp,
+    }
+}
 fn char_to_keycode_shift(mapping: &GetKeyboardMappingReply, keysym: u32) -> Option<(u8, bool)> {
     let per = mapping.keysyms_per_keycode as usize;
     if per == 0 {
@@ -2237,6 +2273,32 @@ fn char_to_keycode_shift(mapping: &GetKeyboardMappingReply, keysym: u32) -> Opti
         }
     }
     None
+}
+
+/// Resolve a Unicode character to a keycode (+ Shift flag) usable in a
+/// synthetic key event, borrowing a spare keycode and remapping it when the
+/// character's keysym is absent from the server's keyboard map (the common
+/// case for non-Latin scripts on a US/headless layout). The returned
+/// [`RemappedKeycode`] guard, if any, MUST be held alive until after the
+/// KeyPress/KeyRelease pair has been delivered and the server has round-tripped
+/// (e.g. via `get_input_focus`); dropping it earlier restores the original
+/// mapping and the events arrive unmapped.
+///
+/// `index` is the 0-based position of `ch` in the original text, used only for
+/// the structured error message when no keycode can be borrowed.
+fn char_to_keycode<'a>(
+    conn: &'a RustConnection,
+    mapping: &GetKeyboardMappingReply,
+    ch: char,
+    index: usize,
+) -> Result<(u8, bool, Option<RemappedKeycode<'a>>)> {
+    let keysym = char_to_keysym(ch);
+    if let Some((kc, needs_shift)) = char_to_keycode_shift(mapping, keysym) {
+        return Ok((kc, needs_shift, None));
+    }
+    let (kc, guard) = keycode_for_keysym(conn, mapping, keysym, &ch.to_string())
+        .with_context(|| format!("char {ch:?} (U+{cp:04X}) at index {index} has keysym 0x{keysym:04X} not in keyboard map and no spare keycode could be remapped", cp = ch as u32))?;
+    Ok((kc, false, guard))
 }
 
 /// Map a human key name (e.g. "Return", "F5", "a") to its X11 keysym. Pure name
@@ -2601,5 +2663,71 @@ mod path_tests {
         let (cum, total) = path_cumulative(&path);
         assert!((total - 0.0).abs() < 1e-9);
         assert_eq!(point_on_path(&path, &cum, total, 0.3), (5, 5));
+    }
+}
+
+#[cfg(test)]
+mod keysym_tests {
+    use super::char_to_keysym;
+
+    #[test]
+    fn ascii_printable_is_identity() {
+        // U+0020–U+007E: keysym == codepoint.
+        for cp in 0x20u32..=0x7e {
+            let ch = char::from_u32(cp).unwrap();
+            assert_eq!(char_to_keysym(ch), cp, "ASCII char {ch:?}");
+        }
+    }
+
+    #[test]
+    fn latin1_supplement_is_identity() {
+        // U+00A0–U+00FF: keysym == codepoint (X11 Latin-1 range).
+        for cp in 0xa0u32..=0xff {
+            let ch = char::from_u32(cp).unwrap();
+            assert_eq!(char_to_keysym(ch), cp, "Latin-1 char {ch:?}");
+        }
+    }
+
+    #[test]
+    fn control_chars_map_to_return_and_tab() {
+        assert_eq!(char_to_keysym('\n'), 0xff0d); // XK_Return
+        assert_eq!(char_to_keysym('\t'), 0xff09); // XK_Tab
+    }
+
+    #[test]
+    fn cyrillic_uses_unicode_keysym() {
+        // U+041F (П) → 0x0100_041F, NOT the legacy XK_Cyrillic_PE (0x06f0).
+        // The legacy keysyms are layout-specific and absent from a US keymap;
+        // the Unicode keysym is what X11 §2.2 specifies for arbitrary codepoints.
+        for (ch, cp) in [('П', 0x041F), ('р', 0x0440), ('и', 0x0438), ('в', 0x0432)] {
+            assert_eq!(char_to_keysym(ch), 0x0100_0000 | cp, "Cyrillic {ch:?}");
+        }
+    }
+
+    #[test]
+    fn cjk_uses_unicode_keysym() {
+        // U+4E2D (中), U+6587 (文): far outside Latin-1.
+        for (ch, cp) in [('中', 0x4e2d), ('文', 0x6587), ('€', 0x20ac)] {
+            assert_eq!(char_to_keysym(ch), 0x0100_0000 | cp, "CJK/symbol {ch:?}");
+        }
+    }
+
+    #[test]
+    fn emoji_uses_unicode_keysym() {
+        // U+1F600 (😀): supplementary plane, must use the 0x0100_0000 | cp form.
+        let ch = '😀';
+        assert_eq!(char_to_keysym(ch), 0x0100_0000 | 0x1f600);
+    }
+
+    #[test]
+    fn round_trip_cyrillic_word() {
+        // "Привет" — every char must map to a Unicode keysym, never to a
+        // Latin-1 value or a legacy Cyrillic keysym.
+        let word = "Привет";
+        for ch in word.chars() {
+            let ks = char_to_keysym(ch);
+            assert!(ks >= 0x0100_0000, "{ch:?} -> 0x{ks:X} not a Unicode keysym");
+            assert_ne!(ks, ch as u32, "{ch:?} keysym must not be the bare codepoint");
+        }
     }
 }

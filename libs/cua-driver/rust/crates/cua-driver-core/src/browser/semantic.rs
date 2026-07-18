@@ -773,7 +773,18 @@ fn action_kinds(
             .get("contenteditable")
             .is_some_and(|value| value.is_empty() || value.eq_ignore_ascii_case("true"))
     });
-    if matches!(role, "textbox" | "searchbox") || matches!(tag, "input" | "textarea") || editable {
+    let file_input = tag == "input"
+        && dom.is_some_and(|meta| {
+            meta.attrs
+                .get("type")
+                .is_some_and(|value| value.eq_ignore_ascii_case("file"))
+        });
+    if file_input {
+        actions.push(BrowserActionKind::Upload);
+    } else if matches!(role, "textbox" | "searchbox")
+        || matches!(tag, "input" | "textarea")
+        || editable
+    {
         actions.push(BrowserActionKind::Type);
     }
     if actions.is_empty()
@@ -1073,6 +1084,22 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn file_inputs_expose_upload_instead_of_text_typing() {
+        let dom = DomMeta {
+            tag: "input".into(),
+            attrs: HashMap::from([("type".into(), "file".into())]),
+            order: 0,
+            css_hidden: false,
+            parent_backend_node_id: None,
+            frame_id: None,
+        };
+        assert_eq!(
+            action_kinds("textbox", Some(&dom), &BTreeMap::new(), None),
+            vec![BrowserActionKind::Upload]
+        );
+    }
     use crate::browser::store::FrameRef;
 
     fn frame() -> FrameRef {

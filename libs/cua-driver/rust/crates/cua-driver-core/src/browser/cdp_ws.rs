@@ -61,6 +61,14 @@ pub struct CdpEvent {
     pub params: Value,
 }
 
+/// Bounded state for one page-owned JavaScript dialog. Message text and URLs
+/// are deliberately not retained.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CdpDialogState {
+    pub generation: u64,
+    pub kind: String,
+}
+
 /// What the reader routed back for one in-flight call.
 enum CallOutcome {
     Result(Value),
@@ -71,6 +79,8 @@ enum CallOutcome {
 struct Demux {
     pending: StdMutex<HashMap<u64, oneshot::Sender<CallOutcome>>>,
     subscribers: StdMutex<Vec<mpsc::UnboundedSender<CdpEvent>>>,
+    dialogs: StdMutex<HashMap<String, CdpDialogState>>,
+    next_dialog_generation: AtomicU64,
     closed: AtomicBool,
 }
 
@@ -81,6 +91,7 @@ impl Demux {
         // error, which `call` reports as a closed socket.
         self.pending.lock().unwrap().clear();
         self.subscribers.lock().unwrap().clear();
+        self.dialogs.lock().unwrap().clear();
     }
 }
 
@@ -126,6 +137,32 @@ async fn read_loop(mut read: SplitStream<WsStream>, demux: Arc<Demux>) {
                     .map(str::to_owned),
                 params: v.get("params").cloned().unwrap_or(Value::Null),
             };
+            if let Some(session_id) = event.session_id.as_deref() {
+                match event.method.as_str() {
+                    "Page.javascriptDialogOpening" => {
+                        let kind = match event.params.get("type").and_then(Value::as_str) {
+                            Some("alert") => "alert",
+                            Some("confirm") => "confirm",
+                            Some("prompt") => "prompt",
+                            Some("beforeunload") => "beforeunload",
+                            _ => "other",
+                        };
+                        let generation =
+                            demux.next_dialog_generation.fetch_add(1, Ordering::Relaxed);
+                        demux.dialogs.lock().unwrap().insert(
+                            session_id.to_owned(),
+                            CdpDialogState {
+                                generation,
+                                kind: kind.to_owned(),
+                            },
+                        );
+                    }
+                    "Page.javascriptDialogClosed" => {
+                        demux.dialogs.lock().unwrap().remove(session_id);
+                    }
+                    _ => {}
+                }
+            }
             demux
                 .subscribers
                 .lock()
@@ -162,6 +199,8 @@ impl CdpConnection {
         let demux = Arc::new(Demux {
             pending: StdMutex::new(HashMap::new()),
             subscribers: StdMutex::new(Vec::new()),
+            dialogs: StdMutex::new(HashMap::new()),
+            next_dialog_generation: AtomicU64::new(1),
             closed: AtomicBool::new(false),
         });
         let reader = tokio::spawn(read_loop(read, demux.clone()));
@@ -188,6 +227,17 @@ impl CdpConnection {
         let (tx, rx) = mpsc::unbounded_channel();
         self.demux.subscribers.lock().unwrap().push(tx);
         rx
+    }
+
+    pub fn dialog_state(&self, session_id: &str) -> Option<CdpDialogState> {
+        self.demux.dialogs.lock().unwrap().get(session_id).cloned()
+    }
+
+    pub fn clear_dialog_state(&self, session_id: &str, generation: u64) {
+        let mut dialogs = self.demux.dialogs.lock().unwrap();
+        if dialogs.get(session_id).map(|state| state.generation) == Some(generation) {
+            dialogs.remove(session_id);
+        }
     }
 
     /// Issue one CDP command and await its `id`-matched reply.
@@ -587,6 +637,39 @@ mod tests {
         assert_eq!(second.session_id.as_deref(), Some("child-sess"));
         assert_eq!(second.params["n"], 2);
         assert!(events.try_recv().is_err(), "no phantom events");
+    }
+
+    #[tokio::test]
+    async fn javascript_dialog_journal_is_bounded_and_generation_checked() {
+        let server = MockCdpServer::start(StdArc::new(|call| match call.method.as_str() {
+            "Dialog.open" => MockReply::ok(json!({})).with_events(vec![MockEvent {
+                method: "Page.javascriptDialogOpening".into(),
+                session_id: Some("tab-session".into()),
+                params: json!({
+                    "type": "prompt",
+                    "message": "private dialog text",
+                    "url": "https://private.example"
+                }),
+            }]),
+            "Dialog.close" => MockReply::ok(json!({})).with_events(vec![MockEvent {
+                method: "Page.javascriptDialogClosed".into(),
+                session_id: Some("tab-session".into()),
+                params: json!({}),
+            }]),
+            _ => MockReply::ok(json!({})),
+        }))
+        .await;
+        let conn = CdpConnection::connect(&server.ws_url()).await.unwrap();
+        conn.call(Some("tab-session"), "Dialog.open", json!({}))
+            .await
+            .unwrap();
+        let dialog = conn.dialog_state("tab-session").expect("dialog journaled");
+        assert_eq!(dialog.kind, "prompt");
+        assert!(!format!("{dialog:?}").contains("private"));
+        conn.call(Some("tab-session"), "Dialog.close", json!({}))
+            .await
+            .unwrap();
+        assert!(conn.dialog_state("tab-session").is_none());
     }
 
     #[tokio::test]

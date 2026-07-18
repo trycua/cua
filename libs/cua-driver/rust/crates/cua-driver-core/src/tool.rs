@@ -265,6 +265,8 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "browser_navigate" => &["browser.navigate"],
         "browser_click" => &["browser.input.click"],
         "browser_type" => &["browser.input.type"],
+        "browser_dialog" => &["browser.dialog"],
+        "browser_set_input_files" => &["browser.input.files"],
 
         // ── driver self-service ──────────────────────────────────────
         "check_for_update" => &["driver.update_check"],
@@ -667,6 +669,8 @@ mod capability_tests {
         "browser_navigate",
         "browser_click",
         "browser_type",
+        "browser_dialog",
+        "browser_set_input_files",
     ];
 
     /// All capability tokens in the canonical vocabulary. Any token

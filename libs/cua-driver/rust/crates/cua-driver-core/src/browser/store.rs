@@ -32,6 +32,7 @@ use super::types::{BindingQuality, ProcessFingerprint, Rect};
 pub enum BrowserActionKind {
     Click,
     Type,
+    Upload,
 }
 
 impl BrowserActionKind {
@@ -39,6 +40,7 @@ impl BrowserActionKind {
         match self {
             Self::Click => "click",
             Self::Type => "type",
+            Self::Upload => "upload",
         }
     }
 }

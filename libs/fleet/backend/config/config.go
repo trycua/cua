@@ -6,8 +6,8 @@
 // hardcoded literals, so behaviour is unchanged unless explicitly overridden.
 //
 // Cross-service identity prefixes (user-/oidc:) are NOT here — they live in
-// OpenFeature/SSM so backend Tenant provisioning and impersonation use the same
-// values (see package identity). The key-/ukey- client-id prefixes are
+// OpenFeature/SSM so backend impersonation and the standalone Tenant controller
+// use the same values (see package identity). The key-/ukey- client-id prefixes are
 // cyclops-only, so they stay in this local config.
 package config
 

@@ -1,0 +1,56 @@
+package trycua:cyclops-sdk@1.0.0;
+
+interface platform {
+  record header { name: string, value: string }
+  record http-request { method: string, url: string, headers: list<header>, body: option<string> }
+  record http-response { status: u16, body: string }
+  record oauth-credentials { token-url: string, client-id: string, client-secret: string }
+  record access-token { value: string, expires-at-ms: u64 }
+  http: func(request: http-request) -> result<http-response, string>;
+  sleep: func(milliseconds: u64) -> result<_, string>;
+  now-ms: func() -> u64;
+  acquire-oauth-credentials: func() -> result<oauth-credentials, string>;
+  load-access-token: func() -> result<option<access-token>, string>;
+  store-access-token: func(token: access-token) -> result<_, string>;
+}
+
+interface resources {
+  record resource-metadata { namespace: string, name: string, labels-json: option<string> }
+  record pool { api-version: string, kind: string, metadata: resource-metadata, spec-json: string, status-json: option<string> }
+  record claim { api-version: string, kind: string, metadata: resource-metadata, spec-json: string, status-json: option<string> }
+  record sandbox { namespace: string, claim: string, sandbox: string, services: list<string> }
+}
+
+interface requests {
+  use resources.{pool};
+  use crd-types.{pool-spec, claim-spec};
+  record create-pool-request { namespace: string, spec: pool-spec }
+  record create-claim-request { pool: pool, spec: option<claim-spec> }
+}
+
+interface service-http {
+  record header { name: string, value: string }
+  record service-http-request { method: string, path: string, headers: list<header>, body: option<string> }
+  record service-http-response { status: u16, body: string }
+}
+
+world cyclops-sdk {
+  import platform;
+  use resources.{pool, claim, sandbox};
+  use requests.{create-pool-request, create-claim-request};
+  use service-http.{service-http-request, service-http-response};
+  export protocol-version: func() -> u32;
+  export configure: func(configuration-json: string) -> result<_, string>;
+  export create-pool: func(request: create-pool-request) -> result<pool, string>;
+  export list-pools: func(namespace: string) -> result<list<pool>, string>;
+  export get-pool: func(value: pool) -> result<pool, string>;
+  export update-pool: func(value: pool) -> result<pool, string>;
+  export delete-pool: func(value: pool) -> result<_, string>;
+  export create-claim: func(request: create-claim-request) -> result<claim, string>;
+  export list-claims: func(namespace: string) -> result<list<claim>, string>;
+  export get-claim: func(value: claim) -> result<claim, string>;
+  export update-claim: func(value: claim) -> result<claim, string>;
+  export delete-claim: func(value: claim) -> result<_, string>;
+  export wait-claim: func(value: claim) -> result<sandbox, string>;
+  export service-request: func(value: sandbox, service: string, request: service-http-request) -> result<service-http-response, string>;
+}

@@ -16,6 +16,26 @@ test_keys_spa_allowed if {
 	}
 }
 
+test_keys_cua_cli_allowed if {
+	authz.allow with input as {
+		"route": "/api/keys",
+		"method": "POST",
+		"path": "/api/keys",
+		"params": {},
+		"user": {"sub": "user-123", "azp": "cua-cli", "namespace": "", "email": "u@example.com"},
+	}
+}
+
+test_keys_other_interactive_client_denied if {
+	not authz.allow with input as {
+		"route": "/api/keys",
+		"method": "POST",
+		"path": "/api/keys",
+		"params": {},
+		"user": {"sub": "user-123", "azp": "kubernetes", "namespace": "", "email": "u@example.com"},
+	}
+}
+
 test_keys_non_spa_denied if {
 	not authz.allow with input as {
 		"route": "/api/keys",
@@ -119,6 +139,16 @@ test_k8s_spa_allowed if {
 	}
 }
 
+test_k8s_cua_cli_allowed if {
+	authz.allow with input as {
+		"route": "/api/k8s/{path...}",
+		"method": "GET",
+		"path": "/api/k8s/api/v1/namespaces",
+		"params": {"path": "api/v1/namespaces"},
+		"user": {"sub": "user-123", "azp": "cua-cli", "namespace": "", "email": "u@example.com"},
+	}
+}
+
 # ── /api/orch ─────────────────────────────────────────────────────────────────
 
 test_orch_spa_allowed if {
@@ -128,6 +158,16 @@ test_orch_spa_allowed if {
 		"path": "/api/orch/mypool/mypool-orchestrator/status",
 		"params": {"namespace": "mypool", "service": "mypool-orchestrator", "path": "status"},
 		"user": {"sub": "user-123", "azp": "cyclops-cs-spa", "namespace": "", "email": "u@example.com"},
+	}
+}
+
+test_orch_cua_cli_allowed if {
+	authz.allow with input as {
+		"route": "/api/orch/{namespace}/{service}/{path...}",
+		"method": "GET",
+		"path": "/api/orch/mypool/mypool-orchestrator/status",
+		"params": {"namespace": "mypool", "service": "mypool-orchestrator", "path": "status"},
+		"user": {"sub": "user-123", "azp": "cua-cli", "namespace": "", "email": "u@example.com"},
 	}
 }
 

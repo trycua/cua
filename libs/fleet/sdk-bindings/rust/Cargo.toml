@@ -1,0 +1,8 @@
+[package]
+name="cyclops-sdk-host"
+version="0.1.0"
+edition="2021"
+[dependencies]
+cyclops-sdk-core={path="../../sdk-core"}
+serde_json="1.0.150"
+ureq={version="3.1.4",features=["json"]}

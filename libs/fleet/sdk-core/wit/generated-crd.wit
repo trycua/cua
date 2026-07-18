@@ -1,0 +1,60 @@
+// Code generated from clusters/base/osgym/crd.yaml; DO NOT EDIT.
+package trycua:cyclops-sdk@1.0.0;
+
+interface crd-types {
+  record string-map-entry { key: string, value: string }
+  record claim-spec {
+    bind-deadline: option<u32>,
+    lifecycle: option<claim-spec-lifecycle>,
+    sandbox-template-ref: sandbox-template-ref,
+    warmpool: option<string>,
+  }
+  record claim-spec-lifecycle {
+    auto-renew: option<bool>,
+    shutdown-policy: option<string>,
+    shutdown-time: option<string>,
+  }
+  record pool-spec {
+    autoscaling: option<pool-spec-autoscaling>,
+    replicas: u32,
+    services: option<list<pool-spec-service>>,
+    template: pool-template,
+  }
+  record pool-spec-autoscaling {
+    initial-pool-size: option<u32>,
+    max-pool-size: option<u32>,
+    min-pool-size: option<u32>,
+  }
+  record pool-spec-service {
+    name: string,
+    protocol: option<pool-spec-service-protocol>,
+    target-port: u32,
+  }
+  enum pool-spec-service-protocol { tcp, udp }
+  record pool-template {
+    command: option<list<string>>,
+    container-disk-image: string,
+    cpu-cores: option<u32>,
+    firmware: option<pool-template-firmware>,
+    image-pull-secret: option<string>,
+    memory: option<string>,
+    node-selector: option<list<string-map-entry>>,
+    oidc: option<pool-template-oidc>,
+    probes: option<string>,
+    runtime: option<pool-template-runtime>,
+    runtime-class-name: option<string>,
+    tolerations: option<list<string>>,
+  }
+  enum pool-template-firmware { bios, efi }
+  record pool-template-oidc {
+    aws-region: option<string>,
+    aws-role-arn: option<string>,
+    credentials-secret: string,
+    refresh-interval-seconds: option<u32>,
+    token-url: string,
+  }
+  enum pool-template-runtime { kubevirt, macos, gvisor }
+  record sandbox-template-ref {
+    name: string,
+  }
+}

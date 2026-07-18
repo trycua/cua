@@ -202,12 +202,12 @@ func TestK8sAllow_RequiresSpaClient(t *testing.T) {
 	}
 }
 
-func TestK8sAllow_UserKeyCannotReachCapsuleTenantLifecycle(t *testing.T) {
+func TestK8sAllow_UserKeyCannotReachCapsuleTenantAPI(t *testing.T) {
 	in := k8sInput("apis/capsule.clastix.io/v1beta2/tenants", false)
 	in["method"] = http.MethodPost
 	in["user"] = map[string]any{"sub": "u-1", "azp": "ukey-u-1"}
 	if evalAllow(t, in) {
-		t.Fatal("expected user key to be denied on Capsule Tenant lifecycle")
+		t.Fatal("expected user key to be denied on the Capsule Tenant API")
 	}
 }
 

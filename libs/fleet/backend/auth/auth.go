@@ -10,8 +10,8 @@
 //     enforces that the token's `namespace` claim equals "pool-{name}"
 //     (CUA-527), preventing a compromised key from reaching any pool other
 //     than its own.
-//   - Two flavors of token use: SPA (azp must equal the SPA client) and
-//     Gateway (azp must be a per-key client; namespace claim mandatory).
+//   - Three token families: exact interactive clients, per-key clients, and
+//     user-key clients; route policy enforces each family and required claims.
 package auth
 
 import (

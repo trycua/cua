@@ -2544,6 +2544,17 @@ fn no_app_id(window_id: u64) -> anyhow::Error {
 /// is the same credential the compositor observes on the owning wl_client.
 /// Fall back to app_id for clients whose accessibility metadata has no PID.
 pub fn inject_target_for_window(window_id: u64) -> anyhow::Result<String> {
+    inject_target_for_window_with_pid(window_id, None)
+}
+
+fn inject_target_for_window_with_pid(
+    window_id: u64,
+    target_pid: Option<u32>,
+) -> anyhow::Result<String> {
+    if let Some(pid) = target_pid {
+        anyhow::ensure!(pid > 0, "cua-compositor target pid must be positive");
+        return Ok(format!("pid:{pid}"));
+    }
     let atspi = crate::atspi::list_windows(None);
     let direct_pid = atspi
         .iter()
@@ -2580,36 +2591,37 @@ fn unique_atspi_pid_for_identity(
 
 /// Focus-free type into the window's surface (no focus change). Rejects any
 /// character the compositor cannot emit before touching the socket.
-pub fn inject_type_text(window_id: u64, text: &str) -> anyhow::Result<()> {
+pub fn inject_type_text(target_pid: u32, window_id: u64, text: &str) -> anyhow::Result<()> {
     validate_injectable_text(text)?;
-    let app = inject_target_for_window(window_id)?;
+    let app = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
     inject_send(&[format!("t {app} {}", to_hex(text))])
 }
 
 /// Focus-free named-key press into the window's surface. Rejects any key
 /// outside the compositor's whitelist before touching the socket.
-pub fn inject_press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
+pub fn inject_press_key(target_pid: u32, window_id: u64, key: &str) -> anyhow::Result<()> {
     validate_injectable_key(key)?;
-    let app = inject_target_for_window(window_id)?;
+    let app = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
     inject_send(&[format!("k {app} {}", key.trim())])
 }
 
 /// Focus-free modifier chord into the target surface.
-pub fn inject_hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
+pub fn inject_hotkey(target_pid: u32, window_id: u64, keys: &[String]) -> anyhow::Result<()> {
     let (modifiers, key) = validate_injectable_hotkey(keys)?;
-    let app = inject_target_for_window(window_id)?;
+    let app = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
     inject_send(&[format!("h {app} {modifiers} {key}")])
 }
 
 /// Focus-free wheel/axis input at one target-local point.
 pub fn inject_scroll(
+    target_pid: u32,
     window_id: u64,
     x: f64,
     y: f64,
     direction: &str,
     amount: u32,
 ) -> anyhow::Result<()> {
-    let app = inject_target_for_window(window_id)?;
+    let app = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
     let (axis, value) = match direction.to_ascii_lowercase().as_str() {
         "up" => (0, -15.0),
         "down" | "page" => (0, 15.0),
@@ -2624,8 +2636,15 @@ pub fn inject_scroll(
 
 /// Focus-free click into the window's surface via the nested cua-compositor.
 /// Coordinates are window-local, matching the rest of the inject protocol.
-pub fn inject_click(window_id: u64, x: f64, y: f64, count: u32, button: u8) -> anyhow::Result<()> {
-    let app = inject_target_for_window(window_id)?;
+pub fn inject_click(
+    target_pid: u32,
+    window_id: u64,
+    x: f64,
+    y: f64,
+    count: u32,
+    button: u8,
+) -> anyhow::Result<()> {
+    let app = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
     let btn = evdev_button(button as u32);
     let n = count.max(1);
     let mut lines = Vec::with_capacity((n as usize) * 4);
@@ -2731,13 +2750,14 @@ pub fn inject_parallel_drags(drags: &[InjectDrag]) -> anyhow::Result<()> {
 
 /// Focus-free single drag using the same per-surface path as parallel drags.
 pub fn inject_drag(
+    target_pid: u32,
     window_id: u64,
     from: (f64, f64),
     to: (f64, f64),
     steps: usize,
     x_button: u32,
 ) -> anyhow::Result<()> {
-    let app_id = inject_target_for_window(window_id)?;
+    let app_id = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
     inject_parallel_drags(&[InjectDrag {
         app_id,
         idx: 0,
@@ -3181,6 +3201,15 @@ mod tests {
             unique_atspi_pid_for_identity(&identity, &windows),
             Some(200)
         );
+    }
+
+    #[test]
+    fn inject_target_prefers_explicit_positive_pid() {
+        assert_eq!(
+            inject_target_for_window_with_pid(99, Some(123)).unwrap(),
+            "pid:123"
+        );
+        assert!(inject_target_for_window_with_pid(99, Some(0)).is_err());
     }
 
     #[test]

@@ -3,8 +3,8 @@
 //! Architecture:
 //! - Creates an override-redirect (non-reparented) X11 window with 32-bit ARGB visual
 //!   from XComposite.  The window covers the full display area.
-//! - A background thread renders frames at ~60 Hz using tiny-skia and XShmPutImage
-//!   (or XPutImage fallback) with XRender ARGB compositing.
+//! - A background thread renders cursor-local tiles at ~60 Hz while animation
+//!   is active and uploads them with XPutImage + XShape clipping.
 //! - XShape clips both input and visible pixels. On bare X11, the visible shape
 //!   quantizes the rendered alpha mask so translucent bloom pixels do not turn
 //!   into an opaque black disk when no compositor is present.
@@ -526,7 +526,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
     use x11rb::protocol::xproto::ConnectionExt as XprotoConnectionExt;
     use x11rb::protocol::xproto::{
-        AtomEnum, ColormapAlloc, CreateWindowAux, EventMask, PropMode, WindowClass,
+        AtomEnum, ColormapAlloc, CreateGCAux, CreateWindowAux, EventMask, PropMode, WindowClass,
     };
     use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 
@@ -634,6 +634,21 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     conn.map_window(win).ok();
     conn.flush().ok();
 
+    // One GC is sufficient for the lifetime of the overlay window. Recreating
+    // and freeing it every 16 ms adds two avoidable X11 requests to the hot
+    // path and compounds server pressure during sustained cursor movement.
+    let gc_id = match conn.generate_id() {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!("X11 overlay: cannot allocate graphics context id: {e}");
+            return;
+        }
+    };
+    if let Err(e) = conn.create_gc(gc_id, win, &CreateGCAux::new()) {
+        tracing::warn!("X11 overlay: cannot create graphics context: {e}");
+        return;
+    }
+
     // Main render loop at ~60 Hz while pixels can change. When every cursor is
     // quiescent, block on the command channel and leave the last frame intact.
     let frame_dur = Duration::from_millis(16);
@@ -721,35 +736,21 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         // more as the final active state settles. This leaves the X11 window in
         // its completed/cleared state before the next blocking receive.
         if had_msg || frame_tick_needed || next_frame_tick_needed {
-            let pixmap = {
+            let tiles = {
                 let guard = RENDER.lock().unwrap();
-                guard.as_ref().map(|map| {
-                    let mut pm = tiny_skia::Pixmap::new(map.scr_w.max(1), map.scr_h.max(1))
-                        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
-                    for rs in map.cursors.values() {
-                        // TODO: thread X11/Wayland scale-factor here so cursors
-                        // render at native resolution on HiDPI Linux displays
-                        // (`XRRGetCrtcInfo` reports per-output DPI; the GNOME
-                        // scale-factor setting is exposed via the screen-scaling
-                        // protocol). For now we default to 1.0 — preserves
-                        // pre-retina-fix behaviour on Linux.
-                        cursor_overlay::paint_cursor(&mut pm, &rs.core, 0.0, 0.0, None, 1.0);
-                    }
-                    pm
-                })
+                guard.as_ref().map(render_x11_tiles)
             };
 
-            if let Some(pm) = pixmap {
-                paint_x11(
-                    &conn,
-                    win,
-                    scr_w,
-                    scr_h,
-                    depth,
-                    visual_id,
-                    &pm,
-                    compositor_present,
-                );
+            if let Some(tiles) = tiles {
+                if let Err(e) =
+                    paint_x11_tiles(&conn, win, depth, gc_id, &tiles, compositor_present)
+                {
+                    // A broken X11 connection cannot recover inside this
+                    // owner thread. Exit instead of spinning at frame cadence
+                    // and repeatedly allocating/rendering work nobody can see.
+                    tracing::warn!("X11 overlay paint failed; disabling overlay: {e}");
+                    break;
+                }
             }
         }
 
@@ -777,6 +778,9 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
             }
         }
     }
+
+    conn.free_gc(gc_id).ok();
+    conn.flush().ok();
 }
 
 // ── Z-order enforcer (Linux impl of cursor_overlay::ZOrderEnforcer) ──────
@@ -871,45 +875,129 @@ fn x11_compositor_present(conn: &impl x11rb::connection::Connection, screen_num:
         .unwrap_or(false)
 }
 
-/// Blit a tiny-skia pixmap to the X11 window using XPutImage (ZPixmap).
-/// The pixmap is premultiplied RGBA; X11 ARGB is premultiplied BGRA.
+/// Current Linux cursor visuals fit inside a 128×128 logical-pixel tile:
+/// bloom/click effects peak below 40 px from the anchor and built-in/custom
+/// silhouettes render at 26 px. Keep generous headroom so active work stays
+/// independent of the root-window area without clipping antialiasing.
+#[cfg(target_os = "linux")]
+const X11_CURSOR_TILE_MARGIN: f64 = 64.0;
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct X11TileBounds {
+    x: i16,
+    y: i16,
+    width: u16,
+    height: u16,
+}
+
+#[cfg(target_os = "linux")]
+struct X11PaintTile {
+    bounds: X11TileBounds,
+    pixmap: tiny_skia::Pixmap,
+}
+
+#[cfg(target_os = "linux")]
+fn cursor_tile_bounds(
+    core: &RenderStateCore,
+    screen_width: u32,
+    screen_height: u32,
+) -> Option<X11TileBounds> {
+    if !core.visible || core.pos.0 < -100.0 || core.idle_alpha < 0.004 {
+        return None;
+    }
+
+    let screen_width = i32::try_from(screen_width).ok()?;
+    let screen_height = i32::try_from(screen_height).ok()?;
+    let left = (core.pos.0 - X11_CURSOR_TILE_MARGIN).floor() as i32;
+    let top = (core.pos.1 - X11_CURSOR_TILE_MARGIN).floor() as i32;
+    let right = (core.pos.0 + X11_CURSOR_TILE_MARGIN).ceil() as i32;
+    let bottom = (core.pos.1 + X11_CURSOR_TILE_MARGIN).ceil() as i32;
+
+    let left = left.clamp(0, screen_width);
+    let top = top.clamp(0, screen_height);
+    let right = right.clamp(0, screen_width);
+    let bottom = bottom.clamp(0, screen_height);
+    if right <= left || bottom <= top {
+        return None;
+    }
+
+    Some(X11TileBounds {
+        x: i16::try_from(left).ok()?,
+        y: i16::try_from(top).ok()?,
+        width: u16::try_from(right - left).ok()?,
+        height: u16::try_from(bottom - top).ok()?,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn render_x11_tiles(map: &RenderMap) -> Vec<X11PaintTile> {
+    let mut bounds = Vec::new();
+    for rs in map.cursors.values() {
+        if let Some(tile) = cursor_tile_bounds(&rs.core, map.scr_w, map.scr_h) {
+            if !bounds.contains(&tile) {
+                bounds.push(tile);
+            }
+        }
+    }
+
+    bounds
+        .into_iter()
+        .filter_map(|bounds| {
+            let mut pixmap = tiny_skia::Pixmap::new(bounds.width.into(), bounds.height.into())?;
+            // Paint every cursor into every intersecting tile. tiny-skia clips
+            // automatically, so overlapping cursor tiles carry the same
+            // composite pixels regardless of upload order.
+            for rs in map.cursors.values() {
+                cursor_overlay::paint_cursor(
+                    &mut pixmap,
+                    &rs.core,
+                    f64::from(bounds.x),
+                    f64::from(bounds.y),
+                    None,
+                    1.0,
+                );
+            }
+            Some(X11PaintTile { bounds, pixmap })
+        })
+        .collect()
+}
+
+/// Blit cursor-local tiny-skia tiles to the full-root X11 overlay using
+/// XPutImage (ZPixmap). The pixmaps are premultiplied RGBA; X11 ARGB is
+/// premultiplied BGRA. XShape hides pixels from previous tile positions, so
+/// no full-root clear/upload is required when a cursor moves.
 #[cfg(target_os = "linux")]
 const NONCOMPOSITED_ALPHA_CUTOFF: u8 = 128;
 
 #[cfg(target_os = "linux")]
-fn paint_x11(
+fn paint_x11_tiles(
     conn: &impl x11rb::connection::Connection,
     win: u32,
-    w: u32,
-    h: u32,
     depth: u8,
-    _visual_id: u32,
-    pm: &tiny_skia::Pixmap,
+    gc_id: u32,
+    tiles: &[X11PaintTile],
     compositor_present: bool,
-) {
+) -> anyhow::Result<()> {
     use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
-    use x11rb::protocol::xproto::{ConnectionExt as XprotoConnectionExt, CreateGCAux, ImageFormat};
-    if pm.width() == 0 || pm.height() == 0 {
-        return;
-    }
+    use x11rb::protocol::xproto::{ConnectionExt as XprotoConnectionExt, ImageFormat};
 
-    // Create a GC for the window if we don't have one.
-    // (Simplified: we recreate it every frame which is safe but not optimal.)
-    let gc_id = match conn.generate_id() {
-        Ok(id) => id,
-        Err(_) => return,
-    };
-    let gc_aux = CreateGCAux::new();
-    if conn.create_gc(gc_id, win, &gc_aux).is_err() {
-        return;
+    let mut payloads = Vec::with_capacity(tiles.len());
+    let mut visible_shape = Vec::new();
+    for tile in tiles {
+        let (bgra, mut tile_shape) = bgra_and_visible_shape(&tile.pixmap, compositor_present);
+        for rect in &mut tile_shape {
+            rect.x = rect.x.saturating_add(tile.bounds.x);
+            rect.y = rect.y.saturating_add(tile.bounds.y);
+        }
+        visible_shape.extend(tile_shape);
+        payloads.push((tile.bounds, bgra));
     }
-
-    let (bgra, visible_shape) = bgra_and_visible_shape(pm, compositor_present);
 
     // A 32-bit ARGB window needs a compositor to blend transparent pixels.
     // Clip the native window to the rendered alpha runs; the converter below
     // quantizes those runs when no compositor owns the screen selection.
-    let _ = conn.shape_rectangles(
+    conn.shape_rectangles(
         SO::SET,
         SK::BOUNDING,
         x11rb::protocol::xproto::ClipOrdering::UNSORTED,
@@ -917,24 +1005,25 @@ fn paint_x11(
         0,
         0,
         &visible_shape,
-    );
+    )?;
 
-    // XPutImage (ZPixmap).
-    let _ = conn.put_image(
-        ImageFormat::Z_PIXMAP,
-        win,
-        gc_id,
-        w as u16,
-        h as u16,
-        0,
-        0,
-        0,
-        depth,
-        &bgra,
-    );
+    for (bounds, bgra) in payloads {
+        conn.put_image(
+            ImageFormat::Z_PIXMAP,
+            win,
+            gc_id,
+            bounds.width,
+            bounds.height,
+            bounds.x,
+            bounds.y,
+            0,
+            depth,
+            &bgra,
+        )?;
+    }
 
-    conn.free_gc(gc_id).ok();
-    conn.flush().ok();
+    conn.flush()?;
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -1409,6 +1498,73 @@ mod tests {
 
         assert!(!cursor.needs_frame_tick());
         assert!(!render_map_needs_frame_tick(&map));
+    }
+
+    #[test]
+    fn active_cursor_rendering_is_bounded_by_tile_not_root_size() {
+        let mut map = default_render_map();
+        map.scr_w = 7680;
+        map.scr_h = 2160;
+        let cursor = map.cursors.get_mut("default").unwrap();
+        cursor.core.pos = (4000.0, 1000.0);
+
+        let tiles = render_x11_tiles(&map);
+
+        assert_eq!(tiles.len(), 1);
+        let tile = &tiles[0];
+        assert_eq!(tile.bounds.width, 128);
+        assert_eq!(tile.bounds.height, 128);
+        assert_eq!(tile.pixmap.data().len(), 128 * 128 * 4);
+        assert!(tile.pixmap.data().len() < (map.scr_w * map.scr_h * 4) as usize);
+    }
+
+    #[test]
+    fn cursor_tiles_clip_at_screen_edges_and_skip_hidden_cursors() {
+        let mut map = default_render_map();
+        map.scr_w = 1920;
+        map.scr_h = 1080;
+        let cursor = map.cursors.get_mut("default").unwrap();
+        cursor.core.pos = (10.0, 12.0);
+
+        let tiles = render_x11_tiles(&map);
+        assert_eq!(tiles.len(), 1);
+        assert_eq!(
+            tiles[0].bounds,
+            X11TileBounds {
+                x: 0,
+                y: 0,
+                width: 74,
+                height: 76,
+            }
+        );
+
+        map.cursors.get_mut("default").unwrap().core.visible = false;
+        assert!(render_x11_tiles(&map).is_empty());
+    }
+
+    #[test]
+    fn distant_cursors_use_independent_small_tiles() {
+        let mut map = default_render_map();
+        map.scr_w = 7680;
+        map.scr_h = 2160;
+        map.cursors.get_mut("default").unwrap().core.pos = (100.0, 100.0);
+        let mut other = render_state_for_key(&map.template, "other");
+        other.core.pos = (7400.0, 1800.0);
+        map.cursors.insert("other".to_owned(), other);
+
+        let tiles = render_x11_tiles(&map);
+
+        assert_eq!(tiles.len(), 2);
+        assert!(tiles
+            .iter()
+            .all(|tile| tile.bounds.width <= 128 && tile.bounds.height <= 128));
+        assert_eq!(
+            tiles
+                .iter()
+                .map(|tile| tile.pixmap.data().len())
+                .sum::<usize>(),
+            2 * 128 * 128 * 4
+        );
     }
 
     #[test]

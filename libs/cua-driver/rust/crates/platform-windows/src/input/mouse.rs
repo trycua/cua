@@ -847,7 +847,6 @@ pub fn foreground_window() -> Result<u64> {
 /// Move the real OS pointer to a desktop coordinate.
 pub fn move_cursor_desktop(x: i32, y: i32) -> Result<()> {
     unsafe { SetCursorPos(x, y) }
-        .ok()
         .map_err(|error| anyhow::anyhow!("SetCursorPos({x}, {y}) failed: {error}"))
 }
 

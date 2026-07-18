@@ -524,7 +524,7 @@ Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restar
 
 **Windows + Linux use an ffmpeg subprocess** (`gdigrab` / `x11grab` + libx264). Requires ffmpeg on PATH (winget install Gyan.FFmpeg / apt install ffmpeg); when ffmpeg is missing or fails on startup the per-turn capture (screenshots + action.json) still runs and the session's `last_error` field carries the diagnostic.
 
-State persists for the life of the daemon / MCP session; a restart resets to disabled with no on-disk state. Call `stop_recording` to disable + finalize the mp4.
+State persists for the life of the daemon; a restart resets to disabled with no on-disk state. Call `stop_recording` to disable + finalize the mp4.
 
 **Arguments:**
 

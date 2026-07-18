@@ -86,6 +86,35 @@ fn title_matches(native_title: &str, candidate_title: &str) -> bool {
     !candidate_title.is_empty() && native_title.contains(candidate_title)
 }
 
+/// Prove the selected page in one already-correlated browser window without
+/// activating a target. Chromium exposes the native window title but no
+/// browser-level selected-tab bit. A unique title match is therefore proof;
+/// duplicate, empty, absent, or substring-colliding titles remain unknown.
+/// Embedded single-page endpoints are selected by cardinality.
+pub fn selected_tab_target_id<'a>(
+    native_title: &str,
+    candidates: &'a [CdpWindowCandidate],
+    cdp_window_id: Option<i64>,
+) -> Option<&'a str> {
+    let tabs = candidates
+        .iter()
+        .filter(|candidate| match cdp_window_id {
+            Some(window_id) => candidate.cdp_window_id == Some(window_id),
+            None => candidate.cdp_window_id.is_none(),
+        })
+        .collect::<Vec<_>>();
+
+    if cdp_window_id.is_none() {
+        return (tabs.len() == 1).then(|| tabs[0].cdp_target_id.as_str());
+    }
+
+    let title_hits = tabs
+        .into_iter()
+        .filter(|candidate| title_matches(native_title, &candidate.title))
+        .collect::<Vec<_>>();
+    (title_hits.len() == 1).then(|| title_hits[0].cdp_target_id.as_str())
+}
+
 /// Reduce page targets to one representative per proven CDP window.
 /// The representative prefers a tab title displayed by the native
 /// window, but its target id is only a handle for the selected window;
@@ -326,6 +355,45 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn selected_tab_requires_one_unique_native_title_match() {
+        let tabs = [cand("first", "Checkout", B), cand("second", "Cart", B)];
+        assert_eq!(
+            selected_tab_target_id("Cart - Chrome", &tabs, Some(1)),
+            Some("second")
+        );
+
+        let duplicate_titles = [cand("first", "Checkout", B), cand("second", "Checkout", B)];
+        assert_eq!(
+            selected_tab_target_id("Checkout - Chrome", &duplicate_titles, Some(1)),
+            None
+        );
+
+        let substring_collision = [cand("first", "Mail", B), cand("second", "Mail Inbox", B)];
+        assert_eq!(
+            selected_tab_target_id("Mail Inbox - Chrome", &substring_collision, Some(1)),
+            None
+        );
+
+        let empty_titles = [cand("first", "", B), cand("second", "", B)];
+        assert_eq!(
+            selected_tab_target_id("Chrome", &empty_titles, Some(1)),
+            None
+        );
+    }
+
+    #[test]
+    fn embedded_single_page_is_selected_by_cardinality_only() {
+        let one = [embedded_cand("only", "Fixture")];
+        assert_eq!(selected_tab_target_id("Fixture", &one, None), Some("only"));
+
+        let two = [
+            embedded_cand("first", "Fixture"),
+            embedded_cand("second", "Fixture"),
+        ];
+        assert_eq!(selected_tab_target_id("Fixture", &two, None), None);
     }
 
     #[test]

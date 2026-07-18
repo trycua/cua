@@ -426,6 +426,10 @@ impl AgentSessionState {
                 | "browser_navigate"
                 | "browser_click"
                 | "browser_type"
+                | "browser_dialog"
+                | "browser_set_input_files"
+                | "browser_download"
+                | "browser_pointer"
         );
         let refused = outcome.refusal_code.is_refusal();
         let completed_computer_action = computer_action && !refused;
@@ -2270,6 +2274,7 @@ mod tests {
 
     #[test]
     fn v3_payload_allows_server_geoip_without_sending_an_ip_or_client_timestamp() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let identity = InstallationIdentity { id: "test-id".into(), persisted: true };
         let payload = build_payload(
             event::MCP_TOOL_COMPLETED,
@@ -2566,6 +2571,55 @@ mod tests {
         assert_eq!(session_properties["had_successful_tool"], true);
         assert_eq!(session_properties["had_successful_computer_action"], false);
         assert_eq!(session_properties["used_browser"], true);
+    }
+
+    #[test]
+    fn every_browser_tool_marks_the_session_without_retaining_arguments() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
+            ToolErrorClass, ToolOperation, ToolRefusalCode,
+        };
+
+        for (tool_name, operation) in [
+            ("browser_dialog", ToolOperation::BrowserDialogAccept),
+            (
+                "browser_set_input_files",
+                ToolOperation::BrowserSetInputFiles,
+            ),
+            ("browser_download", ToolOperation::BrowserDownload),
+            (
+                "browser_pointer",
+                ToolOperation::BrowserPointerDoubleClickDomEvent,
+            ),
+        ] {
+            let mut state = AgentSessionState::new(Transport::McpStdio);
+            state.observe(
+                Transport::McpStdio,
+                true,
+                &ToolCompletionObservation {
+                    tool_name: tool_name.into(),
+                    operation,
+                    computer_action: true,
+                    success: true,
+                    error_class: ToolErrorClass::None,
+                    refusal_code: ToolRefusalCode::None,
+                    duration_bucket: DurationBucket::Under10Ms,
+                    output_type: OutputType::Text,
+                    output_size_bucket: OutputSizeBucket::Under1KiB,
+                },
+            );
+            let properties =
+                state.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
+            assert_eq!(properties["used_browser"], true, "tool={tool_name}");
+            assert_eq!(
+                properties["had_successful_computer_action"], true,
+                "tool={tool_name}"
+            );
+            let serialized = serde_json::to_string(&properties).unwrap();
+            assert!(!serialized.contains("destination_root"));
+            assert!(!serialized.contains("prompt_text"));
+            assert!(!serialized.contains("file_paths"));
+        }
     }
 
     #[test]

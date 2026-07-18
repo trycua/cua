@@ -265,6 +265,21 @@ pub enum ToolOperation {
     BrowserTypeKeystrokes,
     BrowserPrepareIsolated,
     BrowserPrepareExistingProfile,
+    BrowserDialogInspect,
+    BrowserDialogAccept,
+    BrowserDialogDismiss,
+    BrowserSetInputFiles,
+    BrowserDownload,
+    BrowserPointerHoverTrusted,
+    BrowserPointerHoverDomEvent,
+    BrowserPointerRightClickTrusted,
+    BrowserPointerRightClickDomEvent,
+    BrowserPointerDoubleClickTrusted,
+    BrowserPointerDoubleClickDomEvent,
+    BrowserPointerScrollTrusted,
+    BrowserPointerScrollDomEvent,
+    BrowserPointerDragTrusted,
+    BrowserPointerDragDomEvent,
     Other,
 }
 
@@ -288,6 +303,21 @@ impl ToolOperation {
             Self::BrowserTypeKeystrokes => "browser_type_keystrokes",
             Self::BrowserPrepareIsolated => "browser_prepare_isolated",
             Self::BrowserPrepareExistingProfile => "browser_prepare_existing_profile",
+            Self::BrowserDialogInspect => "browser_dialog_inspect",
+            Self::BrowserDialogAccept => "browser_dialog_accept",
+            Self::BrowserDialogDismiss => "browser_dialog_dismiss",
+            Self::BrowserSetInputFiles => "browser_set_input_files",
+            Self::BrowserDownload => "browser_download",
+            Self::BrowserPointerHoverTrusted => "browser_pointer_hover_trusted",
+            Self::BrowserPointerHoverDomEvent => "browser_pointer_hover_dom_event",
+            Self::BrowserPointerRightClickTrusted => "browser_pointer_right_click_trusted",
+            Self::BrowserPointerRightClickDomEvent => "browser_pointer_right_click_dom_event",
+            Self::BrowserPointerDoubleClickTrusted => "browser_pointer_double_click_trusted",
+            Self::BrowserPointerDoubleClickDomEvent => "browser_pointer_double_click_dom_event",
+            Self::BrowserPointerScrollTrusted => "browser_pointer_scroll_trusted",
+            Self::BrowserPointerScrollDomEvent => "browser_pointer_scroll_dom_event",
+            Self::BrowserPointerDragTrusted => "browser_pointer_drag_trusted",
+            Self::BrowserPointerDragDomEvent => "browser_pointer_drag_dom_event",
             Self::Other => "other",
         }
     }
@@ -349,6 +379,35 @@ pub fn tool_operation(tool_name: &str, args: Option<&serde_json::Value>) -> Tool
                 _ => ToolOperation::Other,
             }
         }
+        "browser_dialog" => match string_arg("action") {
+            Some("inspect") => ToolOperation::BrowserDialogInspect,
+            Some("accept") => ToolOperation::BrowserDialogAccept,
+            Some("dismiss") => ToolOperation::BrowserDialogDismiss,
+            _ => ToolOperation::Other,
+        },
+        "browser_set_input_files" => ToolOperation::BrowserSetInputFiles,
+        "browser_download" => ToolOperation::BrowserDownload,
+        "browser_pointer" => match (string_arg("action"), string_arg("input_route")) {
+            (Some("hover"), None | Some("trusted")) => ToolOperation::BrowserPointerHoverTrusted,
+            (Some("hover"), Some("dom_event")) => ToolOperation::BrowserPointerHoverDomEvent,
+            (Some("right_click"), None | Some("trusted")) => {
+                ToolOperation::BrowserPointerRightClickTrusted
+            }
+            (Some("right_click"), Some("dom_event")) => {
+                ToolOperation::BrowserPointerRightClickDomEvent
+            }
+            (Some("double_click"), None | Some("trusted")) => {
+                ToolOperation::BrowserPointerDoubleClickTrusted
+            }
+            (Some("double_click"), Some("dom_event")) => {
+                ToolOperation::BrowserPointerDoubleClickDomEvent
+            }
+            (Some("scroll"), None | Some("trusted")) => ToolOperation::BrowserPointerScrollTrusted,
+            (Some("scroll"), Some("dom_event")) => ToolOperation::BrowserPointerScrollDomEvent,
+            (Some("drag"), None | Some("trusted")) => ToolOperation::BrowserPointerDragTrusted,
+            (Some("drag"), Some("dom_event")) => ToolOperation::BrowserPointerDragDomEvent,
+            _ => ToolOperation::Other,
+        },
         _ => ToolOperation::NotApplicable,
     }
 }
@@ -367,6 +426,18 @@ pub fn is_computer_action(tool_name: &str, operation: ToolOperation) -> bool {
                 | ToolOperation::TypeKeystrokes
                 | ToolOperation::EnableJavascriptAppleEvents
         );
+    }
+    if tool_name == "browser_dialog" {
+        return matches!(
+            operation,
+            ToolOperation::BrowserDialogAccept | ToolOperation::BrowserDialogDismiss
+        );
+    }
+    if matches!(
+        tool_name,
+        "browser_set_input_files" | "browser_download" | "browser_pointer"
+    ) {
+        return true;
     }
     crate::tool::default_capabilities_for(tool_name)
         .iter()
@@ -688,6 +759,10 @@ fn structured_refusal_code(tool_name: &str, result: Option<&serde_json::Value>) 
             | "browser_navigate"
             | "browser_click"
             | "browser_type"
+            | "browser_dialog"
+            | "browser_set_input_files"
+            | "browser_download"
+            | "browser_pointer"
     ) {
         return ToolRefusalCode::None;
     }
@@ -856,6 +931,14 @@ pub async fn handle_request(
                         );
                     }
                 }
+                if call.name == "browser_download" {
+                    if let Some(arguments) = call.args.as_object_mut() {
+                        arguments.insert(
+                            crate::browser::download::MCP_HOST_DOWNLOAD_APPROVAL_ARG.to_owned(),
+                            serde_json::Value::Bool(true),
+                        );
+                    }
+                }
 
                 let result = registry.invoke(&call.name, call.args).await;
                 match serde_json::to_value(result) {
@@ -911,7 +994,11 @@ mod observation_tests {
     #[test]
     fn page_operation_is_closed_and_retains_no_argument_content() {
         for (action, expected, computer_action) in [
-            ("execute_javascript", ToolOperation::ExecuteJavascript, false),
+            (
+                "execute_javascript",
+                ToolOperation::ExecuteJavascript,
+                false,
+            ),
             ("get_text", ToolOperation::GetText, false),
             ("query_dom", ToolOperation::QueryDom, false),
             ("click_element", ToolOperation::ClickElement, true),
@@ -1008,6 +1095,26 @@ mod observation_tests {
                 }),
                 ToolOperation::BrowserPrepareExistingProfile,
             ),
+            (
+                "browser_dialog",
+                serde_json::json!({"action": "accept", "prompt_text": "private prompt"}),
+                ToolOperation::BrowserDialogAccept,
+            ),
+            (
+                "browser_set_input_files",
+                serde_json::json!({"files": ["/private/path"]}),
+                ToolOperation::BrowserSetInputFiles,
+            ),
+            (
+                "browser_download",
+                serde_json::json!({"destination_root": "/private/destination"}),
+                ToolOperation::BrowserDownload,
+            ),
+            (
+                "browser_pointer",
+                serde_json::json!({"action": "drag", "input_route": "dom_event", "ref": "private-ref"}),
+                ToolOperation::BrowserPointerDragDomEvent,
+            ),
         ] {
             let operation = tool_operation(tool_name, Some(&args));
             assert_eq!(operation, expected, "tool={tool_name}");
@@ -1019,6 +1126,9 @@ mod observation_tests {
                 "private typed text",
                 "private-profile",
                 "private-token",
+                "private prompt",
+                "/private/path",
+                "/private/destination",
             ] {
                 assert!(!debug.contains(forbidden), "observer leaked {forbidden}");
             }
@@ -1070,7 +1180,11 @@ mod observation_tests {
             ToolRefusalCode::BrowserInputTrustUnavailable
         );
         let debug = format!("{observation:?}");
-        for forbidden in ["private refusal prose", "private refusal message", "private tab id"] {
+        for forbidden in [
+            "private refusal prose",
+            "private refusal message",
+            "private tab id",
+        ] {
             assert!(!debug.contains(forbidden), "observer leaked {forbidden}");
         }
     }

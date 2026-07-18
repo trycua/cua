@@ -18,6 +18,12 @@ Agents still begin with `list_apps` and `list_windows`. They select a concrete
 mints opaque target and tab capabilities. Raw DevTools target identifiers are
 not part of the public contract.
 
+Selected-tab state is deliberately tri-state. `active: true` or `false` is
+reported only when the native window title uniquely identifies one DevTools
+tab. Duplicate titles, empty titles, and other ambiguity produce `active:
+null` for every candidate instead of treating DevTools list order as native
+selection evidence. A caller can still target an explicit returned tab id.
+
 This preserves one targeting model across native and web content. It also
 prevents a browser helper from choosing the first tab, first window, or first
 process match when several candidates exist.
@@ -54,12 +60,23 @@ default click uses `Input.dispatchMouseEvent`, but Chromium's standalone window
 is known to activate on that route on macOS and Linux. Cua Driver returns
 `browser_input_trust_unavailable` there before dispatch. Standalone Chrome and
 Edge on Windows, and the bounded embedded Electron route, have passing trusted
-background evidence.
+background evidence. The same trust distinction applies to hover,
+right-click, double-click, scroll, and drag through `browser_pointer`.
 
 A caller must explicitly request `input_route: "dom_event"` to invoke an
 element's DOM click behavior. That route is synthetic even when it preserves
 full-background posture. The driver does not silently change trust models to
 make a call appear successful.
+
+Page-owned JavaScript dialogs are modeled as short-lived capabilities rather
+than native-window guesses. Inspection returns the kind and an opaque dialog
+generation; accept or dismiss succeeds only while that exact dialog remains
+current. The page's initial creation of a Chromium native modal may activate
+the browser; after occlusion is re-established, inspection and resolution do
+not require another activation. File assignment bypasses native pickers through an exact live file
+input ref. Downloads additionally cross an open-world filesystem boundary, so
+they require host approval, a canonical destination directory, exact event
+correlation, and path-free output.
 
 ## Capabilities have a lifetime
 

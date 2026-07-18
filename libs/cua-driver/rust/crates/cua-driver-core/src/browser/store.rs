@@ -32,6 +32,7 @@ use super::types::{BindingQuality, ProcessFingerprint, Rect};
 pub enum BrowserActionKind {
     Click,
     Type,
+    Upload,
 }
 
 impl BrowserActionKind {
@@ -39,6 +40,7 @@ impl BrowserActionKind {
         match self {
             Self::Click => "click",
             Self::Type => "type",
+            Self::Upload => "upload",
         }
     }
 }
@@ -187,6 +189,10 @@ pub struct TabRecord {
     pub cdp_target_id: String,
     pub title: String,
     pub url: String,
+    /// Native-window selection proof captured at bind time. `None` means the
+    /// selected tab could not be proven without activating or foregrounding a
+    /// page, so the public `active` field must be JSON null.
+    pub active: Option<bool>,
     pub generation: u64,
     pub snapshots: HashMap<u64, SnapshotRecord>,
 }
@@ -509,6 +515,7 @@ mod tests {
                     cdp_target_id: "CDP1".into(),
                     title: "Example".into(),
                     url: "https://example.test".into(),
+                    active: Some(true),
                     generation: 0,
                     snapshots: HashMap::from([(
                         snap_id,

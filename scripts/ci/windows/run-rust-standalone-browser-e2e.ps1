@@ -117,15 +117,19 @@ if (-not (Test-Path $env:CUA_TEST_DRIVER_BIN)) {
 
 $tests = @(
     "standalone_browser_background_type",
+    "standalone_browser_dialogs",
+    "standalone_browser_download",
     "standalone_browser_existing_profile",
     "standalone_browser_existing_profile_setup",
     "standalone_browser_frames",
     "standalone_browser_multi_tab",
+    "standalone_browser_pointer_actions",
     "standalone_browser_prepare_isolated",
     "standalone_browser_roundtrip",
     "standalone_browser_semantic_state",
     "standalone_browser_stale_ref",
     "standalone_browser_trusted_click",
+    "standalone_browser_upload",
     "standalone_browser_window_collision"
 )
 $failureCount = 0

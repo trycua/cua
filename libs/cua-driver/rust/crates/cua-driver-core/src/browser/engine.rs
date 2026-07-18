@@ -31,7 +31,10 @@ use uuid::Uuid;
 
 use crate::session::register_session_end_hook;
 
-use super::binding::{cardinality_exact_candidate, correlate, BindingOutcome, CdpWindowCandidate};
+use super::binding::{
+    cardinality_exact_candidate, correlate, selected_tab_target_id, BindingOutcome,
+    CdpWindowCandidate,
+};
 use super::cdp_ws::{CdpConnection, CdpPool};
 use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
 use super::mutation::{MutationGates, MutationKey};
@@ -952,7 +955,11 @@ impl BrowserEngine {
             }
         };
 
-        // Tabs = page targets living in the bound CDP window.
+        // Tabs = page targets living in the bound CDP window. Selection is a
+        // separate proof from native-window correlation: a representative CDP
+        // target is only a window handle and must never be reported as active.
+        let selected_cdp_target_id =
+            selected_tab_target_id(&native.title, &candidates, candidate.cdp_window_id);
         let mut tabs = HashMap::new();
         for c in candidates.iter().filter(|c| match candidate.cdp_window_id {
             Some(window_id) => c.cdp_window_id == Some(window_id),
@@ -966,6 +973,7 @@ impl BrowserEngine {
                     cdp_target_id: c.cdp_target_id.clone(),
                     title: c.title.clone(),
                     url: c.url.clone(),
+                    active: selected_cdp_target_id.map(|selected| selected == c.cdp_target_id),
                     generation: grant.as_ref().map_or(0, |grant| grant.generation),
                     snapshots: HashMap::new(),
                 },

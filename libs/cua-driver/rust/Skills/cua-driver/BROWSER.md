@@ -20,7 +20,8 @@ list_windows or launch_app
 get_browser_state(pid, window_id, session)       # bind
 get_browser_state(target_id, tab_id, session,
                   snapshot_format=semantic_v2)  # snapshot
-browser_navigate / browser_click / browser_type
+browser_navigate / browser_click / browser_type / browser_pointer
+browser_dialog / browser_set_input_files / browser_download
 get_browser_state(target_id, tab_id, session,
                   snapshot_format=semantic_v2)  # verify and refresh refs
 end_session
@@ -119,7 +120,10 @@ Never:
 
 ## 3. Snapshot the selected tab
 
-Choose a returned `tab_id`, then request the page snapshot:
+Choose a returned `tab_id`, then request the page snapshot. `active` is
+tri-state: `true` is a uniquely proven selected tab, `false` is a proven
+unselected tab, and `null` means native evidence cannot distinguish the
+selection. Never guess from list order when all tabs are `null`.
 
 ```bash
 cua-driver get_browser_state \
@@ -240,14 +244,61 @@ ownership, and reports requested versus delivered characters. Snapshot again
 to verify application state rather than treating transport completion as the
 task result.
 
+### Extended pointer actions
+
+Use `browser_pointer` for `hover`, `right_click`, `double_click`, `scroll`, and
+`drag`. It uses the same `trusted` versus explicit `dom_event` distinction as
+`browser_click`. The synthetic route requires a current ref; drag also requires
+`destination_ref` in the same proven frame. Coordinate origins and destinations
+are available only where the trusted route can preserve the requested posture.
+
+```bash
+cua-driver browser_pointer \
+  '{"target_id":"<target>","tab_id":"<tab>","ref":"p5:2",
+    "action":"scroll","input_route":"dom_event","delta_y":240,
+    "session":"browser-run-1"}'
+```
+
+### JavaScript dialogs
+
+`browser_dialog` handles only page-owned `alert`, `confirm`, `prompt`, and
+`beforeunload` dialogs. First inspect the exact tab, then accept or dismiss the
+returned opaque `dialog_id`. A prompt response is allowed only with
+`action:"accept"` on a current prompt. Browser permission UI and native dialogs
+remain outside this tool. Creating Chromium's native modal can activate the
+browser; after the caller restores occlusion, inspecting and resolving the
+exact page-owned dialog do not require another activation on Windows and
+macOS. Resolution defaults to `delivery_mode:"background"`. Linux Chromium
+cannot resolve its native modal while preserving background posture, so the
+driver refuses that mode before dispatch; retry explicitly with
+`delivery_mode:"foreground"` when foreground activation is acceptable.
+
+### File inputs
+
+Use a current semantic ref whose `actions` contains `upload`, then call
+`browser_set_input_files` with one to 32 absolute regular-file paths. The tool
+rejects symlinks and directories, bypasses the native file picker, and returns
+only the assigned file count. Paths are redacted from trajectory arguments.
+
+### Downloads
+
+`browser_download` activates one exact ref under a destructive MCP-host
+approval and saves the result under an existing canonical absolute
+`destination_root`. It correlates browser download events to the exact frame,
+serializes Chromium's browser-wide download setting, restores that setting on
+every outcome, and returns only an opaque download id and byte count. It never
+returns the source URL, filename, or destination path. Direct raw calls without
+the host approval proof are refused.
+
 ## Browser chrome and native fallbacks
 
 The browser tools operate on page content, not the surrounding native UI. Use
 the normal native loop for:
 
 - tabs, address bar, menus, bookmarks, and extension UI;
-- permission prompts and remote-debugging consent UI;
-- downloads, save dialogs, authentication sheets, and file pickers;
+- permission prompts, remote-debugging consent UI, and authentication sheets;
+- native save dialogs and file pickers that are not represented by an exact
+  page ref;
 - WebView2, WKWebView, WebKitGTK, Tauri, or Electron surfaces that cannot be
   exactly correlated to a page target;
 - Safari and Firefox, whose typed mutation engines are not yet supported.

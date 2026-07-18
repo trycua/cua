@@ -76,6 +76,8 @@ export interface MCPPropertyDoc {
   type: string;
   description: string;
   items?: { type: string };
+  enum?: string[];
+  minItems?: number;
 }
 
 export interface MCPDocumentation {
@@ -773,6 +775,9 @@ function formatPropertyType(prop: MCPPropertyDoc): string {
 }
 
 function syntheticExampleValue(name: string, prop: MCPPropertyDoc): unknown {
+  if (prop.enum?.length) {
+    return prop.enum[0];
+  }
   switch (prop.type) {
     case 'integer':
       if (name === 'pid') return 844;
@@ -794,6 +799,7 @@ function syntheticExampleValue(name: string, prop: MCPPropertyDoc): unknown {
     case 'array':
       if (name === 'keys') return ['cmd', 'c'];
       if (name === 'modifiers') return ['cmd'];
+      if (name === 'files' || (prop.minItems ?? 0) > 0) return ['example'];
       return [];
     case 'string':
       if (name === 'text') return 'hello';

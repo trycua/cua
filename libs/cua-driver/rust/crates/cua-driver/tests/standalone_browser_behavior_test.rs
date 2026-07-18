@@ -45,6 +45,55 @@ fn standalone_fixture_html() -> String {
     )
 }
 
+fn standalone_browser_completeness_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<fieldset>
+  <legend>browser completeness</legend>
+  <button id="standalone-alert" data-cua-id="standalone-alert">Open alert</button>
+  <button id="standalone-confirm" data-cua-id="standalone-confirm">Open confirm</button>
+  <button id="standalone-prompt" data-cua-id="standalone-prompt">Open prompt</button>
+  <span id="standalone-dialog-state" data-cua-id="standalone-dialog-state">dialog=none</span>
+  <input id="standalone-upload" data-cua-id="standalone-upload" aria-label="standalone-upload" type="file" multiple>
+  <span id="standalone-upload-state" data-cua-id="standalone-upload-state">upload=0</span>
+  <a id="standalone-download" data-cua-id="standalone-download" aria-label="standalone-download" href="/download" download>Download fixture</a>
+  <span id="standalone-hover-state" data-cua-id="standalone-hover-state">hover=false</span>
+</fieldset>
+<script>
+  const dialogState = document.getElementById('standalone-dialog-state');
+  document.getElementById('standalone-alert').addEventListener('click', () => {
+    setTimeout(() => { alert('fixture alert'); dialogState.textContent = 'dialog=alert:accepted'; }, 0);
+  });
+  document.getElementById('standalone-confirm').addEventListener('click', () => {
+    setTimeout(() => { dialogState.textContent = `dialog=confirm:${confirm('fixture confirm')}`; }, 0);
+  });
+  document.getElementById('standalone-prompt').addEventListener('click', () => {
+    setTimeout(() => { dialogState.textContent = `dialog=prompt:${prompt('fixture prompt', '')}`; }, 0);
+  });
+  document.getElementById('standalone-upload').addEventListener('change', event => {
+    const names = Array.from(event.target.files).map(file => file.name).join(',');
+    document.getElementById('standalone-upload-state').textContent = `upload=${event.target.files.length}:${names}`;
+  });
+  document.getElementById('scroll-tall').setAttribute('tabindex', '0');
+  document.getElementById('scroll-tall').setAttribute('role', 'region');
+  document.getElementById('drag-source').setAttribute('tabindex', '0');
+  document.getElementById('drag-source').setAttribute('role', 'button');
+  document.getElementById('drag-source').setAttribute('draggable', 'true');
+  document.getElementById('drop-target').setAttribute('tabindex', '0');
+  document.getElementById('drop-target').setAttribute('role', 'button');
+  document.getElementById('click-target').addEventListener('pointerover', () => {
+    document.getElementById('standalone-hover-state').textContent = 'hover=true';
+  });
+  document.getElementById('drop-target').addEventListener('dragover', event => event.preventDefault());
+  document.getElementById('drop-target').addEventListener('drop', event => {
+    event.preventDefault();
+    document.getElementById('drag-status').textContent = 'drag_status=dropped';
+  });
+</script>
+</body>"#,
+    )
+}
+
 fn standalone_semantic_fixture_html() -> String {
     let hidden = (0..320)
         .map(|index| {
@@ -685,13 +734,16 @@ fn wait_for_exact_browser_binding(
                     "session": session,
                 }),
             );
-            if state.structured()["binding_quality"] == "exact" {
+            let has_unique_active_tab = state.structured()["tabs"]
+                .as_array()
+                .is_some_and(|tabs| tabs.iter().filter(|tab| tab["active"] == true).count() == 1);
+            if state.structured()["binding_quality"] == "exact" && has_unique_active_tab {
                 return Some((window_id, state));
             }
         }
         if Instant::now() >= deadline {
             eprintln!(
-                "no exact browser window binding for prepared pid {pid}; last windows={}",
+                "no exact browser window binding with one active tab for prepared pid {pid}; last windows={}",
                 windows.raw
             );
             return None;
@@ -980,6 +1032,20 @@ fn case(browser: &str, action: &str) -> CaseSpec {
 
 fn refusal_case(browser: &str, action: &str, code: RefusalCode) -> CaseSpec {
     case(browser, action).expecting_refusal(vec![code])
+}
+
+fn foreground_page_case(browser: &str, action: &str) -> CaseSpec {
+    CaseSpec::delivered(
+        format!("{}-{browser}-standalone-{action}", std::env::consts::OS),
+        browser,
+        "standalone-chromium",
+        action,
+        Targeting::Page,
+        Delivery::Foreground,
+        Scope::Window,
+        DriverRoute::Cdp,
+        vec![OracleKind::FixtureState],
+    )
 }
 
 fn run_with_background_oracles(
@@ -2134,6 +2200,485 @@ fn run_multi_tab(spec: &BrowserSpec) {
     });
 }
 
+fn run_same_title_tabs(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-same-title-tabs",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(
+        case(&spec.name, "same_title_tab_selection_unknown"),
+        |evidence| {
+            let mut fixture = launch_browser(spec, &scenario);
+            *evidence = recording_evidence(fixture.driver.recording_dir());
+            let session = format!("standalone-same-title-{}", fixture.pid);
+            let _ = bind(&mut fixture, &session);
+            let second_server = BrowserFixtureServer::start(&standalone_fixture_html());
+            let created = harness_cdp_call(
+                fixture.cdp_port,
+                "Target.createTarget",
+                serde_json::json!({
+                    "url": second_server.page_url(),
+                    "newWindow": false,
+                    "background": true,
+                }),
+            );
+            assert!(created["targetId"].is_string(), "{created}");
+            wait_for_observed(&second_server, "WEB_HARNESS_MARKER_v1");
+            bring_harness_page_to_front(fixture.cdp_port, &fixture.server.page_url());
+
+            run_with_background_oracles(&mut fixture, |fixture| {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let rebound = loop {
+                    let state = fixture.driver.call(
+                        "get_browser_state",
+                        serde_json::json!({
+                            "pid": fixture.pid as i64,
+                            "window_id": fixture.window_id,
+                            "session": session,
+                        }),
+                    );
+                    if state.structured()["tabs"]
+                        .as_array()
+                        .is_some_and(|tabs| tabs.len() >= 2)
+                    {
+                        break state;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "same-title bind failed: {}",
+                        state.raw
+                    );
+                    thread::sleep(Duration::from_millis(100));
+                };
+                assert_eq!(rebound.structured()["binding_quality"], "exact");
+                let tabs = rebound.structured()["tabs"]
+                    .as_array()
+                    .expect("same-title tab list");
+                assert!(tabs
+                    .iter()
+                    .any(|tab| tab["url"] == fixture.server.page_url()));
+                assert!(tabs
+                    .iter()
+                    .any(|tab| tab["url"] == second_server.page_url()));
+                assert!(
+                    tabs.iter().all(|tab| tab["active"].is_null()),
+                    "same-title selection must be unknown instead of guessed: {}",
+                    rebound.raw
+                );
+                Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+            })
+        },
+    );
+}
+
+fn run_dialogs(spec: &BrowserSpec) {
+    let scenario = format!("{}-{}-standalone-dialogs", std::env::consts::OS, spec.name);
+    let spec_case = if cfg!(target_os = "linux") {
+        foreground_page_case(&spec.name, "browser_dialogs")
+    } else {
+        case(&spec.name, "browser_dialogs")
+    };
+    execute_case(spec_case, |evidence| {
+        let mut fixture =
+            launch_browser_with_html(spec, &scenario, standalone_browser_completeness_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        let session = format!("standalone-dialogs-{}", fixture.pid);
+        let (target_id, tab_id, snapshot) = bind(&mut fixture, &session);
+        let primed = fixture.driver.call(
+            "browser_dialog",
+            serde_json::json!({
+                "target_id": target_id,
+                "tab_id": tab_id,
+                "action": "inspect",
+                "session": session,
+            }),
+        );
+        assert_eq!(primed.structured()["present"], false, "{}", primed.raw);
+
+        let sentinel = if cfg!(target_os = "linux") {
+            None
+        } else {
+            Some(ForegroundSentinel::launch(&mut fixture.driver))
+        };
+        let target = TargetWindow {
+            pid: fixture.pid,
+            native_id: fixture.window_id,
+        };
+        fixture.driver.start_behavior_recording();
+        let mut passed_oracles = vec![OracleKind::FixtureState];
+
+        for (button, kind, action, prompt_text, expected) in [
+            (
+                "id=standalone-alert",
+                "alert",
+                "accept",
+                None,
+                "dialog=alert:accepted",
+            ),
+            (
+                "id=standalone-confirm",
+                "confirm",
+                "dismiss",
+                None,
+                "dialog=confirm:false",
+            ),
+            (
+                "id=standalone-prompt",
+                "prompt",
+                "accept",
+                Some("fixture response"),
+                "dialog=prompt:fixture response",
+            ),
+        ] {
+            // Opening a native browser modal can activate Chromium. Treat that
+            // as fixture setup, then prove the typed inspect/resolve operation
+            // itself preserves a fully occluded background posture.
+            let clicked = fixture.driver.call(
+                "browser_click",
+                serde_json::json!({
+                    "target_id": target_id,
+                    "tab_id": tab_id,
+                    "ref": ref_by_label(&snapshot, button),
+                    "input_route": "dom_event",
+                    "session": session,
+                }),
+            );
+            assert_eq!(clicked.structured()["status"], "ok", "{}", clicked.raw);
+            thread::sleep(Duration::from_millis(100));
+
+            if cfg!(target_os = "linux") {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let current = loop {
+                    let current = fixture.driver.call(
+                        "browser_dialog",
+                        serde_json::json!({
+                            "target_id": target_id,
+                            "tab_id": tab_id,
+                            "action": "inspect",
+                            "session": session,
+                        }),
+                    );
+                    if current.structured()["present"] == true {
+                        break current;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "{kind} dialog was not observed: {}",
+                        current.raw
+                    );
+                    thread::sleep(Duration::from_millis(25));
+                };
+                assert_eq!(current.structured()["kind"], kind, "{}", current.raw);
+                let dialog_id = current.structured()["dialog_id"]
+                    .as_str()
+                    .expect("opaque dialog id")
+                    .to_owned();
+                let mut args = serde_json::json!({
+                    "target_id": target_id,
+                    "tab_id": tab_id,
+                    "action": action,
+                    "dialog_id": dialog_id,
+                    "delivery_mode": "foreground",
+                    "session": session,
+                });
+                if let Some(prompt_text) = prompt_text {
+                    args["prompt_text"] = serde_json::Value::String(prompt_text.to_owned());
+                }
+                let handled = fixture.driver.call("browser_dialog", args);
+                assert_eq!(handled.structured()["status"], "ok", "{}", handled.raw);
+                wait_for_text(&fixture.server, "standalone-dialog-state", expected);
+                continue;
+            }
+
+            sentinel
+                .as_ref()
+                .expect("background dialog sentinel")
+                .prepare_background_observation(&mut fixture.driver, target)
+                .expect("occlude the open JavaScript dialog");
+
+            let (_, passed) = sentinel
+                .as_ref()
+                .expect("background dialog sentinel")
+                .observe_background(target, || {
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    let current = loop {
+                        let current = fixture.driver.call(
+                            "browser_dialog",
+                            serde_json::json!({
+                                "target_id": target_id,
+                                "tab_id": tab_id,
+                                "action": "inspect",
+                                "session": session,
+                            }),
+                        );
+                        if current.structured()["present"] == true {
+                            break current;
+                        }
+                        assert!(
+                            Instant::now() < deadline,
+                            "{kind} dialog was not observed: {}",
+                            current.raw
+                        );
+                        thread::sleep(Duration::from_millis(25));
+                    };
+                    assert_eq!(current.structured()["kind"], kind, "{}", current.raw);
+                    let dialog_id = current.structured()["dialog_id"]
+                        .as_str()
+                        .expect("opaque dialog id")
+                        .to_owned();
+                    let mut args = serde_json::json!({
+                        "target_id": target_id,
+                        "tab_id": tab_id,
+                        "action": action,
+                        "dialog_id": dialog_id,
+                        "session": session,
+                    });
+                    if let Some(prompt_text) = prompt_text {
+                        args["prompt_text"] = serde_json::Value::String(prompt_text.to_owned());
+                    }
+                    let handled = fixture.driver.call("browser_dialog", args);
+                    assert_eq!(handled.structured()["status"], "ok", "{}", handled.raw);
+                    wait_for_text(&fixture.server, "standalone-dialog-state", expected);
+                    Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+                })
+                .expect("observe background JavaScript dialog resolution");
+            passed_oracles.extend(passed);
+        }
+
+        Observation::delivered(passed_oracles, Evidence::default())
+    });
+}
+
+#[cfg(target_os = "linux")]
+fn run_dialog_background_refusal(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-dialog-background-refusal",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(
+        refusal_case(
+            &spec.name,
+            "browser_dialogs_background",
+            RefusalCode::BrowserInputTrustUnavailable,
+        ),
+        |evidence| {
+            let mut fixture =
+                launch_browser_with_html(spec, &scenario, standalone_browser_completeness_html());
+            *evidence = recording_evidence(fixture.driver.recording_dir());
+            run_with_background_oracles(&mut fixture, |fixture| {
+                let session = format!("standalone-dialog-refusal-{}", fixture.pid);
+                let (target_id, tab_id, _) = bind(fixture, &session);
+                let refused = fixture.driver.call(
+                    "browser_dialog",
+                    serde_json::json!({
+                        "target_id": target_id,
+                        "tab_id": tab_id,
+                        "action": "accept",
+                        "dialog_id": "dialog-unavailable",
+                        "session": session,
+                    }),
+                );
+                assert_eq!(refused.structured()["status"], "refused", "{}", refused.raw);
+                assert_eq!(
+                    refused.structured()["refusal"]["code"],
+                    "browser_input_trust_unavailable",
+                    "{}",
+                    refused.raw
+                );
+                wait_for_text(&fixture.server, "standalone-dialog-state", "dialog=none");
+                Observation::refused(
+                    RefusalCode::BrowserInputTrustUnavailable,
+                    vec![OracleKind::FixtureState],
+                    refused.text(),
+                    Evidence::default(),
+                )
+            })
+        },
+    );
+}
+
+fn run_upload(spec: &BrowserSpec) {
+    let scenario = format!("{}-{}-standalone-upload", std::env::consts::OS, spec.name);
+    execute_case(case(&spec.name, "browser_file_upload"), |evidence| {
+        let mut fixture =
+            launch_browser_with_html(spec, &scenario, standalone_browser_completeness_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let session = format!("standalone-upload-{}", fixture.pid);
+            let (target, tab, _) = bind(fixture, &session);
+            let snapshot = fixture.driver.call(
+                "get_browser_state",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "session": session,
+                    "snapshot_format": "semantic_v2",
+                    "query": "standalone-upload",
+                }),
+            );
+            let upload_ref = semantic_ref_by_name(&snapshot, "standalone-upload", "upload");
+            let directory = tempfile::tempdir().expect("create upload fixture directory");
+            let path = directory.path().join("fixture-upload.txt");
+            std::fs::write(&path, b"fixture upload payload").expect("write upload fixture");
+            let canonical = std::fs::canonicalize(&path).expect("canonical upload fixture");
+            let uploaded = fixture.driver.call(
+                "browser_set_input_files",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": upload_ref,
+                    "files": [canonical],
+                    "session": session,
+                }),
+            );
+            assert_eq!(uploaded.structured()["status"], "ok", "{}", uploaded.raw);
+            assert_eq!(uploaded.structured()["file_count"], 1, "{}", uploaded.raw);
+            let public = uploaded.raw.to_string();
+            assert!(
+                !public.contains(&path.display().to_string()),
+                "{}",
+                uploaded.raw
+            );
+            assert!(!public.contains("fixture-upload.txt"), "{}", uploaded.raw);
+            wait_for_text(
+                &fixture.server,
+                "standalone-upload-state",
+                "upload=1:fixture-upload.txt",
+            );
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
+fn run_pointer_actions(spec: &BrowserSpec) {
+    let scenario = format!("{}-{}-standalone-pointer", std::env::consts::OS, spec.name);
+    execute_case(case(&spec.name, "browser_pointer_actions"), |evidence| {
+        let mut fixture =
+            launch_browser_with_html(spec, &scenario, standalone_browser_completeness_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let session = format!("standalone-pointer-{}", fixture.pid);
+            let (target, tab, snapshot) = bind(fixture, &session);
+            let click_ref = ref_by_label(&snapshot, "id=click-target");
+
+            for action in ["hover", "right_click", "double_click"] {
+                let response = fixture.driver.call(
+                    "browser_pointer",
+                    serde_json::json!({
+                        "target_id": target,
+                        "tab_id": tab,
+                        "ref": click_ref,
+                        "action": action,
+                        "input_route": "dom_event",
+                        "session": session,
+                    }),
+                );
+                assert_eq!(response.structured()["status"], "ok", "{}", response.raw);
+            }
+            wait_for_text(&fixture.server, "standalone-hover-state", "hover=true");
+            wait_for_text(
+                &fixture.server,
+                "lbl-last-action",
+                "last_action=double_click",
+            );
+
+            let scrolled = fixture.driver.call(
+                "browser_pointer",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": ref_by_label(&snapshot, "id=scroll-tall"),
+                    "action": "scroll",
+                    "input_route": "dom_event",
+                    "delta_y": 240,
+                    "session": session,
+                }),
+            );
+            assert_eq!(scrolled.structured()["status"], "ok", "{}", scrolled.raw);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                if fixture
+                    .server
+                    .text("lbl-scroll-offset")
+                    .is_some_and(|value| value != "scroll_offset=0")
+                {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "scroll oracle did not change");
+                thread::sleep(Duration::from_millis(25));
+            }
+
+            let dragged = fixture.driver.call(
+                "browser_pointer",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": ref_by_label(&snapshot, "id=drag-source"),
+                    "destination_ref": ref_by_label(&snapshot, "id=drop-target"),
+                    "action": "drag",
+                    "input_route": "dom_event",
+                    "session": session,
+                }),
+            );
+            assert_eq!(dragged.structured()["status"], "ok", "{}", dragged.raw);
+            wait_for_text(&fixture.server, "drag-status", "drag_status=dropped");
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
+fn run_download(spec: &BrowserSpec) {
+    let scenario = format!("{}-{}-standalone-download", std::env::consts::OS, spec.name);
+    execute_case(case(&spec.name, "browser_download"), |evidence| {
+        let mut fixture =
+            launch_browser_with_html(spec, &scenario, standalone_browser_completeness_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let session = format!("standalone-download-{}", fixture.pid);
+            let (target, tab, snapshot) = bind(fixture, &session);
+            let destination = tempfile::tempdir().expect("create approved download directory");
+            let canonical =
+                std::fs::canonicalize(destination.path()).expect("canonical download directory");
+            let downloaded = fixture.driver.call(
+                "browser_download",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": ref_by_label(&snapshot, "id=standalone-download"),
+                    "destination_root": canonical,
+                    "session": session,
+                }),
+            );
+            assert_eq!(
+                downloaded.structured()["status"],
+                "completed",
+                "{}",
+                downloaded.raw
+            );
+            let entries = std::fs::read_dir(destination.path())
+                .expect("read approved download directory")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("enumerate approved download directory");
+            assert_eq!(entries.len(), 1, "expected one completed download");
+            let bytes = std::fs::read(entries[0].path()).expect("read completed download");
+            assert_eq!(bytes, b"CUA_DRIVER_BROWSER_DOWNLOAD_FIXTURE_V1\n");
+            assert_eq!(
+                downloaded.structured()["bytes"],
+                bytes.len() as u64,
+                "{}",
+                downloaded.raw
+            );
+            let public = downloaded.raw.to_string();
+            assert!(!public.contains(&destination.path().display().to_string()));
+            assert!(!public.contains("fixture.txt"));
+            assert!(!public.contains(fixture.server.download_url()));
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
 fn run_two_window_collision(spec: &BrowserSpec) {
     let scenario = format!(
         "{}-{}-standalone-two-window",
@@ -2261,6 +2806,16 @@ standalone_browser_test!(
 standalone_browser_test!(standalone_browser_stale_ref, run_stale_ref);
 standalone_browser_test!(standalone_browser_frames, run_frame_roundtrip);
 standalone_browser_test!(standalone_browser_multi_tab, run_multi_tab);
+standalone_browser_test!(standalone_browser_same_title_tabs, run_same_title_tabs);
+standalone_browser_test!(standalone_browser_dialogs, run_dialogs);
+#[cfg(target_os = "linux")]
+standalone_browser_test!(
+    standalone_browser_dialog_background_refusal,
+    run_dialog_background_refusal
+);
+standalone_browser_test!(standalone_browser_upload, run_upload);
+standalone_browser_test!(standalone_browser_pointer_actions, run_pointer_actions);
+standalone_browser_test!(standalone_browser_download, run_download);
 standalone_browser_test!(
     standalone_browser_window_collision,
     run_two_window_collision

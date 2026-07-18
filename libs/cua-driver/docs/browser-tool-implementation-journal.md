@@ -6,9 +6,8 @@ URLs, profile paths, and raw DevTools endpoint identifiers.
 
 ## Definition of done
 
-- Add a capability-aware browser API with five typed tools:
-  `get_browser_state`, `browser_prepare`, `browser_navigate`, `browser_click`,
-  and `browser_type`.
+- Add a capability-aware browser API whose typed tools share one exact target,
+  tab, frame, and ref model.
 - Keep `get_browser_state` read-only and make setup explicit.
 - Bind native `(pid, window_id)` targets to browser tabs exactly or refuse all
   mutation. Never promote a heuristic match into an action route.
@@ -719,3 +718,41 @@ link checks. A source-installed macOS product-path replay passed the real Chrome
 semantic row with the TCC-authorized daemon, foreground sentinel, fixture
 journal, exact DOM click, re-snapshot, and typed-value oracle. Windows and Linux
 X11 exact-SHA workflow evidence is the remaining release-acceptance gate.
+
+## 2026-07-18: browser completeness and adversarial tab state
+
+The bind response no longer labels a representative DevTools target as the
+active native tab. A unique exact native-title match produces one `true` and
+the remaining tabs `false`; duplicate, empty, substring-only, or otherwise
+ambiguous titles produce `null` for every tab. The standalone harness adds a
+same-title adversarial row so future list-order regressions are externally
+visible.
+
+The typed surface now includes page-owned JavaScript dialog inspection and
+resolution, exact file-input assignment, extended pointer actions, and
+approval-scoped downloads. All mutations retain the existing exact binding,
+tab lock, reconnect generation, ref/frame identity, and fail-closed posture.
+Synthetic pointer actions are explicit `dom_event` requests; trusted pointer
+actions never fall back after a refusal. Downloads serialize Chromium's
+browser-wide setting, subscribe before triggering, correlate exact frame and
+opaque id events, restore defaults on every outcome, and remove only a proven
+direct partial file after failure.
+
+The real-browser harness adds separate rows for dialogs, upload,
+hover/right-click/double-click/scroll/drag, and downloads. A fixed loopback
+attachment keeps download evidence deterministic. Background rows use the
+foreground sentinel and fixture-owned state rather than treating a CDP reply
+as delivery. Linux Chromium cannot resolve a native JavaScript modal without
+changing foreground posture, so its matrix records a no-dispatch background
+refusal and a separate explicit foreground delivery row. Windows and macOS
+retain strict background dialog resolution. Trajectory recording redacts
+prompt text, upload paths, download directories, and internal approval
+markers; product telemetry retains only fixed operation and refusal
+categories.
+
+The dialog design adapts the exact-target, no-replay security model introduced
+in PR #2166. Its contributor remains credited through a parsed
+`Co-authored-by` trailer in the landing history and `Salvaged from #2166` in
+the pull request body even though this implementation supersedes that earlier
+code shape. Issue authors remain reporter-attributed when the landing PR
+closes their linked issues.

@@ -704,12 +704,22 @@ pub fn walk_tree_bounded(
     max_elements: Option<usize>,
     max_depth: Option<usize>,
 ) -> Result<Option<(String, Vec<AtspiNode>, Vec<(usize, i32, i32, u32, u32)>)>> {
+    walk_tree_bounded_with_timeout(pid, xid, max_elements, max_depth, OP_TIMEOUT)
+}
+
+pub(super) fn walk_tree_bounded_with_timeout(
+    pid: u32,
+    xid: u64,
+    max_elements: Option<usize>,
+    max_depth: Option<usize>,
+    timeout: Duration,
+) -> Result<Option<(String, Vec<AtspiNode>, Vec<(usize, i32, i32, u32, u32)>)>> {
     runtime().block_on(async {
         let walk = async {
             let conn = shared_connection().await?;
             collect_visited_bounded(conn, pid, max_elements, max_depth).await
         };
-        let visited = match tokio::time::timeout(OP_TIMEOUT, walk).await {
+        let visited = match tokio::time::timeout(timeout, walk).await {
             Ok(result) => result?,
             Err(_) => {
                 dlog!("walk_tree timed out for pid {pid}");

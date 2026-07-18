@@ -398,26 +398,15 @@ fn tick_render_map(map: &mut RenderMap, dt: f64) -> Vec<CursorKey> {
 }
 
 #[cfg(target_os = "linux")]
-fn scheduled_tick_dt(elapsed_dt: f64, maintenance_timeout: bool) -> f64 {
-    if maintenance_timeout {
-        // No animation is active while parked, so maintenance must advance the
-        // complete idle interval rather than the 50 ms animation safety cap.
-        elapsed_dt
-    } else {
-        elapsed_dt.min(0.05)
-    }
-}
-
-#[cfg(target_os = "linux")]
 fn apply_messages_after_wake(
     map: &mut RenderMap,
     first_msg: Option<OverlayMsg>,
     rx: &std::sync::mpsc::Receiver<OverlayMsg>,
     parked_elapsed: Option<f64>,
 ) -> (Vec<CursorKey>, bool) {
-    // Advance pre-existing quiescent state before commands mutate it. This
-    // preserves each cursor's independent idle clock while ensuring newly
-    // commanded animations render their initial frame at dt=0.
+    // For a parked wake, advance pre-existing quiescent state before commands
+    // mutate it. This preserves each cursor's independent idle clock while
+    // ensuring newly commanded animations render their initial frame at dt=0.
     let arrived = parked_elapsed
         .map(|dt| tick_render_map(map, dt))
         .unwrap_or_default();
@@ -433,6 +422,29 @@ fn apply_messages_after_wake(
         if let Some(key) = apply_msg(map, msg) {
             map.last_active = Some(key);
         }
+    }
+    (arrived, had_msg)
+}
+
+#[cfg(target_os = "linux")]
+fn process_render_wake(
+    map: &mut RenderMap,
+    first_msg: Option<OverlayMsg>,
+    rx: &std::sync::mpsc::Receiver<OverlayMsg>,
+    elapsed_dt: f64,
+    maintenance_timeout: bool,
+    frame_tick_needed: bool,
+) -> (Vec<CursorKey>, bool) {
+    // Command receives and maintenance timeouts both wake a parked loop. Tick
+    // the old state before draining the channel so even a command that arrives
+    // just after recv_timeout reports Timeout starts at dt=0. Active-frame
+    // wakes retain their existing apply-then-tick ordering; pre-ticking those
+    // could fire an old path's arrival waiter after a replacement is registered.
+    let parked_wake = first_msg.is_some() || maintenance_timeout;
+    let (mut arrived, had_msg) =
+        apply_messages_after_wake(map, first_msg, rx, parked_wake.then_some(elapsed_dt));
+    if !parked_wake && (frame_tick_needed || had_msg) {
+        arrived.extend(tick_render_map(map, elapsed_dt.min(0.05)));
     }
     (arrived, had_msg)
 }
@@ -649,10 +661,8 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
             OverlayWake::Disconnected => break,
         };
 
-        let woke_for_command = first_msg.is_some();
         let now = Instant::now();
         let elapsed_dt = now.duration_since(last_tick).as_secs_f64();
-        let tick_dt = scheduled_tick_dt(elapsed_dt, maintenance_timeout);
         last_tick = now;
 
         // Drain commands and tick.
@@ -666,15 +676,14 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         ) = {
             let mut guard = RENDER.lock().unwrap();
             if let Some(map) = guard.as_mut() {
-                let (mut arrived, had_msg) = apply_messages_after_wake(
+                let (arrived, had_msg) = process_render_wake(
                     map,
                     first_msg,
                     &rx,
-                    woke_for_command.then_some(elapsed_dt),
+                    elapsed_dt,
+                    maintenance_timeout,
+                    frame_tick_needed,
                 );
-                if !woke_for_command && (frame_tick_needed || had_msg || maintenance_timeout) {
-                    arrived.extend(tick_render_map(map, tick_dt));
-                }
                 let pinned_wid = map
                     .last_active
                     .as_ref()
@@ -1020,8 +1029,17 @@ mod tests {
 
     #[test]
     fn maintenance_tick_advances_the_full_elapsed_interval() {
-        assert_eq!(scheduled_tick_dt(0.08, true), 0.08);
-        assert_eq!(scheduled_tick_dt(0.08, false), 0.05);
+        let mut map = default_render_map();
+        let cursor = map.cursors.get_mut("default").unwrap();
+        cursor.core.pos = (10.0, 10.0);
+        cursor.core.motion.idle_hide_ms = 500.0;
+        let (_tx, rx) = std::sync::mpsc::channel();
+
+        let (arrived, had_msg) = process_render_wake(&mut map, None, &rx, 0.08, true, false);
+
+        assert!(arrived.is_empty());
+        assert!(!had_msg);
+        assert_eq!(map.cursors["default"].core.idle_secs, 0.08);
     }
 
     #[test]
@@ -1123,14 +1141,16 @@ mod tests {
         // elapsed time must advance all existing cursors before each unrelated
         // command is applied.
         for _ in 0..5 {
-            let (arrived, had_msg) = apply_messages_after_wake(
+            let (arrived, had_msg) = process_render_wake(
                 &mut map,
                 Some(OverlayMsg::Cmd(KeyedOverlayCommand {
                     key: "other".to_owned(),
                     cmd: OverlayCommand::SetPalette(Palette::for_instance("other")),
                 })),
                 &rx,
-                Some(0.1),
+                0.1,
+                false,
+                false,
             );
             assert!(arrived.is_empty());
             assert!(had_msg);
@@ -1140,6 +1160,42 @@ mod tests {
         assert!(cursor.core.idle_secs >= 0.5);
         assert!(cursor.needs_frame_tick());
         assert_eq!(cursor.core.idle_alpha, 1.0);
+    }
+
+    #[test]
+    fn command_drained_after_maintenance_timeout_starts_at_zero_dt() {
+        let mut map = default_render_map();
+        {
+            let cursor = map.cursors.get_mut("default").unwrap();
+            cursor.core.pos = (10.0, 10.0);
+            cursor.core.motion.idle_hide_ms = 500.0;
+        }
+        let mut other = render_state_for_key(&map.template, "other");
+        other.core.pos = (20.0, 20.0);
+        map.cursors.insert("other".to_owned(), other);
+
+        // Model a command arriving after recv_timeout returned Timeout but
+        // before the render loop's try_recv drain.
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(OverlayMsg::Cmd(KeyedOverlayCommand {
+            key: "other".to_owned(),
+            cmd: OverlayCommand::MoveTo {
+                x: 250.0,
+                y: 150.0,
+                end_heading_radians: 0.0,
+            },
+        }))
+        .unwrap();
+
+        let (arrived, had_msg) = process_render_wake(&mut map, None, &rx, 0.08, true, false);
+
+        assert!(arrived.is_empty());
+        assert!(had_msg);
+        assert_eq!(map.cursors["default"].core.idle_secs, 0.08);
+        let other = &map.cursors["other"].core;
+        assert!(other.path.is_some());
+        assert_eq!(other.pos, (20.0, 20.0));
+        assert_eq!(other.dist, 0.0);
     }
 
     #[test]

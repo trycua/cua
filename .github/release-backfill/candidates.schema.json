@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/release-backfill/candidates.schema.json",
+  "title": "Cua historical release candidates",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "generatedAt", "promptVersion", "candidates"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "release-backfill-candidates"},
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "promptVersion": {"type": "integer", "minimum": 1},
+    "candidates": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/candidate"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "summary", "evidence"],
+      "properties": {
+        "type": {"enum": ["feat", "fix", "perf", "revert"]},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 500},
+        "evidence": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^(pr:[0-9]+|commit:[0-9a-f]{40})$"}}
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "summary", "summaryEvidence", "changes", "provenance", "candidateSha256"],
+      "properties": {
+        "key": {"type": "string", "minLength": 1},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "summaryEvidence": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^(pr:[0-9]+|commit:[0-9a-f]{40})$"}},
+        "changes": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/change"}},
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["modelId", "promptVersion", "promptSha256", "evidenceSha256", "generatedAt"],
+          "properties": {
+            "modelId": {"type": "string", "minLength": 1},
+            "promptVersion": {"type": "integer", "minimum": 1},
+            "promptSha256": {"$ref": "#/$defs/sha256"},
+            "evidenceSha256": {"$ref": "#/$defs/sha256"},
+            "generatedAt": {"type": "string", "format": "date-time"}
+          }
+        },
+        "candidateSha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

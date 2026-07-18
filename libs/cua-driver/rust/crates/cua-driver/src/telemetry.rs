@@ -2274,6 +2274,7 @@ mod tests {
 
     #[test]
     fn v3_payload_allows_server_geoip_without_sending_an_ip_or_client_timestamp() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let identity = InstallationIdentity { id: "test-id".into(), persisted: true };
         let payload = build_payload(
             event::MCP_TOOL_COMPLETED,

@@ -15,13 +15,15 @@ use crate::tool::{Tool, ToolDef, ToolRegistry};
 use crate::tool_args::ArgsExt;
 
 use super::approval::MCP_HOST_APPROVAL_ARG;
+use super::download::BrowserDownloadTool;
 use super::engine::BrowserEngine;
 use super::platform::{PrepareAuthorization, PrepareProfile, PrepareRequest, PrepareStrategy};
+use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::store::BrowserActionKind;
 use super::types::BindingQuality;
 
-/// Register all five browser tools against one shared engine. Platform
+/// Register the complete browser surface against one shared engine. Platform
 /// crates call this from their `register_all` after constructing the
 /// engine with their adapter.
 pub fn register_browser_tools(engine: &Arc<BrowserEngine>, registry: &mut ToolRegistry) {
@@ -32,6 +34,8 @@ pub fn register_browser_tools(engine: &Arc<BrowserEngine>, registry: &mut ToolRe
     registry.register(Box::new(BrowserTypeTool::new(engine.clone())));
     registry.register(Box::new(BrowserDialogTool::new(engine.clone())));
     registry.register(Box::new(BrowserSetInputFilesTool::new(engine.clone())));
+    registry.register(Box::new(BrowserDownloadTool::new(engine.clone())));
+    registry.register(Box::new(BrowserPointerTool::new(engine.clone())));
 }
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
@@ -1482,16 +1486,27 @@ impl Tool for BrowserDialogTool {
         };
         let conn = &validated.conn;
         let cdp_session = validated.cdp_session.as_str();
-        if let Err(error) = conn.call(Some(cdp_session), "Page.enable", json!({})).await {
-            return BrowserRefusal::new(
-                BrowserRefusalCode::BrowserActionUnavailable,
-                format!("the exact tab does not expose JavaScript dialog events: {error}"),
-            )
-            .to_tool_result();
+        let cdp_target_id = validated.tab.cdp_target_id.as_str();
+        if conn.dialog_state(cdp_target_id).is_none()
+            && !conn.has_dialog_session(cdp_target_id)
+        {
+            // Register before Page.enable so an opening event delivered before
+            // the command reply is still attributed to the exact target.
+            conn.register_dialog_session(cdp_session, cdp_target_id);
+            if let Err(error) = conn.call(Some(cdp_session), "Page.enable", json!({})).await {
+                if conn.dialog_state(cdp_target_id).is_none() {
+                    conn.unregister_dialog_session(cdp_session, cdp_target_id);
+                    return BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserActionUnavailable,
+                        format!("the exact tab does not expose JavaScript dialog events: {error}"),
+                    )
+                    .to_tool_result();
+                }
+            }
+            tokio::task::yield_now().await;
         }
-        tokio::task::yield_now().await;
 
-        let Some(dialog) = conn.dialog_state(cdp_session) else {
+        let Some(dialog) = conn.dialog_state(cdp_target_id) else {
             return if action == "inspect" {
                 ToolResult::text(format!(
                     "no page-owned JavaScript dialog is open in {tab_id}"
@@ -1537,11 +1552,15 @@ impl Tool for BrowserDialogTool {
             params["promptText"] = Value::String(text);
         }
         match conn
-            .call(Some(cdp_session), "Page.handleJavaScriptDialog", params)
+            .call(
+                Some(&dialog.session_id),
+                "Page.handleJavaScriptDialog",
+                params,
+            )
             .await
         {
             Ok(_) => {
-                conn.clear_dialog_state(cdp_session, dialog.generation);
+                conn.clear_dialog_state(cdp_target_id, dialog.generation);
                 ToolResult::text(format!("{action}ed {} dialog in {tab_id}", dialog.kind))
                     .with_structured(json!({
                         "status": "ok", "target_id": target_id, "tab_id": tab_id,
@@ -1914,14 +1933,25 @@ mod tests {
                 BrowserSetInputFilesTool::new(e.clone()).def().clone(),
                 "browser_set_input_files",
             ),
+            (
+                BrowserDownloadTool::new(e.clone()).def().clone(),
+                "browser_download",
+            ),
+            (
+                BrowserPointerTool::new(e.clone()).def().clone(),
+                "browser_pointer",
+            ),
         ] {
             assert_eq!(def.name, name);
             assert!(!def.read_only, "{name} is a mutation");
             assert!(def.input_schema["properties"].is_object(), "{name} schema");
         }
-        // Navigate reaches the open web; the input tools do not.
+        // Navigate and download reach the open web; ordinary input does not.
         assert!(BrowserNavigateTool::new(e.clone()).def().open_world);
-        assert!(!BrowserClickTool::new(e).def().open_world);
+        assert!(BrowserDownloadTool::new(e.clone()).def().open_world);
+        assert!(BrowserDownloadTool::new(e.clone()).def().destructive);
+        assert!(!BrowserClickTool::new(e.clone()).def().open_world);
+        assert!(!BrowserPointerTool::new(e).def().open_world);
     }
 
     #[test]
@@ -1939,7 +1969,9 @@ mod tests {
                 "browser_click",
                 "browser_type",
                 "browser_dialog",
-                "browser_set_input_files"
+                "browser_set_input_files",
+                "browser_download",
+                "browser_pointer"
             ]
         );
     }

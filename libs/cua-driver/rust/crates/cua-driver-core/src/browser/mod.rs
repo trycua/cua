@@ -1,8 +1,7 @@
 //! Platform-agnostic browser-tool v1 core.
 //!
-//! Five typed tools — `get_browser_state` (strictly read-only),
-//! `browser_prepare`, `browser_navigate`, `browser_click`,
-//! `browser_type` — over an exact-or-refused binding model:
+//! Typed browser inspection, preparation, navigation, input, dialog, upload,
+//! and download tools over an exact-or-refused binding model:
 //!
 //! - The native entrypoint is `pid + window_id`. Browser target ids,
 //!   tab ids, and page refs (`p<snapshot>:<index>`) are opaque,
@@ -39,12 +38,14 @@
 pub mod approval;
 pub mod binding;
 pub mod cdp_ws;
+pub mod download;
 pub mod engine;
 mod grant;
 #[cfg(test)]
 pub(crate) mod mock_cdp;
 mod mutation;
 pub mod platform;
+pub mod pointer;
 mod prepare;
 mod reconnect;
 pub mod refusal;

@@ -452,7 +452,14 @@ mod tests {
     #[test]
     fn browser_mutations_are_computer_actions_but_reads_and_prepare_are_not() {
         let args = serde_json::json!({"session": "test-session"});
-        for tool_name in ["browser_navigate", "browser_click", "browser_type"] {
+        for tool_name in [
+            "browser_navigate",
+            "browser_click",
+            "browser_type",
+            "browser_set_input_files",
+            "browser_download",
+            "browser_pointer",
+        ] {
             let operation = crate::server::tool_operation(tool_name, Some(&args));
             assert!(
                 crate::server::is_computer_action(tool_name, operation),
@@ -466,6 +473,20 @@ mod tests {
                 "tool={tool_name}"
             );
         }
+        for action in ["accept", "dismiss"] {
+            let args = serde_json::json!({"action": action});
+            let operation = crate::server::tool_operation("browser_dialog", Some(&args));
+            assert!(crate::server::is_computer_action(
+                "browser_dialog",
+                operation
+            ));
+        }
+        let inspect = serde_json::json!({"action": "inspect"});
+        let operation = crate::server::tool_operation("browser_dialog", Some(&inspect));
+        assert!(!crate::server::is_computer_action(
+            "browser_dialog",
+            operation
+        ));
     }
 
     #[test]

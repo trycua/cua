@@ -103,7 +103,8 @@ impl ToolDef {
 ///   `recording.replay`, `recording.install_dependency`
 /// - `page.action`
 /// - `browser.state`, `browser.prepare`, `browser.navigate`,
-///   `browser.input.click`, `browser.input.type`
+///   `browser.input.click`, `browser.input.type`, `browser.input.files`,
+///   `browser.dialog`
 /// - `driver.update_check`, `driver.probe`
 ///
 /// Tools with no entry get `[]` — that's fine, it just means
@@ -267,6 +268,8 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "browser_type" => &["browser.input.type"],
         "browser_dialog" => &["browser.dialog"],
         "browser_set_input_files" => &["browser.input.files"],
+        "browser_download" => &["browser.download"],
+        "browser_pointer" => &["browser.input.pointer"],
 
         // ── driver self-service ──────────────────────────────────────
         "check_for_update" => &["driver.update_check"],
@@ -484,19 +487,48 @@ fn is_existing_profile_prepare(tool_name: &str, args: &Value) -> bool {
 }
 
 fn recording_args_for(tool_name: &str, args: &Value) -> Value {
-    if tool_name != "browser_prepare" {
-        return args.clone();
-    }
     let mut redacted = args.clone();
     if let Some(arguments) = redacted.as_object_mut() {
-        if arguments.contains_key("approval_token") {
-            arguments.insert(
-                "approval_token".to_owned(),
-                Value::String("[redacted]".to_owned()),
-            );
+        match tool_name {
+            "browser_prepare" => {
+                if arguments.contains_key("approval_token") {
+                    arguments.insert(
+                        "approval_token".to_owned(),
+                        Value::String("[redacted]".to_owned()),
+                    );
+                }
+                arguments.remove("_cua_browser_prepare_mcp_host_approved");
+                arguments.remove("_transport_session_id");
+            }
+            "browser_dialog" => {
+                if arguments.contains_key("prompt_text") {
+                    arguments.insert(
+                        "prompt_text".to_owned(),
+                        Value::String("[redacted]".to_owned()),
+                    );
+                }
+            }
+            "browser_set_input_files" => {
+                if let Some(count) = arguments
+                    .get("files")
+                    .and_then(Value::as_array)
+                    .map(Vec::len)
+                {
+                    arguments.insert("files".to_owned(), serde_json::json!({ "count": count }));
+                }
+            }
+            "browser_download" => {
+                arguments.remove("_cua_browser_download_mcp_host_approved");
+                if arguments.contains_key("destination_root") {
+                    arguments.insert(
+                        "destination_root".to_owned(),
+                        Value::String("[redacted]".to_owned()),
+                    );
+                }
+            }
+            "browser_pointer" => {}
+            _ => {}
         }
-        arguments.remove("_cua_browser_prepare_mcp_host_approved");
-        arguments.remove("_transport_session_id");
     }
     redacted
 }
@@ -587,6 +619,46 @@ mod capability_tests {
     }
 
     #[test]
+    fn browser_sensitive_recording_args_are_path_and_text_free() {
+        let dialog = recording_args_for(
+            "browser_dialog",
+            &serde_json::json!({"action": "accept", "prompt_text": "private reply"}),
+        );
+        assert_eq!(dialog["prompt_text"], "[redacted]");
+
+        let upload = recording_args_for(
+            "browser_set_input_files",
+            &serde_json::json!({"files": ["/private/one", "/private/two"]}),
+        );
+        assert_eq!(upload["files"], serde_json::json!({"count": 2}));
+
+        let download = recording_args_for(
+            "browser_download",
+            &serde_json::json!({
+                "destination_root": "/private/destination",
+                "_cua_browser_download_mcp_host_approved": true,
+            }),
+        );
+        assert_eq!(download["destination_root"], "[redacted]");
+        assert!(download
+            .get("_cua_browser_download_mcp_host_approved")
+            .is_none());
+
+        let serialized = serde_json::json!([dialog, upload, download]).to_string();
+        for forbidden in [
+            "private reply",
+            "/private/one",
+            "/private/two",
+            "/private/destination",
+        ] {
+            assert!(
+                !serialized.contains(forbidden),
+                "recording leaked {forbidden}"
+            );
+        }
+    }
+
+    #[test]
     fn existing_profile_prepare_is_a_private_consent_turn() {
         assert!(is_existing_profile_prepare(
             "browser_prepare",
@@ -671,6 +743,8 @@ mod capability_tests {
         "browser_type",
         "browser_dialog",
         "browser_set_input_files",
+        "browser_download",
+        "browser_pointer",
     ];
 
     /// All capability tokens in the canonical vocabulary. Any token
@@ -743,6 +817,10 @@ mod capability_tests {
         "browser.navigate",
         "browser.input.click",
         "browser.input.type",
+        "browser.input.files",
+        "browser.dialog",
+        "browser.download",
+        "browser.input.pointer",
         // driver self
         "driver.update_check",
         "driver.probe",

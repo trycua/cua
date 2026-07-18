@@ -57,6 +57,5 @@ if (sentinelMode) {
   window.addEventListener('contextmenu', event =>
     record('contextmenu', { x: event.clientX, y: event.clientY })
   );
-  ipcRenderer.on('cua-e2e-heartbeat', () => record('heartbeat'));
   setInterval(() => record('heartbeat'), 100);
 }

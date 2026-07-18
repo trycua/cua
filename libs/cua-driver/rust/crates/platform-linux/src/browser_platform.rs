@@ -1,6 +1,7 @@
 //! Linux identity and endpoint evidence for the first-class browser tools.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -142,6 +143,121 @@ fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     listeners.sort_unstable();
     listeners.dedup();
     Ok(listeners)
+}
+
+fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
+    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    let port = lines.next()?.parse::<u16>().ok()?;
+    let path = lines.next()?;
+    if lines.next().is_some() {
+        return None;
+    }
+    let instance = path.strip_prefix("/devtools/browser/")?;
+    (!instance.is_empty()
+        && instance
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
+    .then_some((port, path))
+}
+
+fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let relative = match product {
+        BrowserProduct::GoogleChrome => ".config/google-chrome",
+        BrowserProduct::MicrosoftEdge => ".config/microsoft-edge",
+        BrowserProduct::Chromium => ".config/chromium",
+        _ => return None,
+    };
+    Some(home.join(relative))
+}
+
+fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
+    let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).map_err(|_| {
+        refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("browser process {pid} is no longer available"),
+        )
+    })?;
+    let args = bytes
+        .split(|byte| *byte == 0)
+        .filter(|arg| !arg.is_empty())
+        .map(|arg| String::from_utf8_lossy(arg).into_owned())
+        .collect::<Vec<_>>();
+    let mut directories = Vec::new();
+    for (index, arg) in args.iter().enumerate() {
+        if let Some(path) = arg.strip_prefix("--user-data-dir=") {
+            if !path.is_empty() {
+                directories.push(PathBuf::from(path));
+            }
+        } else if arg == "--user-data-dir" {
+            if let Some(path) = args.get(index + 1).filter(|path| !path.is_empty()) {
+                directories.push(PathBuf::from(path));
+            }
+        }
+    }
+    directories.sort();
+    directories.dedup();
+    match directories.as_slice() {
+        [] => {
+            let Some(executable) = std::fs::read_link(format!("/proc/{pid}/exe"))
+                .ok()
+                .map(|path| path.to_string_lossy().into_owned())
+            else {
+                return Ok(None);
+            };
+            Ok(default_user_data_dir(browser_product(&executable)))
+        }
+        [path] if path.is_absolute() => Ok(Some(path.clone())),
+        [path] => {
+            let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).map_err(|_| {
+                refusal(
+                    BrowserRefusalCode::BrowserBindingStale,
+                    format!("browser process {pid} working directory is unavailable"),
+                )
+            })?;
+            Ok(Some(cwd.join(path)))
+        }
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "browser process has multiple distinct --user-data-dir arguments",
+        )),
+    }
+}
+
+fn active_port_endpoint(pid: i64) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+    let Some(user_data_dir) = user_data_dir_for_pid(pid)? else {
+        return Ok(None);
+    };
+    let text = match std::fs::read_to_string(user_data_dir.join("DevToolsActivePort")) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not read the browser's DevToolsActivePort file: {error}"),
+            ))
+        }
+    };
+    let Some((port, path)) = parse_devtools_active_port(&text) else {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+            "the browser's DevToolsActivePort file did not contain one exact browser endpoint",
+        ));
+    };
+    if !loopback_ports_for_pid(pid)?.contains(&port) {
+        return Ok(None);
+    }
+    Ok(Some(OwnedEndpoint {
+        ws_url: format!("ws://127.0.0.1:{port}{path}"),
+        http_port: Some(port),
+        ownership: EndpointOwnershipProof {
+            method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
+            owner_pid: pid,
+            detail: Some(
+                "exact /proc argv profile port file plus loopback socket inode owner".to_owned(),
+            ),
+        },
+    }))
 }
 
 fn process_identity(pid: i64) -> Result<(u64, Option<String>), BrowserRefusal> {
@@ -424,6 +540,9 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        if let Some(endpoint) = active_port_endpoint(pid)? {
+            return Ok(Some(endpoint));
+        }
         let ports = tokio::task::spawn_blocking(move || loopback_ports_for_pid(pid))
             .await
             .map_err(|error| {
@@ -452,6 +571,9 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        if let Some(endpoint) = active_port_endpoint(pid)? {
+            return Ok(Some(endpoint));
+        }
         let ports = tokio::task::spawn_blocking(move || loopback_ports_for_pid(pid))
             .await
             .map_err(|error| {
@@ -577,6 +699,11 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 
         let deadline = std::time::Instant::now() + Duration::from_secs(6);
         let endpoint_result = loop {
+            match active_port_endpoint(request.pid) {
+                Ok(Some(endpoint)) => break Ok(endpoint),
+                Ok(None) => {}
+                Err(error) => break Err(error),
+            }
             let ports = match tokio::task::spawn_blocking(move || {
                 loopback_ports_for_pid(request.pid)
             })
@@ -826,5 +953,25 @@ mod tests {
             Some(9222)
         );
         assert_eq!(loopback_websocket_port("ws://0.0.0.0:9222/devtools"), None);
+    }
+
+    #[test]
+    fn active_port_parser_requires_one_exact_browser_path() {
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/browser/abc-123\n"),
+            Some((9222, "/devtools/browser/abc-123"))
+        );
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/browser\n"),
+            None
+        );
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/page/abc\n"),
+            None
+        );
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/browser/../page\n"),
+            None
+        );
     }
 }

@@ -128,14 +128,18 @@ function createWindow() {
         mainWindow.setTitle(fixedTitle);
         if (sentinelMode) {
           if (customCuaCompositor && !compositorHeartbeatTimer) {
-            // Chromium's renderer timer queue can pause under the deliberately
-            // minimal nested compositor even while the surface keeps painting.
-            // Drive the heartbeat over renderer IPC in that environment: the
-            // preload must still service the message before it reaches the
-            // journal, so this remains a renderer-responsiveness oracle.
+            // The deliberately minimal nested compositor can keep presenting
+            // the renderer's committed surface while Chromium pauses renderer
+            // timers and IPC dispatch. Pixel capture is therefore the renderer
+            // / compositor oracle in this lane; keep a separate main-process
+            // heartbeat to prove the sentinel application itself stays live.
             compositorHeartbeatTimer = setInterval(() => {
-              if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('cua-e2e-heartbeat');
+              if (mainWindow && !mainWindow.isDestroyed() && sentinelJournalPath) {
+                fs.appendFileSync(sentinelJournalPath, `${JSON.stringify({
+                  kind: 'heartbeat',
+                  at_ms: Date.now(),
+                  source: 'electron-main',
+                })}\n`, 'utf8');
               }
             }, 100);
           }

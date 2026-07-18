@@ -85,8 +85,8 @@ fn get_config_and_check_permissions() {
     }
 
     // set_config — change max_image_dimension and verify get_config reflects it.
-    // capture_mode / capture_scope are no longer settings on macOS (per-call
-    // params now — modality-ladder refactor); max_image_dimension is the
+    // capture_mode / capture_scope are no longer persistent settings on macOS
+    // (capture_scope is per-session); max_image_dimension is the
     // cross-platform persisted field this exercises.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":4,"method":"tools/call",

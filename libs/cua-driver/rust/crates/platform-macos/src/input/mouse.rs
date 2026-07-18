@@ -87,6 +87,45 @@ pub fn click_at_xy_desktop(x: f64, y: f64, count: usize, button: &str) -> anyhow
     Ok(())
 }
 
+/// Move the real hardware cursor to a logical desktop point.
+pub fn move_cursor_desktop(x: f64, y: f64) -> anyhow::Result<()> {
+    use core_graphics::display::CGDisplay;
+    let point = CGPoint::new(x, y);
+    CGDisplay::warp_mouse_cursor_position(point)
+        .map_err(|error| anyhow::anyhow!("CGWarpMouseCursorPosition failed: {error:?}"))?;
+    unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
+    Ok(())
+}
+
+/// Scroll the foreground desktop surface at a logical screen point through the
+/// global HID queue. Mirrors computer-server's pynput wheel behavior while
+/// preserving cua-driver's explicit direction/amount contract.
+pub fn scroll_wheel_desktop(
+    x: f64,
+    y: f64,
+    delta_y_per_tick: i32,
+    delta_x_per_tick: i32,
+    ticks: usize,
+) -> anyhow::Result<()> {
+    use core_graphics::event::{CGEventTapLocation, ScrollEventUnit};
+
+    move_cursor_desktop(x, y)?;
+    std::thread::sleep(std::time::Duration::from_millis(40));
+    for _ in 0..ticks.max(1) {
+        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+            .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+        let wheel_y = (delta_y_per_tick / 120).clamp(-10, 10);
+        let wheel_x = (delta_x_per_tick / 120).clamp(-10, 10);
+        let event =
+            CGEvent::new_scroll_event(source, ScrollEventUnit::LINE, 2, wheel_y, wheel_x, 0)
+                .map_err(|_| anyhow::anyhow!("CGEvent::new_scroll_event failed"))?;
+        unsafe { CGEventSetLocation(event.as_ptr() as *mut std::ffi::c_void, x, y) };
+        event.post(CGEventTapLocation::HID);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    }
+    Ok(())
+}
+
 /// Click one exact desktop point, then restore the user's cursor position.
 ///
 /// This is intentionally narrower than the public desktop click path. It is

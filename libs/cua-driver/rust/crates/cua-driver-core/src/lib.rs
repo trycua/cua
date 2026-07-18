@@ -34,6 +34,7 @@ pub fn embedded_mode() -> bool {
 
 pub mod browser;
 pub mod capture_mode;
+pub mod capture_scope;
 pub mod cdp;
 pub mod element_cache;
 pub mod element_token;

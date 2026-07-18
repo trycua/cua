@@ -95,7 +95,9 @@ impl ToolDef {
 ///   `system.permissions.tcc.accessibility`,
 ///   `system.permissions.tcc.screen_recording`
 /// - `system.config.read`, `system.config.write`
-/// - `session.lifecycle.start`, `session.lifecycle.end`
+/// - `session.lifecycle.start`, `session.lifecycle.end`,
+///   `session.capture_scope`, `session.capture_scope.read`,
+///   `session.capture_scope.escalate`
 /// - `agent_cursor.move`, `agent_cursor.set_enabled`,
 ///   `agent_cursor.set_motion`, `agent_cursor.set_style`,
 ///   `agent_cursor.state`
@@ -141,13 +143,10 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "mouse_button_up" => &["input.pointer.button"],
         "scroll" => &["input.pointer.scroll", "accessibility.element_tokens"],
         "move_cursor" => &[
-            // Visual overlay move, not a real OS pointer move on
-            // macOS/Windows — see SKILL.md. Surfaced as
-            // `agent_cursor.move` because the canonical name on the
-            // overlay side is "agent cursor"; `input.pointer.move` is
-            // intentionally omitted to avoid claiming we shift the
-            // real cursor.
+            // Window scope moves the agent overlay; explicit desktop scope
+            // moves the real OS pointer.
             "agent_cursor.move",
+            "input.pointer.move",
         ],
 
         // ── input.keyboard ───────────────────────────────────────────
@@ -237,7 +236,9 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "set_config" => &["system.config.write"],
 
         // ── sessions ─────────────────────────────────────────────────
-        "start_session" => &["session.lifecycle.start"],
+        "start_session" => &["session.lifecycle.start", "session.capture_scope"],
+        "escalate_session" => &["session.capture_scope.escalate"],
+        "get_session_state" => &["session.capture_scope.read"],
         "end_session" => &["session.lifecycle.end"],
 
         // ── agent cursor ─────────────────────────────────────────────
@@ -327,8 +328,12 @@ impl ToolRegistry {
     /// (`start_session` / `end_session`). Call alongside
     /// `register_recording_tools` from each platform's `register_all`.
     pub fn register_session_tools(&mut self) {
-        use crate::session_tools::{EndSessionTool, StartSessionTool};
+        use crate::session_tools::{
+            EndSessionTool, EscalateSessionTool, GetSessionStateTool, StartSessionTool,
+        };
         self.register(Box::new(StartSessionTool));
+        self.register(Box::new(EscalateSessionTool));
+        self.register(Box::new(GetSessionStateTool));
         self.register(Box::new(EndSessionTool));
     }
 
@@ -385,9 +390,6 @@ impl ToolRegistry {
 
     /// Invoke a tool by name and (if recording is enabled) write its result to disk.
     pub async fn invoke(&self, name: &str, args: Value) -> ToolResult {
-        // Capture start time for recording timestamps.
-        let start_ms = now_ms();
-
         // Deprecated alias: `type_text_chars` → `type_text`.  Swift's
         // ToolRegistry.swift keeps the same alias (with stderr warning) for
         // backwards compatibility with hermes-agent builds that still emit
@@ -401,13 +403,24 @@ impl ToolRegistry {
             other => other,
         };
 
+        let Some(tool) = self.tools.get(resolved_name) else {
+            return ToolResult::error(format!("Unknown tool: {name}"));
+        };
+        // Reject modality violations before reserving a recording turn. A
+        // rejected action has no before/after evidence and must not leave a
+        // pending recorder entry behind.
+        if let Err(violation) = crate::capture_scope::enforce_tool(resolved_name, &args) {
+            let structured =
+                violation.as_json(args.get("session").and_then(Value::as_str).unwrap_or(""));
+            return ToolResult::error(violation.message).with_structured(structured);
+        }
+
+        // Capture start time for recording timestamps only after validation.
+        let start_ms = now_ms();
+
         // Reserve and capture the turn before dispatch so recorded evidence
         // shows the application immediately before the action changed it.
-        let should_record = self
-            .tools
-            .get(resolved_name)
-            .map(|tool| !tool.def().read_only)
-            .unwrap_or(false)
+        let should_record = !tool.def().read_only
             && !matches!(
                 resolved_name,
                 "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
@@ -426,10 +439,7 @@ impl ToolRegistry {
             })
             .flatten();
 
-        let result = match self.tools.get(resolved_name) {
-            Some(tool) => tool.invoke(args.clone()).await,
-            None => return ToolResult::error(format!("Unknown tool: {name}")),
-        };
+        let result = tool.invoke(args.clone()).await;
         // Use the original name for downstream code paths below so the
         // exit-code matching and recording paths keep treating the alias
         // as a distinct call site.
@@ -719,6 +729,8 @@ mod capability_tests {
         "set_config",
         // sessions
         "start_session",
+        "escalate_session",
+        "get_session_state",
         "end_session",
         // agent cursor
         "set_agent_cursor_enabled",
@@ -797,6 +809,9 @@ mod capability_tests {
         // sessions
         "session.lifecycle.start",
         "session.lifecycle.end",
+        "session.capture_scope",
+        "session.capture_scope.read",
+        "session.capture_scope.escalate",
         // agent cursor
         "agent_cursor.move",
         "agent_cursor.set_enabled",

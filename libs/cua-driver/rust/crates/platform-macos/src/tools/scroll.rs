@@ -92,6 +92,7 @@ fn def() -> &'static ToolDef {
                 "element_token": { "type": "string", "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded. Routes through the pixel-wheel path at the element's center." },
                 "x": { "type": "number", "description": "Window-local screenshot X (top-left origin of the PNG from get_window_state). With `y`, routes through the pixel-wheel path at this point — use for a scrollable surface that isn't in the AX tree. Requires window_id to anchor the window→screen conversion." },
                 "y": { "type": "number", "description": "Window-local screenshot Y. See `x`." },
+                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with x,y and no pid/window_id for native get_desktop_state screenshot coordinates." },
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false
@@ -111,6 +112,58 @@ impl Tool for ScrollTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        if args.opt_str("scope").as_deref() == Some("desktop")
+            && args.get("pid").is_none()
+            && args.get("window_id").is_none()
+        {
+            let direction = match args.require_str("direction") {
+                Ok(value) => value,
+                Err(error) => return error,
+            };
+            let x = match args.require_f64("x") {
+                Ok(value) => value,
+                Err(error) => return error,
+            };
+            let y = match args.require_f64("y") {
+                Ok(value) => value,
+                Err(error) => return error,
+            };
+            let by = args.str_or("by", "line");
+            let amount = args.u64_or("amount", 3).clamp(1, 50) as usize;
+            let step = if by == "page" {
+                WHEEL_STEP_PAGE_PX
+            } else {
+                WHEEL_STEP_LINE_PX
+            };
+            let (delta_y, delta_x) = match direction.as_str() {
+                "down" => (-step, 0),
+                "up" => (step, 0),
+                "right" => (0, -step),
+                "left" => (0, step),
+                other => {
+                    return ToolResult::error(format!(
+                        "unknown scroll direction '{other}'; expected up, down, left, or right"
+                    ))
+                }
+            };
+            let (x, y) = super::desktop_screenshot_point(x, y).await;
+            let result = tokio::task::spawn_blocking(move || {
+                crate::input::mouse::scroll_wheel_desktop(x, y, delta_y, delta_x, amount)
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Scrolled desktop {direction} by {by} × {amount} at ({x:.1}, {y:.1})."
+                ))
+                .with_structured(serde_json::json!({
+                    "scope": "desktop",
+                    "path": "hid",
+                    "effect": "unverifiable"
+                })),
+                Ok(Err(error)) => ToolResult::error(format!("desktop scroll failed: {error}")),
+                Err(error) => ToolResult::error(format!("desktop scroll task failed: {error}")),
+            };
+        }
         let pid = match args.require_i32("pid") {
             Ok(v) => v,
             Err(e) => return e,

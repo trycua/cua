@@ -180,29 +180,17 @@ impl ResizeRegistry {
 }
 
 /// Runtime-mutable driver configuration persisted across calls within a session.
-///
-/// `capture_mode` is per-call now (the `capture_mode` param). `capture_scope` is
-/// re-introduced here as a GLOBAL setting: it gates `get_desktop_state` (a
-/// full-display capture has no pid/window_id and therefore no per-call scope to
-/// key on — the only coherent gate is a global one), matching the Windows/Linux
-/// `DriverConfig.capture_scope`. Per-call tools (`click`/`scroll`) still accept a
-/// per-call `scope`; this global is the baseline the no-args desktop-capture
-/// tool reads. Default `"window"`.
 pub struct DriverConfig {
     /// Max screenshot dimension (0 = no limit). Applied during screenshot/zoom.
     /// Default 1568 matches Swift's `CuaDriverConfig.defaultMaxImageDimension` —
     /// the long edge is downscaled to this before encoding.
     pub max_image_dimension: u32,
-    /// Capture scope: `"window"` (default) or `"desktop"`. Gates
-    /// `get_desktop_state` (full-display capture requires `"desktop"`).
-    pub capture_scope: String,
 }
 
 impl Default for DriverConfig {
     fn default() -> Self {
         Self {
             max_image_dimension: 1568,
-            capture_scope: "window".to_owned(),
         }
     }
 }
@@ -228,20 +216,34 @@ pub fn load_driver_config() -> DriverConfig {
         Ok(v) => v,
         Err(_) => return cfg,  // malformed file — use defaults
     };
-    // `capture_mode` is per-call now; an old on-disk `capture_mode` key is
-    // silently ignored. `capture_scope` IS a global setting again (gates
-    // get_desktop_state) — load it, accepting only window|desktop.
+    // `capture_mode` is per-call now; old on-disk `capture_mode` and
+    // `capture_scope` keys are intentionally inert.
     if let Some(v) = json.get("max_image_dimension").and_then(|v| v.as_u64()) {
         if let Ok(v32) = u32::try_from(v) {
             cfg.max_image_dimension = v32;
         }
     }
-    if let Some(s) = json.get("capture_scope").and_then(|v| v.as_str()) {
-        if s == "window" || s == "desktop" {
-            cfg.capture_scope = s.to_owned();
-        }
-    }
     cfg
+}
+
+/// Convert native pixels from `get_desktop_state` into the logical point space
+/// used by CoreGraphics input APIs. Retina scaled modes cannot rely on the
+/// nominal backing factor alone, so derive the ratio from the actual PNG.
+pub async fn desktop_screenshot_point(x: f64, y: f64) -> (f64, f64) {
+    let ratio = tokio::task::spawn_blocking(|| {
+        let logical_w = get_screen_size::main_screen_size().map(|(w, _, _)| w as f64);
+        let shot_w = crate::capture::screenshot_display_bytes()
+            .ok()
+            .and_then(|png| crate::capture::png_dimensions(&png).ok())
+            .map(|(w, _)| w as f64);
+        match (shot_w, logical_w) {
+            (Some(sw), Some(lw)) if lw > 0.0 && sw > lw => sw / lw,
+            _ => 1.0,
+        }
+    })
+    .await
+    .unwrap_or(1.0);
+    (x / ratio, y / ratio)
 }
 
 /// Persist a single key/value pair to `~/.cua-driver/config.json`.

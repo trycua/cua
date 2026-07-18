@@ -307,12 +307,11 @@ addressing params are a shared cross-platform contract — see `SKILL.md` →
 - **`session` always worked on macOS;** the cross-platform change is that
   Windows/Linux stopped *rejecting* it. No macOS-side change to how you
   pass it.
-- **`scope`** (`window` default / `desktop`) is a **macOS-specific per-call
-  param** on the pointer tools — pass `scope:"desktop"` with `x,y` and no
-  pid/window_id for a screen-absolute click. Windows and Linux support the
-  same windowless capability but gate it on the persisted `capture_scope`
-  config instead (`set_config capture_scope=desktop`), so they have no
-  per-call `scope` param. Unifying the knob is a tracked follow-up.
+- **`scope`** (`window` / `desktop`) selects the action form uniformly on all
+  platforms. Pass `scope:"desktop"` with no pid/window_id for screen-absolute
+  pointer actions or foreground keyboard actions. The session's immutable
+  `capture_scope` policy must permit that form; set it with `start_session`,
+  never persistent config.
 
 ### Canvases, viewports, games (Blender, Unity, GHOST, Qt, wxWidgets)
 

@@ -404,11 +404,11 @@ When a cua-driver call surprises you, diagnose cua-driver first:
   regardless of what you pass.
 - **`get_desktop_state` returns `desktop_scope_disabled`?** That's
   intended: full-display capture is a **desktop-scope** operation, gated
-  on the global `capture_scope`. It's `"window"` by default — so to verify
-  a specific window use `get_window_state(pid, window_id)` (works
-  backgrounded), and only use `get_desktop_state` after
-  `set_config capture_scope=desktop` (the same opt-in that enables
-  window-less screen-absolute `click`/`scroll`). Don't reach for
+  by the caller-declared session policy. To verify a specific window use
+  `get_window_state(pid, window_id)` (works backgrounded). Use
+  `get_desktop_state` only in a strict desktop session or after explicitly
+  escalating an `auto` session once the window ladder is exhausted. Desktop
+  actions pass `scope:"desktop"` with no pid/window_id. Don't reach for
   `get_desktop_state` as a casual screenshot — it's the capture surface for
   desktop-scope coordinate loops, not window inspection.
 - **`Calc display stuck at 0 after my clicks`?** Almost always

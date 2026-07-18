@@ -1424,7 +1424,7 @@ pub fn scroll_at(
 ) -> anyhow::Result<()> {
     let direction = direction.to_string();
     with_libei_fallback(
-        || scroll_vptr(window_id, point, &direction, amount),
+        || scroll_vptr(Some(window_id), point, &direction, amount),
         || {
             libei_wait_scroll_ready()?;
             activate_window_for_input(window_id)?;
@@ -1436,14 +1436,32 @@ pub fn scroll_at(
     )
 }
 
+/// Scroll at a desktop-absolute point without activating a named toplevel.
+pub fn scroll_desktop(
+    x: i32,
+    y: i32,
+    direction: &str,
+    amount: u32,
+) -> anyhow::Result<()> {
+    let direction = direction.to_string();
+    with_libei_fallback(
+        || scroll_vptr(None, Some((x, y)), &direction, amount),
+        || {
+            libei_wait_scroll_ready()?;
+            libei_move_absolute(x, y)?;
+            libei_scroll(&direction, amount)
+        },
+    )
+}
+
 /// wlroots virtual-pointer implementation of [`scroll`].
 fn scroll_vptr(
-    window_id: u64,
+    window_id: Option<u64>,
     point: Option<(i32, i32)>,
     direction: &str,
     amount: u32,
 ) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(Some(window_id))?;
+    let mut sess = open_vptr_session(window_id)?;
     if let Some((x, y)) = point {
         let px = x.clamp(0, (sess.output_w as i32).saturating_sub(1)) as u32;
         let py = y.clamp(0, (sess.output_h as i32).saturating_sub(1)) as u32;
@@ -1549,7 +1567,7 @@ pub fn drag(
     button: u8,
 ) -> anyhow::Result<()> {
     with_libei_fallback(
-        || drag_vptr(window_id, from_x, from_y, to_x, to_y, steps, button),
+        || drag_vptr(Some(window_id), from_x, from_y, to_x, to_y, steps, button),
         || {
             libei_wait_pointer_ready()?;
             activate_window_for_input(window_id)?;
@@ -1558,10 +1576,8 @@ pub fn drag(
     )
 }
 
-/// wlroots virtual-pointer implementation of [`drag`].
-#[allow(clippy::too_many_arguments)]
-fn drag_vptr(
-    window_id: u64,
+/// Drag through desktop-absolute points without activating a named toplevel.
+pub fn drag_desktop(
     from_x: i32,
     from_y: i32,
     to_x: i32,
@@ -1569,7 +1585,27 @@ fn drag_vptr(
     steps: u32,
     button: u8,
 ) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(Some(window_id))?;
+    with_libei_fallback(
+        || drag_vptr(None, from_x, from_y, to_x, to_y, steps, button),
+        || {
+            libei_wait_pointer_ready()?;
+            libei_drag(from_x, from_y, to_x, to_y, steps, button)
+        },
+    )
+}
+
+/// wlroots virtual-pointer implementation of [`drag`].
+#[allow(clippy::too_many_arguments)]
+fn drag_vptr(
+    window_id: Option<u64>,
+    from_x: i32,
+    from_y: i32,
+    to_x: i32,
+    to_y: i32,
+    steps: u32,
+    button: u8,
+) -> anyhow::Result<()> {
+    let mut sess = open_vptr_session(window_id)?;
     std::thread::sleep(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
     let btn = evdev_pointer_button(button);

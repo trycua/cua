@@ -12,7 +12,7 @@ description: Reference for every MCP tool Cua Driver exposes
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`cua-driver` exposes 47 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 49 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -292,7 +292,8 @@ When `from_zoom` is true, coordinates are in the last zoom image for this pid; t
 - `from_y` (number, required): Drag-start Y in window-local screenshot pixels. Top-left origin.
 - `from_zoom` (boolean, optional): When true, coordinates are in the last zoom image for this pid; driver maps back to window coordinates.
 - `modifier` (array of string, optional): Modifier keys held across the entire gesture: cmd/shift/option/ctrl.
-- `pid` (integer, required): Target process ID.
+- `pid` (integer, optional): Target process ID.
+- `scope` (string, optional): Use desktop with no pid/window_id for native get_desktop_state screenshot coordinates.
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `steps` (integer, optional): Number of intermediate mouseDragged events linearly interpolated along the path. Default: 20.
 - `to_x` (number, required): Drag-end X in window-local screenshot pixels.
@@ -300,7 +301,7 @@ When `from_zoom` is true, coordinates are in the last zoom image for this pid; t
 - `window_id` (integer, optional): CGWindowID for the window the pixel coordinates were measured against. Optional — when omitted the driver picks the frontmost window of pid.
 
 ```json
-{"from_x":100,"from_y":200,"pid":844,"to_x":100,"to_y":200}
+{"from_x":100,"from_y":200,"to_x":100,"to_y":200}
 ```
 
 ### `type_text`
@@ -317,7 +318,8 @@ WEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, X's comp
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": AX insert, then CGEvent keystrokes if needed — no focus steal; the driver verifies via an AXValue read-back and reports `verified`. "foreground": briefly front the window, type, restore the prior frontmost — the explicit last resort for focus-sensitive surfaces (e.g. WhatsApp/Catalyst) where background keystrokes don't land. Re-call with "foreground" when a background attempt returns `verified:false` and a screenshot shows the text didn't appear.
 - `element_index` (integer, optional): Element index from last get_window_state. Directs the write to a specific field. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with "Missing required integer field: pid"; it is not a silent no-op.
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit "stale" error if the snapshot has been superseded.
-- `pid` (integer, required): Target process ID.
+- `pid` (integer, optional): Target process ID.
+- `scope` (string, optional): Use desktop with no pid/window_id to type into the frontmost application.
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `text` (string, required): Text to insert at the target's cursor.
 - `window_id` (integer, optional): CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it).
@@ -325,7 +327,7 @@ WEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, X's comp
 - `y` (number, optional): Screenshot-pixel Y of the field (see x).
 
 ```json
-{"pid":844,"text":"hello"}
+{"text":"hello"}
 ```
 
 ### `press_key`
@@ -343,14 +345,15 @@ A key press is never driver-verifiable → effect:"unverifiable"; confirm via sc
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit "stale" error if the snapshot has been superseded.
 - `key` (string, required): Key name: return, tab, escape, up, down, etc.
 - `modifiers` (array of string, optional): Modifier keys: cmd, shift, option/alt, ctrl, fn.
-- `pid` (integer, required)
+- `pid` (integer, optional)
+- `scope` (string, optional): Use desktop with no pid/window_id to send the key to the frontmost application.
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `window_id` (integer, optional): Target window. Required for delivery_mode:"foreground". Does NOT itself raise the window — raising is gated on delivery_mode.
 - `x` (number, optional): Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index.
 - `y` (number, optional): Screenshot-pixel Y (see x).
 
 ```json
-{"key":"return","pid":844}
+{"key":"return"}
 ```
 
 ### `hotkey`
@@ -367,14 +370,15 @@ Recognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. Non-modi
 
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
 - `keys` (array of string, required): Modifier(s) and one non-modifier key, e.g. ["cmd", "c"].
-- `pid` (integer, required): Target process ID.
+- `pid` (integer, optional): Target process ID.
+- `scope` (string, optional): Use desktop with no pid/window_id to send the chord to the frontmost application.
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `window_id` (integer, optional): Target window. Required for delivery_mode:"foreground" (the NSMenu activation needs a window). Does NOT itself raise the window — raising is gated on delivery_mode.
 - `x` (number, optional): Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the combo (so e.g. Cmd+V pastes into that field). Pass with y. Use for Chromium/Electron surfaces the background combo can't reach.
 - `y` (number, optional): Screenshot-pixel Y (see x).
 
 ```json
-{"keys":["cmd","c"],"pid":844}
+{"keys":["cmd","c"]}
 ```
 
 ### `set_value`
@@ -419,6 +423,7 @@ Mapping: by='page' → larger step; by='line' → smaller step; amount = number 
 - `element_index` (integer, optional): Element from last get_window_state. Routes through the pixel-wheel path AT this element's center — use it to scroll a nested overflow region you located in the AX tree.
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit "stale" error if the snapshot has been superseded. Routes through the pixel-wheel path at the element's center.
 - `pid` (integer, optional)
+- `scope` (string, optional): Use desktop with x,y and no pid/window_id for native get_desktop_state screenshot coordinates.
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `window_id` (integer, optional)
 - `x` (number, optional): Window-local screenshot X (top-left origin of the PNG from get_window_state). With `y`, routes through the pixel-wheel path at this point — use for a scrollable surface that isn't in the AX tree. Requires window_id to anchor the window→screen conversion.
@@ -430,11 +435,12 @@ Mapping: by='page' → larger step; by='line' → smaller step; amount = number 
 
 ### `move_cursor`
 
-Move the agent cursor overlay to (x, y). Does NOT move the real mouse cursor — the user's cursor stays where it is. Useful for showing the agent's attention without interrupting the user.
+Move a cursor to (x, y). In window scope (default), moves only the agent cursor overlay. With scope=desktop, moves the real OS pointer in native get_desktop_state screenshot coordinates.
 
 **Arguments:**
 
 - `cursor_id` (string, optional): Cursor instance to move. Default: 'default'.
+- `scope` (string, optional)
 - `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 - `x` (number, required)
 - `y` (number, required)
@@ -560,13 +566,12 @@ Caveats:
 
 ### `set_config`
 
-Update cua-driver-rs configuration. Changes to max_image_dimension and capture_scope take effect immediately. The experimental_pip keys are persisted to ~/.cua-driver/config.json and take effect on the next daemon restart (the PiP backend is initialised once at startup).
+Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately. The experimental_pip keys are persisted to ~/.cua-driver/config.json and take effect on the next daemon restart (the PiP backend is initialised once at startup).
 
-Note: capture_mode is a per-call param (on get_window_state / click), not a stored setting. capture_scope IS a global setting: it gates get_desktop_state (full-display capture requires capture_scope=desktop).
+Note: capture_mode is a per-call param (on get_window_state / click), not a stored setting. Capture scope is selected by start_session, not set_config.
 
 **Arguments:**
 
-- `capture_scope` (string, optional): Capture scope: "window" (default) or "desktop". Desktop scope enables get_desktop_state (full-display capture) and window-less screen-absolute click/scroll. Global setting; takes effect immediately.
 - `experimental_pip` (boolean, optional): Enable the experimental picture-in-picture preview window. Applies on next daemon restart.
 - `experimental_pip_geometry` (string, optional): PiP window size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart.
 - `key` (string, optional): Name of a single config field to write (&#123;key, value&#125; shape, matching the CLI `config set` and the Windows/Linux tools). Pair with `value`. Equivalent to passing the field directly.
@@ -575,10 +580,11 @@ Note: capture_mode is a per-call param (on get_window_state / click), not a stor
 
 ### `start_session`
 
-Declare a session — a named, color-coded identity for THIS agent run. Pass a stable `session` id; the agent cursor, per-session config, and recording all key on it, and it follows the run across any apps/windows. The cursor's color is derived from the id, so distinct runs are visually distinct. A cursor is shown only for a declared session — call this (or pass `session` on your first action) to opt in. Idempotent: re-calling with the same id just refreshes its idle-TTL. End it with `end_session` (or let the idle-TTL reclaim it). Concurrent runs/subagents each pass their own `session` to get their own cursor.
+Declare a session — a named, color-coded identity for THIS agent run. Pass a stable `session` id and choose capture_scope=auto|window|desktop; the agent cursor, capture policy, per-session config, and recording all key on it, and it follows the run across any apps/windows. The cursor's color is derived from the id, so distinct runs are visually distinct. A cursor is shown only for a declared session — call this (or pass `session` on your first action) to opt in. Idempotent: re-calling with the same id just refreshes its idle-TTL. End it with `end_session` (or let the idle-TTL reclaim it). Concurrent runs/subagents each pass their own `session` to get their own cursor.
 
 **Arguments:**
 
+- `capture_scope` (string, optional): Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; window and desktop are strict. Immutable for the live session.
 - `session` (string, required): Stable session id for this run (e.g. "research-run-1").
 
 ```json
@@ -900,4 +906,30 @@ Perform hover, right-click, double-click, scroll, or drag in an exactly-bound br
 
 ```json
 {"action":"hover","session":"example","tab_id":"example","target_id":"example"}
+```
+
+### `escalate_session`
+
+Unlock the desktop phase of an auto capture-scope session after the window action ladder has been exhausted and verified. This is a one-way transition for the live session and records a bounded reason.
+
+**Arguments:**
+
+- `detail` (string, optional): Optional bounded diagnostic detail. Never use secrets or page content.
+- `reason` (string, required)
+- `session` (string, required)
+
+```json
+{"reason":"ax_tree_pixel_mismatch","session":"example"}
+```
+
+### `get_session_state`
+
+Read the live session's capture policy and effective scope.
+
+**Arguments:**
+
+- `session` (string, required)
+
+```json
+{"session":"example"}
 ```

@@ -11,8 +11,8 @@
 //!     visible to later calls on the SAME driver within the session.
 //!
 //! Uses `max_image_dimension` as the persisted key. `capture_mode` /
-//! `capture_scope` are NO LONGER settings (they are per-call params now —
-//! the modality-ladder refactor), so `max_image_dimension` is the remaining
+//! `capture_scope` are NO LONGER settings (`capture_scope` is per-session), so
+//! `max_image_dimension` is the remaining
 //! disk-persisted config field and the right probe for this transport behavior.
 //!
 //! Both tests are `#[ignore]`: they mutate the real on-disk config, so they

@@ -1,11 +1,11 @@
 ---
-title: "Computer-Use 2.0"
-description: "What Cua refers to as Computer-Use 2.0: an agent operating a real computer through code, structured tool calls, and the graphical interface."
+title: 'What is computer use?'
+description: 'Computer use lets AI agents operate real computers through code, structured tools, and graphical interfaces. Learn how the three action surfaces work together.'
 ---
 
-# Computer-Use 2.0
+**Computer use** is the ability of an AI agent to operate a real computer and complete work across applications. A computer-use agent can inspect the computer's current state, choose an action, observe the result, and continue until it reaches a goal.
 
-What we refer to as **Computer-Use 2.0** is an AI agent operating a real computer by choosing among three action surfaces: writing and running code, calling tools and APIs, and driving the graphical interface a person would use. The older screenshot-and-click loop still matters as the UI surface inside a broader model of how agents get work done on computers.
+The term originally described agents that interpreted screenshots and controlled a graphical user interface (GUI) with mouse and keyboard actions. Cua uses **Computer-Use 2.0** for a broader model: an agent chooses among writing and running code, calling structured tools and APIs, and driving the same graphical interface a person would use. The screenshot-and-click loop remains important as one action surface inside the larger system.
 
 ## Three action surfaces
 
@@ -20,6 +20,8 @@ On the **UI automation surface**, the agent clicks, types, scrolls, and presses 
 A capable agent moves between these surfaces during a single task, choosing the one that fits the next piece of work. Code and structured tool calls are usually the right fit when the job is repeatable or text-heavy, especially when the system already exposes a clear interface. UI automation becomes the better choice when the work depends on visual state or when the application is unfamiliar; it is also the fallback when there is no useful API and the path exists only inside the interface.
 
 The skill is the judgment behind that choice. An agent that edits a file with code, checks account state through an API, and then changes a setting in a desktop app is still doing one computer task; it is simply using different action surfaces as the task moves through different kinds of state.
+
+Computer use is most valuable when a task crosses those boundaries. Browser automation can be enough for a stable web workflow, and an API is usually best for a well-defined integration. A computer-use agent becomes useful when the task also depends on visual state, native applications, signed-in sessions, or software that exposes no suitable API.
 
 ## The UI automation loop
 
@@ -36,3 +38,15 @@ You bring the agent, which already handles coding and tool-use on its own. Cua g
 **Cua Driver** drives the GUI of a real machine you already have, whether that machine runs macOS, Windows, or Linux. It is the right shape when the agent needs to work with local applications, signed-in accounts, existing files, or machine state that already lives on that computer.
 
 **Cua Sandbox** is a fresh isolated cloud computer where the agent can run code and drive the GUI together. It is a full computer with all three action surfaces available inside the same environment rather than a remote desktop, which matters when the task needs both programmatic work and visible interaction without touching your local machine. The agent brings the model and its reasoning; Cua provides the computer where that reasoning can turn into action.
+
+## Safety and isolation
+
+Computer-use agents can affect the same files, accounts, and applications as a person, so the environment and permissions are part of the system design. Prefer the least privilege needed for the task, require confirmation for consequential actions, and keep sensitive or untrusted work isolated from a personal computer.
+
+Cua Driver exposes [permission policies](/concepts/how-permission-policies-work) for restricting what an agent can do on an existing machine. Cua Sandbox provides an [isolated computer](/concepts/how-sandboxes-work) whose lifecycle and credentials can be scoped to the task.
+
+## Start building
+
+- [Drive your first application](/tutorials/drive-your-first-app) on an existing macOS, Windows, or Linux computer.
+- [Start your first cloud sandbox](/tutorials/your-first-cloud-sandbox) for an isolated Linux computer.
+- [Install Cua Driver](/how-to-guides/driver/install) and connect it to an agent you already use.

@@ -48,6 +48,17 @@ A daemon drives one physical machine. Multiple MCP clients can connect at the sa
 
 Session identity solves a narrower state problem. When a proxy starts, it mints a session identity and stamps forwarded calls with it. The daemon uses that identity to scope mutable state to one client lifetime. Recording ownership, per-session config overrides, and the agent-cursor overlay are all keyed by session.
 
+<VideoDemo
+  className="my-8"
+  src="https://trycua.github.io/assets/videos/cua-driver/windows-hermes-four-agent-windows.mp4"
+  poster="https://trycua.github.io/assets/posters/cua-driver/windows-hermes-four-agent-windows.jpg"
+  title="Four agent sessions share one Windows desktop"
+  sourceUrl="https://x.com/francedot/status/2061706670208897279"
+>
+  Four Hermes agents operate four app windows. Each session has its own cursor overlay, while all
+  four sessions still share the same desktop.
+</VideoDemo>
+
 Cleanup follows the proxy connection, not a final message. The proxy keeps a long-lived control connection open to the daemon. When the proxy exits, even from an ungraceful kill, the kernel closes that connection. The daemon sees EOF and removes state owned by that session. This prevents stale recordings, cursors, and temporary config overrides.
 
 ## Lifetimes and memory

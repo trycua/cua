@@ -30,7 +30,7 @@
 //	@securityDefinitions.apikey	BearerAuth
 //	@in							header
 //	@name						Authorization
-//	@description				Keycloak access token. For /api/keys and /api/{k8s,orch} the token is the SPA's user JWT (azp=cyclops-cs-spa). /api/gateway/{name} requires a per-key token whose `namespace` claim equals "pool-{name}" (enforced by OPA). The deprecated /api/batch/{pool} and /api/label/{pool} routes are permanently retired — they return 410 Gone for every request regardless of token validity.
+//	@description				Keycloak access token. For /api/keys and /api/{k8s,orch} the token is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli). /api/gateway/{name} requires a per-key token whose `namespace` claim equals "pool-{name}" (enforced by OPA). The deprecated /api/batch/{pool} and /api/label/{pool} routes are permanently retired — they return 410 Gone for every request regardless of token validity.
 package main
 
 import (

@@ -1,0 +1,210 @@
+.device-page {
+  --device-ink: #15231d;
+  --device-muted: #66736d;
+  --device-cream: #f4f0e6;
+  --device-paper: rgba(255, 253, 247, 0.92);
+  --device-green: #167653;
+  --device-green-dark: #0c573c;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  position: relative;
+  padding: 32px 20px;
+  color: var(--device-ink);
+  background:
+    radial-gradient(circle at 15% 15%, rgba(211, 228, 190, 0.9), transparent 34%),
+    radial-gradient(circle at 86% 82%, rgba(245, 194, 139, 0.72), transparent 30%),
+    linear-gradient(135deg, #e7eee3 0%, var(--device-cream) 52%, #f1e3d2 100%);
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.device-page::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.28;
+  background-image: linear-gradient(rgba(21, 35, 29, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(21, 35, 29, 0.08) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: linear-gradient(to bottom, black, transparent 88%);
+}
+
+.device-orbit {
+  position: absolute;
+  border: 1px solid rgba(22, 118, 83, 0.22);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.device-orbit-one {
+  width: 440px;
+  height: 440px;
+  top: -220px;
+  right: -100px;
+}
+
+.device-orbit-two {
+  width: 300px;
+  height: 300px;
+  bottom: -150px;
+  left: -80px;
+}
+
+.device-card {
+  width: min(100%, 620px);
+  position: relative;
+  z-index: 1;
+  padding: clamp(32px, 6vw, 64px);
+  border: 1px solid rgba(21, 35, 29, 0.14);
+  border-radius: 28px 28px 88px 28px;
+  background: var(--device-paper);
+  box-shadow: 0 32px 90px rgba(46, 62, 51, 0.18);
+  backdrop-filter: blur(14px);
+  animation: device-rise 480ms ease-out both;
+}
+
+.device-wordmark {
+  font: 800 29px/1.1 ui-rounded, "Arial Rounded MT Bold", sans-serif;
+  letter-spacing: -0.08em;
+  color: var(--device-green);
+  margin-bottom: 42px;
+}
+
+.device-eyebrow {
+  margin: 0 0 12px;
+  color: var(--device-green);
+  font: 700 12px/1.2 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.device-card h1 {
+  margin: 0;
+  max-width: 470px;
+  font-size: clamp(38px, 8vw, 64px);
+  line-height: 0.96;
+  letter-spacing: -0.045em;
+  font-weight: 500;
+}
+
+.device-lede {
+  max-width: 500px;
+  margin: 24px 0 30px;
+  color: var(--device-muted);
+  font: 400 17px/1.65 ui-sans-serif, "Avenir Next", "Segoe UI", sans-serif;
+}
+
+.device-code {
+  display: inline-block;
+  padding: 16px 20px;
+  border: 1px solid rgba(21, 35, 29, 0.16);
+  border-radius: 12px;
+  color: var(--device-ink);
+  background: rgba(236, 241, 231, 0.78);
+  font: 750 clamp(25px, 7vw, 34px)/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  letter-spacing: 0.16em;
+  box-shadow: inset 0 -3px 0 rgba(22, 118, 83, 0.12);
+}
+
+.device-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.device-button {
+  display: inline-flex;
+  min-height: 50px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 18px;
+  border-radius: 999px;
+  text-decoration: none;
+  font: 700 14px/1 ui-sans-serif, "Avenir Next", "Segoe UI", sans-serif;
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.device-button:hover {
+  transform: translateY(-2px);
+}
+
+.device-button:focus-visible {
+  outline: 3px solid rgba(22, 118, 83, 0.3);
+  outline-offset: 3px;
+}
+
+.device-button-primary {
+  color: white;
+  background: var(--device-green);
+  box-shadow: 0 12px 30px rgba(22, 118, 83, 0.24);
+}
+
+.device-button-primary:hover {
+  background: var(--device-green-dark);
+}
+
+.device-button-secondary {
+  color: var(--device-ink);
+  border: 1px solid rgba(21, 35, 29, 0.2);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.device-footnote {
+  margin: 20px 0 0;
+  color: var(--device-muted);
+  font: 400 13px/1.5 ui-sans-serif, "Avenir Next", "Segoe UI", sans-serif;
+}
+
+.device-alert {
+  display: grid;
+  gap: 8px;
+  padding: 18px 20px;
+  border-left: 4px solid #b75b35;
+  border-radius: 8px;
+  color: #522d20;
+  background: rgba(252, 230, 214, 0.8);
+  font: 400 15px/1.5 ui-sans-serif, "Avenir Next", "Segoe UI", sans-serif;
+}
+
+@keyframes device-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 600px) {
+  .device-page {
+    align-items: start;
+    padding: 18px 12px;
+  }
+
+  .device-card {
+    padding: 30px 24px 38px;
+    border-radius: 22px 22px 58px 22px;
+  }
+
+  .device-wordmark {
+    margin-bottom: 34px;
+  }
+
+  .device-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .device-card {
+    animation: none;
+  }
+
+  .device-button {
+    transition: none;
+  }
+}

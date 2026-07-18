@@ -2,11 +2,10 @@
 #
 # Surfaces, distinguished by `input.route`:
 #
-#   /api/keys, /api/k8s, /api/orch — SPA surfaces. Require a token
-#                       issued to the cyclops-cs-spa client
-#                       (azp == "cyclops-cs-spa") and a non-empty
-#                       subject. Anyone signed into the cyclops-cs realm
-#                       may use them.
+#   /api/keys, /api/k8s, /api/orch — interactive user surfaces. Require a
+#                       non-empty subject and a token issued to one of the
+#                       exact public interactive clients: cyclops-cs-spa or
+#                       cua-cli. Other realm clients are not implicitly trusted.
 #
 #   /api/batch/{pool}, /api/label/{pool}
 #                     — DEPRECATED. The handler returns 410 Gone for
@@ -45,60 +44,71 @@ is_admin {
 
 # ── Route allow rules ───────────────────────────────────────────────────────
 
+# Exact interactive clients. Keep this allowlist closed: accepting any
+# arbitrary public realm client would let unrelated clients call user APIs.
+is_interactive_client {
+    input.user.azp == "cyclops-cs-spa"
+}
+
+is_interactive_client {
+    input.user.azp == "cua-cli"
+}
+
+
 # /api/keys (POST/GET) and /api/keys/{id} (DELETE).
 allow {
     input.route == "/api/keys"
     input.user.sub != ""
-    input.user.azp == "cyclops-cs-spa"
+    is_interactive_client
 }
 
 allow {
     input.route == "/api/keys/{id}"
     input.user.sub != ""
-    input.user.azp == "cyclops-cs-spa"
+    is_interactive_client
 }
 
-# /api/config — per-user feature flags. SPA-only.
+# /api/config — per-user feature flags for exact interactive clients.
 allow {
     input.route == "/api/config"
     input.user.sub != ""
-    input.user.azp == "cyclops-cs-spa"
+    is_interactive_client
 }
 
 # /api/namespaces — namespace management (list, create, delete).
-# SPA-only; any authenticated user may manage their own namespaces.
+# Exact interactive clients may manage their own namespaces.
 # Capsule enforces per-user scoping at the K8s API level via
 # impersonation headers added by the backend.
 allow {
     input.route == "/api/namespaces"
     input.user.sub != ""
-    input.user.azp == "cyclops-cs-spa"
+    is_interactive_client
 }
 
 allow {
     input.route == "/api/namespaces/{name}"
     input.user.sub != ""
-    input.user.azp == "cyclops-cs-spa"
+    is_interactive_client
 }
 
 # /api/pool-templates — per-user saved pool configs (list, create, get,
-# delete). SPA-only; the backend scopes every operation to the caller's
+# delete). Exact interactive clients only; the backend scopes operations to the caller's
 # sub, so a user can only ever read or mutate their own templates.
 allow {
     input.route == "/api/pool-templates"
     input.user.sub != ""
-    input.user.azp == "cyclops-cs-spa"
+    is_interactive_client
 }
 
 allow {
     input.route == "/api/pool-templates/{name}"
     input.user.sub != ""
-    input.user.azp == "cyclops-cs-spa"
+    is_interactive_client
 }
 
 # /api/k8s/{path...} — kubectl-proxy passthrough.
 #
-# Any SPA user may read customer-facing resources (their pools, the pods
+# Any exact interactive client may read customer-facing resources (their pools, the pods
 # backing their VMs, pod logs, metrics, and the K8s event feed — the event
 # *contents* are still redacted for non-admins by filters.rego's
 # visible_events). Infra-only resources (cluster nodes, cluster-wide pod
@@ -107,14 +117,14 @@ allow {
 allow {
     input.route == "/api/k8s/{path...}"
     input.user.sub != ""
-    input.user.azp == "cyclops-cs-spa"
+    is_interactive_client
     not is_infra_k8s_path(input.params.path)
 }
 
 allow {
     input.route == "/api/k8s/{path...}"
     input.user.sub != ""
-    input.user.azp == "cyclops-cs-spa"
+    is_interactive_client
     is_admin
 }
 
@@ -158,13 +168,13 @@ is_infra_k8s_path(path) {
 }
 
 # /api/orch/{namespace}/{service}/{path...} — per-namespace orchestrator
-# catalog read. SPA-only; namespace + service must be DNS-1123 labels.
+# catalog read. Exact interactive clients only; namespace + service must be DNS-1123 labels.
 # Like /api/svc, this proxy dials Service DNS directly, so namespace
 # ownership is enforced in Go (handlers.requireNamespaceAccess).
 allow {
     input.route == "/api/orch/{namespace}/{service}/{path...}"
     input.user.sub != ""
-    input.user.azp == "cyclops-cs-spa"
+    is_interactive_client
     valid_dns_label(input.params.namespace)
     valid_dns_label(input.params.service)
 }
@@ -179,7 +189,7 @@ allow {
 allow {
     is_batch_route
     input.user.sub != ""
-    input.user.azp == "cyclops-cs-spa"
+    is_interactive_client
     valid_dns_label(input.params.pool)
 }
 allow {
@@ -267,13 +277,13 @@ is_per_key_client { startswith(input.user.azp, "key-") }
 allow {
     input.route == "/api/user-keys"
     input.user.sub != ""
-    input.user.azp == "cyclops-cs-spa"
+    is_interactive_client
 }
 
 allow {
     input.route == "/api/user-keys/{id}"
     input.user.sub != ""
-    input.user.azp == "cyclops-cs-spa"
+    is_interactive_client
 }
 
 # ── User API key access to SPA surfaces ────────────────────────────────

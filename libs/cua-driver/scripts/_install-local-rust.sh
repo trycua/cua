@@ -236,17 +236,7 @@ if [ "$OS" = "Darwin" ]; then
     fi
 fi
 
-# Skill pack — stage from the repo so the `current` symlink below
-# transparently exposes it to agents. Mirrors what install.sh does
-# from a release tarball.
 SOURCE_SKILLS="$REPO_ROOT/Skills/cua-driver"
-if [ -d "$SOURCE_SKILLS" ]; then
-    STAGED_SKILLS="$VERSIONED_DIR/Skills/cua-driver"
-    rm -rf "$STAGED_SKILLS"
-    mkdir -p "$(dirname "$STAGED_SKILLS")"
-    cp -R "$SOURCE_SKILLS" "$STAGED_SKILLS"
-    echo "${GREEN}staged skill pack at $STAGED_SKILLS${NORMAL}"
-fi
 
 # Atomically point `current` at the new versioned release dir.
 #
@@ -512,6 +502,21 @@ echo ""
 
 INSTALLED_BIN="$BIN_DIR/cua-driver"
 
+# Install the skill pack through the same manifest validation and atomic
+# activation path used by release and main installs. This explicit local
+# source guarantees the installed instructions come from this checkout.
+if [ ! -d "$SOURCE_SKILLS" ]; then
+    echo "${RED}Error: local skill source is missing.${NORMAL}" >&2
+    exit 1
+fi
+LOCAL_GIT_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true)"
+LOCAL_SKILL_ARGS=(skills update --from local --source "$SOURCE_SKILLS")
+if [[ "$LOCAL_GIT_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    LOCAL_SKILL_ARGS+=(--git-commit "$LOCAL_GIT_COMMIT")
+fi
+CUA_DRIVER_RS_HOME="$HOME_DIR" "$INSTALLED_BIN" "${LOCAL_SKILL_ARGS[@]}"
+echo "${GREEN}installed verified local skill pack${NORMAL}"
+
 # --- Stop any pre-swap cua-driver daemons ------------------------------
 #
 # Mirror of install-local.ps1's daemon kill — the new binary is now
@@ -523,9 +528,6 @@ INSTALLED_BIN="$BIN_DIR/cua-driver"
 stop_cua_driver_daemons
 show_cua_driver_daemon_survivors
 
-# Agent skill pack symlinks: NOT auto-created. Run
-# `cua-driver skills install --local` to symlink agent dirs to the
-# staged copy at $VERSIONED_DIR/Skills/cua-driver-rs above.
 echo ""
 
 # --- Autostart (optional) ----------------------------------------------

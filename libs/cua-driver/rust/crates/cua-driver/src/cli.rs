@@ -232,6 +232,13 @@ fn positional_args(args: &[String]) -> Vec<&str> {
     positionals
 }
 
+fn skills_command_tail(args: &[String]) -> Vec<String> {
+    args.iter()
+        .position(|argument| argument == "skills")
+        .map(|index| args.iter().skip(index + 2).cloned().collect())
+        .unwrap_or_default()
+}
+
 fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
     if args.iter().any(|arg| matches!(arg.as_str(), "--help" | "-h" | "--version" | "-V")) {
         return None;
@@ -435,14 +442,21 @@ pub fn parse_command() -> Command {
         println!("  cua-driver autostart kick       Start the entry now without re-logging.");
         println!();
         println!("skills options (agent skill-pack management, opt-in):");
-        println!("  cua-driver skills install       Fetch the versioned skill pack from GitHub Releases and symlink it");
+        println!("  cua-driver skills install       Fetch, verify, atomically install, and link the skill pack");
         println!("                                  into each detected agent's skills/ dir (Claude Code, Codex, OpenClaw,");
         println!("                                  OpenCode). Idempotent. Never overwrites existing user links.");
-        println!("  cua-driver skills update        Re-fetch the skill pack from GitHub, refreshing the local copy + links.");
+        println!("  cua-driver skills update        Re-fetch, verify, and atomically replace the skill pack + links.");
         println!("  cua-driver skills uninstall     Remove the agent symlinks. Add --all to also delete the local copy.");
-        println!("  cua-driver skills status        Report local install state + per-agent link state. Read-only.");
+        println!("  cua-driver skills status        Report versions, provenance, integrity, compatibility, and links. Read-only.");
         println!("  cua-driver skills path          Print where the local skill pack lives.");
-        println!("  --from main                     (install only) Fetch latest from main branch instead of the tagged release.");
+        println!("  install/update source options:");
+        println!("    --from release                Matching GitHub release (default; pinned to this driver version).");
+        println!("    --from main                   Resolve main to an immutable commit, then fetch from that commit.");
+        println!("    --from local --source <dir>   Copy from an explicit local skill directory.");
+        println!("    --local <dir>                 Backward-compatible shorthand for the explicit local source.");
+        println!("    --git-commit <sha>            Record an optional full commit SHA for local provenance.");
+        println!("    --all-platforms               Keep all OS guides instead of only this host's guide.");
+        println!("    --force                       Refresh an existing install (implicit for update).");
         println!();
         println!("browser preparation approval:");
         println!("  cua-driver browser-approve --pid <pid> --profile-mode isolated_new");
@@ -763,16 +777,12 @@ pub fn parse_command() -> Command {
             // Skills subcommand. Default is `status` so plain `cua-driver
             // skills` is a read-only probe — won't ever modify user state.
             let subcommand = pos.next().unwrap_or("status").to_string();
-            // Pass through any other flags / args after the subcommand for
-            // the verb's own parsing (e.g. `--force`, `--from main`,
-            // `--agent claude-code`, `--local`, `--all`). Collect from `pos`
-            // and dotted long-form flags from the raw args too.
-            let mut flags: Vec<String> = pos.map(str::to_owned).collect();
-            for a in &args {
-                if a.starts_with("--") && !flags.contains(a) {
-                    flags.push(a.clone());
-                }
-            }
+            // Preserve option/value ordering exactly. The general positional
+            // parser intentionally strips flags, which made `--from main`
+            // arrive as `["main", "--from"]` and silently broke source
+            // selection. Skills owns its tail, so pass through the raw argv
+            // after `skills <subcommand>` instead.
+            let flags = skills_command_tail(&args);
             Command::Skills { subcommand, flags }
         }
         Some("browser-approve") => {
@@ -3608,6 +3618,28 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn skills_tail_preserves_source_flag_value_order() {
+        assert_eq!(
+            skills_command_tail(&args(&[
+                "skills",
+                "update",
+                "--from",
+                "local",
+                "--source",
+                "pack",
+                "--all-platforms",
+            ])),
+            args(&[
+                "--from",
+                "local",
+                "--source",
+                "pack",
+                "--all-platforms",
+            ])
+        );
     }
 
     #[test]

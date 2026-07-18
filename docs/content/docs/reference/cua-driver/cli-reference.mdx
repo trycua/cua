@@ -367,18 +367,24 @@ Fetch the versioned skill pack and link detected agents.
 
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--agent` | String | — | Restrict linking to one agent. |
-| `--from` | String | — | Fetch from a source such as main instead of the tagged release. |
+| `--from` | String | `release` | Source: `release`, `main`, or `local`. |
+| `--source` | Path | — | Required skill directory for `--from local`. |
+| `--local` | Path | — | Shorthand for `--from local --source <path>`. |
+| `--git-commit` | String | — | Optional full commit SHA recorded for local provenance. |
 
 **Flags:**
 
 | Name | Description |
 | ---- | ----------- |
 | `--all-platforms` | Keep platform-specific skill files for every platform. |
+| `--force` | Refresh an existing install. |
 
 #### `cua-driver skills update`
 
 Refresh the local skill pack and links.
+
+`update` accepts the same source options and flags as `install`; refreshing is
+implicit, so `--force` is optional.
 
 #### `cua-driver skills uninstall`
 
@@ -392,7 +398,8 @@ Remove agent skill links.
 
 #### `cua-driver skills status`
 
-Report local skill-pack and per-agent link state.
+Report installed and running versions, source provenance, integrity,
+compatibility, missing/extra/modified content, and per-agent link state.
 
 #### `cua-driver skills path`
 

@@ -484,17 +484,18 @@ jobs:
           # Asset name keeps the `cua-driver-rs-v*` prefix for backward
           # compat with the URL skills.rs constructs.
           #
-          # Staging layout = one wrapper directory, flat .md files under
-          # it. extract_tar_gz strips that single wrapper and lands files
-          # directly in <HomeDir>/skills/cua-driver/. v0.2.19 and earlier
-          # had a second `cua-driver/` (or `cua-driver-rs/`) dir inside
-          # the wrapper — the extractor sees that and strips it too for
-          # backward compat with already-published releases.
+          # Staging layout = one wrapper directory containing the exact
+          # payload plus skill-pack.json. The manifest pins this release,
+          # source commit, compatible driver version, file list, and hashes.
           SKILLS_STAGE="cua-driver-rs-v${VERSION}-skills"
           if [ -d libs/cua-driver/rust/Skills/cua-driver ]; then
-            mkdir -p "${SKILLS_STAGE}"
-            cp -R libs/cua-driver/rust/Skills/cua-driver/. "${SKILLS_STAGE}/"
-            tar -czf "release-upload/${SKILLS_STAGE}.tar.gz" "${SKILLS_STAGE}"
+            python3 .github/scripts/package_cua_driver_skills.py \
+              --source libs/cua-driver/rust/Skills/cua-driver \
+              --archive "release-upload/${SKILLS_STAGE}.tar.gz" \
+              --root-name "${SKILLS_STAGE}" \
+              --version "${VERSION}" \
+              --source-kind release \
+              --git-commit "${GITHUB_SHA}"
             echo "Packaged skill pack: release-upload/${SKILLS_STAGE}.tar.gz"
           else
             echo "Note: libs/cua-driver/rust/Skills/cua-driver not present; skipping skill-pack asset."

@@ -42,7 +42,11 @@ impl RawDriver {
             .ok()?;
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        Some(RawDriver { child, stdin, stdout })
+        Some(RawDriver {
+            child,
+            stdin,
+            stdout,
+        })
     }
 
     /// Write one JSON-RPC frame (newline-delimited) and flush.
@@ -55,7 +59,9 @@ impl RawDriver {
     /// (a malformed or missing response is a protocol-test failure).
     pub fn recv(&mut self) -> Value {
         let mut line = String::new();
-        self.stdout.read_line(&mut line).expect("read response line");
+        self.stdout
+            .read_line(&mut line)
+            .expect("read response line");
         serde_json::from_str(line.trim()).expect("parse JSON response")
     }
 }

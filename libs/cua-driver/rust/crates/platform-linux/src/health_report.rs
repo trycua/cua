@@ -79,15 +79,13 @@ pub(crate) fn check_binary_version() -> CheckEntry {
 pub(crate) fn check_platform_supported() -> CheckEntry {
     let arch = arch_label();
     let os_version = os_release_pretty_name().unwrap_or_else(|| "Linux".to_owned());
-    CheckEntry::pass(
-        NAME_PLATFORM_SUPPORTED,
-        format!("{os_version} ({arch})"),
+    CheckEntry::pass(NAME_PLATFORM_SUPPORTED, format!("{os_version} ({arch})")).with_data(
+        CheckData {
+            os_version: Some(os_version),
+            architecture: Some(arch.to_owned()),
+            ..Default::default()
+        },
     )
-    .with_data(CheckData {
-        os_version: Some(os_version),
-        architecture: Some(arch.to_owned()),
-        ..Default::default()
-    })
 }
 
 pub(crate) fn check_session_active() -> CheckEntry {
@@ -566,7 +564,9 @@ fn probe_portal_remote_desktop() -> anyhow::Result<bool> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(|e| anyhow::anyhow!("failed to build tokio runtime for RemoteDesktop probe: {e}"))?;
+            .map_err(|e| {
+                anyhow::anyhow!("failed to build tokio runtime for RemoteDesktop probe: {e}")
+            })?;
 
         rt.block_on(async {
             match RemoteDesktop::new().await {
@@ -699,7 +699,11 @@ mod tests {
 
         assert_eq!(entry.status, CheckStatus::Fail);
         assert!(entry.message.contains("portal/libei"), "{}", entry.message);
-        assert!(entry.hint.as_deref().unwrap_or("").contains("xdg-desktop-portal"));
+        assert!(entry
+            .hint
+            .as_deref()
+            .unwrap_or("")
+            .contains("xdg-desktop-portal"));
     }
 
     #[test]
@@ -716,8 +720,16 @@ mod tests {
         let entry = classify_wayland_backend(&snap, true, true, false);
 
         assert_eq!(entry.status, CheckStatus::Fail);
-        assert!(entry.message.contains("target-activation"), "{}", entry.message);
-        assert!(entry.message.contains("wrong application"), "{}", entry.message);
+        assert!(
+            entry.message.contains("target-activation"),
+            "{}",
+            entry.message
+        );
+        assert!(
+            entry.message.contains("wrong application"),
+            "{}",
+            entry.message
+        );
     }
 
     #[tokio::test]
@@ -753,10 +765,7 @@ mod tests {
             NAME_BUNDLE_IDENTITY,
         ] {
             let entry = by_name[name];
-            assert_eq!(
-                entry["status"], "skip",
-                "{name} must be skipped on Linux"
-            );
+            assert_eq!(entry["status"], "skip", "{name} must be skipped on Linux");
             assert_eq!(entry["message"], "not applicable on Linux");
         }
     }

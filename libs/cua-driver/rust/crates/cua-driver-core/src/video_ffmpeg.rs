@@ -61,8 +61,7 @@ impl FfmpegVideoBackend {
         }
 
         let mut cmd = Command::new(&ffmpeg);
-        cmd.arg("-y")
-            .arg("-loglevel").arg("error");
+        cmd.arg("-y").arg("-loglevel").arg("error");
 
         platform_input_args(&mut cmd);
 
@@ -70,20 +69,25 @@ impl FfmpegVideoBackend {
         // display stays in frame on odd resolutions (e.g. 1512×949 Win11).
         cmd.arg("-vf").arg("pad=ceil(iw/2)*2:ceil(ih/2)*2");
 
-        cmd.arg("-c:v").arg("libx264")
-            .arg("-preset").arg("ultrafast")
-            .arg("-pix_fmt").arg("yuv420p")
-            .arg("-movflags").arg("+faststart")
-            .arg("-g").arg("30")
+        cmd.arg("-c:v")
+            .arg("libx264")
+            .arg("-preset")
+            .arg("ultrafast")
+            .arg("-pix_fmt")
+            .arg("yuv420p")
+            .arg("-movflags")
+            .arg("+faststart")
+            .arg("-g")
+            .arg("30")
             .arg(&output_path);
 
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
 
-        let mut child = cmd.spawn().map_err(|e| {
-            anyhow::anyhow!("Failed to spawn ffmpeg ({}): {e}", ffmpeg.display())
-        })?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("Failed to spawn ffmpeg ({}): {e}", ffmpeg.display()))?;
 
         let stderr_thread = child.stderr.take().map(|mut stderr| {
             std::thread::spawn(move || -> Vec<u8> {
@@ -110,9 +114,7 @@ impl FfmpegVideoBackend {
                         .unwrap_or_default();
                     let tail_str = String::from_utf8_lossy(&tail);
                     let _ = child.kill();
-                    anyhow::bail!(
-                        "ffmpeg exited immediately ({status}). stderr tail:\n{tail_str}"
-                    );
+                    anyhow::bail!("ffmpeg exited immediately ({status}). stderr tail:\n{tail_str}");
                 }
                 Ok(None) => {
                     if Instant::now() >= probe_deadline {
@@ -190,18 +192,34 @@ impl VideoBackend for FfmpegVideoBackend {
 /// distro I've seen.
 pub fn find_ffprobe() -> Option<PathBuf> {
     let ffmpeg = find_ffmpeg()?;
-    if ffmpeg.parent().map(|p| p.as_os_str().is_empty()).unwrap_or(true) {
+    if ffmpeg
+        .parent()
+        .map(|p| p.as_os_str().is_empty())
+        .unwrap_or(true)
+    {
         return Some(PathBuf::from("ffprobe"));
     }
     let mut p = ffmpeg.clone();
-    p.set_file_name(if cfg!(target_os = "windows") { "ffprobe.exe" } else { "ffprobe" });
-    if p.exists() { Some(p) } else { None }
+    p.set_file_name(if cfg!(target_os = "windows") {
+        "ffprobe.exe"
+    } else {
+        "ffprobe"
+    });
+    if p.exists() {
+        Some(p)
+    } else {
+        None
+    }
 }
 
 pub(crate) fn find_ffmpeg() -> Option<PathBuf> {
-    if Command::new("ffmpeg").arg("-version")
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .status().map(|s| s.success()).unwrap_or(false)
+    if Command::new("ffmpeg")
+        .arg("-version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
     {
         return Some(PathBuf::from("ffmpeg"));
     }
@@ -209,8 +227,7 @@ pub(crate) fn find_ffmpeg() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
         if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
-            let pkg_root = PathBuf::from(local_appdata)
-                .join("Microsoft/WinGet/Packages");
+            let pkg_root = PathBuf::from(local_appdata).join("Microsoft/WinGet/Packages");
             if let Ok(entries) = std::fs::read_dir(&pkg_root) {
                 for e in entries.flatten() {
                     let name = e.file_name();
@@ -232,7 +249,9 @@ pub(crate) fn find_ffmpeg() -> Option<PathBuf> {
             "C:/tools/ffmpeg/bin/ffmpeg.exe",
         ] {
             let pb = PathBuf::from(p);
-            if pb.exists() { return Some(pb); }
+            if pb.exists() {
+                return Some(pb);
+            }
         }
     }
 
@@ -244,7 +263,9 @@ pub(crate) fn find_ffmpeg() -> Option<PathBuf> {
             "/snap/bin/ffmpeg",
         ] {
             let pb = PathBuf::from(p);
-            if pb.exists() { return Some(pb); }
+            if pb.exists() {
+                return Some(pb);
+            }
         }
     }
 
@@ -259,7 +280,9 @@ pub(crate) fn find_ffmpeg() -> Option<PathBuf> {
             "/usr/bin/ffmpeg",
         ] {
             let pb = PathBuf::from(p);
-            if pb.exists() { return Some(pb); }
+            if pb.exists() {
+                return Some(pb);
+            }
         }
     }
 
@@ -271,10 +294,14 @@ fn platform_input_args(cmd: &mut Command) {
 
     #[cfg(target_os = "windows")]
     {
-        cmd.arg("-f").arg("gdigrab")
-            .arg("-framerate").arg(framerate)
-            .arg("-draw_mouse").arg("1")
-            .arg("-i").arg("desktop");
+        cmd.arg("-f")
+            .arg("gdigrab")
+            .arg("-framerate")
+            .arg(framerate)
+            .arg("-draw_mouse")
+            .arg("1")
+            .arg("-i")
+            .arg("desktop");
     }
 
     #[cfg(target_os = "linux")]
@@ -288,10 +315,14 @@ fn platform_input_args(cmd: &mut Command) {
             Ok("0") => "0",
             _ => "1",
         };
-        cmd.arg("-f").arg("x11grab")
-            .arg("-framerate").arg(framerate)
-            .arg("-draw_mouse").arg(draw_mouse)
-            .arg("-i").arg(display);
+        cmd.arg("-f")
+            .arg("x11grab")
+            .arg("-framerate")
+            .arg(framerate)
+            .arg("-draw_mouse")
+            .arg(draw_mouse)
+            .arg("-i")
+            .arg(display);
     }
 
     // macOS not wired here — the macOS factory is `SckitVideoBackendFactory`

@@ -37,7 +37,10 @@ impl BuiltinShape {
     /// the default.
     pub fn parse(name: &str) -> Option<Self> {
         let lower = name.to_ascii_lowercase();
-        Self::TABLE.iter().find(|(n, _)| *n == lower).map(|(_, v)| *v)
+        Self::TABLE
+            .iter()
+            .find(|(n, _)| *n == lower)
+            .map(|(_, v)| *v)
     }
 
     /// The accepted built-in names in declaration order, e.g.
@@ -56,7 +59,6 @@ impl BuiltinShape {
             .collect::<Vec<_>>()
             .join(" | ")
     }
-
 }
 
 impl Default for BuiltinShape {
@@ -149,8 +151,7 @@ impl CursorShape {
     pub fn teardrop() -> &'static Self {
         static CACHE: std::sync::OnceLock<CursorShape> = std::sync::OnceLock::new();
         CACHE.get_or_init(|| {
-            Self::load_svg_bytes(TEARDROP_CURSOR_SVG)
-                .expect("embedded teardrop SVG should parse")
+            Self::load_svg_bytes(TEARDROP_CURSOR_SVG).expect("embedded teardrop SVG should parse")
         })
     }
 
@@ -163,16 +164,25 @@ impl CursorShape {
         let opts = usvg::Options::default();
         let tree = usvg::Tree::from_data(data, &opts)?;
 
-        let mut pixmap = tiny_skia::Pixmap::new(CURSOR_SIZE, CURSOR_SIZE)
-            .ok_or_else(|| anyhow::anyhow!("Failed to create {CURSOR_SIZE}×{CURSOR_SIZE} pixmap"))?;
+        let mut pixmap = tiny_skia::Pixmap::new(CURSOR_SIZE, CURSOR_SIZE).ok_or_else(|| {
+            anyhow::anyhow!("Failed to create {CURSOR_SIZE}×{CURSOR_SIZE} pixmap")
+        })?;
 
         let sx = CURSOR_SIZE as f32 / tree.size().width();
         let sy = CURSOR_SIZE as f32 / tree.size().height();
-        resvg::render(&tree, tiny_skia::Transform::from_scale(sx, sy), &mut pixmap.as_mut());
+        resvg::render(
+            &tree,
+            tiny_skia::Transform::from_scale(sx, sy),
+            &mut pixmap.as_mut(),
+        );
 
         let raw = pixmap.take();
         let pixels = unpremultiply(raw);
-        Ok(Self { pixels, width: CURSOR_SIZE, height: CURSOR_SIZE })
+        Ok(Self {
+            pixels,
+            width: CURSOR_SIZE,
+            height: CURSOR_SIZE,
+        })
     }
 
     fn load_raster(path: &str) -> Result<Self> {
@@ -214,9 +224,18 @@ mod tests {
         assert_eq!(BuiltinShape::parse("arrow"), Some(BuiltinShape::Arrow));
         assert_eq!(BuiltinShape::parse("ARROW"), Some(BuiltinShape::Arrow));
         assert_eq!(BuiltinShape::parse("Arrow"), Some(BuiltinShape::Arrow));
-        assert_eq!(BuiltinShape::parse("teardrop"), Some(BuiltinShape::Teardrop));
-        assert_eq!(BuiltinShape::parse("TEARDROP"), Some(BuiltinShape::Teardrop));
-        assert_eq!(BuiltinShape::parse("Teardrop"), Some(BuiltinShape::Teardrop));
+        assert_eq!(
+            BuiltinShape::parse("teardrop"),
+            Some(BuiltinShape::Teardrop)
+        );
+        assert_eq!(
+            BuiltinShape::parse("TEARDROP"),
+            Some(BuiltinShape::Teardrop)
+        );
+        assert_eq!(
+            BuiltinShape::parse("Teardrop"),
+            Some(BuiltinShape::Teardrop)
+        );
     }
 
     #[test]
@@ -225,8 +244,8 @@ mod tests {
         assert_eq!(BuiltinShape::parse("diamond"), None);
         assert_eq!(BuiltinShape::parse("arrow "), None); // whitespace-significant
         assert_eq!(BuiltinShape::parse("cua_brand"), None); // legacy name no longer recognised
-        // The invented MCP names that never existed in the renderer must NOT parse —
-        // they were doc-only fiction and are gone now.
+                                                            // The invented MCP names that never existed in the renderer must NOT parse —
+                                                            // they were doc-only fiction and are gone now.
         assert_eq!(BuiltinShape::parse("crosshair"), None);
         assert_eq!(BuiltinShape::parse("hand"), None);
         assert_eq!(BuiltinShape::parse("dot"), None);
@@ -239,7 +258,10 @@ mod tests {
         let help = BuiltinShape::names_help();
         for name in BuiltinShape::names() {
             assert!(help.contains(name), "names_help() missing {name}: {help}");
-            assert!(BuiltinShape::parse(name).is_some(), "{name} listed but unparseable");
+            assert!(
+                BuiltinShape::parse(name).is_some(),
+                "{name} listed but unparseable"
+            );
         }
         assert_eq!(help, "'arrow' | 'teardrop'");
     }
@@ -248,11 +270,20 @@ mod tests {
     fn resolve_cursor_icon_matches_builtins_and_revert() {
         use CursorIconResolution::*;
         // Empty reverts to the configured default built-in (now teardrop).
-        assert!(matches!(resolve_cursor_icon("").unwrap(), Builtin(BuiltinShape::Teardrop)));
+        assert!(matches!(
+            resolve_cursor_icon("").unwrap(),
+            Builtin(BuiltinShape::Teardrop)
+        ));
         // Built-in names resolve to that built-in, case-insensitively —
         // crucially `arrow` stays reachable even though teardrop is the default.
-        assert!(matches!(resolve_cursor_icon("arrow").unwrap(), Builtin(BuiltinShape::Arrow)));
-        assert!(matches!(resolve_cursor_icon("TEARDROP").unwrap(), Builtin(BuiltinShape::Teardrop)));
+        assert!(matches!(
+            resolve_cursor_icon("arrow").unwrap(),
+            Builtin(BuiltinShape::Arrow)
+        ));
+        assert!(matches!(
+            resolve_cursor_icon("TEARDROP").unwrap(),
+            Builtin(BuiltinShape::Teardrop)
+        ));
         // A non-name, non-existent path is treated as a file and fails to load.
         assert!(resolve_cursor_icon("/no/such/cursor.png").is_err());
     }

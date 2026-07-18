@@ -34,7 +34,8 @@ fn main() {
     eprintln!("\n-- click(500, 400, Left) --");
     let t = std::time::Instant::now();
     match platform_linux::wayland::libei::click(
-        500.0, 400.0,
+        500.0,
+        400.0,
         platform_linux::wayland::libei::Button::Left,
     ) {
         Ok(()) => eprintln!("  OK in {:?}", t.elapsed()),

@@ -12,7 +12,10 @@
 //! `structuredContent` object.
 
 use async_trait::async_trait;
-use cua_driver_core::{protocol::{ToolResult, Content}, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::{Content, ToolResult},
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 
 use super::get_screen_size::main_screen_size;
@@ -47,7 +50,9 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for GetDesktopStateTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
@@ -116,7 +121,11 @@ impl Tool for GetDesktopStateTool {
             structured["screenshot_file_path"] = serde_json::json!(fp);
         }
 
-        ToolResult { content, is_error: None, structured_content: Some(structured) }
+        ToolResult {
+            content,
+            is_error: None,
+            structured_content: Some(structured),
+        }
     }
 }
 
@@ -134,11 +143,20 @@ mod tests {
 
         let props = d.input_schema["properties"].as_object().unwrap();
         assert!(!props.contains_key("pid"), "must not accept pid");
-        assert!(!props.contains_key("window_id"), "must not accept window_id");
-        assert!(!props.contains_key("capture_mode"), "must not accept capture_mode");
+        assert!(
+            !props.contains_key("window_id"),
+            "must not accept window_id"
+        );
+        assert!(
+            !props.contains_key("capture_mode"),
+            "must not accept capture_mode"
+        );
         assert!(props.contains_key("session"));
         assert!(props.contains_key("screenshot_out_file"));
-        assert_eq!(d.input_schema["additionalProperties"], serde_json::json!(false));
+        assert_eq!(
+            d.input_schema["additionalProperties"],
+            serde_json::json!(false)
+        );
     }
 
     #[test]

@@ -98,9 +98,7 @@ pub fn bounded_cursor_outcome(
     } else {
         match icon.map(str::trim).filter(|value| !value.is_empty()) {
             None => CursorStyleCategory::Default,
-            Some(value) if value.eq_ignore_ascii_case("arrow") => {
-                CursorStyleCategory::BuiltinArrow
-            }
+            Some(value) if value.eq_ignore_ascii_case("arrow") => CursorStyleCategory::BuiltinArrow,
             Some(value) if value.eq_ignore_ascii_case("teardrop") => {
                 CursorStyleCategory::BuiltinTeardrop
             }
@@ -416,7 +414,10 @@ mod tests {
 
     impl SessionObserver for ProbeObserver {
         fn on_session_started(&self, id: &str, observation: SessionStartObservation) {
-            self.starts.lock().unwrap().push((id.to_owned(), observation));
+            self.starts
+                .lock()
+                .unwrap()
+                .push((id.to_owned(), observation));
         }
         fn on_tool_completed(
             &self,
@@ -522,10 +523,15 @@ mod tests {
         let sid = "test-ttl-session-DDEEFF";
         touch_session(sid);
         // A huge TTL leaves it alone (just touched).
-        assert!(evict_idle(Duration::from_secs(3600)).iter().all(|s| s != sid));
+        assert!(evict_idle(Duration::from_secs(3600))
+            .iter()
+            .all(|s| s != sid));
         // A zero TTL treats any prior activity as idle → evicts it.
         let evicted = evict_idle(Duration::ZERO);
-        assert!(evicted.iter().any(|s| s == sid), "zero-TTL must evict a touched session");
+        assert!(
+            evicted.iter().any(|s| s == sid),
+            "zero-TTL must evict a touched session"
+        );
         assert!(is_session_ended(sid), "evicted session is ended");
     }
 
@@ -556,7 +562,10 @@ mod tests {
         assert_eq!(custom.active_cursor_count, 7);
         let debug = format!("{custom:?}");
         for forbidden in ["/private/customer", "private-brand", "private agent"] {
-            assert!(!debug.contains(forbidden), "cursor outcome leaked {forbidden}: {debug}");
+            assert!(
+                !debug.contains(forbidden),
+                "cursor outcome leaked {forbidden}: {debug}"
+            );
         }
 
         let unknown = bounded_cursor_outcome(
@@ -730,20 +739,23 @@ mod tests {
                 && observation.declaration == SessionDeclaration::ImplicitFirstAction
                 && observation.transport == SessionTransport::McpHttp
         }));
-        assert!(starts.iter().any(|(id, observation)| id == revived && observation.revived));
+        assert!(starts
+            .iter()
+            .any(|(id, observation)| id == revived && observation.revived));
         drop(starts);
 
         let ends = probe.ends.lock().unwrap();
         assert!(ends.iter().any(|(id, reason, cursor)| {
-            id == explicit && *reason == SessionEndReason::Explicit
+            id == explicit
+                && *reason == SessionEndReason::Explicit
                 && cursor.is_some_and(|value| {
                     value.style == CursorStyleCategory::BuiltinArrow
                         && value.active_cursor_count == 2
                 })
         }));
-        assert!(ends.iter().any(|(id, reason, _)| {
-            id == idle && *reason == SessionEndReason::IdleTimeout
-        }));
+        assert!(ends
+            .iter()
+            .any(|(id, reason, _)| { id == idle && *reason == SessionEndReason::IdleTimeout }));
         assert!(!ends.iter().any(|(id, _, _)| id == control));
     }
 }

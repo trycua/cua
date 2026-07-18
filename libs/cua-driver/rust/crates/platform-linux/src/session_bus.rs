@@ -94,7 +94,9 @@ fn discover_session_bus_address() -> Option<String> {
 /// misses and we go to the environ scan.
 fn current_uid() -> u32 {
     use std::os::unix::fs::MetadataExt;
-    std::fs::metadata("/proc/self").map(|m| m.uid()).unwrap_or(0)
+    std::fs::metadata("/proc/self")
+        .map(|m| m.uid())
+        .unwrap_or(0)
 }
 
 /// Scan `/proc` for a desktop-session leader and return the
@@ -163,7 +165,7 @@ mod tests {
         // Kernel-truncated comm (15 chars).
         assert!(is_session_process("gnome-session-b")); // gnome-session-binary
         assert!(is_session_process("cinnamon-sessio")); // cinnamon-session
-        // Non-session processes are ignored.
+                                                        // Non-session processes are ignored.
         assert!(!is_session_process("bash"));
         assert!(!is_session_process("cua-driver"));
         assert!(!is_session_process(""));
@@ -187,16 +189,25 @@ mod tests {
         );
         // Not anchored to the first entry, and tolerates a trailing NUL.
         let mid = b"A=1\0DBUS_SESSION_BUS_ADDRESS=unix:abstract=/tmp/dbus-xyz\0";
-        assert_eq!(dbus_address_from_environ(mid).as_deref(), Some("unix:abstract=/tmp/dbus-xyz"));
+        assert_eq!(
+            dbus_address_from_environ(mid).as_deref(),
+            Some("unix:abstract=/tmp/dbus-xyz")
+        );
     }
 
     #[test]
     fn dbus_address_absent_or_empty_is_none() {
         assert_eq!(dbus_address_from_environ(b"PATH=/usr/bin\0HOME=/x\0"), None);
         // Present but empty value must not match (avoids exporting "").
-        assert_eq!(dbus_address_from_environ(b"DBUS_SESSION_BUS_ADDRESS=\0"), None);
+        assert_eq!(
+            dbus_address_from_environ(b"DBUS_SESSION_BUS_ADDRESS=\0"),
+            None
+        );
         assert_eq!(dbus_address_from_environ(b""), None);
         // A key that merely contains the name as a substring must not match.
-        assert_eq!(dbus_address_from_environ(b"OLD_DBUS_SESSION_BUS_ADDRESS=x\0"), None);
+        assert_eq!(
+            dbus_address_from_environ(b"OLD_DBUS_SESSION_BUS_ADDRESS=x\0"),
+            None
+        );
     }
 }

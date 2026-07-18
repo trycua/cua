@@ -11,7 +11,9 @@ pub struct Point {
 
 impl Point {
     pub const ZERO: Self = Self { x: 0.0, y: 0.0 };
-    pub fn new(x: f64, y: f64) -> Self { Self { x, y } }
+    pub fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
     pub fn hypot(self, other: Self) -> f64 {
         let dx = self.x - other.x;
         let dy = self.y - other.y;
@@ -32,7 +34,13 @@ pub struct CubicBezier {
 
 impl CubicBezier {
     pub fn new(start: Point, control1: Point, control2: Point, end: Point) -> Self {
-        let mut s = Self { start, control1, control2, end, length: 0.0 };
+        let mut s = Self {
+            start,
+            control1,
+            control2,
+            end,
+            length: 0.0,
+        };
         s.length = s.measure_length();
         s
     }
@@ -45,12 +53,12 @@ impl CubicBezier {
         let (tt, ttt) = (t * t, t * t * t);
         Point {
             x: uuu * self.start.x
-                + 3.0 * uu * t  * self.control1.x
-                + 3.0 * u  * tt * self.control2.x
+                + 3.0 * uu * t * self.control1.x
+                + 3.0 * u * tt * self.control2.x
                 + ttt * self.end.x,
             y: uuu * self.start.y
-                + 3.0 * uu * t  * self.control1.y
-                + 3.0 * u  * tt * self.control2.y
+                + 3.0 * uu * t * self.control1.y
+                + 3.0 * u * tt * self.control2.y
                 + ttt * self.end.y,
         }
     }
@@ -116,19 +124,25 @@ pub fn build_motion_bezier(
 
     // Unit perpendicular (90° CCW of direction vector).
     let perp_x = -dy / length;
-    let perp_y =  dx / length;
+    let perp_y = dx / length;
 
     let deflection = length * arc_size;
-    let flow_bias = (arc_flow + 1.0) / 2.0;  // map [-1,1] → [0,1]
+    let flow_bias = (arc_flow + 1.0) / 2.0; // map [-1,1] → [0,1]
 
     let c1_deflect = deflection * (1.0 - 0.5 * flow_bias);
     let c2_deflect = deflection * (1.0 - 0.5 * (1.0 - flow_bias));
 
     let c1_base = Point::new(start.x + dx * start_handle, start.y + dy * start_handle);
-    let c2_base = Point::new(end.x   - dx * end_handle,   end.y   - dy * end_handle);
+    let c2_base = Point::new(end.x - dx * end_handle, end.y - dy * end_handle);
 
-    let control1 = Point::new(c1_base.x + perp_x * c1_deflect, c1_base.y + perp_y * c1_deflect);
-    let control2 = Point::new(c2_base.x + perp_x * c2_deflect, c2_base.y + perp_y * c2_deflect);
+    let control1 = Point::new(
+        c1_base.x + perp_x * c1_deflect,
+        c1_base.y + perp_y * c1_deflect,
+    );
+    let control2 = Point::new(
+        c2_base.x + perp_x * c2_deflect,
+        c2_base.y + perp_y * c2_deflect,
+    );
 
     CubicBezier::new(start, control1, control2, end)
 }

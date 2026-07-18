@@ -5,7 +5,10 @@
 //! where codex wrapper wants control over the cursor icon.
 
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -42,7 +45,8 @@ pub(crate) fn resolve_cursor_key(args: &Value) -> String {
 /// call carries no session identity at all, so every such call shares one cursor.
 fn default_cursor_session() -> String {
     static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    ID.get_or_init(|| format!("auto-{:x}", std::process::id())).clone()
+    ID.get_or_init(|| format!("auto-{:x}", std::process::id()))
+        .clone()
 }
 
 // ── SetAgentCursorEnabled ─────────────────────────────────────────────────────
@@ -52,7 +56,9 @@ pub struct SetAgentCursorEnabledTool {
 }
 
 impl SetAgentCursorEnabledTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static ENABLED_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -84,11 +90,16 @@ fn enabled_def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for SetAgentCursorEnabledTool {
-    fn def(&self) -> &ToolDef { enabled_def() }
+    fn def(&self) -> &ToolDef {
+        enabled_def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let enabled = match args.require_bool("enabled") { Ok(v) => v, Err(e) => return e };
+        let enabled = match args.require_bool("enabled") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         let key = resolve_cursor_key(&args);
         self.state.cursor_registry.set_enabled(&key, enabled);
         // Drive the visual overlay for THIS session's cursor.
@@ -96,7 +107,11 @@ impl Tool for SetAgentCursorEnabledTool {
             key.clone(),
             cursor_overlay::OverlayCommand::SetEnabled(enabled),
         );
-        ToolResult::text(format!("Agent cursor '{}' {}.", key, if enabled { "enabled" } else { "disabled" }))
+        ToolResult::text(format!(
+            "Agent cursor '{}' {}.",
+            key,
+            if enabled { "enabled" } else { "disabled" }
+        ))
     }
 }
 
@@ -107,7 +122,9 @@ pub struct SetAgentCursorMotionTool {
 }
 
 impl SetAgentCursorMotionTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static MOTION_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -198,7 +215,9 @@ fn motion_def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for SetAgentCursorMotionTool {
-    fn def(&self) -> &ToolDef { motion_def() }
+    fn def(&self) -> &ToolDef {
+        motion_def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
@@ -219,7 +238,9 @@ impl Tool for SetAgentCursorMotionTool {
             let icon_owned = icon.clone();
             match tokio::task::spawn_blocking(move || {
                 cursor_overlay::resolve_cursor_icon(&icon_owned)
-            }).await {
+            })
+            .await
+            {
                 Ok(Ok(resolution)) => {
                     config.cursor_icon = Some(icon);
                     shape_cmd = Some(cursor_overlay::OverlayCommand::from_cursor_icon(resolution));
@@ -287,12 +308,16 @@ impl Tool for SetAgentCursorMotionTool {
                 "Cursor '{}' updated. Motion: start={:.2} end={:.2} arc={:.2} flow={:.2} \
                  spring={:.2} glide={}ms dwell={}ms idle={}ms",
                 cursor_id,
-                new_motion.start_handle, new_motion.end_handle,
-                new_motion.arc_size, new_motion.arc_flow, new_motion.spring,
+                new_motion.start_handle,
+                new_motion.end_handle,
+                new_motion.arc_size,
+                new_motion.arc_flow,
+                new_motion.spring,
                 new_motion.glide_duration_ms as u32,
                 new_motion.dwell_after_click_ms as u32,
                 new_motion.idle_hide_ms as u32,
-            )).with_structured(serde_json::to_value(&current.config).unwrap_or_default())
+            ))
+            .with_structured(serde_json::to_value(&current.config).unwrap_or_default())
         } else {
             ToolResult::text(format!("Cursor '{}' config updated.", cursor_id))
                 .with_structured(serde_json::to_value(&current.config).unwrap_or_default())
@@ -307,7 +332,9 @@ pub struct SetAgentCursorStyleTool {
 }
 
 impl SetAgentCursorStyleTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static STYLE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -359,7 +386,9 @@ fn style_def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for SetAgentCursorStyleTool {
-    fn def(&self) -> &ToolDef { style_def() }
+    fn def(&self) -> &ToolDef {
+        style_def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let cursor_id = resolve_cursor_key(&args);
@@ -374,7 +403,9 @@ impl Tool for SetAgentCursorStyleTool {
                 let path_owned = path.to_owned();
                 match tokio::task::spawn_blocking(move || {
                     cursor_overlay::CursorShape::load(&path_owned)
-                }).await {
+                })
+                .await
+                {
                     Ok(Ok(shape)) => {
                         // Also persist to registry so it's available for state queries.
                         let mut current = self.state.cursor_registry.get_or_create(&cursor_id);
@@ -382,7 +413,9 @@ impl Tool for SetAgentCursorStyleTool {
                         self.state.cursor_registry.update_config(current.config);
                         Some(cursor_overlay::OverlayCommand::SetShape(Some(shape)))
                     }
-                    Ok(Err(e)) => return ToolResult::error(format!("Failed to load image_path: {e}")),
+                    Ok(Err(e)) => {
+                        return ToolResult::error(format!("Failed to load image_path: {e}"))
+                    }
                     Err(e) => return ToolResult::error(format!("Task error: {e}")),
                 }
             }
@@ -391,35 +424,37 @@ impl Tool for SetAgentCursorStyleTool {
         };
 
         // ── gradient_colors ───────────────────────────────────────────────────
-        let gradient_colors: Vec<[u8; 4]> = if let Some(arr) = args.get("gradient_colors").and_then(|v| v.as_array()) {
-            let mut out = vec![];
-            for v in arr {
-                if let Some(hex) = v.as_str() {
-                    match parse_hex_color(hex) {
-                        Some(c) => out.push(c),
-                        None => return ToolResult::error(format!("Invalid hex color: {hex}")),
+        let gradient_colors: Vec<[u8; 4]> =
+            if let Some(arr) = args.get("gradient_colors").and_then(|v| v.as_array()) {
+                let mut out = vec![];
+                for v in arr {
+                    if let Some(hex) = v.as_str() {
+                        match parse_hex_color(hex) {
+                            Some(c) => out.push(c),
+                            None => return ToolResult::error(format!("Invalid hex color: {hex}")),
+                        }
                     }
                 }
-            }
-            out
-        } else {
-            // Not provided — don't change.
-            vec![]
-        };
+                out
+            } else {
+                // Not provided — don't change.
+                vec![]
+            };
 
         // ── bloom_color ───────────────────────────────────────────────────────
-        let bloom_color: Option<Option<[u8; 4]>> = if let Some(hex) = args.get("bloom_color").and_then(|v| v.as_str()) {
-            if hex.is_empty() {
-                Some(None) // revert
-            } else {
-                match parse_hex_color(hex) {
-                    Some(c) => Some(Some(c)),
-                    None => return ToolResult::error(format!("Invalid bloom_color: {hex}")),
+        let bloom_color: Option<Option<[u8; 4]>> =
+            if let Some(hex) = args.get("bloom_color").and_then(|v| v.as_str()) {
+                if hex.is_empty() {
+                    Some(None) // revert
+                } else {
+                    match parse_hex_color(hex) {
+                        Some(c) => Some(Some(c)),
+                        None => return ToolResult::error(format!("Invalid bloom_color: {hex}")),
+                    }
                 }
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
 
         // ── Dispatch to overlay (keyed to this session's cursor) ──────────────
         if let Some(cmd) = shape_cmd {
@@ -439,23 +474,38 @@ impl Tool for SetAgentCursorStyleTool {
         }
 
         // Build response summary.
-        let grad_str = args.get("gradient_colors")
+        let grad_str = args
+            .get("gradient_colors")
             .and_then(|v| v.as_array())
             .map(|arr| {
-                let strs: Vec<String> = arr.iter()
+                let strs: Vec<String> = arr
+                    .iter()
                     .filter_map(|v| v.as_str().map(str::to_owned))
                     .collect();
                 format!("[{}]", strs.join(", "))
             })
             .unwrap_or_else(|| "(unchanged)".into());
 
-        let bloom_str = args.get("bloom_color")
+        let bloom_str = args
+            .get("bloom_color")
             .and_then(|v| v.as_str())
-            .map(|s| if s.is_empty() { "(reverted)".to_owned() } else { s.to_owned() })
+            .map(|s| {
+                if s.is_empty() {
+                    "(reverted)".to_owned()
+                } else {
+                    s.to_owned()
+                }
+            })
             .unwrap_or_else(|| "(unchanged)".into());
 
         let img_str = image_path
-            .map(|s| if s.is_empty() { "(reverted to default)".to_owned() } else { s.to_owned() })
+            .map(|s| {
+                if s.is_empty() {
+                    "(reverted to default)".to_owned()
+                } else {
+                    s.to_owned()
+                }
+            })
             .unwrap_or_else(|| "(unchanged)".into());
 
         ToolResult::text(format!(
@@ -491,7 +541,9 @@ pub struct GetAgentCursorStateTool {
 }
 
 impl GetAgentCursorStateTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static STATE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -518,7 +570,9 @@ fn state_def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for GetAgentCursorStateTool {
-    fn def(&self) -> &ToolDef { state_def() }
+    fn def(&self) -> &ToolDef {
+        state_def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         // Scope to the CALLER's cursor (explicit cursor_id > injected
@@ -536,8 +590,12 @@ impl Tool for GetAgentCursorStateTool {
         let enabled = state.as_ref().map(|s| s.config.enabled).unwrap_or(true);
         let cursors: Vec<&crate::cursor::CursorState> = state.iter().collect();
         let json = serde_json::to_value(&cursors).unwrap_or_default();
-        ToolResult::text(format!("{} cursor instance(s) for '{}'.", cursors.len(), key))
-            .with_structured(serde_json::json!({ "cursors": json, "enabled": enabled }))
+        ToolResult::text(format!(
+            "{} cursor instance(s) for '{}'.",
+            cursors.len(),
+            key
+        ))
+        .with_structured(serde_json::json!({ "cursors": json, "enabled": enabled }))
     }
 }
 
@@ -557,20 +615,32 @@ mod tests {
         let b = resolve_cursor_key(&json!({ "x": 1 }));
         assert!(a.starts_with("auto-"), "got {a}");
         assert_ne!(a, "");
-        assert_eq!(a, b, "the anonymous default must stay the same across calls");
+        assert_eq!(
+            a, b,
+            "the anonymous default must stay the same across calls"
+        );
         // The minted per-run `_session_id` now DOES drive the cursor (consistent run id).
-        assert_eq!(resolve_cursor_key(&json!({ "_session_id": "mcp-1-2" })), "mcp-1-2");
+        assert_eq!(
+            resolve_cursor_key(&json!({ "_session_id": "mcp-1-2" })),
+            "mcp-1-2"
+        );
     }
 
     #[test]
     fn explicit_session_owns_a_cursor() {
-        assert_eq!(resolve_cursor_key(&json!({ "session": "research-run" })), "research-run");
+        assert_eq!(
+            resolve_cursor_key(&json!({ "session": "research-run" })),
+            "research-run"
+        );
     }
 
     #[test]
     fn cursor_id_is_a_legacy_alias() {
         // `cursor_id` still works (codex-wrapper use case); `session` wins if both.
-        assert_eq!(resolve_cursor_key(&json!({ "cursor_id": "user-handle" })), "user-handle");
+        assert_eq!(
+            resolve_cursor_key(&json!({ "cursor_id": "user-handle" })),
+            "user-handle"
+        );
         assert_eq!(
             resolve_cursor_key(&json!({ "session": "s1", "cursor_id": "c1" })),
             "s1"
@@ -609,8 +679,10 @@ mod tests {
         let enable_key = resolve_cursor_key(&enable_args);
         let click_key = resolve_cursor_key(&ax_click_args);
         assert_eq!(enable_key, session);
-        assert_eq!(enable_key, click_key,
-            "set_agent_cursor_enabled and the AX click must drive the same session cursor");
+        assert_eq!(
+            enable_key, click_key,
+            "set_agent_cursor_enabled and the AX click must drive the same session cursor"
+        );
     }
 
     #[test]

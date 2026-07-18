@@ -163,8 +163,12 @@ fn serialize(resp: &Response) -> String {
 /// (so it already works); this keeps config + recording session-scoping
 /// consistent across transports.
 fn apply_session_identity(req: &mut Request) {
-    let Some(params) = req.params.as_mut() else { return };
-    let Some(args) = params.get_mut("arguments").and_then(|a| a.as_object_mut()) else { return };
+    let Some(params) = req.params.as_mut() else {
+        return;
+    };
+    let Some(args) = params.get_mut("arguments").and_then(|a| a.as_object_mut()) else {
+        return;
+    };
     let session = args
         .get("session")
         .and_then(|v| v.as_str())
@@ -236,7 +240,12 @@ async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<Option<Http
     if content_length > 0 {
         stream.read_exact(&mut body).await?;
     }
-    Ok(Some(HttpRequest { method, path, body, keep_alive }))
+    Ok(Some(HttpRequest {
+        method,
+        path,
+        body,
+        keep_alive,
+    }))
 }
 
 async fn write_http(

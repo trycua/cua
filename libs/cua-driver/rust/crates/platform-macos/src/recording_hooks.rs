@@ -12,8 +12,8 @@
 
 use std::sync::{Arc, OnceLock};
 
-use crate::ax::cache::ElementCache;
 use crate::ax::bindings::{element_screen_center, AXUIElementRef};
+use crate::ax::cache::ElementCache;
 
 static ELEMENT_CACHE: OnceLock<Arc<ElementCache>> = OnceLock::new();
 
@@ -31,7 +31,11 @@ pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Ve
         None => crate::windows::resolve_main_window_id(pid).ok()?,
     };
     let result = crate::ax::tree::walk_tree(pid, Some(resolved_wid), None);
-    let element_count = result.nodes.iter().filter(|n| n.element_index.is_some()).count();
+    let element_count = result
+        .nodes
+        .iter()
+        .filter(|n| n.element_index.is_some())
+        .count();
     let payload = serde_json::json!({
         "pid": pid,
         "window_id": resolved_wid,
@@ -60,9 +64,17 @@ pub fn element_window_local_xy(window_id: u64, pid: i64, element_index: u32) -> 
     let scale = if let Ok(png) = crate::capture::screenshot_window_bytes(window_id_u32) {
         if png.len() >= 24 {
             let pw = u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
-            if bounds.width > 0.0 && pw > bounds.width { pw / bounds.width } else { 1.0 }
-        } else { 1.0 }
-    } else { 1.0 };
+            if bounds.width > 0.0 && pw > bounds.width {
+                pw / bounds.width
+            } else {
+                1.0
+            }
+        } else {
+            1.0
+        }
+    } else {
+        1.0
+    };
 
     let wx = (sx - bounds.x) * scale;
     let wy = (sy - bounds.y) * scale;

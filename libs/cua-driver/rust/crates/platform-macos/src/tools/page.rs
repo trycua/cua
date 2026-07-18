@@ -111,7 +111,10 @@ impl PageBackend for MacOsPageBackend {
             return self.execute_javascript(pid, window_id, javascript).await;
         }
         let port = resolve_cdp_port(pid, cdp_port, "execute_javascript").await?;
-        self.state.cdp_sessions.evaluate(javascript, port, target_url_contains).await
+        self.state
+            .cdp_sessions
+            .evaluate(javascript, port, target_url_contains)
+            .await
     }
 
     async fn click_element(
@@ -204,8 +207,14 @@ impl PageBackend for MacOsPageBackend {
         target_url_contains: Option<&str>,
     ) -> anyhow::Result<String> {
         let port = resolve_cdp_port(pid, cdp_port, "insert_text").await?;
-        self.state.cdp_sessions.insert_text(text, port, target_url_contains).await?;
-        Ok(format!("Inserted {} character(s) via CDP Input.insertText.", text.chars().count()))
+        self.state
+            .cdp_sessions
+            .insert_text(text, port, target_url_contains)
+            .await?;
+        Ok(format!(
+            "Inserted {} character(s) via CDP Input.insertText.",
+            text.chars().count()
+        ))
     }
 
     async fn type_keystrokes(
@@ -217,8 +226,14 @@ impl PageBackend for MacOsPageBackend {
         target_url_contains: Option<&str>,
     ) -> anyhow::Result<String> {
         let port = resolve_cdp_port(pid, cdp_port, "type_keystrokes").await?;
-        self.state.cdp_sessions.dispatch_keystrokes(text, port, target_url_contains).await?;
-        Ok(format!("Typed {} character(s) via CDP keystroke events.", text.chars().count()))
+        self.state
+            .cdp_sessions
+            .dispatch_keystrokes(text, port, target_url_contains)
+            .await?;
+        Ok(format!(
+            "Typed {} character(s) via CDP keystroke events.",
+            text.chars().count()
+        ))
     }
 }
 

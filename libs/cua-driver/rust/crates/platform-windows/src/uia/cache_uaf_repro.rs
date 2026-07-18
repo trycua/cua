@@ -46,7 +46,8 @@ use windows::Win32::UI::Accessibility::IUIAutomationElement;
 
 #[repr(C)]
 struct FakeVtbl {
-    query_interface: unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> HRESULT,
+    query_interface:
+        unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> HRESULT,
     add_ref: unsafe extern "system" fn(*mut c_void) -> u32,
     release: unsafe extern "system" fn(*mut c_void) -> u32,
 }
@@ -163,7 +164,13 @@ fn run_forced_interleave(use_retained: bool, poison_on_zero: bool) -> usize {
     let cache = Arc::new(ElementCache::new());
 
     let ptr = make_fake(uaf_hits, poison_on_zero);
-    cache.core.insert(CacheKey { pid: PID, hwnd: HWND }, snapshot_with(vec![ptr]));
+    cache.core.insert(
+        CacheKey {
+            pid: PID,
+            hwnd: HWND,
+        },
+        snapshot_with(vec![ptr]),
+    );
 
     let (b_looked_up_tx, b_looked_up_rx) = mpsc::channel::<()>();
     let (a_replaced_tx, a_replaced_rx) = mpsc::channel::<()>();
@@ -193,9 +200,13 @@ fn run_forced_interleave(use_retained: bool, poison_on_zero: bool) -> usize {
         b_looked_up_rx.recv().unwrap();
         // get_window_state on the same (pid, hwnd): replace the snapshot. The
         // old snapshot's Drop fires COM Release on `ptr`.
-        cache_a
-            .core
-            .insert(CacheKey { pid: PID, hwnd: HWND }, snapshot_with(vec![]));
+        cache_a.core.insert(
+            CacheKey {
+                pid: PID,
+                hwnd: HWND,
+            },
+            snapshot_with(vec![]),
+        );
         a_replaced_tx.send(()).unwrap();
     });
 
@@ -220,7 +231,10 @@ fn fixed_path_survives_concurrent_replace() {
 #[test]
 fn prefix_path_commits_use_after_free() {
     let uaf = run_forced_interleave(/* use_retained */ false, /* poison */ false);
-    assert!(uaf > 0, "pre-fix path must hit the released element (the UAF)");
+    assert!(
+        uaf > 0,
+        "pre-fix path must hit the released element (the UAF)"
+    );
 }
 
 /// AFTER, under real (unforced) concurrency: hammer get_element_retained +
@@ -232,7 +246,13 @@ fn fixed_path_stress_no_uaf() {
 
     // Seed a snapshot of several elements.
     let seed: Vec<usize> = (0..8).map(|_| make_fake(uaf_hits, false)).collect();
-    cache.core.insert(CacheKey { pid: PID, hwnd: HWND }, snapshot_with(seed));
+    cache.core.insert(
+        CacheKey {
+            pid: PID,
+            hwnd: HWND,
+        },
+        snapshot_with(seed),
+    );
 
     const ITERS: usize = 4000;
     let mut handles = Vec::new();
@@ -243,9 +263,13 @@ fn fixed_path_stress_no_uaf() {
         handles.push(thread::spawn(move || {
             for _ in 0..ITERS {
                 let fresh: Vec<usize> = (0..8).map(|_| make_fake(uaf_hits, false)).collect();
-                cache_r
-                    .core
-                    .insert(CacheKey { pid: PID, hwnd: HWND }, snapshot_with(fresh));
+                cache_r.core.insert(
+                    CacheKey {
+                        pid: PID,
+                        hwnd: HWND,
+                    },
+                    snapshot_with(fresh),
+                );
             }
         }));
     }

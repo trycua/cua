@@ -12,14 +12,17 @@
 //!   text fields that expose a settable AXValue).
 
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_children, copy_number_attr, copy_string_attr, perform_action, set_number_attr,
-    set_string_attr, kAXErrorSuccess, AXUIElementRef,
+    copy_children, copy_number_attr, copy_string_attr, kAXErrorSuccess, perform_action,
+    set_number_attr, set_string_attr, AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
@@ -32,7 +35,9 @@ pub struct SetValueTool {
 }
 
 impl SetValueTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -83,18 +88,26 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for SetValueTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
-        let value = match args.require_str("value") { Ok(v) => v, Err(e) => return e };
+        let pid = match args.require_i32("pid") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let value = match args.require_str("value") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
 
         // Surface 6: element_token / element_index precedence. Neither
         // is now schema-required so the resolver can centralize the
         // "missing addressing" error message.
         let element_token_arg = args.opt_str("element_token");
-        let window_id_arg     = args.opt_u64("window_id").map(|v| v as u32);
+        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
         let resolved = match cua_driver_core::element_token::resolve_element_args(
             pid,
@@ -107,31 +120,43 @@ impl Tool for SetValueTool {
             Err(e) => return e,
         };
         let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None =>
+            cua_driver_core::element_token::ResolvedElement::None => {
                 return ToolResult::error(
                     "set_value requires element_index (+ window_id) or element_token to \
-                     address the target element."
-                ),
+                     address the target element.",
+                )
+            }
             cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: Some(wid), element_index: idx, via_token: _,
+                window_id: Some(wid),
+                element_index: idx,
+                via_token: _,
             } => (idx, wid),
             cua_driver_core::element_token::ResolvedElement::Element {
                 window_id: None, ..
-            } => return ToolResult::error(
-                "set_value requires window_id when element_index is used \
-                 (omit only when supplying element_token, which carries it)."
-            ),
+            } => {
+                return ToolResult::error(
+                    "set_value requires window_id when element_index is used \
+                 (omit only when supplying element_token, which carries it).",
+                )
+            }
         };
 
         // Retain out of the cache so a concurrent get_window_state can't free
         // the element mid-action (use-after-free → daemon crash). Guard lives
         // to the end of this method, past the AX write below.
-        let element_guard = match self.state.element_cache.get_element_retained(pid, window_id, element_index) {
-            Some(e) => e,
-            None => return ToolResult::error(format!(
-                "Element index {element_index} not found. Call get_window_state first."
-            )),
-        };
+        let element_guard =
+            match self
+                .state
+                .element_cache
+                .get_element_retained(pid, window_id, element_index)
+            {
+                Some(e) => e,
+                None => {
+                    return ToolResult::error(format!(
+                        "Element index {element_index} not found. Call get_window_state first."
+                    ))
+                }
+            };
         let element_ptr = element_guard.as_ptr();
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
@@ -161,8 +186,8 @@ impl Tool for SetValueTool {
                 msg.push_str(&changes.result_suffix());
                 ToolResult::text(msg)
             }
-            Ok(Err(e))   => ToolResult::error(format!("set_value failed: {e}")),
-            Err(e)       => ToolResult::error(format!("Task error: {e}")),
+            Ok(Err(e)) => ToolResult::error(format!("set_value failed: {e}")),
+            Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
 }
@@ -177,12 +202,10 @@ fn set_value_blocking(
 ) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
 
-    let role = unsafe { copy_string_attr(element, "AXRole") }
-        .unwrap_or_default();
+    let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
 
     if role == "AXPopUpButton" {
-        let element_title = unsafe { copy_string_attr(element, "AXTitle") }
-            .unwrap_or_default();
+        let element_title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
         select_popup_option(element, element_index, pid, value, &element_title)
     } else {
         // Default path: write AXValue directly. Numeric controls (AXSlider /
@@ -252,7 +275,11 @@ fn step_to_value(element: AXUIElementRef, target: f64) -> bool {
             return true;
         }
 
-        let action = if current < target { "AXIncrement" } else { "AXDecrement" };
+        let action = if current < target {
+            "AXIncrement"
+        } else {
+            "AXDecrement"
+        };
         let _ = unsafe { perform_action(element, action) };
 
         let next = match unsafe { copy_number_attr(element, "AXValue") } {
@@ -296,10 +323,8 @@ fn select_popup_option(
         let mut available: Vec<String> = Vec::with_capacity(children.len());
 
         for (i, &child) in children.iter().enumerate() {
-            let child_title = unsafe { copy_string_attr(child, "AXTitle") }
-                .unwrap_or_default();
-            let child_value = unsafe { copy_string_attr(child, "AXValue") }
-                .unwrap_or_default();
+            let child_title = unsafe { copy_string_attr(child, "AXTitle") }.unwrap_or_default();
+            let child_value = unsafe { copy_string_attr(child, "AXValue") }.unwrap_or_default();
             available.push(child_title.clone());
             if child_title.to_lowercase() == value_lower
                 || child_value.to_lowercase() == value_lower
@@ -311,8 +336,8 @@ fn select_popup_option(
 
         let result = if let Some(i) = matched_idx {
             let child = children[i];
-            let opt_title = unsafe { copy_string_attr(child, "AXTitle") }
-                .unwrap_or_else(|| value.to_string());
+            let opt_title =
+                unsafe { copy_string_attr(child, "AXTitle") }.unwrap_or_else(|| value.to_string());
             let err = unsafe { perform_action(child, "AXPress") };
             if err == kAXErrorSuccess {
                 Ok(format!(
@@ -320,12 +345,11 @@ fn select_popup_option(
                      \"{element_title}\" via AX child AXPress."
                 ))
             } else {
-                anyhow::bail!(
-                    "AXPress on child option failed with error {err}"
-                )
+                anyhow::bail!("AXPress on child option failed with error {err}")
             }
         } else {
-            let avail = available.iter()
+            let avail = available
+                .iter()
                 .map(|t| format!("\"{t}\""))
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -337,7 +361,9 @@ fn select_popup_option(
 
         // Release children (copy_children retains each one).
         for &child in &children {
-            unsafe { CFRelease(child as _); }
+            unsafe {
+                CFRelease(child as _);
+            }
         }
 
         return result;
@@ -345,8 +371,7 @@ fn select_popup_option(
 
     // Strategy 2: Safari/WebKit — no AX children when popup is closed.
     // Use osascript do JavaScript to set the <select> element's DOM value.
-    let app_name = crate::apps::get_app_name_for_pid(pid)
-        .unwrap_or_default();
+    let app_name = crate::apps::get_app_name_for_pid(pid).unwrap_or_default();
 
     if app_name != "Safari" {
         anyhow::bail!(
@@ -393,9 +418,8 @@ fn set_select_via_js(
          }})()"
     );
 
-    let apple_script = format!(
-        "tell application \"Safari\" to do JavaScript \"{js}\" in front document"
-    );
+    let apple_script =
+        format!("tell application \"Safari\" to do JavaScript \"{js}\" in front document");
 
     // Spawn osascript with a 10-second deadline. A stuck Safari permission
     // prompt or unresponsive renderer can cause wait() to block indefinitely,
@@ -422,12 +446,11 @@ fn set_select_via_js(
             Err(e) => anyhow::bail!("osascript wait error: {e}"),
         }
     }
-    let out = child.wait_with_output()
+    let out = child
+        .wait_with_output()
         .map_err(|e| anyhow::anyhow!("osascript output error: {e}"))?;
 
-    let raw = String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .to_string();
+    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
 
     if raw.starts_with("SET:") {
         let dom_val = &raw[4..];
@@ -472,8 +495,8 @@ fn percent_encode_unreserved(s: &str) -> String {
 
 fn hex_digit(n: u8) -> char {
     match n {
-        0..=9  => (b'0' + n) as char,
+        0..=9 => (b'0' + n) as char,
         10..=15 => (b'A' + n - 10) as char,
-        _      => '0',
+        _ => '0',
     }
 }

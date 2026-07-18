@@ -22,7 +22,10 @@ impl Request {
     }
 
     pub fn tool_call(&self) -> anyhow::Result<ToolCall> {
-        let params = self.params.as_ref().ok_or_else(|| anyhow::anyhow!("missing params"))?;
+        let params = self
+            .params
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing params"))?;
         let name = params
             .get("name")
             .and_then(|v| v.as_str())
@@ -167,11 +170,7 @@ fn capability_declared(capabilities: Option<&Value>, name: &str) -> bool {
         .is_some_and(|caps| caps.contains_key(name))
 }
 
-fn nested_capability_declared(
-    capabilities: Option<&Value>,
-    parent: &str,
-    child: &str,
-) -> bool {
+fn nested_capability_declared(capabilities: Option<&Value>, parent: &str, child: &str) -> bool {
     capabilities
         .and_then(|v| v.get(parent))
         .and_then(Value::as_object)
@@ -208,14 +207,23 @@ pub struct RpcError {
 
 impl Response {
     pub fn ok(id: Value, result: Value) -> Self {
-        Self { jsonrpc: "2.0", id, body: ResponseBody::Result { result } }
+        Self {
+            jsonrpc: "2.0",
+            id,
+            body: ResponseBody::Result { result },
+        }
     }
 
     pub fn error(id: Value, code: i64, message: impl Into<String>) -> Self {
         Self {
             jsonrpc: "2.0",
             id,
-            body: ResponseBody::Error { error: RpcError { code, message: message.into() } },
+            body: ResponseBody::Error {
+                error: RpcError {
+                    code,
+                    message: message.into(),
+                },
+            },
         }
     }
 
@@ -240,7 +248,7 @@ pub enum Content {
         annotations: Option<Value>,
     },
     Image {
-        data: String,     // base64-encoded PNG
+        data: String, // base64-encoded PNG
         #[serde(rename = "mimeType")]
         mime_type: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -250,15 +258,26 @@ pub enum Content {
 
 impl Content {
     pub fn text(text: impl Into<String>) -> Self {
-        Content::Text { text: text.into(), annotations: None }
+        Content::Text {
+            text: text.into(),
+            annotations: None,
+        }
     }
 
     pub fn image_png(data_base64: String) -> Self {
-        Content::Image { data: data_base64, mime_type: "image/png".into(), annotations: None }
+        Content::Image {
+            data: data_base64,
+            mime_type: "image/png".into(),
+            annotations: None,
+        }
     }
 
     pub fn image_jpeg(data_base64: String) -> Self {
-        Content::Image { data: data_base64, mime_type: "image/jpeg".into(), annotations: None }
+        Content::Image {
+            data: data_base64,
+            mime_type: "image/jpeg".into(),
+            annotations: None,
+        }
     }
 }
 
@@ -274,11 +293,18 @@ pub struct ToolResult {
 
 impl ToolResult {
     pub fn text(msg: impl Into<String>) -> Self {
-        Self { content: vec![Content::text(msg)], ..Default::default() }
+        Self {
+            content: vec![Content::text(msg)],
+            ..Default::default()
+        }
     }
 
     pub fn error(msg: impl Into<String>) -> Self {
-        Self { content: vec![Content::text(msg)], is_error: Some(true), ..Default::default() }
+        Self {
+            content: vec![Content::text(msg)],
+            is_error: Some(true),
+            ..Default::default()
+        }
     }
 
     pub fn with_structured(mut self, v: Value) -> Self {
@@ -359,7 +385,10 @@ mod image_mime_type_tests {
         let c = Content::image_png("ZmFrZQ==".into());
         let v = serde_json::to_value(&c).expect("serialize");
         assert_eq!(v.get("type").and_then(|t| t.as_str()), Some("image"));
-        assert_eq!(v.get("mimeType").and_then(|t| t.as_str()), Some("image/png"));
+        assert_eq!(
+            v.get("mimeType").and_then(|t| t.as_str()),
+            Some("image/png")
+        );
         assert_eq!(v.get("data").and_then(|t| t.as_str()), Some("ZmFrZQ=="));
     }
 
@@ -368,7 +397,10 @@ mod image_mime_type_tests {
         let c = Content::image_jpeg("ZmFrZQ==".into());
         let v = serde_json::to_value(&c).expect("serialize");
         assert_eq!(v.get("type").and_then(|t| t.as_str()), Some("image"));
-        assert_eq!(v.get("mimeType").and_then(|t| t.as_str()), Some("image/jpeg"));
+        assert_eq!(
+            v.get("mimeType").and_then(|t| t.as_str()),
+            Some("image/jpeg")
+        );
     }
 
     /// Text parts must not grow a mimeType field — the field belongs to
@@ -379,7 +411,10 @@ mod image_mime_type_tests {
         let c = Content::text("hi");
         let v = serde_json::to_value(&c).expect("serialize");
         assert_eq!(v.get("type").and_then(|t| t.as_str()), Some("text"));
-        assert!(v.get("mimeType").is_none(), "text content must not carry mimeType");
+        assert!(
+            v.get("mimeType").is_none(),
+            "text content must not carry mimeType"
+        );
     }
 }
 
@@ -443,7 +478,10 @@ mod initialize_metadata_tests {
 
         let debug = format!("{metadata:?}");
         for forbidden in ["secret", "prompt", "task", "arbitrary", "payload"] {
-            assert!(!debug.contains(forbidden), "metadata leaked {forbidden}: {debug}");
+            assert!(
+                !debug.contains(forbidden),
+                "metadata leaked {forbidden}: {debug}"
+            );
         }
     }
 

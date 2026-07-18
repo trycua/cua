@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 
 pub struct GetScreenSizeTool;
@@ -23,7 +26,9 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for GetScreenSizeTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, _args: Value) -> ToolResult {
         match main_screen_size() {
@@ -46,7 +51,7 @@ impl Tool for GetScreenSizeTool {
 /// which always returns `None` on async tokio threads, causing the tool to
 /// return an error even when a display is attached.
 pub(crate) fn main_screen_size() -> Option<(i64, i64, f64)> {
-    use core_graphics::display::{CGMainDisplayID, CGDisplayBounds};
+    use core_graphics::display::{CGDisplayBounds, CGMainDisplayID};
 
     // SAFETY: CGMainDisplayID / CGDisplayBounds are thread-safe CG APIs.
     let display_id = unsafe { CGMainDisplayID() };

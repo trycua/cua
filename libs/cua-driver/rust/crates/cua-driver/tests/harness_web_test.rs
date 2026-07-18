@@ -23,7 +23,9 @@ use cua_driver_testkit::e2e::{
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::run_with_background_oracles;
-use cua_driver_testkit::{harness_app, spawn_in_job, Driver, FixtureJournal, McpDriver, ToolResponse};
+use cua_driver_testkit::{
+    harness_app, spawn_in_job, Driver, FixtureJournal, McpDriver, ToolResponse,
+};
 
 // ── workspace paths ──────────────────────────────────────────────────────────
 

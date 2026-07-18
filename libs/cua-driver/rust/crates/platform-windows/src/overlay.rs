@@ -293,7 +293,11 @@ pub fn current_position(key: &str) -> (f64, f64) {
     RENDER
         .lock()
         .ok()
-        .and_then(|g| g.as_ref().and_then(|m| m.cursors.get(key)).map(|rs| rs.core.pos))
+        .and_then(|g| {
+            g.as_ref()
+                .and_then(|m| m.cursors.get(key))
+                .map(|rs| rs.core.pos)
+        })
         .unwrap_or((-200.0, -200.0))
 }
 
@@ -304,7 +308,9 @@ pub fn current_position(key: &str) -> (f64, f64) {
 /// seed was applied. Mirrors `platform_macos::cursor::overlay::seed_start_*`.
 fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     let mut guard = RENDER.lock().unwrap();
-    let Some(map) = guard.as_mut() else { return false };
+    let Some(map) = guard.as_mut() else {
+        return false;
+    };
     seed_start_in_map(map, key, target_x, target_y)
 }
 
@@ -491,10 +497,10 @@ fn render_map_needs_frame_tick(map: &RenderMap) -> bool {
 
 #[cfg(target_os = "windows")]
 fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMsg>) {
+    use windows::core::PCWSTR;
     use windows::Win32::Media::timeBeginPeriod;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::*;
-    use windows::core::PCWSTR;
 
     // Raise multimedia timer resolution to 1ms so SetTimer can deliver
     // WM_TIMER messages at ~8ms intervals (default is ~15ms).
@@ -662,7 +668,9 @@ unsafe extern "system" fn wnd_proc(
                 static FPS_PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
                 static FPS_FRAMES: AtomicU64 = AtomicU64::new(0);
                 static FPS_LAST: AtomicU64 = AtomicU64::new(0);
-                if let Some(path) = FPS_PATH.get_or_init(|| std::env::var("CUA_DRIVER_RS_OVERLAY_FPS_FILE").ok()) {
+                if let Some(path) =
+                    FPS_PATH.get_or_init(|| std::env::var("CUA_DRIVER_RS_OVERLAY_FPS_FILE").ok())
+                {
                     let n = FPS_FRAMES.fetch_add(1, Relaxed) + 1;
                     let last = FPS_LAST.load(Relaxed);
                     if last == 0 {
@@ -670,11 +678,22 @@ unsafe extern "system" fn wnd_proc(
                     } else if now_ms.wrapping_sub(last) >= 1000 {
                         let secs = (now_ms - last) as f64 / 1000.0;
                         let fps = n as f64 / secs.max(1e-3);
-                        let cursors = RENDER.lock().ok()
-                            .and_then(|g| g.as_ref().map(|m| m.cursors.len())).unwrap_or(0);
-                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                        let cursors = RENDER
+                            .lock()
+                            .ok()
+                            .and_then(|g| g.as_ref().map(|m| m.cursors.len()))
+                            .unwrap_or(0);
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(path)
+                        {
                             use std::io::Write;
-                            let _ = writeln!(f, "overlay fps={fps:.1} avg_dt_ms={:.1} cursors={cursors}", secs * 1000.0 / n as f64);
+                            let _ = writeln!(
+                                f,
+                                "overlay fps={fps:.1} avg_dt_ms={:.1} cursors={cursors}",
+                                secs * 1000.0 / n as f64
+                            );
                         }
                         FPS_FRAMES.store(0, Relaxed);
                         FPS_LAST.store(now_ms, Relaxed);
@@ -837,7 +856,8 @@ unsafe extern "system" fn wnd_proc(
             } else {
                 TIMER_MS_IDLE
             };
-            if TIMER_PERIOD_MS.swap(desired_ms, std::sync::atomic::Ordering::Relaxed) != desired_ms {
+            if TIMER_PERIOD_MS.swap(desired_ms, std::sync::atomic::Ordering::Relaxed) != desired_ms
+            {
                 unsafe {
                     SetTimer(hwnd, TIMER_ID, desired_ms, None);
                 }
@@ -927,7 +947,10 @@ unsafe fn update_layered_window(
     }
 
     let pt_src = POINT { x: 0, y: 0 };
-    let pt_dst = POINT { x: virt_x, y: virt_y };
+    let pt_dst = POINT {
+        x: virt_x,
+        y: virt_y,
+    };
     let sz = SIZE { cx: w, cy: h };
     let blend = BLENDFUNCTION {
         BlendOp: 0, // AC_SRC_OVER
@@ -971,10 +994,14 @@ struct WinZOrderEnforcer {
 unsafe fn topmost_of(ids: &[u64]) -> Option<u64> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{GetTopWindow, GetWindow, GW_HWNDNEXT};
-    if ids.is_empty() { return None; }
+    if ids.is_empty() {
+        return None;
+    }
     let mut h = GetTopWindow(None).unwrap_or(HWND(std::ptr::null_mut()));
     while !h.0.is_null() {
-        if ids.contains(&(h.0 as u64)) { return Some(h.0 as u64); }
+        if ids.contains(&(h.0 as u64)) {
+            return Some(h.0 as u64);
+        }
         h = GetWindow(h, GW_HWNDNEXT).unwrap_or(HWND(std::ptr::null_mut()));
     }
     ids.first().copied()
@@ -991,7 +1018,11 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
 
             let pinned_target = target.and_then(|wid| {
                 let h = HWND(wid as *mut _);
-                if IsWindow(h).as_bool() { Some(h) } else { None }
+                if IsWindow(h).as_bool() {
+                    Some(h)
+                } else {
+                    None
+                }
             });
 
             // The overlay must sit JUST above the pinned target window so the
@@ -1035,7 +1066,11 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
             let insert_after = match pinned_target {
                 Some(target) => {
                     let prev = GetWindow(target, GW_HWNDPREV).unwrap_or(HWND(std::ptr::null_mut()));
-                    if !prev.0.is_null() { prev } else { HWND_TOP }
+                    if !prev.0.is_null() {
+                        prev
+                    } else {
+                        HWND_TOP
+                    }
                 }
                 None => HWND_TOP,
             };
@@ -1067,7 +1102,10 @@ mod tests {
 
     fn empty_map() -> RenderMap {
         let mut cursors = IndexMap::new();
-        cursors.insert("default".to_owned(), RenderState::new(CursorConfig::default()));
+        cursors.insert(
+            "default".to_owned(),
+            RenderState::new(CursorConfig::default()),
+        );
         RenderMap {
             cursors,
             virt_x: 0,
@@ -1084,7 +1122,11 @@ mod tests {
     fn move_msg(key: &str, x: f64, y: f64) -> OverlayMsg {
         OverlayMsg::Cmd(KeyedOverlayCommand {
             key: key.to_owned(),
-            cmd: OverlayCommand::MoveTo { x, y, end_heading_radians: 0.0 },
+            cmd: OverlayCommand::MoveTo {
+                x,
+                y,
+                end_heading_radians: 0.0,
+            },
         })
     }
 
@@ -1162,8 +1204,14 @@ mod tests {
         // A late in-flight Cmd for the ended session must be dropped WITHOUT
         // re-inserting (no get-or-create resurrection).
         let resolved = apply_msg(&mut map, move_msg("sessA", 99.0, 99.0));
-        assert!(resolved.is_none(), "ended-session Cmd must be dropped, not resolved");
-        assert!(!map.cursors.contains_key("sessA"), "tombstone must block resurrection");
+        assert!(
+            resolved.is_none(),
+            "ended-session Cmd must be dropped, not resolved"
+        );
+        assert!(
+            !map.cursors.contains_key("sessA"),
+            "tombstone must block resurrection"
+        );
         assert_eq!(map.cursors.len(), 1);
     }
 
@@ -1182,11 +1230,14 @@ mod tests {
     #[test]
     fn seed_moves_sentinel_cursor_on_screen_for_first_action() {
         let mut map = empty_map(); // 100x100 frame at origin
-        // No "sessA" cursor exists yet — the seed must get-or-create it.
+                                   // No "sessA" cursor exists yet — the seed must get-or-create it.
         let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
         assert!(seeded, "sentinel cursor must be seeded");
         let pos = map.cursors["sessA"].core.pos;
-        assert!(pos.0 > -50.0 && pos.1 > -50.0, "seed must be on-screen, got {pos:?}");
+        assert!(
+            pos.0 > -50.0 && pos.1 > -50.0,
+            "seed must be on-screen, got {pos:?}"
+        );
         assert!(
             (pos.0 - 60.0).abs() > 4.0 || (pos.1 - 60.0).abs() > 4.0,
             "seed must differ from target to produce a visible glide, got {pos:?}"
@@ -1200,7 +1251,11 @@ mod tests {
         map.cursors.get_mut("sessA").unwrap().core.pos = (30.0, 30.0);
         let seeded_again = seed_start_in_map(&mut map, &"sessA".to_owned(), 80.0, 80.0);
         assert!(!seeded_again, "on-screen cursor must not be re-seeded");
-        assert_eq!(map.cursors["sessA"].core.pos, (30.0, 30.0), "pos must be untouched");
+        assert_eq!(
+            map.cursors["sessA"].core.pos,
+            (30.0, 30.0),
+            "pos must be untouched"
+        );
     }
 
     #[test]
@@ -1209,7 +1264,10 @@ mod tests {
         map.ended.insert("sessA".to_owned());
         let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
         assert!(!seeded, "ended session must not be seeded");
-        assert!(!map.cursors.contains_key("sessA"), "ended session must not be resurrected");
+        assert!(
+            !map.cursors.contains_key("sessA"),
+            "ended session must not be resurrected"
+        );
     }
 
     #[test]
@@ -1282,6 +1340,9 @@ mod tests {
         map.last_active = k;
         assert_eq!(map.last_active.as_deref(), Some("sessA"));
         apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
-        assert_eq!(map.last_active, None, "removing the active cursor must clear last_active");
+        assert_eq!(
+            map.last_active, None,
+            "removing the active cursor must clear last_active"
+        );
     }
 }

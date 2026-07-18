@@ -9,33 +9,32 @@
 //! For clicks, coordinates are window-client-relative (ScreenToClient applied
 //! if screen coords are given). We pack with MAKELPARAM(x,y).
 
-pub mod mouse;
-pub mod keyboard;
 pub mod delivery;
 pub mod inject;
+pub mod keyboard;
+pub mod mouse;
 
+pub(crate) use inject::force_foreground_attached;
 pub use inject::{
     inject_click_screen, point_in_window_bounds, ForegroundLockGuard, NoActivateGuard,
-};
-pub(crate) use inject::force_foreground_attached;
-pub use mouse::{
-    has_chromium_descendant, is_chromium_target_window, post_click, post_click_screen,
-    send_click_synthesized, send_click_synthesized_active_mods, send_click_synthesized_mods,
-    send_wheel_synthesized,
 };
 pub use keyboard::{
     is_xaml_host_hwnd, post_char, post_key, post_type_text, post_type_text_with_delay,
     send_key_synthesized, send_text_synthesized, wait_for_focused_descendant,
 };
+pub use mouse::{
+    has_chromium_descendant, is_chromium_target_window, post_click, post_click_screen,
+    send_click_synthesized, send_click_synthesized_active_mods, send_click_synthesized_mods,
+    send_wheel_synthesized,
+};
 
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
 use windows::Win32::Security::{
-    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation,
-    TokenIntegrityLevel, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenIntegrityLevel,
+    TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
 };
 use windows::Win32::System::Threading::{
-    GetCurrentProcess, OpenProcess, OpenProcessToken,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
@@ -43,22 +42,22 @@ use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 /// https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control
 #[allow(dead_code)]
 mod il {
-    pub const UNTRUSTED: u32   = 0x0000;
-    pub const LOW: u32         = 0x1000;
-    pub const MEDIUM: u32      = 0x2000;
+    pub const UNTRUSTED: u32 = 0x0000;
+    pub const LOW: u32 = 0x1000;
+    pub const MEDIUM: u32 = 0x2000;
     pub const MEDIUM_PLUS: u32 = 0x2100;
-    pub const HIGH: u32        = 0x3000;
-    pub const SYSTEM: u32      = 0x4000;
+    pub const HIGH: u32 = 0x3000;
+    pub const SYSTEM: u32 = 0x4000;
 }
 
 fn il_name(rid: u32) -> &'static str {
     match rid {
-        il::UNTRUSTED   => "Untrusted",
-        il::LOW         => "Low",
-        il::MEDIUM      => "Medium",
+        il::UNTRUSTED => "Untrusted",
+        il::LOW => "Low",
+        il::MEDIUM => "Medium",
         il::MEDIUM_PLUS => "Medium+",
-        il::HIGH        => "High",
-        il::SYSTEM      => "System",
+        il::HIGH => "High",
+        il::SYSTEM => "System",
         _ => "unknown",
     }
 }
@@ -133,7 +132,8 @@ pub fn post_message_blocked_by_uipi(hwnd: u64) -> Option<String> {
         return None;
     }
     let own = unsafe { process_integrity_rid(GetCurrentProcess()) }?;
-    let target_handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+    let target_handle =
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
     let target = unsafe { process_integrity_rid(target_handle) };
     let _ = unsafe { CloseHandle(target_handle) };
     let target = target?;

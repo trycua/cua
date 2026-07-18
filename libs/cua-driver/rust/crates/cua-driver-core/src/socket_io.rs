@@ -90,7 +90,10 @@ mod tests {
 
     #[test]
     fn retries_through_transient_eagain() {
-        let mut w = FlakyWriter { eagain_left: 3, written: vec![] };
+        let mut w = FlakyWriter {
+            eagain_left: 3,
+            written: vec![],
+        };
         let deadline = Instant::now() + Duration::from_secs(5);
         write_all_with_retry(&mut w, b"hello\n", deadline)
             .expect("transient EAGAIN should be retried, not fatal");
@@ -99,7 +102,10 @@ mod tests {
 
     #[test]
     fn times_out_when_daemon_never_drains() {
-        let mut w = FlakyWriter { eagain_left: usize::MAX, written: vec![] };
+        let mut w = FlakyWriter {
+            eagain_left: usize::MAX,
+            written: vec![],
+        };
         let deadline = Instant::now() + Duration::from_millis(30);
         let err = write_all_with_retry(&mut w, b"hello\n", deadline)
             .expect_err("a never-draining daemon must eventually surface an error");

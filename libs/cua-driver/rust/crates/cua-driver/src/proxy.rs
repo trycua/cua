@@ -34,9 +34,7 @@ use cua_driver_core::server::{
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
 
-use crate::serve::{
-    is_daemon_listening, send_request, DaemonRequest, ToolObservationOrigin,
-};
+use crate::serve::{is_daemon_listening, send_request, DaemonRequest, ToolObservationOrigin};
 
 /// Run the MCP stdio proxy. Reads JSON-RPC lines from stdin, forwards
 /// the body of each `tools/list` / `tools/call` to the daemon at
@@ -601,8 +599,7 @@ async fn forward_tool_call(
         name: Some(name.clone()),
         args: Some(args),
         session_id: Some(session_id.to_owned()),
-        observation_origin: daemon_observes_tool_calls
-            .then_some(ToolObservationOrigin::McpProxy),
+        observation_origin: daemon_observes_tool_calls.then_some(ToolObservationOrigin::McpProxy),
     };
 
     // The daemon client is sync, so jump to a blocking thread to keep

@@ -62,12 +62,14 @@ impl MissingPermission {
     /// adapted from the Swift gate's SwiftUI subtitle copy.
     pub fn rationale(self) -> &'static str {
         match self {
-            Self::Accessibility =>
+            Self::Accessibility => {
                 "lets cua-driver read the accessibility tree of running apps and \
-                 send clicks / keystrokes via AX RPC.",
-            Self::ScreenRecording =>
+                 send clicks / keystrokes via AX RPC."
+            }
+            Self::ScreenRecording => {
                 "lets cua-driver capture per-window screenshots so agents can see \
-                 the current UI state alongside the tree.",
+                 the current UI state alongside the tree."
+            }
         }
     }
 
@@ -75,10 +77,12 @@ impl MissingPermission {
     /// Privacy pane.  Same strings the Swift gate uses.
     pub fn settings_url(self) -> &'static str {
         match self {
-            Self::Accessibility =>
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-            Self::ScreenRecording =>
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            Self::Accessibility => {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            }
+            Self::ScreenRecording => {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+            }
         }
     }
 }
@@ -266,18 +270,22 @@ pub fn telemetry_context() -> GateTelemetryContext {
         })
         .unwrap_or_default();
     GateTelemetryContext {
-        engaged: started.is_some() && engaged && (missing_accessibility || missing_screen_recording),
+        engaged: started.is_some()
+            && engaged
+            && (missing_accessibility || missing_screen_recording),
         missing_accessibility,
         missing_screen_recording,
-        panel_shown: GATE_PANEL_SHOWN.load(Ordering::Relaxed) || has_internal_arg(GATE_PANEL_SHOWN_ARG),
-        dismissed: GATE_PANEL_DISMISSED.load(Ordering::Relaxed) || has_internal_arg(GATE_PANEL_DISMISSED_ARG),
+        panel_shown: GATE_PANEL_SHOWN.load(Ordering::Relaxed)
+            || has_internal_arg(GATE_PANEL_SHOWN_ARG),
+        dismissed: GATE_PANEL_DISMISSED.load(Ordering::Relaxed)
+            || has_internal_arg(GATE_PANEL_DISMISSED_ARG),
         elapsed,
     }
 }
 
 fn begin_gate_episode(initial: PermissionsStatus) {
-    let already_engaged = GATE_ENGAGED.swap(true, Ordering::Relaxed)
-        || has_internal_arg(GATE_ENGAGED_ARG);
+    let already_engaged =
+        GATE_ENGAGED.swap(true, Ordering::Relaxed) || has_internal_arg(GATE_ENGAGED_ARG);
     if !already_engaged {
         GATE_MISSING_ACCESSIBILITY.store(!initial.accessibility, Ordering::Relaxed);
         GATE_MISSING_SCREEN_RECORDING.store(!initial.screen_recording, Ordering::Relaxed);
@@ -295,9 +303,7 @@ fn begin_gate_episode(initial: PermissionsStatus) {
 /// bounded hidden argv flags only at re-exec time. A returned `Started`
 /// transition belongs to this first probe and should be delivered before the
 /// caller performs other startup work.
-pub fn prepare_telemetry_context(
-    opt_out: bool,
-) -> Option<(GateProgress, GateTelemetryContext)> {
+pub fn prepare_telemetry_context(opt_out: bool) -> Option<(GateProgress, GateTelemetryContext)> {
     if opt_out || is_gate_reexec() || std::env::var_os(GATE_START_ENV).is_some() {
         return None;
     }
@@ -549,7 +555,10 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        match std::env::var(GATE_START_ENV).ok().and_then(|s| s.parse::<u64>().ok()) {
+        match std::env::var(GATE_START_ENV)
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+        {
             Some(orig) => Instant::now()
                 .checked_sub(Duration::from_secs(now_unix.saturating_sub(orig)))
                 .unwrap_or_else(Instant::now),
@@ -669,10 +678,22 @@ fn reexec_self() {
     let mut raw_argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
     for (enabled, flag) in [
         (GATE_ENGAGED.load(Ordering::Relaxed), GATE_ENGAGED_ARG),
-        (GATE_MISSING_ACCESSIBILITY.load(Ordering::Relaxed), GATE_MISSING_ACCESSIBILITY_ARG),
-        (GATE_MISSING_SCREEN_RECORDING.load(Ordering::Relaxed), GATE_MISSING_SCREEN_RECORDING_ARG),
-        (GATE_PANEL_SHOWN.load(Ordering::Relaxed), GATE_PANEL_SHOWN_ARG),
-        (GATE_PANEL_DISMISSED.load(Ordering::Relaxed), GATE_PANEL_DISMISSED_ARG),
+        (
+            GATE_MISSING_ACCESSIBILITY.load(Ordering::Relaxed),
+            GATE_MISSING_ACCESSIBILITY_ARG,
+        ),
+        (
+            GATE_MISSING_SCREEN_RECORDING.load(Ordering::Relaxed),
+            GATE_MISSING_SCREEN_RECORDING_ARG,
+        ),
+        (
+            GATE_PANEL_SHOWN.load(Ordering::Relaxed),
+            GATE_PANEL_SHOWN_ARG,
+        ),
+        (
+            GATE_PANEL_DISMISSED.load(Ordering::Relaxed),
+            GATE_PANEL_DISMISSED_ARG,
+        ),
     ] {
         if enabled && !raw_argv.iter().any(|arg| arg == flag) {
             raw_argv.push(flag.into());
@@ -688,8 +709,7 @@ fn reexec_self() {
     }
 
     // execvp takes a NULL-terminated argv. Build pointers + sentinel.
-    let mut argv_ptrs: Vec<*const libc::c_char> =
-        argv.iter().map(|s| s.as_ptr()).collect();
+    let mut argv_ptrs: Vec<*const libc::c_char> = argv.iter().map(|s| s.as_ptr()).collect();
     argv_ptrs.push(std::ptr::null());
 
     let exe_c = match CString::new(exe.into_os_string().into_vec()) {
@@ -970,8 +990,10 @@ mod tests {
             let opts = GateOpts::from_env_and_flag(false);
             // "TrUe" is in the list intentionally — it must NOT opt out
             // (it's not in the off-sentinel set), so split the assertion.
-            let expected_opt_out =
-                matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off");
+            let expected_opt_out = matches!(
+                v.to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            );
             assert_eq!(
                 opts.opt_out, expected_opt_out,
                 "env={v:?} opt_out mismatch (expected {expected_opt_out})"

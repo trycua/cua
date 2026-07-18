@@ -22,9 +22,7 @@
 use std::collections::HashSet;
 use std::sync::Mutex;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, TRUE};
-use windows::Win32::Graphics::Dwm::{
-    DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS,
-};
+use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumChildWindows, EnumWindows, GetClassNameW, GetWindowRect, GetWindowTextLengthW,
     GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
@@ -89,7 +87,9 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
 /// top-level window. No pid filter is applied here — the caller does that on
 /// the merged list.
 fn enumerate_via_enum_windows() -> Vec<WindowInfo> {
-    let state = Mutex::new(EnumState { windows: Vec::new() });
+    let state = Mutex::new(EnumState {
+        windows: Vec::new(),
+    });
     let state_ptr = &state as *const Mutex<EnumState> as isize;
     unsafe {
         let _ = EnumWindows(Some(enum_windows_cb), LPARAM(state_ptr));
@@ -113,14 +113,18 @@ unsafe extern "system" fn enum_windows_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
 
     // Get title (skip empty).
     let title_len = GetWindowTextLengthW(hwnd);
-    if title_len == 0 { return TRUE; }
+    if title_len == 0 {
+        return TRUE;
+    }
     let mut buf = vec![0u16; (title_len + 1) as usize];
     GetWindowTextW(hwnd, &mut buf);
     let title = {
         let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
         String::from_utf16_lossy(&buf[..len])
     };
-    if title.trim().is_empty() { return TRUE; }
+    if title.trim().is_empty() {
+        return TRUE;
+    }
 
     // Get bounds — prefer DWM extended frame bounds (includes shadow), fallback to GetWindowRect.
     let (x, y, w, h) = get_window_bounds(hwnd);
@@ -154,7 +158,12 @@ fn get_window_bounds(hwnd: HWND) -> (i32, i32, i32, i32) {
             // Fallback to GetWindowRect.
             let _ = GetWindowRect(hwnd, &mut rect);
         }
-        (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+        (
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+        )
     }
 }
 
@@ -272,10 +281,7 @@ pub fn resolve_uwp_host_window(app_pid: u32) -> Option<WindowInfo> {
         matched_frame: None,
     };
     unsafe {
-        let _ = EnumWindows(
-            Some(frame_cb),
-            LPARAM(&mut scan as *mut FrameScan as isize),
-        );
+        let _ = EnumWindows(Some(frame_cb), LPARAM(&mut scan as *mut FrameScan as isize));
     }
 
     let frame = scan.matched_frame?;

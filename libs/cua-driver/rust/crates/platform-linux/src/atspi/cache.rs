@@ -10,7 +10,10 @@ use super::AtspiNode;
 use cua_driver_core::element_cache::ElementCacheCore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CacheKey { pub pid: u32, pub xid: u64 }
+pub struct CacheKey {
+    pub pid: u32,
+    pub xid: u64,
+}
 
 pub struct CachedSnapshot {
     /// element_index → element_key (opaque AT-SPI path hash).
@@ -22,14 +25,20 @@ pub struct ElementCache {
 }
 
 impl ElementCache {
-    pub fn new() -> Self { Self { core: ElementCacheCore::new() } }
+    pub fn new() -> Self {
+        Self {
+            core: ElementCacheCore::new(),
+        }
+    }
 
     pub fn update(&self, pid: u32, xid: u64, nodes: &[AtspiNode]) {
-        let elements: Vec<u64> = nodes.iter()
+        let elements: Vec<u64> = nodes
+            .iter()
             .filter(|n| n.element_index.is_some())
             .map(|n| n.element_key)
             .collect();
-        self.core.insert(CacheKey { pid, xid }, CachedSnapshot { elements });
+        self.core
+            .insert(CacheKey { pid, xid }, CachedSnapshot { elements });
     }
 
     pub fn get_element_key(&self, pid: u32, xid: u64, idx: usize) -> Option<u64> {
@@ -45,4 +54,8 @@ impl ElementCache {
     }
 }
 
-impl Default for ElementCache { fn default() -> Self { Self::new() } }
+impl Default for ElementCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}

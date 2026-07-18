@@ -22,10 +22,10 @@ pub mod status;
 #[cfg(target_os = "macos")]
 pub mod panel;
 
-pub use status::{PermissionsStatus, current_status};
 pub use gate::{
-    GateOpts, GateProgress, MissingPermission, run_if_needed, run_if_needed_with_observer,
+    run_if_needed, run_if_needed_with_observer, GateOpts, GateProgress, MissingPermission,
 };
+pub use status::{current_status, PermissionsStatus};
 
 /// Crate-wide lock serializing tests that mutate process-global env vars.
 /// Per-module locks are not enough: `gate` and `check_permissions` tests

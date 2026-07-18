@@ -186,14 +186,6 @@ static const char *cua_activate_pid(struct tinywl_server *server, pid_t target_p
 	if (matches == 0) return "unknown-pid";
 	if (matches > 1) return "ambiguous-pid";
 	focus_toplevel(found);
-	/* tinywl only notifies seat keyboard focus when a physical wlr_keyboard is
-	 * attached. Headless CI has none, so establish the logical focus explicitly
-	 * for observer truth and client activation semantics. */
-	struct wlr_surface *surface = found->xdg_toplevel->base->surface;
-	if (server->seat->keyboard_state.focused_surface != surface) {
-		struct wlr_keyboard_modifiers modifiers = {0};
-		wlr_seat_keyboard_notify_enter(server->seat, surface, NULL, 0, &modifiers);
-	}
 	return NULL;
 }
 /* Independent observer query used only by the Rust E2E testkit. The target is
@@ -682,6 +674,44 @@ def repl(s, old, new, label, count=1):
 
 # 1) includes + globals + a foreign-toplevel handle field on the toplevel.
 src = repl(src, "struct tinywl_server {", INCLUDES + "struct tinywl_server {", "includes")
+# tinywl's desktop-oriented focus helper sends xdg_toplevel activation
+# configures on every focus transition. Chromium can stop scheduling renderer
+# frames after that configure in this minimal headless compositor. The private
+# compositor uses seat focus plus scene stacking as its source of truth, so keep
+# those semantics without advertising xdg-shell activation state.
+src = repl(src,
+    "\tif (prev_surface) {\n"
+    "\t\t/*\n"
+    "\t\t * Deactivate the previously focused surface. This lets the client know\n"
+    "\t\t * it no longer has focus and the client will repaint accordingly, e.g.\n"
+    "\t\t * stop displaying a caret.\n"
+    "\t\t */\n"
+    "\t\tstruct wlr_xdg_toplevel *prev_toplevel =\n"
+    "\t\t\twlr_xdg_toplevel_try_from_wlr_surface(prev_surface);\n"
+    "\t\tif (prev_toplevel != NULL) {\n"
+    "\t\t\twlr_xdg_toplevel_set_activated(prev_toplevel, false);\n"
+    "\t\t}\n"
+    "\t}\n",
+    "", "headless-skip-deactivation")
+src = repl(src,
+    "\t/* Activate the new surface */\n"
+    "\twlr_xdg_toplevel_set_activated(toplevel->xdg_toplevel, true);\n",
+    "\t/* Seat focus and scene stacking are authoritative in the private\n"
+    "\t * headless compositor; avoid an xdg activation configure here. */\n",
+    "headless-skip-activation")
+src = repl(src,
+    "\tif (keyboard != NULL) {\n"
+    "\t\twlr_seat_keyboard_notify_enter(seat, surface,\n"
+    "\t\t\tkeyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);\n"
+    "\t}\n",
+    "\tif (keyboard != NULL) {\n"
+    "\t\twlr_seat_keyboard_notify_enter(seat, surface,\n"
+    "\t\t\tkeyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);\n"
+    "\t} else {\n"
+    "\t\tstruct wlr_keyboard_modifiers modifiers = {0};\n"
+    "\t\twlr_seat_keyboard_notify_enter(seat, surface, NULL, 0, &modifiers);\n"
+    "\t}\n",
+    "headless-seat-focus")
 src = repl(src,
     "\tstruct wlr_xdg_toplevel *xdg_toplevel;\n",
     STRUCT_FIELD, "ftl-field")

@@ -1,18 +1,33 @@
-//! Guard current user guidance against resurrecting the removed screenshot tool.
+//! Keep removed tools out of the live registry and maintained user guidance.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-const FORBIDDEN: &[&str] = &[
-    "cua-driver call screenshot",
-    "cua-driver screenshot",
-    "gui tools (click, type_text, screenshot,",
-    "screenshot({",
-    "changes only `screenshot`",
-    "changes only the screenshot tool",
-    "compatibility `screenshot`",
-    "`screenshot` or the png",
-    "tool named `screenshot`",
-];
+const REMOVED_TOOLS: &[&str] = &["screenshot"];
+
+#[cfg(target_os = "macos")]
+fn live_tool_names() -> HashSet<String> {
+    platform_macos::register_tools()
+        .tool_names()
+        .map(str::to_owned)
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn live_tool_names() -> HashSet<String> {
+    platform_windows::register_tools()
+        .tool_names()
+        .map(str::to_owned)
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn live_tool_names() -> HashSet<String> {
+    platform_linux::register_tools()
+        .tool_names()
+        .map(str::to_owned)
+        .collect()
+}
 
 fn collect_docs(dir: &Path, files: &mut Vec<PathBuf>) {
     let mut entries = std::fs::read_dir(dir)
@@ -33,8 +48,41 @@ fn collect_docs(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
+fn advertises_removed_tool(line: &str, tool: &str) -> bool {
+    let line = line.to_ascii_lowercase();
+    let invocation = [
+        format!("cua-driver call {tool}"),
+        format!("cua-driver {tool}"),
+        format!("{tool}("),
+    ]
+    .iter()
+    .any(|pattern| line.contains(pattern));
+
+    let tool_reference = [
+        format!("`{tool}` tool"),
+        format!("{tool} tool"),
+        format!("tool `{tool}`"),
+        format!("tool named `{tool}`"),
+    ]
+    .iter()
+    .any(|pattern| line.contains(pattern));
+    let explicitly_absent = ["no standalone", "does not register", "removed", "obsolete"]
+        .iter()
+        .any(|marker| line.contains(marker));
+
+    invocation || (tool_reference && !explicitly_absent)
+}
+
 #[test]
-fn maintained_guidance_does_not_advertise_removed_screenshot_tool() {
+fn maintained_guidance_does_not_advertise_removed_tools() {
+    let registered = live_tool_names();
+    for tool in REMOVED_TOOLS {
+        assert!(
+            !registered.contains(*tool),
+            "removed tool {tool:?} is still present in the live registry"
+        );
+    }
+
     let rust_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
@@ -47,7 +95,7 @@ fn maintained_guidance_does_not_advertise_removed_screenshot_tool() {
         .expect("repository root");
 
     // Keep this list limited to current user guidance. Historical plans may
-    // accurately discuss the old tool and are not instructions to users.
+    // accurately discuss old tools and are not instructions to users.
     let mut files = vec![
         driver_root.join("README.md"),
         driver_root.join("docs/tool-output-format.md"),
@@ -70,17 +118,48 @@ fn maintained_guidance_does_not_advertise_removed_screenshot_tool() {
         let contents = std::fs::read_to_string(&path).unwrap_or_else(|error| {
             panic!("failed to read guidance file {}: {error}", path.display())
         });
-        let lower = contents.to_ascii_lowercase();
-        for pattern in FORBIDDEN {
-            if lower.contains(pattern) {
-                failures.push(format!("{} contains {pattern:?}", path.display()));
+        let mut line_number = 1;
+        for paragraph in contents.split_inclusive("\n\n") {
+            for tool in REMOVED_TOOLS {
+                if advertises_removed_tool(paragraph, tool) {
+                    failures.push(format!(
+                        "{}:{} advertises removed tool {tool:?}: {}",
+                        path.display(),
+                        line_number,
+                        paragraph.split_whitespace().collect::<Vec<_>>().join(" ")
+                    ));
+                }
             }
+            line_number += paragraph.lines().count();
         }
     }
 
     assert!(
         failures.is_empty(),
-        "removed screenshot tool appears in maintained guidance:\n{}",
+        "removed tools appear in maintained guidance:\n{}",
         failures.join("\n")
     );
+}
+
+#[test]
+fn removed_tool_reference_detection_covers_invocations_and_prose() {
+    for reference in [
+        "cua-driver call screenshot '{}'",
+        "screenshot({ window_id: 42 })",
+        "use the `screenshot` tool",
+        "use the screenshot tool",
+    ] {
+        assert!(
+            advertises_removed_tool(reference, "screenshot"),
+            "{reference:?}"
+        );
+    }
+
+    for notice in [
+        "there is no standalone screenshot tool",
+        "the `screenshot` tool was removed",
+        "this does not register a standalone `screenshot` tool",
+    ] {
+        assert!(!advertises_removed_tool(notice, "screenshot"), "{notice:?}");
+    }
 }

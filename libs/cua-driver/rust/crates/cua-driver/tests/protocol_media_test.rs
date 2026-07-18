@@ -615,38 +615,89 @@ fn set_config_screenshot_resize() {
         "params":{"name":"list_windows","arguments":{}}
     }));
     let listed = d.recv();
-    let target = listed["result"]["structuredContent"]["windows"]
+    let windows = listed["result"]["structuredContent"]["windows"]
         .as_array()
-        .and_then(|windows| windows.iter().find(|window| {
-            window["is_on_screen"].as_bool() == Some(true)
-                && window["pid"].as_u64().is_some()
-                && window["window_id"].as_u64().is_some()
-        }));
-    if let Some(target) = target {
-        let pid = target["pid"].as_u64().unwrap();
-        let window_id = target["window_id"].as_u64().unwrap();
+        .cloned()
+        .unwrap_or_default();
+    let mut tried = 0usize;
+    let mut capture_errors = Vec::new();
+    let mut captured = false;
+    for target in windows
+        .iter()
+        .filter(|window| window["is_on_screen"].as_bool() == Some(true))
+        .take(5)
+    {
+        let (Some(pid), Some(window_id)) = (target["pid"].as_u64(), target["window_id"].as_u64())
+        else {
+            continue;
+        };
+        tried += 1;
         d.send(&serde_json::json!({
-            "jsonrpc":"2.0","id":4,"method":"tools/call",
+            "jsonrpc":"2.0","id":3 + tried as u64,"method":"tools/call",
             "params":{"name":"get_window_state","arguments":{
                 "pid":pid,"window_id":window_id,"max_elements":10,"max_depth":2
             }}
         }));
         let state = d.recv();
-        if !state["result"]["isError"].as_bool().unwrap_or(false) {
-            let dimensions = (
-                state["result"]["structuredContent"]["screenshot_width"].as_u64(),
-                state["result"]["structuredContent"]["screenshot_height"].as_u64(),
-            );
-            if let (Some(w), Some(h)) = dimensions {
-                assert!(w <= 200, "screenshot width {w} should be ≤ 200");
-                assert!(h <= 200, "screenshot height {h} should be ≤ 200");
+        let structured = &state["result"]["structuredContent"];
+        match (
+            structured["screenshot_width"].as_u64(),
+            structured["screenshot_height"].as_u64(),
+        ) {
+            (Some(w), Some(h)) => {
+                assert!(
+                    !state["result"]["isError"].as_bool().unwrap_or(false),
+                    "get_window_state returned image dimensions with an error: {state:?}"
+                );
+                assert!(
+                    w > 0 && w <= 200,
+                    "screenshot width {w} should be in 1..=200"
+                );
+                assert!(
+                    h > 0 && h <= 200,
+                    "screenshot height {h} should be in 1..=200"
+                );
+                captured = true;
+                break;
+            }
+            _ => {
+                let error = structured["screenshot_error"]
+                    .as_str()
+                    .or_else(|| {
+                        state["result"]["content"]
+                            .as_array()
+                            .and_then(|items| items.iter().find_map(|item| item["text"].as_str()))
+                    })
+                    .unwrap_or("response omitted screenshot dimensions");
+                capture_errors.push(format!("window_id={window_id}: {error}"));
             }
         }
     }
 
+    if tried == 0 {
+        eprintln!("No on-screen windows found — skipping resize assertion");
+    } else if !captured
+        && cfg!(target_os = "macos")
+        && !capture_errors.is_empty()
+        && capture_errors
+            .iter()
+            .all(|error| error.contains("screencapture failed"))
+    {
+        eprintln!(
+            "No visible windows were capturable by the raw unbundled test process — skipping resize assertion. Errors: {}",
+            capture_errors.join(" | ")
+        );
+    } else {
+        assert!(
+            captured,
+            "Expected a capturable window with resized image dimensions. Errors: {}",
+            capture_errors.join(" | ")
+        );
+    }
+
     // get_config should reflect the updated value even in a headless session.
     d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":5,"method":"tools/call",
+        "jsonrpc":"2.0","id":100,"method":"tools/call",
         "params":{"name":"get_config","arguments":{}}
     }));
     let resp = d.recv();

@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 const FORBIDDEN: &[&str] = &[
     "cua-driver call screenshot",
     "cua-driver screenshot",
+    "gui tools (click, type_text, screenshot,",
     "screenshot({",
     "changes only `screenshot`",
+    "changes only the screenshot tool",
     "compatibility `screenshot`",
     "`screenshot` or the png",
     "tool named `screenshot`",
@@ -39,7 +41,12 @@ fn maintained_driver_docs_do_not_invoke_removed_screenshot_tool() {
         .and_then(Path::parent)
         .expect("repository root");
 
-    let mut files = vec![driver_root.join("README.md"), rust_root.join("README.md")];
+    let mut files = vec![
+        driver_root.join("README.md"),
+        rust_root.join("README.md"),
+        driver_root.join("scripts/post-install-hints.txt"),
+        driver_root.join("scripts/install.ps1"),
+    ];
     collect_docs(&rust_root.join("Skills/cua-driver"), &mut files);
     collect_docs(
         &repo_root.join("docs/content/docs/reference/cua-driver"),

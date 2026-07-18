@@ -753,11 +753,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-driver-contract"
+version = "0.8.3"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cua-driver-core"
 version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "cua-driver-contract",
  "futures-util",
  "image",
  "libc",

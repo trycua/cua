@@ -1,0 +1,13 @@
+[package]
+name = "cua-driver-contract"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[[bin]]
+name = "cua-contract-gen"
+path = "src/bin/cua-contract-gen.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

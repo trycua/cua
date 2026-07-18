@@ -17,14 +17,7 @@ use crate::{
     tool_args::ArgsExt,
 };
 
-/// MCP `tools/list` capability-vocabulary version. Bumped on BREAKING
-/// changes only (renaming a capability token, removing a capability
-/// claim from a tool). Additive changes — new capability tokens, new
-/// tools, new tools that newly claim an existing token — keep the
-/// version. Downstream consumers (Hermes, Codex) read this to gate
-/// strict-vs-tolerant capability matching. See
-/// `default_capabilities_for` for the live vocabulary.
-pub const CAPABILITY_VERSION: &str = "1";
+pub use cua_driver_contract::{CAPABILITY_VERSION, TOOLS_LIST_SCHEMA_VERSION};
 
 /// Metadata for a single tool.
 #[derive(Debug, Clone)]
@@ -39,6 +32,21 @@ pub struct ToolDef {
 }
 
 impl ToolDef {
+    /// Build the runtime MCP definition from a canonical client contract.
+    /// Only migrated tools use this bridge; platform-specific tools continue
+    /// to own their live schemas until they can pass parity checks.
+    pub fn from_contract(contract: &cua_driver_contract::ToolContract) -> Self {
+        Self {
+            name: contract.name.clone(),
+            description: contract.description.clone(),
+            input_schema: contract.input_schema.clone(),
+            read_only: contract.annotations.read_only,
+            destructive: contract.annotations.destructive,
+            idempotent: contract.annotations.idempotent,
+            open_world: contract.annotations.open_world,
+        }
+    }
+
     pub fn to_list_entry(&self) -> Value {
         // `capabilities` is always emitted (even when empty) so consumers
         // can rely on the key existing. Additive only — old consumers
@@ -369,7 +377,7 @@ impl ToolRegistry {
         serde_json::json!({
             "tools": list,
             "capability_version": CAPABILITY_VERSION,
-            "schema_version": "1",
+            "schema_version": TOOLS_LIST_SCHEMA_VERSION,
         })
     }
 

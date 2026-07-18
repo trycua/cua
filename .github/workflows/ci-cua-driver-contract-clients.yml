@@ -1,0 +1,68 @@
+name: "CI: cua-driver contract clients"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/contract/**"
+      - "libs/cua-driver/clients/**"
+      - "libs/cua-driver/rust/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/crates/cua-driver-contract/**"
+      - ".github/workflows/ci-cua-driver-contract-clients.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-driver/contract/**"
+      - "libs/cua-driver/clients/**"
+      - "libs/cua-driver/rust/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/crates/cua-driver-contract/**"
+      - ".github/workflows/ci-cua-driver-contract-clients.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-driver-contract-clients-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Generated contract and reference clients
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/clients/typescript/package-lock.json
+
+      - name: Verify generated files
+        working-directory: libs/cua-driver/rust
+        run: cargo run --locked -p cua-driver-contract --bin cua-contract-gen -- all --check
+
+      - name: Test contract crate
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p cua-driver-contract
+
+      - name: Test Python reference client
+        working-directory: libs/cua-driver/clients/python
+        run: PYTHONPATH=src python -m unittest discover -s tests -v
+
+      - name: Install TypeScript reference client dependencies
+        working-directory: libs/cua-driver/clients/typescript
+        run: npm ci
+
+      - name: Test TypeScript reference client
+        working-directory: libs/cua-driver/clients/typescript
+        run: npm run typecheck && npm test

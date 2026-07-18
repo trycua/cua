@@ -1,0 +1,21 @@
+{
+  "name": "@trycua/cua-driver-client",
+  "version": "0.0.0-experimental",
+  "private": true,
+  "description": "Experimental generated TypeScript client for cua-driver",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "generate:check": "cargo run --manifest-path ../../rust/Cargo.toml -p cua-driver-contract --bin cua-contract-gen -- clients --check"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

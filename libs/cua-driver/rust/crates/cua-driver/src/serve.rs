@@ -859,7 +859,7 @@ pub async fn run_serve(
                                 let resp = DaemonResponse::ok(serde_json::json!({
                                     "tools": tools,
                                     "capability_version": cua_driver_core::tool::CAPABILITY_VERSION,
-                                    "schema_version": "1",
+                                    "schema_version": cua_driver_core::tool::TOOLS_LIST_SCHEMA_VERSION,
                                     "tool_observation_owner": "daemon",
                                 }));
                                 let _ = writer.write_all(
@@ -1379,7 +1379,7 @@ pub async fn run_serve(
                                 let resp = DaemonResponse::ok(serde_json::json!({
                                     "tools": tools,
                                     "capability_version": cua_driver_core::tool::CAPABILITY_VERSION,
-                                    "schema_version": "1",
+                                    "schema_version": cua_driver_core::tool::TOOLS_LIST_SCHEMA_VERSION,
                                     "tool_observation_owner": "daemon",
                                 }));
                                 let _ = writer.write_all(

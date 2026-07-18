@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cua-driver-client"
+version = "0.0.0"
+description = "Experimental generated Python client for cua-driver"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cua_driver_client"]

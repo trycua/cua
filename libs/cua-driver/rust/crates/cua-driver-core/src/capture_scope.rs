@@ -6,7 +6,7 @@
 //! per-session contract.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Mutex, OnceLock};
@@ -122,14 +122,21 @@ impl SessionCaptureScope {
     }
 
     pub fn as_json(&self, session: &str) -> Value {
-        json!({
-            "session": session,
-            "capture_scope": self.policy.as_str(),
-            "effective_scope": self.effective_scope().as_str(),
-            "desktop_unlocked": self.desktop_unlocked,
-            "escalation_reason": self.escalation_reason.map(EscalationReason::as_str),
-            "escalation_detail": self.escalation_detail,
-        })
+        serde_json::to_value(self.output(session)).expect("session output serializes")
+    }
+
+    pub fn output(&self, session: &str) -> cua_driver_contract::SessionStateOutput {
+        cua_driver_contract::SessionStateOutput {
+            session: session.to_owned(),
+            capture_scope: self.policy.as_str().to_owned(),
+            effective_scope: self.effective_scope().as_str().to_owned(),
+            desktop_unlocked: self.desktop_unlocked,
+            escalation_reason: self
+                .escalation_reason
+                .map(EscalationReason::as_str)
+                .map(str::to_owned),
+            escalation_detail: self.escalation_detail.clone(),
+        }
     }
 }
 
@@ -359,6 +366,7 @@ pub fn enforce_tool(tool_name: &str, args: &Value) -> Result<(), ScopeViolation>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn fresh(prefix: &str) -> String {
         format!("capture-scope-{prefix}-{}", std::process::id())

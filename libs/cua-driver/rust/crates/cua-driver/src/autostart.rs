@@ -63,6 +63,41 @@ impl Status {
     }
 }
 
+/// Outcome of asking `schtasks /HRESULT` whether the autostart task exists.
+///
+/// Keep query failures separate from `Status::NotRegistered`: a caller that
+/// cannot inspect Task Scheduler must not report that the task is absent.
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskQueryOutcome {
+    Registered,
+    NotRegistered,
+    PermissionDenied,
+    Unknown,
+}
+
+#[cfg(any(target_os = "windows", test))]
+const HRESULT_FILE_NOT_FOUND: u32 = 0x8007_0002;
+
+#[cfg(any(target_os = "windows", test))]
+const HRESULT_ACCESS_DENIED: u32 = 0x8007_0005;
+
+#[cfg(any(target_os = "windows", test))]
+fn classify_task_query(success: bool, exit_code: Option<i32>) -> TaskQueryOutcome {
+    if success {
+        return TaskQueryOutcome::Registered;
+    }
+
+    // `/HRESULT` makes the process exit code carry the original Windows error
+    // instead of collapsing every failure to exit 1. Interpret the i32 as its
+    // raw u32 bit pattern because Windows HRESULTs have the high bit set.
+    match exit_code.map(|code| code as u32) {
+        Some(HRESULT_FILE_NOT_FOUND) => TaskQueryOutcome::NotRegistered,
+        Some(HRESULT_ACCESS_DENIED) => TaskQueryOutcome::PermissionDenied,
+        _ => TaskQueryOutcome::Unknown,
+    }
+}
+
 // ── Public API ────────────────────────────────────────────────────────────
 
 /// Register the platform-native autostart entry for `cua-driver serve`.
@@ -307,15 +342,45 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
     }
 
     pub fn status() -> Result<Status> {
-        // schtasks /Query exits 0 with task details on stdout, or 1 with
-        // "ERROR: The system cannot find the file specified." on stderr.
+        // Without /HRESULT, schtasks collapses "task not found", permission
+        // failures, and other Task Scheduler errors to exit 1. /HRESULT keeps
+        // those cases distinct and is locale-independent: ERROR_FILE_NOT_FOUND
+        // means the named task is absent, while ERROR_PATH_NOT_FOUND means the
+        // scheduler namespace could not be inspected and therefore stays
+        // unknown.
         let out = Command::new("schtasks")
-            .args(["/Query", "/TN", TASK_NAME])
+            .args(["/Query", "/TN", TASK_NAME, "/HRESULT"])
             .output()
-            .map_err(|e| anyhow!("failed to invoke schtasks: {e}"))?;
-        if !out.status.success() {
-            return Ok(Status::NotRegistered);
+            .map_err(|e| anyhow!("unknown: failed to invoke schtasks: {e}"))?;
+
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        match classify_task_query(out.status.success(), out.status.code()) {
+            TaskQueryOutcome::Registered => {}
+            TaskQueryOutcome::NotRegistered => return Ok(Status::NotRegistered),
+            outcome @ (TaskQueryOutcome::PermissionDenied | TaskQueryOutcome::Unknown) => {
+                let tag = match outcome {
+                    TaskQueryOutcome::PermissionDenied => "permission-denied",
+                    TaskQueryOutcome::Unknown => "unknown",
+                    _ => unreachable!(),
+                };
+                let diagnostic = match (stdout.trim(), stderr.trim()) {
+                    ("", "") => "no diagnostic output".to_owned(),
+                    (stdout, "") => stdout.to_owned(),
+                    ("", stderr) => stderr.to_owned(),
+                    (stdout, stderr) => format!("{stdout}\n{stderr}"),
+                };
+                let hresult = out
+                    .status
+                    .code()
+                    .map(|code| format!("0x{:08X}", code as u32))
+                    .unwrap_or_else(|| "unavailable".to_owned());
+                return Err(anyhow!(
+                    "{tag}: schtasks /Query /HRESULT failed (HRESULT {hresult}): {diagnostic}"
+                ));
+            }
         }
+
         // Registered — now check whether `cua-driver serve` is running.
         // Avoid invoking `tasklist` (slow ~200ms on first run); use the
         // same registry the daemon's own status command uses via a
@@ -416,5 +481,58 @@ pub fn run_autostart_cmd(subcommand: &str) {
             eprintln!("cua-driver autostart {subcommand}: {e}");
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn successful_task_query_is_registered() {
+        assert_eq!(
+            classify_task_query(true, Some(0)),
+            TaskQueryOutcome::Registered
+        );
+        assert_eq!(
+            classify_task_query(true, Some(HRESULT_ACCESS_DENIED as i32)),
+            TaskQueryOutcome::Registered
+        );
+    }
+
+    #[test]
+    fn file_not_found_is_not_registered() {
+        assert_eq!(
+            classify_task_query(false, Some(HRESULT_FILE_NOT_FOUND as i32)),
+            TaskQueryOutcome::NotRegistered
+        );
+    }
+
+    #[test]
+    fn access_failure_is_permission_denied() {
+        assert_eq!(
+            classify_task_query(false, Some(HRESULT_ACCESS_DENIED as i32)),
+            TaskQueryOutcome::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn unrecognized_failure_is_unknown() {
+        const HRESULT_PATH_NOT_FOUND: u32 = 0x8007_0003;
+        const HRESULT_RPC_SERVER_UNAVAILABLE: u32 = 0x8007_06BA;
+
+        assert_eq!(
+            classify_task_query(false, Some(HRESULT_PATH_NOT_FOUND as i32)),
+            TaskQueryOutcome::Unknown
+        );
+        assert_eq!(
+            classify_task_query(false, Some(HRESULT_RPC_SERVER_UNAVAILABLE as i32)),
+            TaskQueryOutcome::Unknown
+        );
+        assert_eq!(
+            classify_task_query(false, Some(1)),
+            TaskQueryOutcome::Unknown
+        );
+        assert_eq!(classify_task_query(false, None), TaskQueryOutcome::Unknown);
     }
 }

@@ -348,6 +348,8 @@ Remove the autostart entry.
 
 Print whether autostart is registered and running.
 
+`not-registered` is emitted only when Task Scheduler explicitly reports that the named task does not exist. If the task cannot be inspected, the command exits non-zero and reports `permission-denied` or `unknown` together with the original diagnostic.
+
 #### `cua-driver autostart kick`
 
 Start the autostart entry now without re-logging.

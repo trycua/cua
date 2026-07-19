@@ -517,20 +517,14 @@ fn target_in_web_area(pid: i32, element_ptr_and_idx: Option<(usize, Option<usize
     }
 }
 
-/// Type via CGEvent keystrokes, optionally clearing the field first (idempotent
-/// retype), then verify by read-back.
-///
-/// `clear_first` is the idempotency guard for escalation: when the field was
-/// empty/unreadable at capture, `Cmd+A`+`Delete` makes the retype land exactly
-/// `text` regardless of what a prior unverified rung may have done — avoiding
-/// double-type. It is NOT used when the field had readable pre-existing content
-/// (that would clobber it).
+/// Type via CGEvent keystrokes at the current insertion point, then verify by
+/// read-back. `type_text` is deliberately non-idempotent: it must never clear
+/// an existing value merely because AX cannot read that value back.
 fn cgevent_type_verified(
     pid: i32,
     text: &str,
     delay_ms: u64,
     before: Option<&str>,
-    clear_first: bool,
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
     settle_ms: u64,
 ) -> anyhow::Result<bool> {
@@ -551,17 +545,6 @@ fn cgevent_type_verified(
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
-    if clear_first {
-        if settle_ms > 0 {
-            // Some renderer focus proxies discard the first printable event
-            // after activation even after their AX focus is visible. Prime
-            // that channel with disposable text, then clear it before the
-            // requested payload. Never do this for a nonempty field.
-            let _ = crate::input::keyboard::type_text_with_delay(pid, " ", delay_ms);
-        }
-        let _ = crate::input::keyboard::press_key(pid, "a", &["cmd"]);
-        let _ = crate::input::keyboard::press_key(pid, "delete", &[]);
-    }
     crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
     let after = read_axvalue(pid, element_ptr_and_idx);
     Ok(verify_typed(before, after.as_deref(), text))
@@ -572,8 +555,7 @@ fn cgevent_type_verified(
 /// - `delivery_mode == Background` (default): AX insert → read-back; on a
 ///   silent/unreadable accept, CGEvent keystrokes → read-back. Never fronts.
 /// - `delivery_mode == Foreground`: the agent's explicit last resort — briefly
-///   front `window_id`, type (clear-first when the field was empty/unreadable so
-///   the retype is idempotent), restore, then read-back.
+///   front `window_id`, insert at the current cursor, restore, then read-back.
 ///
 /// Returns `(detail, path, verified)`. `verified` is `true` only when a
 /// read-back positively confirmed the text; `false` means the agent must
@@ -587,12 +569,9 @@ fn type_text_blocking(
     delivery_mode: super::DeliveryMode,
     window_id: Option<u32>,
 ) -> anyhow::Result<(String, &'static str, bool)> {
-    // Original field value before ANY rung — drives both the read-back delta and
-    // the clear-then-type idempotency decision.
+    // Original field value before any rung drives read-back verification only.
+    // An unreadable value is not evidence that the field is empty.
     let before = read_axvalue(pid, element_ptr_and_idx);
-    // Clear-then-type only when we can't see existing content to preserve
-    // (empty or unreadable). A readable non-empty value is left intact.
-    let clear_first = !matches!(before.as_deref(), Some(b) if !b.is_empty());
 
     // --- Foreground rung: explicit agent request (skip AX/background ladder). ---
     if delivery_mode.is_foreground() {
@@ -610,7 +589,6 @@ fn type_text_blocking(
                 text,
                 delay_ms,
                 before.as_deref(),
-                clear_first,
                 element_ptr_and_idx,
                 FOREGROUND_SETTLE_MS,
             )
@@ -660,7 +638,6 @@ fn type_text_blocking(
             text,
             delay_ms,
             before.as_deref(),
-            /*clear_first=*/ false,
             element_ptr_and_idx,
             /*settle_ms=*/ 0,
         )?;
@@ -707,15 +684,13 @@ fn type_text_blocking(
     }
 
     // --- Background rung 2: CGEvent keystrokes with read-back. ---
-    // No clear-first here: a partial AX write is rare and clearing on every
-    // background fallback would change insert-at-cursor semantics. The
-    // foreground rung owns the idempotent clear-then-type.
+    // Never clear here: a partial AX write is rare, and clearing would violate
+    // insert-at-cursor semantics.
     let verified = cgevent_type_verified(
         pid,
         text,
         delay_ms,
         before.as_deref(),
-        /*clear_first=*/ false,
         element_ptr_and_idx,
         /*settle_ms=*/ 0,
     )?;

@@ -20,7 +20,10 @@
 //! foreground — it is an explicit opt-in, never called by the input ladder.
 
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 use serde_json::Value;
 
@@ -31,8 +34,7 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "bring_to_front".into(),
-        description:
-            "Persistently activate an app so it genuinely holds macOS foreground, \
+        description: "Persistently activate an app so it genuinely holds macOS foreground, \
              then leave it there. Most input does NOT need this — every macOS \
              dispatch reaches backgrounded windows, and `dispatch:\"foreground\"` \
              does its own brief front→act→restore. Reach for `bring_to_front` only \
@@ -62,7 +64,9 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for BringToFrontTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let pid = match args.get("pid").and_then(Value::as_i64) {
@@ -122,11 +126,12 @@ impl Tool for BringToFrontTool {
             }));
         }
 
-        ToolResult::text(format!("Brought pid {pid} to the foreground."))
-            .with_structured(serde_json::json!({
+        ToolResult::text(format!("Brought pid {pid} to the foreground.")).with_structured(
+            serde_json::json!({
                 "pid": pid,
                 "window_id": window_id,
                 "activated": true,
-            }))
+            }),
+        )
     }
 }

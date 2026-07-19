@@ -36,11 +36,39 @@ jobs:
             exit 0
           fi
 
+          # A label only authorizes a release when its latest add/remove event
+          # shows that the release owner applied it and it remains present.
+          LABEL_EVENTS=$(gh api --paginate --slurp \
+            "repos/$REPO/issues/$PR_NUMBER/events?per_page=100")
+
+          label_was_applied_by_release_owner() {
+            local label=$1
+            jq -e --arg label "$label" '
+              [
+                .[][]
+                | select(
+                    (.event == "labeled" or .event == "unlabeled")
+                    and .label.name == $label
+                  )
+              ]
+              | last
+              | .event == "labeled" and .actor.login == "f-trycua"
+            ' <<< "$LABEL_EVENTS" > /dev/null
+          }
+
           # Determine bump type from labels (default: patch)
           BUMP_TYPE="patch"
           if echo "$LABELS" | grep -q '"bump:major"'; then
+            if ! label_was_applied_by_release_owner "bump:major"; then
+              echo "::warning::bump:major was not applied by f-trycua; skipping auto-release."
+              exit 0
+            fi
             BUMP_TYPE="major"
           elif echo "$LABELS" | grep -q '"bump:minor"'; then
+            if ! label_was_applied_by_release_owner "bump:minor"; then
+              echo "::warning::bump:minor was not applied by f-trycua; skipping auto-release."
+              exit 0
+            fi
             BUMP_TYPE="minor"
           fi
           echo "Bump type: $BUMP_TYPE"
@@ -102,13 +130,18 @@ jobs:
           # Collect labeled packages for auto-release
           LABELED=()
           for svc in "${!AFFECTED_MAP[@]}"; do
-            if echo "$LABELS" | grep -q "\"release:${svc}\""; then
-              LABELED+=("$svc")
+            release_label="release:${svc}"
+            if echo "$LABELS" | grep -q "\"${release_label}\""; then
+              if label_was_applied_by_release_owner "$release_label"; then
+                LABELED+=("$svc")
+              else
+                echo "::warning::$release_label was not applied by f-trycua; ignoring it."
+              fi
             fi
           done
 
           if [ ${#LABELED[@]} -eq 0 ]; then
-            echo "No release labels found. Daily digest will catch unreleased packages."
+            echo "No owner-authorized release labels found. Daily digest will catch unreleased packages."
             exit 0
           fi
 

@@ -64,14 +64,18 @@ use cua_driver_testkit::{Driver, McpDriver};
 fn swriter_exe() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("LO_SWRITER_EXE") {
         let pb = PathBuf::from(p);
-        if pb.exists() { return Some(pb); }
+        if pb.exists() {
+            return Some(pb);
+        }
     }
     for candidate in [
         r"C:\Program Files\LibreOffice\program\swriter.exe",
         r"C:\Program Files (x86)\LibreOffice\program\swriter.exe",
     ] {
         let pb = PathBuf::from(candidate);
-        if pb.exists() { return Some(pb); }
+        if pb.exists() {
+            return Some(pb);
+        }
     }
     None
 }
@@ -80,14 +84,18 @@ fn swriter_exe() -> Option<PathBuf> {
 fn scalc_exe() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("LO_SCALC_EXE") {
         let pb = PathBuf::from(p);
-        if pb.exists() { return Some(pb); }
+        if pb.exists() {
+            return Some(pb);
+        }
     }
     for candidate in [
         r"C:\Program Files\LibreOffice\program\scalc.exe",
         r"C:\Program Files (x86)\LibreOffice\program\scalc.exe",
     ] {
         let pb = PathBuf::from(candidate);
-        if pb.exists() { return Some(pb); }
+        if pb.exists() {
+            return Some(pb);
+        }
     }
     None
 }
@@ -109,7 +117,9 @@ impl Drop for LoSession {
     fn drop(&mut self) {
         // SAL/VCL soffice.bin daemon hangs around after the parent exits;
         // best-effort sweep via taskkill so the next test starts clean.
-        let _ = Command::new("taskkill").args(["/F", "/IM", "soffice.bin"]).output();
+        let _ = Command::new("taskkill")
+            .args(["/F", "/IM", "soffice.bin"])
+            .output();
         std::thread::sleep(Duration::from_millis(800));
     }
 }
@@ -125,7 +135,9 @@ fn setup() -> Option<LoSession> {
 
     // Sweep any leftover soffice.bin from a prior run so this test gets
     // a fresh writer pid + clean recovery state.
-    let _ = Command::new("taskkill").args(["/F", "/IM", "soffice.bin"]).output();
+    let _ = Command::new("taskkill")
+        .args(["/F", "/IM", "soffice.bin"])
+        .output();
     std::thread::sleep(Duration::from_millis(800));
 
     let mut driver = McpDriver::spawn()?;
@@ -162,7 +174,11 @@ fn setup() -> Option<LoSession> {
                     let pid = w["pid"].as_u64().unwrap_or(0) as u32;
                     let wid = w["window_id"].as_u64().unwrap_or(0);
                     if pid > 0 && wid > 0 {
-                        return Some(LoSession { driver, writer_pid: pid, writer_wid: wid });
+                        return Some(LoSession {
+                            driver,
+                            writer_pid: pid,
+                            writer_wid: wid,
+                        });
                     }
                 }
             }
@@ -196,25 +212,40 @@ fn setup() -> Option<LoSession> {
 #[test]
 #[ignore]
 fn harness_lo_vcl_font_color_split_button_exposes_expand() {
-    let mut fx = match setup() { Some(s) => s, None => return };
+    let mut fx = match setup() {
+        Some(s) => s,
+        None => return,
+    };
     let (pid, wid) = (fx.writer_pid, fx.writer_wid);
     let driver = &mut fx.driver;
 
-    let snap = driver.call("get_window_state", serde_json::json!({
-        "pid": pid as i64, "window_id": wid,
-        "capture_mode": "ax", "query": "Font Color"
-    }));
+    let snap = driver.call(
+        "get_window_state",
+        serde_json::json!({
+            "pid": pid as i64, "window_id": wid,
+            "capture_mode": "ax", "query": "Font Color"
+        }),
+    );
     let text = snap.text();
-    assert!(text.contains("SplitButton \"Font Color\""),
-        "Font Color SplitButton not found in tree: {text:?}");
-    let line = text.lines().find(|l| l.contains("\"Font Color\"")).unwrap_or("");
-    assert!(line.contains("expand"),
+    assert!(
+        text.contains("SplitButton \"Font Color\""),
+        "Font Color SplitButton not found in tree: {text:?}"
+    );
+    let line = text
+        .lines()
+        .find(|l| l.contains("\"Font Color\""))
+        .unwrap_or("");
+    assert!(
+        line.contains("expand"),
         "Expected `expand` in actions on Font Color SplitButton — got {line:?}. \
          The MSAA fallback may not be running for SALFRAME (check uia/mod.rs \
-         SAL class detection — should route ALL SAL* classes through msaa.rs).");
-    assert!(line.contains("invoke"),
+         SAL class detection — should route ALL SAL* classes through msaa.rs)."
+    );
+    assert!(
+        line.contains("invoke"),
         "Expected `invoke` to remain in actions alongside `expand` — got {line:?}. \
-         MSAA walker should expose both press and dropdown halves.");
+         MSAA walker should expose both press and dropdown halves."
+    );
 }
 
 // ── Test 2: action:"expand" actually opens the color picker ─────────────────
@@ -240,72 +271,106 @@ fn harness_lo_vcl_font_color_split_button_exposes_expand() {
 #[test]
 #[ignore]
 fn harness_lo_vcl_font_color_expand_opens_picker() {
-    let mut fx = match setup() { Some(s) => s, None => return };
+    let mut fx = match setup() {
+        Some(s) => s,
+        None => return,
+    };
     let (pid, wid) = (fx.writer_pid, fx.writer_wid);
     let driver = &mut fx.driver;
 
     // Bring Writer to foreground so SendInput click lands on it.
-    let _ = driver.call("bring_to_front", serde_json::json!({
-        "pid": pid as i64, "window_id": wid
-    }));
+    let _ = driver.call(
+        "bring_to_front",
+        serde_json::json!({
+            "pid": pid as i64, "window_id": wid
+        }),
+    );
     std::thread::sleep(Duration::from_millis(400));
 
-    let snap = driver.call("get_window_state", serde_json::json!({
-        "pid": pid as i64, "window_id": wid,
-        "capture_mode": "ax", "query": "Font Color"
-    }));
+    let snap = driver.call(
+        "get_window_state",
+        serde_json::json!({
+            "pid": pid as i64, "window_id": wid,
+            "capture_mode": "ax", "query": "Font Color"
+        }),
+    );
     let text = snap.text();
-    let line = text.lines()
+    let line = text
+        .lines()
         .find(|l| l.contains("\"Font Color\"") && l.contains("expand"))
-        .unwrap_or_else(|| panic!("Font Color SplitButton with `expand` action not found: {text:?}"));
+        .unwrap_or_else(|| {
+            panic!("Font Color SplitButton with `expand` action not found: {text:?}")
+        });
     let s = line.find('[').expect("element_index bracket open");
     let e = line[s..].find(']').expect("element_index bracket close") + s;
-    let idx: u64 = line[s+1..e].trim().parse()
+    let idx: u64 = line[s + 1..e]
+        .trim()
+        .parse()
         .unwrap_or_else(|_| panic!("could not parse element_index from line {line:?}"));
 
     // Snapshot windows under our pid BEFORE the click.
-    let before = driver.call("list_windows", serde_json::json!({
-        "pid": pid as i64
-    }));
-    let before_ids: std::collections::HashSet<u64> = before
-        .structured()["windows"].as_array()
+    let before = driver.call(
+        "list_windows",
+        serde_json::json!({
+            "pid": pid as i64
+        }),
+    );
+    let before_ids: std::collections::HashSet<u64> = before.structured()["windows"]
+        .as_array()
         .map(|a| a.iter().filter_map(|w| w["window_id"].as_u64()).collect())
         .unwrap_or_default();
 
-    let resp = driver.call("click", serde_json::json!({
-        "pid": pid as i64, "window_id": wid,
-        "element_index": idx, "action": "expand"
-    }));
+    let resp = driver.call(
+        "click",
+        serde_json::json!({
+            "pid": pid as i64, "window_id": wid,
+            "element_index": idx, "action": "expand"
+        }),
+    );
     let resp_text = resp.text();
-    assert!(resp_text.starts_with("✅"),
-        "click(action:expand) failed: {resp_text:?}");
-    assert!(resp_text.contains("dropdown half"),
+    assert!(
+        resp_text.starts_with("✅"),
+        "click(action:expand) failed: {resp_text:?}"
+    );
+    assert!(
+        resp_text.contains("dropdown half"),
         "Expected response to mention dropdown half — got {resp_text:?}. \
-         The MSAA dispatch path may not have triggered.");
+         The MSAA dispatch path may not have triggered."
+    );
 
     // Let the picker spawn.
     std::thread::sleep(Duration::from_millis(900));
 
-    let after = driver.call("list_windows", serde_json::json!({
-        "pid": pid as i64
-    }));
-    let new_wins: Vec<&serde_json::Value> = after
-        .structured()["windows"].as_array()
-        .map(|a| a.iter()
-            .filter(|w| {
-                let id = w["window_id"].as_u64();
-                id.map(|i| !before_ids.contains(&i)).unwrap_or(false)
-            })
-            .collect())
+    let after = driver.call(
+        "list_windows",
+        serde_json::json!({
+            "pid": pid as i64
+        }),
+    );
+    let new_wins: Vec<&serde_json::Value> = after.structured()["windows"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|w| {
+                    let id = w["window_id"].as_u64();
+                    id.map(|i| !before_ids.contains(&i)).unwrap_or(false)
+                })
+                .collect()
+        })
         .unwrap_or_default();
     let picker = new_wins.iter().find(|w| {
-        w["title"].as_str().map(|t| t.contains("Font Color")).unwrap_or(false)
+        w["title"]
+            .as_str()
+            .map(|t| t.contains("Font Color"))
+            .unwrap_or(false)
     });
-    assert!(picker.is_some(),
+    assert!(
+        picker.is_some(),
         "No new window titled 'Font Color' appeared after click(action:expand). \
          new_windows={new_wins:?}. The right-edge dispatch may have hit the \
          wrong pixel (LO's toolbar scaled differently?) or the picker spawned \
-         as a child window instead of a top-level.");
+         as a child window instead of a top-level."
+    );
 }
 
 // ── Working path: SALSUBFRAME modal dialogs accept SendInput input ─────────
@@ -336,39 +401,57 @@ fn harness_lo_vcl_font_color_expand_opens_picker() {
 #[test]
 #[ignore]
 fn harness_lo_vcl_modal_input_roundtrip_works() {
-    let mut fx = match setup() { Some(s) => s, None => return };
+    let mut fx = match setup() {
+        Some(s) => s,
+        None => return,
+    };
     let (pid, wid) = (fx.writer_pid, fx.writer_wid);
     let driver = &mut fx.driver;
 
     std::thread::sleep(Duration::from_millis(800));
 
-    let open_resp = driver.call("hotkey", serde_json::json!({
-        "pid": pid as i64, "window_id": wid,
-        "keys": ["ctrl", "h"], "delivery_mode": "foreground"
-    }));
+    let open_resp = driver.call(
+        "hotkey",
+        serde_json::json!({
+            "pid": pid as i64, "window_id": wid,
+            "keys": ["ctrl", "h"], "delivery_mode": "foreground"
+        }),
+    );
     let open_text = open_resp.text();
-    assert!(open_text.starts_with("✅"),
-        "hotkey(ctrl+h, foreground) failed: {open_text:?}");
+    assert!(
+        open_text.starts_with("✅"),
+        "hotkey(ctrl+h, foreground) failed: {open_text:?}"
+    );
 
     let dialog_wid = {
         let deadline = std::time::Instant::now() + Duration::from_secs(8);
         loop {
-            let wins = driver.call("list_windows", serde_json::json!({
-                "pid": pid as i64
-            }));
-            let found = wins.structured()["windows"].as_array()
-                .and_then(|a| a.iter().find_map(|w| {
+            let wins = driver.call(
+                "list_windows",
+                serde_json::json!({
+                    "pid": pid as i64
+                }),
+            );
+            let found = wins.structured()["windows"].as_array().and_then(|a| {
+                a.iter().find_map(|w| {
                     let title = w["title"].as_str().unwrap_or("");
                     let id = w["window_id"].as_u64();
-                    if id != Some(wid)
-                       && (title.contains("Find") || title.contains("Replace"))
-                    { id } else { None }
-                }));
-            if let Some(id) = found { break id; }
+                    if id != Some(wid) && (title.contains("Find") || title.contains("Replace")) {
+                        id
+                    } else {
+                        None
+                    }
+                })
+            });
+            if let Some(id) = found {
+                break id;
+            }
             if std::time::Instant::now() > deadline {
-                panic!("Find & Replace dialog did not appear after Ctrl+H — \
+                panic!(
+                    "Find & Replace dialog did not appear after Ctrl+H — \
                         Writer accelerator may have regressed under \
-                        foreground SendInput on SALFRAME.");
+                        foreground SendInput on SALFRAME."
+                );
             }
             std::thread::sleep(Duration::from_millis(300));
         }
@@ -377,49 +460,76 @@ fn harness_lo_vcl_modal_input_roundtrip_works() {
     // Snapshot the dialog — MSAA walker should produce a real tree
     // with the dialog's buttons and edit fields, NOT the old skip
     // stub.
-    let dialog_ax = driver.call("get_window_state", serde_json::json!({
-        "pid": pid as i64, "window_id": dialog_wid, "capture_mode": "ax"
-    }));
+    let dialog_ax = driver.call(
+        "get_window_state",
+        serde_json::json!({
+            "pid": pid as i64, "window_id": dialog_wid, "capture_mode": "ax"
+        }),
+    );
     let dialog_text = dialog_ax.text();
-    assert!(!dialog_text.contains("SAL/VCL target, UIA walk skipped"),
+    assert!(
+        !dialog_text.contains("SAL/VCL target, UIA walk skipped"),
         "Got the old skip-stub message — MSAA fallback did not engage on \
-         this SALSUBFRAME. Snapshot was: {dialog_text:?}");
-    assert!(dialog_text.contains("Button \"Close\""),
+         this SALSUBFRAME. Snapshot was: {dialog_text:?}"
+    );
+    assert!(
+        dialog_text.contains("Button \"Close\""),
         "Expected MSAA walker to expose a 'Close' Button in the Find & Replace \
-         dialog tree (it's a documented child via accChild). Snapshot was: {dialog_text:?}");
+         dialog tree (it's a documented child via accChild). Snapshot was: {dialog_text:?}"
+    );
     // Sanity: should have several actionable element_indices, not zero.
-    let actionable_count = dialog_text.lines()
+    let actionable_count = dialog_text
+        .lines()
         .filter(|l| l.contains("actions=[invoke"))
         .count();
-    assert!(actionable_count >= 4,
+    assert!(
+        actionable_count >= 4,
         "Expected ≥4 actionable elements in Find & Replace via MSAA walker, \
-         got {actionable_count}. Tree: {dialog_text:?}");
+         got {actionable_count}. Tree: {dialog_text:?}"
+    );
 
     // Foreground Escape should close the dialog.
-    let esc_resp = driver.call("press_key", serde_json::json!({
-        "pid": pid as i64, "window_id": dialog_wid,
-        "key": "escape", "delivery_mode": "foreground"
-    }));
+    let esc_resp = driver.call(
+        "press_key",
+        serde_json::json!({
+            "pid": pid as i64, "window_id": dialog_wid,
+            "key": "escape", "delivery_mode": "foreground"
+        }),
+    );
     let esc_text = esc_resp.text();
-    assert!(esc_text.starts_with("✅"),
-        "press_key(escape, foreground) returned an error: {esc_text:?}");
+    assert!(
+        esc_text.starts_with("✅"),
+        "press_key(escape, foreground) returned an error: {esc_text:?}"
+    );
     std::thread::sleep(Duration::from_millis(700));
 
-    let wins_after = driver.call("list_windows", serde_json::json!({
-        "pid": pid as i64
-    }));
-    let still_open = wins_after.structured()["windows"].as_array()
-        .map(|a| a.iter().any(|w| w["window_id"].as_u64() == Some(dialog_wid)))
+    let wins_after = driver.call(
+        "list_windows",
+        serde_json::json!({
+            "pid": pid as i64
+        }),
+    );
+    let still_open = wins_after.structured()["windows"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .any(|w| w["window_id"].as_u64() == Some(dialog_wid))
+        })
         .unwrap_or(false);
-    assert!(!still_open,
+    assert!(
+        !still_open,
         "Find & Replace dialog stayed open after foreground Escape — \
          SAL modal input dispatch regressed. Check uia/mod.rs SAL-class \
-         handling and the press_key SendInput path.");
+         handling and the press_key SendInput path."
+    );
 
     // Cleanup: kill the LO process — Drop impl sweeps soffice.bin.
-    let _ = driver.call("kill_app", serde_json::json!({
-        "pid": pid as i64
-    }));
+    let _ = driver.call(
+        "kill_app",
+        serde_json::json!({
+            "pid": pid as i64
+        }),
+    );
 }
 
 // ── Test 4: All toolbar SplitButtons expose `expand` ────────────────────────
@@ -442,36 +552,50 @@ fn harness_lo_vcl_modal_input_roundtrip_works() {
 #[test]
 #[ignore]
 fn harness_lo_vcl_all_toolbar_split_buttons_expose_expand() {
-    let mut fx = match setup() { Some(s) => s, None => return };
+    let mut fx = match setup() {
+        Some(s) => s,
+        None => return,
+    };
     let (pid, wid) = (fx.writer_pid, fx.writer_wid);
     let driver = &mut fx.driver;
 
-    let snap = driver.call("get_window_state", serde_json::json!({
-        "pid": pid as i64, "window_id": wid, "capture_mode": "ax"
-    }));
+    let snap = driver.call(
+        "get_window_state",
+        serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "capture_mode": "ax"
+        }),
+    );
     let text = snap.text();
     let splitbutton_lines: Vec<&str> = text
         .lines()
         .filter(|l| l.contains("SplitButton") && l.contains("actions=["))
         .collect();
-    let with_expand: Vec<&&str> = splitbutton_lines.iter()
+    let with_expand: Vec<&&str> = splitbutton_lines
+        .iter()
         .filter(|l| l.contains("expand"))
         .collect();
-    assert!(splitbutton_lines.len() >= 15,
+    assert!(
+        splitbutton_lines.len() >= 15,
         "Expected ≥15 SplitButtons in LO Writer toolbar tree, got {}. \
          Possible MSAA walker regression. Full snapshot first 1500 chars: {}",
         splitbutton_lines.len(),
-        &text.chars().take(1500).collect::<String>());
-    assert_eq!(with_expand.len(), splitbutton_lines.len(),
+        &text.chars().take(1500).collect::<String>()
+    );
+    assert_eq!(
+        with_expand.len(),
+        splitbutton_lines.len(),
         "{}/{} SplitButtons report `expand`. The MSAA role→actions \
          mapping may have dropped one of BUTTONDROPDOWN / BUTTONMENU / \
          BUTTONDROPDOWNGRID / SPLITBUTTON. Missing-expand lines:\n{}",
-        with_expand.len(), splitbutton_lines.len(),
-        splitbutton_lines.iter()
+        with_expand.len(),
+        splitbutton_lines.len(),
+        splitbutton_lines
+            .iter()
             .filter(|l| !l.contains("expand"))
             .map(|l| l.trim())
             .collect::<Vec<_>>()
-            .join("\n"));
+            .join("\n")
+    );
 }
 
 // ── Test 5: End-to-end color-pick ───────────────────────────────────────────
@@ -492,115 +616,171 @@ fn harness_lo_vcl_all_toolbar_split_buttons_expose_expand() {
 #[test]
 #[ignore]
 fn harness_lo_vcl_color_pick_green_end_to_end() {
-    let mut fx = match setup() { Some(s) => s, None => return };
+    let mut fx = match setup() {
+        Some(s) => s,
+        None => return,
+    };
     let (pid, wid) = (fx.writer_pid, fx.writer_wid);
     let driver = &mut fx.driver;
 
     // Foreground first so type_text + Ctrl+A land on Writer.
-    let _ = driver.call("bring_to_front", serde_json::json!({
-        "pid": pid as i64, "window_id": wid
-    }));
+    let _ = driver.call(
+        "bring_to_front",
+        serde_json::json!({
+            "pid": pid as i64, "window_id": wid
+        }),
+    );
     std::thread::sleep(Duration::from_millis(400));
 
-    let _ = driver.call("type_text", serde_json::json!({
-        "pid": pid as i64, "window_id": wid,
-        "text": "color pick regression"
-    }));
+    let _ = driver.call(
+        "type_text",
+        serde_json::json!({
+            "pid": pid as i64, "window_id": wid,
+            "text": "color pick regression"
+        }),
+    );
     std::thread::sleep(Duration::from_millis(400));
 
-    let _ = driver.call("hotkey", serde_json::json!({
-        "pid": pid as i64, "window_id": wid,
-        "keys": ["ctrl", "a"], "delivery_mode": "foreground"
-    }));
+    let _ = driver.call(
+        "hotkey",
+        serde_json::json!({
+            "pid": pid as i64, "window_id": wid,
+            "keys": ["ctrl", "a"], "delivery_mode": "foreground"
+        }),
+    );
     std::thread::sleep(Duration::from_millis(400));
 
     // Locate Font Color element_index in Writer's MSAA tree.
-    let snap = driver.call("get_window_state", serde_json::json!({
-        "pid": pid as i64, "window_id": wid,
-        "capture_mode": "ax", "query": "Font Color"
-    }));
+    let snap = driver.call(
+        "get_window_state",
+        serde_json::json!({
+            "pid": pid as i64, "window_id": wid,
+            "capture_mode": "ax", "query": "Font Color"
+        }),
+    );
     let snap_text = snap.text();
-    let fc_line = snap_text.lines()
+    let fc_line = snap_text
+        .lines()
         .find(|l| l.contains("\"Font Color\"") && l.contains("expand"))
         .unwrap_or_else(|| panic!("Font Color with `expand` not found in tree: {snap_text:?}"));
     let s = fc_line.find('[').expect("[ in fc_line");
     let e = fc_line[s..].find(']').expect("] in fc_line") + s;
-    let fc_idx: u64 = fc_line[s+1..e].trim().parse().expect("fc element_index");
+    let fc_idx: u64 = fc_line[s + 1..e].trim().parse().expect("fc element_index");
 
     // Snapshot which windows existed BEFORE opening the picker so
     // we can isolate the picker on appearance.
-    let before = driver.call("list_windows", serde_json::json!({
-        "pid": pid as i64
-    }));
-    let before_ids: std::collections::HashSet<u64> = before
-        .structured()["windows"].as_array()
+    let before = driver.call(
+        "list_windows",
+        serde_json::json!({
+            "pid": pid as i64
+        }),
+    );
+    let before_ids: std::collections::HashSet<u64> = before.structured()["windows"]
+        .as_array()
         .map(|a| a.iter().filter_map(|w| w["window_id"].as_u64()).collect())
         .unwrap_or_default();
 
     // Open the dropdown.
-    let open_resp = driver.call("click", serde_json::json!({
-        "pid": pid as i64, "window_id": wid,
-        "element_index": fc_idx, "action": "expand"
-    }));
+    let open_resp = driver.call(
+        "click",
+        serde_json::json!({
+            "pid": pid as i64, "window_id": wid,
+            "element_index": fc_idx, "action": "expand"
+        }),
+    );
     let open_text = open_resp.text();
-    assert!(open_text.contains("dropdown half"),
-        "click(action:expand) did not dispatch via MSAA dropdown path: {open_text:?}");
+    assert!(
+        open_text.contains("dropdown half"),
+        "click(action:expand) did not dispatch via MSAA dropdown path: {open_text:?}"
+    );
     std::thread::sleep(Duration::from_millis(900));
 
     // Find the picker window.
-    let after = driver.call("list_windows", serde_json::json!({
-        "pid": pid as i64
-    }));
+    let after = driver.call(
+        "list_windows",
+        serde_json::json!({
+            "pid": pid as i64
+        }),
+    );
     let picker_wid = after.structured()["windows"]
         .as_array()
-        .and_then(|a| a.iter().find_map(|w| {
-            let id = w["window_id"].as_u64();
-            let title = w["title"].as_str().unwrap_or("");
-            if id.map(|i| !before_ids.contains(&i)).unwrap_or(false)
-               && title.contains("Font Color")
-            { id } else { None }
-        }))
+        .and_then(|a| {
+            a.iter().find_map(|w| {
+                let id = w["window_id"].as_u64();
+                let title = w["title"].as_str().unwrap_or("");
+                if id.map(|i| !before_ids.contains(&i)).unwrap_or(false)
+                    && title.contains("Font Color")
+                {
+                    id
+                } else {
+                    None
+                }
+            })
+        })
         .unwrap_or_else(|| panic!("No new 'Font Color' picker window appeared"));
 
     // Walk the picker tree to find a green color cell.
-    let psnap = driver.call("get_window_state", serde_json::json!({
-        "pid": pid as i64, "window_id": picker_wid, "capture_mode": "ax"
-    }));
+    let psnap = driver.call(
+        "get_window_state",
+        serde_json::json!({
+            "pid": pid as i64, "window_id": picker_wid, "capture_mode": "ax"
+        }),
+    );
     let psnap_text = psnap.text();
-    let green_line = psnap_text.lines()
+    let green_line = psnap_text
+        .lines()
         .find(|l| l.contains("\"Green\"") && l.contains("[") && l.contains("actions=[invoke"))
-        .unwrap_or_else(|| panic!(
-            "No 'Green' ListItem in picker tree. The MSAA walker may have \
+        .unwrap_or_else(|| {
+            panic!(
+                "No 'Green' ListItem in picker tree. The MSAA walker may have \
              truncated the color grid or LO's locale renamed the color. \
              First 1500 chars: {}",
-            &psnap_text.chars().take(1500).collect::<String>()));
+                &psnap_text.chars().take(1500).collect::<String>()
+            )
+        });
     let s = green_line.find('[').expect("[ in green");
     let e = green_line[s..].find(']').expect("] in green") + s;
-    let green_idx: u64 = green_line[s+1..e].trim().parse().expect("green element_index");
+    let green_idx: u64 = green_line[s + 1..e]
+        .trim()
+        .parse()
+        .expect("green element_index");
 
     // Pick it. Default action (invoke) clicks center via MSAA dispatch.
-    let pick_resp = driver.call("click", serde_json::json!({
-        "pid": pid as i64, "window_id": picker_wid,
-        "element_index": green_idx
-    }));
+    let pick_resp = driver.call(
+        "click",
+        serde_json::json!({
+            "pid": pid as i64, "window_id": picker_wid,
+            "element_index": green_idx
+        }),
+    );
     let pick_text = pick_resp.text();
-    assert!(pick_text.starts_with("✅"),
-        "click on Green color cell failed: {pick_text:?}");
+    assert!(
+        pick_text.starts_with("✅"),
+        "click on Green color cell failed: {pick_text:?}"
+    );
     std::thread::sleep(Duration::from_millis(700));
 
     // Verify the picker closed (LO closes the popup after a color is
     // selected — the canonical "color applied" signal). If it
     // didn't, the click didn't actually land on the cell.
-    let after2 = driver.call("list_windows", serde_json::json!({
-        "pid": pid as i64
-    }));
+    let after2 = driver.call(
+        "list_windows",
+        serde_json::json!({
+            "pid": pid as i64
+        }),
+    );
     let still_open = after2.structured()["windows"]
         .as_array()
-        .map(|a| a.iter().any(|w| w["window_id"].as_u64() == Some(picker_wid)))
+        .map(|a| {
+            a.iter()
+                .any(|w| w["window_id"].as_u64() == Some(picker_wid))
+        })
         .unwrap_or(false);
-    assert!(!still_open,
+    assert!(
+        !still_open,
         "Picker stayed open after click on Green — the cell click \
-         didn't land. LO didn't apply the color.");
+         didn't land. LO didn't apply the color."
+    );
 }
 
 // ── Test 6: Recovery dialog walks via MSAA ──────────────────────────────────
@@ -625,27 +805,38 @@ fn harness_lo_vcl_recovery_dialog_walks_via_msaa() {
     // First: launch Writer WITHOUT -norestore (we WANT recovery
     // behavior), type something, then force-kill so LO marks the
     // session as crashed.
-    let writer = match swriter_exe() { Some(p) => p, None => return };
-    let _ = Command::new("taskkill").args(["/F", "/IM", "soffice.bin"]).output();
+    let writer = match swriter_exe() {
+        Some(p) => p,
+        None => return,
+    };
+    let _ = Command::new("taskkill")
+        .args(["/F", "/IM", "soffice.bin"])
+        .output();
     std::thread::sleep(Duration::from_millis(800));
 
     // Launch (no -norestore, no -nologo flag → default behavior).
     let mut crash_proc = match Command::new(&writer)
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn() {
-            Ok(p) => p,
-            Err(_) => return,
-        };
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(p) => p,
+        Err(_) => return,
+    };
     std::thread::sleep(Duration::from_secs(5));
     let _ = crash_proc.kill();
     let _ = crash_proc.wait();
     // Force-kill the actual soffice.bin worker too (the launcher is what
     // we just killed; the real LO process is a fork).
-    let _ = Command::new("taskkill").args(["/F", "/IM", "soffice.bin"]).output();
+    let _ = Command::new("taskkill")
+        .args(["/F", "/IM", "soffice.bin"])
+        .output();
     std::thread::sleep(Duration::from_secs(2));
 
     // Re-launch Writer — Recovery dialog should appear.
-    let Some(mut driver) = McpDriver::spawn() else { return };
+    let Some(mut driver) = McpDriver::spawn() else {
+        return;
+    };
     if driver
         .reaper()
         .spawn(
@@ -667,7 +858,10 @@ fn harness_lo_vcl_recovery_dialog_walks_via_msaa() {
             let resp = driver.call("list_windows", serde_json::json!({}));
             if let Some(wins) = resp.structured()["windows"].as_array() {
                 if let Some(w) = wins.iter().find(|w| {
-                    w["title"].as_str().map(|t| t.contains("Recovery")).unwrap_or(false)
+                    w["title"]
+                        .as_str()
+                        .map(|t| t.contains("Recovery"))
+                        .unwrap_or(false)
                 }) {
                     let id = w["window_id"].as_u64();
                     let pid = w["pid"].as_u64().map(|p| p as u32);
@@ -684,34 +878,46 @@ fn harness_lo_vcl_recovery_dialog_walks_via_msaa() {
 
     match recovery_wid_pid {
         None => {
-            eprintln!("Recovery dialog did not appear — LO didn't enter recovery \
+            eprintln!(
+                "Recovery dialog did not appear — LO didn't enter recovery \
                        state (possibly disabled in user config, or our crash \
                        trigger didn't take effect). Test cannot assert MSAA \
                        walk on a dialog that doesn't exist; logging and \
-                       returning OK.");
+                       returning OK."
+            );
         }
         Some((rwid, rpid)) => {
-            let snap = driver.call("get_window_state",
+            let snap = driver.call(
+                "get_window_state",
                 serde_json::json!({
                     "pid": rpid as i64, "window_id": rwid, "capture_mode": "ax"
-                }));
+                }),
+            );
             let text = snap.text();
-            assert!(!text.contains("SAL/VCL target, UIA walk skipped"),
+            assert!(
+                !text.contains("SAL/VCL target, UIA walk skipped"),
                 "Recovery dialog returned the old SAL-skip stub — MSAA fallback \
-                 isn't engaging on SALFRAME Recovery dialogs.");
-            assert!(text.contains("Button \"Discard All\""),
+                 isn't engaging on SALFRAME Recovery dialogs."
+            );
+            assert!(
+                text.contains("Button \"Discard All\""),
                 "Recovery dialog tree should expose `Discard All` Button via MSAA. \
-                 Got: {text:?}");
-            assert!(text.contains("Button \"Recover Selected\""),
+                 Got: {text:?}"
+            );
+            assert!(
+                text.contains("Button \"Recover Selected\""),
                 "Recovery dialog tree should expose `Recover Selected` Button via MSAA. \
-                 Got: {text:?}");
+                 Got: {text:?}"
+            );
         }
     }
 
     // Cleanup: reaper kills the MCP driver + the spawned writer on drop;
     // sweep the soffice.bin daemon that outlives the launcher.
     drop(driver);
-    let _ = Command::new("taskkill").args(["/F", "/IM", "soffice.bin"]).output();
+    let _ = Command::new("taskkill")
+        .args(["/F", "/IM", "soffice.bin"])
+        .output();
     std::thread::sleep(Duration::from_millis(800));
 }
 
@@ -728,12 +934,19 @@ fn harness_lo_vcl_recovery_dialog_walks_via_msaa() {
 #[test]
 #[ignore]
 fn harness_lo_vcl_calc_msaa_smoke() {
-    let scalc = match scalc_exe() { Some(p) => p, None => return };
+    let scalc = match scalc_exe() {
+        Some(p) => p,
+        None => return,
+    };
 
-    let _ = Command::new("taskkill").args(["/F", "/IM", "soffice.bin"]).output();
+    let _ = Command::new("taskkill")
+        .args(["/F", "/IM", "soffice.bin"])
+        .output();
     std::thread::sleep(Duration::from_millis(800));
 
-    let Some(mut driver) = McpDriver::spawn() else { return };
+    let Some(mut driver) = McpDriver::spawn() else {
+        return;
+    };
     if driver
         .reaper()
         .spawn(
@@ -756,7 +969,10 @@ fn harness_lo_vcl_calc_msaa_smoke() {
             let r = driver.call("list_windows", serde_json::json!({}));
             if let Some(wins) = r.structured()["windows"].as_array() {
                 if let Some(w) = wins.iter().find(|w| {
-                    w["title"].as_str().map(|t| t.contains("LibreOffice Calc")).unwrap_or(false)
+                    w["title"]
+                        .as_str()
+                        .map(|t| t.contains("LibreOffice Calc"))
+                        .unwrap_or(false)
                 }) {
                     let id = w["window_id"].as_u64();
                     let pid = w["pid"].as_u64().map(|p| p as u32);
@@ -774,32 +990,46 @@ fn harness_lo_vcl_calc_msaa_smoke() {
     let (cwid, cpid) = match calc_wid_pid {
         Some(v) => v,
         None => {
-            let _ = Command::new("taskkill").args(["/F", "/IM", "soffice.bin"]).output();
+            let _ = Command::new("taskkill")
+                .args(["/F", "/IM", "soffice.bin"])
+                .output();
             panic!("LO Calc window did not appear within 20 s");
         }
     };
 
-    let snap = driver.call("get_window_state",
+    let snap = driver.call(
+        "get_window_state",
         serde_json::json!({
             "pid": cpid as i64, "window_id": cwid, "capture_mode": "ax"
-        }));
+        }),
+    );
     let text = snap.text();
-    assert!(!text.contains("SAL/VCL target, UIA walk skipped"),
-        "Calc returned the old SAL-skip stub — MSAA didn't engage.");
-    let sb_with_expand = text.lines()
+    assert!(
+        !text.contains("SAL/VCL target, UIA walk skipped"),
+        "Calc returned the old SAL-skip stub — MSAA didn't engage."
+    );
+    let sb_with_expand = text
+        .lines()
         .filter(|l| l.contains("SplitButton") && l.contains("expand"))
         .count();
-    assert!(sb_with_expand >= 15,
+    assert!(
+        sb_with_expand >= 15,
         "Expected ≥15 SplitButtons with `expand` in Calc toolbar (proves MSAA \
          generalizes beyond Writer). Got {sb_with_expand}. The MSAA role \
-         mapping may differ in Calc, or the toolbar config is unexpectedly slim.");
+         mapping may differ in Calc, or the toolbar config is unexpectedly slim."
+    );
 
     // Cleanup: reaper kills the MCP driver + the spawned calc on drop;
     // sweep the soffice.bin daemon that outlives the launcher.
-    let _ = driver.call("kill_app", serde_json::json!({
-        "pid": cpid as i64
-    }));
+    let _ = driver.call(
+        "kill_app",
+        serde_json::json!({
+            "pid": cpid as i64
+        }),
+    );
     drop(driver);
-    let _ = Command::new("taskkill").args(["/F", "/IM", "soffice.bin"]).output();
+    let _ = Command::new("taskkill")
+        .args(["/F", "/IM", "soffice.bin"])
+        .output();
     std::thread::sleep(Duration::from_millis(800));
 }

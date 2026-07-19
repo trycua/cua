@@ -12,9 +12,9 @@
 
 pub const RESPONSIBILITY_DISCLAIMED_ENV: &str = "CUA_DRIVER_RS_RESPONSIBILITY_DISCLAIMED";
 
-/// Embedded mode (`CUA_DRIVER_EMBEDDED=1` / `--embedded`): the driver runs
-/// as a direct child of a host app and stays in its TCC responsibility
-/// chain — no disclaim re-exec, no daemon relaunch, no permission prompts.
+/// Embedded mode (`CUA_DRIVER_EMBEDDED=1` / `--embedded`): the daemon runs as
+/// a direct child of a host app and stays in its TCC responsibility chain —
+/// no disclaim re-exec, standalone-app relaunch, or permission prompts.
 /// See `Skills/cua-driver/EMBEDDING.md`.
 ///
 /// Caller-controlled, which is safe only because embedded mode strictly
@@ -34,7 +34,9 @@ pub fn embedded_mode() -> bool {
 
 pub mod browser;
 pub mod capture_mode;
+pub mod capture_scope;
 pub mod cdp;
+pub mod cursor_sampler;
 pub mod element_cache;
 pub mod element_token;
 pub mod ffmpeg_install;
@@ -44,7 +46,6 @@ pub mod page;
 pub mod pip_hook;
 pub mod policy;
 pub mod protocol;
-pub mod cursor_sampler;
 pub mod recording;
 pub mod recording_loader;
 pub mod recording_render;
@@ -56,8 +57,8 @@ pub mod session_tools;
 pub mod socket_io;
 pub mod text_sanitize;
 pub mod tool;
-pub mod tool_schema;
 pub mod tool_args;
+pub mod tool_schema;
 pub mod video;
 pub mod video_ffmpeg;
 

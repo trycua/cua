@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 
 use crate::permissions::status::{
@@ -29,13 +32,11 @@ fn screen_recording_capturable() -> bool {
 ///
 /// macOS attributes Accessibility / Screen-Recording to the *responsible
 /// process* (the LaunchServices launching app), not the executable path.
-/// So `check_permissions` answered in-process reflects:
+/// So `check_permissions` answered by the daemon reflects:
 ///   - the **CuaDriver daemon** (`com.trycua.driver`) when this process is
 ///     its own responsible process — the real driver status.
-///   - the **calling app** otherwise — e.g. the terminal/IDE that spawned
-///     `cua-driver call …`. That grant is NOT the driver's, which is why a
-///     standalone check can read `true` while `tccutil … com.trycua.driver`
-///     reports no record.
+///   - the **embedding host** otherwise. That is intentional only when the
+///     host directly spawned `cua-driver serve --embedded`.
 fn permission_source() -> serde_json::Value {
     let pid = unsafe { libc::getpid() };
     let ppid = unsafe { libc::getppid() };
@@ -44,16 +45,14 @@ fn permission_source() -> serde_json::Value {
         .and_then(|p| std::fs::canonicalize(p).ok())
         .and_then(|p| p.to_str().map(str::to_owned))
         .unwrap_or_default();
-    let disclaimed =
-        std::env::var_os(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV).is_some();
+    let disclaimed = std::env::var_os(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV).is_some();
     // Embedded mode: the driver is a child in a host app's responsibility
     // chain, so the probes already answer for the host's TCC identity.
     // This branch only ever downgrades attribution (host, never
     // driver-daemon), so the caller-controlled env var can't spoof an
     // elevated identity. `host_bundle_id` is advisory, not a trust signal.
     if cua_driver_core::embedded_mode() {
-        let host_bundle_id = std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV)
-            .unwrap_or_default();
+        let host_bundle_id = std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV).unwrap_or_default();
         return serde_json::json!({
             "attribution": "host",
             "host_bundle_id": host_bundle_id,
@@ -148,7 +147,9 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for CheckPermissionsTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
@@ -157,8 +158,7 @@ impl Tool for CheckPermissionsTool {
         // host owns the grant flow). This and the startup gate are the only
         // `request_*` call sites, so both being gated makes prompts
         // unreachable when embedded.
-        let should_prompt =
-            args.bool_or("prompt", true) && !cua_driver_core::embedded_mode();
+        let should_prompt = args.bool_or("prompt", true) && !cua_driver_core::embedded_mode();
         if should_prompt {
             let _ = request_accessibility();
             let _ = request_screen_recording();
@@ -173,10 +173,18 @@ impl Tool for CheckPermissionsTool {
 
         // Text format mirrors Swift 1:1:
         //   "✅ Accessibility: granted.\n✅ Screen Recording: granted."
-        let ax_prefix  = if accessibility   { "✅" } else { "❌" };
-        let sr_prefix  = if screen_recording { "✅" } else { "❌" };
-        let ax_state   = if accessibility   { "granted" } else { "NOT granted" };
-        let sr_state   = if screen_recording { "granted" } else { "NOT granted" };
+        let ax_prefix = if accessibility { "✅" } else { "❌" };
+        let sr_prefix = if screen_recording { "✅" } else { "❌" };
+        let ax_state = if accessibility {
+            "granted"
+        } else {
+            "NOT granted"
+        };
+        let sr_state = if screen_recording {
+            "granted"
+        } else {
+            "NOT granted"
+        };
         let mut summary = format!(
             "{ax_prefix} Accessibility: {ax_state}.\n{sr_prefix} Screen Recording: {sr_state}."
         );
@@ -203,13 +211,12 @@ impl Tool for CheckPermissionsTool {
             );
         }
 
-        ToolResult::text(summary)
-            .with_structured(serde_json::json!({
-                "accessibility":               accessibility,
-                "screen_recording":            screen_recording,
-                "screen_recording_capturable": screen_recording_capturable,
-                "source":                      source,
-            }))
+        ToolResult::text(summary).with_structured(serde_json::json!({
+            "accessibility":               accessibility,
+            "screen_recording":            screen_recording,
+            "screen_recording_capturable": screen_recording_capturable,
+            "source":                      source,
+        }))
     }
 }
 
@@ -266,7 +273,10 @@ mod tests {
     fn embedded_mode_reports_host_attribution() {
         let _guard = env_lock();
         let embedded = swap_env(cua_driver_core::EMBEDDED_ENV, Some("1"));
-        let host = swap_env(cua_driver_core::HOST_BUNDLE_ID_ENV, Some("com.example.host"));
+        let host = swap_env(
+            cua_driver_core::HOST_BUNDLE_ID_ENV,
+            Some("com.example.host"),
+        );
 
         let source = permission_source();
         assert_eq!(

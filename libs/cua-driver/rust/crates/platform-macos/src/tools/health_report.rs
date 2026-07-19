@@ -16,9 +16,7 @@ use cua_driver_core::health_report::{
     NAME_SESSION_ACTIVE, NAME_TCC_ACCESSIBILITY, NAME_TCC_SCREEN_RECORDING,
 };
 
-use crate::permissions::status::{
-    accessibility_granted, current_status, screen_recording_granted,
-};
+use crate::permissions::status::{accessibility_granted, current_status, screen_recording_granted};
 
 /// macOS run order, in the order consumers see them reflected back in
 /// `report.checks[]`. Matches the Swift PR #1905 contract.

@@ -7,39 +7,39 @@
 //! - CGWindow / ScreenCaptureKit for window enumeration and screenshots
 
 #[cfg(target_os = "macos")]
-pub mod ax;
-#[cfg(target_os = "macos")]
 pub mod apps;
 #[cfg(target_os = "macos")]
-pub mod windows;
-#[cfg(target_os = "macos")]
-pub mod input;
-#[cfg(target_os = "macos")]
-pub mod cursor;
-#[cfg(target_os = "macos")]
-pub mod capture;
+pub mod ax;
 #[cfg(target_os = "macos")]
 pub mod browser;
 #[cfg(target_os = "macos")]
-pub mod focus_steal;
+pub mod capture;
 #[cfg(target_os = "macos")]
-pub mod permissions;
+pub mod cursor;
 #[cfg(target_os = "macos")]
 pub mod focus_guard;
 #[cfg(target_os = "macos")]
-pub mod window_change_detector;
+pub mod focus_steal;
+#[cfg(target_os = "macos")]
+pub mod input;
+#[cfg(target_os = "macos")]
+pub mod permissions;
+#[cfg(target_os = "macos")]
+pub mod pip;
+#[cfg(target_os = "macos")]
+pub mod recording_hooks;
+#[cfg(target_os = "macos")]
+pub mod session;
 #[cfg(target_os = "macos")]
 pub mod terminal;
 #[cfg(target_os = "macos")]
 pub mod tools;
 #[cfg(target_os = "macos")]
-pub mod recording_hooks;
-#[cfg(target_os = "macos")]
 pub mod video_sckit;
 #[cfg(target_os = "macos")]
-pub mod pip;
+pub mod window_change_detector;
 #[cfg(target_os = "macos")]
-pub mod session;
+pub mod windows;
 
 use cua_driver_core::tool::ToolRegistry;
 

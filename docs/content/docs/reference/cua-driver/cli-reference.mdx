@@ -40,9 +40,9 @@ Print a tool's full description and JSON input schema.
 
 ### `cua-driver call`
 
-Invoke an MCP tool directly from the shell.
+Invoke an MCP tool through the running daemon.
 
-Runs the same handler the MCP server uses. JSON arguments may be passed as a positional JSON object or through stdin.
+Requires a Cua Driver daemon. JSON arguments may be passed as a positional JSON object or through stdin.
 
 **Arguments:**
 
@@ -62,24 +62,23 @@ Runs the same handler the MCP server uses. JSON arguments may be passed as a pos
 
 ### `cua-driver mcp`
 
-Run the stdio MCP server.
+Run the daemon-backed stdio MCP proxy.
 
-On macOS, shell-spawned MCP processes can auto-launch and proxy through a CuaDriver.app daemon so TCC grants attach to the bundle. On Windows and Linux, MCP proxies through an already-running daemon when one is listening.
+Every MCP tool call is forwarded to a Cua Driver daemon. On macOS the proxy can auto-launch CuaDriver.app; on Windows and Linux the daemon must already be running.
 
 **Options:**
 
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--socket` | String | — | Override the daemon socket or named-pipe path used by the proxy fallback. |
+| `--socket` | String | — | Override the required daemon socket or named-pipe path. |
 | `--host-bundle-id` | String | — | Advisory host bundle id label echoed in check_permissions output (embedded mode). |
 
 **Flags:**
 
 | Name | Description |
 | ---- | ----------- |
-| `--no-daemon-relaunch` | Stay in-process instead of proxying through a daemon. |
 | `--claude-code-computer-use-compat` | Expose the Claude Code computer-use compatibility screenshot surface. |
-| `--embedded` | Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1. |
+| `--embedded` | Require a daemon spawned by the embedding host instead of auto-launching the standalone app. |
 
 ### `cua-driver serve`
 
@@ -141,7 +140,7 @@ Supported clients include claude, codex, cursor, antigravity, openclaw, opencode
 
 Control trajectory recording on a running daemon.
 
-Recording state lives in-process, so use a daemon for multi-call sessions.
+Recording state lives in the required daemon and survives client reconnects.
 
 **Options:**
 

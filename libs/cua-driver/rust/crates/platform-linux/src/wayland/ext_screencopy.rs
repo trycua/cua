@@ -115,7 +115,9 @@ pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
     if !state.done || state.width == 0 || state.height == 0 || state.fmt.is_none() {
         anyhow::bail!(
             "ext-image-copy-capture session never reported buffer specs (w={}, h={}, fmt={:?})",
-            state.width, state.height, state.fmt
+            state.width,
+            state.height,
+            state.fmt
         );
     }
 
@@ -126,9 +128,12 @@ pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
     let stride = if state.stride > 0 {
         state.stride
     } else {
-        state.width
-            .checked_mul(4)
-            .ok_or_else(|| anyhow::anyhow!("compositor advertised width that overflows stride: {}", state.width))?
+        state.width.checked_mul(4).ok_or_else(|| {
+            anyhow::anyhow!(
+                "compositor advertised width that overflows stride: {}",
+                state.width
+            )
+        })?
     };
     if stride < state.width.saturating_mul(4) {
         anyhow::bail!(
@@ -141,7 +146,8 @@ pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "compositor buffer size overflows usize: stride={} height={}",
-                stride, state.height
+                stride,
+                state.height
             )
         })?;
 
@@ -151,7 +157,10 @@ pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
     let pool_fd = unsafe { super::borrowed_fd(fd) };
     let pool: WlShmPool = shm.create_pool(pool_fd.as_fd(), size as i32, &qh, ());
     let fmt: wl_shm::Format = wl_shm::Format::try_from(state.fmt.unwrap()).map_err(|_| {
-        anyhow::anyhow!("compositor advertised unsupported wl_shm format {:#x}", state.fmt.unwrap())
+        anyhow::anyhow!(
+            "compositor advertised unsupported wl_shm format {:#x}",
+            state.fmt.unwrap()
+        )
     })?;
     let buffer: WlBuffer = pool.create_buffer(
         0,
@@ -225,11 +234,9 @@ fn encode_buffer_to_png(
         }
     }
 
-    use image::{ImageBuffer, Rgba, codecs::png::PngEncoder};
-    let img: ImageBuffer<Rgba<u8>, _> =
-        ImageBuffer::from_raw(width, height, rgba).ok_or_else(|| {
-            anyhow::anyhow!("internal: buffer dims mismatch ({}x{})", width, height)
-        })?;
+    use image::{codecs::png::PngEncoder, ImageBuffer, Rgba};
+    let img: ImageBuffer<Rgba<u8>, _> = ImageBuffer::from_raw(width, height, rgba)
+        .ok_or_else(|| anyhow::anyhow!("internal: buffer dims mismatch ({}x{})", width, height))?;
     let mut out: Vec<u8> = Vec::new();
     use image::ImageEncoder;
     PngEncoder::new(&mut out).write_image(
@@ -252,23 +259,34 @@ impl Dispatch<wl_registry::WlRegistry, ()> for CapState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
                 "wl_output" => {
                     if state.output.is_none() {
-                        state.output = Some(registry.bind::<WlOutput, _, _>(name, version.min(4), qh, ()));
+                        state.output =
+                            Some(registry.bind::<WlOutput, _, _>(name, version.min(4), qh, ()));
                     }
                 }
                 "wl_shm" => {
                     state.shm = Some(registry.bind::<WlShm, _, _>(name, 1, qh, ()));
                 }
                 "ext_output_image_capture_source_manager_v1" => {
-                    state.source_mgr = Some(registry.bind::<ExtOutputImageCaptureSourceManagerV1, _, _>(
-                        name, 1, qh, ()));
+                    state.source_mgr =
+                        Some(registry.bind::<ExtOutputImageCaptureSourceManagerV1, _, _>(
+                            name,
+                            1,
+                            qh,
+                            (),
+                        ));
                 }
                 "ext_image_copy_capture_manager_v1" => {
-                    state.copy_mgr = Some(registry.bind::<ExtImageCopyCaptureManagerV1, _, _>(
-                        name, 1, qh, ()));
+                    state.copy_mgr =
+                        Some(registry.bind::<ExtImageCopyCaptureManagerV1, _, _>(name, 1, qh, ()));
                 }
                 _ => {}
             }
@@ -277,25 +295,81 @@ impl Dispatch<wl_registry::WlRegistry, ()> for CapState {
 }
 
 impl Dispatch<WlOutput, ()> for CapState {
-    fn event(_: &mut Self, _: &WlOutput, _: <WlOutput as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlOutput,
+        _: <WlOutput as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<WlShm, ()> for CapState {
-    fn event(_: &mut Self, _: &WlShm, _: <WlShm as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlShm,
+        _: <WlShm as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<WlShmPool, ()> for CapState {
-    fn event(_: &mut Self, _: &WlShmPool, _: <WlShmPool as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlShmPool,
+        _: <WlShmPool as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<WlBuffer, ()> for CapState {
-    fn event(_: &mut Self, _: &WlBuffer, _: <WlBuffer as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlBuffer,
+        _: <WlBuffer as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<ExtOutputImageCaptureSourceManagerV1, ()> for CapState {
-    fn event(_: &mut Self, _: &ExtOutputImageCaptureSourceManagerV1, _: <ExtOutputImageCaptureSourceManagerV1 as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &ExtOutputImageCaptureSourceManagerV1,
+        _: <ExtOutputImageCaptureSourceManagerV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<ExtImageCaptureSourceV1, ()> for CapState {
-    fn event(_: &mut Self, _: &ExtImageCaptureSourceV1, _: <ExtImageCaptureSourceV1 as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &ExtImageCaptureSourceV1,
+        _: <ExtImageCaptureSourceV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<ExtImageCopyCaptureManagerV1, ()> for CapState {
-    fn event(_: &mut Self, _: &ExtImageCopyCaptureManagerV1, _: <ExtImageCopyCaptureManagerV1 as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &ExtImageCopyCaptureManagerV1,
+        _: <ExtImageCopyCaptureManagerV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<ExtImageCopyCaptureSessionV1, ()> for CapState {
     fn event(

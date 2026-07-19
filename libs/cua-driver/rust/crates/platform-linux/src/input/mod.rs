@@ -2052,6 +2052,40 @@ pub fn send_click_xtest_desktop(x: i32, y: i32, button: u8, count: usize) -> Res
     Ok(())
 }
 
+/// Move the real X11 pointer to a screen-absolute desktop coordinate.
+pub fn send_move_xtest_desktop(x: i32, y: i32) -> Result<()> {
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    let (conn, screen_num) = connect_x11_for_input()?;
+    let root = conn.setup().roots[screen_num].root;
+    conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
+    conn.flush()?;
+    let _ = conn.get_input_focus()?.reply();
+    Ok(())
+}
+
+/// Scroll the window under a screen-absolute point via real XTest wheel-button
+/// events. X11 buttons 4/5 are vertical up/down and 6/7 horizontal left/right.
+pub fn send_scroll_xtest_desktop(x: i32, y: i32, direction: &str, amount: usize) -> Result<()> {
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    let button = match direction {
+        "up" => 4,
+        "down" => 5,
+        "left" => 6,
+        "right" => 7,
+        other => anyhow::bail!("unknown desktop scroll direction: {other}"),
+    };
+    let (conn, screen_num) = connect_x11_for_input()?;
+    let root = conn.setup().roots[screen_num].root;
+    conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
+    for _ in 0..amount.max(1) {
+        conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+        conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+    }
+    conn.flush()?;
+    let _ = conn.get_input_focus()?.reply();
+    Ok(())
+}
+
 /// Screen-absolute drag via XTest. The caller activates the target first; XTest
 /// then supplies one real press, interpolated pointer motion, and one release.
 /// This is the foreground counterpart to the window-addressed XSendEvent drag.

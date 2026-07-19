@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use Cua in your research, please cite it using this metadata."
+title: "Cua"
+type: software
+authors:
+  - name: "Cua AI, Inc."
+abstract: "Scale computer-use 2.0 with open-source drivers, cross-OS fleets, and benchmarks for training, evaluation, and data generation."
+date-released: 2025-01-31
+repository-code: "https://github.com/trycua/cua"
+url: "https://cua.ai"
+license: MIT

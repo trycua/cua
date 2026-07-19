@@ -404,11 +404,11 @@ When a cua-driver call surprises you, diagnose cua-driver first:
   regardless of what you pass.
 - **`get_desktop_state` returns `desktop_scope_disabled`?** That's
   intended: full-display capture is a **desktop-scope** operation, gated
-  on the global `capture_scope`. It's `"window"` by default — so to verify
-  a specific window use `get_window_state(pid, window_id)` (works
-  backgrounded), and only use `get_desktop_state` after
-  `set_config capture_scope=desktop` (the same opt-in that enables
-  window-less screen-absolute `click`/`scroll`). Don't reach for
+  by the caller-declared session policy. To verify a specific window use
+  `get_window_state(pid, window_id)` (works backgrounded). Use
+  `get_desktop_state` only in a strict desktop session or after explicitly
+  escalating an `auto` session once the window ladder is exhausted. Desktop
+  actions pass `scope:"desktop"` with no pid/window_id. Don't reach for
   `get_desktop_state` as a casual screenshot — it's the capture surface for
   desktop-scope coordinate loops, not window inspection.
 - **`Calc display stuck at 0 after my clicks`?** Almost always
@@ -491,9 +491,9 @@ Tool names are `snake_case`, management subcommands are
 <tool-name>` with JSON via stdin or positional arg. Management
 subcommands:
 
-- **`cua-driver serve`** — start persistent daemon (**required** for
-  `element_index` workflows; without it each CLI invocation spawns a
-  fresh process and the per-pid element cache dies between calls).
+- **`cua-driver serve`** — start the persistent daemon (**required for every
+  tool call**). CLI and MCP processes are adapters; the daemon owns the
+  interactive-session identity, policy, and per-pid element cache.
   Normally not run manually — the autostart Scheduled Task fires it
   at every interactive logon. If you stopped it (`Stop-Process`),
   re-run with `schtasks /Run /TN cua-driver-serve`, not by spawning

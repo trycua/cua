@@ -12,55 +12,21 @@
 // then-unused tools/list helpers.
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
-
-use cua_driver_testkit::driver_binary;
-
-fn send_request(stdin: &mut impl Write, request: &serde_json::Value) {
-    let line = serde_json::to_string(request).unwrap();
-    writeln!(stdin, "{}", line).unwrap();
-}
-
-fn read_response(reader: &mut impl BufRead) -> serde_json::Value {
-    let mut line = String::new();
-    reader.read_line(&mut line).expect("read line");
-    serde_json::from_str(line.trim()).expect("parse JSON")
-}
+use cua_driver_testkit::RawDriver;
 
 /// Spawn the driver, send initialize + tools/list, return the parsed
 /// `tools/list` response. Skips the test silently if the binary hasn't
 /// been built (CI builds it separately).
 fn fetch_tools_list() -> Option<serde_json::Value> {
-    let binary = driver_binary();
-    if !binary.exists() {
-        eprintln!("Binary not found at {:?} — run `cargo build` first", binary);
-        return None;
-    }
-
-    let mut child = Command::new(&binary)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn cua-driver");
-
-    {
-        let stdin = child.stdin.as_mut().unwrap();
-        let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
-
-        send_request(stdin, &serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}
-        }));
-        let _ = read_response(&mut stdout);
-
-        send_request(stdin, &serde_json::json!({
-            "jsonrpc": "2.0", "id": 2, "method": "tools/list"
-        }));
-        let resp = read_response(&mut stdout);
-        child.kill().ok();
-        return Some(resp);
-    }
+    let mut driver = RawDriver::spawn()?;
+    driver.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}
+    }));
+    driver.recv();
+    driver.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/list"
+    }));
+    Some(driver.recv())
 }
 
 /// Surface 6: Every tool that accepts the opaque `element_token` arg
@@ -74,7 +40,8 @@ fn token_accepting_tools_advertise_element_token_in_schema_and_capabilities() {
         Some(r) => r,
         None => return,
     };
-    let tools = resp["result"]["tools"].as_array()
+    let tools = resp["result"]["tools"]
+        .as_array()
         .expect("tools/list response missing tools array");
 
     // Tools that gained `element_token` in Surface 6. Keep in sync with
@@ -91,18 +58,21 @@ fn token_accepting_tools_advertise_element_token_in_schema_and_capabilities() {
     ];
 
     for tool_name in TOKEN_TOOLS {
-        let tool = tools.iter()
+        let tool = tools
+            .iter()
             .find(|t| t["name"].as_str() == Some(tool_name))
             .unwrap_or_else(|| panic!("tool {tool_name:?} missing from tools/list"));
 
         // (a) inputSchema.properties.element_token present, type=string.
-        let props = tool["inputSchema"]["properties"].as_object()
+        let props = tool["inputSchema"]["properties"]
+            .as_object()
             .unwrap_or_else(|| panic!("{tool_name} has no inputSchema.properties"));
-        let et = props.get("element_token")
-            .unwrap_or_else(|| panic!(
+        let et = props.get("element_token").unwrap_or_else(|| {
+            panic!(
                 "Surface 6: {tool_name} must advertise an `element_token` input field — \
                  missing from schema properties: {props:?}"
-            ));
+            )
+        });
         assert_eq!(
             et["type"].as_str(),
             Some("string"),
@@ -110,7 +80,8 @@ fn token_accepting_tools_advertise_element_token_in_schema_and_capabilities() {
         );
 
         // (b) capabilities array includes `accessibility.element_tokens`.
-        let caps: Vec<&str> = tool["capabilities"].as_array()
+        let caps: Vec<&str> = tool["capabilities"]
+            .as_array()
             .unwrap_or_else(|| panic!("{tool_name} capabilities missing"))
             .iter()
             .filter_map(|v| v.as_str())
@@ -134,11 +105,16 @@ fn get_window_state_claims_element_tokens_capability() {
         None => return,
     };
     let tools = resp["result"]["tools"].as_array().expect("tools array");
-    let gws = tools.iter()
+    let gws = tools
+        .iter()
         .find(|t| t["name"].as_str() == Some("get_window_state"))
         .expect("get_window_state missing");
-    let caps: Vec<&str> = gws["capabilities"].as_array().unwrap()
-        .iter().filter_map(|v| v.as_str()).collect();
+    let caps: Vec<&str> = gws["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
     assert!(
         caps.contains(&"accessibility.element_tokens"),
         "Surface 6: get_window_state must claim accessibility.element_tokens \
@@ -160,12 +136,18 @@ fn element_index_field_still_present_on_token_accepting_tools() {
     let tools = resp["result"]["tools"].as_array().expect("tools array");
 
     const TOKEN_TOOLS: &[&str] = &[
-        "click", "double_click", "right_click",
-        "scroll", "type_text", "press_key", "set_value",
+        "click",
+        "double_click",
+        "right_click",
+        "scroll",
+        "type_text",
+        "press_key",
+        "set_value",
     ];
 
     for tool_name in TOKEN_TOOLS {
-        let tool = tools.iter()
+        let tool = tools
+            .iter()
             .find(|t| t["name"].as_str() == Some(tool_name))
             .unwrap_or_else(|| panic!("{tool_name} missing"));
         let props = tool["inputSchema"]["properties"].as_object().unwrap();

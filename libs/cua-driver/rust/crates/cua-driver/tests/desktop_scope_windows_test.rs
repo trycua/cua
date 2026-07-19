@@ -6,16 +6,15 @@
 //! cover. This test exercises the Windows Phase-1 actuator end-to-end against a
 //! real harness app:
 //!
-//!   1. `set_config capture_scope=desktop` → `get_desktop_state` returns a
+//!   1. A strict desktop session → `get_desktop_state` returns a
 //!      full-display capture with true `screen_width/height` (no downscale).
 //!   2. A **window-less** screen-absolute `click` / `scroll` (no pid/window_id)
 //!      lands via `WindowFromPoint` while in desktop scope.
 //!   3. Negative gate: the same window-less `click` under `capture_scope=window`
 //!      is rejected with the structured `desktop_scope_disabled` error.
 //!
-//! Note: `set_config` is a *session* override — it persists for the lifetime of
-//! the one MCP server we spawn here (not across separate `cua-driver call`
-//! processes), which is exactly why this test drives a single long-lived server.
+//! A separate strict-window session observes the WPF fixture. Keeping both live
+//! proves capture policy is isolated per session rather than process-global.
 //!
 //! All tests are `#[ignore]` (need a real desktop session). Run explicitly:
 //!   cargo test -p cua-driver --test desktop_scope_windows_test -- --ignored --nocapture --test-threads=1
@@ -88,10 +87,15 @@ fn launch_wpf(driver: &mut McpDriver) -> Option<(u32, u64)> {
     None
 }
 
-fn snapshot(driver: &mut McpDriver, pid: u32, wid: u64) -> cua_driver_testkit::ToolResponse {
+fn snapshot(
+    driver: &mut McpDriver,
+    session: &str,
+    pid: u32,
+    wid: u64,
+) -> cua_driver_testkit::ToolResponse {
     driver.call(
         "get_window_state",
-        serde_json::json!({ "pid": pid as i64, "window_id": wid, "capture_mode": "ax" }),
+        serde_json::json!({ "session": session, "pid": pid as i64, "window_id": wid, "capture_mode": "ax" }),
     )
 }
 
@@ -115,20 +119,20 @@ fn element_center(state: &cua_driver_testkit::ToolResponse, id: &str) -> (i64, i
     )
 }
 
-fn set_scope(driver: &mut McpDriver, scope: &str) {
+fn start_scope(driver: &mut McpDriver, session: &str, scope: &str) {
     let r = driver.call(
-        "set_config",
-        serde_json::json!({ "key": "capture_scope", "value": scope }),
+        "start_session",
+        serde_json::json!({ "session": session, "capture_scope": scope }),
     );
     assert!(
         !r.is_error(),
-        "set_config capture_scope={scope} failed: {}",
+        "start_session capture_scope={scope} failed: {}",
         r.text()
     );
     assert_eq!(
         r.structured()["capture_scope"].as_str(),
         Some(scope),
-        "set_config did not report capture_scope={scope}: {}",
+        "start_session did not report capture_scope={scope}: {}",
         r.text()
     );
 }
@@ -136,7 +140,7 @@ fn set_scope(driver: &mut McpDriver, scope: &str) {
 fn run_desktop_fixture_case(
     action: &str,
     route: DriverRoute,
-    test: impl FnOnce(u32, u64, &mut McpDriver),
+    test: impl FnOnce(u32, u64, &str, &str, &mut McpDriver),
 ) {
     let cell_id = format!("windows-wpf-desktop-{action}-px-foreground").replace('_', "-");
     let case = CaseSpec::delivered(
@@ -154,16 +158,23 @@ fn run_desktop_fixture_case(
         let mut driver =
             McpDriver::spawn_named(&cell_id).expect("required source-built driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
+        let window_session = format!("{cell_id}-window");
+        let desktop_session = format!("{cell_id}-desktop");
+        start_scope(&mut driver, &window_session, "window");
+        start_scope(&mut driver, &desktop_session, "desktop");
         let (pid, wid) = launch_wpf(&mut driver).expect("required WPF harness did not launch");
-        set_scope(&mut driver, "desktop");
         let posture = driver.call(
             "bring_to_front",
-            serde_json::json!({"pid": pid as i64, "window_id": wid}),
+            serde_json::json!({"session": window_session, "pid": pid as i64, "window_id": wid}),
         );
-        assert!(!posture.is_error(), "could not foreground WPF fixture: {}", posture.text());
+        assert!(
+            !posture.is_error(),
+            "could not foreground WPF fixture: {}",
+            posture.text()
+        );
         std::thread::sleep(Duration::from_millis(300));
         driver.start_behavior_recording();
-        test(pid, wid, &mut driver);
+        test(pid, wid, &window_session, &desktop_session, &mut driver);
         Observation::delivered_with_fixture_state(Vec::new())
     });
 }
@@ -191,9 +202,10 @@ fn desktop_scope_capture_returns_screen_dims() {
         let mut driver = McpDriver::spawn_named("windows-desktop-state-px-not-applicable")
             .expect("required source-built driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
-        set_scope(&mut driver, "desktop");
+        let session = "windows-desktop-state-px-not-applicable-desktop";
+        start_scope(&mut driver, session, "desktop");
         driver.start_behavior_recording();
-        let response = driver.call("get_desktop_state", serde_json::json!({}));
+        let response = driver.call("get_desktop_state", serde_json::json!({"session": session}));
         assert!(
             !response.is_error(),
             "get_desktop_state errored: {}",
@@ -217,17 +229,22 @@ fn desktop_scope_windowless_click_lands_on_control() {
     run_desktop_fixture_case(
         "left_click",
         DriverRoute::WindowsSendInput,
-        |pid, wid, driver| {
-            let pre = snapshot(driver, pid, wid);
+        |pid, wid, window_session, desktop_session, driver| {
+            let pre = snapshot(driver, window_session, pid, wid);
             let (x, y) = element_center(&pre, "border-click-target");
-            let response = driver.call("click", serde_json::json!({ "x": x, "y": y }));
+            let response = driver.call(
+                "click",
+                serde_json::json!({
+                    "session": desktop_session, "scope": "desktop", "x": x, "y": y
+                }),
+            );
             assert!(
                 !response.is_error(),
                 "desktop click failed: {}",
                 response.text()
             );
             std::thread::sleep(Duration::from_millis(400));
-            let after = snapshot(driver, pid, wid);
+            let after = snapshot(driver, window_session, pid, wid);
             assert!(
                 after.tree_text().contains("last_action=left_click"),
                 "desktop click did not update the WPF click oracle: {}",
@@ -243,8 +260,8 @@ fn desktop_scope_windowless_scroll_lands_on_control() {
     run_desktop_fixture_case(
         "scroll",
         DriverRoute::WindowsSendInput,
-        |pid, wid, driver| {
-            let pre = snapshot(driver, pid, wid);
+        |pid, wid, window_session, desktop_session, driver| {
+            let pre = snapshot(driver, window_session, pid, wid);
             // The fixture's outer ScrollViewer is visible while the nested
             // scroll-tall region begins below a 768px CI desktop. Wheel over a
             // visible child and verify the outer viewport moved by observing a
@@ -253,7 +270,10 @@ fn desktop_scope_windowless_scroll_lands_on_control() {
             let (_, before_y) = element_center(&pre, "btn-increment");
             let response = driver.call(
                 "scroll",
-                serde_json::json!({ "x": x, "y": y, "direction": "down", "amount": 5 }),
+                serde_json::json!({
+                    "session": desktop_session, "scope": "desktop", "x": x, "y": y,
+                    "direction": "down", "amount": 5
+                }),
             );
             assert!(
                 !response.is_error(),
@@ -261,7 +281,7 @@ fn desktop_scope_windowless_scroll_lands_on_control() {
                 response.text()
             );
             std::thread::sleep(Duration::from_millis(500));
-            let after = snapshot(driver, pid, wid);
+            let after = snapshot(driver, window_session, pid, wid);
             let (_, after_y) = element_center(&after, "btn-increment");
             assert!(
                 after_y < before_y,
@@ -284,16 +304,22 @@ fn window_scope_rejects_windowless_click() {
         Targeting::Px,
         Delivery::NotApplicable,
         Scope::Window,
-        DriverRoute::Composite,
+        DriverRoute::CaptureScopeGate,
         vec![OracleKind::Protocol],
     );
     execute_case(case, |evidence| {
         let mut driver = McpDriver::spawn_named("windows-window-scope-gate-px-not-applicable")
             .expect("required source-built driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
-        set_scope(&mut driver, "window");
+        let session = "windows-window-scope-gate-px-not-applicable";
+        start_scope(&mut driver, session, "window");
         driver.start_behavior_recording();
-        let response = driver.call("click", serde_json::json!({ "x": 100, "y": 100 }));
+        let response = driver.call(
+            "click",
+            serde_json::json!({
+                "session": session, "scope": "desktop", "x": 100, "y": 100
+            }),
+        );
         assert!(
             response.is_error()
                 && response.structured()["code"].as_str() == Some("desktop_scope_disabled"),

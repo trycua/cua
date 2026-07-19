@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use cua_driver_core::{protocol::{ToolResult, Content}, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::{Content, ToolResult},
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -10,7 +13,9 @@ pub struct GetWindowStateTool {
 }
 
 impl GetWindowStateTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -89,12 +94,20 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for GetWindowStateTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
-        let window_id = match args.require_u32("window_id") { Ok(v) => v, Err(e) => return e };
+        let pid = match args.require_i32("pid") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let window_id = match args.require_u32("window_id") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         let query = args.opt_str("query");
         let screenshot_out_file = args.opt_str("screenshot_out_file").map(|s| {
             // Expand ~ prefix.
@@ -110,7 +123,9 @@ impl Tool for GetWindowStateTool {
         let session_id = args.opt_str("_session_id");
         let effective_max_dim = {
             let cfg = self.state.config.read().unwrap();
-            self.state.session_config.effective_max_image_dimension(session_id.as_deref(), &cfg)
+            self.state
+                .session_config
+                .effective_max_image_dimension(session_id.as_deref(), &cfg)
         };
         // `capture_mode` is DEPRECATED and ignored — get_window_state always
         // returns BOTH the tree and a screenshot now, so the agent grounds on
@@ -206,7 +221,9 @@ impl Tool for GetWindowStateTool {
                     // Record resize ratio so ClickTool can scale coordinates back up.
                     if let Some(ow) = orig_w {
                         if w > 0 {
-                            self.state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
+                            self.state
+                                .resize_registry
+                                .set_ratio(pid, ow as f64 / w as f64);
                         }
                     } else {
                         self.state.resize_registry.clear_ratio(pid);
@@ -258,11 +275,16 @@ impl Tool for GetWindowStateTool {
         }
 
         if content.is_empty() {
-            return ToolResult::error("No content produced (neither AX tree nor screenshot succeeded)");
+            return ToolResult::error(
+                "No content produced (neither AX tree nor screenshot succeeded)",
+            );
         }
 
         let element_count = self.state.element_cache.element_count(pid, window_id);
-        let tree_md = tree_result.as_ref().map(|r| r.tree_markdown.clone()).unwrap_or_default();
+        let tree_md = tree_result
+            .as_ref()
+            .map(|r| r.tree_markdown.clone())
+            .unwrap_or_default();
 
         // Surface 6: register a snapshot in the global token registry so
         // every actionable element gets an opaque `element_token` keyed
@@ -275,8 +297,11 @@ impl Tool for GetWindowStateTool {
             .as_ref()
             .map(|r| r.nodes.iter().filter(|n| n.element_index.is_some()).count())
             .unwrap_or(0);
-        let snapshot_id = cua_driver_core::element_token::global()
-            .register_snapshot(pid, window_id, elem_count_for_snapshot);
+        let snapshot_id = cua_driver_core::element_token::global().register_snapshot(
+            pid,
+            window_id,
+            elem_count_for_snapshot,
+        );
 
         // Build the structured `elements` array — one entry per actionable
         // node, matching the order (and indices) of the markdown rendering.
@@ -349,7 +374,11 @@ impl Tool for GetWindowStateTool {
         if let Some(ref fp) = screenshot_file_path {
             structured["screenshot_file_path"] = serde_json::json!(fp);
         }
-        ToolResult { content, is_error: None, structured_content: Some(structured) }
+        ToolResult {
+            content,
+            is_error: None,
+            structured_content: Some(structured),
+        }
     }
 }
 
@@ -380,9 +409,9 @@ pub(crate) fn build_elements_array_with_token(
                 .or_else(|| node.description.clone())
                 .or_else(|| node.value.clone())
                 .or_else(|| node.identifier.clone());
-            let frame = node.frame.map(|[x, y, w, h]| {
-                serde_json::json!({ "x": x, "y": y, "w": w, "h": h })
-            });
+            let frame = node
+                .frame
+                .map(|[x, y, w, h]| serde_json::json!({ "x": x, "y": y, "w": w, "h": h }));
             let mut entry = serde_json::json!({
                 "element_index": idx,
                 // Surface 6: opaque token paired to the integer index.
@@ -444,7 +473,14 @@ mod tests {
     use super::*;
     use crate::ax::tree::AXNode;
 
-    fn node(idx: Option<usize>, role: &str, title: Option<&str>, depth: usize, parent: Option<usize>, frame: Option<[f64; 4]>) -> AXNode {
+    fn node(
+        idx: Option<usize>,
+        role: &str,
+        title: Option<&str>,
+        depth: usize,
+        parent: Option<usize>,
+        frame: Option<[f64; 4]>,
+    ) -> AXNode {
         AXNode {
             element_index: idx,
             role: role.into(),
@@ -465,25 +501,59 @@ mod tests {
     fn elements_match_indexed_node_count() {
         // Mix of indexed + non-indexed nodes; only indexed should surface.
         let nodes = vec![
-            node(Some(0), "AXWindow", Some("Doc"), 0, None, Some([0.0, 0.0, 800.0, 600.0])),
+            node(
+                Some(0),
+                "AXWindow",
+                Some("Doc"),
+                0,
+                None,
+                Some([0.0, 0.0, 800.0, 600.0]),
+            ),
             node(None, "AXStaticText", Some("hint"), 1, Some(0), None),
-            node(Some(1), "AXButton", Some("OK"), 1, Some(0), Some([10.0, 20.0, 60.0, 24.0])),
-            node(Some(2), "AXButton", Some("Cancel"), 1, Some(0), Some([80.0, 20.0, 60.0, 24.0])),
+            node(
+                Some(1),
+                "AXButton",
+                Some("OK"),
+                1,
+                Some(0),
+                Some([10.0, 20.0, 60.0, 24.0]),
+            ),
+            node(
+                Some(2),
+                "AXButton",
+                Some("Cancel"),
+                1,
+                Some(0),
+                Some([80.0, 20.0, 60.0, 24.0]),
+            ),
         ];
         let elements = build_elements_array(&nodes);
-        assert_eq!(elements.len(), 3, "non-actionable rows must be filtered out");
+        assert_eq!(
+            elements.len(),
+            3,
+            "non-actionable rows must be filtered out"
+        );
         let indices: Vec<u64> = elements
             .iter()
             .map(|e| e["element_index"].as_u64().unwrap())
             .collect();
-        assert_eq!(indices, vec![0, 1, 2], "ordering must match DFS / element_index assignment");
+        assert_eq!(
+            indices,
+            vec![0, 1, 2],
+            "ordering must match DFS / element_index assignment"
+        );
     }
 
     #[test]
     fn elements_shape_carries_role_label_frame_parent_depth() {
-        let nodes = vec![
-            node(Some(7), "AXButton", Some("Go"), 3, Some(2), Some([1.5, 2.5, 33.0, 44.0])),
-        ];
+        let nodes = vec![node(
+            Some(7),
+            "AXButton",
+            Some("Go"),
+            3,
+            Some(2),
+            Some([1.5, 2.5, 33.0, 44.0]),
+        )];
         let entry = &build_elements_array(&nodes)[0];
         assert_eq!(entry["element_index"], 7);
         assert_eq!(entry["role"], "AXButton");
@@ -502,13 +572,21 @@ mod tests {
         // A field with BOTH a title and a value (e.g. WhatsApp's "Compose
         // message" box holding typed text): label is the title, but the typed
         // value must ALSO be exposed so the caller can verify what landed.
-        let mut nodes = vec![
-            node(Some(0), "AXTextArea", Some("Compose message"), 1, None, None),
-        ];
+        let mut nodes = vec![node(
+            Some(0),
+            "AXTextArea",
+            Some("Compose message"),
+            1,
+            None,
+            None,
+        )];
         nodes[0].value = Some("i love u".into());
         let entry = &build_elements_array(&nodes)[0];
         assert_eq!(entry["label"], "Compose message", "label stays the title");
-        assert_eq!(entry["value"], "i love u", "value must be surfaced separately");
+        assert_eq!(
+            entry["value"], "i love u",
+            "value must be surfaced separately"
+        );
     }
 
     #[test]
@@ -523,13 +601,20 @@ mod tests {
 
     #[test]
     fn elements_omit_optional_fields_when_missing() {
-        let nodes = vec![
-            node(Some(0), "AXUnknown", None, 0, None, None),
-        ];
+        let nodes = vec![node(Some(0), "AXUnknown", None, 0, None, None)];
         let entry = &build_elements_array(&nodes)[0];
-        assert!(entry.get("label").is_none(), "label must be omitted when title/value/desc/id are all empty");
-        assert!(entry.get("frame").is_none(), "frame must be omitted when no rect was captured");
-        assert!(entry.get("parent_index").is_none(), "parent_index must be omitted at the root");
+        assert!(
+            entry.get("label").is_none(),
+            "label must be omitted when title/value/desc/id are all empty"
+        );
+        assert!(
+            entry.get("frame").is_none(),
+            "frame must be omitted when no rect was captured"
+        );
+        assert!(
+            entry.get("parent_index").is_none(),
+            "parent_index must be omitted at the root"
+        );
         assert_eq!(entry["role"], "AXUnknown");
         assert_eq!(entry["depth"], 0);
     }
@@ -569,8 +654,13 @@ mod tests {
         assert_eq!(entries.len(), 3);
         // Every entry must have BOTH fields (additive contract).
         for e in &entries {
-            assert!(e.get("element_index").is_some(), "element_index must remain");
-            let tok = e.get("element_token").and_then(|v| v.as_str())
+            assert!(
+                e.get("element_index").is_some(),
+                "element_index must remain"
+            );
+            let tok = e
+                .get("element_token")
+                .and_then(|v| v.as_str())
                 .expect("element_token must be a string");
             assert!(tok.starts_with('s'), "token must use the 's' prefix: {tok}");
             assert!(tok.contains(':'), "token must be `s{{hex}}:{{idx}}`: {tok}");
@@ -591,9 +681,7 @@ mod tests {
     /// through get a clean shape.
     #[test]
     fn build_elements_array_shim_skips_element_token() {
-        let nodes = vec![
-            node(Some(0), "AXButton", Some("A"), 1, None, None),
-        ];
+        let nodes = vec![node(Some(0), "AXButton", Some("A"), 1, None, None)];
         let entries = build_elements_array(&nodes);
         assert_eq!(entries.len(), 1);
         assert!(
@@ -617,12 +705,18 @@ mod tests {
         // exercises the early-return path; the assertion is that the call
         // honors the cap without overflowing or panicking.
         assert!(r1.nodes.len() <= 5, "max_elements=5 must cap nodes ≤ 5");
-        assert!(r1.nodes.iter().all(|n| n.depth <= 2), "max_depth=2 must cap depth ≤ 2");
+        assert!(
+            r1.nodes.iter().all(|n| n.depth <= 2),
+            "max_depth=2 must cap depth ≤ 2"
+        );
         // And the uncapped variant — same dead-pid path, just validating
         // walk_tree(...) (which delegates to walk_tree_bounded with
         // DEFAULT_MAX_*) returns the same empty/safe shape.
         let r2 = crate::ax::tree::walk_tree(i32::MAX, None, None);
-        assert_eq!(r1.nodes.len(), r2.nodes.len(),
-            "no-pid case: both bounded and unbounded must agree on the empty result");
+        assert_eq!(
+            r1.nodes.len(),
+            r2.nodes.len(),
+            "no-pid case: both bounded and unbounded must agree on the empty result"
+        );
     }
 }

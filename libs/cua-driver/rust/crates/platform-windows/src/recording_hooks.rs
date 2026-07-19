@@ -64,10 +64,7 @@ pub fn resolve_window_for_recording(window_id: Option<u64>, pid: Option<i64>) ->
 }
 
 #[cfg(target_os = "windows")]
-pub fn screenshot_for_recording(
-    window_id: Option<u64>,
-    pid: Option<i64>,
-) -> ScreenshotCapture {
+pub fn screenshot_for_recording(window_id: Option<u64>, pid: Option<i64>) -> ScreenshotCapture {
     if window_id.is_none() && pid.is_none() {
         return crate::capture::screenshot_display_bytes()
             .map(ScreenshotCapture::captured)
@@ -127,10 +124,7 @@ pub fn resolve_window_for_recording(_window_id: Option<u64>, _pid: Option<i64>) 
     None
 }
 #[cfg(not(target_os = "windows"))]
-pub fn screenshot_for_recording(
-    _window_id: Option<u64>,
-    _pid: Option<i64>,
-) -> ScreenshotCapture {
+pub fn screenshot_for_recording(_window_id: Option<u64>, _pid: Option<i64>) -> ScreenshotCapture {
     ScreenshotCapture::unavailable("unsupported_platform")
 }
 #[cfg(not(target_os = "windows"))]

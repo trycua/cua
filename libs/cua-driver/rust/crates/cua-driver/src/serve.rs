@@ -31,11 +31,7 @@ fn is_active_proxy_session(session: Option<&str>) -> bool {
     session.is_some_and(|session| active_proxy_sessions().lock().unwrap().contains(session))
 }
 
-fn inject_browser_approvals(
-    tool_name: &str,
-    args: &mut serde_json::Value,
-    session: Option<&str>,
-) {
+fn inject_browser_approvals(tool_name: &str, args: &mut serde_json::Value, session: Option<&str>) {
     if tool_name == "browser_prepare" && is_active_proxy_session(session) {
         if let Some(arguments) = args.as_object_mut() {
             arguments.insert(
@@ -86,10 +82,7 @@ fn now_unix_secs() -> u64 {
 /// Also refreshes the idle-TTL clock for an explicit session (the minted
 /// fallback is reaped by EOF, not TTL). Returns the effective `_session_id` for
 /// the resurrection guard.
-fn apply_session_identity(
-    args: &mut serde_json::Value,
-    minted: &Option<String>,
-) -> Option<String> {
+fn apply_session_identity(args: &mut serde_json::Value, minted: &Option<String>) -> Option<String> {
     let explicit = args
         .as_object()
         .and_then(|o| o.get("session"))
@@ -159,9 +152,8 @@ fn spawn_recording_idle_backstop(
         loop {
             tick.tick().await;
             if registry.recording.current_state().enabled {
-                let idle = now_unix_secs().saturating_sub(
-                    last_activity.load(std::sync::atomic::Ordering::Relaxed),
-                );
+                let idle = now_unix_secs()
+                    .saturating_sub(last_activity.load(std::sync::atomic::Ordering::Relaxed));
                 if idle >= ttl {
                     tracing::warn!(
                         "recording idle {idle}s ≥ {ttl}s TTL; auto-stopping \
@@ -178,10 +170,8 @@ fn spawn_recording_idle_backstop(
                     // (SCStream::stop_capture blocks on disk I/O), so run it on a
                     // blocking thread to keep the reactor free (see the EOF reaper).
                     let reg2 = registry.clone();
-                    let _ = tokio::task::spawn_blocking(move || {
-                        reg2.recording.stop_owner(None)
-                    })
-                    .await;
+                    let _ =
+                        tokio::task::spawn_blocking(move || reg2.recording.stop_owner(None)).await;
                 }
             }
         }
@@ -219,7 +209,10 @@ fn spawn_session_idle_sweep() {
             tick.tick().await;
             let ended = cua_driver_core::session::evict_idle(ttl);
             if !ended.is_empty() {
-                tracing::info!(count = ended.len(), "idle-TTL reclaimed sessions: {ended:?}");
+                tracing::info!(
+                    count = ended.len(),
+                    "idle-TTL reclaimed sessions: {ended:?}"
+                );
             }
         }
     });
@@ -355,10 +348,20 @@ pub struct DaemonResponse {
 
 impl DaemonResponse {
     pub fn ok(result: serde_json::Value) -> Self {
-        Self { ok: true, result: Some(result), error: None, exit_code: None }
+        Self {
+            ok: true,
+            result: Some(result),
+            error: None,
+            exit_code: None,
+        }
     }
     pub fn err(msg: impl Into<String>, code: i32) -> Self {
-        Self { ok: false, result: None, error: Some(msg.into()), exit_code: Some(code) }
+        Self {
+            ok: false,
+            result: None,
+            error: Some(msg.into()),
+            exit_code: Some(code),
+        }
     }
 }
 
@@ -392,7 +395,9 @@ fn observe_daemon_result(
     crate::telemetry::capture_tool_completed(outcome, transport);
     match response.body {
         cua_driver_core::protocol::ResponseBody::Result { result } => result,
-        cua_driver_core::protocol::ResponseBody::Error { .. } => unreachable!("constructed ok response"),
+        cua_driver_core::protocol::ResponseBody::Error { .. } => {
+            unreachable!("constructed ok response")
+        }
     }
 }
 
@@ -424,7 +429,9 @@ async fn invoke_daemon_tool(
     let observation_transport = daemon_observation_transport(&req);
     let raw_name = req.name.as_deref().unwrap_or("").to_owned();
     let tool_name = if raw_name == "type_text_chars" {
-        eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");
+        eprintln!(
+            "[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead."
+        );
         "type_text".to_owned()
     } else {
         raw_name
@@ -443,15 +450,14 @@ async fn invoke_daemon_tool(
                 operation,
                 known_tool,
                 true,
-                cua_driver_core::server::StdioExecutionPath::InProcess,
+                cua_driver_core::server::StdioExecutionPath::DirectDaemon,
             ),
             transport,
         )
     });
 
     if let Some(sid) = &effective_session {
-        if !is_session_lifecycle_tool(&tool_name)
-            && cua_driver_core::session::is_session_ended(sid)
+        if !is_session_lifecycle_tool(&tool_name) && cua_driver_core::session::is_session_ended(sid)
         {
             observe_daemon_error(observation, 1);
             return DaemonResponse::err(
@@ -465,12 +471,10 @@ async fn invoke_daemon_tool(
         }
     }
 
-    if !known_tool {
-        observe_daemon_error(observation, 64);
-        return DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);
-    }
-
     // Policy enforcement — defense-in-depth for direct daemon socket connections.
+    // Evaluate before registry lookup so a deny-by-default policy does not leak
+    // whether an unapproved name happens to be registered. This also preserves
+    // the MCP policy contract now that every call passes through the daemon.
     match cua_driver_core::policy::configured_policy() {
         Ok(Some(policy)) => match policy.evaluate(&tool_name, &args) {
             cua_driver_core::policy::PolicyDecision::Allow => {}
@@ -490,6 +494,11 @@ async fn invoke_daemon_tool(
         }
     }
 
+    if !known_tool {
+        observe_daemon_error(observation, 64);
+        return DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);
+    }
+
     inject_browser_approvals(&tool_name, &mut args, req.session_id.as_deref());
 
     let session_context = observation_transport.and_then(|transport| {
@@ -500,9 +509,7 @@ async fn invoke_daemon_tool(
             crate::telemetry::Transport::McpHttp => {
                 cua_driver_core::session::SessionTransport::McpHttp
             }
-            crate::telemetry::Transport::Cli => {
-                cua_driver_core::session::SessionTransport::Cli
-            }
+            crate::telemetry::Transport::Cli => cua_driver_core::session::SessionTransport::Cli,
             crate::telemetry::Transport::Daemon => {
                 cua_driver_core::session::SessionTransport::Daemon
             }
@@ -531,7 +538,11 @@ async fn invoke_daemon_tool(
     if let Some(structured) = result.structured_content {
         result_value["structuredContent"] = structured;
     }
-    DaemonResponse::ok(observe_daemon_result(observation, session_context, result_value))
+    DaemonResponse::ok(observe_daemon_result(
+        observation,
+        session_context,
+        result_value,
+    ))
 }
 
 // ── Client ────────────────────────────────────────────────────────────────────
@@ -542,10 +553,9 @@ async fn invoke_daemon_tool(
 /// whether a pipe instance is available **without consuming one**. The
 /// previous design (sending a `list` request) opened a pipe instance,
 /// then the immediately-following real `send_request` had to wait for the
-/// daemon to spin up its NEXT instance — that race caused real tool calls
+/// daemon to spin up its NEXT instance — that race made real tool calls
 /// (especially state-dependent ones like `click` that need the daemon's
-/// element_index cache) to fall through to the in-process path with a
-/// fresh empty cache. See the conversation around the
+/// element_index cache) miss the shared daemon state. See the conversation around the
 /// "Element 3 not in cache" bug for the diagnosis.
 ///
 /// `WaitNamedPipeW(name, 1)`:
@@ -738,8 +748,8 @@ pub async fn run_serve(
     // Remove stale socket file (from a crashed previous daemon).
     let _ = std::fs::remove_file(socket_path);
 
-    let listener = UnixListener::bind(socket_path)
-        .map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
+    let listener =
+        UnixListener::bind(socket_path).map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
 
@@ -829,8 +839,8 @@ pub async fn run_serve(
                                 //
                                 // `capabilities` is sourced from the centralised
                                 // `cua_driver_core::tool::default_capabilities_for`
-                                // name → tokens map so the daemon and in-process
-                                // paths emit identical capability arrays.
+                                // name → tokens map so daemon responses match the
+                                // core MCP capability contract.
                                 let tools: Vec<serde_json::Value> = reg.iter_defs()
                                     .map(|(name, def)| {
                                         let caps = cua_driver_core::tool::default_capabilities_for(name);
@@ -1085,9 +1095,8 @@ fn maybe_spawn_uia_worker() {
         return;
     }
     let uia_str = uia.display().to_string();
-    let cmd = format!(
-        "(New-Object -ComObject Shell.Application).ShellExecute('{uia_str}','','','',0)"
-    );
+    let cmd =
+        format!("(New-Object -ComObject Shell.Application).ShellExecute('{uia_str}','','','',0)");
     match std::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &cmd])
         .spawn()
@@ -1134,8 +1143,8 @@ fn is_self_at_high_il() -> bool {
 /// #1630). Without this, the default UIPI rule "no write-up across IL
 /// boundaries" makes the High-IL daemon's pipe unreachable from a normal
 /// Medium-IL user shell — every `cua-driver <tool>` call from the CLI
-/// silently falls through to in-process execution with a fresh, empty
-/// `ToolState`, which breaks the element_index cache invariant
+/// fails to reach the daemon and its shared `ToolState`, which breaks the
+/// element_index cache invariant
 /// (`get_window_state` → `click(element_index)` stops working because
 /// the two calls land in different ToolState instances).
 ///
@@ -1149,8 +1158,7 @@ fn is_self_at_high_il() -> bool {
 /// pointer (which the caller must keep alive for the lifetime of the
 /// pipe-server, then free via `LocalFree`).
 #[cfg(target_os = "windows")]
-unsafe fn build_open_pipe_security_attrs()
-    -> Option<(SecurityAttributesRaw, *mut std::ffi::c_void)>
+unsafe fn build_open_pipe_security_attrs() -> Option<(SecurityAttributesRaw, *mut std::ffi::c_void)>
 {
     #[link(name = "advapi32")]
     extern "system" {
@@ -1210,8 +1218,8 @@ pub async fn run_serve(
     if security_attrs.is_none() {
         eprintln!(
             "cua-driver: failed to build cross-IL SECURITY_ATTRIBUTES; pipe will be \
-             High-IL exclusive. CLI calls from Medium-IL shells will fall through \
-             to in-process and break state-dependent tool sequences."
+             High-IL exclusive. CLI and MCP clients from Medium-IL processes \
+             will be unable to reach the daemon."
         );
     }
     // Hold the SD pointer alive for the lifetime of run_serve. We never
@@ -1483,7 +1491,8 @@ pub fn run_serve_cmd(
 
     // Fail fast if another daemon is already running.
     if is_daemon_listening(&socket_path) {
-        let pid_hint = pid_file_path.as_deref()
+        let pid_hint = pid_file_path
+            .as_deref()
             .and_then(|p| read_pid_file(p))
             .map(|pid| format!(" (pid {pid})"))
             .unwrap_or_default();
@@ -1502,10 +1511,7 @@ pub fn run_serve_cmd(
     // hours of debugging tools that are working as designed.
     #[cfg(target_os = "windows")]
     {
-        if matches!(
-            platform_windows::diagnostics::current_session_id(),
-            Some(0),
-        ) {
+        if matches!(platform_windows::diagnostics::current_session_id(), Some(0),) {
             eprintln!(
                 "WARNING: cua-driver serve is starting in Session 0 (services). \
                  Window-driving tools — click, type_text, screenshot, \
@@ -1524,11 +1530,7 @@ pub fn run_serve_cmd(
         .build()
         .expect("tokio runtime");
 
-    if let Err(e) = rt.block_on(run_serve(
-        registry,
-        &socket_path,
-        pid_file_path.as_deref(),
-    )) {
+    if let Err(e) = rt.block_on(run_serve(registry, &socket_path, pid_file_path.as_deref())) {
         eprintln!("cua-driver serve error: {e}");
         std::process::exit(1);
     }
@@ -1700,10 +1702,11 @@ mod gate_tests {
         // 1. LIVE session call → tool runs.
         let socket1 = socket.clone();
         let s1 = sid.to_owned();
-        let resp = tokio::task::spawn_blocking(move || send_request(&socket1, &call_req(Some(&s1))))
-            .await
-            .unwrap()
-            .expect("live call response");
+        let resp =
+            tokio::task::spawn_blocking(move || send_request(&socket1, &call_req(Some(&s1))))
+                .await
+                .unwrap()
+                .expect("live call response");
         assert!(resp.ok, "live-session call should succeed");
         assert_eq!(
             PROBE_INVOCATIONS.load(Ordering::SeqCst),
@@ -1731,11 +1734,15 @@ mod gate_tests {
         //    success that silently does nothing).
         let socket3 = socket.clone();
         let s3 = sid.to_owned();
-        let resp = tokio::task::spawn_blocking(move || send_request(&socket3, &call_req(Some(&s3))))
-            .await
-            .unwrap()
-            .expect("ended call response");
-        assert!(!resp.ok, "ended-session call must be rejected loudly (not ok)");
+        let resp =
+            tokio::task::spawn_blocking(move || send_request(&socket3, &call_req(Some(&s3))))
+                .await
+                .unwrap()
+                .expect("ended call response");
+        assert!(
+            !resp.ok,
+            "ended-session call must be rejected loudly (not ok)"
+        );
         assert!(
             resp.error.as_deref().unwrap_or("").contains("has ended"),
             "rejection must explain the session ended; got {:?}",
@@ -1753,7 +1760,9 @@ mod gate_tests {
         let start = DaemonRequest {
             method: "call".into(),
             name: Some("start_session".into()),
-            args: Some(serde_json::json!({})),
+            // Session policy is caller-declared. The transport session id is
+            // cleanup/ownership metadata and must not grant policy authority.
+            args: Some(serde_json::json!({ "session": s3b.clone() })),
             session_id: Some(s3b),
             observation_origin: None,
         };
@@ -1761,15 +1770,19 @@ mod gate_tests {
             .await
             .unwrap()
             .expect("start_session response");
-        assert!(resp.ok, "start_session must run even for an ended id (lifecycle-exempt)");
+        assert!(
+            resp.ok,
+            "start_session must run even for an ended id (lifecycle-exempt)"
+        );
 
         // 3c. A call on the revived id now RUNS again.
         let socket3c = socket.clone();
         let s3c = sid.to_owned();
-        let resp = tokio::task::spawn_blocking(move || send_request(&socket3c, &call_req(Some(&s3c))))
-            .await
-            .unwrap()
-            .expect("revived call response");
+        let resp =
+            tokio::task::spawn_blocking(move || send_request(&socket3c, &call_req(Some(&s3c))))
+                .await
+                .unwrap()
+                .expect("revived call response");
         assert!(resp.ok, "call on a revived session should succeed");
         assert_eq!(
             PROBE_INVOCATIONS.load(Ordering::SeqCst),
@@ -1843,8 +1856,7 @@ mod telemetry_routing_tests {
         .unwrap();
         assert_eq!(legacy.observation_origin, None);
 
-        let current = serde_json::to_value(request(Some(ToolObservationOrigin::McpProxy)))
-            .unwrap();
+        let current = serde_json::to_value(request(Some(ToolObservationOrigin::McpProxy))).unwrap();
         assert_eq!(current["observation_origin"], "mcp_proxy");
     }
 }

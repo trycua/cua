@@ -1424,7 +1424,7 @@ pub fn scroll_at(
 ) -> anyhow::Result<()> {
     let direction = direction.to_string();
     with_libei_fallback(
-        || scroll_vptr(window_id, point, &direction, amount),
+        || scroll_vptr(Some(window_id), point, &direction, amount),
         || {
             libei_wait_scroll_ready()?;
             activate_window_for_input(window_id)?;
@@ -1436,14 +1436,27 @@ pub fn scroll_at(
     )
 }
 
+/// Scroll at a desktop-absolute point without activating a named toplevel.
+pub fn scroll_desktop(x: i32, y: i32, direction: &str, amount: u32) -> anyhow::Result<()> {
+    let direction = direction.to_string();
+    with_libei_fallback(
+        || scroll_vptr(None, Some((x, y)), &direction, amount),
+        || {
+            libei_wait_scroll_ready()?;
+            libei_move_absolute(x, y)?;
+            libei_scroll(&direction, amount)
+        },
+    )
+}
+
 /// wlroots virtual-pointer implementation of [`scroll`].
 fn scroll_vptr(
-    window_id: u64,
+    window_id: Option<u64>,
     point: Option<(i32, i32)>,
     direction: &str,
     amount: u32,
 ) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(Some(window_id))?;
+    let mut sess = open_vptr_session(window_id)?;
     if let Some((x, y)) = point {
         let px = x.clamp(0, (sess.output_w as i32).saturating_sub(1)) as u32;
         let py = y.clamp(0, (sess.output_h as i32).saturating_sub(1)) as u32;
@@ -1549,7 +1562,7 @@ pub fn drag(
     button: u8,
 ) -> anyhow::Result<()> {
     with_libei_fallback(
-        || drag_vptr(window_id, from_x, from_y, to_x, to_y, steps, button),
+        || drag_vptr(Some(window_id), from_x, from_y, to_x, to_y, steps, button),
         || {
             libei_wait_pointer_ready()?;
             activate_window_for_input(window_id)?;
@@ -1558,10 +1571,8 @@ pub fn drag(
     )
 }
 
-/// wlroots virtual-pointer implementation of [`drag`].
-#[allow(clippy::too_many_arguments)]
-fn drag_vptr(
-    window_id: u64,
+/// Drag through desktop-absolute points without activating a named toplevel.
+pub fn drag_desktop(
     from_x: i32,
     from_y: i32,
     to_x: i32,
@@ -1569,7 +1580,27 @@ fn drag_vptr(
     steps: u32,
     button: u8,
 ) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(Some(window_id))?;
+    with_libei_fallback(
+        || drag_vptr(None, from_x, from_y, to_x, to_y, steps, button),
+        || {
+            libei_wait_pointer_ready()?;
+            libei_drag(from_x, from_y, to_x, to_y, steps, button)
+        },
+    )
+}
+
+/// wlroots virtual-pointer implementation of [`drag`].
+#[allow(clippy::too_many_arguments)]
+fn drag_vptr(
+    window_id: Option<u64>,
+    from_x: i32,
+    from_y: i32,
+    to_x: i32,
+    to_y: i32,
+    steps: u32,
+    button: u8,
+) -> anyhow::Result<()> {
+    let mut sess = open_vptr_session(window_id)?;
     std::thread::sleep(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
     let btn = evdev_pointer_button(button);
@@ -2513,48 +2544,87 @@ fn no_app_id(window_id: u64) -> anyhow::Error {
 /// is the same credential the compositor observes on the owning wl_client.
 /// Fall back to app_id for clients whose accessibility metadata has no PID.
 pub fn inject_target_for_window(window_id: u64) -> anyhow::Result<String> {
-    if let Some(pid) = crate::atspi::list_windows(None)
-        .into_iter()
+    inject_target_for_window_with_pid(window_id, None)
+}
+
+fn inject_target_for_window_with_pid(
+    window_id: u64,
+    target_pid: Option<u32>,
+) -> anyhow::Result<String> {
+    if let Some(pid) = target_pid {
+        anyhow::ensure!(pid > 0, "cua-compositor target pid must be positive");
+        // Electron/Chromium may create the xdg_toplevel from a renderer child
+        // rather than the public tool target. The compositor verifies the
+        // wl_client owner is this process or one of its descendants.
+        return Ok(format!("root:{pid}"));
+    }
+    let atspi = crate::atspi::list_windows(None);
+    let direct_pid = atspi
+        .iter()
         .find(|window| window.xid == window_id)
-        .and_then(|window| window.pid)
-    {
+        .and_then(|window| window.pid);
+    let correlated_pid = identity_for(window_id)
+        .as_ref()
+        .and_then(|identity| unique_atspi_pid_for_identity(identity, &atspi));
+    if let Some(pid) = direct_pid.or(correlated_pid) {
         return Ok(format!("pid:{pid}"));
     }
     app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))
 }
 
+/// Correlate a connection-local native toplevel with its AT-SPI process. Exact
+/// titles are the same bridge used by window enumeration; requiring one unique
+/// PID prevents a shared toolkit app_id from silently selecting another app.
+fn unique_atspi_pid_for_identity(
+    identity: &ToplevelIdentity,
+    windows: &[WindowInfo],
+) -> Option<u32> {
+    if identity.title.is_empty() {
+        return None;
+    }
+    let mut pids = windows
+        .iter()
+        .filter(|window| window.title == identity.title)
+        .filter_map(|window| window.pid)
+        .collect::<Vec<_>>();
+    pids.sort_unstable();
+    pids.dedup();
+    (pids.len() == 1).then(|| pids[0])
+}
+
 /// Focus-free type into the window's surface (no focus change). Rejects any
 /// character the compositor cannot emit before touching the socket.
-pub fn inject_type_text(window_id: u64, text: &str) -> anyhow::Result<()> {
+pub fn inject_type_text(target_pid: u32, window_id: u64, text: &str) -> anyhow::Result<()> {
     validate_injectable_text(text)?;
-    let app = inject_target_for_window(window_id)?;
+    let app = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
     inject_send(&[format!("t {app} {}", to_hex(text))])
 }
 
 /// Focus-free named-key press into the window's surface. Rejects any key
 /// outside the compositor's whitelist before touching the socket.
-pub fn inject_press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
+pub fn inject_press_key(target_pid: u32, window_id: u64, key: &str) -> anyhow::Result<()> {
     validate_injectable_key(key)?;
-    let app = inject_target_for_window(window_id)?;
+    let app = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
     inject_send(&[format!("k {app} {}", key.trim())])
 }
 
 /// Focus-free modifier chord into the target surface.
-pub fn inject_hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
+pub fn inject_hotkey(target_pid: u32, window_id: u64, keys: &[String]) -> anyhow::Result<()> {
     let (modifiers, key) = validate_injectable_hotkey(keys)?;
-    let app = inject_target_for_window(window_id)?;
+    let app = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
     inject_send(&[format!("h {app} {modifiers} {key}")])
 }
 
 /// Focus-free wheel/axis input at one target-local point.
 pub fn inject_scroll(
+    target_pid: u32,
     window_id: u64,
     x: f64,
     y: f64,
     direction: &str,
     amount: u32,
 ) -> anyhow::Result<()> {
-    let app = inject_target_for_window(window_id)?;
+    let app = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
     let (axis, value) = match direction.to_ascii_lowercase().as_str() {
         "up" => (0, -15.0),
         "down" | "page" => (0, 15.0),
@@ -2569,8 +2639,15 @@ pub fn inject_scroll(
 
 /// Focus-free click into the window's surface via the nested cua-compositor.
 /// Coordinates are window-local, matching the rest of the inject protocol.
-pub fn inject_click(window_id: u64, x: f64, y: f64, count: u32, button: u8) -> anyhow::Result<()> {
-    let app = inject_target_for_window(window_id)?;
+pub fn inject_click(
+    target_pid: u32,
+    window_id: u64,
+    x: f64,
+    y: f64,
+    count: u32,
+    button: u8,
+) -> anyhow::Result<()> {
+    let app = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
     let btn = evdev_button(button as u32);
     let n = count.max(1);
     let mut lines = Vec::with_capacity((n as usize) * 4);
@@ -2676,13 +2753,14 @@ pub fn inject_parallel_drags(drags: &[InjectDrag]) -> anyhow::Result<()> {
 
 /// Focus-free single drag using the same per-surface path as parallel drags.
 pub fn inject_drag(
+    target_pid: u32,
     window_id: u64,
     from: (f64, f64),
     to: (f64, f64),
     steps: usize,
     x_button: u32,
 ) -> anyhow::Result<()> {
-    let app_id = inject_target_for_window(window_id)?;
+    let app_id = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
     inject_parallel_drags(&[InjectDrag {
         app_id,
         idx: 0,
@@ -3110,6 +3188,44 @@ mod tests {
             identity_for(enriched[0].xid).unwrap().title,
             "CuaTestHarness"
         );
+    }
+
+    #[test]
+    fn inject_target_correlates_native_identity_to_unique_atspi_pid() {
+        let identity = ToplevelIdentity {
+            title: "Unique sentinel".into(),
+            app_id: "electron".into(),
+        };
+        let windows = vec![
+            window(10, Some(100), "Background fixture"),
+            window(20, Some(200), "Unique sentinel"),
+        ];
+        assert_eq!(
+            unique_atspi_pid_for_identity(&identity, &windows),
+            Some(200)
+        );
+    }
+
+    #[test]
+    fn inject_target_prefers_explicit_positive_pid() {
+        assert_eq!(
+            inject_target_for_window_with_pid(99, Some(123)).unwrap(),
+            "root:123"
+        );
+        assert!(inject_target_for_window_with_pid(99, Some(0)).is_err());
+    }
+
+    #[test]
+    fn inject_target_refuses_ambiguous_title_pid_correlation() {
+        let identity = ToplevelIdentity {
+            title: "Shared title".into(),
+            app_id: "electron".into(),
+        };
+        let windows = vec![
+            window(10, Some(100), "Shared title"),
+            window(20, Some(200), "Shared title"),
+        ];
+        assert_eq!(unique_atspi_pid_for_identity(&identity, &windows), None);
     }
 
     #[test]

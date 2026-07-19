@@ -22,7 +22,9 @@ fn concurrent_clients() {
     //! the multi-cursor use case.
     let mut drivers: Vec<RawDriver> = Vec::new();
     for _ in 0..2 {
-        let Some(d) = RawDriver::spawn() else { return; };
+        let Some(d) = RawDriver::spawn() else {
+            return;
+        };
         drivers.push(d);
     }
 
@@ -36,8 +38,10 @@ fn concurrent_clients() {
 
         let resp = d.recv();
         assert_eq!(resp["id"], (i + 1) as i64);
-        assert!(resp["result"]["protocolVersion"].is_string(),
-            "Process {i} failed to initialize");
+        assert!(
+            resp["result"]["protocolVersion"].is_string(),
+            "Process {i} failed to initialize"
+        );
     }
 }
 
@@ -48,7 +52,9 @@ fn concurrent_clients_with_cursor_moves() {
     //! This covers the multi-cursor use case where two Codex agents run simultaneously.
     let mut drivers: Vec<RawDriver> = Vec::new();
     for _ in 0..2 {
-        let Some(d) = RawDriver::spawn() else { return; };
+        let Some(d) = RawDriver::spawn() else {
+            return;
+        };
         drivers.push(d);
     }
 
@@ -67,8 +73,10 @@ fn concurrent_clients_with_cursor_moves() {
             "params":{"name":"move_cursor","arguments":{"x":px,"y":py}}
         }));
         let resp = d.recv();
-        assert!(!resp["result"]["isError"].as_bool().unwrap_or(false),
-            "Process {i} move_cursor failed: {resp:?}");
+        assert!(
+            !resp["result"]["isError"].as_bool().unwrap_or(false),
+            "Process {i} move_cursor failed: {resp:?}"
+        );
     }
 
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -81,7 +89,10 @@ fn concurrent_clients_with_cursor_moves() {
             "params":{"name":"get_agent_cursor_state","arguments":{}}
         }));
         let resp = d.recv();
-        assert_eq!(resp["id"], 99, "cua-driver process {i} crashed during concurrent cursor test");
+        assert_eq!(
+            resp["id"], 99,
+            "cua-driver process {i} crashed during concurrent cursor test"
+        );
     }
 }
 
@@ -91,8 +102,12 @@ fn concurrent_multi_driver_isolation() {
     //! Two cua-driver processes running simultaneously with different cursor IDs.
     //! Verifies that concurrent sessions don't interfere — each tracks its own
     //! cursor state and the overlay stays alive under concurrent load.
-    let Some(mut child_a) = RawDriver::spawn() else { return; };
-    let Some(mut child_b) = RawDriver::spawn() else { return; };
+    let Some(mut child_a) = RawDriver::spawn() else {
+        return;
+    };
+    let Some(mut child_b) = RawDriver::spawn() else {
+        return;
+    };
 
     // Initialize both.
     child_a.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
@@ -111,8 +126,14 @@ fn concurrent_multi_driver_isolation() {
     }));
     let resp_a = child_a.recv();
     let resp_b = child_b.recv();
-    assert!(resp_a["error"].is_null(), "Driver A set_agent_cursor_enabled failed: {resp_a:?}");
-    assert!(resp_b["error"].is_null(), "Driver B set_agent_cursor_enabled failed: {resp_b:?}");
+    assert!(
+        resp_a["error"].is_null(),
+        "Driver A set_agent_cursor_enabled failed: {resp_a:?}"
+    );
+    assert!(
+        resp_b["error"].is_null(),
+        "Driver B set_agent_cursor_enabled failed: {resp_b:?}"
+    );
 
     // Each driver queries its own cursor state — should reflect what it set.
     // get_agent_cursor_state is session-scoped, so pass the cursor_id each
@@ -127,8 +148,14 @@ fn concurrent_multi_driver_isolation() {
     }));
     let state_a = child_a.recv();
     let state_b = child_b.recv();
-    assert!(state_a["error"].is_null(), "Driver A get_agent_cursor_state failed: {state_a:?}");
-    assert!(state_b["error"].is_null(), "Driver B get_agent_cursor_state failed: {state_b:?}");
+    assert!(
+        state_a["error"].is_null(),
+        "Driver A get_agent_cursor_state failed: {state_a:?}"
+    );
+    assert!(
+        state_b["error"].is_null(),
+        "Driver B get_agent_cursor_state failed: {state_b:?}"
+    );
 
     // cursors is an array of { config: { cursor_id, enabled, ... }, x, y }.
     // Cursor alpha should be enabled (we set true), beta disabled (we set false).
@@ -136,15 +163,29 @@ fn concurrent_multi_driver_isolation() {
     let cursors_a = state_a["result"]["structuredContent"]["cursors"].as_array();
     let cursors_b = state_b["result"]["structuredContent"]["cursors"].as_array();
 
-    let alpha_enabled = cursors_a.and_then(|arr| arr.iter().find(|c| {
-        c["config"]["cursor_id"].as_str() == Some("alpha")
-    })).and_then(|c| c["config"]["enabled"].as_bool());
-    let beta_enabled = cursors_b.and_then(|arr| arr.iter().find(|c| {
-        c["config"]["cursor_id"].as_str() == Some("beta")
-    })).and_then(|c| c["config"]["enabled"].as_bool());
+    let alpha_enabled = cursors_a
+        .and_then(|arr| {
+            arr.iter()
+                .find(|c| c["config"]["cursor_id"].as_str() == Some("alpha"))
+        })
+        .and_then(|c| c["config"]["enabled"].as_bool());
+    let beta_enabled = cursors_b
+        .and_then(|arr| {
+            arr.iter()
+                .find(|c| c["config"]["cursor_id"].as_str() == Some("beta"))
+        })
+        .and_then(|c| c["config"]["enabled"].as_bool());
 
-    assert_eq!(alpha_enabled, Some(true),  "Cursor alpha should be enabled in driver A");
-    assert_eq!(beta_enabled,  Some(false), "Cursor beta should be disabled in driver B");
+    assert_eq!(
+        alpha_enabled,
+        Some(true),
+        "Cursor alpha should be enabled in driver A"
+    );
+    assert_eq!(
+        beta_enabled,
+        Some(false),
+        "Cursor beta should be disabled in driver B"
+    );
 
     // macOS additionally exercises move_cursor on both drivers to confirm
     // neither crashes the other (the Windows variant stops after the state check).
@@ -159,8 +200,14 @@ fn concurrent_multi_driver_isolation() {
         }));
         let mv_a = child_a.recv();
         let mv_b = child_b.recv();
-        assert!(mv_a["error"].is_null(), "Driver A move_cursor failed: {mv_a:?}");
-        assert!(mv_b["error"].is_null(), "Driver B move_cursor failed: {mv_b:?}");
+        assert!(
+            mv_a["error"].is_null(),
+            "Driver A move_cursor failed: {mv_a:?}"
+        );
+        assert!(
+            mv_b["error"].is_null(),
+            "Driver B move_cursor failed: {mv_b:?}"
+        );
     }
 }
 
@@ -168,7 +215,9 @@ fn concurrent_multi_driver_isolation() {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn multi_cursor_instance_state() {
     //! Two cursor instances can be created with different IDs; each has independent state.
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
@@ -217,18 +266,33 @@ fn multi_cursor_instance_state() {
     }));
     let resp1 = d.recv();
     assert!(!resp1["result"]["isError"].as_bool().unwrap_or(false));
-    let cursors1 = resp1["result"]["structuredContent"]["cursors"].as_array().cloned().unwrap_or_default();
+    let cursors1 = resp1["result"]["structuredContent"]["cursors"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     if cfg!(target_os = "windows") {
         // Windows returns the full cursor list; find agent1 within it.
-        let a1 = cursors1.iter()
+        let a1 = cursors1
+            .iter()
             .find(|c| c["config"]["cursor_id"].as_str() == Some("agent1"))
             .expect("agent1 in returned cursor list");
-        assert_eq!(a1["config"]["enabled"].as_bool(), Some(true), "agent1 was never disabled");
+        assert_eq!(
+            a1["config"]["enabled"].as_bool(),
+            Some(true),
+            "agent1 was never disabled"
+        );
     } else {
-        assert_eq!(cursors1.len(), 1, "agent1 query must return exactly its own cursor, got: {cursors1:?}");
+        assert_eq!(
+            cursors1.len(),
+            1,
+            "agent1 query must return exactly its own cursor, got: {cursors1:?}"
+        );
         assert_eq!(cursors1[0]["config"]["cursor_id"].as_str(), Some("agent1"));
-        assert_eq!(resp1["result"]["structuredContent"]["enabled"].as_bool(), Some(true),
-            "agent1 was never disabled");
+        assert_eq!(
+            resp1["result"]["structuredContent"]["enabled"].as_bool(),
+            Some(true),
+            "agent1 was never disabled"
+        );
     }
 
     d.send(&serde_json::json!({
@@ -237,18 +301,33 @@ fn multi_cursor_instance_state() {
     }));
     let resp2 = d.recv();
     assert!(!resp2["result"]["isError"].as_bool().unwrap_or(false));
-    let cursors2 = resp2["result"]["structuredContent"]["cursors"].as_array().cloned().unwrap_or_default();
+    let cursors2 = resp2["result"]["structuredContent"]["cursors"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     if cfg!(target_os = "windows") {
         // Windows returns the full cursor list; find agent2 within it.
-        let a2 = cursors2.iter()
+        let a2 = cursors2
+            .iter()
             .find(|c| c["config"]["cursor_id"].as_str() == Some("agent2"))
             .expect("agent2 in returned cursor list");
-        assert_eq!(a2["config"]["enabled"].as_bool(), Some(false), "agent2 was hidden");
+        assert_eq!(
+            a2["config"]["enabled"].as_bool(),
+            Some(false),
+            "agent2 was hidden"
+        );
     } else {
-        assert_eq!(cursors2.len(), 1, "agent2 query must return exactly its own cursor, got: {cursors2:?}");
+        assert_eq!(
+            cursors2.len(),
+            1,
+            "agent2 query must return exactly its own cursor, got: {cursors2:?}"
+        );
         assert_eq!(cursors2[0]["config"]["cursor_id"].as_str(), Some("agent2"));
-        assert_eq!(resp2["result"]["structuredContent"]["enabled"].as_bool(), Some(false),
-            "agent2 was hidden");
+        assert_eq!(
+            resp2["result"]["structuredContent"]["enabled"].as_bool(),
+            Some(false),
+            "agent2 was hidden"
+        );
     }
 
     std::thread::sleep(std::time::Duration::from_millis(50));
@@ -259,7 +338,10 @@ fn multi_cursor_instance_state() {
         "params":{"name":"get_agent_cursor_state","arguments":{"cursor_id":"agent1"}}
     }));
     let resp = d.recv();
-    assert_eq!(resp["id"], 99, "cua-driver crashed during multi-cursor test");
+    assert_eq!(
+        resp["id"], 99,
+        "cua-driver crashed during multi-cursor test"
+    );
 }
 
 #[test]
@@ -270,13 +352,19 @@ fn overlay_move_cursor_stays_alive() {
     //! sends commands via the global channel.  Any crash in the render thread (e.g. wrong
     //! GCD queue pointer, bad CGImage argument types) would cause this test to fail with
     //! an early EOF or a non-zero exit code.
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
 
     // Call move_cursor several times to drive the overlay render loop.
-    for (id, (x, y)) in [(2u64, (100.0_f64, 200.0_f64)), (3, (400.0, 300.0)), (4, (800.0, 600.0))] {
+    for (id, (x, y)) in [
+        (2u64, (100.0_f64, 200.0_f64)),
+        (3, (400.0, 300.0)),
+        (4, (800.0, 600.0)),
+    ] {
         d.send(&serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -313,7 +401,10 @@ fn overlay_move_cursor_stays_alive() {
         "params": { "name": "get_agent_cursor_state", "arguments": {} }
     }));
     let resp = d.recv();
-    assert_eq!(resp["id"], 99, "cua-driver crashed during overlay move_cursor test");
+    assert_eq!(
+        resp["id"], 99,
+        "cua-driver crashed during overlay move_cursor test"
+    );
 }
 
 #[test]
@@ -321,7 +412,9 @@ fn overlay_move_cursor_stays_alive() {
 fn set_agent_cursor_motion_bezier_knobs() {
     //! set_agent_cursor_motion with Bezier/timing knobs — verifies schema accepts them
     //! and returns a non-error response with the updated values in the response text.
-    let Some(mut d) = RawDriver::spawn() else { return; };
+    let Some(mut d) = RawDriver::spawn() else {
+        return;
+    };
 
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
@@ -339,11 +432,18 @@ fn set_agent_cursor_motion_bezier_knobs() {
         }}
     }));
     let resp = d.recv();
-    assert!(resp["error"].is_null(), "Protocol error from set_agent_cursor_motion: {resp:?}");
-    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false),
-        "set_agent_cursor_motion returned isError: {resp:?}");
+    assert!(
+        resp["error"].is_null(),
+        "Protocol error from set_agent_cursor_motion: {resp:?}"
+    );
+    assert!(
+        !resp["result"]["isError"].as_bool().unwrap_or(false),
+        "set_agent_cursor_motion returned isError: {resp:?}"
+    );
     // Response text should mention the new glide duration.
     let text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
-    assert!(text.contains("500") || text.contains("motion"),
-        "Expected motion summary in response, got: {text}");
+    assert!(
+        text.contains("500") || text.contains("motion"),
+        "Expected motion summary in response, got: {text}"
+    );
 }

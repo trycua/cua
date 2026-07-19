@@ -46,7 +46,9 @@ pub struct StartRecordingTool {
 }
 
 impl StartRecordingTool {
-    pub fn new(session: Arc<RecordingSession>) -> Self { Self { session } }
+    pub fn new(session: Arc<RecordingSession>) -> Self {
+        Self { session }
+    }
 }
 
 static START_REC_DEF: OnceLock<ToolDef> = OnceLock::new();
@@ -77,8 +79,8 @@ impl Tool for StartRecordingTool {
                 capture the main display to `<output_dir>/recording.mp4` (H.264 / \
                 30 fps) for the lifetime of the session. The recording is torn \
                 down automatically when the MCP client disconnects.\n\n\
-                **macOS uses native ScreenCaptureKit** (in-process SCStream + \
-                SCRecordingOutput) so video inherits Cua Driver's own Screen \
+                **macOS uses native ScreenCaptureKit** (daemon-owned SCStream + \
+                SCRecordingOutput) so video inherits the daemon's Screen \
                 Recording grant — no extra TCC prompt, no ffmpeg subprocess. \
                 Requires macOS 15.0+.\n\n\
                 **Windows + Linux use an ffmpeg subprocess** (`gdigrab` / \
@@ -87,9 +89,10 @@ impl Tool for StartRecordingTool {
                 fails on startup the per-turn capture (screenshots + \
                 action.json) still runs and the session's `last_error` field \
                 carries the diagnostic.\n\n\
-                State persists for the life of the daemon / MCP session; a restart \
+                State persists for the life of the daemon; a restart \
                 resets to disabled with no on-disk state. Call `stop_recording` to \
-                disable + finalize the mp4.".into(),
+                disable + finalize the mp4."
+                .into(),
             input_schema: json!({
                 "type": "object",
                 "required": ["output_dir"],
@@ -130,7 +133,11 @@ impl Tool for StartRecordingTool {
         // (session_end) only stops the recording its own session started.
         let owner = args.opt_str("_session_id");
 
-        match self.session.start(output_dir.as_deref().unwrap(), record_video, owner.as_deref()) {
+        match self.session.start(
+            output_dir.as_deref().unwrap(),
+            record_video,
+            owner.as_deref(),
+        ) {
             Ok(()) => {
                 let state = self.session.current_state();
                 // When the caller asked for video and it failed (e.g. macOS
@@ -149,10 +156,14 @@ impl Tool for StartRecordingTool {
                         ""
                     };
                     format!("\n\n⚠️ Video capture failed (per-turn JSON+screenshot still running):\n{err}{hint}")
-                } else { String::new() };
-                let msg = format!("✅ Recording started -> {}{}",
+                } else {
+                    String::new()
+                };
+                let msg = format!(
+                    "✅ Recording started -> {}{}",
                     state.output_dir.as_deref().unwrap_or("?"),
-                    video_note);
+                    video_note
+                );
                 ToolResult::text(msg).with_structured(recording_state_json(&state))
             }
             Err(e) => ToolResult::error(format!("Failed to start recording: {e}")),
@@ -167,7 +178,9 @@ pub struct StopRecordingTool {
 }
 
 impl StopRecordingTool {
-    pub fn new(session: Arc<RecordingSession>) -> Self { Self { session } }
+    pub fn new(session: Arc<RecordingSession>) -> Self {
+        Self { session }
+    }
 }
 
 static STOP_REC_DEF: OnceLock<ToolDef> = OnceLock::new();
@@ -186,7 +199,8 @@ impl Tool for StopRecordingTool {
                 recording is active regardless of which session started it. \
                 Ownership-scoped teardown (so one MCP client disconnecting can't stop a \
                 recording a later client started) is handled by the daemon's \
-                `session_end` lifecycle signal, not by this tool.".into(),
+                `session_end` lifecycle signal, not by this tool."
+                .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {},
@@ -206,7 +220,9 @@ impl Tool for StopRecordingTool {
         match self.session.stop_owner(None) {
             Ok(()) => {
                 let state = self.session.current_state();
-                let video_note = state.last_video_path.as_deref()
+                let video_note = state
+                    .last_video_path
+                    .as_deref()
                     .map(|p| format!(" (video → {p})"))
                     .unwrap_or_default();
                 ToolResult::text(format!("✅ Recording stopped.{video_note}"))
@@ -224,7 +240,9 @@ pub struct GetRecordingStateTool {
 }
 
 impl GetRecordingStateTool {
-    pub fn new(session: Arc<RecordingSession>) -> Self { Self { session } }
+    pub fn new(session: Arc<RecordingSession>) -> Self {
+        Self { session }
+    }
 }
 
 static GET_REC_DEF: OnceLock<ToolDef> = OnceLock::new();
@@ -331,12 +349,19 @@ impl Tool for ReplayTrajectoryTool {
             if let Some(relative) = dir_str.strip_prefix("~/") {
                 if let Ok(home) = std::env::var("HOME") {
                     std::path::PathBuf::from(home).join(relative)
-                } else { p }
-            } else { p }
+                } else {
+                    p
+                }
+            } else {
+                p
+            }
         };
 
         if !dir.exists() {
-            return ToolResult::error(format!("Trajectory directory does not exist: {}", dir.display()));
+            return ToolResult::error(format!(
+                "Trajectory directory does not exist: {}",
+                dir.display()
+            ));
         }
 
         // Collect and sort turn-NNNNN directories.
@@ -344,22 +369,30 @@ impl Tool for ReplayTrajectoryTool {
             .map(|rd| {
                 rd.filter_map(|e| e.ok())
                     .map(|e| e.path())
-                    .filter(|p| p.is_dir() && p.file_name()
-                        .and_then(|n| n.to_str())
-                        .map(|n| n.starts_with("turn-"))
-                        .unwrap_or(false))
+                    .filter(|p| {
+                        p.is_dir()
+                            && p.file_name()
+                                .and_then(|n| n.to_str())
+                                .map(|n| n.starts_with("turn-"))
+                                .unwrap_or(false)
+                    })
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
         turn_dirs.sort();
 
         if turn_dirs.is_empty() {
-            return ToolResult::error(format!("No turn-NNNNN folders found under {}", dir.display()));
+            return ToolResult::error(format!(
+                "No turn-NNNNN folders found under {}",
+                dir.display()
+            ));
         }
 
         let registry = match get_replay_registry() {
             Some(r) => r,
-            None => return ToolResult::error("Replay not available: registry not initialised yet."),
+            None => {
+                return ToolResult::error("Replay not available: registry not initialised yet.")
+            }
         };
 
         let mut attempted = 0u32;
@@ -369,7 +402,8 @@ impl Tool for ReplayTrajectoryTool {
         let mut first_failure: Option<(String, String, String)> = None;
 
         for turn_dir in &turn_dirs {
-            let turn_name = turn_dir.file_name()
+            let turn_name = turn_dir
+                .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("?")
                 .to_owned();
@@ -380,14 +414,17 @@ impl Tool for ReplayTrajectoryTool {
                 Err(e) => {
                     failed += 1;
                     if first_failure.is_none() {
-                        first_failure = Some((turn_name.clone(), "action.json".into(), e.to_string()));
+                        first_failure =
+                            Some((turn_name.clone(), "action.json".into(), e.to_string()));
                     }
                     turns_json.push(json!({
                         "turn": turn_name,
                         "ok": false,
                         "parse_error": e.to_string()
                     }));
-                    if stop_on_error { break; }
+                    if stop_on_error {
+                        break;
+                    }
                     continue;
                 }
             };
@@ -395,11 +432,15 @@ impl Tool for ReplayTrajectoryTool {
             attempted += 1;
             let result = registry.invoke(&tool_name, tool_args).await;
             let is_err = result.is_error.unwrap_or(false);
-            let summary = result.content.iter()
+            let summary = result
+                .content
+                .iter()
                 .find_map(|c| {
                     if let crate::protocol::Content::Text { text, .. } = c {
                         Some(text.as_str())
-                    } else { None }
+                    } else {
+                        None
+                    }
                 })
                 .unwrap_or("")
                 .to_owned();
@@ -416,7 +457,9 @@ impl Tool for ReplayTrajectoryTool {
                 if first_failure.is_none() {
                     first_failure = Some((turn_name.clone(), tool_name.clone(), summary));
                 }
-                if stop_on_error { break; }
+                if stop_on_error {
+                    break;
+                }
             } else {
                 succeeded += 1;
             }
@@ -426,9 +469,7 @@ impl Tool for ReplayTrajectoryTool {
             }
         }
 
-        let dir_name = dir.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("?");
+        let dir_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("?");
         let mut summary_text = format!(
             "replay {dir_name}: attempted={attempted} succeeded={succeeded} failed={failed}"
         );
@@ -448,8 +489,7 @@ impl Tool for ReplayTrajectoryTool {
             structured["first_failure"] = json!({ "turn": turn, "tool": tool, "error": error });
         }
 
-        ToolResult::text(summary_text)
-            .with_structured(structured)
+        ToolResult::text(summary_text).with_structured(structured)
     }
 }
 
@@ -479,11 +519,15 @@ fn parse_action_json(path: &std::path::Path) -> anyhow::Result<(String, Value)> 
     }
     let text = std::fs::read_to_string(path)?;
     let obj: Value = serde_json::from_str(&text)?;
-    let tool = obj.get("tool")
+    let tool = obj
+        .get("tool")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("action.json missing 'tool' string field"))?
         .to_owned();
-    let tool_args = obj.get("arguments").cloned().unwrap_or(Value::Object(Default::default()));
+    let tool_args = obj
+        .get("arguments")
+        .cloned()
+        .unwrap_or(Value::Object(Default::default()));
     Ok((tool, tool_args))
 }
 
@@ -556,7 +600,8 @@ impl Tool for InstallFfmpegTool {
         }
 
         let display = plan.display();
-        let result = tokio::task::spawn_blocking(move || crate::ffmpeg_install::run_install(&plan)).await;
+        let result =
+            tokio::task::spawn_blocking(move || crate::ffmpeg_install::run_install(&plan)).await;
         match result {
             Ok(Ok((cmd_ok, output))) => match crate::video_ffmpeg::find_ffmpeg() {
                 Some(path) => ToolResult::text(format!("✅ ffmpeg installed via `{display}`."))
@@ -569,7 +614,9 @@ impl Tool for InstallFfmpegTool {
                      Command: {display}\ncommand_succeeded={cmd_ok}\nOutput tail:\n{output}"
                 )),
             },
-            Ok(Err(e)) => ToolResult::error(format!("ffmpeg install failed: {e}\nCommand: {display}")),
+            Ok(Err(e)) => {
+                ToolResult::error(format!("ffmpeg install failed: {e}\nCommand: {display}"))
+            }
             Err(e) => ToolResult::error(format!("install task error: {e}")),
         }
     }

@@ -1,7 +1,7 @@
 //! BrowserJS: run JavaScript in Chrome/Brave/Edge/Safari via AppleScript/osascript.
 
-use std::time::Duration;
 use anyhow::Context;
+use std::time::Duration;
 
 use crate::windows::WindowBounds;
 
@@ -18,12 +18,12 @@ struct NativeWindowTarget {
 
 fn app_name_for_bundle(bundle_id: &str) -> Option<&'static str> {
     match bundle_id {
-        "com.google.Chrome"      => Some("Google Chrome"),
-        "com.brave.Browser"      => Some("Brave Browser"),
-        "com.microsoft.edgemac"  => Some("Microsoft Edge"),
-        "com.apple.Safari"       => Some("Safari"),
+        "com.google.Chrome" => Some("Google Chrome"),
+        "com.brave.Browser" => Some("Brave Browser"),
+        "com.microsoft.edgemac" => Some("Microsoft Edge"),
+        "com.apple.Safari" => Some("Safari"),
         _ if bundle_id.starts_with(CHROME_APP_BUNDLE_PREFIX) => Some("Google Chrome"),
-        _                        => None,
+        _ => None,
     }
 }
 
@@ -34,7 +34,11 @@ impl BrowserJs {
     }
 
     /// Execute JavaScript in the browser window identified by window_id.
-    pub async fn execute(javascript: &str, bundle_id: &str, window_id: u32) -> anyhow::Result<String> {
+    pub async fn execute(
+        javascript: &str,
+        bundle_id: &str,
+        window_id: u32,
+    ) -> anyhow::Result<String> {
         let app_name = app_name_for_bundle(bundle_id)
             .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
 
@@ -90,9 +94,13 @@ end tell"#
         // Find profile directory.
         let home = std::env::var("HOME").unwrap_or_default();
         let profiles_dir = match bundle_id {
-            "com.google.Chrome"     => format!("{home}/Library/Application Support/Google/Chrome"),
-            _ if bundle_id.starts_with(CHROME_APP_BUNDLE_PREFIX) => format!("{home}/Library/Application Support/Google/Chrome"),
-            "com.brave.Browser"     => format!("{home}/Library/Application Support/BraveSoftware/Brave-Browser"),
+            "com.google.Chrome" => format!("{home}/Library/Application Support/Google/Chrome"),
+            _ if bundle_id.starts_with(CHROME_APP_BUNDLE_PREFIX) => {
+                format!("{home}/Library/Application Support/Google/Chrome")
+            }
+            "com.brave.Browser" => {
+                format!("{home}/Library/Application Support/BraveSoftware/Brave-Browser")
+            }
             "com.microsoft.edgemac" => format!("{home}/Library/Application Support/Microsoft Edge"),
             _ => anyhow::bail!("No profiles directory for {bundle_id}"),
         };
@@ -203,7 +211,9 @@ fn rounded_i64(value: f64) -> i64 {
 }
 
 fn find_preferences_files(profiles_dir: &str) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(profiles_dir) else { return vec![] };
+    let Ok(entries) = std::fs::read_dir(profiles_dir) else {
+        return vec![];
+    };
     let mut result = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
@@ -218,33 +228,40 @@ fn find_preferences_files(profiles_dir: &str) -> Vec<String> {
 }
 
 fn patch_preferences_file(path: &str) -> anyhow::Result<()> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("Reading {path}"))?;
-    let mut json: serde_json::Value = serde_json::from_str(&content)
-        .with_context(|| format!("Parsing {path}"))?;
+    let content = std::fs::read_to_string(path).with_context(|| format!("Reading {path}"))?;
+    let mut json: serde_json::Value =
+        serde_json::from_str(&content).with_context(|| format!("Parsing {path}"))?;
 
     // Set browser.allow_javascript_apple_events = true.
     if let Some(obj) = json.as_object_mut() {
-        let browser = obj.entry("browser")
+        let browser = obj
+            .entry("browser")
             .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
         if let Some(b) = browser.as_object_mut() {
-            b.insert("allow_javascript_apple_events".to_owned(), serde_json::Value::Bool(true));
+            b.insert(
+                "allow_javascript_apple_events".to_owned(),
+                serde_json::Value::Bool(true),
+            );
         }
         // Also set account_values.browser.allow_javascript_apple_events.
-        let account_values = obj.entry("account_values")
+        let account_values = obj
+            .entry("account_values")
             .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
         if let Some(av) = account_values.as_object_mut() {
-            let av_browser = av.entry("browser")
+            let av_browser = av
+                .entry("browser")
                 .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
             if let Some(avb) = av_browser.as_object_mut() {
-                avb.insert("allow_javascript_apple_events".to_owned(), serde_json::Value::Bool(true));
+                avb.insert(
+                    "allow_javascript_apple_events".to_owned(),
+                    serde_json::Value::Bool(true),
+                );
             }
         }
     }
 
     let new_content = serde_json::to_string(&json)?;
-    std::fs::write(path, new_content)
-        .with_context(|| format!("Writing {path}"))?;
+    std::fs::write(path, new_content).with_context(|| format!("Writing {path}"))?;
     Ok(())
 }
 
@@ -256,7 +273,8 @@ fn escape_for_applescript_string(s: &str) -> String {
 /// Escape JS for embedding in an AppleScript string literal.
 /// Multi-line JS is split by newline and concatenated with `& (ASCII character 10) &`.
 fn escape_js_for_applescript(js: &str) -> String {
-    let lines: Vec<String> = js.lines()
+    let lines: Vec<String> = js
+        .lines()
         .map(|l| {
             let escaped = l.replace('\\', "\\\\").replace('"', "\\\"");
             format!("\"{escaped}\"")
@@ -276,15 +294,17 @@ pub async fn run_osascript(script: &str) -> anyhow::Result<String> {
     let uuid = format!("{:x}", rand_u64());
     let path = format!("/tmp/{uuid}.applescript");
 
-    tokio::fs::write(&path, script).await
+    tokio::fs::write(&path, script)
+        .await
         .with_context(|| format!("Writing temp applescript to {path}"))?;
 
     let out = tokio::time::timeout(
         Duration::from_secs(15),
         tokio::process::Command::new("/usr/bin/osascript")
             .arg(&path)
-            .output()
-    ).await
+            .output(),
+    )
+    .await
     .context("osascript timed out after 15s")?
     .context("osascript failed to spawn")?;
 
@@ -304,15 +324,21 @@ pub async fn run_osascript(script: &str) -> anyhow::Result<String> {
         anyhow::bail!("osascript error: {msg}");
     }
 
-    Ok(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_owned())
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .trim_end_matches('\n')
+        .to_owned())
 }
 
 fn rand_u64() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let t = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     // Mix in thread id for uniqueness.
     let tid = std::thread::current().id();
-    t.subsec_nanos() as u64 ^ t.as_secs().wrapping_mul(6364136223846793005) ^ format!("{tid:?}").len() as u64
+    t.subsec_nanos() as u64
+        ^ t.as_secs().wrapping_mul(6364136223846793005)
+        ^ format!("{tid:?}").len() as u64
 }
 
 #[cfg(test)]

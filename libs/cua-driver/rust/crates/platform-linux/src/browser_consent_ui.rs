@@ -159,6 +159,55 @@ fn prove_window_owner(pid: u32, window_id: u64) -> Result<(), BrowserRefusal> {
     Ok(())
 }
 
+fn with_target_foreground<T>(
+    pid: u32,
+    window_id: u64,
+    body: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        let window = crate::wayland::sway_ipc::window_for_id(window_id)
+            .filter(|window| window.pid == pid)
+            .ok_or_else(|| anyhow::anyhow!("no exact Sway container owns the approved window"))?;
+        crate::wayland::sway_ipc::with_focused_container(window.id, body)
+    } else {
+        crate::input::with_x11_foreground(window_id, 80, body)
+    }
+}
+
+fn exact_button_center(
+    bounds: &[(usize, i32, i32, u32, u32)],
+    element_index: usize,
+) -> anyhow::Result<(i32, i32)> {
+    let (_, x, y, width, height) = bounds
+        .iter()
+        .find(|(index, _, _, width, height)| *index == element_index && *width > 1 && *height > 1)
+        .ok_or_else(|| anyhow::anyhow!("the exact Allow action had empty screen bounds"))?;
+    let center_x = x
+        .checked_add(i32::try_from(width / 2)?)
+        .ok_or_else(|| anyhow::anyhow!("Allow button center x overflowed"))?;
+    let center_y = y
+        .checked_add(i32::try_from(height / 2)?)
+        .ok_or_else(|| anyhow::anyhow!("Allow button center y overflowed"))?;
+    Ok((center_x, center_y))
+}
+
+fn trusted_allow_click(pid: u32, window_id: u64) -> anyhow::Result<()> {
+    with_target_foreground(pid, window_id, || {
+        let tree = crate::atspi::walk_tree(pid, window_id, None);
+        let index = exact_allow_button(&tree.nodes, &tree.bounds)
+            .map_err(|error| anyhow::anyhow!(error.message))?
+            .ok_or_else(|| {
+                anyhow::anyhow!("the exact Chromium remote-debugging consent action became stale")
+            })?;
+        let (center_x, center_y) = exact_button_center(&tree.bounds, index)?;
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            crate::wayland::click_desktop(center_x, center_y, 1, 1)
+        } else {
+            crate::input::send_click_xtest_desktop(center_x, center_y, 1, 1)
+        }
+    })
+}
+
 pub async fn handle(
     request: BrowserConsentRequest,
 ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
@@ -171,6 +220,8 @@ pub async fn handle(
     prove_window_owner(pid, request.window_id)?;
     let deadline = Instant::now() + Duration::from_secs(4);
     let mut saw_prompt = false;
+    let mut accessibility_action_at = None;
+    let mut trusted_click_attempted = false;
     loop {
         prove_window_owner(pid, request.window_id)?;
         let window_id = request.window_id;
@@ -186,7 +237,7 @@ pub async fn handle(
         let prompt_present = remote_debugging_prompt_present(&tree.nodes);
         saw_prompt |= prompt_present;
         match exact_allow_button(&tree.nodes, &tree.bounds)? {
-            Some(index) => {
+            Some(index) if accessibility_action_at.is_none() => {
                 tokio::task::spawn_blocking(move || crate::atspi::perform_action(pid, index))
                     .await
                     .map_err(|error| {
@@ -201,9 +252,37 @@ pub async fn handle(
                             format!("the exact browser consent action failed: {error}"),
                         )
                     })?;
-                return Ok(BrowserConsentOutcome::Accepted);
+                accessibility_action_at = Some(Instant::now());
+            }
+            Some(_)
+                if !trusted_click_attempted
+                    && accessibility_action_at.is_some_and(|attempted| {
+                        attempted.elapsed() >= Duration::from_millis(150)
+                    }) =>
+            {
+                let window_id = request.window_id;
+                tokio::task::spawn_blocking(move || trusted_allow_click(pid, window_id))
+                    .await
+                    .map_err(|error| {
+                        refusal(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            format!(
+                                "could not dispatch the trusted browser consent click: {error}"
+                            ),
+                        )
+                    })?
+                    .map_err(|error| {
+                        refusal(
+                            BrowserRefusalCode::BrowserWrongTargetRefused,
+                            format!("the trusted browser consent click failed: {error}"),
+                        )
+                    })?;
+                trusted_click_attempted = true;
             }
             None if saw_prompt && !prompt_present => {
+                if accessibility_action_at.is_some() {
+                    return Ok(BrowserConsentOutcome::Accepted);
+                }
                 return Err(refusal(
                     BrowserRefusalCode::BrowserConsentRevoked,
                     "the person dismissed the browser consent prompt",
@@ -218,8 +297,9 @@ pub async fn handle(
                     ),
                 ));
             }
-            None => tokio::time::sleep(Duration::from_millis(100)).await,
+            _ => {}
         }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
@@ -300,5 +380,15 @@ mod tests {
             child.in_web_content = true;
         }
         assert_eq!(exact_allow_button(&nodes, &[]).unwrap(), None);
+    }
+
+    #[test]
+    fn exact_button_center_requires_nonempty_bounds() {
+        assert_eq!(
+            exact_button_center(&[(7, 10, 20, 80, 30)], 7).unwrap(),
+            (50, 35)
+        );
+        assert!(exact_button_center(&[(7, 10, 20, 1, 30)], 7).is_err());
+        assert!(exact_button_center(&[(8, 10, 20, 80, 30)], 7).is_err());
     }
 }

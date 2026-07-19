@@ -175,10 +175,12 @@ osascript -e \
 ~/.local/bin/cua-driver list_apps '{}'
 
 # A desktop screenshot triggers Tahoe's direct-capture/private-window prompt.
-~/.local/bin/cua-driver call set_config '{"capture_scope":"desktop"}'
-~/.local/bin/cua-driver call get_desktop_state '{}' \
+~/.local/bin/cua-driver call start_session \
+  '{"session":"seed-desktop-consent","capture_scope":"desktop"}'
+~/.local/bin/cua-driver call get_desktop_state \
+  '{"session":"seed-desktop-consent"}' \
   > /tmp/cua-driver-seed-desktop-state.json
-~/.local/bin/cua-driver call set_config '{"capture_scope":"window"}'
+~/.local/bin/cua-driver call end_session '{"session":"seed-desktop-consent"}'
 jq -e '
   .screenshot_mime_type == "image/png"
   and .screenshot_width > 0

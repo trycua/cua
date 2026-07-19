@@ -50,9 +50,9 @@ pub enum Button {
 impl Button {
     fn to_evdev(self) -> u32 {
         match self {
-            Button::Left => 0x110,    // BTN_LEFT
-            Button::Right => 0x111,   // BTN_RIGHT
-            Button::Middle => 0x112,  // BTN_MIDDLE
+            Button::Left => 0x110,   // BTN_LEFT
+            Button::Right => 0x111,  // BTN_RIGHT
+            Button::Middle => 0x112, // BTN_MIDDLE
         }
     }
 }
@@ -146,7 +146,8 @@ enum Cmd {
 static TX: OnceLock<Sender<Cmd>> = OnceLock::new();
 
 fn tx() -> anyhow::Result<&'static Sender<Cmd>> {
-    TX.get().ok_or_else(|| anyhow::anyhow!("libei worker not started; call ensure_started() first"))
+    TX.get()
+        .ok_or_else(|| anyhow::anyhow!("libei worker not started; call ensure_started() first"))
 }
 
 fn wait_for_reply(rx: Receiver<anyhow::Result<()>>) -> anyhow::Result<()> {
@@ -168,7 +169,10 @@ fn restore_token_path() -> Option<PathBuf> {
 
 fn read_restore_token() -> Option<String> {
     let path = restore_token_path()?;
-    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 fn write_restore_token(token: &str) -> anyhow::Result<()> {
@@ -176,7 +180,10 @@ fn write_restore_token(token: &str) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("no config dir available for libei restore_token"))?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
-            anyhow::anyhow!("failed to create {} for restore_token: {e}", parent.display())
+            anyhow::anyhow!(
+                "failed to create {} for restore_token: {e}",
+                parent.display()
+            )
         })?;
     }
     use std::io::Write;
@@ -189,10 +196,16 @@ fn write_restore_token(token: &str) -> anyhow::Result<()> {
         .mode(0o600)
         .open(&path)
         .map_err(|e| {
-            anyhow::anyhow!("failed to open libei restore_token at {}: {e}", path.display())
+            anyhow::anyhow!(
+                "failed to open libei restore_token at {}: {e}",
+                path.display()
+            )
         })?;
     file.write_all(token.as_bytes()).map_err(|e| {
-        anyhow::anyhow!("failed to write libei restore_token to {}: {e}", path.display())
+        anyhow::anyhow!(
+            "failed to write libei restore_token to {}: {e}",
+            path.display()
+        )
     })
 }
 
@@ -250,7 +263,13 @@ pub fn wait_keyboard_ready() -> anyhow::Result<()> {
 pub fn click(x: f64, y: f64, button: Button) -> anyhow::Result<()> {
     ensure_started()?;
     let (tx_r, rx_r) = bounded(1);
-    tx()?.send(Cmd::Click { x, y, button, reply: tx_r })
+    tx()?
+        .send(Cmd::Click {
+            x,
+            y,
+            button,
+            reply: tx_r,
+        })
         .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
     wait_for_reply(rx_r)
 }
@@ -260,7 +279,8 @@ pub fn click(x: f64, y: f64, button: Button) -> anyhow::Result<()> {
 pub fn move_absolute(x: f64, y: f64) -> anyhow::Result<()> {
     ensure_started()?;
     let (tx_r, rx_r) = bounded(1);
-    tx()?.send(Cmd::MoveAbsolute { x, y, reply: tx_r })
+    tx()?
+        .send(Cmd::MoveAbsolute { x, y, reply: tx_r })
         .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
     wait_for_reply(rx_r)
 }
@@ -269,7 +289,12 @@ pub fn move_absolute(x: f64, y: f64) -> anyhow::Result<()> {
 pub fn scroll(dx: f64, dy: f64) -> anyhow::Result<()> {
     ensure_started()?;
     let (tx_r, rx_r) = bounded(1);
-    tx()?.send(Cmd::Scroll { dx, dy, reply: tx_r })
+    tx()?
+        .send(Cmd::Scroll {
+            dx,
+            dy,
+            reply: tx_r,
+        })
         .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
     wait_for_reply(rx_r)
 }
@@ -279,7 +304,11 @@ pub fn scroll(dx: f64, dy: f64) -> anyhow::Result<()> {
 pub fn type_text(text: &str) -> anyhow::Result<()> {
     ensure_started()?;
     let (tx_r, rx_r) = bounded(1);
-    tx()?.send(Cmd::TypeText { text: text.to_string(), reply: tx_r })
+    tx()?
+        .send(Cmd::TypeText {
+            text: text.to_string(),
+            reply: tx_r,
+        })
         .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
     wait_for_reply(rx_r)
 }
@@ -289,7 +318,11 @@ pub fn type_text(text: &str) -> anyhow::Result<()> {
 pub fn press_key(keycode: u32) -> anyhow::Result<()> {
     ensure_started()?;
     let (tx_r, rx_r) = bounded(1);
-    tx()?.send(Cmd::PressKey { keycode, reply: tx_r })
+    tx()?
+        .send(Cmd::PressKey {
+            keycode,
+            reply: tx_r,
+        })
         .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
     wait_for_reply(rx_r)
 }
@@ -398,8 +431,8 @@ enum PortalKeepAlive {
 fn worker(rx: Receiver<Cmd>) -> anyhow::Result<()> {
     // Phase 1 — acquire an EIS context (plus, on the portal path, a keep-alive
     // that owns the ashpd RemoteDesktop session + its tokio runtime).
-    let (context, _portal_keepalive) = open_eis_context()
-        .map_err(|e| anyhow::anyhow!("failed to obtain EIS connection: {e}"))?;
+    let (context, _portal_keepalive) =
+        open_eis_context().map_err(|e| anyhow::anyhow!("failed to obtain EIS connection: {e}"))?;
 
     // Phase 2 — handshake. The reis API requires we call context.handshake()
     // and flush before the event loop starts polling.
@@ -494,7 +527,14 @@ fn open_eis_context() -> anyhow::Result<(reis::ei::Context, PortalKeepAlive)> {
     let stream = UnixStream::from(fd);
     let ctx = reis::ei::Context::new(stream)
         .map_err(|e| anyhow::anyhow!("reis ei::Context::new failed: {e}"))?;
-    Ok((ctx, PortalKeepAlive::Portal { _rt: rt, _proxy: proxy, _session: session }))
+    Ok((
+        ctx,
+        PortalKeepAlive::Portal {
+            _rt: rt,
+            _proxy: proxy,
+            _session: session,
+        },
+    ))
 }
 
 // ── calloop dispatch ────────────────────────────────────────────────────
@@ -751,9 +791,16 @@ impl EisState {
                         data.device_type = Some(device_type);
                     }
                     reis::ei::device::Event::Interface { object } => {
-                        data.interfaces.insert(object.interface().to_owned(), object);
+                        data.interfaces
+                            .insert(object.interface().to_owned(), object);
                     }
-                    reis::ei::device::Event::Region { offset_x, offset_y, width, hight, scale: _ } => {
+                    reis::ei::device::Event::Region {
+                        offset_x,
+                        offset_y,
+                        width,
+                        hight,
+                        scale: _,
+                    } => {
                         // reis 0.7 keeps the misspelled "hight" field name
                         // for ABI compatibility — see the protocol comment.
                         if width > 0 && hight > 0 {
@@ -868,8 +915,7 @@ impl EisState {
     /// run before their device exists fail with "no EIS device negotiated yet",
     /// so `run_calloop` queues them until this holds (or READY_TIMEOUT elapses).
     fn cmd_ready(&self, cmd: &Cmd) -> bool {
-        const DEVICE_QUIET_PERIOD: std::time::Duration =
-            std::time::Duration::from_millis(200);
+        const DEVICE_QUIET_PERIOD: std::time::Duration = std::time::Duration::from_millis(200);
         if self
             .last_device_event
             .is_none_or(|last| last.elapsed() < DEVICE_QUIET_PERIOD)
@@ -897,14 +943,30 @@ impl EisState {
         let result = self.run_command(&cmd);
         // Send the reply on whichever channel this command carries.
         match cmd {
-            Cmd::WaitReady { reply, .. } => { let _ = reply.send(result); }
-            Cmd::Click { reply, .. } => { let _ = reply.send(result); }
-            Cmd::MoveAbsolute { reply, .. } => { let _ = reply.send(result); }
-            Cmd::Scroll { reply, .. } => { let _ = reply.send(result); }
-            Cmd::TypeText { reply, .. } => { let _ = reply.send(result); }
-            Cmd::PressKey { reply, .. } => { let _ = reply.send(result); }
-            Cmd::KeySequence { reply, .. } => { let _ = reply.send(result); }
-            Cmd::Drag { reply, .. } => { let _ = reply.send(result); }
+            Cmd::WaitReady { reply, .. } => {
+                let _ = reply.send(result);
+            }
+            Cmd::Click { reply, .. } => {
+                let _ = reply.send(result);
+            }
+            Cmd::MoveAbsolute { reply, .. } => {
+                let _ = reply.send(result);
+            }
+            Cmd::Scroll { reply, .. } => {
+                let _ = reply.send(result);
+            }
+            Cmd::TypeText { reply, .. } => {
+                let _ = reply.send(result);
+            }
+            Cmd::PressKey { reply, .. } => {
+                let _ = reply.send(result);
+            }
+            Cmd::KeySequence { reply, .. } => {
+                let _ = reply.send(result);
+            }
+            Cmd::Drag { reply, .. } => {
+                let _ = reply.send(result);
+            }
             Cmd::Shutdown => {}
         }
     }
@@ -919,7 +981,8 @@ impl EisState {
             Cmd::Click { x, y, button, .. } => {
                 let (device, rel_x, rel_y) = self.pointer_device_for(*x, *y)?;
                 let serial = self.last_serial;
-                let ptr_abs = require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
+                let ptr_abs =
+                    require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
                 let btn = require_device_interface::<reis::ei::Button>(&self.devices, &device)?;
 
                 ptr_abs.motion_absolute(rel_x, rel_y);
@@ -949,11 +1012,12 @@ impl EisState {
                 // correct only within one region, but avoids the cross-monitor
                 // mis-mapping of blindly reusing the start offset.
                 let (to_rx, to_ry) =
-                    self.region_local_on(&device, *to_x, *to_y).unwrap_or_else(|| {
-                        let off_x = *from_x as f32 - from_rx;
-                        let off_y = *from_y as f32 - from_ry;
-                        (*to_x as f32 - off_x, *to_y as f32 - off_y)
-                    });
+                    self.region_local_on(&device, *to_x, *to_y)
+                        .unwrap_or_else(|| {
+                            let off_x = *from_x as f32 - from_rx;
+                            let off_y = *from_y as f32 - from_ry;
+                            (*to_x as f32 - off_x, *to_y as f32 - off_y)
+                        });
 
                 ptr_abs.motion_absolute(from_rx, from_ry);
                 device.frame(serial, event_time_us());
@@ -976,14 +1040,16 @@ impl EisState {
             Cmd::MoveAbsolute { x, y, .. } => {
                 let (device, rel_x, rel_y) = self.pointer_device_for(*x, *y)?;
                 let serial = self.last_serial;
-                let ptr_abs = require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
+                let ptr_abs =
+                    require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
 
                 ptr_abs.motion_absolute(rel_x, rel_y);
                 device.frame(serial, event_time_us());
             }
             Cmd::Scroll { dx, dy, .. } => {
-                let device = self.device_with_interface("ei_scroll")
-                    .ok_or_else(|| anyhow::anyhow!("no EIS scroll device negotiated yet — wait for handshake"))?;
+                let device = self.device_with_interface("ei_scroll").ok_or_else(|| {
+                    anyhow::anyhow!("no EIS scroll device negotiated yet — wait for handshake")
+                })?;
                 let serial = self.last_serial;
                 let scroll = require_device_interface::<reis::ei::Scroll>(&self.devices, &device)?;
 
@@ -999,16 +1065,20 @@ impl EisState {
                 // support needs an xkb keymap, like reis's type-text example).
                 if let Some(device) = self.device_with_interface("ei_text") {
                     let serial = self.last_serial;
-                    let text_iface = require_device_interface::<reis::ei::Text>(&self.devices, &device)?;
+                    let text_iface =
+                        require_device_interface::<reis::ei::Text>(&self.devices, &device)?;
                     text_iface.utf8(text);
                     device.frame(serial, event_time_us());
                 } else {
                     use reis::ei::keyboard::KeyState;
                     let device = self.device_with_interface("ei_keyboard").ok_or_else(|| {
-                        anyhow::anyhow!("no EIS keyboard device negotiated yet — wait for handshake")
+                        anyhow::anyhow!(
+                            "no EIS keyboard device negotiated yet — wait for handshake"
+                        )
                     })?;
                     let serial = self.last_serial;
-                    let kb = require_device_interface::<reis::ei::Keyboard>(&self.devices, &device)?;
+                    let kb =
+                        require_device_interface::<reis::ei::Keyboard>(&self.devices, &device)?;
                     let shift_code = self.keymap_shift.unwrap_or(42);
                     let mut skipped = 0usize;
                     for ch in text.chars() {
@@ -1049,8 +1119,9 @@ impl EisState {
                 }
             }
             Cmd::PressKey { keycode, .. } => {
-                let device = self.device_with_interface("ei_keyboard")
-                    .ok_or_else(|| anyhow::anyhow!("no EIS keyboard device negotiated yet — wait for handshake"))?;
+                let device = self.device_with_interface("ei_keyboard").ok_or_else(|| {
+                    anyhow::anyhow!("no EIS keyboard device negotiated yet — wait for handshake")
+                })?;
                 let serial = self.last_serial;
                 let kb = require_device_interface::<reis::ei::Keyboard>(&self.devices, &device)?;
 
@@ -1060,8 +1131,9 @@ impl EisState {
                 device.frame(serial, event_time_us());
             }
             Cmd::KeySequence { transitions, .. } => {
-                let device = self.device_with_interface("ei_keyboard")
-                    .ok_or_else(|| anyhow::anyhow!("no EIS keyboard device negotiated yet — wait for handshake"))?;
+                let device = self.device_with_interface("ei_keyboard").ok_or_else(|| {
+                    anyhow::anyhow!("no EIS keyboard device negotiated yet — wait for handshake")
+                })?;
                 let serial = self.last_serial;
                 let kb = require_device_interface::<reis::ei::Keyboard>(&self.devices, &device)?;
 
@@ -1115,8 +1187,13 @@ impl EisState {
             }
         }
         // Fallback: first absolute-pointer device, raw coords (single-region).
-        let device = self.device_with_interface("ei_pointer_absolute")
-            .ok_or_else(|| anyhow::anyhow!("no EIS absolute-pointer device negotiated yet — wait for handshake"))?;
+        let device = self
+            .device_with_interface("ei_pointer_absolute")
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no EIS absolute-pointer device negotiated yet — wait for handshake"
+                )
+            })?;
         Ok((device, x as f32, y as f32))
     }
 
@@ -1126,9 +1203,10 @@ impl EisState {
     /// resolved to (a single EIS emulation session can't span devices).
     fn region_local_on(&self, device: &reis::ei::Device, x: f64, y: f64) -> Option<(f32, f32)> {
         let data = self.devices.get(device)?;
-        data.regions.iter().find(|r| r.contains(x, y)).map(|r| {
-            (x as f32 - r.offset_x, y as f32 - r.offset_y)
-        })
+        data.regions
+            .iter()
+            .find(|r| r.contains(x, y))
+            .map(|r| (x as f32 - r.offset_x, y as f32 - r.offset_y))
     }
 
     /// The negotiated device that exposes `iface` (e.g. `ei_pointer_absolute`,
@@ -1140,13 +1218,10 @@ impl EisState {
     fn device_with_interface(&self, iface: &str) -> Option<reis::ei::Device> {
         self.devices
             .iter()
-            .filter(|(_, data)| {
-                data.resumed && data.interfaces.contains_key(iface)
-            })
+            .filter(|(_, data)| data.resumed && data.interfaces.contains_key(iface))
             .max_by_key(|(_, data)| data.resumed_serial.unwrap_or(0))
             .map(|(d, _)| d.clone())
     }
-
 }
 
 /// Map a character to a US-layout evdev keycode + whether Shift is needed.
@@ -1254,7 +1329,8 @@ fn device_interface<T: reis::Interface>(
     devices: &HashMap<reis::ei::Device, DeviceData>,
     device: &reis::ei::Device,
 ) -> Option<T> {
-    devices.get(device)?
+    devices
+        .get(device)?
         .interfaces
         .get(T::NAME)?
         .clone()

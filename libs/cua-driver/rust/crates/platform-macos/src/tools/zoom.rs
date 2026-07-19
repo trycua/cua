@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use cua_driver_core::{protocol::{ToolResult, Content}, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::{Content, ToolResult},
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -42,16 +45,33 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for ZoomTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let window_id = match args.require_u32("window_id") { Ok(v) => v, Err(e) => return e };
+        let window_id = match args.require_u32("window_id") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         let pid = args.opt_i64("pid").map(|v| v as i32);
-        let x1 = match args.require_f64("x1") { Ok(v) => v, Err(e) => return e };
-        let y1 = match args.require_f64("y1") { Ok(v) => v, Err(e) => return e };
-        let x2 = match args.require_f64("x2") { Ok(v) => v, Err(e) => return e };
-        let y2 = match args.require_f64("y2") { Ok(v) => v, Err(e) => return e };
+        let x1 = match args.require_f64("x1") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let y1 = match args.require_f64("y1") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let x2 = match args.require_f64("x2") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let y2 = match args.require_f64("y2") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
 
         if x2 <= x1 || y2 <= y1 {
             return ToolResult::error("x2 must be > x1 and y2 must be > y1");
@@ -61,17 +81,21 @@ impl Tool for ZoomTool {
         let result = tokio::task::spawn_blocking(move || {
             let png_bytes = crate::capture::screenshot_window_bytes(window_id)?;
             cursor_overlay::capture_utils::crop_png_to_jpeg(&png_bytes, x1, y1, x2, y2, 500)
-        }).await;
+        })
+        .await;
 
         match result {
             Ok(Ok(crop)) => {
                 // Store zoom context so from_zoom clicks can translate back.
                 if let Some(p) = pid {
-                    state.zoom_registry.set(p, ZoomContext {
-                        origin_x: crop.origin_x,
-                        origin_y: crop.origin_y,
-                        scale_inv: crop.scale_inv,
-                    });
+                    state.zoom_registry.set(
+                        p,
+                        ZoomContext {
+                            origin_x: crop.origin_x,
+                            origin_y: crop.origin_y,
+                            scale_inv: crop.scale_inv,
+                        },
+                    );
                 }
                 let (w, h) = (crop.out_w, crop.out_h);
                 let b64 = BASE64.encode(&crop.jpeg_bytes);

@@ -514,10 +514,8 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         use core_graphics::display::{CGDisplayBounds, CGMainDisplayID};
         let display_id = CGMainDisplayID();
         let bounds = CGDisplayBounds(display_id);
-        backing_scale = crate::tools::get_screen_size::get_backing_scale(
-            display_id,
-            bounds.size.width as i64,
-        );
+        backing_scale =
+            crate::tools::get_screen_size::get_backing_scale(display_id, bounds.size.width as i64);
         if !(backing_scale > 0.0) {
             backing_scale = 1.0;
         }
@@ -736,7 +734,9 @@ fn render_loop(
                             t: rs.focus_rect_t,
                         });
                         cursor_overlay::paint_cursor(
-                            &mut pm, &rs.core, 0.0,
+                            &mut pm,
+                            &rs.core,
+                            0.0,
                             0.0, // macOS uses screen-local coords (no origin offset)
                             focus,
                             backing_scale_f32,

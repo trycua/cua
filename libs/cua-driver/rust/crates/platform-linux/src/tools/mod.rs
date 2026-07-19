@@ -25,4 +25,6 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
 }
 
 // Keep register_all as alias for backwards compat.
-pub fn register_all() -> ToolRegistry { build_registry(false) }
+pub fn register_all() -> ToolRegistry {
+    build_registry(false)
+}

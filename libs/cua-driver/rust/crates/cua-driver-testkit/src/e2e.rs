@@ -109,6 +109,7 @@ pub enum Scope {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DriverRoute {
+    CaptureScopeGate,
     AxRead,
     WindowState,
     UiaInvoke,
@@ -1361,7 +1362,7 @@ impl CatalogPolicy {
 fn case_requires_action_turn(case: &CaseSpec) -> bool {
     !matches!(
         case.driver_route,
-        DriverRoute::AxRead | DriverRoute::WindowState
+        DriverRoute::CaptureScopeGate | DriverRoute::AxRead | DriverRoute::WindowState
     ) && case.action != "screenshot"
 }
 
@@ -2014,6 +2015,22 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.contains("missing turn evidence")));
+    }
+
+    #[test]
+    fn strict_capture_scope_gate_does_not_invent_an_action_turn() {
+        let case = CaseSpec::delivered(
+            "window-scope-gate",
+            "desktop",
+            "x11",
+            "window_scope_gate",
+            Targeting::Px,
+            Delivery::NotApplicable,
+            Scope::Window,
+            DriverRoute::CaptureScopeGate,
+            vec![OracleKind::Protocol],
+        );
+        assert!(!case_requires_action_turn(&case));
     }
 
     #[test]

@@ -705,12 +705,7 @@ pub mod macos {
         }
     }
 
-    fn row_occludes_target(
-        cover: Bounds,
-        target: Bounds,
-        display: Bounds,
-        tolerance: f64,
-    ) -> bool {
+    fn row_occludes_target(cover: Bounds, target: Bounds, display: Bounds, tolerance: f64) -> bool {
         if cover.fully_contains(target, tolerance) {
             return true;
         }

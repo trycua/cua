@@ -30,12 +30,11 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "check_for_update".into(),
-        description:
-            "Check whether a newer cua-driver-rs release is available on GitHub. \
+        description: "Check whether a newer cua-driver-rs release is available on GitHub. \
              Returns the current and latest versions, an `update_available` boolean, \
              the install one-liner, and the release notes URL. Read-only — never \
              installs. Mirror of `cua-driver check-update --json`."
-                .into(),
+            .into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {},
@@ -61,11 +60,9 @@ impl Tool for CheckForUpdateTool {
         // The fetch hits the network with a 4s timeout — run on a
         // blocking pool so the MCP server's tokio runtime keeps
         // multiplexing other tool calls during the round-trip.
-        let state = tokio::task::spawn_blocking(|| {
-            crate::version_check::check_update_state(false)
-        })
-        .await
-        .expect("version_check::check_update_state never panics");
+        let state = tokio::task::spawn_blocking(|| crate::version_check::check_update_state(false))
+            .await
+            .expect("version_check::check_update_state never panics");
 
         let summary = if let Some(err) = &state.error {
             format!("Update check failed: {err}")
@@ -79,8 +76,7 @@ impl Tool for CheckForUpdateTool {
             format!("Up to date (cua-driver {}).", state.current_version)
         };
 
-        let structured = serde_json::to_value(&state)
-            .unwrap_or_else(|_| serde_json::json!({}));
+        let structured = serde_json::to_value(&state).unwrap_or_else(|_| serde_json::json!({}));
 
         ToolResult::text(summary).with_structured(structured)
     }

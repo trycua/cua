@@ -97,11 +97,11 @@ fn launch(driver: &mut McpDriver) -> Option<(u32, u64)> {
     None
 }
 
-fn ax_snapshot(driver: &mut McpDriver, pid: u32, wid: u64) -> serde_json::Value {
+fn ax_snapshot(driver: &mut McpDriver, session: &str, pid: u32, wid: u64) -> serde_json::Value {
     driver
         .call(
             "get_window_state",
-            serde_json::json!({ "pid": pid as i64, "window_id": wid, "capture_mode": "ax" }),
+            serde_json::json!({ "session": session, "pid": pid as i64, "window_id": wid, "capture_mode": "ax" }),
         )
         .structured()
         .clone()
@@ -185,15 +185,31 @@ fn desktop_scope_windowless_click_lands_on_control() {
         let mut driver = McpDriver::spawn_macos_daemon_proxy_named(cell_id)
             .expect("start installed macOS daemon proxy");
         *evidence = recording_evidence(driver.recording_dir());
+        let window_session = format!("{cell_id}-window");
+        let desktop_session = format!("{cell_id}-desktop");
+        for (session, capture_scope) in [
+            (window_session.as_str(), "window"),
+            (desktop_session.as_str(), "desktop"),
+        ] {
+            let started = driver.call(
+                "start_session",
+                serde_json::json!({"session": session, "capture_scope": capture_scope}),
+            );
+            assert!(
+                !started.is_error(),
+                "start_session failed: {}",
+                started.text()
+            );
+        }
         let (pid, wid) = launch(&mut driver).expect("required AppKit harness did not launch");
 
         // Settle for the AppKit AX tree to register the button + its frame.
-        let mut snap = ax_snapshot(&mut driver, pid, wid);
+        let mut snap = ax_snapshot(&mut driver, &window_session, pid, wid);
         let mut center = increment_center(&snap);
         let deadline = Instant::now() + Duration::from_secs(8);
         while center.is_none() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(400));
-            snap = ax_snapshot(&mut driver, pid, wid);
+            snap = ax_snapshot(&mut driver, &window_session, pid, wid);
             center = increment_center(&snap);
         }
         let Some((cx, cy)) = center else {
@@ -209,7 +225,7 @@ fn desktop_scope_windowless_click_lands_on_control() {
         // Window-less screen-absolute click — no pid, no window_id; scope per-call.
         let clicked = driver.call(
             "click",
-            serde_json::json!({ "x": cx, "y": cy, "scope": "desktop" }),
+            serde_json::json!({ "session": desktop_session, "x": cx, "y": cy, "scope": "desktop" }),
         );
         assert!(
             !clicked.is_error(),
@@ -224,7 +240,7 @@ fn desktop_scope_windowless_click_lands_on_control() {
         println!("[desktop-mac] {}", clicked.text());
 
         std::thread::sleep(Duration::from_millis(600));
-        let post = counter(&ax_snapshot(&mut driver, pid, wid)).unwrap_or(pre);
+        let post = counter(&ax_snapshot(&mut driver, &window_session, pid, wid)).unwrap_or(pre);
         assert!(
             post > pre,
             "desktop click did not advance AppKit counter at ({cx},{cy}): {pre} -> {post}"
@@ -248,18 +264,26 @@ fn window_scope_rejects_windowless_click() {
         Targeting::Px,
         Delivery::NotApplicable,
         Scope::Window,
-        DriverRoute::Composite,
+        DriverRoute::CaptureScopeGate,
         vec![OracleKind::Protocol],
     );
     execute_case(case, |evidence| {
         let mut driver = McpDriver::spawn_macos_daemon_proxy_named(cell_id)
             .expect("start installed macOS daemon proxy");
         *evidence = recording_evidence(driver.recording_dir());
-        // Default scope is "window" — a window-less click must be rejected.
+        let started = driver.call(
+            "start_session",
+            serde_json::json!({"session": cell_id, "capture_scope": "window"}),
+        );
+        assert!(
+            !started.is_error(),
+            "start_session failed: {}",
+            started.text()
+        );
         driver.start_behavior_recording();
         let r = driver.call(
             "click",
-            serde_json::json!({ "x": 100, "y": 100, "scope": "window" }),
+            serde_json::json!({ "session": cell_id, "x": 100, "y": 100, "scope": "desktop" }),
         );
         assert!(
             r.is_error() && r.structured()["code"].as_str() == Some("desktop_scope_disabled"),

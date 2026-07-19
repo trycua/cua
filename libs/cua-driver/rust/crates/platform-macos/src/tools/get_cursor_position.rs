@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 
 pub struct GetCursorPositionTool;
@@ -20,7 +23,9 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for GetCursorPositionTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, _args: Value) -> ToolResult {
         // Create a null event and query its location to get cursor position.
@@ -32,11 +37,11 @@ impl Tool for GetCursorPositionTool {
         let result = tokio::task::spawn_blocking(|| {
             let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
                 .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-            let event = CGEvent::new(source)
-                .map_err(|_| anyhow::anyhow!("CGEvent::new failed"))?;
+            let event = CGEvent::new(source).map_err(|_| anyhow::anyhow!("CGEvent::new failed"))?;
             let loc = event.location();
             Ok::<(f64, f64), anyhow::Error>((loc.x, loc.y))
-        }).await;
+        })
+        .await;
 
         match result {
             Ok(Ok((x, y))) => {

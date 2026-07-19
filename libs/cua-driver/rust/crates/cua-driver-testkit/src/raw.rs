@@ -9,16 +9,19 @@
 //! don't each re-implement `send_request`/`read_response`.
 
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::Value;
 
+use crate::daemon::TestDaemon;
 use crate::paths::driver_binary;
+use crate::reaper::{spawn_in_job, ChildReaper};
 
 /// A spawned cua-driver with raw stdio access and no handshake performed.
 /// Killed on drop.
 pub struct RawDriver {
-    child: Child,
+    _reaper: ChildReaper,
+    _daemon: TestDaemon,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
 }
@@ -33,16 +36,26 @@ impl RawDriver {
             eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
             return None;
         }
-        let mut child = Command::new(&bin)
+        let mut reaper = ChildReaper::new();
+        let daemon = TestDaemon::spawn(&bin, &mut reaper, &[])?;
+        let mut command = Command::new(&bin);
+        command
+            .args(["mcp", "--socket", &daemon.socket])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
+            .stderr(Stdio::null());
+        let mut child = spawn_in_job(&mut command)
             .inspect_err(|e| eprintln!("[testkit] driver spawn failed: {e}"))
             .ok()?;
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        Some(RawDriver { child, stdin, stdout })
+        reaper.push(child);
+        Some(RawDriver {
+            _reaper: reaper,
+            _daemon: daemon,
+            stdin,
+            stdout,
+        })
     }
 
     /// Write one JSON-RPC frame (newline-delimited) and flush.
@@ -55,14 +68,9 @@ impl RawDriver {
     /// (a malformed or missing response is a protocol-test failure).
     pub fn recv(&mut self) -> Value {
         let mut line = String::new();
-        self.stdout.read_line(&mut line).expect("read response line");
+        self.stdout
+            .read_line(&mut line)
+            .expect("read response line");
         serde_json::from_str(line.trim()).expect("parse JSON response")
-    }
-}
-
-impl Drop for RawDriver {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }

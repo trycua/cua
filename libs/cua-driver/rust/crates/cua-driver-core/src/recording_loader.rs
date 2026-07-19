@@ -69,7 +69,12 @@ pub fn load(dir: &Path) -> Result<LoadedTrajectory, LoadError> {
     let clicks = load_clicks(dir);
     let action_spans = load_action_spans(dir);
 
-    Ok(LoadedTrajectory { metadata, clicks, cursor_samples, action_spans })
+    Ok(LoadedTrajectory {
+        metadata,
+        clicks,
+        cursor_samples,
+        action_spans,
+    })
 }
 
 // ── session.json ─────────────────────────────────────────────────────────────
@@ -101,12 +106,14 @@ fn load_session_metadata(
         }
     }
 
-    let cursor_sample_count = v.get("cursor")
+    let cursor_sample_count = v
+        .get("cursor")
         .and_then(|c| c.get("sample_count"))
         .and_then(|x| x.as_u64())
         .unwrap_or(0) as usize;
 
-    let display_scale_factor = v.get("display_scale_factor")
+    let display_scale_factor = v
+        .get("display_scale_factor")
         .and_then(|x| x.as_f64())
         .unwrap_or(1.0);
 
@@ -127,14 +134,22 @@ fn probe_video_dimensions(video_path: &Path) -> Option<(u32, u32)> {
     use std::process::Command;
     let ffprobe = crate::video_ffmpeg::find_ffprobe()?;
     let out = Command::new(ffprobe)
-        .args(["-v", "error",
-               "-select_streams", "v:0",
-               "-show_entries", "stream=width,height",
-               "-of", "csv=p=0:s=x"])
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0:s=x",
+        ])
         .arg(video_path)
         .output()
         .ok()?;
-    if !out.status.success() { return None; }
+    if !out.status.success() {
+        return None;
+    }
     let s = String::from_utf8_lossy(&out.stdout);
     let trimmed = s.trim();
     let mut parts = trimmed.split('x');
@@ -146,7 +161,9 @@ fn probe_video_dimensions(video_path: &Path) -> Option<(u32, u32)> {
 // ── cursor.jsonl ─────────────────────────────────────────────────────────────
 
 fn load_cursor_samples(path: &Path) -> Vec<CursorSample> {
-    if !path.exists() { return Vec::new(); }
+    if !path.exists() {
+        return Vec::new();
+    }
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(_) => return Vec::new(),
@@ -154,14 +171,29 @@ fn load_cursor_samples(path: &Path) -> Vec<CursorSample> {
     let mut out: Vec<CursorSample> = Vec::with_capacity(text.len() / 48);
     for line in text.lines() {
         let line = line.trim();
-        if line.is_empty() { continue; }
-        let v: Value = match serde_json::from_str(line) { Ok(v) => v, Err(_) => continue };
+        if line.is_empty() {
+            continue;
+        }
+        let v: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
         let t_ms = double_value(v.get("t_ms")).unwrap_or(0.0);
-        let x = match double_value(v.get("x")) { Some(x) => x, None => continue };
-        let y = match double_value(v.get("y")) { Some(y) => y, None => continue };
+        let x = match double_value(v.get("x")) {
+            Some(x) => x,
+            None => continue,
+        };
+        let y = match double_value(v.get("y")) {
+            Some(y) => y,
+            None => continue,
+        };
         out.push(CursorSample { t_ms, x, y });
     }
-    out.sort_by(|a, b| a.t_ms.partial_cmp(&b.t_ms).unwrap_or(std::cmp::Ordering::Equal));
+    out.sort_by(|a, b| {
+        a.t_ms
+            .partial_cmp(&b.t_ms)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     out
 }
 
@@ -169,19 +201,30 @@ fn load_cursor_samples(path: &Path) -> Vec<CursorSample> {
 
 fn load_clicks(dir: &Path) -> Vec<ClickEvent> {
     let mut out = Vec::new();
-    let entries = match std::fs::read_dir(dir) { Ok(e) => e, Err(_) => return out };
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return out,
+    };
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name_s = name.to_string_lossy();
-        if !name_s.starts_with("turn-") { continue; }
+        if !name_s.starts_with("turn-") {
+            continue;
+        }
         let path = entry.path();
-        if !path.is_dir() { continue; }
+        if !path.is_dir() {
+            continue;
+        }
         let action_path = path.join("action.json");
         if let Some(c) = parse_click_turn(&action_path) {
             out.push(c);
         }
     }
-    out.sort_by(|a, b| a.t_ms.partial_cmp(&b.t_ms).unwrap_or(std::cmp::Ordering::Equal));
+    out.sort_by(|a, b| {
+        a.t_ms
+            .partial_cmp(&b.t_ms)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     out
 }
 
@@ -189,7 +232,9 @@ fn parse_click_turn(action_path: &Path) -> Option<ClickEvent> {
     let text = std::fs::read_to_string(action_path).ok()?;
     let v: Value = serde_json::from_str(&text).ok()?;
     let tool = v.get("tool")?.as_str()?;
-    if !is_click_class_tool(tool) { return None; }
+    if !is_click_class_tool(tool) {
+        return None;
+    }
 
     // Coordinate recovery, in priority order:
     //   1. `arguments.{x,y}` — pixel-addressed clicks pass coords directly.
@@ -208,7 +253,9 @@ fn parse_click_turn(action_path: &Path) -> Option<ClickEvent> {
         } else if let Some(cp) = v.get("click_point") {
             (double_value(cp.get("x"))?, double_value(cp.get("y"))?)
         } else if let Some(screen) = parse_screen_from_summary(
-            v.get("result_summary").and_then(|s| s.as_str()).unwrap_or("")
+            v.get("result_summary")
+                .and_then(|s| s.as_str())
+                .unwrap_or(""),
         ) {
             screen
         } else {
@@ -246,25 +293,39 @@ fn is_click_class_tool(name: &str) -> bool {
 }
 
 fn is_click_or_type_class_tool(name: &str) -> bool {
-    matches!(name, "click" | "double_click" | "right_click" | "type_text" | "type_text_chars")
+    matches!(
+        name,
+        "click" | "double_click" | "right_click" | "type_text" | "type_text_chars"
+    )
 }
 
 // ── turn-*/action.json → action spans ────────────────────────────────────────
 
 fn load_action_spans(dir: &Path) -> Vec<ActionSpan> {
     let mut spans = Vec::new();
-    let entries = match std::fs::read_dir(dir) { Ok(e) => e, Err(_) => return spans };
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return spans,
+    };
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name_s = name.to_string_lossy();
-        if !name_s.starts_with("turn-") { continue; }
+        if !name_s.starts_with("turn-") {
+            continue;
+        }
         let path = entry.path();
-        if !path.is_dir() { continue; }
+        if !path.is_dir() {
+            continue;
+        }
         if let Some(s) = parse_action_span(&path.join("action.json")) {
             spans.push(s);
         }
     }
-    spans.sort_by(|a, b| a.start_ms.partial_cmp(&b.start_ms).unwrap_or(std::cmp::Ordering::Equal));
+    spans.sort_by(|a, b| {
+        a.start_ms
+            .partial_cmp(&b.start_ms)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     spans
 }
 
@@ -272,7 +333,9 @@ fn parse_action_span(action_path: &Path) -> Option<ActionSpan> {
     let text = std::fs::read_to_string(action_path).ok()?;
     let v: Value = serde_json::from_str(&text).ok()?;
     let tool = v.get("tool")?.as_str()?;
-    if !is_click_or_type_class_tool(tool) { return None; }
+    if !is_click_or_type_class_tool(tool) {
+        return None;
+    }
 
     let end_ms = double_value(v.get("t_ms_from_session_start"))?;
     let start_ms = double_value(v.get("t_start_ms_from_session_start")).unwrap_or(end_ms);
@@ -283,8 +346,15 @@ fn parse_action_span(action_path: &Path) -> Option<ActionSpan> {
         let width = double_value(wb.get("width"))?;
         let height = double_value(wb.get("height"))?;
         if width > 0.0 && height > 0.0 {
-            Some(WindowBounds { x, y, width, height })
-        } else { None }
+            Some(WindowBounds {
+                x,
+                y,
+                width,
+                height,
+            })
+        } else {
+            None
+        }
     });
 
     let click_point = v.get("click_point").and_then(|cp| {
@@ -306,9 +376,17 @@ fn parse_action_span(action_path: &Path) -> Option<ActionSpan> {
 
 fn double_value(v: Option<&Value>) -> Option<f64> {
     let v = v?;
-    if let Some(d) = v.as_f64() { return Some(d); }
-    if let Some(i) = v.as_i64() { return Some(i as f64); }
-    if let Some(u) = v.as_u64() { return Some(u as f64); }
-    if let Some(s) = v.as_str() { return s.parse().ok(); }
+    if let Some(d) = v.as_f64() {
+        return Some(d);
+    }
+    if let Some(i) = v.as_i64() {
+        return Some(i as f64);
+    }
+    if let Some(u) = v.as_u64() {
+        return Some(u as f64);
+    }
+    if let Some(s) = v.as_str() {
+        return s.parse().ok();
+    }
     None
 }

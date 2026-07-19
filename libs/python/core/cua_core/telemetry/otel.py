@@ -30,6 +30,8 @@ DEFAULT_OTEL_ENDPOINT = "https://otel.cua.ai"
 _initialized = False
 _init_failed = False
 _init_lock = Lock()
+_deprecation_warning_emitted = False
+_deprecation_warning_lock = Lock()
 
 # OTEL components (lazily initialized)
 _meter: Optional[Any] = None
@@ -54,13 +56,20 @@ def is_otel_enabled() -> bool:
     """
     import warnings
 
+    global _deprecation_warning_emitted
+
     disabled_val = os.environ.get("CUA_TELEMETRY_DISABLED", "")
     if disabled_val:
-        warnings.warn(
-            "CUA_TELEMETRY_DISABLED is deprecated. " "Use CUA_TELEMETRY_ENABLED=false instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        if not _deprecation_warning_emitted:
+            with _deprecation_warning_lock:
+                if not _deprecation_warning_emitted:
+                    warnings.warn(
+                        "CUA_TELEMETRY_DISABLED is deprecated. "
+                        "Use CUA_TELEMETRY_ENABLED=false instead.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
+                    _deprecation_warning_emitted = True
         if disabled_val.lower() in {"1", "true", "yes", "on"}:
             return False
 

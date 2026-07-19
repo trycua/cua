@@ -62,10 +62,11 @@ Use whichever combination matches the host. When in doubt, run
 `cua-driver doctor` — it reports the platform and the right entry
 point.
 
-## The no-foreground principle (cross-platform)
+## The no-foreground principle (window phase)
 
-**The user's frontmost app MUST NOT change.** Every platform has its
-own list of forbidden commands; the principle is universal:
+In a strict `window` session, and during the initial window phase of an
+`auto` session, **the user's frontmost app MUST NOT change.** Every platform
+has its own list of forbidden commands:
 
 - macOS: any `open` invocation, any `osascript` that mutates GUI
   state, `cliclick`, `cghidEventTap` writes targeting another app's
@@ -77,6 +78,12 @@ own list of forbidden commands; the principle is universal:
 If you reach for a command that says "activate", "foreground",
 "raise", or "make key", stop and translate to the cua-driver tool
 that does the same intent without focus-stealing.
+
+A strict `desktop` session is an explicit user choice to operate the visible
+desktop and therefore uses foreground/system input. An `auto` session may enter
+that phase only after the complete window ladder below has been attempted and
+verified, followed by `escalate_session`. Never infer desktop permission from a
+failed action or a proxy/transport session id.
 
 ## Defaults — always prefer cua-driver over shell shims
 
@@ -121,9 +128,9 @@ Tool names are `snake_case`, management subcommands are
 `kebab-case` — no ambiguity. Tools invoked as `cua-driver
 <tool-name> '<JSON-args>'`. Management subcommands:
 
-- `cua-driver serve` — start persistent daemon (**required** for
-  `element_index` workflows; without it each CLI invocation spawns a
-  fresh process and the per-pid element cache dies between calls).
+- `cua-driver serve` — start the persistent daemon (**required for every
+  tool call**). CLI and MCP processes are adapters; the daemon owns policy,
+  platform identity, state, and the per-pid element cache.
   macOS users: see `MACOS.md` for the LaunchServices-routed launch
   form.
 - `cua-driver stop` / `status`
@@ -179,12 +186,14 @@ recording, do a pixel click (`click({pid,x,y})`) or a `move_cursor`
 first to put the cursor on-screen; subsequent AX actions then glide the
 full path normally.
 
-Requires the daemon process's UI runloop, which `cua-driver serve` /
-`mcp` bootstraps. One-shot CLI invocations skip the overlay entirely.
+Requires the daemon process's UI runloop, which `cua-driver serve`
+bootstraps. One-shot CLI adapters do not own an overlay themselves.
 
 ## The core invariant — snapshot before AND after every action
 
-**Every action MUST be bracketed by `get_window_state(pid, window_id)`**:
+**Every action MUST be bracketed by the state tool for the session's effective
+scope**: `get_window_state(pid, window_id)` in window scope, or
+`get_desktop_state(session)` in desktop scope.
 
 - **Before** — the pre-action snapshot resolves the `element_index`
   you're about to use. Indices from previous turns are stale; the
@@ -200,8 +209,39 @@ Requires the daemon process's UI runloop, which `cua-driver serve` /
   the action fired. If nothing changed, the action probably failed
   silently — say so, don't assume success.
 
-This applies to pixel clicks too — re-snapshot after to confirm the
-click landed on the intended target.
+This applies to pixel clicks and desktop actions too — re-snapshot after to
+confirm the action landed on the intended target.
+
+## Choose capture scope when the session starts
+
+`capture_scope` is a per-session policy, not persistent configuration. Declare
+it with `start_session`; it is immutable until that session ends. Concurrent
+sessions may choose different policies safely.
+
+- `auto` (default): begins with effective scope `window`. Desktop perception
+  and actions are locked until the window ladder is exhausted, each attempted
+  action is verified, and the caller explicitly invokes `escalate_session`.
+  Escalation is one-way for the live session.
+- `window`: strict window-only perception and actions. Desktop tools are always
+  rejected with `desktop_scope_disabled`.
+- `desktop`: strict full-desktop perception and foreground/system actions.
+  Window-scoped perception and actions are rejected with
+  `window_scope_disabled`.
+
+```bash
+cua-driver start_session '{"session":"research-1","capture_scope":"auto"}'
+cua-driver get_session_state '{"session":"research-1"}'
+```
+
+Do not use `config set capture_scope` or `set_config`; that key is retired and
+stale values on disk are ignored. Always pass the public `session` field on
+state and action calls. Reserved fields such as `_session_id` are transport
+metadata and cannot create or change policy.
+
+During a mixed-version rollout, require `tools/list` to advertise
+`session.capture_scope` (and `session.capture_scope.escalate` for `auto`). If an
+older daemon does not advertise them, fail closed and ask for an upgrade; never
+fall back to the retired global config key.
 
 ### Why window selection is the caller's job now
 
@@ -362,6 +402,13 @@ if resp.effect == "suspected_noop"
     get_window_state(pid, window_id)        # re-snapshot, eyeball the result
     if it landed: done
 
+# Rung 2b — exact browser page tools, when get_browser_state can bind this window
+# Use typed browser refs for page content; native window tools still handle chrome.
+get_browser_state(session, pid, window_id)
+browser_click(session, target_id, tab_id, ref) # or browser_type; see BROWSER.md
+get_browser_state(session, pid, window_id)     # verify with fresh refs
+if it landed: done
+
 # Rung 3 — background delivery was dropped (insert/click never arrived)
 if resp.escalation.recommended == "foreground"
    or the px action still did nothing:
@@ -369,6 +416,16 @@ if resp.escalation.recommended == "foreground"
     # on Wayland this is the ONLY escalation — px-bg can't target an
     # unfocused window there; see LINUX.md
     verify again
+
+# Rung 4 — desktop fallback (auto sessions only, explicit and one-way)
+# Reach this only after AX, window-pixel, browser-page (when available), and
+# foreground-window delivery have all been exhausted and verified ineffective.
+escalate_session(session,
+    reason="foreground_ineffective",       # or another advertised reason
+    detail="bounded non-sensitive summary")
+get_desktop_state(session)                  # full primary display
+desktop_action(session, scope="desktop", ...)  # no pid/window_id
+get_desktop_state(session)                  # verify in the same coordinate frame
 ```
 
 The two ideas to hold onto: (1) the AX tree **lies** on canvas / web /
@@ -399,7 +456,7 @@ last resort.
 ## The canonical loop
 
 ```
-start_session(session)            # once per run: declares this run's identity
+start_session(session, capture_scope="auto") # once per run; policy is immutable
 launch_app(target)
   → pick window_id from the returned `windows` array
     (or call list_windows(pid) separately)
@@ -409,19 +466,28 @@ launch_app(target)
 end_session(session)              # when the run finishes
 ```
 
+For strict desktop sessions, replace the window portion with
+`get_desktop_state(session) → action(session, scope="desktop", ...) →
+get_desktop_state(session)`. Desktop actions use screen-absolute coordinates
+from that exact full-display image and omit `pid`/`window_id`. The global
+`get_screen_size` and `get_cursor_position` helpers are desktop-scoped too.
+
 `launch_app` now returns a `windows` array alongside the pid, so the
 common case collapses to two calls (`launch_app` → `get_window_state`)
 without a separate `list_windows` hop.
 
 **Declare a session.** A session is _your run's_ identity — a stable id
 you choose (`"research-1"`), declared with `start_session` and passed as
-`session` on every action. It owns your agent cursor (a distinct colour
-per id), follows the run across any apps/windows, and is the same whether
+`session` on every action. It owns your agent cursor and capture policy (a
+distinct colour and one immutable policy per id), follows the run across any
+apps/windows, and is the same whether
 you drive over MCP, the CLI, or the socket. Declaring the session creates the
 cursor; anonymous actions remain cursor-less.
 End with `end_session` (or the idle-TTL reclaims it).
 
-**Concurrent runs/subagents:** `launch_app` is idempotent — two runs that
+**Concurrent runs/subagents:** each run may independently choose `auto`,
+`window`, or `desktop`; one session's escalation never changes another. Also,
+`launch_app` is idempotent — two runs that
 launch the same app get the **same** instance (and on single-instance apps
 like Calculator, the same window), so they clobber each other. Give each run
 its **own `session`** (→ its own cursor) AND pass
@@ -551,10 +617,15 @@ against a specific window.
 | Send key to pid                  | `press_key({pid, key, modifiers})`                                                                              | no focus change; key goes to pid's current focus                                                                                                                                                                      |
 | Modifier combo                   | `hotkey({pid, keys})` (no focus) or `hotkey({pid, x, y, keys})` (px)                                            | e.g. `["cmd","c"]` / `["ctrl","c"]`; posted per-pid, not HID tap. **px** pixel-clicks `(x,y)` to focus a field first, e.g. `["cmd","v"]` to paste into it                                                             |
 
-**All keyboard/text primitives require `pid`.** There is no
-frontmost-routed variant — every key goes to the named target via
-the platform's per-pid event-post path, so the driver cannot leak
-keystrokes into the user's foreground app.
+In effective desktop scope, the foreground/system equivalents omit
+`pid`/`window_id` and pass `scope:"desktop"`: `click`, `scroll`, `drag`,
+`move_cursor`, `type_text`, `press_key`, and `hotkey`. Coordinates are
+screen-absolute pixels from the latest `get_desktop_state` image.
+
+**Window-scope keyboard/text primitives require `pid`.** They use the named
+target's per-pid event-post path. Only a strict/effective desktop session may
+omit `pid`, and it intentionally routes keyboard input to the current
+foreground application.
 
 **Why `element_index` is the primary path:** works on hidden /
 occluded / off-desktop windows, no focus steal, stable across

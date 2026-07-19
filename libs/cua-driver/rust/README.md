@@ -31,6 +31,22 @@ The Python wrapper and install scripts expect the built binary at
 `target/<profile>/cua-driver` (or `cua-driver.exe` on Windows), unless
 `CUA_DRIVER_BINARY` is set.
 
+## Formatting
+
+The supported Rust toolchain and `rustfmt` component are pinned in
+`rust-toolchain.toml`. Install [rustup](https://rustup.rs/) and run the
+canonical formatting check from this directory:
+
+```bash
+cargo fmt --all -- --check
+```
+
+To apply formatting, omit `--check`:
+
+```bash
+cargo fmt --all
+```
+
 ## Tests
 
 Default tests should be headless and safe for CI:
@@ -58,8 +74,8 @@ See `crates/cua-driver/tests/README.md` for the test matrix.
 
 ## Permission Policies
 
-Set `CUA_DRIVER_POLICY_FILE` to enforce a deny-by-default policy on MCP
-`tools/call` requests. If the variable is unset, or points to a path that does
+Set `CUA_DRIVER_POLICY_FILE` on the daemon to enforce a deny-by-default policy
+on all tool calls from MCP and CLI clients. If the variable is unset, or points to a path that does
 not exist, the driver keeps its backward-compatible behavior with no policy
 enforcement. Supported paths are:
 
@@ -91,4 +107,4 @@ deny:
 
 Rego policies must expose a boolean rule at `data.cua.policy.allow`. The input
 shape is `{ "server": "cua-driver", "tool": <name>, "arguments": <object> }`.
-Regorus evaluates policies in-process; no OPA service is required.
+Regorus evaluates policies inside the daemon; no OPA service is required.

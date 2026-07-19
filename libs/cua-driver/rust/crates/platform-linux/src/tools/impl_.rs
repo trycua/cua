@@ -19,7 +19,6 @@ use cursor_overlay::CursorRegistry;
 #[derive(Clone)]
 pub struct DriverConfig {
     pub capture_mode: String,
-    pub capture_scope: String,
     pub max_image_dimension: u32,
 }
 
@@ -27,7 +26,6 @@ impl Default for DriverConfig {
     fn default() -> Self {
         Self {
             capture_mode: "ax".into(),
-            capture_scope: "window".into(),
             max_image_dimension: 1568,
         }
     }
@@ -44,11 +42,6 @@ pub fn load_driver_config() -> DriverConfig {
         pip_preview::read_config_value("capture_mode").and_then(|v| v.as_str().map(str::to_owned))
     {
         cfg.capture_mode = v;
-    }
-    if let Some(v) =
-        pip_preview::read_config_value("capture_scope").and_then(|v| v.as_str().map(str::to_owned))
-    {
-        cfg.capture_scope = v;
     }
     if let Some(v) = pip_preview::read_config_value("max_image_dimension").and_then(|v| v.as_u64())
     {
@@ -1750,6 +1743,7 @@ impl Tool for ClickTool {
                     "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: \"left\" (legacy back-compat). X11: routed via ButtonPress/Release with the matching evdev code. Native Wayland: only left-button is supported via the virtual-pointer protocol; right/middle return an error."},
                     "count":{"type":"integer"},
                     "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
+                    "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -1762,28 +1756,23 @@ impl Tool for ClickTool {
 
         // ── Window-less screen-absolute branch (capture_scope="desktop") ──────
         // x,y with NO pid and NO window_id → TRUE SCREEN pixels. Foreground,
-        // vision-driven desktop-scope click (the Linux peer of the Windows
-        // WindowFromPoint / macOS global-HID path). Gate on the effective scope:
-        // under "window" return the same `desktop_scope_disabled` contract.
+        // desktop-scope click (the Linux peer of the Windows WindowFromPoint /
+        // macOS global-HID path). The core registry has already enforced the
+        // session policy; this branch validates the explicit action form.
         let has_pid = args.get("pid").map(|v| !v.is_null()).unwrap_or(false);
         let has_window_id = args.get("window_id").map(|v| !v.is_null()).unwrap_or(false);
         let has_xy = args.get("x").map(|v| v.is_number()).unwrap_or(false)
             && args.get("y").map(|v| v.is_number()).unwrap_or(false);
         if has_xy && !has_pid && !has_window_id {
-            // Linux config is global-only (no per-session override layer).
-            let scope = self.state.config.read().unwrap().capture_scope.clone();
-            if scope != "desktop" {
+            if args.get("scope").and_then(Value::as_str) != Some("desktop") {
                 return ToolResult::error(
-                    "click: x,y given with no pid/window_id, but capture_scope is \
-                     \"window\". Screen-absolute clicks require desktop scope. Call \
-                     set_config with capture_scope=desktop (and use get_desktop_state \
-                     to read true screen pixels) first."
+                    "click: x,y given with no pid/window_id requires scope=\"desktop\"; \
+                     use get_desktop_state to read true screen pixels first."
                         .to_string(),
                 )
                 .with_structured(json!({
-                    "code": "desktop_scope_disabled",
-                    "capture_scope": scope,
-                    "suggestion": "set_config capture_scope=desktop",
+                    "code": "desktop_coordinate_scope_required",
+                    "suggestion": "pass scope=desktop",
                 }));
             }
             let button_raw = args.str_or("button", "left").to_lowercase();
@@ -2042,7 +2031,7 @@ impl Tool for ClickTool {
                     }
                 }
                 if crate::wayland::is_inject_mode() {
-                    crate::wayland::inject_click(xid, x, y, count as u32, button)?;
+                    crate::wayland::inject_click(pid, xid, x, y, count as u32, button)?;
                     return Ok("wayland_cua_compositor");
                 }
                 if !delivery.is_foreground() {
@@ -2192,7 +2181,7 @@ async fn focus_nested_inject_target(
     }
     if let Some((x, y)) = pixel {
         return match tokio::task::spawn_blocking(move || {
-            crate::wayland::inject_click(window_id, x, y, 1, 1)
+            crate::wayland::inject_click(pid, window_id, x, y, 1, 1)
         })
         .await
         {
@@ -2218,7 +2207,7 @@ impl Tool for TypeTextTool {
             name: "type_text".into(),
             description: "Type text to a window via XSendEvent (KeyPress/KeyRelease). No focus steal.".into(),
             input_schema: json!({
-                "type":"object","required":["pid","text"],"properties":{
+                "type":"object","required":["text"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
@@ -2227,6 +2216,7 @@ impl Tool for TypeTextTool {
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "x":{"type":"number","description":"Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click."},
                     "y":{"type":"number","description":"Screenshot-pixel Y of the field (see x)."},
+                    "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -2236,6 +2226,33 @@ impl Tool for TypeTextTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        if args.opt_str("scope").as_deref() == Some("desktop") && args.get("pid").is_none() {
+            let text = match args.require_str("text") {
+                Ok(value) => {
+                    cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&value)
+                        .into_owned()
+                }
+                Err(error) => return error,
+            };
+            let wayland = crate::wayland::wayland_input_enabled();
+            let path = if wayland { "wayland_focused" } else { "xtest" };
+            let result = tokio::task::spawn_blocking(move || {
+                if wayland {
+                    crate::wayland::type_text_focused(&text)
+                } else {
+                    crate::input::send_type_text_xtest(&text)
+                }
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text("Typed text into the focused desktop application.")
+                    .with_structured(
+                        json!({"scope":"desktop","path":path,"effect":"unverifiable"}),
+                    ),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
+        }
         let pid = args.u64_or("pid", 0) as u32;
         let text_raw = match args.require_str("text") {
             Ok(v) => v,
@@ -2337,9 +2354,10 @@ impl Tool for TypeTextTool {
                 return error;
             }
             let text_w = text.clone();
-            let result =
-                tokio::task::spawn_blocking(move || crate::wayland::inject_type_text(xid, &text_w))
-                    .await;
+            let result = tokio::task::spawn_blocking(move || {
+                crate::wayland::inject_type_text(pid, xid, &text_w)
+            })
+            .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (focus-free via cua-compositor)."
@@ -2767,7 +2785,7 @@ impl Tool for PressKeyTool {
             name: "press_key".into(),
             description: "Press a key via XSendEvent to a window. No focus steal.".into(),
             input_schema: json!({
-                "type":"object","required":["pid","key"],"properties":{
+                "type":"object","required":["key"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
@@ -2777,6 +2795,7 @@ impl Tool for PressKeyTool {
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "x":{"type":"number","description":"Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index."},
                     "y":{"type":"number","description":"Screenshot-pixel Y (see x)."},
+                    "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -2786,6 +2805,37 @@ impl Tool for PressKeyTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        if args.opt_str("scope").as_deref() == Some("desktop") && args.get("pid").is_none() {
+            let key = match args.require_str("key") {
+                Ok(value) => value,
+                Err(error) => return error,
+            };
+            let display = key.clone();
+            let modifiers: Vec<String> = args.str_array("modifiers");
+            let wayland = crate::wayland::wayland_input_enabled();
+            let path = if wayland { "wayland_focused" } else { "xtest" };
+            let result = tokio::task::spawn_blocking(move || {
+                if wayland && modifiers.is_empty() {
+                    crate::wayland::press_key_focused(&key)
+                } else if wayland {
+                    let mut keys = modifiers;
+                    keys.push(key);
+                    crate::wayland::hotkey_focused(&keys)
+                } else {
+                    let refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                    crate::input::send_key_xtest(&key, &refs)
+                }
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!("Pressed desktop key '{display}'."))
+                    .with_structured(
+                        json!({"scope":"desktop","path":path,"effect":"unverifiable"}),
+                    ),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
+        }
         let pid = args.u64_or("pid", 0) as u32;
         let key = match args.require_str("key") {
             Ok(v) => v,
@@ -2874,12 +2924,14 @@ impl Tool for PressKeyTool {
             }
             let result = if mods.is_empty() {
                 let key_w = key.clone();
-                tokio::task::spawn_blocking(move || crate::wayland::inject_press_key(xid, &key_w))
-                    .await
+                tokio::task::spawn_blocking(move || {
+                    crate::wayland::inject_press_key(pid, xid, &key_w)
+                })
+                .await
             } else {
                 let mut chord = mods.clone();
                 chord.push(key.clone());
-                tokio::task::spawn_blocking(move || crate::wayland::inject_hotkey(xid, &chord))
+                tokio::task::spawn_blocking(move || crate::wayland::inject_hotkey(pid, xid, &chord))
                     .await
             };
             return match result {
@@ -3026,7 +3078,7 @@ impl Tool for HotkeyTool {
             description: "Press a combination of keys simultaneously, e.g. [\"ctrl\",\"c\"] for Copy. \
                 Sent via XSendEvent directly to the target pid; target does NOT need to be frontmost.".into(),
             input_schema: json!({
-                "type":"object","required":["pid","keys"],"properties":{
+                "type":"object","required":["keys"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
@@ -3036,6 +3088,7 @@ impl Tool for HotkeyTool {
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "x":{"type":"number","description":"Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the combo (so e.g. Ctrl+V pastes into that field). Pass with y. Use for Chromium/Electron surfaces the background combo can't reach."},
                     "y":{"type":"number","description":"Screenshot-pixel Y (see x)."},
+                    "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -3045,6 +3098,37 @@ impl Tool for HotkeyTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        if args.opt_str("scope").as_deref() == Some("desktop") && args.get("pid").is_none() {
+            let keys: Vec<String> = args.str_array("keys");
+            let modifiers: Vec<String> = keys
+                .iter()
+                .filter(|key| is_modifier(key))
+                .cloned()
+                .collect();
+            let Some(key) = keys.iter().rev().find(|key| !is_modifier(key)).cloned() else {
+                return ToolResult::error("keys must include at least one non-modifier key.");
+            };
+            let display = keys.join("+");
+            let wayland = crate::wayland::wayland_input_enabled();
+            let path = if wayland { "wayland_focused" } else { "xtest" };
+            let result = tokio::task::spawn_blocking(move || {
+                if wayland {
+                    crate::wayland::hotkey_focused(&keys)
+                } else {
+                    let refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                    crate::input::send_key_xtest(&key, &refs)
+                }
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!("Pressed desktop hotkey {display}."))
+                    .with_structured(
+                        json!({"scope":"desktop","path":path,"effect":"unverifiable"}),
+                    ),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
+        }
         let pid = args.u64_or("pid", 0) as u32;
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|value| value as usize);
@@ -3148,9 +3232,10 @@ impl Tool for HotkeyTool {
             }
             let mut chord = mods.clone();
             chord.push(key.clone());
-            let result =
-                tokio::task::spawn_blocking(move || crate::wayland::inject_hotkey(xid, &chord))
-                    .await;
+            let result = tokio::task::spawn_blocking(move || {
+                crate::wayland::inject_hotkey(pid, xid, &chord)
+            })
+            .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Pressed hotkey '{key_display}' (focus-free via cua-compositor)."
@@ -3392,6 +3477,7 @@ impl Tool for ScrollTool {
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "x":{"type":"number","description":"Window-local screenshot-pixel X of the scroll target. Pass with y and without element_index."},
                     "y":{"type":"number","description":"Window-local screenshot-pixel Y of the scroll target. Pass with x and without element_index."},
+                    "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -3401,6 +3487,43 @@ impl Tool for ScrollTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let cursor_id = resolve_cursor_key(&args);
+        if args.opt_str("scope").as_deref() == Some("desktop")
+            && args.get("pid").is_none()
+            && args.get("window_id").is_none()
+        {
+            let direction = match args.require_str("direction") {
+                Ok(value) => value,
+                Err(error) => return error,
+            };
+            let x = match args.require_f64("x") {
+                Ok(value) => value.round() as i32,
+                Err(error) => return error,
+            };
+            let y = match args.require_f64("y") {
+                Ok(value) => value.round() as i32,
+                Err(error) => return error,
+            };
+            let amount = args.u64_or("amount", 3).clamp(1, 50) as usize;
+            let display = direction.clone();
+            let wayland = crate::wayland::wayland_input_enabled();
+            let path = if wayland { "wayland_desktop" } else { "xtest" };
+            let result = tokio::task::spawn_blocking(move || {
+                if wayland {
+                    crate::wayland::scroll_desktop(x, y, &direction, amount as u32)
+                } else {
+                    crate::input::send_scroll_xtest_desktop(x, y, &direction, amount)
+                }
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!("Scrolled desktop {display} × {amount}."))
+                    .with_structured(
+                        json!({"scope":"desktop","path":path,"effect":"unverifiable"}),
+                    ),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
+        }
         let pid = match args.require_u32("pid") {
             Ok(v) => v,
             Err(e) => return e,
@@ -3514,7 +3637,7 @@ impl Tool for ScrollTool {
             };
             let direction_for_inject = direction.clone();
             let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::inject_scroll(xid, x, y, &direction_for_inject, amount as u32)
+                crate::wayland::inject_scroll(pid, xid, x, y, &direction_for_inject, amount as u32)
             })
             .await;
             return match result {
@@ -3822,7 +3945,7 @@ impl Tool for DoubleClickTool {
                     let cursor_id_for_task = cursor_id.clone();
                     let click_result = tokio::task::spawn_blocking(move || {
                         if crate::wayland::is_inject_mode() {
-                            return crate::wayland::inject_click(xid, lx, ly, 2, 1);
+                            return crate::wayland::inject_click(pid, xid, lx, ly, 2, 1);
                         }
                         if crate::wayland::wayland_input_enabled() {
                             let (output_x, output_y) = wayland_point.unwrap_or((lxi, lyi));
@@ -3910,7 +4033,7 @@ impl Tool for DoubleClickTool {
         let cursor_id_for_task = cursor_id.clone();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::is_inject_mode() {
-                return crate::wayland::inject_click(xid, x, y, 2, 1);
+                return crate::wayland::inject_click(pid, xid, x, y, 2, 1);
             }
             if crate::wayland::wayland_input_enabled() {
                 let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
@@ -4054,7 +4177,7 @@ impl Tool for RightClickTool {
                     let cursor_id_for_task = cursor_id.clone();
                     let click_result = tokio::task::spawn_blocking(move || {
                         if crate::wayland::is_inject_mode() {
-                            return crate::wayland::inject_click(xid, lx, ly, 1, 3);
+                            return crate::wayland::inject_click(pid, xid, lx, ly, 1, 3);
                         }
                         if crate::wayland::wayland_input_enabled() {
                             let (output_x, output_y) = wayland_point.unwrap_or((lxi, lyi));
@@ -4142,7 +4265,7 @@ impl Tool for RightClickTool {
         let cursor_id_for_task = cursor_id.clone();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::is_inject_mode() {
-                return crate::wayland::inject_click(xid, x, y, 1, 3);
+                return crate::wayland::inject_click(pid, xid, x, y, 1, 3);
             }
             if crate::wayland::wayland_input_enabled() {
                 let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
@@ -4199,7 +4322,7 @@ impl Tool for DragTool {
             description: "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in \
                           window-local screenshot pixels via XSendEvent (ButtonPress + MotionNotify × steps + ButtonRelease). \
                           duration_ms (default 500), steps (default 20). No focus steal.".into(),
-            input_schema: json!({"type":"object","required":["pid","from_x","from_y","to_x","to_y"],"properties":{
+            input_schema: json!({"type":"object","required":["from_x","from_y","to_x","to_y"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
@@ -4213,6 +4336,7 @@ impl Tool for DragTool {
                 "modifier": cua_driver_core::tool_schema::modifier_schema(),
                 "button": cua_driver_core::tool_schema::button_schema(),
                 "from_zoom":{"type":"boolean"},
+                "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                 "delivery_mode": crate::input::delivery::delivery_mode_schema()
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -4220,6 +4344,62 @@ impl Tool for DragTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         let cursor_id = resolve_cursor_key(&args);
+        if args.opt_str("scope").as_deref() == Some("desktop")
+            && args.get("pid").is_none()
+            && args.get("window_id").is_none()
+        {
+            let coordinate = |key: &str| {
+                args.opt_f64(key)
+                    .or_else(|| args.opt_i64(key).map(|value| value as f64))
+            };
+            let Some(from_x) = coordinate("from_x") else {
+                return ToolResult::error("Missing: from_x");
+            };
+            let Some(from_y) = coordinate("from_y") else {
+                return ToolResult::error("Missing: from_y");
+            };
+            let Some(to_x) = coordinate("to_x") else {
+                return ToolResult::error("Missing: to_x");
+            };
+            let Some(to_y) = coordinate("to_y") else {
+                return ToolResult::error("Missing: to_y");
+            };
+            let button = parse_mouse_button(&args.str_or("button", "left"));
+            let duration_ms = args.u64_or("duration_ms", 500).min(10_000);
+            let steps = args.u64_or("steps", 20).clamp(1, 200) as usize;
+            let wayland = crate::wayland::wayland_input_enabled();
+            let path = if wayland { "wayland_desktop" } else { "xtest" };
+            let result = tokio::task::spawn_blocking(move || {
+                if wayland {
+                    crate::wayland::drag_desktop(
+                        from_x.round() as i32,
+                        from_y.round() as i32,
+                        to_x.round() as i32,
+                        to_y.round() as i32,
+                        steps as u32,
+                        button,
+                    )
+                } else {
+                    crate::input::send_drag_xtest_desktop(
+                        from_x.round() as i32,
+                        from_y.round() as i32,
+                        to_x.round() as i32,
+                        to_y.round() as i32,
+                        button,
+                        duration_ms,
+                        steps,
+                    )
+                }
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text("Dragged on the desktop.").with_structured(
+                    json!({"scope":"desktop","path":path,"effect":"unverifiable"}),
+                ),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
+        }
         let pid = match args.require_u32("pid") {
             Ok(v) => v,
             Err(e) => return e,
@@ -4345,6 +4525,7 @@ impl Tool for DragTool {
             let drag_result = if crate::wayland::is_inject_mode() {
                 tokio::task::spawn_blocking(move || {
                     crate::wayland::inject_drag(
+                        pid,
                         xid,
                         (from_x, from_y),
                         (to_x, to_y),
@@ -5456,28 +5637,6 @@ impl Tool for GetDesktopStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        // Gate on the global capture_scope: a full-display capture is a
-        // desktop-scope operation, available only when capture_scope="desktop"
-        // (same gate as window-less screen-absolute click/scroll). Read the
-        // persisted value the same way load_config does.
-        let scope = pip_preview::read_config_value("capture_scope")
-            .and_then(|v| v.as_str().map(str::to_owned))
-            .unwrap_or_else(|| "window".to_owned());
-        if scope != "desktop" {
-            return ToolResult::error(format!(
-                "get_desktop_state requires capture_scope=\"desktop\" (current scope is \
-                 \"{scope}\"). Full-display capture is a desktop-scope operation; call \
-                 set_config with capture_scope=desktop first (it also enables window-less \
-                 screen-absolute click/scroll). For a single window, use \
-                 get_window_state(pid, window_id) instead."
-            ))
-            .with_structured(serde_json::json!({
-                "code": "desktop_scope_disabled",
-                "capture_scope": scope,
-                "suggestion": "set_config capture_scope=desktop",
-            }));
-        }
-
         let out_file = args.opt_str("screenshot_out_file");
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
@@ -5521,10 +5680,12 @@ impl Tool for GetDesktopStateTool {
                 let mut content = Vec::new();
                 let mut structured = json!({
                     "platform": "linux",
+                    "display": "primary",
                     "screenshot_width": shot_w,
                     "screenshot_height": shot_h,
                     "screen_width": screen_w,
                     "screen_height": screen_h,
+                    "scale_factor": 1.0,
                     "screenshot_mime_type": "image/png",
                 });
                 if let Some(b64) = b64_opt {
@@ -5621,9 +5782,9 @@ impl Tool for MoveCursorTool {
     fn def(&self) -> &ToolDef {
         MCURSOR_DEF.get_or_init(|| ToolDef {
             name: "move_cursor".into(),
-            description: "Move the agent cursor overlay to (x, y). Does NOT move the real mouse cursor.".into(),
+            description: "Move the agent cursor overlay, or with scope=desktop move the real OS pointer in get_desktop_state coordinates.".into(),
             input_schema: json!({"type":"object","required":["x","y"],"properties":{
-                "x":{"type":"number"},"y":{"type":"number"},"session": cua_driver_core::tool_schema::session_schema(),"cursor_id":{"type":"string"}
+                "x":{"type":"number"},"y":{"type":"number"},"session": cua_driver_core::tool_schema::session_schema(),"cursor_id":{"type":"string"},"scope":{"type":"string","enum":["window","desktop"],"default":"window"}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
@@ -5632,6 +5793,29 @@ impl Tool for MoveCursorTool {
         use cua_driver_core::tool_args::ArgsExt;
         let x = args.f64_or("x", 0.0);
         let y = args.f64_or("y", 0.0);
+        if args.opt_str("scope").as_deref() == Some("desktop") {
+            let xi = x.round() as i32;
+            let yi = y.round() as i32;
+            let result = if crate::wayland::wayland_input_enabled() {
+                tokio::task::spawn_blocking(move || {
+                    crate::wayland::move_cursor_absolute(None, xi, yi)
+                })
+                .await
+            } else {
+                tokio::task::spawn_blocking(move || crate::input::send_move_xtest_desktop(xi, yi))
+                    .await
+            };
+            return match result {
+                Ok(Ok(())) => {
+                    ToolResult::text(format!("Moved the real desktop pointer to ({xi}, {yi})."))
+                        .with_structured(
+                            json!({"scope":"desktop","x":xi,"y":yi,"effect":"unverifiable"}),
+                        )
+                }
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
+        }
         let window_id = args.get("window_id").and_then(|v| v.as_u64());
         let cursor_id = resolve_cursor_key(&args);
         self.state.cursor_registry.update_position(&cursor_id, x, y);
@@ -6172,7 +6356,6 @@ impl Tool for GetConfigTool {
             "source_sha": option_env!("CUA_DRIVER_SOURCE_SHA"),
             "platform": "linux",
             "capture_mode": cfg.capture_mode,
-            "capture_scope": cfg.capture_scope,
             "max_image_dimension": cfg.max_image_dimension,
             "experimental_pip": pip_enabled,
             "experimental_pip_geometry": pip_geometry
@@ -6205,7 +6388,6 @@ impl Tool for SetConfigTool {
                 "key":{"type":"string","description":"Name of a single config field to write ({key, value} shape). Pair with `value`."},
                 "value":{"description":"New value for `key`. JSON type depends on the key."},
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Legacy per-field shape. Default capture mode for get_window_state. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
-                "capture_scope":{"type":"string","enum":["window","desktop"],"description":"Capture scope: single window or whole desktop. Default window."},
                 "max_image_dimension":{"type":"integer","description":"Legacy per-field shape. Max dimension for screenshot resizing (0 = no limit)."},
                 "experimental_pip":{"type":"boolean","description":"Enable the experimental PiP preview window (applies next restart; Linux backend stubbed)."},
                 "experimental_pip_geometry":{"type":"string","description":"PiP window size + optional position in `WxH` or `WxH+X+Y` form."}
@@ -6215,6 +6397,18 @@ impl Tool for SetConfigTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        if args.get("capture_scope").is_some()
+            || args.get("key").and_then(Value::as_str) == Some("capture_scope")
+        {
+            return ToolResult::error(
+                "config key 'capture_scope' is retired; pass capture_scope=auto|window|desktop to start_session",
+            )
+            .with_structured(json!({
+                "code": "config_key_retired",
+                "key": "capture_scope",
+                "replacement": "start_session.capture_scope",
+            }));
+        }
         let mut cfg = self.state.config.write().unwrap();
         let mut parts = Vec::new();
         // {key, value} shape (what the Swift/macOS and Windows callers send).
@@ -6234,17 +6428,6 @@ impl Tool for SetConfigTool {
                         parts.push(format!("capture_mode={s}"));
                     }
                     None => return ToolResult::error(format!("`capture_mode` must be a string, got {val}.")),
-                },
-                "capture_scope" => match val.as_str() {
-                    Some(s @ ("window" | "desktop")) => {
-                        cfg.capture_scope = s.to_owned();
-                        if let Err(e) = pip_preview::write_config_key("capture_scope", Value::String(s.to_owned())) {
-                            tracing::warn!("set_config: failed to persist capture_scope: {e}");
-                        }
-                        parts.push(format!("capture_scope={s}"));
-                    }
-                    Some(other) => return ToolResult::error(format!("`capture_scope` must be \"window\" or \"desktop\", got \"{other}\".")),
-                    None => return ToolResult::error(format!("`capture_scope` must be a string, got {val}.")),
                 },
                 "max_image_dimension" => match val.as_u64() {
                     Some(n) => {
@@ -6280,7 +6463,7 @@ impl Tool for SetConfigTool {
                     None => return ToolResult::error(format!("`experimental_pip_geometry` must be a string, got {val}.")),
                 },
                 other => return ToolResult::error(format!(
-                    "Unknown config key `{other}`. Known: capture_mode, capture_scope, max_image_dimension, experimental_pip, experimental_pip_geometry."
+                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension, experimental_pip, experimental_pip_geometry."
                 )),
             }
         }
@@ -6293,20 +6476,6 @@ impl Tool for SetConfigTool {
             }
             parts.push(format!("capture_mode={mode}"));
             cfg.capture_mode = mode;
-        }
-        if let Some(scope) = args.opt_str("capture_scope") {
-            if scope != "window" && scope != "desktop" {
-                return ToolResult::error(format!(
-                    "`capture_scope` must be \"window\" or \"desktop\", got \"{scope}\"."
-                ));
-            }
-            if let Err(e) =
-                pip_preview::write_config_key("capture_scope", Value::String(scope.clone()))
-            {
-                tracing::warn!("set_config: failed to persist capture_scope: {e}");
-            }
-            parts.push(format!("capture_scope={scope}"));
-            cfg.capture_scope = scope;
         }
         if let Some(dim) = args.opt_u64("max_image_dimension") {
             cfg.max_image_dimension = dim as u32;
@@ -6346,7 +6515,6 @@ impl Tool for SetConfigTool {
         let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         ToolResult::text(msg).with_structured(json!({
             "capture_mode": cfg.capture_mode,
-            "capture_scope": cfg.capture_scope,
             "max_image_dimension": cfg.max_image_dimension,
             "experimental_pip": pip_enabled,
             "experimental_pip_geometry": pip_geometry
@@ -6986,16 +7154,6 @@ mod click_button_schema_tests {
         assert!(!maps_indicate_gtk(
             "7f00-7f01 r-xp /usr/lib/x86_64-linux-gnu/libgdk_pixbuf-2.0.so"
         ));
-    }
-}
-
-#[cfg(test)]
-mod driver_config_tests {
-    use super::DriverConfig;
-
-    #[test]
-    fn capture_scope_defaults_to_window() {
-        assert_eq!(DriverConfig::default().capture_scope, "window");
     }
 }
 

@@ -155,21 +155,18 @@ pub fn desktop_state() -> DesktopState {
                 Err(e) => (None, Some(format!("GetThreadDesktop: {e}"))),
             };
 
-        let (input_desktop_name, input_desktop_error) = match OpenInputDesktop(
-            DESKTOP_CONTROL_FLAGS(0),
-            false,
-            DESKTOP_READOBJECTS,
-        ) {
-            Ok(h) => {
-                let name = desktop_name(h);
-                let _ = CloseDesktop(h);
-                match name {
-                    Ok(name) => (Some(name), None),
-                    Err(e) => (None, Some(format!("OpenInputDesktop name: {e}"))),
+        let (input_desktop_name, input_desktop_error) =
+            match OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_READOBJECTS) {
+                Ok(h) => {
+                    let name = desktop_name(h);
+                    let _ = CloseDesktop(h);
+                    match name {
+                        Ok(name) => (Some(name), None),
+                        Err(e) => (None, Some(format!("OpenInputDesktop name: {e}"))),
+                    }
                 }
-            }
-            Err(e) => (None, Some(format!("OpenInputDesktop: {e}"))),
-        };
+                Err(e) => (None, Some(format!("OpenInputDesktop: {e}"))),
+            };
 
         let fg = GetForegroundWindow();
         let foreground_hwnd = (!fg.0.is_null()).then_some(fg.0 as usize);
@@ -243,13 +240,10 @@ pub fn ui_automation_available() -> Result<(), String> {
         // we proceed to CoUninitialize. Holding the binding past
         // CoUninitialize and letting Drop run at function return
         // causes a use-after-free in the COM apartment.
-        let result = CoCreateInstance::<_, IUIAutomation>(
-            &CUIAutomation,
-            None,
-            CLSCTX_INPROC_SERVER,
-        )
-        .map(|_| ())
-        .map_err(|e| format!("{e}"));
+        let result =
+            CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+                .map(|_| ())
+                .map_err(|e| format!("{e}"));
 
         if need_uninit {
             CoUninitialize();
@@ -338,8 +332,8 @@ mod tests {
         match ui_automation_available() {
             Ok(()) => {}
             Err(e) => {
-                let non_interactive = current_session_id() == Some(0)
-                    || is_non_interactive_error(&e);
+                let non_interactive =
+                    current_session_id() == Some(0) || is_non_interactive_error(&e);
                 assert!(
                     non_interactive,
                     "ui_automation_available failed in what looks like an interactive session: {e}",

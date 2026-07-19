@@ -58,13 +58,28 @@ pub struct Probe {
 
 impl Probe {
     pub fn ok(label: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { label: label.into(), status: Status::Ok, message: message.into(), detail: None }
+        Self {
+            label: label.into(),
+            status: Status::Ok,
+            message: message.into(),
+            detail: None,
+        }
     }
     pub fn warn(label: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { label: label.into(), status: Status::Warn, message: message.into(), detail: None }
+        Self {
+            label: label.into(),
+            status: Status::Warn,
+            message: message.into(),
+            detail: None,
+        }
     }
     pub fn err(label: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { label: label.into(), status: Status::Err, message: message.into(), detail: None }
+        Self {
+            label: label.into(),
+            status: Status::Err,
+            message: message.into(),
+            detail: None,
+        }
     }
     pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = Some(detail.into());
@@ -120,8 +135,14 @@ impl Report {
             .map(|p| {
                 let mut obj = serde_json::Map::new();
                 obj.insert("label".into(), serde_json::Value::String(p.label.clone()));
-                obj.insert("status".into(), serde_json::Value::String(p.status.tag().into()));
-                obj.insert("message".into(), serde_json::Value::String(p.message.clone()));
+                obj.insert(
+                    "status".into(),
+                    serde_json::Value::String(p.status.tag().into()),
+                );
+                obj.insert(
+                    "message".into(),
+                    serde_json::Value::String(p.message.clone()),
+                );
                 if let Some(d) = &p.detail {
                     obj.insert("detail".into(), serde_json::Value::String(d.clone()));
                 }
@@ -160,8 +181,7 @@ fn probe_install_layout() -> Probe {
     match exe {
         Err(e) => Probe::err("install dir", format!("could not resolve current_exe: {e}")),
         Ok(path) => {
-            let canonical = std::fs::canonicalize(&path)
-                .unwrap_or_else(|_| path.clone());
+            let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
             let mut detail = String::new();
             if path != canonical {
                 detail.push_str(&format!("argv exe:  {}\n", path.display()));
@@ -187,7 +207,10 @@ fn probe_home_dir() -> Probe {
     if !cua_home.exists() {
         return Probe::warn(
             "home dir",
-            format!("{} does not exist yet (created on first run)", cua_home.display()),
+            format!(
+                "{} does not exist yet (created on first run)",
+                cua_home.display()
+            ),
         );
     }
     let releases = cua_home.join("packages").join("releases");
@@ -216,10 +239,20 @@ fn probe_home_dir() -> Probe {
 fn probe_telemetry() -> Probe {
     let status = crate::telemetry::status();
     if status.enabled {
-        let identity = if status.installation_id_present { "install-id present" } else { "install-id not yet generated" };
-        Probe::ok("telemetry", format!("enabled via {} ({identity})", status.source))
+        let identity = if status.installation_id_present {
+            "install-id present"
+        } else {
+            "install-id not yet generated"
+        };
+        Probe::ok(
+            "telemetry",
+            format!("enabled via {} ({identity})", status.source),
+        )
     } else {
-        Probe::ok("telemetry", format!("disabled via {} (installation ID retained)", status.source))
+        Probe::ok(
+            "telemetry",
+            format!("disabled via {} (installation ID retained)", status.source),
+        )
     }
 }
 
@@ -387,7 +420,9 @@ fn append_platform_probes(report: &mut Report) {
     // (XWayland leaves DISPLAY pointing at the X server XWayland exposes,
     // but the actual session is still Wayland).
     let display = std::env::var("DISPLAY").ok().filter(|v| !v.is_empty());
-    let wayland = std::env::var("WAYLAND_DISPLAY").ok().filter(|v| !v.is_empty());
+    let wayland = std::env::var("WAYLAND_DISPLAY")
+        .ok()
+        .filter(|v| !v.is_empty());
     match (display.as_deref(), wayland.as_deref()) {
         (None, None) => report.push(
             Probe::warn(
@@ -422,15 +457,17 @@ fn append_platform_probes(report: &mut Report) {
     // open — `list_windows` doesn't distinguish the two — so the warning
     // hedges instead of asserting a connection failure.
     match platform_linux::x11::list_windows(None) {
-        v if v.is_empty() => report.push(
-            Probe::warn(
-                "X11 connection",
-                "no top-level windows returned (possible disconnected or inaccessible X11 display)",
-            ),
-        ),
+        v if v.is_empty() => report.push(Probe::warn(
+            "X11 connection",
+            "no top-level windows returned (possible disconnected or inaccessible X11 display)",
+        )),
         v => report.push(Probe::ok(
             "X11 connection",
-            format!("connected, {} visible top-level window{}", v.len(), if v.len() == 1 { "" } else { "s" }),
+            format!(
+                "connected, {} visible top-level window{}",
+                v.len(),
+                if v.len() == 1 { "" } else { "s" }
+            ),
         )),
     }
 
@@ -440,7 +477,10 @@ fn append_platform_probes(report: &mut Report) {
     // org.a11y.Bus name.
     let at_spi_env = std::env::var("AT_SPI_BUS").ok().filter(|v| !v.is_empty());
     match at_spi_env {
-        Some(addr) => report.push(Probe::ok("AT-SPI", format!("bus address present (AT_SPI_BUS={addr})"))),
+        Some(addr) => report.push(Probe::ok(
+            "AT-SPI",
+            format!("bus address present (AT_SPI_BUS={addr})"),
+        )),
         None => {
             // Bounded wait — a hung session bus daemon would otherwise
             // block `doctor` indefinitely. 3s is enough for a healthy
@@ -449,7 +489,10 @@ fn append_platform_probes(report: &mut Report) {
             // as a warning instead of looking like the binary froze.
             let bus_ok = probe_at_spi_bus_via_gdbus(std::time::Duration::from_secs(3));
             if bus_ok {
-                report.push(Probe::ok("AT-SPI", "org.a11y.Bus reachable via session bus"));
+                report.push(Probe::ok(
+                    "AT-SPI",
+                    "org.a11y.Bus reachable via session bus",
+                ));
             } else {
                 report.push(
                     Probe::warn("AT-SPI", "accessibility bus not reachable")
@@ -516,7 +559,10 @@ fn append_platform_probes(report: &mut Report) {
 fn append_platform_probes(report: &mut Report) {
     report.push(Probe::warn(
         "platform",
-        format!("no platform-specific probes implemented for {}", std::env::consts::OS),
+        format!(
+            "no platform-specific probes implemented for {}",
+            std::env::consts::OS
+        ),
     ));
 }
 

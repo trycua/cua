@@ -17,6 +17,7 @@ action, addressing mode, delivery mode, or OS-specific window-system case.
 | Prefix | Runs by default | Purpose |
 | --- | --- | --- |
 | `protocol_*_test.rs` | yes | MCP/CLI protocol and schema behavior |
+| `session_capture_scope_test.rs` | yes | Per-session policy isolation, escalation, lifecycle, and retired config key |
 | `schema_*_test.rs` | yes | Generated schema consistency |
 | `harness_<toolkit>_test.rs` | no, `#[ignore]` | Toolkit-specific harness apps |
 | `desktop_scope_<os>_test.rs` | no, `#[ignore]` | Platform window/desktop scope contract |

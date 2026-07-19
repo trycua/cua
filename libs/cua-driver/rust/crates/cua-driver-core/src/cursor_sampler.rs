@@ -52,9 +52,11 @@ impl CursorSampler {
                     // Write one JSON object per line. We hand-format
                     // the trivial shape rather than pulling serde_json
                     // into the hot loop — keeps wakeup-cost bounded.
-                    let _ = writeln!(writer,
+                    let _ = writeln!(
+                        writer,
                         "{{\"t_ms\":{:.3},\"x\":{:.2},\"y\":{:.2}}}",
-                        t_ms, x, y);
+                        t_ms, x, y
+                    );
                     count += 1;
                 }
                 std::thread::sleep(interval);
@@ -73,12 +75,12 @@ impl CursorSampler {
     /// Stop the sampler. Returns the number of samples written.
     pub fn stop(mut self) -> usize {
         self.stop_flag.store(true, Ordering::Relaxed);
-        self.handle.take()
-            .and_then(|h| h.join().ok())
-            .unwrap_or(0)
+        self.handle.take().and_then(|h| h.join().ok()).unwrap_or(0)
     }
 
-    pub fn output_path(&self) -> &std::path::Path { &self.output_path }
+    pub fn output_path(&self) -> &std::path::Path {
+        &self.output_path
+    }
 }
 
 impl Drop for CursorSampler {
@@ -119,11 +121,16 @@ fn sample_cursor() -> Option<(f64, f64)> {
     }
     #[repr(C)]
     #[derive(Copy, Clone)]
-    struct CGPoint { x: f64, y: f64 }
+    struct CGPoint {
+        x: f64,
+        y: f64,
+    }
 
     unsafe {
         let event = CGEventCreate(std::ptr::null_mut());
-        if event.is_null() { return None; }
+        if event.is_null() {
+            return None;
+        }
         let p = CGEventGetLocation(event);
         CFRelease(event);
         Some((p.x, p.y))
@@ -144,4 +151,6 @@ fn sample_cursor() -> Option<(f64, f64)> {
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-fn sample_cursor() -> Option<(f64, f64)> { None }
+fn sample_cursor() -> Option<(f64, f64)> {
+    None
+}

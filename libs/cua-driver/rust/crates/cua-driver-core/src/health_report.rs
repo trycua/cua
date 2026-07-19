@@ -58,7 +58,11 @@ pub const NAME_SCREEN_CAPTURE_CAPABILITY: &str = "screen_capture_capability";
 /// apply on a platform simply isn't present in that platform's `names`
 /// vector, so the overall rollup ignores it.
 pub fn core_check_names() -> &'static [&'static str] {
-    &[NAME_BINARY_VERSION, NAME_PLATFORM_SUPPORTED, NAME_SESSION_ACTIVE]
+    &[
+        NAME_BINARY_VERSION,
+        NAME_PLATFORM_SUPPORTED,
+        NAME_SESSION_ACTIVE,
+    ]
 }
 
 // ── Output model ─────────────────────────────────────────────────────────────

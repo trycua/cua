@@ -52,7 +52,7 @@ fn def() -> &'static ToolDef {
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
-            "required": ["pid", "from_x", "from_y", "to_x", "to_y"],
+            "required": ["from_x", "from_y", "to_x", "to_y"],
             "properties": {
                 "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid": { "type": "integer", "description": "Target process ID." },
@@ -90,6 +90,7 @@ fn def() -> &'static ToolDef {
                     "type": "boolean",
                     "description": "When true, coordinates are in the last zoom image for this pid; driver maps back to window coordinates."
                 },
+                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id for native get_desktop_state screenshot coordinates." },
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false
@@ -109,6 +110,68 @@ impl Tool for DragTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        if args.opt_str("scope").as_deref() == Some("desktop")
+            && args.get("pid").is_none()
+            && args.get("window_id").is_none()
+        {
+            let coordinate = |key: &str| {
+                args.opt_f64(key)
+                    .or_else(|| args.opt_i64(key).map(|value| value as f64))
+            };
+            let Some(from_x) = coordinate("from_x") else {
+                return ToolResult::error("Missing required parameter: from_x");
+            };
+            let Some(from_y) = coordinate("from_y") else {
+                return ToolResult::error("Missing required parameter: from_y");
+            };
+            let Some(to_x) = coordinate("to_x") else {
+                return ToolResult::error("Missing required parameter: to_x");
+            };
+            let Some(to_y) = coordinate("to_y") else {
+                return ToolResult::error("Missing required parameter: to_y");
+            };
+            let (from_x, from_y) = super::desktop_screenshot_point(from_x, from_y).await;
+            let (to_x, to_y) = super::desktop_screenshot_point(to_x, to_y).await;
+            let duration_ms = args.u64_or("duration_ms", 500).min(10_000);
+            let steps = args.u64_or("steps", 20).clamp(1, 200) as usize;
+            let modifiers: Vec<String> = args.str_array("modifier");
+            let button = match args.str_or("button", "left").to_lowercase().as_str() {
+                "left" => DragButton::Left,
+                "right" => DragButton::Right,
+                "middle" => DragButton::Middle,
+                other => {
+                    return ToolResult::error(format!(
+                        "Unknown button '{other}' — expected left, right, or middle."
+                    ))
+                }
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                crate::input::mouse::drag_at_xy_foreground(
+                    from_x,
+                    from_y,
+                    to_x,
+                    to_y,
+                    duration_ms,
+                    steps,
+                    &modifier_refs,
+                    button,
+                )
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Dragged desktop from ({from_x:.1}, {from_y:.1}) to ({to_x:.1}, {to_y:.1})."
+                ))
+                .with_structured(serde_json::json!({
+                    "scope": "desktop",
+                    "path": "hid",
+                    "effect": "unverifiable"
+                })),
+                Ok(Err(error)) => ToolResult::error(format!("desktop drag failed: {error}")),
+                Err(error) => ToolResult::error(format!("desktop drag task failed: {error}")),
+            };
+        }
         let pid = match args.require_i32("pid") {
             Ok(v) => v,
             Err(e) => return e,

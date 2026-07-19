@@ -22,15 +22,17 @@
 //! (e.g., to trigger live-search debounce handlers).
 
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 use std::sync::Arc;
 
-use crate::ax::bindings::{
-    copy_string_attr, focused_element_of_pid, kAXErrorSuccess, set_string_attr,
-    AXUIElementRef,
-};
 use crate::apps;
+use crate::ax::bindings::{
+    copy_string_attr, focused_element_of_pid, kAXErrorSuccess, set_string_attr, AXUIElementRef,
+};
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::CFRelease;
@@ -42,7 +44,9 @@ pub struct TypeTextTool {
 }
 
 impl TypeTextTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -78,7 +82,7 @@ fn def() -> &'static ToolDef {
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
-            "required": ["pid", "text"],
+            "required": ["text"],
             "properties": {
                 "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid":  { "type": "integer", "description": "Target process ID." },
@@ -103,6 +107,7 @@ fn def() -> &'static ToolDef {
                     "maximum": 200,
                     "description": "Milliseconds between characters in the CGEvent fallback path. Default 30. Ignored when the AX path succeeds."
                 },
+                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id to type into the frontmost application." },
                 "delivery_mode": {
                     "type": "string",
                     "enum": ["background", "foreground"],
@@ -120,19 +125,56 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for TypeTextTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
-        let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        if args.opt_str("scope").as_deref() == Some("desktop")
+            && args.get("pid").is_none()
+            && args.get("window_id").is_none()
+        {
+            let text = match args.require_str("text") {
+                Ok(value) => {
+                    cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&value)
+                        .into_owned()
+                }
+                Err(error) => return error,
+            };
+            let delay_ms = args.u64_or("delay_ms", 30).min(200);
+            let result = tokio::task::spawn_blocking(move || {
+                crate::input::keyboard::type_text_global(&text, delay_ms)
+            })
+            .await;
+            return match result {
+                Ok(Ok(())) => {
+                    ToolResult::text("Typed text into the frontmost desktop application.")
+                        .with_structured(serde_json::json!({
+                            "scope": "desktop",
+                            "path": "hid",
+                            "effect": "unverifiable"
+                        }))
+                }
+                Ok(Err(error)) => ToolResult::error(format!("desktop type_text failed: {error}")),
+                Err(error) => ToolResult::error(format!("desktop type_text task failed: {error}")),
+            };
+        }
+        let pid = match args.require_i32("pid") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let text_raw = match args.require_str("text") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         // Strip trailing agent-protocol closing tags — see
         // cua_driver_core::text_sanitize docs for rationale.
         let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
         // Surface 6: element_token / element_index precedence resolution.
         let element_token_arg = args.opt_str("element_token");
-        let window_id_arg     = args.opt_u64("window_id").map(|v| v as u32);
+        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
         let resolved = match cua_driver_core::element_token::resolve_element_args(
             pid,
@@ -147,10 +189,12 @@ impl Tool for TypeTextTool {
         let (element_index, window_id) = match resolved {
             cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
             cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid, element_index: idx, via_token: _,
+                window_id: wid,
+                element_index: idx,
+                via_token: _,
             } => (Some(idx), wid),
         };
-        let delay_ms      = args.u64_or("delay_ms", 30);
+        let delay_ms = args.u64_or("delay_ms", 30);
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
 
         // ── px form: focus by pixel-click, then type into the focused element ──
@@ -165,14 +209,26 @@ impl Tool for TypeTextTool {
         if let (Some(cx), Some(cy)) = (px, py) {
             if element_index.is_some() {
                 return ToolResult::error(
-                    "Pass either element_index (ax) or x,y (px) to type_text, not both."
+                    "Pass either element_index (ax) or x,y (px) to type_text, not both.",
                 );
             }
-            let from_zoom = args.get("from_zoom").and_then(|v| v.as_bool()).unwrap_or(false);
+            let from_zoom = args
+                .get("from_zoom")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             if let Err(e) = super::focus_by_pixel(
-                &self.state, pid, window_id, cx, cy, delivery_mode.is_foreground(),
-                args.opt_str("session"), args.opt_str("_session_id"), from_zoom,
-            ).await {
+                &self.state,
+                pid,
+                window_id,
+                cx,
+                cy,
+                delivery_mode.is_foreground(),
+                args.opt_str("session"),
+                args.opt_str("_session_id"),
+                from_zoom,
+            )
+            .await
+            {
                 return e;
             }
             // element_index stays None → the type path below writes to the now-
@@ -182,9 +238,7 @@ impl Tool for TypeTextTool {
         // Validate element_index requires window_id (still applies for
         // the legacy integer path; token path already resolved window_id).
         if element_index.is_some() && window_id.is_none() {
-            return ToolResult::error(
-                "window_id is required when element_index is used."
-            );
+            return ToolResult::error("window_id is required when element_index is used.");
         }
 
         // Resolve the element pointer (if element_index given). Retain it out
@@ -194,17 +248,21 @@ impl Tool for TypeTextTool {
         let element_guard = if let (Some(idx), Some(wid)) = (element_index, window_id) {
             match self.state.element_cache.get_element_retained(pid, wid, idx) {
                 Some(e) => Some((e, idx)),
-                None => return ToolResult::error(format!(
-                    "Element index {idx} not found. Call get_window_state first."
-                )),
+                None => {
+                    return ToolResult::error(format!(
+                        "Element index {idx} not found. Call get_window_state first."
+                    ))
+                }
             }
         } else {
             None
         };
-        let element_ptr = element_guard.as_ref().map(|(g, idx)| (g.as_ptr(), Some(*idx)));
+        let element_ptr = element_guard
+            .as_ref()
+            .map(|(g, idx)| (g.as_ptr(), Some(*idx)));
 
-        let text_clone  = text.clone();
-        let char_count  = text.chars().count();
+        let text_clone = text.clone();
+        let char_count = text.chars().count();
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // Typing into a field can trigger autocomplete popovers or
@@ -256,9 +314,8 @@ impl Tool for TypeTextTool {
                 // browser's OWN native chrome (address bar, toolbar) stays trusted.
                 // Probe ONLY when it would otherwise confirm via the AX path, so
                 // native types pay nothing.
-                let ax_echo_surface = verified
-                    && path == PATH_AX
-                    && target_in_web_area(pid, element_ptr);
+                let ax_echo_surface =
+                    verified && path == PATH_AX && target_in_web_area(pid, element_ptr);
                 let verified = verified && !ax_echo_surface;
 
                 // `verified:false` means the driver could not confirm the text
@@ -269,20 +326,28 @@ impl Tool for TypeTextTool {
                 let (mark, note) = if verified {
                     ("✅ Inserted", String::new())
                 } else if ax_echo_surface {
-                    ("📨 Sent (unverified)",
-                     " — web-content surface (Chromium / WebKit / Electron): the AX \
+                    (
+                        "📨 Sent (unverified)",
+                        " — web-content surface (Chromium / WebKit / Electron): the AX \
                       layer accepts and echoes the write but the renderer/DOM may not \
                       have observed it, so the driver cannot confirm via AX. Verify \
                       via the screenshot. For a browser tab use the `page` tool (it \
                       drives the DOM); for an embedded web view, re-type with the px \
-                      form (x,y).".to_string())
+                      form (x,y)."
+                            .to_string(),
+                    )
                 } else if path == PATH_KEY_EVENTS_FG {
-                    ("📨 Sent (unverified)",
-                     " — driver could not confirm; verify via screenshot.".to_string())
+                    (
+                        "📨 Sent (unverified)",
+                        " — driver could not confirm; verify via screenshot.".to_string(),
+                    )
                 } else {
-                    ("📨 Sent (unverified)",
-                     " — driver could not confirm the text landed; verify via screenshot, \
-                      and re-call with delivery_mode:\"foreground\" if it didn't.".to_string())
+                    (
+                        "📨 Sent (unverified)",
+                        " — driver could not confirm the text landed; verify via screenshot, \
+                      and re-call with delivery_mode:\"foreground\" if it didn't."
+                            .to_string(),
+                    )
                 };
                 ToolResult::text(format!(
                     "{mark} {char_count} char(s){detail}.{note}{}",
@@ -306,15 +371,18 @@ impl Tool for TypeTextTool {
                         // renderer/DOM-focus problem, never a foreground one.
                         let (recommended, reason) =
                             if crate::browser::electron_js::ElectronJs::is_electron(pid) {
-                                ("px",
-                                 "Electron web view — the AX write was echoed but the \
+                                (
+                                    "px",
+                                    "Electron web view — the AX write was echoed but the \
                                   renderer may not have observed it. Confirm via the \
                                   screenshot; if it didn't land, re-type with the \
                                   element px action (x,y to pixel-focus the field, then \
-                                  type).")
+                                  type).",
+                                )
                             } else {
-                                ("page",
-                                 "Browser web content — the AX write was echoed but the \
+                                (
+                                    "page",
+                                    "Browser web content — the AX write was echoed but the \
                                   DOM may not have observed it (and AX type_text on a \
                                   contenteditable is racy). Drive the tab's DOM with the \
                                   `page` tool: execute_javascript + el.value/innerText for a \
@@ -323,7 +391,8 @@ impl Tool for TypeTextTool {
                                   a one-shot DOM write on their next render) try insert_text \
                                   first (one CDP call, cheap), then type_keystrokes if that \
                                   also gets discarded (real per-character keyboard events, \
-                                  slower but most durable). Or confirm via the screenshot.")
+                                  slower but most durable). Or confirm via the screenshot.",
+                                )
                             };
                         s["escalation"] = serde_json::json!({
                             "recommended": recommended,
@@ -341,7 +410,7 @@ impl Tool for TypeTextTool {
                 })
             }
             Ok(Err(e)) => ToolResult::error(format!("type_text failed: {e}")),
-            Err(e)     => ToolResult::error(format!("Task error: {e}")),
+            Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
 }
@@ -367,10 +436,11 @@ const PATH_KEY_EVENTS_FG: &str = "key_events_fg";
 /// substring/length test even though something landed — we report `false`
 /// (unverified) rather than erroring, so the agent can still confirm.
 fn verify_typed(before: Option<&str>, after: Option<&str>, text: &str) -> bool {
-    if text.is_empty() { return true; }
+    if text.is_empty() {
+        return true;
+    }
     let Some(after) = after else { return false };
-    after.contains(text)
-        || before.map_or(false, |b| after.chars().count() > b.chars().count())
+    after.contains(text) || before.map_or(false, |b| after.chars().count() > b.chars().count())
 }
 
 /// Read the focused/target field's `AXValue`, for before/after read-back.
@@ -381,7 +451,9 @@ fn read_axvalue(pid: i32, element_ptr_and_idx: Option<(usize, Option<usize>)>) -
         unsafe { copy_string_attr(ptr as AXUIElementRef, "AXValue") }
     } else if let Some(el) = unsafe { focused_element_of_pid(pid) } {
         let v = unsafe { copy_string_attr(el, "AXValue") };
-        unsafe { CFRelease(el as _); }
+        unsafe {
+            CFRelease(el as _);
+        }
         v
     } else {
         None
@@ -416,16 +488,20 @@ fn target_in_web_area(pid: i32, element_ptr_and_idx: Option<(usize, Option<usize
         let mut found = false;
         for _ in 0..40 {
             match copy_string_attr(cur, "AXRole").as_deref() {
-                Some("AXWebArea") => { found = true; break; }
+                Some("AXWebArea") => {
+                    found = true;
+                    break;
+                }
                 // No web area lives above the window/app root — stop.
                 Some("AXWindow") | Some("AXApplication") | None => break,
                 _ => {}
             }
             let mut parent: CFTypeRef = std::ptr::null_mut();
-            let err = AXUIElementCopyAttributeValue(
-                cur, parent_attr.as_concrete_TypeRef(), &mut parent,
-            );
-            if cur_owned { CFRelease(cur as CFTypeRef); }
+            let err =
+                AXUIElementCopyAttributeValue(cur, parent_attr.as_concrete_TypeRef(), &mut parent);
+            if cur_owned {
+                CFRelease(cur as CFTypeRef);
+            }
             if err != kAXErrorSuccess || parent.is_null() {
                 cur = std::ptr::null_mut();
                 cur_owned = false;
@@ -528,10 +604,17 @@ fn type_text_blocking(
         // the remote host over hundreds of ms, so at 60ms every keystroke was
         // dropped. 200ms covers that re-grab without being perceptible.
         const FOREGROUND_SETTLE_MS: u64 = 200;
-        let do_type = || cgevent_type_verified(
-            pid, text, delay_ms, before.as_deref(), clear_first, element_ptr_and_idx,
-            FOREGROUND_SETTLE_MS,
-        );
+        let do_type = || {
+            cgevent_type_verified(
+                pid,
+                text,
+                delay_ms,
+                before.as_deref(),
+                clear_first,
+                element_ptr_and_idx,
+                FOREGROUND_SETTLE_MS,
+            )
+        };
         let (verified, fronted) = match window_id {
             Some(wid) => {
                 // Front → type → restore. The closure returns the read-back
@@ -557,7 +640,11 @@ fn type_text_blocking(
         // background keystrokes and `path` must say so honestly.
         return Ok((
             format!(" via foreground keystrokes ({delay_ms}ms delay)"),
-            if fronted { PATH_KEY_EVENTS_FG } else { PATH_KEY_EVENTS },
+            if fronted {
+                PATH_KEY_EVENTS_FG
+            } else {
+                PATH_KEY_EVENTS
+            },
             verified,
         ));
     }
@@ -569,7 +656,12 @@ fn type_text_blocking(
              using CGEvent key-event synthesis"
         );
         let verified = cgevent_type_verified(
-            pid, text, delay_ms, before.as_deref(), /*clear_first=*/ false, element_ptr_and_idx,
+            pid,
+            text,
+            delay_ms,
+            before.as_deref(),
+            /*clear_first=*/ false,
+            element_ptr_and_idx,
             /*settle_ms=*/ 0,
         )?;
         return Ok((
@@ -585,7 +677,7 @@ fn type_text_blocking(
         None => unsafe { focused_element_of_pid(pid) }.map(|el| (el, /*owns=*/ true, None)),
     };
     if let Some((element, owns, idx_opt)) = ax_target {
-        let role  = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
+        let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
         let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
         let err = unsafe { set_string_attr(element, "AXSelectedText", text) };
         // Landed iff the API succeeded AND a read-back positively confirms the
@@ -595,9 +687,13 @@ fn type_text_blocking(
         // its old (non-empty) value, which would otherwise report a false
         // success. `verify_typed` compares the read-back against `before`/`text`.
         let after = unsafe { copy_string_attr(element, "AXValue") };
-        let ax_landed = err == kAXErrorSuccess
-            && verify_typed(before.as_deref(), after.as_deref(), text);
-        if owns { unsafe { CFRelease(element as _); } }
+        let ax_landed =
+            err == kAXErrorSuccess && verify_typed(before.as_deref(), after.as_deref(), text);
+        if owns {
+            unsafe {
+                CFRelease(element as _);
+            }
+        }
         if ax_landed {
             let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
             return Ok((format!(" into{idx_str} {role} \"{title}\""), PATH_AX, true));
@@ -615,7 +711,12 @@ fn type_text_blocking(
     // background fallback would change insert-at-cursor semantics. The
     // foreground rung owns the idempotent clear-then-type.
     let verified = cgevent_type_verified(
-        pid, text, delay_ms, before.as_deref(), /*clear_first=*/ false, element_ptr_and_idx,
+        pid,
+        text,
+        delay_ms,
+        before.as_deref(),
+        /*clear_first=*/ false,
+        element_ptr_and_idx,
         /*settle_ms=*/ 0,
     )?;
     Ok((
@@ -648,8 +749,13 @@ mod tests {
         // CGEvent. The fact that this returns an Err (without crashing)
         // proves we routed through CGEvent-only and never touched AX.
         let r = type_text_blocking(
-            -1, "x", None, 0, /*is_terminal_target=*/ true,
-            super::super::DeliveryMode::Background, None,
+            -1,
+            "x",
+            None,
+            0,
+            /*is_terminal_target=*/ true,
+            super::super::DeliveryMode::Background,
+            None,
         );
         // We don't care whether r is Ok or Err — what matters is that
         // calling it with is_terminal_target=true is safe and never
@@ -666,9 +772,9 @@ mod tests {
 
     #[test]
     fn verify_typed_contains_or_grew_is_verified() {
-        assert!(verify_typed(Some(""), Some("hi"), "hi"));          // contains
-        assert!(verify_typed(Some("ab"), Some("ab hi"), "hi"));     // contains, appended
-        assert!(verify_typed(Some("ab"), Some("abXY"), "??"));      // grew vs before
+        assert!(verify_typed(Some(""), Some("hi"), "hi")); // contains
+        assert!(verify_typed(Some("ab"), Some("ab hi"), "hi")); // contains, appended
+        assert!(verify_typed(Some("ab"), Some("abXY"), "??")); // grew vs before
     }
 
     #[test]

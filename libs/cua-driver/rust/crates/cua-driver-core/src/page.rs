@@ -51,14 +51,14 @@ pub struct ClickElementResult {
 pub trait PageBackend: Send + Sync {
     /// Returns the visible text of the page (rough analog of
     /// `document.body.innerText`).
-    async fn get_text(&self, pid: i32, window_id: u32) -> anyhow::Result<String>;
+    async fn get_text(&self, pid: i32, window_id: u64) -> anyhow::Result<String>;
 
     /// Find elements matching `css_selector` and return a formatted-text
     /// response (same human-readable shape macOS already emits).
     async fn query_dom(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         css_selector: &str,
         attributes: &[String],
     ) -> anyhow::Result<String>;
@@ -68,7 +68,7 @@ pub trait PageBackend: Send + Sync {
     async fn execute_javascript(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         javascript: &str,
     ) -> anyhow::Result<String>;
 
@@ -80,7 +80,7 @@ pub trait PageBackend: Send + Sync {
     async fn execute_javascript_targeted(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         javascript: &str,
         cdp_port: Option<u16>,
         target_url_contains: Option<&str>,
@@ -122,7 +122,7 @@ pub trait PageBackend: Send + Sync {
     async fn click_element(
         &self,
         _pid: i32,
-        _window_id: u32,
+        _window_id: u64,
         _selector: &str,
     ) -> anyhow::Result<ClickElementResult> {
         anyhow::bail!(
@@ -162,7 +162,7 @@ pub trait PageBackend: Send + Sync {
     async fn type_keystrokes(
         &self,
         _pid: i32,
-        _window_id: u32,
+        _window_id: u64,
         _text: &str,
         _cdp_port: Option<u16>,
         _target_url_contains: Option<&str>,
@@ -191,7 +191,7 @@ pub trait PageBackend: Send + Sync {
     async fn insert_text(
         &self,
         _pid: i32,
-        _window_id: u32,
+        _window_id: u64,
         _text: &str,
         _cdp_port: Option<u16>,
         _target_url_contains: Option<&str>,
@@ -327,9 +327,9 @@ impl Tool for PageTool {
         // `pid` / `window_id` are resolved per-action: every action except
         // `enable_javascript_apple_events` needs both. We resolve once here
         // so each arm can `?` on the Result and we get matching error text.
-        // Narrowing casts use `TryFrom` so out-of-range JSON numbers fail
-        // with an actionable error instead of silently truncating to the
-        // wrong process / window.
+        // PID narrowing uses `TryFrom` so out-of-range JSON numbers fail
+        // instead of silently truncating. Window IDs remain u64 because
+        // native Wayland accessibility providers can legitimately exceed u32.
         let resolve_pid = |args: &Value| -> Result<i32, String> {
             let raw = args
                 .get("pid")
@@ -337,17 +337,14 @@ impl Tool for PageTool {
                 .ok_or_else(|| "Missing required parameter: pid".to_owned())?;
             i32::try_from(raw).map_err(|_| format!("Invalid parameter: pid {raw} out of i32 range"))
         };
-        let resolve_window_id = |args: &Value| -> Result<u32, String> {
-            let raw = args
-                .get("window_id")
+        let resolve_window_id = |args: &Value| -> Result<u64, String> {
+            args.get("window_id")
                 .and_then(|v| v.as_u64())
-                .ok_or_else(|| "Missing required parameter: window_id".to_owned())?;
-            u32::try_from(raw)
-                .map_err(|_| format!("Invalid parameter: window_id {raw} out of u32 range"))
+                .ok_or_else(|| "Missing required parameter: window_id".to_owned())
         };
 
         let (pid, window_id) = if action == "enable_javascript_apple_events" {
-            (0i32, 0u32) // unused
+            (0i32, 0u64) // unused
         } else {
             let pid = match resolve_pid(&args) {
                 Ok(v) => v,
@@ -401,17 +398,10 @@ impl Tool for PageTool {
                     Ok(value) => value,
                     Err(error) => return ToolResult::error(error),
                 };
-                let target_url_contains =
-                    args.get("target_url_contains").and_then(|v| v.as_str());
+                let target_url_contains = args.get("target_url_contains").and_then(|v| v.as_str());
                 match self
                     .backend
-                    .execute_javascript_targeted(
-                        pid,
-                        window_id,
-                        &js,
-                        cdp_port,
-                        target_url_contains,
-                    )
+                    .execute_javascript_targeted(pid, window_id, &js, cdp_port, target_url_contains)
                     .await
                 {
                     Ok(result) => ToolResult::text(result),
@@ -429,16 +419,13 @@ impl Tool for PageTool {
                 // fail fast at the input boundary rather than blowing up
                 // inside the backend's JS payload (`querySelector("   ")`
                 // returns null and the error there is much less specific).
-                let selector = match args
-                    .get("selector")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                {
-                    Some(s) if !s.is_empty() => s.to_owned(),
-                    _ => return ToolResult::error(
-                        "Missing required parameter: selector (CSS selector for click_element)"
-                    ),
-                };
+                let selector =
+                    match args.get("selector").and_then(|v| v.as_str()).map(str::trim) {
+                        Some(s) if !s.is_empty() => s.to_owned(),
+                        _ => return ToolResult::error(
+                            "Missing required parameter: selector (CSS selector for click_element)",
+                        ),
+                    };
                 match self.backend.click_element(pid, window_id, &selector).await {
                     Ok(res) => {
                         let structured = serde_json::json!({
@@ -464,7 +451,11 @@ impl Tool for PageTool {
                     Err(error) => return ToolResult::error(error),
                 };
                 let target_url_contains = args.get("target_url_contains").and_then(|v| v.as_str());
-                match self.backend.insert_text(pid, window_id, &text, cdp_port, target_url_contains).await {
+                match self
+                    .backend
+                    .insert_text(pid, window_id, &text, cdp_port, target_url_contains)
+                    .await
+                {
                     Ok(msg) => ToolResult::text(msg),
                     Err(e) => ToolResult::error(format!("insert_text failed: {e}")),
                 }
@@ -480,7 +471,11 @@ impl Tool for PageTool {
                     Err(error) => return ToolResult::error(error),
                 };
                 let target_url_contains = args.get("target_url_contains").and_then(|v| v.as_str());
-                match self.backend.type_keystrokes(pid, window_id, &text, cdp_port, target_url_contains).await {
+                match self
+                    .backend
+                    .type_keystrokes(pid, window_id, &text, cdp_port, target_url_contains)
+                    .await
+                {
                     Ok(msg) => ToolResult::text(msg),
                     Err(e) => ToolResult::error(format!("type_keystrokes failed: {e}")),
                 }
@@ -520,9 +515,9 @@ fn optional_cdp_port(args: &Value) -> Result<Option<u16>, String> {
     let Some(value) = args.get("cdp_port") else {
         return Ok(None);
     };
-    let raw = value
-        .as_u64()
-        .ok_or_else(|| "Invalid parameter: cdp_port must be an integer from 1 to 65535".to_owned())?;
+    let raw = value.as_u64().ok_or_else(|| {
+        "Invalid parameter: cdp_port must be an integer from 1 to 65535".to_owned()
+    })?;
     let port = u16::try_from(raw)
         .ok()
         .filter(|port| *port > 0)
@@ -535,7 +530,7 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    type TargetedCall = (i32, u32, String, Option<u16>, Option<String>);
+    type TargetedCall = (i32, u64, String, Option<u16>, Option<String>);
 
     #[derive(Default)]
     struct RecordingBackend {
@@ -544,14 +539,14 @@ mod tests {
 
     #[async_trait]
     impl PageBackend for RecordingBackend {
-        async fn get_text(&self, _pid: i32, _window_id: u32) -> anyhow::Result<String> {
+        async fn get_text(&self, _pid: i32, _window_id: u64) -> anyhow::Result<String> {
             Ok(String::new())
         }
 
         async fn query_dom(
             &self,
             _pid: i32,
-            _window_id: u32,
+            _window_id: u64,
             _css_selector: &str,
             _attributes: &[String],
         ) -> anyhow::Result<String> {
@@ -561,7 +556,7 @@ mod tests {
         async fn execute_javascript(
             &self,
             _pid: i32,
-            _window_id: u32,
+            _window_id: u64,
             _javascript: &str,
         ) -> anyhow::Result<String> {
             anyhow::bail!("untargeted execute must not be used")
@@ -570,7 +565,7 @@ mod tests {
         async fn execute_javascript_targeted(
             &self,
             pid: i32,
-            window_id: u32,
+            window_id: u64,
             javascript: &str,
             cdp_port: Option<u16>,
             target_url_contains: Option<&str>,
@@ -590,11 +585,12 @@ mod tests {
     async fn execute_javascript_forwards_explicit_page_target() {
         let backend = Arc::new(RecordingBackend::default());
         let tool = PageTool::new(backend.clone());
+        let synthetic_wayland_window_id = u64::from(u32::MAX) + 0x1234;
 
         let result = tool
             .invoke(serde_json::json!({
                 "pid": 42,
-                "window_id": 7,
+                "window_id": synthetic_wayland_window_id,
                 "action": "execute_javascript",
                 "javascript": "document.title",
                 "cdp_port": 9333,
@@ -607,7 +603,7 @@ mod tests {
             *backend.targeted.lock().unwrap(),
             Some((
                 42,
-                7,
+                synthetic_wayland_window_id,
                 "document.title".to_owned(),
                 Some(9333),
                 Some("#window-b".to_owned()),

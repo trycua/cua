@@ -577,8 +577,35 @@ fn wait_for_overlay_work(
 }
 
 #[cfg(target_os = "linux")]
-fn x11_display_change_event(event: &x11rb::protocol::Event) -> anyhow::Result<bool> {
+fn recoverable_x11_z_order_error(error: &x11rb::x11_utils::X11Error, overlay_win: u32) -> bool {
+    error.error_kind == x11rb::protocol::ErrorKind::Window
+        && error.major_opcode == x11rb::protocol::xproto::CONFIGURE_WINDOW_REQUEST
+        && error.extension_name.is_none()
+        && error.bad_value != overlay_win
+}
+
+#[cfg(target_os = "linux")]
+fn x11_display_change_event(
+    event: &x11rb::protocol::Event,
+    overlay_win: u32,
+) -> anyhow::Result<bool> {
     match event {
+        // The pinned target can disappear after the synchronous liveness probe
+        // in X11ZOrderEnforcer::reassert but before its unchecked ConfigureWindow
+        // request reaches the server. x11rb then delivers BadWindow here after
+        // the VoidCookie is dropped. This owner connection's only other
+        // ConfigureWindow path is checked synchronously, so a non-overlay bad
+        // window is the stale sibling and is safe to retry without a sibling on
+        // the next eligible z-order reassertion.
+        x11rb::protocol::Event::Error(error)
+            if recoverable_x11_z_order_error(error, overlay_win) =>
+        {
+            tracing::debug!(
+                stale_target = error.bad_value,
+                "X11 overlay target disappeared during z-order reassertion"
+            );
+            Ok(false)
+        }
         x11rb::protocol::Event::Error(error) => {
             anyhow::bail!("X11 server rejected an overlay request: {error:?}")
         }
@@ -599,10 +626,13 @@ fn update_render_map_geometry(map: &mut RenderMap, width: u16, height: u16) -> b
 }
 
 #[cfg(target_os = "linux")]
-fn drain_x11_display_changes(conn: &impl x11rb::connection::Connection) -> anyhow::Result<bool> {
+fn drain_x11_display_changes(
+    conn: &impl x11rb::connection::Connection,
+    overlay_win: u32,
+) -> anyhow::Result<bool> {
     let mut display_changed = false;
     while let Some(event) = conn.poll_for_event()? {
-        display_changed |= x11_display_change_event(&event)?;
+        display_changed |= x11_display_change_event(&event, overlay_win)?;
     }
     Ok(display_changed)
 }
@@ -851,7 +881,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         // bounded maintenance timeout above to service this queue. Detect
         // RandR changes before touching render state; unrelated X events remain
         // cheap and do not authorize a repaint.
-        let screen_changed = match drain_x11_display_changes(&conn) {
+        let screen_changed = match drain_x11_display_changes(&conn, win) {
             Ok(changed) => changed,
             Err(e) => {
                 tracing::warn!("X11 overlay event drain failed; disabling overlay: {e}");
@@ -1500,9 +1530,9 @@ mod tests {
                 sequence: 0,
                 u: x11rb::protocol::randr::CrtcChange::default().into(),
             });
-        assert!(x11_display_change_event(&screen_change).unwrap());
-        assert!(x11_display_change_event(&crtc_change).unwrap());
-        assert!(!x11_display_change_event(&x11rb::protocol::Event::Unknown(vec![])).unwrap());
+        assert!(x11_display_change_event(&screen_change, 7).unwrap());
+        assert!(x11_display_change_event(&crtc_change, 7).unwrap());
+        assert!(!x11_display_change_event(&x11rb::protocol::Event::Unknown(vec![]), 7).unwrap());
     }
 
     #[test]
@@ -1518,7 +1548,55 @@ mod tests {
             request_name: Some("PutImage"),
         });
 
-        assert!(x11_display_change_event(&error).is_err());
+        assert!(x11_display_change_event(&error, 7).is_err());
+    }
+
+    #[test]
+    fn stale_z_order_sibling_badwindow_is_recoverable() {
+        let error = x11rb::protocol::Event::Error(x11rb::x11_utils::X11Error {
+            error_kind: x11rb::protocol::ErrorKind::Window,
+            error_code: 3,
+            sequence: 1,
+            bad_value: 42,
+            minor_opcode: 0,
+            major_opcode: x11rb::protocol::xproto::CONFIGURE_WINDOW_REQUEST,
+            extension_name: None,
+            request_name: Some("ConfigureWindow"),
+        });
+
+        assert!(!x11_display_change_event(&error, 7).unwrap());
+    }
+
+    #[test]
+    fn overlay_badwindow_remains_fatal() {
+        let error = x11rb::protocol::Event::Error(x11rb::x11_utils::X11Error {
+            error_kind: x11rb::protocol::ErrorKind::Window,
+            error_code: 3,
+            sequence: 1,
+            bad_value: 7,
+            minor_opcode: 0,
+            major_opcode: x11rb::protocol::xproto::CONFIGURE_WINDOW_REQUEST,
+            extension_name: None,
+            request_name: Some("ConfigureWindow"),
+        });
+
+        assert!(x11_display_change_event(&error, 7).is_err());
+    }
+
+    #[test]
+    fn non_badwindow_configure_error_remains_fatal() {
+        let error = x11rb::protocol::Event::Error(x11rb::x11_utils::X11Error {
+            error_kind: x11rb::protocol::ErrorKind::Match,
+            error_code: 8,
+            sequence: 1,
+            bad_value: 42,
+            minor_opcode: 0,
+            major_opcode: x11rb::protocol::xproto::CONFIGURE_WINDOW_REQUEST,
+            extension_name: None,
+            request_name: Some("ConfigureWindow"),
+        });
+
+        assert!(x11_display_change_event(&error, 7).is_err());
     }
 
     #[test]

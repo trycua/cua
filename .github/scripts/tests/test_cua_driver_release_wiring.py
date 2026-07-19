@@ -137,6 +137,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('"path": "python/src/cua_driver/__init__.py"', config)
         self.assertIn('"path": "scripts/_install-rust.sh"', config)
         self.assertIn('"path": "scripts/install.ps1"', config)
+        self.assertIn('"path": "rust/Skills/cua-driver/SKILL.md"', config)
 
     def test_installers_preserve_legacy_telemetry_state_before_cleanup(self) -> None:
         for relative_path in (
@@ -173,9 +174,10 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")
 
         self.assertIn(
-            'security find-identity -v -p codesigning "$kc"',
+            'security find-identity -p codesigning "$kc"',
             installer,
         )
+        self.assertNotIn('security find-identity -v -p codesigning "$kc"', installer)
         self.assertIn('SIGN_ID="$(ensure_local_signing_identity)"', installer)
         self.assertIn(
             'codesign_bounded 20 --force --deep --sign "$SIGN_ID" "$APP_STAGE"',

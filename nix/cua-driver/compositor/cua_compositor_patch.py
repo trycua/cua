@@ -294,6 +294,10 @@ static bool cua_motion(struct tinywl_server *server, struct tinywl_toplevel *t, 
 	if (idx == 0) {
 		wlr_seat_pointer_notify_enter(server->seat, surface, local_x, local_y);
 		wlr_seat_pointer_notify_motion(server->seat, cua_now_ms(), local_x, local_y);
+		/* Real cursors emit a separate frame event after the motion callback.
+		 * Synthetic commands have no cursor-frame signal, so terminate the
+		 * protocol batch here; Chromium buffers motion/button events until it. */
+		wlr_seat_pointer_notify_frame(server->seat);
 		cua_ptr[idx].entered = surface;
 		return true;
 	}
@@ -345,6 +349,9 @@ static bool cua_button(struct tinywl_server *server, struct tinywl_toplevel *t, 
 	if (idx == 0) {
 		wlr_seat_pointer_notify_button(server->seat, cua_now_ms(), button,
 			pressed ? WLR_BUTTON_PRESSED : WLR_BUTTON_RELEASED);
+		/* See cua_motion: there is no hardware cursor-frame callback for the
+		 * virtual device, so each injected command must close its own batch. */
+		wlr_seat_pointer_notify_frame(server->seat);
 		return true;
 	}
 	uint32_t tm = cua_now_ms(), bs = wlr_seat_client_next_serial(sc);

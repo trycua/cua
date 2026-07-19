@@ -560,6 +560,28 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         })?;
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
             let Some(windows) = crate::wayland::sway_ipc::list_windows() else {
+                if crate::wayland::is_inject_mode() {
+                    // The private cua-compositor route owns both the native
+                    // toplevel enumeration and its PID correlation. Unlike a
+                    // generic AT-SPI-only Wayland session, that is sufficient
+                    // to attest singleton native-window cardinality for an
+                    // embedded Chromium endpoint.
+                    let owned = tokio::task::spawn_blocking(move || {
+                        crate::wayland::list_windows_dispatch(Some(pid_u32))
+                            .into_iter()
+                            .filter(|window| window.pid == Some(pid_u32))
+                            .map(|window| window.xid)
+                            .collect::<Vec<_>>()
+                    })
+                    .await
+                    .map_err(|error| {
+                        refusal(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            format!("could not enumerate cua-compositor browser windows: {error}"),
+                        )
+                    })?;
+                    return Ok(Some(owned.len() == 1 && owned[0] == window_id));
+                }
                 return Ok(None);
             };
             let owned = windows

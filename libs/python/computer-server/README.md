@@ -2,7 +2,7 @@
 
 Server component for the Computer-Use Interface (CUI) framework providing low-level computer control primitives.
 
-**[Documentation](https://cua.ai/docs/cua/guide/advanced/local-computer-server)** - Installation, guides, and configuration.
+**[Cua documentation](https://cua.ai/docs)** - Tutorials, guides, and reference documentation.
 
 ## Interfaces
 

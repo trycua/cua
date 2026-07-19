@@ -16,6 +16,7 @@ on:
       - "release-please-config.json"
       - ".github/workflows/ci-test-scripts.yml"
       - "docs/release-backfill-runbook.md"
+      - "libs/cua-driver/scripts/**"
 
 jobs:
   test:
@@ -39,6 +40,9 @@ jobs:
         run: |
           cd .github/scripts
           pytest tests/ -v
+
+      - name: Test Cua Driver uninstall scripts
+        run: python -m pytest libs/cua-driver/scripts/tests/ -v
 
       - name: Validate historical release backfill
         run: python3 .github/scripts/release_backfill.py validate

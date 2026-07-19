@@ -53,6 +53,10 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
             base / "scripts/install.ps1",
             r'^\$Script:CuaDriverRsBakedVersion\s*=\s*"([^"]+)"',
         ),
+        "rust/Skills/cua-driver/SKILL.md": read_match(
+            base / "rust/Skills/cua-driver/SKILL.md",
+            r"^version:\s*([^\s#]+)",
+        ),
         "docs/cli-reference.mdx:metadata": read_match(
             docs / "cli-reference.mdx", r"^  Version: (\S+)$"
         ),

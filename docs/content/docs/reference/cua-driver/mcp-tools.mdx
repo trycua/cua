@@ -476,8 +476,8 @@ Legacy browser compatibility tool. Prefer get_browser_state and the typed browse
 
 Actions:
 - execute_javascript: Run JS and return the result.
-- get_text: Extract visible text from the page.
-- query_dom: Find elements matching a CSS selector.
+- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.
+- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text.
 - click_element: Click a CSS-selected element AND animate the agent cursor to its on-screen center first (so the user sees what the agent is doing). Prefer over `execute_javascript('el.click()')` whenever you want visible cursor feedback.
 - insert_text: Insert `text` at whatever currently holds DOM focus in one native operation (CDP Input.insertText) — no synthesized key events, but more durable than a one-shot execute_javascript write since rich-text editors already have to treat it like an IME commit. Try this before type_keystrokes on a contenteditable that discarded an execute_javascript write. Click/focus the target field first.
 - type_keystrokes: Type `text` via real per-character keystroke events into whatever currently holds DOM focus. Slower than insert_text but the most durable rung — use it when insert_text also gets discarded, or the editor's own keydown/keyup handlers need to see real keys. Click/focus the target field first.

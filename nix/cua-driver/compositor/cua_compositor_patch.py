@@ -66,6 +66,8 @@ struct cua_keyent { uint32_t keycode; int shift; int valid; };
 static struct cua_keyent g_chartab[128];
 static struct wlr_foreign_toplevel_manager_v1 *g_ftl_mgr = NULL;
 static void cua_ftl_request_activate(struct wl_listener *listener, void *data);
+static pid_t cua_toplevel_pid(struct tinywl_toplevel *t);
+static bool cua_pid_in_family(pid_t pid, pid_t root_pid);
 
 """
 
@@ -91,6 +93,30 @@ static void cua_focus_toplevel(struct tinywl_toplevel *toplevel) {
 		struct wlr_keyboard_modifiers modifiers = {0};
 		wlr_seat_keyboard_notify_enter(
 			toplevel->server->seat, surface, NULL, 0, &modifiers);
+	}
+}
+/* New child toplevels may request focus as part of their normal map sequence.
+ * Preserve that behavior only when the current keyboard focus belongs to the
+ * same process family. A background application opening a child must not steal
+ * focus from the foreground sentinel (or from any other application). */
+static void cua_maybe_focus_new_toplevel(struct tinywl_toplevel *toplevel) {
+	struct wlr_surface *focused = toplevel->server->seat->keyboard_state.focused_surface;
+	struct wlr_surface *focused_root = focused ? wlr_surface_get_root_surface(focused) : NULL;
+	if (!focused_root) {
+		cua_focus_toplevel(toplevel);
+		return;
+	}
+	struct tinywl_toplevel *current;
+	wl_list_for_each(current, &toplevel->server->toplevels, link) {
+		struct wlr_surface *surface = current->xdg_toplevel ? current->xdg_toplevel->base->surface : NULL;
+		if (surface != focused_root) continue;
+		pid_t requested_pid = cua_toplevel_pid(toplevel);
+		pid_t focused_pid = cua_toplevel_pid(current);
+		if (requested_pid == focused_pid ||
+			cua_pid_in_family(requested_pid, focused_pid) ||
+			cua_pid_in_family(focused_pid, requested_pid))
+			cua_focus_toplevel(toplevel);
+		return;
 	}
 }
 static void cua_ftl_request_activate(struct wl_listener *listener, void *data) {
@@ -120,7 +146,6 @@ static void cua_pframe(struct wl_resource *res) {
 	if (wl_resource_get_version(res) >= WL_POINTER_FRAME_SINCE_VERSION)
 		wl_pointer_send_frame(res);
 }
-static pid_t cua_toplevel_pid(struct tinywl_toplevel *t);
 static bool cua_pid_in_family(pid_t pid, pid_t root_pid) {
 	if (pid <= 0 || root_pid <= 0) return false;
 	for (int depth = 0; depth < 64 && pid > 1; depth++) {
@@ -780,7 +805,7 @@ src = repl(src,
     "\t\t\twlr_foreign_toplevel_handle_v1_set_app_id(toplevel->ftl, toplevel->xdg_toplevel->app_id);\n"
     "\t\ttoplevel->ftl_request_activate.notify = cua_ftl_request_activate;\n"
     "\t\twl_signal_add(&toplevel->ftl->events.request_activate, &toplevel->ftl_request_activate);\n"
-    "\t}\n\n\tfocus_toplevel(toplevel);",
+    "\t}\n\n\tcua_maybe_focus_new_toplevel(toplevel);",
     "ftl-on-map")
 
 # 4) On unmap: drop the foreign-toplevel handle.

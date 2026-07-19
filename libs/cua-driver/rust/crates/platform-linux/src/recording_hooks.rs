@@ -15,9 +15,14 @@ pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Ve
 fn app_state_json_for_blocking(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
     let pid = u32::try_from(pid?).ok()?;
     let window_id = if crate::wayland::is_inject_mode() {
-        // The compositor protocol already verified this action target. Avoid a
-        // second window enumeration before the bounded tree snapshot.
-        window_id?
+        // Most injected actions already carry the protocol-verified window id.
+        // Process-scoped setup calls such as browser_prepare do not, so resolve
+        // their single target here instead of classifying required AX evidence
+        // as a capture failure.
+        match window_id {
+            Some(window_id) => window_id,
+            None => resolve_window_for_recording(pid, None)?.xid,
+        }
     } else {
         resolve_window_for_recording(pid, window_id)?.xid
     };

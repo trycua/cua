@@ -74,8 +74,6 @@ fn standalone_browser_completeness_html() -> String {
     const names = Array.from(event.target.files).map(file => file.name).join(',');
     document.getElementById('standalone-upload-state').textContent = `upload=${event.target.files.length}:${names}`;
   });
-  document.getElementById('scroll-tall').setAttribute('tabindex', '0');
-  document.getElementById('scroll-tall').setAttribute('role', 'region');
   document.getElementById('drag-source').setAttribute('tabindex', '0');
   document.getElementById('drag-source').setAttribute('role', 'button');
   document.getElementById('drag-source').setAttribute('draggable', 'true');
@@ -2560,8 +2558,42 @@ fn run_pointer_actions(spec: &BrowserSpec) {
         *evidence = recording_evidence(fixture.driver.recording_dir());
         run_with_background_oracles(&mut fixture, |fixture| {
             let session = format!("standalone-pointer-{}", fixture.pid);
-            let (target, tab, snapshot) = bind(fixture, &session);
-            let click_ref = ref_by_label(&snapshot, "id=click-target");
+            let (target, tab, _) = bind(fixture, &session);
+            let snapshot = fixture.driver.call(
+                "get_browser_state",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "session": session,
+                    "snapshot_format": "semantic_v2",
+                }),
+            );
+            assert_eq!(snapshot.structured()["status"], "ok", "{}", snapshot.raw);
+
+            let content_ref = snapshot.structured()["content_refs"]
+                .as_array()
+                .and_then(|refs| refs.first())
+                .and_then(|entry| entry["ref"].as_str())
+                .expect("semantic snapshot content ref");
+            let refused = fixture.driver.call(
+                "browser_pointer",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": content_ref,
+                    "action": "hover",
+                    "input_route": "dom_event",
+                    "session": session,
+                }),
+            );
+            assert_eq!(
+                refused.structured()["refusal"]["code"],
+                "browser_action_unavailable",
+                "{}",
+                refused.raw
+            );
+
+            let click_ref = semantic_ref_by_name(&snapshot, "border-click-target", "pointer");
 
             for action in ["hover", "right_click", "double_click"] {
                 let response = fixture.driver.call(
@@ -2589,7 +2621,7 @@ fn run_pointer_actions(spec: &BrowserSpec) {
                 serde_json::json!({
                     "target_id": target,
                     "tab_id": tab,
-                    "ref": ref_by_label(&snapshot, "id=scroll-tall"),
+                    "ref": semantic_ref_by_name(&snapshot, "scroll-tall", "scroll"),
                     "action": "scroll",
                     "input_route": "dom_event",
                     "delta_y": 240,
@@ -2615,8 +2647,8 @@ fn run_pointer_actions(spec: &BrowserSpec) {
                 serde_json::json!({
                     "target_id": target,
                     "tab_id": tab,
-                    "ref": ref_by_label(&snapshot, "id=drag-source"),
-                    "destination_ref": ref_by_label(&snapshot, "id=drop-target"),
+                    "ref": semantic_ref_by_name(&snapshot, "drag-source", "pointer"),
+                    "destination_ref": semantic_ref_by_name(&snapshot, "drop-target", "pointer"),
                     "action": "drag",
                     "input_route": "dom_event",
                     "session": session,

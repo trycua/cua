@@ -74,6 +74,22 @@ attempts are made after a socket loss. A successful reconnect increments the
 generation and invalidates every target, tab, snapshot, frame, and ref minted
 by the previous generation.
 
+## Security properties
+
+| Property | Guarantee |
+| --- | --- |
+| Network exposure | The accepted DevTools endpoint must be loopback-only. |
+| Process binding | The endpoint, native window, and live process fingerprint must agree before every mutation. |
+| Driver authorization | Existing-profile setup needs a single-use interactive artifact; a model-supplied Boolean and ordinary MCP approval are insufficient. |
+| Capability scope | Targets, tabs, dialogs, frames, and refs are opaque, session-scoped, and invalidated after navigation or connection-generation changes. |
+| Profile handling | Cua Driver does not copy, edit, restart, or terminate the selected existing profile. |
+| Residual local risk | CDP itself is not authenticated. Another process running as the same OS user may connect to an exposed endpoint outside Cua Driver. |
+
+An isolated profile is the recommended default. Existing-profile attachment is
+appropriate only when the task requires its authenticated state and the host is
+trusted. See [Browser targeting and background delivery](/concepts/browser-targeting-and-background-delivery#the-cdp-trust-boundary)
+for why Cua Driver uses CDP and which risks remain outside the driver.
+
 ## Refusals
 
 | Code | Meaning |

@@ -19,7 +19,7 @@ use crate::tool_args::ArgsExt;
 use super::cdp_ws::CdpConnection;
 use super::engine::{BrowserEngine, ValidatedTab};
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
-use super::store::{FrameKind, FrameRef};
+use super::store::{BrowserActionKind, FrameKind, FrameRef};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PointerAction {
@@ -52,6 +52,15 @@ impl PointerAction {
             Self::Scroll => "scroll",
             Self::Drag => "drag",
         }
+    }
+}
+
+fn ref_declares_pointer_action(actions: &[BrowserActionKind], action: PointerAction) -> bool {
+    match action {
+        PointerAction::Scroll => actions
+            .iter()
+            .any(|kind| matches!(kind, BrowserActionKind::Scroll | BrowserActionKind::Pointer)),
+        _ => actions.contains(&BrowserActionKind::Pointer),
     }
 }
 
@@ -272,7 +281,7 @@ impl BrowserPointerTool {
         Self {
             def: ToolDef {
                 name: "browser_pointer".into(),
-                description: "Perform hover, right-click, double-click, scroll, or drag in an exactly-bound browser tab. The trusted route uses CDP Input events and refuses if standalone background posture cannot be preserved. The explicit dom_event route requires a page ref and synthesizes full-background DOM events. Never activates or brings a tab to the foreground.".into(),
+                description: "Perform hover, right-click, double-click, scroll, or drag in an exactly-bound browser tab. Semantic refs must declare pointer for hover, right-click, double-click, and drag; scroll accepts a scroll or pointer capability. The trusted route uses CDP Input events and refuses if standalone background posture cannot be preserved. The explicit dom_event route requires a page ref and synthesizes full-background DOM events. Never activates or brings a tab to the foreground.".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -296,7 +305,7 @@ impl BrowserPointerTool {
                 read_only: false,
                 destructive: false,
                 idempotent: false,
-                open_world: false,
+                open_world: true,
             },
             engine,
         }
@@ -309,12 +318,26 @@ impl BrowserPointerTool {
         tab_id: &str,
         validated: &ValidatedTab,
         external: &str,
+        action: PointerAction,
     ) -> Result<ResolvedRef, ToolResult> {
         let entry = self
             .engine
             .store
             .resolve_ref(session, target_id, tab_id, external)
             .map_err(|refusal| refusal.to_tool_result())?;
+        let declared = ref_declares_pointer_action(&entry.actions, action);
+        if entry.semantic && !declared {
+            let required = if action == PointerAction::Scroll {
+                "scroll or pointer"
+            } else {
+                "pointer"
+            };
+            return Err(BrowserRefusal::new(
+                BrowserRefusalCode::BrowserActionUnavailable,
+                format!("semantic ref {external} does not declare the {required} action"),
+            )
+            .to_tool_result());
+        }
         let cdp_session = self
             .engine
             .frame_session_for_mutation(session, target_id, tab_id, validated, &entry.frame)
@@ -704,7 +727,14 @@ impl Tool for BrowserPointerTool {
 
         let origin_ref = match &request.origin {
             Location::Ref(external) => match self
-                .resolve_ref(&session, &target_id, &tab_id, &validated, external)
+                .resolve_ref(
+                    &session,
+                    &target_id,
+                    &tab_id,
+                    &validated,
+                    external,
+                    request.action,
+                )
                 .await
             {
                 Ok(reference) => Some(reference),
@@ -714,7 +744,14 @@ impl Tool for BrowserPointerTool {
         };
         let destination_ref = match &request.destination {
             Some(Location::Ref(external)) => match self
-                .resolve_ref(&session, &target_id, &tab_id, &validated, external)
+                .resolve_ref(
+                    &session,
+                    &target_id,
+                    &tab_id,
+                    &validated,
+                    external,
+                    request.action,
+                )
                 .await
             {
                 Ok(reference) => Some(reference),
@@ -838,6 +875,30 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(parsed.delta_y, 240.0);
+    }
+
+    #[test]
+    fn scroll_capability_does_not_authorize_other_pointer_actions() {
+        let scroll_only = [BrowserActionKind::Scroll];
+        assert!(ref_declares_pointer_action(
+            &scroll_only,
+            PointerAction::Scroll
+        ));
+        for action in [
+            PointerAction::Hover,
+            PointerAction::RightClick,
+            PointerAction::DoubleClick,
+            PointerAction::Drag,
+        ] {
+            assert!(!ref_declares_pointer_action(&scroll_only, action));
+        }
+
+        let pointer = [BrowserActionKind::Pointer];
+        assert!(ref_declares_pointer_action(&pointer, PointerAction::Scroll));
+        assert!(ref_declares_pointer_action(
+            &pointer,
+            PointerAction::RightClick
+        ));
     }
 
     #[test]

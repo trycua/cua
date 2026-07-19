@@ -22,6 +22,13 @@ binding.
 
 ## Inspect the selected browser first
 
+<Callout type="warn">
+  Prefer a driver-owned isolated profile. Existing-profile attachment gives
+  CDP broad access to that profile's live pages, cookies, and storage. Use it
+  only when the task needs an existing authenticated session and the machine
+  and its local processes are trusted.
+</Callout>
+
 First use `list_apps` and `list_windows` as usual, then call
 `get_browser_state` with the selected native `(pid, window_id)`. If that browser
 already exposes an owned loopback DevTools endpoint, the driver binds it without
@@ -273,6 +280,11 @@ browser_pointer({
 })
 ```
 
+Hover, right-click, double-click, and drag require a ref whose `actions`
+contains `pointer`. Scroll accepts either `scroll` or `pointer`, so a plain
+overflow container can be scrollable without gaining broader pointer
+authority.
+
 For drag, pass `destination_ref` from the same exact frame. The driver refuses
 mixed-frame or stale destinations instead of translating them approximately.
 
@@ -341,11 +353,17 @@ and AX/PX actions for those surfaces.
 
 ## Legacy page actions
 
-The older `page` tool remains available for compatibility and for its read
-actions. It preserves its first-page and URL-hint behavior, but now shares the
-event-aware CDP transport used by the typed browser tools. New browser mutation
-workflows should use the typed browser tools so window correlation, endpoint
-ownership, capability lifetime, and refusal reasons remain explicit.
+The older `page` tool remains available for compatibility. Its read-only
+`get_text` and `query_dom` actions are available by default. Legacy mutation
+actions are disabled unless the daemon operator explicitly starts Cua Driver
+with `CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1`. The flag is read when the
+daemon starts, so restart Cua Driver after changing it.
+
+That flag is a temporary compatibility escape hatch, not an equivalent browser
+grant: legacy CDP ports and URL hints do not receive the typed surface's exact
+native-window correlation, endpoint lifetime, or existing-profile consent
+checks. Do not enable it for untrusted agents or shared hosts. Migrate mutation
+workflows to `get_browser_state` and the typed `browser_*` tools.
 
 ## Related
 

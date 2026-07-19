@@ -1,5 +1,16 @@
-# Require a core maintainer to approve every change.
-* @f-trycua @ddupont808 @r33drichards
-
-# Keep repository policy, automation, and release credentials under the owner.
+# Repository policy, automation, and releases.
 /.github/ @f-trycua
+/.release-please-manifest.json @f-trycua
+/release-please-config.json @f-trycua
+
+# Core products and SDKs.
+/libs/cua-driver/ @f-trycua
+/libs/lume/ @f-trycua
+/libs/python/ @ddupont808
+/libs/cua-bench/ @ddupont808
+
+# Platform infrastructure.
+/libs/fleet/ @r33drichards
+/nix/ @r33drichards
+/flake.nix @r33drichards
+/flake.lock @r33drichards

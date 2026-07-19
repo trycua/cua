@@ -25,6 +25,28 @@ use crate::{
     tool::{Tool, ToolDef},
 };
 
+const LEGACY_PAGE_MUTATIONS_ENV: &str = "CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS";
+
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+fn is_mutating_action(action: &str) -> bool {
+    matches!(
+        action,
+        "execute_javascript"
+            | "click_element"
+            | "insert_text"
+            | "type_keystrokes"
+            | "enable_javascript_apple_events"
+    )
+}
+
 /// Result of a `click_element` call. The backend is responsible for driving
 /// the cursor overlay before returning; `screen_x` / `screen_y` are reported
 /// back to the caller for diagnostics + downstream chaining.
@@ -208,11 +230,23 @@ pub trait PageBackend: Send + Sync {
 /// host platform constructs and passes in at registration time.
 pub struct PageTool {
     backend: Arc<dyn PageBackend>,
+    legacy_mutations_enabled: bool,
 }
 
 impl PageTool {
     pub fn new(backend: Arc<dyn PageBackend>) -> Self {
-        Self { backend }
+        Self {
+            backend,
+            legacy_mutations_enabled: env_flag_enabled(LEGACY_PAGE_MUTATIONS_ENV),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_legacy_mutations(backend: Arc<dyn PageBackend>, enabled: bool) -> Self {
+        Self {
+            backend,
+            legacy_mutations_enabled: enabled,
+        }
     }
 }
 
@@ -220,7 +254,13 @@ fn def() -> &'static ToolDef {
     static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
     DEF.get_or_init(|| ToolDef {
         name: "page".into(),
-        description: "Interact with the browser page loaded in a running app. Supports \
+        description: "Legacy browser compatibility tool. Prefer get_browser_state and the \
+            typed browser_* tools for exact targeting, endpoint ownership, and consent. \
+            Read-only get_text and query_dom remain available by default. Mutating actions \
+            require the daemon operator to set CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1 before \
+            daemon startup (restart the daemon after changing it); this escape hatch does not \
+            provide the typed browser surface's exact binding or \
+            existing-profile grant guarantees. Supports \
             Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), \
             Chromium/Firefox on Windows (via UIA for read; CDP for execute_javascript when \
             --remote-debugging-port is set), and WKWebView/Tauri/AT-SPI fallbacks.\n\n\
@@ -308,7 +348,7 @@ fn def() -> &'static ToolDef {
         read_only: false,
         destructive: false,
         idempotent: false,
-        open_world: false,
+        open_world: true,
     })
 }
 
@@ -323,6 +363,15 @@ impl Tool for PageTool {
             Some(v) => v.to_owned(),
             None => return ToolResult::error("Missing required parameter: action"),
         };
+
+        if is_mutating_action(&action) && !self.legacy_mutations_enabled {
+            return ToolResult::error(format!(
+                "legacy page mutation {action:?} is disabled by default because it does not use \
+                 the typed browser surface's exact endpoint and consent checks; use \
+                 get_browser_state plus browser_* tools, or have the daemon operator explicitly \
+                 set {LEGACY_PAGE_MUTATIONS_ENV}=1 for temporary compatibility"
+            ));
+        }
 
         // `pid` / `window_id` are resolved per-action: every action except
         // `enable_javascript_apple_events` needs both. We resolve once here
@@ -584,7 +633,7 @@ mod tests {
     #[tokio::test]
     async fn execute_javascript_forwards_explicit_page_target() {
         let backend = Arc::new(RecordingBackend::default());
-        let tool = PageTool::new(backend.clone());
+        let tool = PageTool::with_legacy_mutations(backend.clone(), true);
         let synthetic_wayland_window_id = u64::from(u32::MAX) + 0x1234;
 
         let result = tool
@@ -627,9 +676,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn every_legacy_mutation_refuses_without_operator_opt_in() {
+        let backend = Arc::new(RecordingBackend::default());
+        let tool = PageTool::with_legacy_mutations(backend.clone(), false);
+
+        for action in [
+            "execute_javascript",
+            "click_element",
+            "insert_text",
+            "type_keystrokes",
+            "enable_javascript_apple_events",
+        ] {
+            let result = tool.invoke(serde_json::json!({ "action": action })).await;
+            assert_eq!(result.is_error, Some(true), "{action}");
+            assert!(
+                serde_json::to_string(&result)
+                    .unwrap()
+                    .contains(LEGACY_PAGE_MUTATIONS_ENV),
+                "{action}"
+            );
+        }
+        assert!(backend.targeted.lock().unwrap().is_none());
+        assert!(def().open_world);
+    }
+
+    #[tokio::test]
     async fn rejects_out_of_range_cdp_port_before_dispatch() {
         let backend = Arc::new(RecordingBackend::default());
-        let tool = PageTool::new(backend.clone());
+        let tool = PageTool::with_legacy_mutations(backend.clone(), true);
 
         let result = tool
             .invoke(serde_json::json!({

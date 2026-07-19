@@ -443,7 +443,7 @@ impl BrowserPrepareTool {
             read_only: false,
             destructive: true,
             idempotent: false,
-            open_world: false,
+            open_world: true,
         };
         Self { def, engine }
     }
@@ -689,7 +689,7 @@ impl BrowserClickTool {
             read_only: false,
             destructive: false,
             idempotent: false,
-            open_world: false,
+            open_world: true,
         };
         Self { def, engine }
     }
@@ -1071,7 +1071,7 @@ impl BrowserTypeTool {
             read_only: false,
             destructive: false,
             idempotent: false,
-            open_world: false,
+            open_world: true,
         };
         Self { def, engine }
     }
@@ -1445,7 +1445,7 @@ impl BrowserDialogTool {
                 read_only: false,
                 destructive: false,
                 idempotent: false,
-                open_world: false,
+                open_world: true,
             },
             engine,
         }
@@ -1970,12 +1970,21 @@ mod tests {
             assert!(!def.read_only, "{name} is a mutation");
             assert!(def.input_schema["properties"].is_object(), "{name} schema");
         }
-        // Navigate and download reach the open web; ordinary input does not.
-        assert!(BrowserNavigateTool::new(e.clone()).def().open_world);
-        assert!(BrowserDownloadTool::new(e.clone()).def().open_world);
+        // Every browser mutation can affect web or browser state outside the
+        // client, even when the immediate delivery route is local CDP.
+        for def in [
+            BrowserPrepareTool::new(e.clone()).def().clone(),
+            BrowserNavigateTool::new(e.clone()).def().clone(),
+            BrowserClickTool::new(e.clone()).def().clone(),
+            BrowserTypeTool::new(e.clone()).def().clone(),
+            BrowserDialogTool::new(e.clone()).def().clone(),
+            BrowserSetInputFilesTool::new(e.clone()).def().clone(),
+            BrowserDownloadTool::new(e.clone()).def().clone(),
+            BrowserPointerTool::new(e.clone()).def().clone(),
+        ] {
+            assert!(def.open_world, "{} can affect open-world state", def.name);
+        }
         assert!(BrowserDownloadTool::new(e.clone()).def().destructive);
-        assert!(!BrowserClickTool::new(e.clone()).def().open_world);
-        assert!(!BrowserPointerTool::new(e).def().open_world);
     }
 
     #[test]

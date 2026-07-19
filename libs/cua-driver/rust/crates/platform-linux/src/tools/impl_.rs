@@ -2264,10 +2264,13 @@ impl Tool for TypeTextTool {
             .into_owned();
         // Fail before any element focus or pixel-click can redirect subsequent
         // key events. The guard remains live until the delivery worker exits.
-        let _input_guard = match cua_driver_core::type_text_lock::try_acquire(pid as i64) {
+        let input_guard = match cua_driver_core::type_text_lock::try_acquire(pid as i64) {
             Ok(guard) => guard,
             Err(refusal) => return refusal,
         };
+        let tool_state = self.state.clone();
+        input_guard
+            .run_until_complete(async move {
         // Surface 6: resolve element_token / element_index for the
         // optional pre-typing focus glide below. The token also carries
         // the window_id when supplied so the caller can omit window_id.
@@ -2390,7 +2393,7 @@ impl Tool for TypeTextTool {
             }
             let from_zoom = args.bool_or("from_zoom", false);
             if let Err(e) = focus_by_pixel(
-                &self.state,
+                &tool_state,
                 pid,
                 Some(xid),
                 cx,
@@ -2774,6 +2777,8 @@ impl Tool for TypeTextTool {
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+            })
+            .await
     }
 }
 

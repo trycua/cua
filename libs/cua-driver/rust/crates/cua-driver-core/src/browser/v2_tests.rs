@@ -21,6 +21,7 @@ use super::platform::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
     ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
+use super::pointer::BrowserPointerTool;
 use super::refusal::BrowserRefusal;
 use super::tools::{
     BrowserClickTool, BrowserNavigateTool, BrowserPrepareTool, BrowserTypeTool, GetBrowserStateTool,
@@ -1394,6 +1395,21 @@ async fn semantic_refs_enforce_declared_action_kinds_before_delivery() {
         .await;
     assert_eq!(
         structured(&click)["refusal"]["code"],
+        "browser_action_unavailable"
+    );
+
+    let pointer = BrowserPointerTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "ref": content_ref,
+            "action": "hover",
+            "input_route": "dom_event"
+        }))
+        .await;
+    assert_eq!(
+        structured(&pointer)["refusal"]["code"],
         "browser_action_unavailable"
     );
 

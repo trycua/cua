@@ -120,6 +120,40 @@ approval is not enough. The initial existing-profile route requires a separate
 interactive artifact bound to one process, native window, and named driver
 session.
 
+## The CDP trust boundary
+
+CDP is used because it is the only supported Chromium interface that can
+address an exact inactive tab, inspect its document, and perform declared
+background operations without borrowing the person's keyboard or pointer.
+That power is also the reason Cua Driver treats attachment as a security
+boundary rather than a connection detail. CDP exposes broad browser authority,
+including page runtime, DOM, network, storage, and cookie domains; it is not a
+least-privilege API for one button or one tab.
+
+A loopback listener prevents remote hosts from connecting directly, but
+loopback is not authentication. Another process running as the same operating
+system user may be able to discover and connect to an exposed endpoint. Cua
+Driver's PID ownership proof, native-window correlation, scoped capabilities,
+and approval grant prevent the driver from attaching to the wrong endpoint;
+they cannot turn the Chromium endpoint itself into an authenticated service or
+protect it from unrelated local software.
+
+Use a driver-owned isolated profile by default. Attach an existing profile
+only when the task genuinely needs its authenticated session, only on a trusted
+machine, and only for the duration of that task. An endpoint that the browser
+already exposes can use the ordinary exact binding route without another setup
+transition because Cua Driver did not create or widen the listener. That does
+not reduce the endpoint's authority: the operator is responsible for how that
+browser was started and for closing remote debugging when it is no longer
+needed.
+
+Chromium applies its own protections to remote debugging on default profiles.
+Cua Driver does not bypass those protections, copy a profile, or weaken the
+browser's data encryption. See Chromium's
+[remote-debugging security guidance](https://developer.chrome.com/blog/remote-debugging-port)
+and the [Chrome DevTools Protocol domains](https://chromedevtools.github.io/devtools-protocol/)
+for the underlying browser boundary.
+
 Chrome can ask for consent whenever a genuinely new browser-level socket is
 opened. Cua Driver therefore keeps one socket for each approved connection
 generation and multiplexes tabs over it. If the socket drops, one reconnect

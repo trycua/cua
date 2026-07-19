@@ -87,6 +87,12 @@ Attaching to an authenticated profile requires a separate interactive grant
 bound to the exact process, native window, and caller session. Ordinary MCP
 approval is not enough:
 
+CDP exposes broad authority over the profile's live pages, cookies, storage,
+runtime, and network state. Loopback prevents remote-host access but is not
+authentication against other processes running as the same OS user. Use this
+route only on a trusted machine and only when an isolated profile cannot
+satisfy the task.
+
 ```bash
 cua-driver browser-approve --strategy existing_profile \
   --pid 4242 --window-id 991 --session browser-run-1
@@ -248,9 +254,11 @@ task result.
 
 Use `browser_pointer` for `hover`, `right_click`, `double_click`, `scroll`, and
 `drag`. It uses the same `trusted` versus explicit `dom_event` distinction as
-`browser_click`. The synthetic route requires a current ref; drag also requires
-`destination_ref` in the same proven frame. Coordinate origins and destinations
-are available only where the trusted route can preserve the requested posture.
+`browser_click`. A ref used here must declare `pointer` in its `actions` array.
+The synthetic route requires a current ref; drag also requires
+`destination_ref` in the same proven frame. Coordinate origins and
+destinations are available only where the trusted route can preserve the
+requested posture.
 
 ```bash
 cua-driver browser_pointer \
@@ -311,7 +319,10 @@ AX/PX ladder for browser chrome.
 The legacy `page` tool remains a compatibility surface for older clients. Do
 not start new browser workflows with it: its backend and trust semantics are
 less precise than the typed browser tools, and it does not replace exact
-window binding.
+window binding. Its mutations are disabled by default. Only a trusted daemon
+operator can enable the temporary compatibility path with
+`CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1`; that flag does not add typed
+endpoint ownership, capabilities, or existing-profile consent.
 
 ## Support boundaries
 

@@ -33,6 +33,7 @@ pub enum BrowserActionKind {
     Click,
     Type,
     Upload,
+    Pointer,
 }
 
 impl BrowserActionKind {
@@ -41,6 +42,7 @@ impl BrowserActionKind {
             Self::Click => "click",
             Self::Type => "type",
             Self::Upload => "upload",
+            Self::Pointer => "pointer",
         }
     }
 }

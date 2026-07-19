@@ -126,7 +126,10 @@ fn run_web_case_with_preparation<P, F>(
         let journal = FixtureJournal::start();
         let mut driver = McpDriver::spawn_named_with_env(
             &cell_id,
-            &[("CUA_DRIVER_CDP_PORT", cdp_port_string.as_str())],
+            &[
+                ("CUA_DRIVER_CDP_PORT", cdp_port_string.as_str()),
+                ("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS", "1"),
+            ],
         )
         .expect("required source-built Windows driver did not start");
         *evidence = recording_evidence(driver.recording_dir());

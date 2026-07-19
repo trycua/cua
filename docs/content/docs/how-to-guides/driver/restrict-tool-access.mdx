@@ -76,6 +76,51 @@ Each `constraints` key matches a JSON argument name. A rule allows the call only
   The `type_text_chars` tool name is automatically aliased to `type_text` before policy evaluation, so a rule on `type_text` covers both forms.
 </Callout>
 
+## Restrict a browser-only agent
+
+For an agent that should work only in a browser Cua Driver has already
+prepared, allow inspection and ordinary page interaction while denying profile
+setup, local-file transfer, downloads, and the legacy mutation surface:
+
+```yaml
+allow:
+  tools:
+    - list_apps
+    - list_windows
+    - start_session
+    - end_session
+    - get_browser_state
+    - browser_click
+    - browser_type
+    - browser_pointer
+    - browser_dialog
+    - wait
+  rules:
+    - tool: browser_navigate
+      constraints:
+        url:
+          pattern: "^https://(docs\\.example\\.com|app\\.example\\.com)(/|$)"
+deny:
+  tools:
+    - browser_prepare
+    - browser_set_input_files
+    - browser_download
+    - page
+    - shell_execute
+```
+
+Replace the example hosts with the exact destinations required for the task.
+Run profile preparation separately under maintainer control before starting the
+restricted agent.
+
+<Callout type="warn">
+  Tool policy cannot predict what a page will do after a click, form submit,
+  script, or redirect. A host allowlist constrains explicit
+  `browser_navigate` calls, not destinations reached through page behavior.
+  Keep consequential accounts and existing authenticated profiles outside an
+  untrusted agent's policy boundary.
+</Callout>
+
 ## Create a Rego policy
 
 For more complex access control — for example, allowing different tool sets based on the active task or runtime conditions — write a Rego policy:

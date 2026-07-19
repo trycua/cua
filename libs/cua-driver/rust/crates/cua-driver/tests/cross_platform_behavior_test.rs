@@ -1211,20 +1211,6 @@ fn cell_selected(case: &CaseSpec) -> bool {
 }
 
 fn run_browser_tool_roundtrip(fixture: &mut Fixture) -> Observation {
-    let legacy = fixture.driver.call(
-        "page",
-        serde_json::json!({
-            "pid": fixture.pid as i64,
-            "window_id": fixture.wid,
-            "action": "execute_javascript",
-            "javascript": "document.querySelector('[data-cua-id=page-marker]').textContent",
-        }),
-    );
-    assert!(
-        !legacy.is_error() && legacy.text().contains("WEB_HARNESS_MARKER_v1"),
-        "legacy page transport did not read the Electron fixture marker: {}",
-        legacy.raw
-    );
     let session = format!("browser-v1-e2e-{}", fixture.pid);
     let started = fixture
         .driver

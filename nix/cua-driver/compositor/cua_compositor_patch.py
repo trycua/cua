@@ -322,21 +322,14 @@ static struct tinywl_toplevel *cua_desktop_motion(struct tinywl_server *server, 
 	if (!t || !surface) return NULL;
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
 	if (!sc || wl_list_empty(&sc->pointers)) return NULL;
-	struct wl_resource *res;
-	if (cua_ptr[0].entered != surface) {
-		if (cua_ptr[0].entered) cua_ptr_leave(server->seat, cua_ptr[0].entered);
-		uint32_t serial = wlr_seat_client_next_serial(sc);
-		wl_resource_for_each(res, &sc->pointers) {
-			wl_pointer_send_enter(res, serial, surface->resource, wl_fixed_from_double(sx), wl_fixed_from_double(sy));
-			cua_pframe(res);
-		}
-		cua_ptr[0].entered = surface;
-	}
-	uint32_t tm = cua_now_ms();
-	wl_resource_for_each(res, &sc->pointers) {
-		wl_pointer_send_motion(res, tm, wl_fixed_from_double(sx), wl_fixed_from_double(sy));
-		cua_pframe(res);
-	}
+	/* Desktop scope also uses logical device 0. Keep wlroots' seat pointer
+	 * focus in sync before cua_button() sends its protocol-complete seat
+	 * notification; raw resource enters here would leave the seat targeting a stale
+	 * surface, so the following button notification never reaches this point. */
+	wlr_seat_pointer_notify_enter(server->seat, surface, sx, sy);
+	wlr_seat_pointer_notify_motion(server->seat, cua_now_ms(), sx, sy);
+	wlr_seat_pointer_notify_frame(server->seat);
+	cua_ptr[0].entered = surface;
 	return t;
 }
 static bool cua_button(struct tinywl_server *server, struct tinywl_toplevel *t, int idx, uint32_t button, bool pressed) {

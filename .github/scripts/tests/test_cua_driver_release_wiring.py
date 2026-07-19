@@ -246,6 +246,16 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('--tag "${{ steps.version.outputs.tag }}"', workflow)
         self.assertIn('--sha "${{ steps.version.outputs.sha }}"', workflow)
 
+    def test_driver_release_publishes_checksums_for_python_wheels(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+
+        self.assertIn("name: Generate SHA256 checksums", workflow)
+        self.assertIn(
+            "shasum -a 256 cua-driver-rs-*.{tar.gz,zip}",
+            workflow,
+        )
+        self.assertIn("} > checksums.txt", workflow)
+
     def test_lume_uses_the_same_draft_finalizer(self) -> None:
         workflow = self.read(".github/workflows/cd-swift-lume.yml")
 

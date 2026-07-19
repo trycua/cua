@@ -300,7 +300,7 @@ impl Tool for TypeTextTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        let changes = super::finish_window_observation(snapshot, &args).await;
 
         match result {
             Ok(Ok((detail, path, verified))) => {
@@ -422,6 +422,14 @@ impl Tool for TypeTextTool {
 const PATH_AX: &str = "ax";
 const PATH_KEY_EVENTS: &str = "key_events";
 const PATH_KEY_EVENTS_FG: &str = "key_events_fg";
+
+fn foreground_settle_ms(pid: i32, frontmost_pid: Option<i32>) -> u64 {
+    if frontmost_pid == Some(pid) {
+        20
+    } else {
+        200
+    }
+}
 
 /// Read-back verification for a keystroke rung: did the typed text actually land?
 ///
@@ -577,12 +585,13 @@ fn type_text_blocking(
     if delivery_mode.is_foreground() {
         // Settle between front+focus and the first keystroke — see the
         // "i love u" -> "love u" first-char-drop note in cgevent_type_verified.
-        // 60ms covers native Cocoa/Catalyst surfaces, but focus-proxy clients
-        // that re-establish their own input channel on activation need longer:
+        // A target that was already frontmost pays only 20ms for element-focus
+        // settling. Focus-proxy clients that were just activated need longer:
         // an RDP client (Microsoft Windows App) re-arms its keyboard grab with
         // the remote host over hundreds of ms, so at 60ms every keystroke was
-        // dropped. 200ms covers that re-grab without being perceptible.
-        const FOREGROUND_SETTLE_MS: u64 = 200;
+        // dropped. 200ms covers that re-grab without penalizing an already
+        // armed interactive stream on every text chunk.
+        let foreground_settle_ms = foreground_settle_ms(pid, apps::frontmost_pid());
         let do_type = || {
             cgevent_type_verified(
                 pid,
@@ -590,7 +599,7 @@ fn type_text_blocking(
                 delay_ms,
                 before.as_deref(),
                 element_ptr_and_idx,
-                FOREGROUND_SETTLE_MS,
+                foreground_settle_ms,
             )
         };
         let (verified, fronted) = match window_id {
@@ -770,5 +779,12 @@ mod tests {
         assert_eq!(PATH_AX, "ax");
         assert_eq!(PATH_KEY_EVENTS, "key_events");
         assert_eq!(PATH_KEY_EVENTS_FG, "key_events_fg");
+    }
+
+    #[test]
+    fn foreground_typing_skips_long_rearm_when_target_is_already_frontmost() {
+        assert_eq!(foreground_settle_ms(42, Some(42)), 20);
+        assert_eq!(foreground_settle_ms(42, Some(7)), 200);
+        assert_eq!(foreground_settle_ms(42, None), 200);
     }
 }

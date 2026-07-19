@@ -89,22 +89,50 @@ fn try_send_x11_message(
 
 #[cfg(target_os = "linux")]
 struct X11OverlayThreadCleanup {
+    receiver: Option<std::sync::mpsc::Receiver<OverlayMsg>>,
     disable_render_state: bool,
 }
 
 #[cfg(target_os = "linux")]
-impl Drop for X11OverlayThreadCleanup {
-    fn drop(&mut self) {
-        // Dropping every sender releases active animate_cursor_to waiters. On
-        // X11, also make future calls observe the renderer as unavailable. A
-        // Wayland session may still use its native forwarding path even when
-        // the optional XWayland owner thread cannot start.
-        release_all_arrivals();
+impl X11OverlayThreadCleanup {
+    fn receiver(&self) -> &std::sync::mpsc::Receiver<OverlayMsg> {
+        self.receiver
+            .as_ref()
+            .expect("X11 overlay receiver is available before teardown")
+    }
+
+    fn disconnect_receiver(&mut self) {
+        drop(self.receiver.take());
+    }
+
+    fn finish_cleanup(&self) {
         if self.disable_render_state {
             if let Ok(mut guard) = RENDER.lock() {
                 disable_render_map(&mut guard);
             }
         }
+        release_all_arrivals();
+    }
+
+    /// Run a hook in the only teardown interval where registration can race:
+    /// after channel disconnection but before renderer/waiter cleanup.
+    fn teardown_with_after_disconnect(&mut self, after_disconnect: impl FnOnce()) {
+        self.disconnect_receiver();
+        after_disconnect();
+        self.finish_cleanup();
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for X11OverlayThreadCleanup {
+    fn drop(&mut self) {
+        // Disconnect first so an animator racing teardown cannot enqueue after
+        // the waiter sweep. Registrations before release are swept below;
+        // registrations after release observe a disconnected channel and cancel
+        // themselves. On X11, also make future calls observe the renderer as
+        // unavailable. A Wayland session may still use its native forwarding
+        // path even when the optional XWayland owner thread cannot start.
+        self.teardown_with_after_disconnect(|| {});
     }
 }
 
@@ -718,9 +746,11 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     };
     use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 
-    let _cleanup = X11OverlayThreadCleanup {
+    let cleanup = X11OverlayThreadCleanup {
+        receiver: Some(rx),
         disable_render_state: !crate::wayland::is_wayland(),
     };
+    let rx = cleanup.receiver();
 
     // Connect to X11.
     let (conn, screen_num) = match x11rb::connect(None) {
@@ -876,7 +906,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         // services X11/RandR events; a resting visible cursor also reasserts
         // z-order at most every 80 ms. Neither maintenance path authorizes paint.
         let (first_msg, maintenance_timeout) =
-            match wait_for_overlay_work(&rx, frame_tick_needed, maintenance_deadline) {
+            match wait_for_overlay_work(rx, frame_tick_needed, maintenance_deadline) {
                 OverlayWake::Frame => (None, false),
                 OverlayWake::Message(msg) => (Some(msg), false),
                 OverlayWake::MaintenanceTimeout => (None, true),
@@ -941,7 +971,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
                 let (arrived, had_msg) = process_render_wake(
                     map,
                     first_msg,
-                    &rx,
+                    rx,
                     elapsed_dt,
                     maintenance_timeout,
                     frame_tick_needed,
@@ -1396,6 +1426,29 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         assert!(try_send_x11_message(Some(&tx), test_message()));
         assert!(matches!(rx.try_recv(), Ok(OverlayMsg::Cmd(_))));
+    }
+
+    #[test]
+    fn teardown_disconnects_before_releasing_registration() {
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::sync_channel(1);
+        let mut cleanup = X11OverlayThreadCleanup {
+            receiver: Some(cmd_rx),
+            disable_render_state: false,
+        };
+
+        let key = "teardown-race".to_owned();
+        let (arrival_tx, mut arrival_rx) = tokio::sync::oneshot::channel();
+        cleanup.teardown_with_after_disconnect(|| {
+            assert!(matches!(
+                cmd_tx.try_send(test_message()),
+                Err(std::sync::mpsc::TrySendError::Disconnected(_))
+            ));
+            arrival_register(key, arrival_tx);
+        });
+        assert!(matches!(
+            arrival_rx.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+        ));
     }
 
     #[test]

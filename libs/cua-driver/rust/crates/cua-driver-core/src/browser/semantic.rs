@@ -20,6 +20,8 @@ pub(crate) const SEMANTIC_COMPUTED_STYLES: &[&str] = &[
     "cursor",
     "position",
     "z-index",
+    "overflow-x",
+    "overflow-y",
 ];
 pub(crate) const DEFAULT_SEMANTIC_NODE_BUDGET: usize = 300;
 const NEAR_VIEWPORT_MARGIN: f64 = 1_000.0;
@@ -91,6 +93,8 @@ pub(crate) struct DomIndex {
 #[derive(Debug, Clone, Default)]
 struct LayoutMeta {
     bounds: Option<Rect>,
+    client_rect: Option<Rect>,
+    scroll_rect: Option<Rect>,
     styles: HashMap<String, String>,
     paint_order: Option<i64>,
 }
@@ -382,6 +386,16 @@ pub(crate) fn build_layout_index(snapshot: &Value) -> LayoutIndex {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        let client_rects = layout
+            .get("clientRects")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let scroll_rects = layout
+            .get("scrollRects")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
 
         for (layout_idx, node_index) in node_indices.iter().enumerate() {
             let Some(node_index) = node_index.as_u64().and_then(|v| usize::try_from(v).ok()) else {
@@ -405,6 +419,8 @@ pub(crate) fn build_layout_index(snapshot: &Value) -> LayoutIndex {
                 backend,
                 LayoutMeta {
                     bounds: bounds.get(layout_idx).and_then(Rect::from_value),
+                    client_rect: client_rects.get(layout_idx).and_then(Rect::from_value),
+                    scroll_rect: scroll_rects.get(layout_idx).and_then(Rect::from_value),
                     styles: computed,
                     paint_order: paint_orders.get(layout_idx).and_then(Value::as_i64),
                 },
@@ -810,18 +826,41 @@ fn action_kinds(
     {
         actions.push(BrowserActionKind::Click);
     }
-    if !actions.is_empty()
-        && layout.is_some_and(|meta| {
-            meta.bounds.is_some_and(Rect::has_area)
-                && !meta
-                    .styles
-                    .get("pointer-events")
-                    .is_some_and(|value| value.eq_ignore_ascii_case("none"))
-        })
-    {
-        actions.push(BrowserActionKind::Pointer);
+    if let Some(layout) = layout.filter(|meta| {
+        meta.bounds.is_some_and(Rect::has_area)
+            && !meta
+                .styles
+                .get("pointer-events")
+                .is_some_and(|value| value.eq_ignore_ascii_case("none"))
+    }) {
+        if !actions.is_empty() {
+            actions.push(BrowserActionKind::Pointer);
+        }
+        if layout_is_scrollable(layout) {
+            actions.push(BrowserActionKind::Scroll);
+        }
     }
     actions
+}
+
+fn layout_is_scrollable(layout: &LayoutMeta) -> bool {
+    let (Some(client), Some(scroll)) = (layout.client_rect, layout.scroll_rect) else {
+        return false;
+    };
+    let scrollable_axis = |overflow: Option<&String>, scroll_extent: f64, client_extent: f64| {
+        overflow.is_some_and(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "auto" | "scroll" | "overlay"
+            )
+        }) && scroll_extent > client_extent + 0.5
+    };
+    scrollable_axis(layout.styles.get("overflow-x"), scroll.width, client.width)
+        || scrollable_axis(
+            layout.styles.get("overflow-y"),
+            scroll.height,
+            client.height,
+        )
 }
 
 fn ax_states(node: &Value) -> BTreeMap<String, Value> {
@@ -1201,6 +1240,60 @@ mod tests {
             .selected
             .iter()
             .all(|node| node.name.as_deref() != Some("Static panel")));
+    }
+
+    #[test]
+    fn dom_supplement_exposes_scrollable_containers_without_click_authority() {
+        let dom = build_dom_index(&json!({
+            "nodeType": 9,
+            "frameId": "F_MAIN",
+            "children": [
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 1,
+                 "attributes": ["aria-label", "Scrollable archive"]},
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 2,
+                 "attributes": ["aria-label", "Overflow-visible panel"]}
+            ]
+        }));
+        let layout = build_layout_index(&json!({
+            "strings": ["block", "visible", "1", "auto", "default", "static", "0", "scroll"],
+            "documents": [{
+                "nodes": {"backendNodeId": [1, 2]},
+                "layout": {
+                    "nodeIndex": [0, 1],
+                    "bounds": [[10, 10, 100, 50], [10, 80, 100, 50]],
+                    "clientRects": [[10, 10, 100, 50], [10, 80, 100, 50]],
+                    "scrollRects": [[0, 0, 100, 250], [0, 0, 100, 250]],
+                    "styles": [
+                        [0, 1, 2, 3, 4, 5, 6, 3, 7],
+                        [0, 1, 2, 3, 4, 5, 6, 1, 1]
+                    ],
+                    "paintOrders": [1, 2]
+                }
+            }]
+        }));
+        let viewport = parse_viewport(&json!({
+            "cssVisualViewport": {"pageX": 0.0, "pageY": 0.0,
+                                  "clientWidth": 800.0, "clientHeight": 600.0}
+        }));
+        let document = compose_accessibility_tree(
+            &json!({"nodes": [{"nodeId": "root", "ignored": false,
+                "role": {"value": "RootWebArea"}, "childIds": []}]}),
+            &dom,
+            &layout,
+            &viewport,
+            frame(),
+        );
+        let page = document.page(0, 300, None, None);
+        let scrollable = page
+            .selected
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Scrollable archive"))
+            .expect("scrollable DOM supplement");
+        assert_eq!(scrollable.actions, vec![BrowserActionKind::Scroll]);
+        assert!(page
+            .selected
+            .iter()
+            .all(|node| node.name.as_deref() != Some("Overflow-visible panel")));
     }
 
     #[test]

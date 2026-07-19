@@ -280,6 +280,11 @@ browser_pointer({
 })
 ```
 
+Hover, right-click, double-click, and drag require a ref whose `actions`
+contains `pointer`. Scroll accepts either `scroll` or `pointer`, so a plain
+overflow container can be scrollable without gaining broader pointer
+authority.
+
 For drag, pass `destination_ref` from the same exact frame. The driver refuses
 mixed-frame or stale destinations instead of translating them approximately.
 
@@ -351,7 +356,8 @@ and AX/PX actions for those surfaces.
 The older `page` tool remains available for compatibility. Its read-only
 `get_text` and `query_dom` actions are available by default. Legacy mutation
 actions are disabled unless the daemon operator explicitly starts Cua Driver
-with `CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1`.
+with `CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1`. The flag is read when the
+daemon starts, so restart Cua Driver after changing it.
 
 That flag is a temporary compatibility escape hatch, not an equivalent browser
 grant: legacy CDP ports and URL hints do not receive the typed surface's exact

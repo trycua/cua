@@ -55,6 +55,9 @@ jobs:
         # Compile every Rust target without executing desktop-dependent integration
         # tests; interactive behavior belongs in e2e-rust-windows.yml.
         run: cargo test -p cua-driver -p cua-driver-core -p cua-driver-testkit -p platform-windows -p cua-driver-uia --all-targets --no-run --locked
+      - name: Run Windows browser platform unit tests
+        working-directory: libs/cua-driver/rust
+        run: 'cargo test -p platform-windows browser_platform::tests:: --lib --locked'
       - name: Run Windows protocol schema contract
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver --test protocol_schema_test --locked

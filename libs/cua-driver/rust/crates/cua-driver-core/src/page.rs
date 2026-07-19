@@ -257,8 +257,9 @@ fn def() -> &'static ToolDef {
         description: "Legacy browser compatibility tool. Prefer get_browser_state and the \
             typed browser_* tools for exact targeting, endpoint ownership, and consent. \
             Read-only get_text and query_dom remain available by default. Mutating actions \
-            require the daemon operator to set CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1; \
-            this escape hatch does not provide the typed browser surface's exact binding or \
+            require the daemon operator to set CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1 before \
+            daemon startup (restart the daemon after changing it); this escape hatch does not \
+            provide the typed browser surface's exact binding or \
             existing-profile grant guarantees. Supports \
             Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), \
             Chromium/Firefox on Windows (via UIA for read; CDP for execute_javascript when \

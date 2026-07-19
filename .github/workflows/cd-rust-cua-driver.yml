@@ -180,9 +180,10 @@ jobs:
       # fail here instead of surfacing a misleading `can't find crate core`
       # error during the release build.
       - name: Ensure Rust target is installed
+        working-directory: libs/cua-driver/rust
         shell: bash
         run: |
-          rustup target add --toolchain stable "${{ matrix.target }}"
+          rustup target add "${{ matrix.target }}"
           rustup target list --installed | grep -Fx "${{ matrix.target }}"
       - uses: actions/cache@v4
         with:
@@ -300,8 +301,9 @@ jobs:
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
       - name: Ensure Rust targets are installed
+        working-directory: libs/cua-driver/rust
         run: |
-          rustup target add --toolchain stable \
+          rustup target add \
             aarch64-apple-darwin x86_64-apple-darwin
           rustup target list --installed | grep -Fx aarch64-apple-darwin
           rustup target list --installed | grep -Fx x86_64-apple-darwin

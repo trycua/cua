@@ -231,9 +231,14 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             "format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref"
         )
         self.assertEqual(workflow.count(immutable_ref), 4)
-        self.assertIn('rustup target add --toolchain stable "${{ matrix.target }}"', workflow)
         self.assertIn(
-            "rustup target add --toolchain stable \\\n"
+            "name: Ensure Rust target is installed\n"
+            "        working-directory: libs/cua-driver/rust",
+            workflow,
+        )
+        self.assertIn('rustup target add "${{ matrix.target }}"', workflow)
+        self.assertIn(
+            "rustup target add \\\n"
             "            aarch64-apple-darwin x86_64-apple-darwin",
             workflow,
         )

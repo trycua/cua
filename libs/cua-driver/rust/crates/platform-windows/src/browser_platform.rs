@@ -267,6 +267,21 @@ async fn browser_endpoints_for_pid(pid: u32) -> Result<Vec<(u16, String)>, Brows
     .await
 }
 
+async fn loopback_port_is_owned_with_retry(
+    pid: u32,
+    expected_port: u16,
+) -> Result<bool, BrowserRefusal> {
+    for attempt in 0..ENDPOINT_DISCOVERY_ATTEMPTS {
+        if loopback_ports_for_pid(pid).await?.contains(&expected_port) {
+            return Ok(true);
+        }
+        if attempt + 1 < ENDPOINT_DISCOVERY_ATTEMPTS {
+            tokio::time::sleep(ENDPOINT_DISCOVERY_RETRY_DELAY).await;
+        }
+    }
+    Ok(false)
+}
+
 #[async_trait]
 impl BrowserPlatform for WindowsBrowserPlatform {
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
@@ -452,12 +467,10 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 "the approved existing-profile endpoint is not loopback-only",
             ));
         };
-        let endpoint_is_owned = browser_endpoints_for_pid(pid_u32).await?.iter().any(
-            |(candidate_port, candidate_ws_url)| {
-                *candidate_port == port && candidate_ws_url == expected_ws_url
-            },
-        );
-        if !endpoint_is_owned {
+        // Setup may approve the exact PID-owned port before Chromium publishes
+        // its final browser WebSocket id. Reprove that stable port ownership
+        // here; the connection layer still uses the approved WebSocket path.
+        if !loopback_port_is_owned_with_retry(pid_u32, port).await? {
             return Ok(None);
         }
         Ok(Some(OwnedEndpoint {

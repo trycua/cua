@@ -19,7 +19,7 @@ use crate::tool_args::ArgsExt;
 use super::cdp_ws::CdpConnection;
 use super::engine::{BrowserEngine, ValidatedTab};
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
-use super::store::{FrameKind, FrameRef};
+use super::store::{BrowserActionKind, FrameKind, FrameRef};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PointerAction {
@@ -296,7 +296,7 @@ impl BrowserPointerTool {
                 read_only: false,
                 destructive: false,
                 idempotent: false,
-                open_world: false,
+                open_world: true,
             },
             engine,
         }
@@ -315,6 +315,13 @@ impl BrowserPointerTool {
             .store
             .resolve_ref(session, target_id, tab_id, external)
             .map_err(|refusal| refusal.to_tool_result())?;
+        if entry.semantic && !entry.actions.contains(&BrowserActionKind::Pointer) {
+            return Err(BrowserRefusal::new(
+                BrowserRefusalCode::BrowserActionUnavailable,
+                format!("semantic ref {external} does not declare the pointer action"),
+            )
+            .to_tool_result());
+        }
         let cdp_session = self
             .engine
             .frame_session_for_mutation(session, target_id, tab_id, validated, &entry.frame)

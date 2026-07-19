@@ -810,6 +810,17 @@ fn action_kinds(
     {
         actions.push(BrowserActionKind::Click);
     }
+    if !actions.is_empty()
+        && layout.is_some_and(|meta| {
+            meta.bounds.is_some_and(Rect::has_area)
+                && !meta
+                    .styles
+                    .get("pointer-events")
+                    .is_some_and(|value| value.eq_ignore_ascii_case("none"))
+        })
+    {
+        actions.push(BrowserActionKind::Pointer);
+    }
     actions
 }
 
@@ -1184,7 +1195,7 @@ mod tests {
         let page = document.page(0, 300, None, None);
         assert!(page.selected.iter().any(|node| {
             node.name.as_deref() == Some("Custom action")
-                && node.actions == vec![BrowserActionKind::Click]
+                && node.actions == vec![BrowserActionKind::Click, BrowserActionKind::Pointer]
         }));
         assert!(page
             .selected

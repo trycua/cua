@@ -1,5 +1,6 @@
 //! Windows identity and endpoint evidence for the first-class browser tools.
 
+use std::future::Future;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -224,6 +225,63 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
     .flatten()
 }
 
+const ENDPOINT_DISCOVERY_ATTEMPTS: usize = 4;
+const ENDPOINT_DISCOVERY_RETRY_DELAY: Duration = Duration::from_millis(100);
+
+async fn browser_endpoints_once(pid: u32) -> Result<Vec<(u16, String)>, BrowserRefusal> {
+    let mut endpoints = Vec::new();
+    for port in loopback_ports_for_pid(pid).await? {
+        if let Some(ws_url) = browser_websocket_url(port).await {
+            endpoints.push((port, ws_url));
+        }
+    }
+    Ok(endpoints)
+}
+
+async fn retry_empty_endpoint_discovery<F, Fut>(
+    attempts: usize,
+    delay: Duration,
+    mut probe: F,
+) -> Result<Vec<(u16, String)>, BrowserRefusal>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<Vec<(u16, String)>, BrowserRefusal>>,
+{
+    let attempts = attempts.max(1);
+    for attempt in 0..attempts {
+        let endpoints = probe().await?;
+        if !endpoints.is_empty() || attempt + 1 == attempts {
+            return Ok(endpoints);
+        }
+        tokio::time::sleep(delay).await;
+    }
+    unreachable!("the bounded endpoint-discovery loop always returns")
+}
+
+async fn browser_endpoints_for_pid(pid: u32) -> Result<Vec<(u16, String)>, BrowserRefusal> {
+    retry_empty_endpoint_discovery(
+        ENDPOINT_DISCOVERY_ATTEMPTS,
+        ENDPOINT_DISCOVERY_RETRY_DELAY,
+        || browser_endpoints_once(pid),
+    )
+    .await
+}
+
+async fn loopback_port_is_owned_with_retry(
+    pid: u32,
+    expected_port: u16,
+) -> Result<bool, BrowserRefusal> {
+    for attempt in 0..ENDPOINT_DISCOVERY_ATTEMPTS {
+        if loopback_ports_for_pid(pid).await?.contains(&expected_port) {
+            return Ok(true);
+        }
+        if attempt + 1 < ENDPOINT_DISCOVERY_ATTEMPTS {
+            tokio::time::sleep(ENDPOINT_DISCOVERY_RETRY_DELAY).await;
+        }
+    }
+    Ok(false)
+}
+
 #[async_trait]
 impl BrowserPlatform for WindowsBrowserPlatform {
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
@@ -348,20 +406,19 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
-        for port in loopback_ports_for_pid(pid_u32).await? {
-            if let Some(ws_url) = browser_websocket_url(port).await {
-                return Ok(Some(OwnedEndpoint {
-                    ws_url,
-                    http_port: Some(port),
-                    ownership: EndpointOwnershipProof {
-                        method: EndpointOwnershipMethod::ListeningSocketPid,
-                        owner_pid: pid,
-                        detail: Some("netstat listener owner pid".to_owned()),
-                    },
-                }));
-            }
-        }
-        Ok(None)
+        Ok(browser_endpoints_for_pid(pid_u32)
+            .await?
+            .into_iter()
+            .next()
+            .map(|(port, ws_url)| OwnedEndpoint {
+                ws_url,
+                http_port: Some(port),
+                ownership: EndpointOwnershipProof {
+                    method: EndpointOwnershipMethod::ListeningSocketPid,
+                    owner_pid: pid,
+                    detail: Some("netstat listener owner pid".to_owned()),
+                },
+            }))
     }
 
     async fn discover_existing_profile_endpoint(
@@ -374,12 +431,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
-        let mut discovered = Vec::new();
-        for port in loopback_ports_for_pid(pid_u32).await? {
-            if let Some(ws_url) = browser_websocket_url(port).await {
-                discovered.push((port, ws_url));
-            }
-        }
+        let discovered = browser_endpoints_for_pid(pid_u32).await?;
         match discovered.as_slice() {
             [] => Ok(None),
             [(port, ws_url)] => Ok(Some(OwnedEndpoint {
@@ -415,7 +467,10 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 "the approved existing-profile endpoint is not loopback-only",
             ));
         };
-        if !loopback_ports_for_pid(pid_u32).await?.contains(&port) {
+        // Setup may approve the exact PID-owned port before Chromium publishes
+        // its final browser WebSocket id. Reprove that stable port ownership
+        // here; the connection layer still uses the approved WebSocket path.
+        if !loopback_port_is_owned_with_retry(pid_u32, port).await? {
             return Ok(None);
         }
         Ok(Some(OwnedEndpoint {
@@ -651,6 +706,8 @@ impl BrowserPlatform for WindowsBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     #[test]
     fn netstat_parser_requires_loopback_listening_and_exact_pid() {
@@ -692,6 +749,36 @@ mod tests {
         assert_eq!(
             loopback_websocket_port("wss://127.0.0.1:9222/devtools"),
             None
+        );
+    }
+
+    #[tokio::test]
+    async fn endpoint_discovery_retries_only_empty_socket_snapshots() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let probe_calls = Arc::clone(&calls);
+        let endpoints = retry_empty_endpoint_discovery(4, Duration::ZERO, move || {
+            let call = probe_calls.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if call < 2 {
+                    Ok(Vec::new())
+                } else {
+                    Ok(vec![(
+                        9222,
+                        "ws://127.0.0.1:9222/devtools/browser/proven".to_owned(),
+                    )])
+                }
+            }
+        })
+        .await
+        .expect("retry transient empty socket snapshots");
+
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            endpoints,
+            vec![(
+                9222,
+                "ws://127.0.0.1:9222/devtools/browser/proven".to_owned(),
+            )]
         );
     }
 }

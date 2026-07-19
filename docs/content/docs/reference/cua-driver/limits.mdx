@@ -35,6 +35,22 @@ Apple Events JavaScript is not equivalent to trusted browser input, and mutable
 tab ordinals cannot satisfy exact window targeting. These surfaces therefore
 remain capability-visible but mutation-unavailable instead of being guessed.
 
+The typed browser surface is preview-grade before 1.0. Product support means
+that the exact binding, supported mutations, declared background posture, and
+structured refusals have release evidence. Recognition alone is not a support
+claim.
+
+| Platform and surface | Current typed-browser status |
+| --- | --- |
+| Windows Chrome and Edge | Validated. Trusted background pointer and synthetic DOM routes are covered. An interactive desktop is required. |
+| macOS Chrome and Edge | Existing-profile attachment is validated. Synthetic DOM actions can remain fully background; trusted standalone pointer routes refuse when Chromium would activate. |
+| Linux X11 Chrome and Edge | Validated for exact binding and synthetic DOM background routes. Trusted standalone pointer routes refuse when activation is unavoidable. |
+| Linux Sway with Chrome | Validated only when compositor identity, process, window, and geometry are exact. |
+| Generic GNOME or KDE Wayland | Read-only discovery or structured refusal; mutation is not claimed. |
+| Electron | Validated only for the bounded one-native-window to one-CDP-page shape. |
+| Brave, Vivaldi, Opera, Arc, and other detected Chromium derivatives | Detected but not release-accepted; use at your own risk. |
+| Safari, Firefox, WebView2, Tauri, WKWebView, and WebKitGTK | Typed mutation unsupported. Use documented native AX/PX fallbacks where available. |
+
 Page refs traverse open shadow roots and same-process frames and are capped to
 the first 300 interactive elements. Out-of-process frames are included only
 when the runtime exposes a capability-tested CDP session for that frame;

@@ -2268,9 +2268,21 @@ impl Tool for TypeTextTool {
             Ok(guard) => guard,
             Err(refusal) => return refusal,
         };
-        let tool_state = self.state.clone();
         input_guard
-            .run_until_complete(async move {
+            .run_until_complete(Self::invoke_locked(self.state.clone(), args, pid, text))
+            .await
+    }
+}
+
+impl TypeTextTool {
+    async fn invoke_locked(
+        tool_state: Arc<ToolState>,
+        args: Value,
+        pid: u32,
+        text: String,
+    ) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+
         // Surface 6: resolve element_token / element_index for the
         // optional pre-typing focus glide below. The token also carries
         // the window_id when supplied so the caller can omit window_id.
@@ -2777,8 +2789,6 @@ impl Tool for TypeTextTool {
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
-            })
-            .await
     }
 }
 

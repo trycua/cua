@@ -178,9 +178,21 @@ impl Tool for TypeTextTool {
             Ok(guard) => guard,
             Err(refusal) => return refusal,
         };
-        let tool_state = self.state.clone();
         input_guard
-            .run_until_complete(async move {
+            .run_until_complete(Self::invoke_locked(self.state.clone(), args, pid, text))
+            .await
+    }
+}
+
+impl TypeTextTool {
+    async fn invoke_locked(
+        tool_state: Arc<ToolState>,
+        args: Value,
+        pid: i32,
+        text: String,
+    ) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+
         // Surface 6: element_token / element_index precedence resolution.
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
@@ -421,8 +433,6 @@ impl Tool for TypeTextTool {
             Ok(Err(e)) => ToolResult::error(format!("type_text failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
-            })
-            .await
     }
 }
 

@@ -3469,7 +3469,6 @@ impl Tool for TypeTextTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use crate::input::delivery::{DeliveryMode, EventKind};
         use cua_driver_core::tool_args::ArgsExt;
         let text_raw = match args.require_str("text") {
             Ok(v) => v,
@@ -3519,9 +3518,31 @@ impl Tool for TypeTextTool {
             Ok(guard) => guard,
             Err(refusal) => return refusal,
         };
-        let tool_state = self.state.clone();
         input_guard
-            .run_until_complete(async move {
+            .run_until_complete(Self::invoke_locked(
+                self.state.clone(),
+                args,
+                pid,
+                raw_pid,
+                text,
+                cursor_key,
+            ))
+            .await
+    }
+}
+
+impl TypeTextTool {
+    async fn invoke_locked(
+        tool_state: Arc<ToolState>,
+        args: Value,
+        pid: u32,
+        raw_pid: i64,
+        text: String,
+        cursor_key: String,
+    ) -> ToolResult {
+        use crate::input::delivery::{DeliveryMode, EventKind};
+        use cua_driver_core::tool_args::ArgsExt;
+
         // Surface 6: element_token / element_index precedence resolution.
         let resolved = match cua_driver_core::element_token::resolve_element_args(
             pid as i32,
@@ -3651,8 +3672,7 @@ impl Tool for TypeTextTool {
             // actuator used by an indexed click before sending Unicode input.
             if let Some(idx) = elem_idx {
                 let (cx, cy) =
-                    match self
-                        .state
+                    match tool_state
                         .element_cache
                         .get_element_center(pid, hwnd, idx as usize)
                     {
@@ -4012,8 +4032,6 @@ impl Tool for TypeTextTool {
             Ok((Err(e), _, _)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
-            })
-            .await
     }
 }
 

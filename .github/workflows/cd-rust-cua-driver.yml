@@ -545,6 +545,16 @@ jobs:
           echo "Release files:"
           ls -lh release-upload/
 
+      - name: Generate SHA256 checksums
+        run: |
+          cd release-upload
+          {
+            echo "## SHA256 Checksums"
+            echo '```'
+            shasum -a 256 cua-driver-rs-*.{tar.gz,zip} 2>/dev/null | sort
+            echo '```'
+          } > checksums.txt
+
       - name: Collect PR-first release attribution
         env:
           GH_TOKEN: ${{ github.token }}

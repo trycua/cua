@@ -73,6 +73,11 @@ cua-driver autostart status
 # registered (running)
 ```
 
+Only `not-registered` confirms that the Scheduled Task is absent. A
+`permission-denied` or `unknown` result means the current process could not
+inspect Task Scheduler; the command exits non-zero and preserves the original
+diagnostic instead of telling you to re-register blindly.
+
 Remove the autostart registration:
 
 ```powershell

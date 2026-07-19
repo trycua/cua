@@ -26,8 +26,9 @@
 #     - versioned packages/current symlink under ~/.cua-driver/
 #     - telemetry id, preference, and registration markers are preserved by
 #       default so a reinstall remains the same pseudonymous installation
-#     - ~/.config/systemd/user/cua-driver-rs.service (if --autostart
-#       was used via install-local.sh — stop + disable + remove)
+#     - ~/.config/systemd/user/cua-driver.service (if --autostart
+#       was used via install-local.sh — stop + disable + remove), plus the
+#       legacy cua-driver-rs.service unit
 #     - Skill symlinks under ~/.claude/skills/cua-driver(-rs), ~/.agents/
 #       skills/…, ~/.openclaw/skills/…, ~/.config/opencode/skills/…
 #   macOS:
@@ -36,8 +37,9 @@
 #       /Applications/CuaDriver.app)
 #     - runtime payloads under ~/.cua-driver/ and legacy ~/.cua-driver-rs/;
 #       telemetry state remains unless --purge is passed
-#     - ~/Library/LaunchAgents/com.trycua.cua-driver-rs.plist (if
-#       --autostart was used via install-local.sh — unload + remove)
+#     - ~/Library/LaunchAgents/com.trycua.cua-driver.plist (if --autostart
+#       was used via install-local.sh — unload + remove), plus the legacy
+#       com.trycua.cua-driver-rs.plist LaunchAgent
 #     - Skill symlinks under ~/.claude/skills/cua-driver(-rs), etc.
 #
 # Shared-path safety: /Applications/CuaDriver.app + its ~/.local/bin
@@ -179,8 +181,10 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     # one unambiguous on-disk Rust discriminator now that the .app bundle +
     # bundle id are shared with Swift.
     PACKAGES_DIR="$HOME_DIR/packages"
-    LAUNCHAGENT_PLIST="$HOME/Library/LaunchAgents/com.trycua.cua-driver-rs.plist"
-    SYSTEMD_USER_UNIT="$HOME/.config/systemd/user/cua-driver-rs.service"
+    LAUNCHAGENT_PLIST="$HOME/Library/LaunchAgents/com.trycua.cua-driver.plist"
+    LEGACY_LAUNCHAGENT_PLIST="$HOME/Library/LaunchAgents/com.trycua.cua-driver-rs.plist"
+    SYSTEMD_USER_UNIT="$HOME/.config/systemd/user/cua-driver.service"
+    LEGACY_SYSTEMD_USER_UNIT="$HOME/.config/systemd/user/cua-driver-rs.service"
     SKILL_PACK_NAME="cua-driver"
     # Pre-rename skill pack name — swept alongside the current one so
     # users who installed under the legacy name end up clean after
@@ -199,11 +203,12 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     #   - ~/.cua-driver/packages/ exists (Rust install-local / updater store)
     #   - ~/.cua-driver-rs/ exists (legacy Rust state dir, pre-rename)
     #   - /Applications/CuaDriverRs.app exists (legacy bundle, pre-rename)
-    #   - LaunchAgent plist / systemd unit exists (autostart was used)
+    #   - current or legacy LaunchAgent plist / systemd unit exists
+    #     (autostart was used)
     #   - current telemetry identity/registration marker exists (release
     #     installs on macOS live in /Applications and have no packages dir)
     RUST_INSTALL_PRESENT=0
-    if [[ -d "$PACKAGES_DIR" || -d "$LEGACY_HOME_DIR" || -d "$LEGACY_APP_BUNDLE" || -f "$LAUNCHAGENT_PLIST" || -f "$SYSTEMD_USER_UNIT" || -f "$HOME_DIR/.telemetry_id" || -f "$HOME_DIR/.installation_recorded" ]]; then
+    if [[ -d "$PACKAGES_DIR" || -d "$LEGACY_HOME_DIR" || -d "$LEGACY_APP_BUNDLE" || -f "$LAUNCHAGENT_PLIST" || -f "$LEGACY_LAUNCHAGENT_PLIST" || -f "$SYSTEMD_USER_UNIT" || -f "$LEGACY_SYSTEMD_USER_UNIT" || -f "$HOME_DIR/.telemetry_id" || -f "$HOME_DIR/.installation_recorded" ]]; then
         RUST_INSTALL_PRESENT=1
     fi
 
@@ -243,34 +248,50 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
 
     # --- Autostart (Linux systemd --user) ---
     # install-local.sh --autostart registers
-    # ~/.config/systemd/user/cua-driver-rs.service. Stop + disable +
-    # remove if present so the daemon doesn't come back at next logon.
+    # ~/.config/systemd/user/cua-driver.service. Stop + disable + remove it,
+    # plus the pre-rename cua-driver-rs.service when present, so neither daemon
+    # comes back at next logon.
     # systemctl --user no-ops gracefully on a non-systemd host.
-    if [[ "$OS" == "Linux" && -f "$SYSTEMD_USER_UNIT" ]]; then
-        if command -v systemctl >/dev/null 2>&1; then
-            systemctl --user stop    cua-driver-rs.service 2>/dev/null || true
-            systemctl --user disable cua-driver-rs.service 2>/dev/null || true
-            log "stopped + disabled systemd --user unit cua-driver-rs.service"
-        fi
-        rm -f "$SYSTEMD_USER_UNIT"
-        log "removed $SYSTEMD_USER_UNIT"
-        if command -v systemctl >/dev/null 2>&1; then
+    if [[ "$OS" == "Linux" ]]; then
+        FOUND_SYSTEMD_USER_UNIT=0
+        for SYSTEMD_USER_UNIT_PATH in "$SYSTEMD_USER_UNIT" "$LEGACY_SYSTEMD_USER_UNIT"; do
+            if [[ -f "$SYSTEMD_USER_UNIT_PATH" ]]; then
+                FOUND_SYSTEMD_USER_UNIT=1
+                SYSTEMD_USER_UNIT_NAME="${SYSTEMD_USER_UNIT_PATH##*/}"
+                if command -v systemctl >/dev/null 2>&1; then
+                    systemctl --user stop "$SYSTEMD_USER_UNIT_NAME" 2>/dev/null || true
+                    systemctl --user disable "$SYSTEMD_USER_UNIT_NAME" 2>/dev/null || true
+                    log "stopped + disabled systemd --user unit $SYSTEMD_USER_UNIT_NAME"
+                fi
+                rm -f "$SYSTEMD_USER_UNIT_PATH"
+                log "removed $SYSTEMD_USER_UNIT_PATH"
+            fi
+        done
+        if [[ "$FOUND_SYSTEMD_USER_UNIT" == "0" ]]; then
+            log "no current or legacy systemd --user unit found (skipping)"
+        elif command -v systemctl >/dev/null 2>&1; then
             systemctl --user daemon-reload 2>/dev/null || true
         fi
-    elif [[ "$OS" == "Linux" ]]; then
-        log "no systemd --user unit at $SYSTEMD_USER_UNIT (skipping)"
     fi
 
     # --- Autostart (macOS LaunchAgent) ---
     # install-local.sh --autostart on macOS registers
-    # ~/Library/LaunchAgents/com.trycua.cua-driver-rs.plist. Unload (so
-    # the running daemon stops) + remove the plist.
-    if [[ "$OS" == "Darwin" && -f "$LAUNCHAGENT_PLIST" ]]; then
-        launchctl unload "$LAUNCHAGENT_PLIST" 2>/dev/null || true
-        rm -f "$LAUNCHAGENT_PLIST"
-        log "removed LaunchAgent $LAUNCHAGENT_PLIST"
-    elif [[ "$OS" == "Darwin" ]]; then
-        log "no LaunchAgent at $LAUNCHAGENT_PLIST (skipping)"
+    # ~/Library/LaunchAgents/com.trycua.cua-driver.plist. Unload (so the
+    # running daemon stops) + remove it, plus the pre-rename
+    # com.trycua.cua-driver-rs.plist when present.
+    if [[ "$OS" == "Darwin" ]]; then
+        FOUND_LAUNCHAGENT_PLIST=0
+        for LAUNCHAGENT_PLIST_PATH in "$LAUNCHAGENT_PLIST" "$LEGACY_LAUNCHAGENT_PLIST"; do
+            if [[ -f "$LAUNCHAGENT_PLIST_PATH" ]]; then
+                FOUND_LAUNCHAGENT_PLIST=1
+                launchctl unload "$LAUNCHAGENT_PLIST_PATH" 2>/dev/null || true
+                rm -f "$LAUNCHAGENT_PLIST_PATH"
+                log "removed LaunchAgent $LAUNCHAGENT_PLIST_PATH"
+            fi
+        done
+        if [[ "$FOUND_LAUNCHAGENT_PLIST" == "0" ]]; then
+            log "no current or legacy LaunchAgent found (skipping)"
+        fi
     fi
 
     # --- .app bundle (macOS only) ---
@@ -301,7 +322,7 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
                 $SUDO rm -rf "$APP_BUNDLE"
                 log "removed $APP_BUNDLE"
             else
-                log "$APP_BUNDLE exists but no Rust marker on disk (~/.cua-driver/packages/, ~/.cua-driver-rs/, CuaDriverRs.app, LaunchAgent, systemd unit); leaving it (looks like a Swift-only install)"
+                log "$APP_BUNDLE exists but no Rust marker on disk (~/.cua-driver/packages/, ~/.cua-driver-rs/, CuaDriverRs.app, current/legacy LaunchAgent or systemd unit); leaving it (looks like a Swift-only install)"
             fi
         else
             log "no app bundle at $APP_BUNDLE (skipping)"

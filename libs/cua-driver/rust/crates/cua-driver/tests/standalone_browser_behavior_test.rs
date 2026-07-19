@@ -74,8 +74,6 @@ fn standalone_browser_completeness_html() -> String {
     const names = Array.from(event.target.files).map(file => file.name).join(',');
     document.getElementById('standalone-upload-state').textContent = `upload=${event.target.files.length}:${names}`;
   });
-  document.getElementById('scroll-tall').setAttribute('tabindex', '0');
-  document.getElementById('scroll-tall').setAttribute('role', 'region');
   document.getElementById('drag-source').setAttribute('tabindex', '0');
   document.getElementById('drag-source').setAttribute('role', 'button');
   document.getElementById('drag-source').setAttribute('draggable', 'true');
@@ -2623,7 +2621,7 @@ fn run_pointer_actions(spec: &BrowserSpec) {
                 serde_json::json!({
                     "target_id": target,
                     "tab_id": tab,
-                    "ref": semantic_ref_by_name(&snapshot, "scroll-tall", "pointer"),
+                    "ref": semantic_ref_by_name(&snapshot, "scroll-tall", "scroll"),
                     "action": "scroll",
                     "input_route": "dom_event",
                     "delta_y": 240,

@@ -7,7 +7,7 @@
 
 #![cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 
-use cua_driver_testkit::RawDriver;
+use cua_driver_testkit::{Driver, McpDriver, RawDriver};
 
 #[test]
 fn tools_list_schema_shape() {
@@ -215,6 +215,47 @@ fn tools_list_schema_shape() {
             sc["inputSchema"]["properties"]
         );
     }
+}
+
+#[test]
+fn legacy_page_mutation_flag_is_read_by_the_spawned_daemon() {
+    let args = serde_json::json!({
+        "action": "enable_javascript_apple_events",
+        "user_has_confirmed_enabling": false
+    });
+
+    {
+        let mut driver = McpDriver::spawn().expect("spawn default source-built driver");
+        let response = driver.call("page", args.clone());
+        assert!(response.is_error(), "mutation must refuse by default");
+        assert!(
+            response
+                .text()
+                .contains("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1"),
+            "default refusal must name the operator gate: {}",
+            response.text()
+        );
+    }
+
+    let mut driver = McpDriver::spawn_with_env(&[("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS", "1")])
+        .expect("spawn source-built driver with daemon-scoped compatibility flag");
+    let response = driver.call("page", args);
+    assert!(
+        response.is_error(),
+        "unconfirmed mutation must still refuse"
+    );
+    assert!(
+        response
+            .text()
+            .contains("Set user_has_confirmed_enabling=true"),
+        "enabled daemon should reach the explicit confirmation gate: {}",
+        response.text()
+    );
+    assert!(
+        !response.text().contains("disabled by default"),
+        "the daemon did not observe its startup environment: {}",
+        response.text()
+    );
 }
 
 #[test]

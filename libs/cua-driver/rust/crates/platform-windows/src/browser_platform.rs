@@ -68,15 +68,25 @@ fn browser_product(name: &str) -> BrowserProduct {
     }
 }
 
-fn loopback_websocket_port(url: &str) -> Option<u16> {
-    ["ws://127.0.0.1:", "ws://localhost:", "ws://[::1]:"]
+fn websocket_port_and_suffix<'a>(url: &'a str, prefix: &str) -> Option<(u16, &'a str)> {
+    let remainder = url.strip_prefix(prefix)?;
+    let path_start = remainder.find('/')?;
+    let port = remainder[..path_start].parse::<u16>().ok()?;
+    Some((port, &remainder[path_start..]))
+}
+
+fn literal_loopback_websocket_port(url: &str) -> Option<u16> {
+    ["ws://127.0.0.1:", "ws://[::1]:"]
         .iter()
-        .find_map(|prefix| {
-            url.strip_prefix(prefix)?
-                .split('/')
-                .next()?
-                .parse::<u16>()
-                .ok()
+        .find_map(|prefix| websocket_port_and_suffix(url, prefix).map(|(port, _)| port))
+}
+
+fn canonical_discovered_websocket_url(url: &str, expected_port: u16) -> Option<String> {
+    ["ws://127.0.0.1:", "ws://[::1]:", "ws://localhost:"]
+        .iter()
+        .find_map(|prefix| websocket_port_and_suffix(url, prefix))
+        .and_then(|(port, suffix)| {
+            (port == expected_port).then(|| format!("ws://127.0.0.1:{expected_port}{suffix}"))
         })
 }
 
@@ -217,8 +227,8 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
         }
         let body_start = bytes.windows(4).position(|part| part == b"\r\n\r\n")? + 4;
         let value: serde_json::Value = serde_json::from_slice(&bytes[body_start..]).ok()?;
-        let url = value.get("webSocketDebuggerUrl")?.as_str()?.to_owned();
-        (loopback_websocket_port(&url) == Some(port)).then_some(url)
+        let url = value.get("webSocketDebuggerUrl")?.as_str()?;
+        canonical_discovered_websocket_url(url, port)
     })
     .await
     .ok()
@@ -271,12 +281,32 @@ async fn loopback_port_is_owned_with_retry(
     pid: u32,
     expected_port: u16,
 ) -> Result<bool, BrowserRefusal> {
-    for attempt in 0..ENDPOINT_DISCOVERY_ATTEMPTS {
-        if loopback_ports_for_pid(pid).await?.contains(&expected_port) {
+    retry_port_ownership(
+        ENDPOINT_DISCOVERY_ATTEMPTS,
+        ENDPOINT_DISCOVERY_RETRY_DELAY,
+        expected_port,
+        || loopback_ports_for_pid(pid),
+    )
+    .await
+}
+
+async fn retry_port_ownership<F, Fut>(
+    attempts: usize,
+    delay: Duration,
+    expected_port: u16,
+    mut probe: F,
+) -> Result<bool, BrowserRefusal>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<Vec<u16>, BrowserRefusal>>,
+{
+    let attempts = attempts.max(1);
+    for attempt in 0..attempts {
+        if probe().await?.contains(&expected_port) {
             return Ok(true);
         }
-        if attempt + 1 < ENDPOINT_DISCOVERY_ATTEMPTS {
-            tokio::time::sleep(ENDPOINT_DISCOVERY_RETRY_DELAY).await;
+        if attempt + 1 < attempts {
+            tokio::time::sleep(delay).await;
         }
     }
     Ok(false)
@@ -461,7 +491,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
-        let Some(port) = loopback_websocket_port(expected_ws_url) else {
+        let Some(port) = literal_loopback_websocket_port(expected_ws_url) else {
             return Err(refusal(
                 BrowserRefusalCode::BrowserEndpointOwnerMismatch,
                 "the approved existing-profile endpoint is not loopback-only",
@@ -737,19 +767,57 @@ mod tests {
     }
 
     #[test]
-    fn websocket_url_must_keep_the_attested_listener_port() {
+    fn discovered_websocket_url_is_canonical_and_keeps_the_attested_port() {
         assert_eq!(
-            loopback_websocket_port("ws://[::1]:9222/devtools/browser/id"),
-            Some(9222)
-        );
-        assert_ne!(
-            loopback_websocket_port("ws://127.0.0.1:9333/devtools/browser/foreign"),
-            Some(9222)
+            canonical_discovered_websocket_url("ws://localhost:9222/devtools/browser/id", 9222),
+            Some("ws://127.0.0.1:9222/devtools/browser/id".to_owned())
         );
         assert_eq!(
-            loopback_websocket_port("wss://127.0.0.1:9222/devtools"),
+            canonical_discovered_websocket_url("ws://[::1]:9222/devtools/browser/id", 9222),
+            Some("ws://127.0.0.1:9222/devtools/browser/id".to_owned())
+        );
+        assert_eq!(
+            canonical_discovered_websocket_url(
+                "ws://127.0.0.1:9333/devtools/browser/foreign",
+                9222
+            ),
             None
         );
+        assert_eq!(
+            canonical_discovered_websocket_url("wss://127.0.0.1:9222/devtools/browser/id", 9222),
+            None
+        );
+        assert_eq!(
+            canonical_discovered_websocket_url(
+                "ws://127.0.0.1.evil.test:9222/devtools/browser/id",
+                9222
+            ),
+            None
+        );
+        assert_eq!(
+            canonical_discovered_websocket_url(
+                "ws://user@127.0.0.1:9222/devtools/browser/id",
+                9222
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn endpoint_reproof_requires_a_literal_loopback_url() {
+        assert_eq!(
+            literal_loopback_websocket_port("ws://127.0.0.1:9222/devtools/browser/id"),
+            Some(9222)
+        );
+        assert_eq!(
+            literal_loopback_websocket_port("ws://[::1]:9222/devtools/browser/id"),
+            Some(9222)
+        );
+        assert_eq!(
+            literal_loopback_websocket_port("ws://localhost:9222/devtools/browser/id"),
+            None
+        );
+        assert_eq!(literal_loopback_websocket_port("ws://127.0.0.1:9222"), None);
     }
 
     #[tokio::test]
@@ -780,5 +848,55 @@ mod tests {
                 "ws://127.0.0.1:9222/devtools/browser/proven".to_owned(),
             )]
         );
+    }
+
+    #[tokio::test]
+    async fn endpoint_ownership_retries_transient_socket_snapshots() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let probe_calls = Arc::clone(&calls);
+        let owned = retry_port_ownership(4, Duration::ZERO, 9222, move || {
+            let call = probe_calls.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if call < 2 {
+                    Ok(Vec::new())
+                } else {
+                    Ok(vec![9222])
+                }
+            }
+        })
+        .await
+        .expect("retry transient socket snapshots");
+
+        assert!(owned);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn endpoint_ownership_exhausts_wrong_ports_and_fails_fast_on_errors() {
+        let wrong_calls = Arc::new(AtomicUsize::new(0));
+        let probe_calls = Arc::clone(&wrong_calls);
+        let owned = retry_port_ownership(3, Duration::ZERO, 9222, move || {
+            probe_calls.fetch_add(1, Ordering::SeqCst);
+            async { Ok(vec![9333]) }
+        })
+        .await
+        .expect("wrong ports are a clean ownership miss");
+        assert!(!owned);
+        assert_eq!(wrong_calls.load(Ordering::SeqCst), 3);
+
+        let error_calls = Arc::new(AtomicUsize::new(0));
+        let probe_calls = Arc::clone(&error_calls);
+        let result = retry_port_ownership(3, Duration::ZERO, 9222, move || {
+            probe_calls.fetch_add(1, Ordering::SeqCst);
+            async {
+                Err(refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    "socket inventory failed",
+                ))
+            }
+        })
+        .await;
+        assert!(result.is_err());
+        assert_eq!(error_calls.load(Ordering::SeqCst), 1);
     }
 }

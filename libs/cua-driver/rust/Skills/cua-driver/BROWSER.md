@@ -254,9 +254,11 @@ task result.
 
 Use `browser_pointer` for `hover`, `right_click`, `double_click`, `scroll`, and
 `drag`. It uses the same `trusted` versus explicit `dom_event` distinction as
-`browser_click`. A ref used here must declare `pointer` in its `actions` array.
-The synthetic route requires a current ref; drag also requires
-`destination_ref` in the same proven frame. Coordinate origins and
+`browser_click`. Hover, right-click, double-click, and drag require a ref that
+declares `pointer`. Scroll accepts either `scroll` or `pointer`; a plain
+overflow container can therefore be scrollable without gaining click, hover,
+or drag authority. The synthetic route requires a current ref; drag also
+requires `destination_ref` in the same proven frame. Coordinate origins and
 destinations are available only where the trusted route can preserve the
 requested posture.
 
@@ -321,8 +323,9 @@ not start new browser workflows with it: its backend and trust semantics are
 less precise than the typed browser tools, and it does not replace exact
 window binding. Its mutations are disabled by default. Only a trusted daemon
 operator can enable the temporary compatibility path with
-`CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1`; that flag does not add typed
-endpoint ownership, capabilities, or existing-profile consent.
+`CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1` before daemon startup. Restart Cua
+Driver after changing the flag. It does not add typed endpoint ownership,
+capabilities, or existing-profile consent.
 
 ## Support boundaries
 

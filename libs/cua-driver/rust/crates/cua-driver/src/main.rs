@@ -801,15 +801,7 @@ fn build_registry(
     #[cfg(target_os = "linux")]
     {
         cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-            if let Some(xid) = window_id {
-                platform_linux::wayland::screenshot_dispatch(xid).ok()
-            } else if let Some(p) = pid {
-                let wins = platform_linux::wayland::list_windows_dispatch(Some(p as u32));
-                wins.first()
-                    .and_then(|w| platform_linux::wayland::screenshot_dispatch(w.xid).ok())
-            } else {
-                platform_linux::capture::screenshot_display_bytes().ok()
-            }
+            platform_linux::recording_hooks::screenshot_for_recording(window_id, pid)
         });
         cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_linux::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
@@ -907,15 +899,7 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
             tracing::warn!("could not activate the persistent AT-SPI listener: {error}");
         }
         cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-            if let Some(xid) = window_id {
-                platform_linux::wayland::screenshot_dispatch(xid).ok()
-            } else if let Some(p) = pid {
-                let wins = platform_linux::wayland::list_windows_dispatch(Some(p as u32));
-                wins.first()
-                    .and_then(|w| platform_linux::wayland::screenshot_dispatch(w.xid).ok())
-            } else {
-                platform_linux::capture::screenshot_display_bytes().ok()
-            }
+            platform_linux::recording_hooks::screenshot_for_recording(window_id, pid)
         });
         cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_linux::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()

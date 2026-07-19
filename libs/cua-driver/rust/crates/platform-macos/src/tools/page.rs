@@ -41,7 +41,7 @@ impl MacOsPageBackend {
 
 #[async_trait]
 impl PageBackend for MacOsPageBackend {
-    async fn get_text(&self, pid: i32, window_id: u32) -> anyhow::Result<String> {
+    async fn get_text(&self, pid: i32, window_id: u64) -> anyhow::Result<String> {
         let bundle_id = Self::bundle_id_for(pid).await;
 
         let use_ax_fallback = !BrowserJs::supports(&bundle_id)
@@ -63,7 +63,7 @@ impl PageBackend for MacOsPageBackend {
     async fn query_dom(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         css_selector: &str,
         attributes: &[String],
     ) -> anyhow::Result<String> {
@@ -92,7 +92,7 @@ impl PageBackend for MacOsPageBackend {
     async fn execute_javascript(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         javascript: &str,
     ) -> anyhow::Result<String> {
         let bundle_id = Self::bundle_id_for(pid).await;
@@ -102,7 +102,7 @@ impl PageBackend for MacOsPageBackend {
     async fn execute_javascript_targeted(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         javascript: &str,
         cdp_port: Option<u16>,
         target_url_contains: Option<&str>,
@@ -120,7 +120,7 @@ impl PageBackend for MacOsPageBackend {
     async fn click_element(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         selector: &str,
     ) -> anyhow::Result<ClickElementResult> {
         let selector_js = json_string(selector);
@@ -201,7 +201,7 @@ impl PageBackend for MacOsPageBackend {
     async fn insert_text(
         &self,
         pid: i32,
-        _window_id: u32,
+        _window_id: u64,
         text: &str,
         cdp_port: Option<u16>,
         target_url_contains: Option<&str>,
@@ -220,7 +220,7 @@ impl PageBackend for MacOsPageBackend {
     async fn type_keystrokes(
         &self,
         pid: i32,
-        _window_id: u32,
+        _window_id: u64,
         text: &str,
         cdp_port: Option<u16>,
         target_url_contains: Option<&str>,
@@ -263,8 +263,10 @@ async fn resolve_cdp_port(pid: i32, cdp_port: Option<u16>, action: &str) -> anyh
 }
 
 /// Route JavaScript execution to the appropriate backend.
-async fn execute_js(js: &str, bundle_id: &str, pid: i32, window_id: u32) -> anyhow::Result<String> {
+async fn execute_js(js: &str, bundle_id: &str, pid: i32, window_id: u64) -> anyhow::Result<String> {
     if BrowserJs::supports(bundle_id) {
+        let window_id = u32::try_from(window_id)
+            .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
         return BrowserJs::execute(js, bundle_id, window_id).await;
     }
     let is_electron = tokio::task::spawn_blocking(move || ElectronJs::is_electron(pid)).await?;
@@ -282,7 +284,9 @@ async fn execute_js(js: &str, bundle_id: &str, pid: i32, window_id: u32) -> anyh
 }
 
 /// Extract page text via the AX tree.
-async fn ax_text_fallback(pid: i32, window_id: u32) -> anyhow::Result<String> {
+async fn ax_text_fallback(pid: i32, window_id: u64) -> anyhow::Result<String> {
+    let window_id = u32::try_from(window_id)
+        .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
     let result =
         tokio::task::spawn_blocking(move || crate::ax::tree::walk_tree(pid, Some(window_id), None))
             .await
@@ -293,9 +297,11 @@ async fn ax_text_fallback(pid: i32, window_id: u32) -> anyhow::Result<String> {
 /// Query AX tree by CSS selector.
 async fn ax_query_fallback(
     pid: i32,
-    window_id: u32,
+    window_id: u64,
     selector: &str,
 ) -> anyhow::Result<Vec<crate::browser::ax_page_reader::AXElement>> {
+    let window_id = u32::try_from(window_id)
+        .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
     let sel = selector.to_owned();
     let result =
         tokio::task::spawn_blocking(move || crate::ax::tree::walk_tree(pid, Some(window_id), None))

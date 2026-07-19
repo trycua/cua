@@ -264,7 +264,7 @@ fn window_scope_rejects_windowless_click() {
         Targeting::Px,
         Delivery::NotApplicable,
         Scope::Window,
-        DriverRoute::Composite,
+        DriverRoute::CaptureScopeGate,
         vec![OracleKind::Protocol],
     );
     execute_case(case, |evidence| {

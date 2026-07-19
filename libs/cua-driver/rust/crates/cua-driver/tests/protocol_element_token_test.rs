@@ -12,61 +12,21 @@
 // then-unused tools/list helpers.
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
-
-use cua_driver_testkit::driver_binary;
-
-fn send_request(stdin: &mut impl Write, request: &serde_json::Value) {
-    let line = serde_json::to_string(request).unwrap();
-    writeln!(stdin, "{}", line).unwrap();
-}
-
-fn read_response(reader: &mut impl BufRead) -> serde_json::Value {
-    let mut line = String::new();
-    reader.read_line(&mut line).expect("read line");
-    serde_json::from_str(line.trim()).expect("parse JSON")
-}
+use cua_driver_testkit::RawDriver;
 
 /// Spawn the driver, send initialize + tools/list, return the parsed
 /// `tools/list` response. Skips the test silently if the binary hasn't
 /// been built (CI builds it separately).
 fn fetch_tools_list() -> Option<serde_json::Value> {
-    let binary = driver_binary();
-    if !binary.exists() {
-        eprintln!("Binary not found at {:?} — run `cargo build` first", binary);
-        return None;
-    }
-
-    let mut child = Command::new(&binary)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn cua-driver");
-
-    {
-        let stdin = child.stdin.as_mut().unwrap();
-        let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
-
-        send_request(
-            stdin,
-            &serde_json::json!({
-                "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}
-            }),
-        );
-        let _ = read_response(&mut stdout);
-
-        send_request(
-            stdin,
-            &serde_json::json!({
-                "jsonrpc": "2.0", "id": 2, "method": "tools/list"
-            }),
-        );
-        let resp = read_response(&mut stdout);
-        child.kill().ok();
-        return Some(resp);
-    }
+    let mut driver = RawDriver::spawn()?;
+    driver.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}
+    }));
+    driver.recv();
+    driver.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/list"
+    }));
+    Some(driver.recv())
 }
 
 /// Surface 6: Every tool that accepts the opaque `element_token` arg

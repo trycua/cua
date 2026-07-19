@@ -137,6 +137,10 @@ struct Visited<'a> {
     /// True when an ancestor is a web document (e.g. role "document web"),
     /// i.e. this node is page content rather than browser chrome.
     in_web_doc: bool,
+    /// True when this node is exported by a separate WebKit WebProcess bus.
+    /// Chromium keeps its document on the application's ordinary AT-SPI bus,
+    /// where descendant Window extents already include the document origin.
+    on_web_process_bus: bool,
     acc: AccessibleProxy<'a>,
 }
 
@@ -574,6 +578,7 @@ async fn collect_visited_bounded<'a>(
             has_component,
             focused,
             in_web_doc,
+            on_web_process_bus: is_web_process_bus(&oref.name),
             acc,
         });
     }
@@ -704,12 +709,22 @@ pub fn walk_tree_bounded(
     max_elements: Option<usize>,
     max_depth: Option<usize>,
 ) -> Result<Option<(String, Vec<AtspiNode>, Vec<(usize, i32, i32, u32, u32)>)>> {
+    walk_tree_bounded_with_timeout(pid, xid, max_elements, max_depth, OP_TIMEOUT)
+}
+
+pub(super) fn walk_tree_bounded_with_timeout(
+    pid: u32,
+    xid: u64,
+    max_elements: Option<usize>,
+    max_depth: Option<usize>,
+    timeout: Duration,
+) -> Result<Option<(String, Vec<AtspiNode>, Vec<(usize, i32, i32, u32, u32)>)>> {
     runtime().block_on(async {
         let walk = async {
             let conn = shared_connection().await?;
             collect_visited_bounded(conn, pid, max_elements, max_depth).await
         };
-        let visited = match tokio::time::timeout(OP_TIMEOUT, walk).await {
+        let visited = match tokio::time::timeout(timeout, walk).await {
             Ok(result) => result?,
             Err(_) => {
                 dlog!("walk_tree timed out for pid {pid}");
@@ -1921,7 +1936,15 @@ fn prefer_authoritative_wayland_origin(
 fn combine_wayland_content_offsets(
     compositor: Option<(i32, i32)>,
     document: Option<(i32, i32)>,
+    document_is_separate: bool,
 ) -> Option<(i32, i32)> {
+    if !document_is_separate {
+        // Chromium descendants' CoordType::Window extents are already rooted
+        // below the document accessible. Adding that document's own (x,y)
+        // double-counts its renderer inset. WebKitGTK exports page content on
+        // a distinct WebProcess bus, so only that bridge needs the extra hop.
+        return compositor;
+    }
     match (compositor, document) {
         (Some((cx, cy)), Some((dx, dy))) => Some((cx + dx, cy + dy)),
         (Some(offset), None) | (None, Some(offset)) => Some(offset),
@@ -1974,9 +1997,10 @@ async fn web_document_origin_for_visited(visited: &[Visited<'_>], pid: u32) -> O
     } else {
         None
     };
-    let combined = combine_wayland_content_offsets(compositor, document);
+    let document_is_separate = visited.iter().any(|node| node.on_web_process_bus);
+    let combined = combine_wayland_content_offsets(compositor, document, document_is_separate);
     dlog!(
-        "Wayland web content offset: compositor={compositor:?} document={document:?} combined={combined:?}"
+        "Wayland web content offset: compositor={compositor:?} document={document:?} separate_process={document_is_separate} combined={combined:?}"
     );
     combined
 }
@@ -2249,18 +2273,30 @@ mod coord_tests {
     #[test]
     fn wayland_compositor_and_document_offsets_are_additive() {
         assert_eq!(
-            combine_wayland_content_offsets(Some((0, 47)), Some((0, 0))),
+            combine_wayland_content_offsets(Some((0, 47)), Some((0, 0)), true),
             Some((0, 47))
         );
         assert_eq!(
-            combine_wayland_content_offsets(Some((2, 20)), Some((0, 47))),
+            combine_wayland_content_offsets(Some((2, 20)), Some((0, 47)), true),
             Some((2, 67))
         );
         assert_eq!(
-            combine_wayland_content_offsets(None, Some((0, 47))),
+            combine_wayland_content_offsets(None, Some((0, 47)), true),
             Some((0, 47))
         );
-        assert_eq!(combine_wayland_content_offsets(None, None), None);
+        assert_eq!(combine_wayland_content_offsets(None, None, true), None);
+    }
+
+    #[test]
+    fn chromium_window_extents_do_not_double_count_document_origin() {
+        assert_eq!(
+            combine_wayland_content_offsets(Some((2, 20)), Some((22, 55)), false),
+            Some((2, 20))
+        );
+        assert_eq!(
+            combine_wayland_content_offsets(None, Some((22, 55)), false),
+            None
+        );
     }
 
     #[test]

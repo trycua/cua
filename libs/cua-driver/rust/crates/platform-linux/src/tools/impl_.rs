@@ -2031,7 +2031,7 @@ impl Tool for ClickTool {
                     }
                 }
                 if crate::wayland::is_inject_mode() {
-                    crate::wayland::inject_click(xid, x, y, count as u32, button)?;
+                    crate::wayland::inject_click(pid, xid, x, y, count as u32, button)?;
                     return Ok("wayland_cua_compositor");
                 }
                 if !delivery.is_foreground() {
@@ -2181,7 +2181,7 @@ async fn focus_nested_inject_target(
     }
     if let Some((x, y)) = pixel {
         return match tokio::task::spawn_blocking(move || {
-            crate::wayland::inject_click(window_id, x, y, 1, 1)
+            crate::wayland::inject_click(pid, window_id, x, y, 1, 1)
         })
         .await
         {
@@ -2354,9 +2354,10 @@ impl Tool for TypeTextTool {
                 return error;
             }
             let text_w = text.clone();
-            let result =
-                tokio::task::spawn_blocking(move || crate::wayland::inject_type_text(xid, &text_w))
-                    .await;
+            let result = tokio::task::spawn_blocking(move || {
+                crate::wayland::inject_type_text(pid, xid, &text_w)
+            })
+            .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (focus-free via cua-compositor)."
@@ -2923,12 +2924,14 @@ impl Tool for PressKeyTool {
             }
             let result = if mods.is_empty() {
                 let key_w = key.clone();
-                tokio::task::spawn_blocking(move || crate::wayland::inject_press_key(xid, &key_w))
-                    .await
+                tokio::task::spawn_blocking(move || {
+                    crate::wayland::inject_press_key(pid, xid, &key_w)
+                })
+                .await
             } else {
                 let mut chord = mods.clone();
                 chord.push(key.clone());
-                tokio::task::spawn_blocking(move || crate::wayland::inject_hotkey(xid, &chord))
+                tokio::task::spawn_blocking(move || crate::wayland::inject_hotkey(pid, xid, &chord))
                     .await
             };
             return match result {
@@ -3229,9 +3232,10 @@ impl Tool for HotkeyTool {
             }
             let mut chord = mods.clone();
             chord.push(key.clone());
-            let result =
-                tokio::task::spawn_blocking(move || crate::wayland::inject_hotkey(xid, &chord))
-                    .await;
+            let result = tokio::task::spawn_blocking(move || {
+                crate::wayland::inject_hotkey(pid, xid, &chord)
+            })
+            .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Pressed hotkey '{key_display}' (focus-free via cua-compositor)."
@@ -3633,7 +3637,7 @@ impl Tool for ScrollTool {
             };
             let direction_for_inject = direction.clone();
             let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::inject_scroll(xid, x, y, &direction_for_inject, amount as u32)
+                crate::wayland::inject_scroll(pid, xid, x, y, &direction_for_inject, amount as u32)
             })
             .await;
             return match result {
@@ -3941,7 +3945,7 @@ impl Tool for DoubleClickTool {
                     let cursor_id_for_task = cursor_id.clone();
                     let click_result = tokio::task::spawn_blocking(move || {
                         if crate::wayland::is_inject_mode() {
-                            return crate::wayland::inject_click(xid, lx, ly, 2, 1);
+                            return crate::wayland::inject_click(pid, xid, lx, ly, 2, 1);
                         }
                         if crate::wayland::wayland_input_enabled() {
                             let (output_x, output_y) = wayland_point.unwrap_or((lxi, lyi));
@@ -4029,7 +4033,7 @@ impl Tool for DoubleClickTool {
         let cursor_id_for_task = cursor_id.clone();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::is_inject_mode() {
-                return crate::wayland::inject_click(xid, x, y, 2, 1);
+                return crate::wayland::inject_click(pid, xid, x, y, 2, 1);
             }
             if crate::wayland::wayland_input_enabled() {
                 let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
@@ -4173,7 +4177,7 @@ impl Tool for RightClickTool {
                     let cursor_id_for_task = cursor_id.clone();
                     let click_result = tokio::task::spawn_blocking(move || {
                         if crate::wayland::is_inject_mode() {
-                            return crate::wayland::inject_click(xid, lx, ly, 1, 3);
+                            return crate::wayland::inject_click(pid, xid, lx, ly, 1, 3);
                         }
                         if crate::wayland::wayland_input_enabled() {
                             let (output_x, output_y) = wayland_point.unwrap_or((lxi, lyi));
@@ -4261,7 +4265,7 @@ impl Tool for RightClickTool {
         let cursor_id_for_task = cursor_id.clone();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::is_inject_mode() {
-                return crate::wayland::inject_click(xid, x, y, 1, 3);
+                return crate::wayland::inject_click(pid, xid, x, y, 1, 3);
             }
             if crate::wayland::wayland_input_enabled() {
                 let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
@@ -4521,6 +4525,7 @@ impl Tool for DragTool {
             let drag_result = if crate::wayland::is_inject_mode() {
                 tokio::task::spawn_blocking(move || {
                     crate::wayland::inject_drag(
+                        pid,
                         xid,
                         (from_x, from_y),
                         (to_x, to_y),

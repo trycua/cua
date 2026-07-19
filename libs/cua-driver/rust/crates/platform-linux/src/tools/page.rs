@@ -24,9 +24,9 @@ impl Default for LinuxPageBackend {
 
 #[async_trait]
 impl PageBackend for LinuxPageBackend {
-    async fn get_text(&self, pid: i32, window_id: u32) -> anyhow::Result<String> {
+    async fn get_text(&self, pid: i32, window_id: u64) -> anyhow::Result<String> {
         let pid_u = pid as u32;
-        let xid = window_id as u64;
+        let xid = window_id;
         let result = tokio::task::spawn_blocking(move || crate::atspi::walk_tree(pid_u, xid, None))
             .await
             .map_err(|e| anyhow::anyhow!("AT-SPI walk task failed: {e}"))?;
@@ -36,12 +36,12 @@ impl PageBackend for LinuxPageBackend {
     async fn query_dom(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         css_selector: &str,
         _attributes: &[String],
     ) -> anyhow::Result<String> {
         let pid_u = pid as u32;
-        let xid = window_id as u64;
+        let xid = window_id;
         let selector = css_selector.to_owned();
         let result = tokio::task::spawn_blocking(move || crate::atspi::walk_tree(pid_u, xid, None))
             .await
@@ -105,7 +105,7 @@ impl PageBackend for LinuxPageBackend {
     async fn execute_javascript(
         &self,
         _pid: i32,
-        _window_id: u32,
+        _window_id: u64,
         javascript: &str,
     ) -> anyhow::Result<String> {
         let port: u16 = match std::env::var("CUA_DRIVER_CDP_PORT")
@@ -127,7 +127,7 @@ impl PageBackend for LinuxPageBackend {
     async fn execute_javascript_targeted(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         javascript: &str,
         cdp_port: Option<u16>,
         target_url_contains: Option<&str>,

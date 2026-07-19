@@ -81,6 +81,54 @@
                     </StackPanel>
                 </GroupBox>
 
+                <!-- Keep pop-up menu targets near the top of the viewport.
+                     WPF opens submenu popups below their owner; placing this
+                     fixture below the fold can put the child UIA element
+                     outside a 768px CI desktop even after ScrollIntoView. -->
+                <GroupBox Header="menus" Padding="10" Margin="0,0,0,12">
+                    <StackPanel>
+                        <Menu Background="Transparent" HorizontalAlignment="Left">
+                            <MenuItem Header="_File"
+                                      AutomationProperties.AutomationId="menu-file">
+                                <MenuItem Header="_New"
+                                          AutomationProperties.AutomationId="menu-file-new"
+                                          Click="OnMenuFileNew"/>
+                                <MenuItem Header="_Open"
+                                          AutomationProperties.AutomationId="menu-file-open"
+                                          Click="OnMenuFileOpen"/>
+                            </MenuItem>
+                            <MenuItem Header="_Edit"
+                                      AutomationProperties.AutomationId="menu-edit">
+                                <MenuItem Header="_Copy"
+                                          AutomationProperties.AutomationId="menu-edit-copy"
+                                          Click="OnMenuEditCopy"/>
+                            </MenuItem>
+                        </Menu>
+                        <Button x:Name="BtnContextTarget"
+                                AutomationProperties.AutomationId="btn-context-target"
+                                Content="Right-click for context menu"
+                                Width="260" Margin="0,8,0,0" HorizontalAlignment="Left">
+                            <Button.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="_Cut"
+                                              AutomationProperties.AutomationId="ctx-cut"
+                                              Click="OnCtxAction"/>
+                                    <MenuItem Header="C_opy"
+                                              AutomationProperties.AutomationId="ctx-copy"
+                                              Click="OnCtxAction"/>
+                                    <MenuItem Header="_Paste"
+                                              AutomationProperties.AutomationId="ctx-paste"
+                                              Click="OnCtxAction"/>
+                                </ContextMenu>
+                            </Button.ContextMenu>
+                        </Button>
+                        <TextBlock x:Name="LblMenuAction"
+                                   AutomationProperties.AutomationId="lbl-menu-action"
+                                   Margin="0,6,0,0" FontFamily="Consolas"
+                                   Text="menu_action=none"/>
+                    </StackPanel>
+                </GroupBox>
+
                 <!-- Slider (drives `drag` tool — thumb at left end, label
                      tracks Value. ValuePattern also surfaced so the cua-driver
                      `set_value` tool can be exercised too.) -->
@@ -162,51 +210,6 @@
                                    AutomationProperties.AutomationId="lbl-list-value"
                                    Margin="0,6,0,0" FontFamily="Consolas"
                                    Text="selected=none"/>
-                    </StackPanel>
-                </GroupBox>
-
-                <!-- Menu + ContextMenu (a Button with attached ContextMenu) -->
-                <GroupBox Header="menus" Padding="10" Margin="0,0,0,12">
-                    <StackPanel>
-                        <Menu Background="Transparent" HorizontalAlignment="Left">
-                            <MenuItem Header="_File"
-                                      AutomationProperties.AutomationId="menu-file">
-                                <MenuItem Header="_New"
-                                          AutomationProperties.AutomationId="menu-file-new"
-                                          Click="OnMenuFileNew"/>
-                                <MenuItem Header="_Open"
-                                          AutomationProperties.AutomationId="menu-file-open"
-                                          Click="OnMenuFileOpen"/>
-                            </MenuItem>
-                            <MenuItem Header="_Edit"
-                                      AutomationProperties.AutomationId="menu-edit">
-                                <MenuItem Header="_Copy"
-                                          AutomationProperties.AutomationId="menu-edit-copy"
-                                          Click="OnMenuEditCopy"/>
-                            </MenuItem>
-                        </Menu>
-                        <Button x:Name="BtnContextTarget"
-                                AutomationProperties.AutomationId="btn-context-target"
-                                Content="Right-click for context menu"
-                                Width="260" Margin="0,8,0,0" HorizontalAlignment="Left">
-                            <Button.ContextMenu>
-                                <ContextMenu>
-                                    <MenuItem Header="_Cut"
-                                              AutomationProperties.AutomationId="ctx-cut"
-                                              Click="OnCtxAction"/>
-                                    <MenuItem Header="C_opy"
-                                              AutomationProperties.AutomationId="ctx-copy"
-                                              Click="OnCtxAction"/>
-                                    <MenuItem Header="_Paste"
-                                              AutomationProperties.AutomationId="ctx-paste"
-                                              Click="OnCtxAction"/>
-                                </ContextMenu>
-                            </Button.ContextMenu>
-                        </Button>
-                        <TextBlock x:Name="LblMenuAction"
-                                   AutomationProperties.AutomationId="lbl-menu-action"
-                                   Margin="0,6,0,0" FontFamily="Consolas"
-                                   Text="menu_action=none"/>
                     </StackPanel>
                 </GroupBox>
 

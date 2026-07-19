@@ -60,8 +60,8 @@ impl Default for WindowsPageBackend {
 
 #[async_trait]
 impl PageBackend for WindowsPageBackend {
-    async fn get_text(&self, _pid: i32, window_id: u32) -> anyhow::Result<String> {
-        let hwnd = window_id as u64;
+    async fn get_text(&self, _pid: i32, window_id: u64) -> anyhow::Result<String> {
+        let hwnd = window_id;
         tokio::task::spawn_blocking(move || unsafe { get_text_blocking(hwnd) })
             .await
             .map_err(|e| anyhow::anyhow!("join error: {e}"))?
@@ -70,11 +70,11 @@ impl PageBackend for WindowsPageBackend {
     async fn query_dom(
         &self,
         _pid: i32,
-        window_id: u32,
+        window_id: u64,
         css_selector: &str,
         attributes: &[String],
     ) -> anyhow::Result<String> {
-        let hwnd = window_id as u64;
+        let hwnd = window_id;
         let selector = css_selector.to_owned();
         let attrs: Vec<String> = attributes.to_vec();
         tokio::task::spawn_blocking(move || unsafe { query_dom_blocking(hwnd, &selector, &attrs) })
@@ -85,7 +85,7 @@ impl PageBackend for WindowsPageBackend {
     async fn execute_javascript(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         javascript: &str,
     ) -> anyhow::Result<String> {
         // 1) Bookmark-based UIA exec — zero config, no launch flag needed.
@@ -94,7 +94,15 @@ impl PageBackend for WindowsPageBackend {
         //    sits there).  Any failure (favorites bar hidden + Ctrl+Shift+B
         //    fails to summon, dialog drift, title-poll timeout) is logged
         //    and falls through to the CDP path.
-        match super::page_bookmark::try_bookmark_exec(pid, window_id, javascript).await {
+        let bookmark_result = match u32::try_from(window_id) {
+            Ok(window_id) => {
+                super::page_bookmark::try_bookmark_exec(pid, window_id, javascript).await
+            }
+            Err(_) => Err(anyhow::anyhow!(
+                "window_id {window_id} is outside the legacy bookmark transport's u32 range"
+            )),
+        };
+        match bookmark_result {
             Ok(v) => {
                 return Ok(format!("uia.bookmark_exec: {v}"));
             }
@@ -131,7 +139,7 @@ impl PageBackend for WindowsPageBackend {
     async fn execute_javascript_targeted(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         javascript: &str,
         cdp_port: Option<u16>,
         target_url_contains: Option<&str>,
@@ -159,7 +167,7 @@ impl PageBackend for WindowsPageBackend {
     async fn click_element(
         &self,
         pid: i32,
-        window_id: u32,
+        window_id: u64,
         selector: &str,
     ) -> anyhow::Result<ClickElementResult> {
         // Two-step:

@@ -52,6 +52,31 @@ pub fn walk_tree(pid: u32, xid: u64, query: Option<&str>) -> AtspiTreeResult {
     walk_tree_bounded(pid, xid, query, None, None)
 }
 
+/// Best-effort accessibility snapshot for synchronous trajectory evidence.
+///
+/// Recording brackets an action with before/after captures, so it must use a
+/// smaller budget than the transport's tool-call deadline. Unlike the
+/// interactive tree walker, evidence capture makes one attempt and accepts an
+/// unavailable tree when the target renderer is blocked.
+pub(crate) fn walk_tree_for_recording(
+    pid: u32,
+    xid: u64,
+    timeout: std::time::Duration,
+) -> AtspiTreeResult {
+    if let Ok(Some((tree_markdown, nodes, bounds))) =
+        native::walk_tree_bounded_with_timeout(pid, xid, None, None, timeout)
+    {
+        if !tree_markdown.is_empty() {
+            return AtspiTreeResult {
+                tree_markdown,
+                nodes,
+                bounds,
+            };
+        }
+    }
+    walk_via_x11_properties(xid, None)
+}
+
 /// Walk the AT-SPI tree with caller-supplied caps. `None` for either cap
 /// means "use the walker's built-in default" (5 000 nodes; unlimited depth).
 /// Issue #22865: caps protect against Electron / large web apps that

@@ -241,6 +241,7 @@ fn walk_tree_with_web_content(
     let mut nodes: Vec<AXNode> = Vec::new();
     let mut lines: Vec<(usize, String)> = Vec::new(); // (depth, line)
     let mut index_counter = 0usize;
+    let mut depth_truncated = false;
     let mut window_scope: Option<WindowScope> = None;
 
     unsafe {
@@ -322,6 +323,7 @@ fn walk_tree_with_web_content(
                 &mut lines,
                 &mut index_counter,
                 &mut budget,
+                &mut depth_truncated,
                 max_depth,
                 include_web_content,
             );
@@ -347,10 +349,14 @@ fn walk_tree_with_web_content(
         tree_markdown.push_str(&note);
     }
 
+    if depth_truncated {
+        tree_markdown.push_str(&format!("\n⚠️  AX tree truncated beyond depth {max_depth}. Element indices above are still valid. Use pixel clicks for elements not visible in this partial tree."));
+    }
+
     TreeWalkResult {
         tree_markdown,
         nodes,
-        truncated: walk.truncated(),
+        truncated: walk.truncated() || depth_truncated,
         walk,
         window_scope,
     }
@@ -438,10 +444,12 @@ unsafe fn walk_element(
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
     budget: &mut WalkBudget,
+    depth_truncated: &mut bool,
     max_depth: usize,
     include_web_content: bool,
 ) {
     if depth > max_depth {
+        *depth_truncated = true;
         return;
     }
     // Node and time budget: a refused node is counted as discovered but not
@@ -477,6 +485,7 @@ unsafe fn walk_element(
                 lines,
                 counter,
                 budget,
+                depth_truncated,
                 max_depth,
                 include_web_content,
             );
@@ -544,6 +553,7 @@ unsafe fn walk_element(
                 lines,
                 counter,
                 budget,
+                depth_truncated,
                 max_depth,
                 include_web_content,
             );
@@ -680,6 +690,7 @@ unsafe fn walk_element(
             lines,
             counter,
             budget,
+            depth_truncated,
             max_depth,
             include_web_content,
         );

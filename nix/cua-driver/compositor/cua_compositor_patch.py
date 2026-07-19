@@ -226,7 +226,10 @@ static const char *cua_query_geometry(struct tinywl_server *server, pid_t target
 	struct tinywl_toplevel *t, *target = NULL;
 	int matches = 0;
 	wl_list_for_each(t, &server->toplevels, link) {
-		if (cua_toplevel_pid(t) == target_pid) { target = t; matches++; }
+		/* Electron exposes accessibility under the browser root while its
+		 * xdg_toplevel can be owned by a descendant GPU/renderer client. Match
+		 * the same bounded process family accepted by root:<pid> injection. */
+		if (cua_pid_in_family(cua_toplevel_pid(t), target_pid)) { target = t; matches++; }
 	}
 	if (!matches) return "target-not-found";
 	if (matches > 1) return "ambiguous-pid";
@@ -282,6 +285,18 @@ static bool cua_motion(struct tinywl_server *server, struct tinywl_toplevel *t, 
 		sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
 		if (!sc || wl_list_empty(&sc->pointers)) return false;
 	}
+	/* Chromium consumes pointer input through wlroots' seat pointer state. Raw
+	 * wl_pointer resource sends are sufficient for GTK, but Chromium can ACK
+	 * them without dispatching DOM mouse events because the compositor-side
+	 * focus/grab state was never updated. Device 0 is the normal single-pointer
+	 * route, so use the protocol-complete seat notifications there. Higher
+	 * logical device indices retain direct delivery for independent cursors. */
+	if (idx == 0) {
+		wlr_seat_pointer_notify_enter(server->seat, surface, local_x, local_y);
+		wlr_seat_pointer_notify_motion(server->seat, cua_now_ms(), local_x, local_y);
+		cua_ptr[idx].entered = surface;
+		return true;
+	}
 	wl_fixed_t sx = wl_fixed_from_double(local_x), sy = wl_fixed_from_double(local_y);
 	struct wl_resource *res;
 	if (cua_ptr[idx].entered != surface) {
@@ -327,6 +342,11 @@ static bool cua_button(struct tinywl_server *server, struct tinywl_toplevel *t, 
 	struct wlr_surface *surface = cua_ptr[idx].entered ? cua_ptr[idx].entered : t->xdg_toplevel->base->surface;
 	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(server->seat, wl_resource_get_client(surface->resource));
 	if (!sc || wl_list_empty(&sc->pointers)) return false;
+	if (idx == 0) {
+		wlr_seat_pointer_notify_button(server->seat, cua_now_ms(), button,
+			pressed ? WLR_BUTTON_PRESSED : WLR_BUTTON_RELEASED);
+		return true;
+	}
 	uint32_t tm = cua_now_ms(), bs = wlr_seat_client_next_serial(sc);
 	struct wl_resource *res;
 	wl_resource_for_each(res, &sc->pointers) {

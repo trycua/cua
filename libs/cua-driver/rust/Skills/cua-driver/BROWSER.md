@@ -327,6 +327,14 @@ operator can enable the temporary compatibility path with
 Driver after changing the flag. It does not add typed endpoint ownership,
 capabilities, or existing-profile consent.
 
+On macOS, legacy `page.get_text` and `page.query_dom` keep their original text
+payload but also report read provenance in `structuredContent.source`:
+`javascript`, `cdp`, or `ax_fallback`. When JavaScript or CDP fails and the AX
+fallback succeeds, `structuredContent.fallback_error` preserves the triggering
+error and `structuredContent.truncated` reports whether the bounded AX walk was
+cut short. A direct WKWebView/Tauri AX read has no `fallback_error` because no
+JavaScript or CDP route was attempted.
+
 ## Support boundaries
 
 | Surface | Typed state and mutation | Important boundary |

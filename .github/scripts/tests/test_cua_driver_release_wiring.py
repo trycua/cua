@@ -223,6 +223,24 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("https://cua.ai/driver/install.ps1", windows_skill)
         self.assertNotIn("/releases/latest/download/install.ps1", windows_skill)
 
+    def test_driver_cd_can_recover_an_existing_tag_with_cross_targets(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+
+        immutable_ref = (
+            "github.event_name == 'workflow_dispatch' && inputs.publish && "
+            "format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref"
+        )
+        self.assertEqual(workflow.count(immutable_ref), 4)
+        self.assertIn('rustup target add --toolchain stable "${{ matrix.target }}"', workflow)
+        self.assertIn(
+            "rustup target add --toolchain stable \\\n"
+            "            aarch64-apple-darwin x86_64-apple-darwin",
+            workflow,
+        )
+        self.assertIn("inputs.publish == true", workflow)
+        self.assertIn('--tag "${{ steps.version.outputs.tag }}"', workflow)
+        self.assertIn('--sha "${{ steps.version.outputs.sha }}"', workflow)
+
     def test_lume_uses_the_same_draft_finalizer(self) -> None:
         workflow = self.read(".github/workflows/cd-swift-lume.yml")
 

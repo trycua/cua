@@ -98,7 +98,44 @@ fn daemon_is_listening(_binary: &Path, socket: &str) -> bool {
     std::os::unix::net::UnixStream::connect(socket).is_ok()
 }
 
-#[cfg(not(unix))]
+#[cfg(target_os = "windows")]
+fn daemon_is_listening(_binary: &Path, socket: &str) -> bool {
+    use std::io::{BufRead, BufReader, Write};
+
+    // Exercise the real named-pipe protocol instead of spawning `status`.
+    // A finite CLI command is wrapped by the telemetry completion observer,
+    // which makes it an unnecessarily heavy and timing-sensitive readiness
+    // probe on hosted Windows runners. Completing `list` also proves that the
+    // server has progressed past pipe creation and can service the connection.
+    let Ok(pipe) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(socket)
+    else {
+        return false;
+    };
+    let Ok(mut writer) = pipe.try_clone() else {
+        return false;
+    };
+    if writer
+        .write_all(b"{\"method\":\"list\"}\n")
+        .and_then(|()| writer.flush())
+        .is_err()
+    {
+        return false;
+    }
+
+    let mut response = String::new();
+    if BufReader::new(pipe).read_line(&mut response).is_err() {
+        return false;
+    }
+    serde_json::from_str::<serde_json::Value>(&response)
+        .ok()
+        .and_then(|value| value.get("ok").and_then(serde_json::Value::as_bool))
+        == Some(true)
+}
+
+#[cfg(not(any(unix, target_os = "windows")))]
 fn daemon_is_listening(binary: &Path, socket: &str) -> bool {
     Command::new(binary)
         .args(["status", "--socket", socket])

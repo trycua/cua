@@ -471,12 +471,10 @@ async fn invoke_daemon_tool(
         }
     }
 
-    if !known_tool {
-        observe_daemon_error(observation, 64);
-        return DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);
-    }
-
     // Policy enforcement — defense-in-depth for direct daemon socket connections.
+    // Evaluate before registry lookup so a deny-by-default policy does not leak
+    // whether an unapproved name happens to be registered. This also preserves
+    // the MCP policy contract now that every call passes through the daemon.
     match cua_driver_core::policy::configured_policy() {
         Ok(Some(policy)) => match policy.evaluate(&tool_name, &args) {
             cua_driver_core::policy::PolicyDecision::Allow => {}
@@ -494,6 +492,11 @@ async fn invoke_daemon_tool(
             observe_daemon_error(observation, 1);
             return DaemonResponse::err(format!("Policy loading error: {message}"), 1);
         }
+    }
+
+    if !known_tool {
+        observe_daemon_error(observation, 64);
+        return DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);
     }
 
     inject_browser_approvals(&tool_name, &mut args, req.session_id.as_deref());

@@ -805,11 +805,17 @@ trace back to one of these checks reading "false."
 `cua-driver autostart status` reports whether the daemon is
 registered to auto-start at logon AND whether it's currently running:
 
-- `not-registered` — install didn't set up autostart, or user
-  removed the task. Re-register via `cua-driver autostart enable`.
+- `not-registered` — Task Scheduler explicitly reported that the named task
+  does not exist. Re-register via `cua-driver autostart enable`.
 - `registered (not running)` — autostart task exists but no daemon
   process. Kick it with `cua-driver autostart kick`.
 - `registered (running)` — happy path.
+- `permission-denied` — the current process cannot inspect Task Scheduler;
+  registration is unknown. Re-run the status check from a context that can
+  read the task rather than re-registering it blindly.
+- `unknown` — the query failed for another reason. The command exits non-zero
+  and includes the original `schtasks` diagnostic; do not treat this as an
+  absent registration.
 
 ## Recording
 

@@ -1,6 +1,7 @@
 //! Linux identity and endpoint evidence for the first-class browser tools.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -106,28 +107,77 @@ fn parse_proc_net_loopback_listeners(text: &str) -> Vec<(u16, u64)> {
         .collect()
 }
 
-fn socket_inodes_for_pid(pid: i64) -> Result<HashSet<u64>, BrowserRefusal> {
-    let directory = std::fs::read_dir(format!("/proc/{pid}/fd")).map_err(|_| {
-        refusal(
+fn descendant_pids(root: i64, relationships: impl IntoIterator<Item = (i64, i64)>) -> HashSet<i64> {
+    let mut children = HashMap::<i64, Vec<i64>>::new();
+    for (pid, parent) in relationships {
+        children.entry(parent).or_default().push(pid);
+    }
+    let mut family = HashSet::from([root]);
+    let mut pending = VecDeque::from([root]);
+    while let Some(parent) = pending.pop_front() {
+        for child in children.get(&parent).into_iter().flatten() {
+            if family.insert(*child) {
+                pending.push_back(*child);
+            }
+        }
+    }
+    family
+}
+
+fn process_family_pids(root: i64) -> Result<HashSet<i64>, BrowserRefusal> {
+    if !std::path::Path::new(&format!("/proc/{root}")).exists() {
+        return Err(refusal(
             BrowserRefusalCode::BrowserBindingStale,
-            format!("browser process {pid} is no longer available"),
-        )
-    })?;
-    Ok(directory
+            format!("browser process {root} is no longer available"),
+        ));
+    }
+    let relationships = std::fs::read_dir("/proc")
+        .into_iter()
         .flatten()
-        .filter_map(|entry| std::fs::read_link(entry.path()).ok())
-        .filter_map(|target| {
-            let target = target.to_string_lossy();
-            target
-                .strip_prefix("socket:[")
-                .and_then(|value| value.strip_suffix(']'))
-                .and_then(|value| value.parse::<u64>().ok())
-        })
-        .collect())
+        .flatten()
+        .filter_map(|entry| {
+            let pid = entry.file_name().to_string_lossy().parse::<i64>().ok()?;
+            let status = std::fs::read_to_string(entry.path().join("status")).ok()?;
+            let parent = status
+                .lines()
+                .find_map(|line| line.strip_prefix("PPid:"))?
+                .trim()
+                .parse::<i64>()
+                .ok()?;
+            Some((pid, parent))
+        });
+    Ok(descendant_pids(root, relationships))
+}
+
+fn socket_inodes_for_process_tree(pid: i64) -> Result<HashSet<u64>, BrowserRefusal> {
+    let process_family = process_family_pids(pid)?;
+    let mut inodes = HashSet::new();
+    for owner_pid in process_family {
+        let Ok(directory) = std::fs::read_dir(format!("/proc/{owner_pid}/fd")) else {
+            continue;
+        };
+        inodes.extend(
+            directory
+                .flatten()
+                .filter_map(|entry| std::fs::read_link(entry.path()).ok())
+                .filter_map(|target| {
+                    let target = target.to_string_lossy();
+                    target
+                        .strip_prefix("socket:[")
+                        .and_then(|value| value.strip_suffix(']'))
+                        .and_then(|value| value.parse::<u64>().ok())
+                }),
+        );
+    }
+    Ok(inodes)
 }
 
 fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
-    let owned = socket_inodes_for_pid(pid)?;
+    // Chromium may delegate its DevTools listener to a utility child. Core's
+    // ownership contract explicitly accepts the approved browser PID or one
+    // of its children, so inspect the bounded descendant tree as well as the
+    // root process while still attributing the result to the approved root.
+    let owned = socket_inodes_for_process_tree(pid)?;
     let mut listeners = Vec::new();
     for path in ["/proc/net/tcp", "/proc/net/tcp6"] {
         if let Ok(text) = std::fs::read_to_string(path) {
@@ -142,6 +192,121 @@ fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     listeners.sort_unstable();
     listeners.dedup();
     Ok(listeners)
+}
+
+fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
+    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    let port = lines.next()?.parse::<u16>().ok()?;
+    let path = lines.next()?;
+    if lines.next().is_some() {
+        return None;
+    }
+    let instance = path.strip_prefix("/devtools/browser/")?;
+    (!instance.is_empty()
+        && instance
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
+    .then_some((port, path))
+}
+
+fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let relative = match product {
+        BrowserProduct::GoogleChrome => ".config/google-chrome",
+        BrowserProduct::MicrosoftEdge => ".config/microsoft-edge",
+        BrowserProduct::Chromium => ".config/chromium",
+        _ => return None,
+    };
+    Some(home.join(relative))
+}
+
+fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
+    let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).map_err(|_| {
+        refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("browser process {pid} is no longer available"),
+        )
+    })?;
+    let args = bytes
+        .split(|byte| *byte == 0)
+        .filter(|arg| !arg.is_empty())
+        .map(|arg| String::from_utf8_lossy(arg).into_owned())
+        .collect::<Vec<_>>();
+    let mut directories = Vec::new();
+    for (index, arg) in args.iter().enumerate() {
+        if let Some(path) = arg.strip_prefix("--user-data-dir=") {
+            if !path.is_empty() {
+                directories.push(PathBuf::from(path));
+            }
+        } else if arg == "--user-data-dir" {
+            if let Some(path) = args.get(index + 1).filter(|path| !path.is_empty()) {
+                directories.push(PathBuf::from(path));
+            }
+        }
+    }
+    directories.sort();
+    directories.dedup();
+    match directories.as_slice() {
+        [] => {
+            let Some(executable) = std::fs::read_link(format!("/proc/{pid}/exe"))
+                .ok()
+                .map(|path| path.to_string_lossy().into_owned())
+            else {
+                return Ok(None);
+            };
+            Ok(default_user_data_dir(browser_product(&executable)))
+        }
+        [path] if path.is_absolute() => Ok(Some(path.clone())),
+        [path] => {
+            let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).map_err(|_| {
+                refusal(
+                    BrowserRefusalCode::BrowserBindingStale,
+                    format!("browser process {pid} working directory is unavailable"),
+                )
+            })?;
+            Ok(Some(cwd.join(path)))
+        }
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "browser process has multiple distinct --user-data-dir arguments",
+        )),
+    }
+}
+
+fn active_port_endpoint(pid: i64) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+    let Some(user_data_dir) = user_data_dir_for_pid(pid)? else {
+        return Ok(None);
+    };
+    let text = match std::fs::read_to_string(user_data_dir.join("DevToolsActivePort")) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not read the browser's DevToolsActivePort file: {error}"),
+            ))
+        }
+    };
+    let Some((port, path)) = parse_devtools_active_port(&text) else {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+            "the browser's DevToolsActivePort file did not contain one exact browser endpoint",
+        ));
+    };
+    if !loopback_ports_for_pid(pid)?.contains(&port) {
+        return Ok(None);
+    }
+    Ok(Some(OwnedEndpoint {
+        ws_url: format!("ws://127.0.0.1:{port}{path}"),
+        http_port: Some(port),
+        ownership: EndpointOwnershipProof {
+            method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
+            owner_pid: pid,
+            detail: Some(
+                "exact /proc argv profile port file plus loopback socket inode owner".to_owned(),
+            ),
+        },
+    }))
 }
 
 fn process_identity(pid: i64) -> Result<(u64, Option<String>), BrowserRefusal> {
@@ -395,6 +560,28 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         })?;
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
             let Some(windows) = crate::wayland::sway_ipc::list_windows() else {
+                if crate::wayland::is_inject_mode() {
+                    // The private cua-compositor route owns both the native
+                    // toplevel enumeration and its PID correlation. Unlike a
+                    // generic AT-SPI-only Wayland session, that is sufficient
+                    // to attest singleton native-window cardinality for an
+                    // embedded Chromium endpoint.
+                    let owned = tokio::task::spawn_blocking(move || {
+                        crate::wayland::list_windows_dispatch(Some(pid_u32))
+                            .into_iter()
+                            .filter(|window| window.pid == Some(pid_u32))
+                            .map(|window| window.xid)
+                            .collect::<Vec<_>>()
+                    })
+                    .await
+                    .map_err(|error| {
+                        refusal(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            format!("could not enumerate cua-compositor browser windows: {error}"),
+                        )
+                    })?;
+                    return Ok(Some(owned.len() == 1 && owned[0] == window_id));
+                }
                 return Ok(None);
             };
             let owned = windows
@@ -424,6 +611,9 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        if let Some(endpoint) = active_port_endpoint(pid)? {
+            return Ok(Some(endpoint));
+        }
         let ports = tokio::task::spawn_blocking(move || loopback_ports_for_pid(pid))
             .await
             .map_err(|error| {
@@ -452,6 +642,9 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        if let Some(endpoint) = active_port_endpoint(pid)? {
+            return Ok(Some(endpoint));
+        }
         let ports = tokio::task::spawn_blocking(move || loopback_ports_for_pid(pid))
             .await
             .map_err(|error| {
@@ -577,6 +770,11 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 
         let deadline = std::time::Instant::now() + Duration::from_secs(6);
         let endpoint_result = loop {
+            match active_port_endpoint(request.pid) {
+                Ok(Some(endpoint)) => break Ok(endpoint),
+                Ok(None) => {}
+                Err(error) => break Err(error),
+            }
             let ports = match tokio::task::spawn_blocking(move || {
                 loopback_ports_for_pid(request.pid)
             })
@@ -604,10 +802,14 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                     .filter(|port| !listeners_before.contains(port))
                     .collect::<Vec<_>>();
                 if let [port] = correlated.as_slice() {
+                    // Chromium's consent-gated server intentionally disables
+                    // `/json/*` discovery and accepts the stable browser route
+                    // without a UUID. The exact setup action plus the newly
+                    // PID-owned listener proves which approval server this is.
                     endpoints.push((
                         *port,
                         format!("ws://127.0.0.1:{port}/devtools/browser"),
-                        "new PID-owned listener correlated with exact approved setup",
+                        "new PID-owned approval listener correlated with exact setup",
                     ));
                 } else if correlated.len() > 1 {
                     break Err(refusal(
@@ -783,6 +985,14 @@ mod tests {
     }
 
     #[test]
+    fn process_family_contains_only_transitive_descendants() {
+        assert_eq!(
+            descendant_pids(10, [(11, 10), (12, 11), (20, 1), (21, 20)]),
+            HashSet::from([10, 11, 12])
+        );
+    }
+
+    #[test]
     fn classifier_covers_embedded_and_standalone_chromium() {
         assert!(is_chromium("CuaTestHarness.Electron"));
         assert!(is_chromium("chromium-browser"));
@@ -828,5 +1038,25 @@ mod tests {
             Some(9222)
         );
         assert_eq!(loopback_websocket_port("ws://0.0.0.0:9222/devtools"), None);
+    }
+
+    #[test]
+    fn active_port_parser_requires_one_exact_browser_path() {
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/browser/abc-123\n"),
+            Some((9222, "/devtools/browser/abc-123"))
+        );
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/browser\n"),
+            None
+        );
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/page/abc\n"),
+            None
+        );
+        assert_eq!(
+            parse_devtools_active_port("9222\n/devtools/browser/../page\n"),
+            None
+        );
     }
 }

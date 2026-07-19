@@ -40,9 +40,9 @@ Print a tool's full description and JSON input schema.
 
 ### `cua-driver call`
 
-Invoke an MCP tool directly from the shell.
+Invoke an MCP tool through the running daemon.
 
-Sends the tool request to the required Cua Driver daemon. JSON arguments may be passed as a positional JSON object or through stdin. If the daemon is unavailable, the command fails; it never executes the tool in the CLI process.
+Requires a Cua Driver daemon. JSON arguments may be passed as a positional JSON object or through stdin.
 
 **Arguments:**
 
@@ -62,9 +62,9 @@ Sends the tool request to the required Cua Driver daemon. JSON arguments may be 
 
 ### `cua-driver mcp`
 
-Run the stdio MCP server.
+Run the daemon-backed stdio MCP proxy.
 
-Every MCP process is a stdio proxy to a Cua Driver daemon. On macOS it can auto-launch the CuaDriver.app daemon so TCC grants attach to the bundle. On Windows and Linux, the daemon must already be running.
+Every MCP tool call is forwarded to a Cua Driver daemon. On macOS the proxy can auto-launch CuaDriver.app; on Windows and Linux the daemon must already be running.
 
 **Options:**
 
@@ -140,7 +140,7 @@ Supported clients include claude, codex, cursor, antigravity, openclaw, opencode
 
 Control trajectory recording on a running daemon.
 
-Recording state lives in the daemon and is shared across daemon-backed clients.
+Recording state lives in the required daemon and survives client reconnects.
 
 **Options:**
 
@@ -347,6 +347,8 @@ Remove the autostart entry.
 #### `cua-driver autostart status`
 
 Print whether autostart is registered and running.
+
+`not-registered` is emitted only when Task Scheduler explicitly reports that the named task does not exist. If the task cannot be inspected, the command exits non-zero and reports `permission-denied` or `unknown` together with the original diagnostic.
 
 #### `cua-driver autostart kick`
 

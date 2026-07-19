@@ -2644,7 +2644,7 @@ fn cli_docs_json() -> serde_json::Value {
                 "subcommands": [
                     {"name":"enable","abstract":"Register the autostart entry.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
                     {"name":"disable","abstract":"Remove the autostart entry.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
-                    {"name":"status","abstract":"Print whether autostart is registered and running.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"status","abstract":"Print whether autostart is registered and running.","discussion":"`not-registered` is emitted only when Task Scheduler explicitly reports that the named task does not exist. If the task cannot be inspected, the command exits non-zero and reports `permission-denied` or `unknown` together with the original diagnostic.","arguments":[],"options":[],"flags":[],"subcommands":[]},
                     {"name":"kick","abstract":"Start the autostart entry now without re-logging.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
                 ]
             },

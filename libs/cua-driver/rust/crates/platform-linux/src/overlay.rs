@@ -179,10 +179,17 @@ pub fn init(cfg: CursorConfig) {
 }
 
 pub fn send_command(cmd: OverlayCommand) {
-    let _ = send_command_for("default".to_owned(), cmd);
+    send_command_for("default".to_owned(), cmd);
 }
 
-pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
+pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
+    let _ = try_send_command_for(key, cmd);
+}
+
+/// Dispatch to every active Linux overlay backend. The result reports only
+/// whether the X11 owner accepted the command and can fire `ARRIVAL_TX`; the
+/// Wayland layer-shell path does not currently publish arrival notifications.
+fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
     if key.is_empty() {
         return false;
     }
@@ -321,7 +328,7 @@ pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     arrival_register(key.clone(), tx);
 
-    if !send_command_for(
+    if !try_send_command_for(
         key.clone(),
         OverlayCommand::MoveTo {
             x,
@@ -418,8 +425,8 @@ impl RenderState {
 
     /// True while the render loop must wake at frame cadence because the next
     /// tick can change pixels. A brand-new sentinel cursor is deliberately
-    /// quiescent, so an idle MCP server can block on the command channel
-    /// instead of repainting a full-screen X11 pixmap at 60 fps.
+    /// quiescent, so an idle MCP server can park on bounded maintenance waits
+    /// instead of rebuilding and repainting X11 cursor tiles at 60 fps.
     #[cfg(target_os = "linux")]
     fn needs_frame_tick(&self) -> bool {
         let fade_start = self.core.motion.idle_hide_ms / 1000.0;
@@ -585,7 +592,9 @@ fn recoverable_x11_z_order_error(error: &x11rb::x11_utils::X11Error, overlay_win
 }
 
 #[cfg(target_os = "linux")]
-fn x11_display_change_event(
+/// Return `Ok(true)` for display changes, `Ok(false)` for unrelated or safely
+/// recoverable events, and `Err` for protocol failures that disable the overlay.
+fn classify_x11_overlay_event(
     event: &x11rb::protocol::Event,
     overlay_win: u32,
 ) -> anyhow::Result<bool> {
@@ -616,23 +625,19 @@ fn x11_display_change_event(
 }
 
 #[cfg(target_os = "linux")]
-fn update_render_map_geometry(map: &mut RenderMap, width: u16, height: u16) -> bool {
-    let width = u32::from(width);
-    let height = u32::from(height);
-    let changed = map.scr_w != width || map.scr_h != height;
-    map.scr_w = width;
-    map.scr_h = height;
-    changed
+fn update_render_map_geometry(map: &mut RenderMap, width: u16, height: u16) {
+    map.scr_w = u32::from(width);
+    map.scr_h = u32::from(height);
 }
 
 #[cfg(target_os = "linux")]
-fn drain_x11_display_changes(
+fn drain_x11_overlay_events(
     conn: &impl x11rb::connection::Connection,
     overlay_win: u32,
 ) -> anyhow::Result<bool> {
     let mut display_changed = false;
     while let Some(event) = conn.poll_for_event()? {
-        display_changed |= x11_display_change_event(&event, overlay_win)?;
+        display_changed |= classify_x11_overlay_event(&event, overlay_win)?;
     }
     Ok(display_changed)
 }
@@ -853,8 +858,9 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         return;
     }
 
-    // Main render loop at ~60 Hz while pixels can change. When every cursor is
-    // quiescent, block on the command channel and leave the last frame intact.
+    // Render at ~60 Hz only while pixels can change. Quiescent cursors use
+    // bounded channel waits so X11/RandR events are serviced without repainting;
+    // the final frame remains intact between maintenance wakes.
     let frame_dur = Duration::from_millis(16);
     let z_order_interval = Duration::from_millis(80);
     let mut last_tick = Instant::now();
@@ -865,10 +871,10 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let z_enforcer = X11ZOrderEnforcer { conn: &conn, win };
 
     loop {
-        // Idle fast path: no full-screen Pixmap allocation, RGBA→BGRA copy,
-        // XShape update, or XPutImage until a command arrives. A resting visible
-        // cursor still wakes cheaply every 80 ms to preserve the documented
-        // X11 z-order contract without repainting.
+        // Idle fast path: no Pixmap allocation, RGBA→BGRA copy, XShape update,
+        // or XPutImage until pixels can change. The 50 ms maintenance bound
+        // services X11/RandR events; a resting visible cursor also reasserts
+        // z-order at most every 80 ms. Neither maintenance path authorizes paint.
         let (first_msg, maintenance_timeout) =
             match wait_for_overlay_work(&rx, frame_tick_needed, maintenance_deadline) {
                 OverlayWake::Frame => (None, false),
@@ -881,7 +887,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         // bounded maintenance timeout above to service this queue. Detect
         // RandR changes before touching render state; unrelated X events remain
         // cheap and do not authorize a repaint.
-        let screen_changed = match drain_x11_display_changes(&conn, win) {
+        let screen_changed = match drain_x11_overlay_events(&conn, win) {
             Ok(changed) => changed,
             Err(e) => {
                 tracing::warn!("X11 overlay event drain failed; disabling overlay: {e}");
@@ -1031,8 +1037,8 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
 /// X11 implementation of [`cursor_overlay::ZOrderEnforcer`].
 ///
 /// Borrows the X11 connection and overlay window id; lives only inside
-/// `run_overlay_thread` (the X11 connection is not `'static`). Called
-/// every 80 ms from the render loop.
+/// `run_overlay_thread` (the X11 connection is not `'static`). Reasserted after
+/// commands, target/display changes, and at most every 80 ms while visible.
 #[cfg(target_os = "linux")]
 struct X11ZOrderEnforcer<'a, C: x11rb::connection::Connection> {
     conn: &'a C,
@@ -1369,6 +1375,11 @@ mod tests {
     }
 
     #[test]
+    fn send_command_for_keeps_unit_returning_api() {
+        let _: fn(CursorKey, OverlayCommand) = send_command_for;
+    }
+
+    #[test]
     fn failed_x11_enqueue_is_reported_without_waiting() {
         assert!(!try_send_x11_message(None, test_message()));
 
@@ -1530,9 +1541,9 @@ mod tests {
                 sequence: 0,
                 u: x11rb::protocol::randr::CrtcChange::default().into(),
             });
-        assert!(x11_display_change_event(&screen_change, 7).unwrap());
-        assert!(x11_display_change_event(&crtc_change, 7).unwrap());
-        assert!(!x11_display_change_event(&x11rb::protocol::Event::Unknown(vec![]), 7).unwrap());
+        assert!(classify_x11_overlay_event(&screen_change, 7).unwrap());
+        assert!(classify_x11_overlay_event(&crtc_change, 7).unwrap());
+        assert!(!classify_x11_overlay_event(&x11rb::protocol::Event::Unknown(vec![]), 7).unwrap());
     }
 
     #[test]
@@ -1548,7 +1559,7 @@ mod tests {
             request_name: Some("PutImage"),
         });
 
-        assert!(x11_display_change_event(&error, 7).is_err());
+        assert!(classify_x11_overlay_event(&error, 7).is_err());
     }
 
     #[test]
@@ -1564,7 +1575,7 @@ mod tests {
             request_name: Some("ConfigureWindow"),
         });
 
-        assert!(!x11_display_change_event(&error, 7).unwrap());
+        assert!(!classify_x11_overlay_event(&error, 7).unwrap());
     }
 
     #[test]
@@ -1580,7 +1591,7 @@ mod tests {
             request_name: Some("ConfigureWindow"),
         });
 
-        assert!(x11_display_change_event(&error, 7).is_err());
+        assert!(classify_x11_overlay_event(&error, 7).is_err());
     }
 
     #[test]
@@ -1596,15 +1607,14 @@ mod tests {
             request_name: Some("ConfigureWindow"),
         });
 
-        assert!(x11_display_change_event(&error, 7).is_err());
+        assert!(classify_x11_overlay_event(&error, 7).is_err());
     }
 
     #[test]
-    fn geometry_change_updates_render_bounds_once() {
+    fn geometry_update_sets_render_bounds() {
         let mut map = default_render_map();
-        assert!(update_render_map_geometry(&mut map, 1920, 2160));
+        update_render_map_geometry(&mut map, 1920, 2160);
         assert_eq!((map.scr_w, map.scr_h), (1920, 2160));
-        assert!(!update_render_map_geometry(&mut map, 1920, 2160));
     }
 
     #[test]
@@ -1615,7 +1625,7 @@ mod tests {
         map.cursors.get_mut("default").unwrap().core.pos = (100.0, 2000.0);
         assert_eq!(render_x11_tiles(&map).len(), 1);
 
-        assert!(update_render_map_geometry(&mut map, 1920, 1080));
+        update_render_map_geometry(&mut map, 1920, 1080);
         assert!(render_x11_tiles(&map).is_empty());
     }
 

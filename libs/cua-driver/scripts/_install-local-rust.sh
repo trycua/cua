@@ -282,11 +282,14 @@ echo ""
 # this avoids image-specific login-keychain ACL failures. Local dev only;
 # releases are CI-signed.
 #
-# Echoes the `codesign --sign` argument: the valid identity's SHA-1 when
+# Echoes the `codesign --sign` argument: a matching identity's SHA-1 when
 # available, or "-" when it can't be created — no codesign/openssl, CI,
-# locked keychain. Use the identity hash rather than the certificate name:
-# stale certificate-only duplicates can share the same name and make codesign
-# reject an otherwise valid identity as ambiguous.
+# locked keychain. The installer creates a self-signed local certificate, which
+# `security find-identity -v` filters out as untrusted even when its private key
+# is present and codesign can use it. Query matching code-signing identities
+# without the valid-only filter; the bounded codesign call below remains the
+# authoritative usability check. Use the identity hash rather than the
+# certificate name because duplicate certificate names are ambiguous.
 CUA_LOCAL_SIGN_CN="CuaDriver Local Signing (cua-driver-rs)"
 ensure_local_signing_identity() {
     { [ "$OS" = "Darwin" ] && command -v codesign >/dev/null 2>&1; } || { printf -- '-'; return; }
@@ -296,7 +299,7 @@ ensure_local_signing_identity() {
     fi
     [ -f "$kc" ] || { printf -- '-'; return; }
     local identity
-    identity="$(security find-identity -v -p codesigning "$kc" 2>/dev/null \
+    identity="$(security find-identity -p codesigning "$kc" 2>/dev/null \
         | awk -v cn="$CUA_LOCAL_SIGN_CN" 'index($0, "\"" cn "\"") { print $2; exit }')"
     if [ -n "$identity" ]; then
         printf '%s' "$identity"; return
@@ -318,7 +321,7 @@ ensure_local_signing_identity() {
             || openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
                 -out "$tmp/id.p12" -passout pass:"$pw" -name "$CUA_LOCAL_SIGN_CN" >/dev/null 2>&1; } \
        && security import "$tmp/id.p12" -k "$kc" -P "$pw" -A -T /usr/bin/codesign >/dev/null 2>&1; then
-        identity="$(security find-identity -v -p codesigning "$kc" 2>/dev/null \
+        identity="$(security find-identity -p codesigning "$kc" 2>/dev/null \
             | awk -v cn="$CUA_LOCAL_SIGN_CN" 'index($0, "\"" cn "\"") { print $2; exit }')"
         rm -rf "$tmp"
         if [ -n "$identity" ]; then
@@ -368,6 +371,29 @@ clean_partial_bundle_signature() {
     # the unsigned staged bundle.
     rm -rf "$app/Contents/_CodeSignature"
     find "$app" -type f -name '*.cstemp' -delete
+}
+
+# Classify a bundle's macOS designated requirement into a stable identity
+# class, used below to decide whether a TCC grant must be reset:
+#   * "cert:<fp>" — any certificate/anchor-based requirement (a Developer ID
+#                   release build OR the self-signed local cert). <fp> is a
+#                   hash of the normalized requirement text: STABLE across
+#                   rebuilds with the same cert, but DIFFERENT between the
+#                   Developer ID release build and the local build — exactly
+#                   the release<->local transition that invalidates a grant.
+#   * "adhoc"     — a bare `cdhash H"..."` requirement (churns every rebuild).
+#   * ""          — no bundle / unsigned / codesign unavailable.
+classify_designated_requirement() {
+    local app="$1" req
+    { [ "$OS" = "Darwin" ] && [ -d "$app" ] && command -v codesign >/dev/null 2>&1; } \
+        || { printf ''; return; }
+    req="$(codesign -d -r- "$app" 2>&1 | sed -n 's/^designated => //p')"
+    [ -n "$req" ] || { printf ''; return; }
+    if printf '%s' "$req" | grep -Eq 'certificate|anchor'; then
+        printf 'cert:%s' "$(printf '%s' "$req" | shasum | awk '{print $1}')"
+    else
+        printf 'adhoc'
+    fi
 }
 
 # --- macOS: wrap the binary in CuaDriver.app for a stable TCC identity ---
@@ -435,6 +461,14 @@ if [ "$OS" = "Darwin" ]; then
         fi
     fi
 
+    # Capture the live app's ACTUAL designated requirement before we replace
+    # it, so the TCC-reset decision below compares real signing identities
+    # rather than trusting the .tcc-signing-identity marker. The marker records
+    # only the last *local* signing decision and can disagree with what is
+    # actually installed — e.g. a Developer ID release bundle whose grant the
+    # marker knows nothing about. See #2230.
+    OLD_LIVE_IDENTITY="$(classify_designated_requirement "$APP_DEST")"
+
     # Install to /Applications (user-writable for admins; no sudo — same as
     # install.sh). Keep the prior bundle available until the copy completes so
     # an interrupted install cannot leave a corrupt live app.
@@ -460,38 +494,68 @@ if [ "$OS" = "Darwin" ]; then
     # TCC pins each Accessibility / Screen-Recording grant to the app's
     # designated requirement AT GRANT TIME. A user who granted while the app
     # was ad-hoc signed has a grant whose csreq is a bare `cdhash H"..."`
-    # (changes every rebuild); a user who granted under a different cert has
-    # one pinned to that leaf. After we re-sign with the stable cert above,
-    # that old row survives with auth_value=allowed but a csreq that no longer
-    # matches THIS build — so the daemon reads "not granted" while System
-    # Settings still shows the toggle ON. That's a dead end: re-toggling
-    # doesn't help because the row already records a decision, so the grant
-    # prompt never re-fires. Detect a signing-identity change vs the last
-    # install and `tccutil reset` once, so the next `permissions grant`
-    # prompts cleanly and re-pins to the current (stable cert) identity —
-    # after which cert-pinned grants survive all future rebuilds.
+    # (changes every rebuild); a user who granted under a Developer ID release
+    # build or a different local cert has one pinned to that leaf. When the
+    # newly installed build's requirement differs, the old row survives with
+    # auth_value=allowed but a csreq that no longer matches THIS build — so the
+    # daemon reads "not granted" while System Settings still shows the toggle
+    # ON. That's a dead end: re-toggling doesn't help because the row already
+    # records a decision, so the grant prompt never re-fires.
     #
-    # `tccutil reset` needs no sudo / Full Disk Access, and is a no-op when
-    # nothing was granted. We only reset when moving TO a cert identity (the
-    # case a clean re-grant durably fixes); an ad-hoc build churns its cdhash
-    # every rebuild regardless, so resetting it would just add friction.
+    # We compare the LIVE requirement captured before replacement
+    # (OLD_LIVE_IDENTITY) against the newly installed one — not the
+    # .tcc-signing-identity marker, which only records the last *local* signing
+    # decision and misses a release->local transition entirely (#2230). On any
+    # transition a clean re-grant fixes (release<->local, local-cert-a<->b, or
+    # cert->adhoc), `tccutil reset` once so the next `permissions grant` prompts
+    # cleanly and re-pins to the current identity. We deliberately do NOT reset
+    # adhoc->adhoc: the cdhash churns every rebuild, so a reset there would just
+    # force a re-grant on every install for no durable benefit.
+    #
+    # `tccutil reset` needs no sudo / Full Disk Access and is a no-op when
+    # nothing was granted. Its exit status is honored: the identity marker is
+    # only advanced once a needed reset actually succeeds, so a failed reset is
+    # retried on the next install instead of being recorded as complete (#2230).
     if command -v tccutil >/dev/null 2>&1; then
         IDENTITY_MARKER="$HOME_DIR/.tcc-signing-identity"
-        NEW_IDENTITY="$(codesign -d -r- "$APP_DEST" 2>&1 \
-            | sed -n 's/.*certificate leaf = H"\([0-9a-fA-F]*\)".*/cert:\1/p' | head -1)"
+        NEW_IDENTITY="$(classify_designated_requirement "$APP_DEST")"
         [ -n "$NEW_IDENTITY" ] || NEW_IDENTITY="adhoc"
-        OLD_IDENTITY="$(cat "$IDENTITY_MARKER" 2>/dev/null || true)"
-        case "$NEW_IDENTITY" in
-            cert:*)
-                if [ "$NEW_IDENTITY" != "$OLD_IDENTITY" ]; then
-                    tccutil reset Accessibility com.trycua.driver >/dev/null 2>&1 || true
-                    tccutil reset ScreenCapture com.trycua.driver >/dev/null 2>&1 || true
-                    echo "${BOLD}cleared any stale Accessibility / Screen-Recording grant pinned to a previous build.${NORMAL}"
+        # Prefer the live pre-replacement requirement; fall back to the marker
+        # only when the old app was absent/unsigned (first install).
+        OLD_IDENTITY="$OLD_LIVE_IDENTITY"
+        [ -n "$OLD_IDENTITY" ] || OLD_IDENTITY="$(cat "$IDENTITY_MARKER" 2>/dev/null || true)"
+
+        old_is_cert=0; new_is_cert=0
+        case "$OLD_IDENTITY" in cert:*) old_is_cert=1 ;; esac
+        case "$NEW_IDENTITY" in cert:*) new_is_cert=1 ;; esac
+        needs_reset=0
+        if [ "$NEW_IDENTITY" != "$OLD_IDENTITY" ] \
+           && { [ "$old_is_cert" = 1 ] || [ "$new_is_cert" = 1 ]; }; then
+            needs_reset=1
+        fi
+
+        reset_succeeded=1
+        if [ "$needs_reset" = 1 ]; then
+            tccutil reset Accessibility com.trycua.driver >/dev/null 2>&1 || reset_succeeded=0
+            tccutil reset ScreenCapture com.trycua.driver >/dev/null 2>&1 || reset_succeeded=0
+            if [ "$reset_succeeded" = 1 ]; then
+                echo "${BOLD}cleared any stale Accessibility / Screen-Recording grant pinned to a previous signing identity.${NORMAL}"
+                if [ "$new_is_cert" = 1 ]; then
                     echo "  Grant once more (System Settings → Privacy & Security) and it will${BOLD} stick across every future rebuild${NORMAL} — the grant now pins to a stable signing certificate, not the per-build cdhash."
+                else
+                    echo "  Grant once more (System Settings → Privacy & Security). Reinstall once a stable local signing certificate is available to keep the grant across rebuilds."
                 fi
-                ;;
-        esac
-        printf '%s\n' "$NEW_IDENTITY" > "$IDENTITY_MARKER" 2>/dev/null || true
+            else
+                echo "${YELLOW}warning: could not reset the stale TCC grant; leaving the identity marker unchanged so the next install retries.${NORMAL}" >&2
+            fi
+        fi
+
+        # Advance the marker only when no reset was needed, or the reset that
+        # was needed succeeded — otherwise leave it stale so the next install
+        # retries the transition.
+        if [ "$needs_reset" = 0 ] || [ "$reset_succeeded" = 1 ]; then
+            printf '%s\n' "$NEW_IDENTITY" > "$IDENTITY_MARKER" 2>/dev/null || true
+        fi
     fi
 fi
 

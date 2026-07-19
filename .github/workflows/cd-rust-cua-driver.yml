@@ -25,6 +25,11 @@ on:
         required: false
         type: boolean
         default: true
+      publish:
+        description: "Publish an existing immutable version tag after successful builds"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -89,6 +94,8 @@ jobs:
             libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev \
             libxkbcommon-dev
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
       - name: Determine version
         id: version
         shell: bash
@@ -153,6 +160,8 @@ jobs:
             target: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
       - name: Determine version
         id: version
         shell: bash
@@ -166,6 +175,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      # rustup can drop non-host std components while updating an existing
+      # stable toolchain. Install the requested cross target explicitly and
+      # fail here instead of surfacing a misleading `can't find crate core`
+      # error during the release build.
+      - name: Ensure Rust target is installed
+        shell: bash
+        run: |
+          rustup target add --toolchain stable "${{ matrix.target }}"
+          rustup target list --installed | grep -Fx "${{ matrix.target }}"
       - uses: actions/cache@v4
         with:
           path: |
@@ -239,6 +257,8 @@ jobs:
       KEYCHAIN_PASSWORD: temporary-cd-keychain-pwd
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
       - name: Determine version
         id: version
         shell: bash
@@ -279,6 +299,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - name: Ensure Rust targets are installed
+        run: |
+          rustup target add --toolchain stable \
+            aarch64-apple-darwin x86_64-apple-darwin
+          rustup target list --installed | grep -Fx aarch64-apple-darwin
+          rustup target list --installed | grep -Fx x86_64-apple-darwin
       - uses: actions/cache@v4
         with:
           path: |
@@ -422,18 +448,32 @@ jobs:
   # ── Release ──────────────────────────────────────────────────────────────────
   release:
     needs: [build-linux, build-windows, build-macos-universal]
-    if: startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    if: startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.publish == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
 
       - name: Determine version
         id: version
         run: |
-          VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          TAG="cua-driver-rs-v${VERSION}"
+          SHA=$(git rev-parse HEAD)
+          TAG_SHA=$(git rev-list -n 1 "$TAG")
+          if [[ "$SHA" != "$TAG_SHA" ]]; then
+            echo "Checked-out source $SHA does not match $TAG ($TAG_SHA)" >&2
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -513,9 +553,9 @@ jobs:
             --product cua-driver-rs \
             --display-name "Cua Driver" \
             --version "${{ steps.version.outputs.version }}" \
-            --tag "${{ github.ref_name }}" \
+            --tag "${{ steps.version.outputs.tag }}" \
             --tag-prefix cua-driver-rs-v \
-            --sha "${{ github.sha }}" \
+            --sha "${{ steps.version.outputs.sha }}" \
             --path libs/cua-driver \
             --exclude-path libs/cua-driver/docs \
             --exclude-path libs/cua-driver/python \
@@ -556,8 +596,8 @@ jobs:
         run: |
           python3 .github/scripts/github_release.py \
             --repository "${{ github.repository }}" \
-            --tag "${{ github.ref_name }}" \
-            --sha "${{ github.sha }}" \
+            --tag "${{ steps.version.outputs.tag }}" \
+            --sha "${{ steps.version.outputs.sha }}" \
             --body release-metadata/release-body.md \
             --asset-dir release-upload \
             --prerelease

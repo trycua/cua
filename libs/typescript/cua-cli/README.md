@@ -7,7 +7,6 @@
 > ```
 >
 > The Python CLI provides the same functionality with better integration into the Cua ecosystem.
-> See the [cloud sandbox tutorial](https://cua.ai/docs/tutorials/your-first-cloud-sandbox) for installation and usage.
 
 ---
 

@@ -41,6 +41,13 @@ support hardening branch. It is not a public support contract.
 - Corrected the existing-profile setup row to model the user workflow: launch
   an ordinary browser page without CDP, prepare that exact native window, then
   navigate to the oracle fixture through the newly attached browser route.
+- Made standalone Linux certification compile with `portal-input`, matching
+  the published artifact instead of misclassifying GNOME/KDE through a
+  default-feature binary that can only fall back to `wtype`.
+- Made `XDG_SESSION_TYPE=wayland` plus `WAYLAND_DISPLAY` authoritative for the
+  standalone runner and browser launch. GNOME/KDE retain `DISPLAY` for
+  XWayland, but that no longer sends a native Wayland lane through X11 window
+  enumeration or launches its browser on XWayland.
 - Added protocol and compositor identity design records.
 - Added a GNOME Wayland browser-identity route using WinRects helper API
   v4. Browser-sensitive calls now prove the immutable D-Bus owner is the
@@ -55,7 +62,8 @@ support hardening branch. It is not a public support contract.
 - `cargo test -p cua-driver --test standalone_browser_behavior_test --no-run`:
   compiled successfully at the current working tree.
 - `cargo test -p platform-linux --no-default-features`: platform code compiled
-  on macOS; Linux-only helper tests are scheduled on the GNOME/Sway workers.
+  on macOS. The release-equivalent `portal-input` build compiled on GNOME and
+  completed the canonical browser matrix below.
 
 ## Representative evidence
 
@@ -89,10 +97,35 @@ support hardening branch. It is not a public support contract.
   videos. Both ordinary-profile setup and isolated-profile launch passed for
   both products after the harness began from an ordinary `about:blank` window
   and navigated through the prepared browser route.
+- macOS Tahoe exact-tip setup replay at source `a22840a4`: existing-profile
+  setup passed for Chrome and Edge, and isolated-profile launch passed for
+  Edge. Chrome isolated launch encountered one transient
+  `ERR_HTTP_RESPONSE_CODE_FAILURE`; an immediate clean retry and three further
+  consecutive runs all delivered with videos and complete fixture journals.
+  No assertion was relaxed and no retry was added to the harness.
+- Native Sway exact-tip setup replay at source `a22840a4`: existing-profile
+  setup and isolated-profile launch delivered for Chrome and Edge, with 4
+  playable videos and no failure or skip.
+- GNOME Wayland with Google Chrome at source `b1838255`: the canonical runner
+  completed 13 delivered rows, 3 expected policy refusals, 0 failures, 0
+  skips, and 16 playable videos. This run used the release-equivalent
+  `portal-input` feature and native Wayland even though GNOME also exported an
+  XWayland `DISPLAY`.
+- [Hosted Linux X11 with Google Chrome at source `b1838255`](https://github.com/trycua/cua/actions/runs/29722330860):
+  13 delivered, 3 expected policy refusals, 0 failures, 0 skips, and 16
+  playable videos.
+- [Hosted Windows with Google Chrome and Microsoft Edge at source `b1838255`](https://github.com/trycua/cua/actions/runs/29722330860):
+  28 delivered, 2 expected policy refusals, 0 failures, 0 skips, and 30
+  playable videos.
 
-## Evidence still pending
+## Deliberate boundaries
 
-- Windows interactive desktop: replay Chrome and Edge from the exact branch.
-- Linux X11: final hosted Chrome regression at the pushed source commit.
-- Non-Sway Wayland: record only fail-closed evidence unless an exact compositor
-  identity adapter is implemented and separately accepted.
+- Already-running ordinary Safari and Firefox profiles remain structured,
+  protocol-specific refusals; neither product exposes the current Chromium
+  attachment lifecycle.
+- Generic Wayland remains fail-closed when no accepted compositor adapter can
+  attest the exact native window. Sway and the maintained GNOME helper are
+  accepted routes, not evidence of a generic protocol.
+- Trusted Chromium pointer input on macOS and Linux remains refused when it
+  would activate the browser. Explicit ref-targeted `dom_event` delivery is
+  available when a synthetic event satisfies the caller's contract.

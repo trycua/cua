@@ -1,0 +1,15 @@
+{
+  "packages": [
+    {
+      "manifest_path": "/workspace/other/Cargo.toml",
+      "name": "cyclops-sdk",
+      "id": "wrong 0.1.0"
+    },
+    {
+      "name": "cyclops-sdk",
+      "id": "exact 0.1.0",
+      "manifest_path": "/workspace/cyclops-cs/sdk/Cargo.toml"
+    }
+  ],
+  "workspace_members": ["wrong 0.1.0", "exact 0.1.0"]
+}

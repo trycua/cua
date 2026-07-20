@@ -72,11 +72,11 @@ from cua_sandbox.interfaces import (
 )
 from cua_sandbox.transport.base import Transport
 from cua_sandbox.transport.cloud import CloudTransport
+from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
 from cua_sandbox.transport.http import HTTPTransport
 from cua_sandbox.transport.websocket import WebSocketTransport
 
 if TYPE_CHECKING:
-    from cua_sandbox.providers.base import SandboxProvider
     from cua_sandbox.runtime.base import Runtime, RuntimeInfo
 
 logger = logging.getLogger(__name__)
@@ -249,8 +249,6 @@ class Sandbox:
         _runtime_info: Optional[RuntimeInfo] = None,
         _ephemeral: Optional[bool] = None,
         _telemetry_enabled: bool = True,
-        _provider: Optional["SandboxProvider"] = None,
-        _provider_handle: Any = None,
     ):
         self._transport = transport
         self.name = name
@@ -259,8 +257,6 @@ class Sandbox:
         self._ephemeral = _ephemeral
         self._has_snapshots = False
         self.telemetry_enabled = _telemetry_enabled
-        self._provider = _provider
-        self._provider_handle = _provider_handle
         self.screen = Screen(transport)
         self.mouse = Mouse(transport)
         self.keyboard = Keyboard(transport)
@@ -277,7 +273,7 @@ class Sandbox:
     async def _connect(self) -> None:
         await self._transport.connect()
         # Update name from transport (e.g. CloudTransport resolves name after creating a VM)
-        if self.name is None and isinstance(self._transport, CloudTransport):
+        if self.name is None and isinstance(self._transport, (CloudTransport, FleetCloudTransport)):
             self.name = self._transport.name
 
     async def disconnect(self) -> None:
@@ -299,7 +295,7 @@ class Sandbox:
         """
         from cua_sandbox.transport.cloud import CloudTransport
 
-        if not isinstance(self._transport, CloudTransport):
+        if not isinstance(self._transport, (CloudTransport, FleetCloudTransport)):
             raise NotImplementedError("Snapshots are only supported for cloud sandboxes")
 
         image_desc = await self._transport.create_snapshot(name=name, stateful=stateful)
@@ -338,14 +334,7 @@ class Sandbox:
             await self._transport.disconnect()
         except Exception:
             logger.warning("Failed to disconnect transport for sandbox %r", self.name)
-        if self._provider is not None and self._provider_handle is not None:
-            try:
-                await self._provider.destroy(self._provider_handle)
-            except Exception:
-                logger.warning("Failed to delete provider resources for sandbox %r", self.name)
-            finally:
-                self._provider_handle = None
-        elif isinstance(self._transport, CloudTransport):
+        if isinstance(self._transport, (CloudTransport, FleetCloudTransport)):
             try:
                 await self._transport.delete_vm()
             except Exception:
@@ -415,7 +404,6 @@ class Sandbox:
         api_key: Optional[str] = None,
         local: bool = False,
         runtime: Optional["Runtime"] = None,
-        provider: Optional["SandboxProvider"] = None,
         cpu: Optional[int] = None,
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
@@ -462,7 +450,6 @@ class Sandbox:
             api_key=api_key,
             local=local,
             runtime=runtime,
-            provider=provider,
             cpu=cpu,
             memory_mb=memory_mb,
             disk_gb=disk_gb,
@@ -541,7 +528,6 @@ class Sandbox:
         api_key: Optional[str] = None,
         local: bool = False,
         runtime: Optional["Runtime"] = None,
-        provider: Optional["SandboxProvider"] = None,
         cpu: Optional[int] = None,
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
@@ -582,7 +568,6 @@ class Sandbox:
             api_key=api_key,
             local=local,
             runtime=runtime,
-            provider=provider,
             cpu=cpu,
             memory_mb=memory_mb,
             disk_gb=disk_gb,
@@ -996,7 +981,6 @@ class Sandbox:
         container_name: Optional[str] = None,
         image: Optional[Image] = None,
         runtime: Optional["Runtime"] = None,
-        provider: Optional["SandboxProvider"] = None,
         name: Optional[str] = None,
         ephemeral: Optional[bool] = None,
         cpu: Optional[int] = None,
@@ -1013,49 +997,7 @@ class Sandbox:
             ephemeral = bool(image)
 
         rt_info = None
-        if provider is not None:
-            if image is None:
-                raise ValueError("An image is required when using a Sandbox provider")
-            if local or runtime is not None or ws_url or http_url:
-                raise ValueError(
-                    "provider cannot be combined with local, runtime, ws_url, or http_url"
-                )
-            sb_name = name or _random_name()
-            provisioned = await provider.create(
-                image,
-                name=sb_name,
-                cpu=cpu,
-                memory_mb=memory_mb,
-                disk_gb=disk_gb,
-                region=region,
-                time_to_start=time_to_start,
-                request_timeout=request_timeout,
-            )
-            sb = cls(
-                provisioned.transport,
-                name=provisioned.name,
-                _ephemeral=ephemeral,
-                _telemetry_enabled=telemetry_enabled,
-                _provider=provider,
-                _provider_handle=provisioned.handle,
-            )
-            try:
-                await sb._connect()
-            except BaseException:
-                try:
-                    await provider.destroy(provisioned.handle)
-                except Exception:
-                    logger.warning(
-                        "Failed to clean up provider resources for sandbox %r after connect failure",
-                        provisioned.name,
-                    )
-                raise
-            _record_sandbox_create(
-                sb, image=image, local=False, ephemeral=bool(ephemeral), t_start=_t_start
-            )
-            return sb
-
-        if image and image.kind is None and image._registry:
+        if image and image.kind is None and image._registry and local:
             from cua_sandbox.registry.resolve import resolve_image_kind
 
             image = resolve_image_kind(image)
@@ -1104,15 +1046,11 @@ class Sandbox:
         if image and not runtime and not local:
             # image without runtime and not local → cloud creation
             if not any([ws_url, http_url]):
-                transport = CloudTransport(
-                    name=name,
-                    api_key=api_key,
+                transport = FleetCloudTransport(
                     image=image,
+                    name=name or _random_name(),
                     cpu=cpu,
                     memory_mb=memory_mb,
-                    disk_gb=disk_gb,
-                    region=region,
-                    time_to_start=time_to_start,
                     request_timeout=request_timeout,
                 )
                 sb = cls(

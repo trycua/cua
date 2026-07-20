@@ -2,7 +2,7 @@ name: "CI: Release metadata"
 
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened]
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -47,10 +47,22 @@ jobs:
       - name: Validate squash-release title
         if: steps.scope.outputs.product_changed == 'true'
         env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           PR_TITLE: ${{ github.event.pull_request.title }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          python3 .github/scripts/release_attribution.py validate-title \
-            --title "$PR_TITLE"
+          set -euo pipefail
+          ARGS=(validate-title --title "$PR_TITLE" --require-release)
+          if jq -e 'index("no-release") != null' <<<"$PR_LABELS" >/dev/null; then
+            ARGS+=(--allow-non-release)
+          fi
+          if [[ "$HEAD_REPOSITORY" == "$REPOSITORY" && \
+                "$HEAD_REF" == release-please--branches--* ]]; then
+            ARGS+=(--allow-non-release)
+          fi
+          python3 .github/scripts/release_attribution.py "${ARGS[@]}"
 
       - name: Validate checked-in release versions
         run: python3 .github/scripts/validate_release_versions.py --product all

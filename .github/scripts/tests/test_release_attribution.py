@@ -92,6 +92,28 @@ def test_title_validation_and_override_entries():
     )
 
 
+def test_release_tracked_changes_require_a_releasing_title_or_explicit_opt_out():
+    for title in (
+        "fix(cua-driver): preserve browser attachment",
+        "feat(lume): add resumable pulls",
+        "perf(cua-driver): reduce snapshot latency",
+        "revert(lume): restore prior network setup",
+    ):
+        validate_pr_title(title, require_release=True)
+
+    with pytest.raises(ReleaseError, match="makes Release Please skip"):
+        validate_pr_title(
+            "test(cua-driver): harden browser certification",
+            require_release=True,
+        )
+
+    validate_pr_title(
+        "style(cua-driver): apply deterministic formatting",
+        require_release=True,
+        allow_non_release=True,
+    )
+
+
 def test_login_from_noreply_and_override():
     assert login_from_email("123+octo-user@users.noreply.github.com", {}) == "octo-user"
     assert (

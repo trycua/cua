@@ -279,7 +279,9 @@ def resolve_pull_for_commit(
     github: GitHubClient,
     repository: str,
     commit: CommitRecord,
-) -> Mapping[str, Any]:
+    *,
+    required: bool = True,
+) -> Mapping[str, Any] | None:
     """Resolve a commit to its merged PR, including an exact squash-title fallback."""
     pulls = github.pulls_for_commit(repository, commit.sha)
     if pulls:
@@ -288,6 +290,8 @@ def resolve_pull_for_commit(
 
     reference = TRAILING_PR_RE.search(commit.subject)
     if not reference:
+        if not required:
+            return None
         raise ReleaseError(f"commit {commit.sha} is not associated with a pull request")
 
     pull = github.pull(repository, int(reference.group("number")))
@@ -493,12 +497,22 @@ def build_manifest(
         ) or LEGACY_RELEASE_BUMP_RE.match(commit.subject):
             continue
         parsed_subject = parse_conventional_line(commit.subject)
-        if parsed_subject and parsed_subject.change_type not in RELEASING_TYPES:
+        subject_is_releasing = bool(
+            parsed_subject and parsed_subject.change_type in RELEASING_TYPES
+        )
+        pull = resolve_pull_for_commit(
+            github,
+            repository,
+            commit,
+            required=subject_is_releasing,
+        )
+        if pull is None:
             continue
-
-        pull = resolve_pull_for_commit(github, repository, commit)
+        pull_body = str(pull.get("body") or "")
+        if not subject_is_releasing and not OVERRIDE_RE.search(pull_body):
+            continue
         pull_number = int(pull["number"])
-        entries = release_entries(commit.subject, commit.body, str(pull.get("body") or ""))
+        entries = release_entries(commit.subject, commit.body, pull_body)
         if not entries:
             continue
         contributors, issues, pull_visual = _change_contributors(

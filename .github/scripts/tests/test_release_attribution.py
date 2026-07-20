@@ -161,6 +161,93 @@ def test_exact_squash_title_resolves_when_commit_association_is_missing():
             "trycua/cua",
             CommitRecord("def456", "feat(driver): no pull suffix", ""),
         )
+    assert (
+        resolve_pull_for_commit(
+            UnassociatedGitHub(),
+            "trycua/cua",
+            CommitRecord("def456", "test(driver): no pull suffix", ""),
+            required=False,
+        )
+        is None
+    )
+
+
+def test_merged_pr_override_recovers_a_non_releasing_squash_title(tmp_path: Path):
+    git(tmp_path, "init")
+    git(tmp_path, "config", "user.name", "Release Test")
+    git(tmp_path, "config", "user.email", "release@example.com")
+    product = tmp_path / "libs/cua-driver/rust"
+    product.mkdir(parents=True)
+    (product / "CHANGELOG.md").write_text("# Changelog\n")
+    (product / "driver.txt").write_text("initial\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-m", "chore: seed fixture")
+    git(tmp_path, "tag", "cua-driver-rs-v0.9.0")
+
+    (product / "driver.txt").write_text("hardened\n")
+    (product / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "## [0.9.1] (2026-07-20)\n\n"
+        "* harden exact-profile browser attachment (#2367)\n"
+    )
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-m", "test(cua-driver): harden browser certification (#2367)")
+    release_sha = git(tmp_path, "rev-parse", "HEAD")
+    git(tmp_path, "tag", "cua-driver-rs-v0.9.1")
+
+    class OverrideGitHub:
+        def pulls_for_commit(self, repository: str, commit_sha: str):
+            assert repository == "trycua/cua"
+            assert commit_sha == release_sha
+            return [{"number": 2367, "merge_commit_sha": commit_sha, "merged_at": "now"}]
+
+        def pull(self, repository: str, number: int):
+            assert repository == "trycua/cua"
+            assert number == 2367
+            return {
+                "number": 2367,
+                "user": {"login": "browser-author"},
+                "author_association": "MEMBER",
+                "body": (
+                    "BEGIN_COMMIT_OVERRIDE\n"
+                    "fix(cua-driver): harden exact-profile browser attachment\n\n"
+                    "fix(cua-driver): fail closed for unsupported browser routes\n"
+                    "END_COMMIT_OVERRIDE"
+                ),
+                "labels": [],
+            }
+
+        def issue(self, repository: str, number: int):
+            raise AssertionError("the override fixture does not reference issues")
+
+    manifest = build_manifest(
+        repo_root=tmp_path,
+        repository="trycua/cua",
+        product="cua-driver-rs",
+        display_name="Cua Driver",
+        version="0.9.1",
+        tag="cua-driver-rs-v0.9.1",
+        previous_tag="cua-driver-rs-v0.9.0",
+        expected_sha=release_sha,
+        paths=("libs/cua-driver",),
+        changelog_path=product / "CHANGELOG.md",
+        attribution_config={
+            "bots": [],
+            "coauthorOverrides": {},
+            "ignoredCoauthorEmails": [],
+            "identityOverrides": {},
+            "internalHandles": ["browser-author"],
+            "optOutHandles": [],
+        },
+        github=OverrideGitHub(),
+    )
+
+    assert [
+        (change["type"], change["summary"], change["pr"]) for change in manifest["changes"]
+    ] == [
+        ("fix", "harden exact-profile browser attachment", 2367),
+        ("fix", "fail closed for unsupported browser routes", 2367),
+    ]
 
 
 def test_legacy_release_bump_subject_is_recognized():

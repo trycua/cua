@@ -12,7 +12,15 @@ struct Run: AsyncParsableCommand {
         completion: .custom(completeVMName))
     var name: String
 
-    @Flag(name: [.short, .long], help: "Do not start the VNC client")
+    @Option(
+        help: "Local viewer to open: 'vnc', 'native', or 'none'. The VNC server remains available in every mode."
+    )
+    var display: DisplayMode = .vnc
+
+    @Flag(
+        name: [.customShort("d"), .customLong("no-display")],
+        help: "Compatibility alias for --display none"
+    )
     var noDisplay: Bool = false
 
     @Option(
@@ -73,7 +81,10 @@ struct Run: AsyncParsableCommand {
         help: "Optional network override: 'nat', 'bridged', or 'bridged:<interface>' (e.g. 'bridged:en0'). Defaults to the VM's configured mode.")
     var network: String?
 
-    @Flag(name: .customLong("clipboard"), help: "Enable bidirectional clipboard sync with the VM via SSH (experimental)")
+    @Flag(
+        name: .customLong("clipboard"),
+        help: "Enable bidirectional clipboard sync via SSH. This is automatic for native macOS display."
+    )
     var clipboard: Bool = false
 
     private var parsedNetworkMode: NetworkMode? {
@@ -138,13 +149,20 @@ struct Run: AsyncParsableCommand {
     @MainActor
     func run() async throws {
         // Record telemetry
+        let displayMode = DisplayMode.resolve(requested: display, noDisplay: noDisplay)
         TelemetryClient.shared.record(event: TelemetryEvent.run, properties: [
-            "headless": noDisplay
+            "headless": displayMode == .none
         ])
 
+        try await runVM(displayMode: displayMode)
+    }
+
+    @MainActor
+    private func runVM(displayMode: DisplayMode) async throws {
         try await LumeController().runVM(
             name: name,
             noDisplay: noDisplay,
+            displayMode: displayMode,
             sharedDirectories: parsedSharedDirectories,
             mount: mount.map { Path($0) },
             registry: registry,

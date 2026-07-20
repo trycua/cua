@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import Virtualization
 
@@ -23,39 +22,71 @@ struct VMVirtualizationServiceContext {
 @MainActor
 protocol VMVirtualizationService {
     var state: VZVirtualMachine.State { get }
+    /// The framework VM used by native display and VNC. Test services may return nil.
+    var displayVirtualMachine: VZVirtualMachine? { get }
     func start() async throws
     func stop() async throws
     func pause() async throws
     func resume() async throws
-    func getVirtualMachine() -> Any
+    func updateSharedDirectories(_ sharedDirectories: [SharedDirectory]) async throws
+    func waitForStop() async throws
 }
 
 /// Base implementation of VMVirtualizationService using VZVirtualMachine
 @MainActor
 class BaseVirtualizationService: VMVirtualizationService {
-    let virtualMachine: VZVirtualMachine
-    let recoveryMode: Bool  // Store whether we should start in recovery mode
+    final class VirtualMachineHandle: @unchecked Sendable {
+        let machine: VZVirtualMachine
+        let queue: DispatchQueue
 
-    var state: VZVirtualMachine.State {
-        virtualMachine.state
+        init(machine: VZVirtualMachine, queue: DispatchQueue) {
+            self.machine = machine
+            self.queue = queue
+        }
     }
 
-    init(virtualMachine: VZVirtualMachine, recoveryMode: Bool = false) {
-        self.virtualMachine = virtualMachine
+    let virtualMachineHandle: VirtualMachineHandle
+    var virtualMachine: VZVirtualMachine { virtualMachineHandle.machine }
+    let recoveryMode: Bool  // Store whether we should start in recovery mode
+    private let lifecycleMonitor: VMVirtualMachineLifecycleMonitor
+
+    var state: VZVirtualMachine.State {
+        let handle = virtualMachineHandle
+        return handle.queue.sync { handle.machine.state }
+    }
+
+    var displayVirtualMachine: VZVirtualMachine? {
+        virtualMachine
+    }
+
+    init(
+        virtualMachine: VZVirtualMachine,
+        queue: DispatchQueue,
+        recoveryMode: Bool = false
+    ) {
+        self.virtualMachineHandle = VirtualMachineHandle(machine: virtualMachine, queue: queue)
         self.recoveryMode = recoveryMode
+        self.lifecycleMonitor = VMVirtualMachineLifecycleMonitor()
+        let handle = virtualMachineHandle
+        let monitor = lifecycleMonitor
+        handle.queue.sync {
+            handle.machine.delegate = monitor
+        }
     }
 
     func start() async throws {
+        let handle = virtualMachineHandle
+        let recoveryMode = recoveryMode
         try await withCheckedThrowingContinuation {
             (continuation: CheckedContinuation<Void, Error>) in
-            Task { @MainActor in
+            handle.queue.async {
                 if #available(macOS 13, *) {
                     let startOptions = VZMacOSVirtualMachineStartOptions()
                     startOptions.startUpFromMacOSRecovery = recoveryMode
                     if recoveryMode {
                         Logger.info("Starting VM in recovery mode")
                     }
-                    virtualMachine.start(options: startOptions) { error in
+                    handle.machine.start(options: startOptions) { error in
                         if let error = error {
                             continuation.resume(throwing: error)
                         } else {
@@ -64,7 +95,7 @@ class BaseVirtualizationService: VMVirtualizationService {
                     }
                 } else {
                     Logger.info("Starting VM in normal mode")
-                    virtualMachine.start { result in
+                    handle.machine.start { result in
                         switch result {
                         case .success:
                             continuation.resume()
@@ -78,48 +109,79 @@ class BaseVirtualizationService: VMVirtualizationService {
     }
 
     func stop() async throws {
+        let handle = virtualMachineHandle
+        let monitor = lifecycleMonitor
         try await withCheckedThrowingContinuation {
             (continuation: CheckedContinuation<Void, Error>) in
-            virtualMachine.stop { error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume()
+            handle.queue.async {
+                handle.machine.stop { error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        monitor.stoppedByHost()
+                        continuation.resume()
+                    }
                 }
             }
         }
     }
 
     func pause() async throws {
+        let handle = virtualMachineHandle
         try await withCheckedThrowingContinuation {
             (continuation: CheckedContinuation<Void, Error>) in
-            virtualMachine.pause { result in
-                switch result {
-                case .success:
-                    continuation.resume()
-                case .failure(let error):
-                    continuation.resume(throwing: error)
+            handle.queue.async {
+                handle.machine.pause { result in
+                    switch result {
+                    case .success:
+                        continuation.resume()
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
                 }
             }
         }
     }
 
     func resume() async throws {
+        let handle = virtualMachineHandle
         try await withCheckedThrowingContinuation {
             (continuation: CheckedContinuation<Void, Error>) in
-            virtualMachine.resume { result in
-                switch result {
-                case .success:
-                    continuation.resume()
-                case .failure(let error):
-                    continuation.resume(throwing: error)
+            handle.queue.async {
+                handle.machine.resume { result in
+                    switch result {
+                    case .success:
+                        continuation.resume()
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
                 }
             }
         }
     }
 
-    func getVirtualMachine() -> Any {
-        return virtualMachine
+    func updateSharedDirectories(_ sharedDirectories: [SharedDirectory]) async throws {
+        let handle = virtualMachineHandle
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            handle.queue.async {
+                guard let device = handle.machine.directorySharingDevices.first(where: {
+                    ($0 as? VZVirtioFileSystemDevice)?.tag
+                        == VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag
+                }) as? VZVirtioFileSystemDevice else {
+                    continuation.resume(
+                        throwing: VMError.internalError(
+                            "The VM was not started with a live shared-folder device"))
+                    return
+                }
+                device.share = Self.createDirectoryShare(sharedDirectories)
+                continuation.resume()
+            }
+        }
+    }
+
+    func waitForStop() async throws {
+        try await lifecycleMonitor.waitForStop()
     }
 
     // Helper methods for creating common configurations
@@ -213,13 +275,31 @@ class BaseVirtualizationService: VMVirtualizationService {
     static func createDirectorySharingDevices(sharedDirectories: [SharedDirectory]?)
         -> [VZDirectorySharingDeviceConfiguration]
     {
-        return sharedDirectories?.map { sharedDir in
-            let device = VZVirtioFileSystemDeviceConfiguration(tag: sharedDir.tag)
-            let url = URL(fileURLWithPath: sharedDir.hostPath)
-            device.share = VZSingleDirectoryShare(
-                directory: VZSharedDirectory(url: url, readOnly: sharedDir.readOnly))
+        let grouped = Dictionary(grouping: sharedDirectories ?? [], by: \.tag)
+        return grouped.map { tag, directories in
+            let device = VZVirtioFileSystemDeviceConfiguration(tag: tag)
+            device.share = createDirectoryShare(directories)
             return device
-        } ?? []
+        }
+    }
+
+    nonisolated static func createDirectoryShare(
+        _ sharedDirectories: [SharedDirectory]
+    ) -> VZDirectoryShare {
+        var directories: [String: VZSharedDirectory] = [:]
+        for sharedDirectory in sharedDirectories {
+            let url = URL(fileURLWithPath: sharedDirectory.hostPath)
+            let directory = VZSharedDirectory(url: url, readOnly: sharedDirectory.readOnly)
+            let baseName = url.lastPathComponent.isEmpty ? "Shared Folder" : url.lastPathComponent
+            var name = baseName
+            var suffix = 2
+            while directories[name] != nil {
+                name = "\(baseName) (\(suffix))"
+                suffix += 1
+            }
+            directories[name] = directory
+        }
+        return VZMultipleDirectoryShare(directories: directories)
     }
 }
 
@@ -258,26 +338,18 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
         vzConfig.platform = platform
         vzConfig.bootLoader = VZMacOSBootLoader()
 
-        // Graphics configuration
-        // Use host screen-based display configuration when available for better
-        // display compositor integration (helps with screenshot capture in VMs)
+        // Use an explicit framebuffer configuration. Deriving the display from host
+        // points and backing scale can leave VZVirtualMachineView with a black
+        // framebuffer when native and VNC displays are attached concurrently.
         let display = VMDisplayResolution(string: config.display)!
         let graphics = VZMacGraphicsDeviceConfiguration()
-        if let hostMainScreen = NSScreen.main {
-            let vmScreenSize = NSSize(width: display.width, height: display.height)
-            graphics.displays = [
-                VZMacGraphicsDisplayConfiguration(for: hostMainScreen, sizeInPoints: vmScreenSize)
-            ]
-        } else {
-            // Fallback to pixel-based configuration if no host screen available
-            graphics.displays = [
-                VZMacGraphicsDisplayConfiguration(
-                    widthInPixels: display.width,
-                    heightInPixels: display.height,
-                    pixelsPerInch: 220
-                )
-            ]
-        }
+        graphics.displays = [
+            VZMacGraphicsDisplayConfiguration(
+                widthInPixels: display.width,
+                heightInPixels: display.height,
+                pixelsPerInch: 220
+            )
+        ]
         vzConfig.graphicsDevices = [graphics]
 
         // Common configurations
@@ -363,12 +435,19 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
             }
         }
 
-        // Directory sharing
-        let directorySharingDevices = createDirectorySharingDevices(
+        // Directory sharing. Keep an empty macOS automount device available so the
+        // native toolbar can replace its share while the VM is running.
+        var directorySharingDevices = createDirectorySharingDevices(
             sharedDirectories: config.sharedDirectories)
-        if !directorySharingDevices.isEmpty {
-            vzConfig.directorySharingDevices = directorySharingDevices
+        let automountTag = VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag
+        if !directorySharingDevices.contains(where: {
+            ($0 as? VZVirtioFileSystemDeviceConfiguration)?.tag == automountTag
+        }) {
+            let device = VZVirtioFileSystemDeviceConfiguration(tag: automountTag)
+            device.share = createDirectoryShare([])
+            directorySharingDevices.append(device)
         }
+        vzConfig.directorySharingDevices = directorySharingDevices
 
         // USB Controller configuration
         if #available(macOS 15.0, *) {
@@ -397,8 +476,13 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
 
     init(configuration: VMVirtualizationServiceContext) throws {
         let vzConfig = try Self.createConfiguration(configuration)
+        let queue = DispatchQueue(
+            label: "ai.cua.lume.virtual-machine.darwin",
+            qos: .userInteractive
+        )
         super.init(
-            virtualMachine: VZVirtualMachine(configuration: vzConfig),
+            virtualMachine: VZVirtualMachine(configuration: vzConfig, queue: queue),
+            queue: queue,
             recoveryMode: configuration.recoveryMode)
     }
 
@@ -570,6 +654,13 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
 
     init(configuration: VMVirtualizationServiceContext) throws {
         let vzConfig = try Self.createConfiguration(configuration)
-        super.init(virtualMachine: VZVirtualMachine(configuration: vzConfig))
+        let queue = DispatchQueue(
+            label: "ai.cua.lume.virtual-machine.linux",
+            qos: .userInteractive
+        )
+        super.init(
+            virtualMachine: VZVirtualMachine(configuration: vzConfig, queue: queue),
+            queue: queue
+        )
     }
 }

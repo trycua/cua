@@ -156,6 +156,7 @@ build_lume() {
     if [ -d "$BUILD_PATH/lume_lume.bundle" ]; then
       cp -rf "$BUILD_PATH/lume_lume.bundle" "$APP_BUNDLE/Contents/Resources/"
     fi
+    cp -f "$LUME_DIR/resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
     # Stamp Info.plist with version
     CURRENT_VERSION=$("$BUILD_PATH/lume" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "0.0.0")

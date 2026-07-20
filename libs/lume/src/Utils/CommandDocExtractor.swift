@@ -341,12 +341,14 @@ enum CommandDocExtractor {
                 OptionDoc(name: "usb-storage", shortName: nil, help: "Disk image to attach as USB mass storage device", type: "[String]", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "registry", shortName: nil, help: "Container registry URL", type: "String", defaultValue: "ghcr.io", isOptional: false),
                 OptionDoc(name: "organization", shortName: nil, help: "Organization to pull from", type: "String", defaultValue: "trycua", isOptional: false),
+                OptionDoc(name: "display", shortName: nil, help: "Local viewer to open: vnc, native, or none. The VNC server remains available in every mode", type: "DisplayMode", defaultValue: "vnc", isOptional: false),
                 OptionDoc(name: "vnc-port", shortName: nil, help: "Port for VNC server (0 for auto-assign)", type: "Int", defaultValue: "0", isOptional: false),
                 OptionDoc(name: "recovery-mode", shortName: nil, help: "For macOS VMs only, boot in recovery mode", type: "Bool", defaultValue: "false", isOptional: true),
                 OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
             ],
             flags: [
-                FlagDoc(name: "no-display", shortName: "d", help: "Do not start the VNC client", defaultValue: false),
+                FlagDoc(name: "no-display", shortName: "d", help: "Compatibility alias for --display none", defaultValue: false),
+                FlagDoc(name: "clipboard", shortName: nil, help: "Enable bidirectional clipboard sync via SSH. Automatic for native macOS display", defaultValue: false),
             ],
             subcommands: []
         )

@@ -71,6 +71,9 @@ shrink. Use `CUA_E2E_BROWSER_BIN` with `CUA_E2E_BROWSER_NAME` only for a
 single-product diagnostic run. Every launched product also appends its
 CDP-reported product, version, protocol version, user agent, and exact source
 SHA to `browser-provenance.jsonl` beside the matrix report.
+On Linux the runner compiles `cua-driver` with `portal-input`, matching the
+published artifact so representative GNOME/KDE runs exercise the libei
+fallback instead of a default-feature `wtype` refusal.
 
 For the test layout and the distinction between unit tests, shared harnesses,
 and native harnesses, see

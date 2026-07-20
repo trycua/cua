@@ -28,6 +28,13 @@ export CUA_TEST_DRIVER_STDERR=1
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 
 HOST_OS="$(uname -s)"
+CARGO_DRIVER_FEATURE_ARGS=()
+if [[ "${HOST_OS}" == Linux ]]; then
+  # Published Linux artifacts include the portal/libei route. Compile the
+  # browser matrix with the same feature set so GNOME/KDE setup cannot be
+  # misclassified from a default-feature test binary that falls back to wtype.
+  CARGO_DRIVER_FEATURE_ARGS=(--features portal-input)
+fi
 if [[ "${HOST_OS}" == Linux ]] \
     && [[ "${XDG_SESSION_TYPE:-}" == wayland ]] \
     && [[ -n "${WAYLAND_DISPLAY:-}" ]] \
@@ -83,7 +90,9 @@ if [[ -f "${SOURCE_MARKER}" ]]; then
 fi
 
 if [[ "${CUA_E2E_SKIP_BUILD:-0}" != 1 ]]; then
-  cargo build --release -p cua-driver --manifest-path "${RUST_ROOT}/Cargo.toml"
+  cargo build --release -p cua-driver \
+    ${CARGO_DRIVER_FEATURE_ARGS[@]+"${CARGO_DRIVER_FEATURE_ARGS[@]}"} \
+    --manifest-path "${RUST_ROOT}/Cargo.toml"
 fi
 if [[ ! -x "${CUA_TEST_DRIVER_BIN}" ]]; then
   echo "Driver binary not found: ${CUA_TEST_DRIVER_BIN}" >&2
@@ -125,6 +134,7 @@ for test_name in "${tests[@]}"; do
   echo "[RUN] ${test_name}"
   set +e
   (cd "${RUST_ROOT}" && cargo test --release -p cua-driver \
+    ${CARGO_DRIVER_FEATURE_ARGS[@]+"${CARGO_DRIVER_FEATURE_ARGS[@]}"} \
     --test standalone_browser_behavior_test "${test_name}" -- \
     --ignored --exact --nocapture --test-threads=1) \
     2>&1 | tee "${ARTIFACT_DIR}/${test_name}.log"

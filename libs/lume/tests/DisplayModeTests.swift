@@ -6,6 +6,7 @@ import Testing
 
 @Test("DisplayMode parses all supported values")
 func displayModeParsing() throws {
+  #expect(try Run.parse(["test-vm"]).display == .none)
   #expect(try Run.parse(["test-vm", "--display", "vnc"]).display == .vnc)
   #expect(try Run.parse(["test-vm", "--display", "native"]).display == .native)
   #expect(try Run.parse(["test-vm", "--display", "none"]).display == .none)

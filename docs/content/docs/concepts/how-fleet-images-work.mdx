@@ -15,6 +15,29 @@ A Fleet image sits one layer lower. It is the guest boot artifact that a pool de
 
 If you need the public SDK model, read [How sandboxes work](/concepts/how-sandboxes-work#images-as-starting-state-contracts), [Choose and build a sandbox image](/how-to-guides/sandbox/images), and the [Image reference](/reference/sandbox-sdk/image).
 
+## Fleet uses a constrained subset of the SDK image surface
+
+Fleet currently accepts only `Image.from_registry(...)` and optional `.expose(...)` ports when you create a cloud sandbox through the Fleet transport.
+
+That means Fleet does **not** build an environment from SDK layers such as `apt_install`, `pip_install`, `uv_install`, `run`, `copy`, `env`, `from_file`, or snapshot-derived images. Those APIs still matter for local runtimes and the broader Sandbox SDK, but Fleet expects you to publish the guest artifact ahead of time and then reference it by registry address.
+
+| Fleet image input | Supported today |
+|-------------------|-----------------|
+| `Image.from_registry(...)` | Yes |
+| `.expose(...)` on a registry image | Yes |
+| Built-in constructors such as `Image.linux()` or `Image.macos()` | No |
+| Builder layers such as `apt_install`, `run`, `copy`, `env`, `pip_install` | No |
+| `Image.from_file(...)` | No |
+| Snapshot images | No |
+
+Read [Choose and build a sandbox image](/how-to-guides/sandbox/images#fleet-compatibility) for the compatibility summary and [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image) for the operational workflow.
+
+## Fleet references an OCI artifact that carries the boot image
+
+At the pool layer, Fleet stores the registry reference as the deployed boot artifact for the pool template. In practice that means the OCI artifact you publish has to contain the bootable guest image that Fleet expects, including the `.img` payload used to start the guest.
+
+`Image.from_registry(...)` does not assemble that artifact for you. It only points Fleet at a prebuilt OCI image that already contains the bootable environment. Publishing the artifact is therefore part of image preparation, not part of the claim path.
+
 ## Image identity defines compatibility
 
 A pool's image reference is part of what makes one replica compatible with another. Two pools with different boot artifacts can differ in operating system, installed software, startup behavior, readiness checks, and service endpoints even if they request the same CPU and memory.
@@ -32,6 +55,8 @@ This is why image choice is more than package selection. A Linux-oriented artifa
 A Fleet image does not only determine what operating system boots. It also determines what software is already present when a replica starts and which services can become ready inside that guest.
 
 That means readiness has to match the image's actual workload. A pool is only meaningfully ready when the guest started from that image has reached the service state the claimant needs. A running replica without its expected service is capacity in progress, not yet a ready environment.
+
+Ports you mark with `.expose(...)` become named Fleet services. When a client later calls `sb.tunnel.forward(...)`, Fleet returns the authenticated service URL for that exposed service. It is not creating a localhost tunnel on the caller's machine.
 
 ## Immutability improves repeatability
 

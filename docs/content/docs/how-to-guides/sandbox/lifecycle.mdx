@@ -95,6 +95,10 @@ Use cloud by default. Set `CUA_API_KEY` in the environment before creating cloud
 async with Sandbox.ephemeral(Image.linux()) as sb: ...
 ```
 
+<Callout type="info">
+  The example above describes the legacy API-key cloud path. Fleet cloud sandboxes use OAuth plus published registry images and currently support a narrower image contract. See [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image).
+</Callout>
+
 Pass `local=True` for local runtimes such as Docker, Lume, or QEMU.
 
 ```python

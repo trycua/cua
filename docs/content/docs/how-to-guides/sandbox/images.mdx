@@ -7,6 +7,10 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Use an **Image** to define the OS and software environment for a sandbox before you start it.
 
+<Callout type="info">
+  This page describes the full Sandbox SDK image-builder surface across local runtimes and the broader cloud API. Fleet cloud sandboxes support a narrower deployment contract today. See [Fleet compatibility](#fleet-compatibility) before you assume a builder method also works for Fleet.
+</Callout>
+
 ## Choose a base image
 
 An Image describes the OS and software environment. Images are *immutable* and *chainable*. Each builder method returns a new Image.
@@ -121,6 +125,23 @@ Image.from_registry('ubuntu:22.04')
 # chain builder on top
 img = Image.from_registry('ubuntu:22.04').apt_install('curl')
 ```
+
+## Fleet compatibility
+
+Fleet currently accepts only a published registry image plus optional exposed ports.
+
+| Fleet deployment input | Supported |
+|------------------------|-----------|
+| `Image.from_registry(...)` | Yes |
+| `.expose(...)` on a registry image | Yes |
+| Built-in constructors such as `Image.linux()` / `Image.macos()` | No |
+| Builder layers such as `apt_install`, `pip_install`, `uv_install`, `run`, `copy`, `env` | No |
+| `Image.from_file(...)` | No |
+| Snapshot images | No |
+
+Fleet consumes a **prebuilt OCI artifact** instead of applying SDK layers at claim time. That OCI artifact must already contain the bootable guest image Fleet expects, including the `.img` payload used by the Fleet image pipeline.
+
+If you are targeting Fleet, start from [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image) and [How Fleet images work](/concepts/how-fleet-images-work).
 
 ## Use a local disk image
 

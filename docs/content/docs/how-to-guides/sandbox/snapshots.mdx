@@ -13,6 +13,10 @@ A *snapshot* captures the **full disk state** of a running sandbox and returns a
   Snapshots are currently supported on Cua Cloud sandboxes. Local sandboxes (Docker, Lume, QEMU) have limited snapshot support.
 </Callout>
 
+<Callout type="warn">
+  Fleet cloud sandboxes do not currently support snapshots. Fleet expects a published registry image as the deployment input instead of a snapshot-derived `Image`.
+</Callout>
+
 Call `snapshot()` on a running sandbox after you make the changes you want to keep.
 
 ```python

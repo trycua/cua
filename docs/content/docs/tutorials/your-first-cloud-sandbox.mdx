@@ -13,6 +13,10 @@ In this tutorial, you create an *ephemeral* cloud Linux sandbox, run `uname -a` 
   Prerequisites: Python 3.12 or 3.13. A free account at cua.ai for cloud sandboxes.
 </Callout>
 
+<Callout type="warn">
+  This tutorial shows the legacy API-key cloud path using `Image.linux()`. If you are targeting Fleet cloud sandboxes, start with [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image) instead. Fleet currently expects a published registry image rather than the full SDK image-builder flow.
+</Callout>
+
 ## Sign in and create an API key
 
 Sign in at cua.ai.
@@ -86,6 +90,7 @@ When the `async with` block exited, **the sandbox destroyed itself**. No cleanup
 
 - [Manage sandbox lifecycle](/how-to-guides/sandbox/lifecycle)
 - [Create and restore snapshots](/how-to-guides/sandbox/snapshots)
+- [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image)
 - [Pass secrets to sandboxes](/how-to-guides/sandbox/secrets)
 - [Run parallel sandboxes](/how-to-guides/sandbox/scale-out)
 - [Sandbox SDK API reference](/reference/sandbox-sdk)

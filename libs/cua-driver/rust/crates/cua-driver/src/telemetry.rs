@@ -20,12 +20,14 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const POSTHOG_CAPTURE_URL: &str = "https://eu.i.posthog.com/capture/";
 const POSTHOG_API_KEY: &str = "phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14";
 const POSTHOG_TIMEOUT_SECS: u64 = 3;
 const LIFECYCLE_RETRY_BACKOFF_SECS: u64 = 15 * 60;
+const TOOL_TELEMETRY_LIMIT_PER_HOUR: usize = 1_000;
+const TOOL_TELEMETRY_WINDOW: Duration = Duration::from_secs(60 * 60);
 
 const HOME_SUBDIRECTORY: &str = ".cua-driver";
 const LEGACY_HOME_SUBDIRECTORY: &str = ".cua-driver-rs";
@@ -787,12 +789,62 @@ pub(crate) fn capture_tool_completed(
     outcome: cua_driver_core::server::ToolCompletionObservation,
     transport: Transport,
 ) {
+    let is_first_value_candidate =
+        outcome.computer_action && outcome.success && !outcome.refusal_code.is_refusal();
+    if !is_enabled() || !should_capture_tool_completion(Instant::now(), is_first_value_candidate) {
+        return;
+    }
     let mut properties = tool_completion_properties(outcome);
     properties.insert(
         "execution_mode".into(),
         Value::String(execution_mode().into()),
     );
     capture_bounded(event::MCP_TOOL_COMPLETED, properties, transport);
+}
+
+#[derive(Debug)]
+struct ToolTelemetryRateLimit {
+    window_started: Instant,
+    captured: usize,
+    captured_value_event: bool,
+}
+
+impl ToolTelemetryRateLimit {
+    fn new(now: Instant) -> Self {
+        Self {
+            window_started: now,
+            captured: 0,
+            captured_value_event: false,
+        }
+    }
+
+    fn allow(&mut self, now: Instant, is_value_event: bool) -> bool {
+        if now.duration_since(self.window_started) >= TOOL_TELEMETRY_WINDOW {
+            self.window_started = now;
+            self.captured = 0;
+            self.captured_value_event = false;
+        }
+        if self.captured >= TOOL_TELEMETRY_LIMIT_PER_HOUR {
+            if !is_value_event || self.captured_value_event {
+                return false;
+            }
+            self.captured_value_event = true;
+            return true;
+        }
+        self.captured += 1;
+        self.captured_value_event |= is_value_event;
+        true
+    }
+}
+
+static TOOL_TELEMETRY_RATE_LIMIT: OnceLock<Mutex<ToolTelemetryRateLimit>> = OnceLock::new();
+
+fn should_capture_tool_completion(now: Instant, is_value_event: bool) -> bool {
+    TOOL_TELEMETRY_RATE_LIMIT
+        .get_or_init(|| Mutex::new(ToolTelemetryRateLimit::new(now)))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .allow(now, is_value_event)
 }
 
 fn tool_completion_properties(
@@ -3061,6 +3113,20 @@ mod tests {
                 .contains_key(session_id));
             assert!(read_install_id().is_none());
         });
+    }
+
+    #[test]
+    fn tool_completion_rate_limit_resets_after_one_hour() {
+        let started = Instant::now();
+        let mut limit = ToolTelemetryRateLimit::new(started);
+
+        for _ in 0..TOOL_TELEMETRY_LIMIT_PER_HOUR {
+            assert!(limit.allow(started, false));
+        }
+        assert!(!limit.allow(started, false));
+        assert!(limit.allow(started, true));
+        assert!(!limit.allow(started, true));
+        assert!(limit.allow(started + TOOL_TELEMETRY_WINDOW, false));
     }
 
     #[test]

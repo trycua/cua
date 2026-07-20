@@ -177,6 +177,8 @@ Routine telemetry excludes task text, prompts, tool arguments, tool response bod
 
 Tool-completion events retain only coarse result shape: text, image, mixed, empty, or unknown; a size bucket; a duration bucket; a fixed error class; and, for reviewed structured browser refusals, the fixed code above. The content itself never crosses the telemetry observer boundary. A proxy and daemon negotiate one completion-event owner. Mixed-version pairs retain proxy ownership, which prevents duplicate events during upgrades.
 
+To bound client and ingestion load, each Cua Driver process emits at most 1,000 routine tool-completion events in an hour. If that ceiling is reached before a successful computer action, the process may emit that first value event as well. Lifecycle, permissions, and aggregate session events are not subject to this ceiling.
+
 A CLI `call` is always delegated to the daemon. The daemon owns the completion event and reports `transport=daemon`, so the event is emitted only once.
 
 ## Region and deletion controls

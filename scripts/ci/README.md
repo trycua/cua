@@ -21,10 +21,11 @@ scripts/ci/windows/run-rust-standalone-browser-e2e.ps1
 The runners require an existing desktop user session and a fresh artifact
 directory. They stage the repo-owned Electron foreground sentinel when the
 fixture is absent and execute each scenario in an independent Cargo process.
-In a pure native Wayland session, the Unix runner also enables the driver's
-native Wayland backend and launches the sentinel through Wayland, so the result
-cannot silently fall back to X11. To exercise the same matrix in the repo-owned
-native Sway session, run:
+In a Wayland session, the Unix runner also enables the driver's native Wayland
+backend and launches the sentinel and test browsers through Wayland, so GNOME
+and KDE cannot silently fall back to X11 merely because they retain `DISPLAY`
+for XWayland. To exercise the same matrix in the repo-owned native Sway session,
+run:
 
 ```bash
 CUA_E2E_WAYLAND_RUNNER="$PWD/scripts/ci/run-rust-standalone-browser-e2e.sh" \

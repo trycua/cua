@@ -710,8 +710,7 @@ fn configure_linux_browser_command(command: &mut Command) {
     command.arg("--password-store=basic");
     let native_wayland = std::env::var("XDG_SESSION_TYPE")
         .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
-        && std::env::var_os("WAYLAND_DISPLAY").is_some()
-        && std::env::var_os("DISPLAY").is_none();
+        && std::env::var_os("WAYLAND_DISPLAY").is_some();
     if native_wayland {
         command.arg("--ozone-platform=wayland");
     }

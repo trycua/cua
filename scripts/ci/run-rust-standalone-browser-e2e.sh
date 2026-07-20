@@ -37,11 +37,10 @@ if [[ "${HOST_OS}" == Linux ]]; then
 fi
 if [[ "${HOST_OS}" == Linux ]] \
     && [[ "${XDG_SESSION_TYPE:-}" == wayland ]] \
-    && [[ -n "${WAYLAND_DISPLAY:-}" ]] \
-    && [[ -z "${DISPLAY:-}" ]]; then
-  # This lane promises native Wayland behavior. Opt into the driver's native
-  # backend explicitly so a missing caller variable cannot silently exercise
-  # the X11 fallback and time out during native-window correlation.
+    && [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+  # GNOME/KDE retain DISPLAY for XWayland even in native Wayland sessions.
+  # Session type and the Wayland socket are the authority; opt into the native
+  # backend so those desktops cannot silently exercise X11 enumeration.
   export CUA_DRIVER_RS_ENABLE_WAYLAND=1
   export ELECTRON_OZONE_PLATFORM_HINT=wayland
 fi

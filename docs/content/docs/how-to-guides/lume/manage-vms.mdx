@@ -23,42 +23,48 @@ lume get macos-tahoe
 The details include the VM state, IP address, display session, resources, and
 SSH availability when the VM is running.
 
-## Run and stop a VM
+## Run, attach to, and stop a VM
 
-Run Tahoe with the default Screen Sharing viewer:
+Run Tahoe without automatically opening a viewer:
 
 ```bash
 lume run macos-tahoe
-# Equivalent to: lume run macos-tahoe --display vnc
 ```
 
-Use Lume's lower-latency native macOS viewer instead:
+VNC remains active in the background. From another terminal, attach the
+preferred viewer; Lume uses its native viewer when the owning process supports
+live attachment and otherwise falls back to VNC:
+
+```bash
+lume attach macos-tahoe
+```
+
+Select a viewer explicitly when needed:
+
+```bash
+lume attach macos-tahoe --display native
+lume attach macos-tahoe --display vnc
+```
+
+You can also start and immediately open a viewer:
 
 ```bash
 lume run macos-tahoe --display native
+lume run macos-tahoe --display vnc
 ```
 
 Closing the native window only hides it; it does not stop the guest. Reopen it
-from Lume's Dock icon or **Window → Show VM Window**. Run headlessly with
-`--display none` (the older `--no-display` flag remains an alias):
+from Lume's Dock icon, **Window → Show VM Window**, or another `lume attach`
+command. The older `--no-display` flag remains an alias for `--display none`.
+
+Gracefully restart or shut down a guest over SSH:
 
 ```bash
-lume run macos-tahoe --display none
+lume restart macos-tahoe
+lume shutdown macos-tahoe
 ```
 
-VNC remains available in all three modes. To open Screen Sharing for an
-already-running VM without restarting it:
-
-```bash
-open "$(lume get macos-tahoe --format json | \
-  plutil -extract 0.vncUrl raw -o - -)"
-```
-
-A native view can only be created by the process that started the VM, so a VM
-started with `--display vnc` or `--display none` cannot be switched to native
-from a second command yet.
-
-Stop it when you are finished:
+Keep `stop` for an immediate process-level stop:
 
 ```bash
 lume stop macos-tahoe

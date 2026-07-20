@@ -5,10 +5,11 @@ private final class NativeOperationBridge: @unchecked Sendable {
     var result: Result<Void, Error>?
 }
 
-/// Hosts native-display VM work inside a conventional AppKit application loop.
+/// Hosts direct `lume run` work inside a conventional AppKit application loop.
 ///
 /// This must be entered synchronously from the process entry point, before any async
-/// MainActor command task is active. AppKit owns the main thread, while
+/// MainActor command task is active. It stays accessory-only for background runs but
+/// keeps them ready for a later native attach. AppKit owns the main thread while
 /// Virtualization.framework uses a dedicated serial queue for VM operations.
 @MainActor
 enum NativeApplicationLoop {
@@ -22,6 +23,7 @@ enum NativeApplicationLoop {
     }
 
     static func run(
+        showsStartupWindow: Bool,
         operation: @escaping @MainActor @Sendable () async throws -> Void
     ) throws {
         precondition(!isActive, "The native AppKit loop is already running")
@@ -35,17 +37,21 @@ enum NativeApplicationLoop {
             ProcessInfo.processInfo.enableAutomaticTermination(terminationReason)
         }
 
-        if application.activationPolicy() != .regular {
-            guard application.setActivationPolicy(.regular) else {
+        let activationPolicy: NSApplication.ActivationPolicy =
+            showsStartupWindow ? .regular : .accessory
+        if application.activationPolicy() != activationPolicy {
+            guard application.setActivationPolicy(activationPolicy) else {
                 throw VMDisplayPresenterError.applicationSetupFailed
             }
         }
         application.finishLaunching()
 
-        let startupWindow = makeStartupWindow()
-        self.startupWindow = startupWindow
-        startupWindow.makeKeyAndOrderFront(nil)
-        application.activate(ignoringOtherApps: true)
+        if showsStartupWindow {
+            let startupWindow = makeStartupWindow()
+            self.startupWindow = startupWindow
+            startupWindow.makeKeyAndOrderFront(nil)
+            application.activate(ignoringOtherApps: true)
+        }
 
         isActive = true
         defer {

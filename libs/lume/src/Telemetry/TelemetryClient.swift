@@ -486,6 +486,8 @@ enum TelemetryEvent {
   static let clone = "lume_clone"
   static let pull = "lume_pull"
   static let push = "lume_push"
+  static let importUTM = "lume_import_utm"
+  static let exportUTM = "lume_export_utm"
   static let serve = "lume_serve"
   static let setup = "lume_setup"
   static let config = "lume_config"

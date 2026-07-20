@@ -85,6 +85,10 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertNotIn("    paths:", trigger)
         self.assertIn("Determine product release scope", workflow)
         self.assertIn("if: steps.scope.outputs.product_changed == 'true'", workflow)
+        self.assertIn("--require-release", workflow)
+        self.assertIn('index("no-release") != null', workflow)
+        self.assertIn('"$HEAD_REF" == release-please--branches--*', workflow)
+        self.assertIn("labeled, unlabeled", workflow)
 
     def test_legacy_release_routes_exclude_driver_and_lume(self) -> None:
         workflow = self.read(".github/workflows/release-bump-version.yml")

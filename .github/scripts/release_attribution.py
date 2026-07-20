@@ -197,7 +197,12 @@ def release_entries(subject: str, commit_body: str, pull_body: str) -> list[Conv
     return [entry for entry in entries if entry.change_type in RELEASING_TYPES]
 
 
-def validate_pr_title(title: str) -> None:
+def validate_pr_title(
+    title: str,
+    *,
+    require_release: bool = False,
+    allow_non_release: bool = False,
+) -> None:
     entry = parse_conventional_line(title)
     if not entry:
         raise ReleaseError(
@@ -208,6 +213,14 @@ def validate_pr_title(title: str) -> None:
         allowed = ", ".join(sorted(ALLOWED_TITLE_TYPES))
         raise ReleaseError(
             f"unsupported pull request type '{entry.change_type}'; use one of: {allowed}"
+        )
+    if require_release and entry.change_type not in RELEASING_TYPES and not allow_non_release:
+        raise ReleaseError(
+            f"pull request type '{entry.change_type}' makes Release Please skip changes to "
+            "release-tracked product files; use 'fix(scope): ...' for a patch, "
+            "'feat(scope): ...' for a minor release, 'feat(scope)!: ...' for a breaking "
+            "release, or add the 'no-release' label when the change is intentionally "
+            "non-releasing"
         )
 
 
@@ -769,6 +782,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate = subparsers.add_parser("validate-title")
     validate.add_argument("--title", required=True)
+    validate.add_argument("--require-release", action="store_true")
+    validate.add_argument("--allow-non-release", action="store_true")
 
     collect = subparsers.add_parser("collect")
     collect.add_argument("--repo-root", type=Path, default=Path.cwd())
@@ -805,7 +820,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "validate-title":
-            validate_pr_title(args.title)
+            validate_pr_title(
+                args.title,
+                require_release=args.require_release,
+                allow_non_release=args.allow_non_release,
+            )
             print("release title is valid")
         elif args.command == "collect":
             collect_command(args)

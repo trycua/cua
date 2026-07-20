@@ -3,8 +3,6 @@ title: Best-effort background
 description: How Cua Driver tries to operate apps without taking focus, moving the cursor, or raising windows, and when it must fall back to foreground.
 ---
 
-# Best-effort background
-
 Best-effort background means Cua Driver tries to operate a target app while preserving the user's active desktop. The default paths do not move the real pointer, do not raise the target window, and do not switch the user's frontmost app.
 
 This is a best effort rather than an absolute promise. Most app automation can stay in the background through accessibility actions, routed input, and window-specific capture. A small set of apps and OS surfaces only accept real foreground input, so the driver reports that limit and lets the caller choose a foreground escalation for that specific action.

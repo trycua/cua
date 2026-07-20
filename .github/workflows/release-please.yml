@@ -150,7 +150,34 @@ jobs:
             git checkout -B "$BRANCH" "origin/$BRANCH"
             git config user.name "trycua-release[bot]"
             git config user.email "trycua-release[bot]@users.noreply.github.com"
-            git rebase origin/main
+            if [[ "$DRIVER" == "true" ]]; then
+              COMPONENT_PATH="libs/cua-driver"
+            else
+              COMPONENT_PATH="libs/lume"
+            fi
+            if ! git rebase origin/main; then
+              CONFLICTS=$(git diff --name-only --diff-filter=U)
+              if [[ "$CONFLICTS" != ".release-please-manifest.json" ]]; then
+                printf 'Unsupported release branch conflicts:\n%s\n' "$CONFLICTS"
+                git rebase --abort
+                exit 1
+              fi
+
+              # Parallel component releases can change different manifest keys.
+              # Keep the current main manifest and copy only this release value.
+              RELEASE_VERSION=$(git show :3:.release-please-manifest.json | \
+                jq -er --arg path "$COMPONENT_PATH" '.[$path]')
+              git show :2:.release-please-manifest.json | \
+                jq --arg path "$COMPONENT_PATH" \
+                  --arg version "$RELEASE_VERSION" \
+                  '.[$path] = $version' \
+                  > .release-please-manifest.json
+              git add .release-please-manifest.json
+              if ! GIT_EDITOR=true git rebase --continue; then
+                git rebase --abort
+                exit 1
+              fi
+            fi
             if [[ "$DRIVER" == "true" ]]; then
               DRIVER_VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/VERSION)
               cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \

@@ -190,24 +190,20 @@ impl Tool for ScrollTool {
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match super::resolve_element_target(
+            &self.state,
             pid,
+            window_id_arg,
             element_index_arg,
             element_token_arg.as_deref(),
-            window_id_arg,
-            "scroll",
         ) {
             Ok(r) => r,
             Err(e) => return e,
         };
-        let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid,
-                element_index: idx,
-                via_token: _,
-            } => (Some(idx), wid),
-        };
+        let token_targeted = resolved.via_token;
+        let element_index = resolved.element_index;
+        let window_id = resolved.window_id;
+        let token_guard = resolved.retained;
 
         // Resolve the pre-focus element pointer (if requested) outside
         // the suppression closure — only the focus_element() write itself
@@ -216,7 +212,7 @@ impl Tool for ScrollTool {
         // the element before the suppressed focus below dereferences it
         // (use-after-free → daemon crash). Guard lives to method end.
         let pre_focus_guard = if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            self.state.element_cache.get_element_retained(pid, wid, idx)
+            token_guard.or_else(|| self.state.element_cache.get_element_retained(pid, wid, idx))
         } else {
             None
         };
@@ -238,17 +234,14 @@ impl Tool for ScrollTool {
         // AXScrollArea parent. Pressing those controls is a true
         // background-safe scroll: no activation, z-order change, or cursor move.
         if matches!(direction.as_str(), "up" | "down") {
-            if let (Some(index), Some(wid)) = (element_index, window_id) {
-                let native_element_guard = self
-                    .state
-                    .element_cache
-                    .get_element_retained(pid, wid, index);
+            if let (Some(_index), Some(wid)) = (element_index, window_id) {
+                let native_element_ptr = pre_focus_ptr;
                 let direction_for_ax = direction.clone();
                 let by_for_ax = by.clone();
                 let foreground = delivery_mode.is_foreground();
                 let ax_result =
                     tokio::task::spawn_blocking(move || -> anyhow::Result<(bool, bool)> {
-                        let Some(element_guard) = native_element_guard else {
+                        let Some(element_ptr) = native_element_ptr else {
                             return Ok((false, false));
                         };
                         if foreground {
@@ -259,7 +252,7 @@ impl Tool for ScrollTool {
                                 || {
                                     delivered = unsafe {
                                         scroll_native_text_area(
-                                            element_guard.as_ptr() as AXUIElementRef,
+                                            element_ptr as AXUIElementRef,
                                             &direction_for_ax,
                                             &by_for_ax,
                                             amount,
@@ -274,7 +267,7 @@ impl Tool for ScrollTool {
                             Ok((
                                 unsafe {
                                     scroll_native_text_area(
-                                        element_guard.as_ptr() as AXUIElementRef,
+                                        element_ptr as AXUIElementRef,
                                         &direction_for_ax,
                                         &by_for_ax,
                                         amount,
@@ -305,6 +298,12 @@ impl Tool for ScrollTool {
                     }
                 }
             }
+        }
+        if token_targeted {
+            return ToolResult::error(
+                "token-targeted scroll requires a native AX scroll action; refusing \
+                 CGEvent wheel or keystroke fallback for an exact-node capability.",
+            );
         }
 
         // ── Targeted wheel path ─────────────────────────────────────────────

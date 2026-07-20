@@ -118,24 +118,20 @@ impl Tool for PressKeyTool {
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match super::resolve_element_target(
+            &self.state,
             pid,
+            window_id_arg,
             element_index_arg,
             element_token_arg.as_deref(),
-            window_id_arg,
-            "press_key",
         ) {
             Ok(r) => r,
             Err(e) => return e,
         };
-        let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid,
-                element_index: idx,
-                via_token: _,
-            } => (Some(idx), wid),
-        };
+        let token_targeted = resolved.via_token;
+        let element_index = resolved.element_index;
+        let window_id = resolved.window_id;
+        let token_guard = resolved.retained;
 
         // Remap "+" / "plus" → "=" + Shift (same physical key on US layout).
         let key = if key_raw == "+" || key_raw == "plus" {
@@ -197,10 +193,17 @@ impl Tool for PressKeyTool {
         // the element before the suppressed focus below dereferences it
         // (use-after-free → daemon crash). Guard lives to method end.
         let pre_focus_guard = if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            self.state.element_cache.get_element_retained(pid, wid, idx)
+            token_guard.or_else(|| self.state.element_cache.get_element_retained(pid, wid, idx))
         } else {
             None
         };
+        if let Some(idx) = element_index {
+            if pre_focus_guard.is_none() {
+                return ToolResult::error(format!(
+                    "Element index {idx} not found. Call get_window_state first."
+                ));
+            }
+        }
         let pre_focus_ptr: Option<usize> = pre_focus_guard.as_ref().map(|g| g.as_ptr());
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
@@ -222,10 +225,19 @@ impl Tool for PressKeyTool {
                 // Pre-focus the element under suppression so its
                 // side-effects are captured by the snapshot + lease.
                 if let Some(element_ptr) = pre_focus_ptr {
-                    let _ = tokio::task::spawn_blocking(move || {
-                        crate::input::ax_actions::focus_element(element_ptr)
+                    match tokio::task::spawn_blocking(move || {
+                        if token_targeted {
+                            crate::input::ax_actions::focus_element_strict(element_ptr)
+                        } else {
+                            crate::input::ax_actions::focus_element(element_ptr)
+                        }
                     })
-                    .await;
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => return Ok(Err(error)),
+                        Err(error) => return Err(error),
+                    }
                     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
                 }
 

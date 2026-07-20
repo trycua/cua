@@ -176,24 +176,20 @@ impl Tool for TypeTextTool {
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match super::resolve_element_target(
+            &self.state,
             pid,
+            window_id_arg,
             element_index_arg,
             element_token_arg.as_deref(),
-            window_id_arg,
-            "type_text",
         ) {
             Ok(r) => r,
             Err(e) => return e,
         };
-        let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid,
-                element_index: idx,
-                via_token: _,
-            } => (Some(idx), wid),
-        };
+        let token_targeted = resolved.via_token;
+        let element_index = resolved.element_index;
+        let window_id = resolved.window_id;
+        let token_guard = resolved.retained;
         let delay_ms = args.u64_or("delay_ms", 30);
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
 
@@ -246,7 +242,9 @@ impl Tool for TypeTextTool {
         // the blocking type below dereferences it (use-after-free → daemon
         // crash). The guard lives to method end, past type_text_blocking.
         let element_guard = if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            match self.state.element_cache.get_element_retained(pid, wid, idx) {
+            match token_guard
+                .or_else(|| self.state.element_cache.get_element_retained(pid, wid, idx))
+            {
                 Some(e) => Some((e, idx)),
                 None => {
                     return ToolResult::error(format!(
@@ -293,6 +291,7 @@ impl Tool for TypeTextTool {
                         is_terminal_target,
                         delivery_mode,
                         window_id,
+                        token_targeted,
                     )
                 })
                 .await
@@ -586,6 +585,7 @@ fn type_text_blocking(
     is_terminal_target: bool,
     delivery_mode: super::DeliveryMode,
     window_id: Option<u32>,
+    token_targeted: bool,
 ) -> anyhow::Result<(String, &'static str, bool)> {
     // Original field value before ANY rung — drives both the read-back delta and
     // the clear-then-type idempotency decision.
@@ -593,6 +593,24 @@ fn type_text_blocking(
     // Clear-then-type only when we can't see existing content to preserve
     // (empty or unreadable). A readable non-empty value is left intact.
     let clear_first = !matches!(before.as_deref(), Some(b) if !b.is_empty());
+
+    if token_targeted {
+        let (ptr, idx) = element_ptr_and_idx
+            .ok_or_else(|| anyhow::anyhow!("token-targeted type_text lost its AX element"))?;
+        crate::input::ax_actions::focus_element_strict(ptr)?;
+        let element = ptr as AXUIElementRef;
+        let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
+        let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
+        let err = unsafe { set_string_attr(element, "AXSelectedText", text) };
+        let after = unsafe { copy_string_attr(element, "AXValue") };
+        if err != kAXErrorSuccess || !verify_typed(before.as_deref(), after.as_deref(), text) {
+            anyhow::bail!(
+                "token-targeted type_text could not verify AXSelectedText on exact element"
+            );
+        }
+        let idx_str = idx.map(|i| format!(" [{i}]")).unwrap_or_default();
+        return Ok((format!(" into{idx_str} {role} \"{title}\""), PATH_AX, true));
+    }
 
     // --- Foreground rung: explicit agent request (skip AX/background ladder). ---
     if delivery_mode.is_foreground() {
@@ -756,6 +774,7 @@ mod tests {
             /*is_terminal_target=*/ true,
             super::super::DeliveryMode::Background,
             None,
+            false,
         );
         // We don't care whether r is Ok or Err — what matters is that
         // calling it with is_terminal_target=true is safe and never

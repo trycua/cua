@@ -327,15 +327,12 @@ impl Tool for GetWindowStateTool {
             "element_count": element_count,
             "tree_markdown": tree_md,
             "elements": elements_json,
-            // Debug correlation only. Element capabilities do not encode this
-            // generation or any other binding field.
-            "snapshot_id": snapshot_id,
-            "generation": snapshot_id,
             "_note": "Prefer `elements` — `tree_markdown` will continue to work \
                 but new fields will only be added to the structured side. \
                 Issue #22865: use `max_elements` / `max_depth` to bound the \
                 AX walk on apps with very large trees."
         });
+        cua_driver_core::element_token::add_snapshot_metadata(&mut structured, snapshot_id);
         // Best-effort-background ladder, rung (2): an AX walk that ran but found
         // zero actionable elements is NOT a clean snapshot — the window may be a
         // non-AX surface (canvas/WebGL) or its tree wasn't ready (Chromium needs

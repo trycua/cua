@@ -400,4 +400,46 @@ mod tests {
             cua_driver_core::element_token::TOKEN_STALE_GENERATION_CODE
         );
     }
+
+    #[test]
+    fn superseded_snapshot_same_index_replacement_fails_closed() {
+        let first = CFString::new("cua-driver-stable-token-first-node");
+        let second = CFString::new("cua-driver-stable-token-replacement-node");
+        let first_ptr = first.as_concrete_TypeRef() as usize;
+        let second_ptr = second.as_concrete_TypeRef() as usize;
+        unsafe {
+            CFRetain(first_ptr as CFTypeRef);
+            CFRetain(second_ptr as CFTypeRef);
+        }
+        let pid = 0x6afe_0004;
+        let window_id = 80;
+        let first_generation = cua_driver_core::element_token::global()
+            .register_snapshot_with_identities(pid, window_id, 1, [(0, first_ptr as u64)]);
+        let cache = ElementCache::new();
+        cache.update_with_generation(
+            pid,
+            window_id,
+            first_generation,
+            &[node_with_ptr(first_ptr)],
+        );
+        let stale_token = cua_driver_core::element_token::token_for(first_generation, 0);
+
+        let second_generation = cua_driver_core::element_token::global()
+            .register_snapshot_with_identities(pid, window_id, 1, [(0, second_ptr as u64)]);
+        cache.update_with_generation(
+            pid,
+            window_id,
+            second_generation,
+            &[node_with_ptr(second_ptr)],
+        );
+
+        let error = cache
+            .resolve_token(pid, Some(window_id), Some(0), &stale_token)
+            .err()
+            .expect("old token must not resolve replacement node at the same index");
+        assert_eq!(
+            error.code,
+            cua_driver_core::element_token::TOKEN_STALE_GENERATION_CODE
+        );
+    }
 }

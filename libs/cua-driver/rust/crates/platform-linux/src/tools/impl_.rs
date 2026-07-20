@@ -739,10 +739,10 @@ impl Tool for GetWindowStateTool {
                         .collect();
                     structured["elements"] = json!(elements);
                     // Surface 6: snapshot id mirror for debug correlation.
-                    structured["snapshot_id"] =
-                        json!(cua_driver_core::element_token::token_for(snapshot_id, 0)
-                            .trim_end_matches(":0")
-                            .to_string());
+                    cua_driver_core::element_token::add_snapshot_metadata(
+                        &mut structured,
+                        snapshot_id,
+                    );
                     structured["_note"] = json!(
                         "Prefer `elements` — `tree_markdown` will continue to work \
                          but new fields will only be added to the structured side. \

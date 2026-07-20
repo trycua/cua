@@ -70,6 +70,7 @@ Run a virtual machine
 | `--registry` | String | ghcr.io | Container registry URL |
 | `--organization` | String | trycua | Organization to pull from |
 | `--display` | DisplayMode | none | Local viewer to open: vnc, native, or none. The VNC server remains available in every mode |
+| `--log-file` | String | ~/Library/Logs/lume/<vm>.log | Log path for --detach |
 | `--vnc-port` | Int | 0 | Port for VNC server (0 for auto-assign) |
 | `--recovery-mode` | Bool | false | For macOS VMs only, boot in recovery mode |
 | `--storage` | String | - | VM storage location to use |
@@ -79,6 +80,7 @@ Run a virtual machine
 | Name | Default | Description |
 | ---- | ------- | ----------- |
 | `-d, --no-display` | false | Compatibility alias for --display none |
+| `--detach` | false | Run the VM in the background and return immediately |
 | `--clipboard` | false | Enable bidirectional clipboard sync via SSH. Automatic for native macOS display |
 
 ### lume attach

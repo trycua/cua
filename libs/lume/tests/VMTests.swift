@@ -99,7 +99,7 @@ func testVMRunAndStop() async throws {
     // Test running VM
     let runTask = Task {
         try await vm.run(
-            noDisplay: false, sharedDirectories: [], mount: nil as Path?, vncPort: 0,
+            displayMode: .vnc, sharedDirectories: [], mount: nil as Path?, vncPort: 0,
             recoveryMode: false)
     }
 

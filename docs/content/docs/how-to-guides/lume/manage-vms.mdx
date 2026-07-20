@@ -25,17 +25,38 @@ SSH availability when the VM is running.
 
 ## Run and stop a VM
 
-Run Tahoe with a display:
+Run Tahoe with the default Screen Sharing viewer:
 
 ```bash
 lume run macos-tahoe
+# Equivalent to: lume run macos-tahoe --display vnc
 ```
 
-Run it headlessly:
+Use Lume's lower-latency native macOS viewer instead:
 
 ```bash
-lume run --no-display macos-tahoe
+lume run macos-tahoe --display native
 ```
+
+Closing the native window only hides it; it does not stop the guest. Reopen it
+from Lume's Dock icon or **Window → Show VM Window**. Run headlessly with
+`--display none` (the older `--no-display` flag remains an alias):
+
+```bash
+lume run macos-tahoe --display none
+```
+
+VNC remains available in all three modes. To open Screen Sharing for an
+already-running VM without restarting it:
+
+```bash
+open "$(lume get macos-tahoe --format json | \
+  plutil -extract 0.vncUrl raw -o - -)"
+```
+
+A native view can only be created by the process that started the VM, so a VM
+started with `--display vnc` or `--display none` cannot be switched to native
+from a second command yet.
 
 Stop it when you are finished:
 
@@ -55,8 +76,10 @@ Pass a host directory when you run the VM:
 lume run macos-tahoe --shared-dir ~/Projects
 ```
 
-The directory appears in the guest at `/Volumes/My Shared Files`. Use a
-read-only mount when the guest only needs to read the files:
+The directory appears in the guest at `/Volumes/My Shared Files`. In the native
+viewer, **Share Folder** can also add a directory while the guest is running;
+folders added from the toolbar last for that run only. Use a read-only mount
+when the guest only needs to read the files:
 
 ```bash
 lume run macos-tahoe --shared-dir ~/Projects:ro

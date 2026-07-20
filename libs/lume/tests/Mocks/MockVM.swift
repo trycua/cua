@@ -22,14 +22,14 @@ class MockVM: VM {
     }
 
     override func run(
-        noDisplay: Bool, sharedDirectories: [SharedDirectory], mount: Path?, vncPort: Int = 0,
-        vncPassword: String? = nil, recoveryMode: Bool = false, usbMassStoragePaths: [Path]? = nil,
-        additionalDiskPaths: [Path]? = nil,
+        displayMode: DisplayMode = .vnc, sharedDirectories: [SharedDirectory], mount: Path?,
+        vncPort: Int = 0, vncPassword: String? = nil, recoveryMode: Bool = false,
+        usbMassStoragePaths: [Path]? = nil, additionalDiskPaths: [Path]? = nil,
         networkMode: NetworkMode? = nil, clipboard: Bool = false
     ) async throws {
         mockIsRunning = true
         try await super.run(
-            noDisplay: noDisplay, sharedDirectories: sharedDirectories, mount: mount,
+            displayMode: displayMode, sharedDirectories: sharedDirectories, mount: mount,
             vncPort: vncPort, vncPassword: vncPassword, recoveryMode: recoveryMode,
             usbMassStoragePaths: usbMassStoragePaths,
             additionalDiskPaths: additionalDiskPaths,

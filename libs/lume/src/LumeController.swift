@@ -1036,6 +1036,7 @@ final class LumeController {
     public func runVM(
         name: String,
         noDisplay: Bool = false,
+        displayMode: DisplayMode? = nil,
         sharedDirectories: [SharedDirectory] = [],
         mount: Path? = nil,
         registry: String = "ghcr.io",
@@ -1053,11 +1054,12 @@ final class LumeController {
         telemetryTransport: TelemetryTransport = .cli
     ) async throws {
         let normalizedName = normalizeVMName(name: name)
+        let effectiveDisplayMode = displayMode ?? (noDisplay ? .none : .vnc)
         Logger.info(
             "Running VM",
             metadata: [
                 "name": normalizedName,
-                "no_display": "\(noDisplay)",
+                "display_mode": effectiveDisplayMode.rawValue,
                 "shared_directories":
                     "\(sharedDirectories.map( { $0.string } ).joined(separator: ", "))",
                 "mount": mount?.path ?? "none",
@@ -1168,7 +1170,7 @@ final class LumeController {
 
             SharedVM.shared.setVM(name: normalizedName, vm: vm)
             try await vm.run(
-                noDisplay: noDisplay,
+                displayMode: effectiveDisplayMode,
                 sharedDirectories: sharedDirectories,
                 mount: mount,
                 vncPort: vncPort,

@@ -77,7 +77,15 @@ async fn serve_conn(mut stream: TcpStream, registry: Arc<ToolRegistry>) -> anyho
             return Ok(()); // clean EOF
         };
         let keep_alive = req.keep_alive;
-        if !req.method.eq_ignore_ascii_case("POST") {
+        if req.has_origin {
+            write_http(
+                &mut stream,
+                403,
+                br#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Browser-origin requests are forbidden"}}"#,
+                keep_alive,
+            )
+            .await?;
+        } else if !req.method.eq_ignore_ascii_case("POST") {
             write_http(
                 &mut stream,
                 405,
@@ -187,6 +195,8 @@ struct HttpRequest {
     #[allow(dead_code)]
     path: String,
     body: Vec<u8>,
+    /// Browser requests carry Origin; native MCP clients normally do not.
+    has_origin: bool,
     /// Whether to keep the connection open after responding (HTTP/1.1 default;
     /// false if the client sent `Connection: close` or spoke HTTP/1.0).
     keep_alive: bool,
@@ -218,11 +228,14 @@ async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<Option<Http
     let path = parts.next().unwrap_or("/").to_owned();
     let version = parts.next().unwrap_or("HTTP/1.1");
     let mut content_length = 0usize;
+    let mut has_origin = false;
     let mut keep_alive = version.eq_ignore_ascii_case("HTTP/1.1"); // 1.1 defaults to keep-alive
     for line in lines {
         if let Some((k, v)) = line.split_once(':') {
             let (k, v) = (k.trim(), v.trim());
-            if k.eq_ignore_ascii_case("content-length") {
+            if k.eq_ignore_ascii_case("origin") {
+                has_origin = true;
+            } else if k.eq_ignore_ascii_case("content-length") {
                 content_length = v.parse().unwrap_or(0);
             } else if k.eq_ignore_ascii_case("connection") {
                 if v.eq_ignore_ascii_case("close") {
@@ -244,6 +257,7 @@ async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<Option<Http
         method,
         path,
         body,
+        has_origin,
         keep_alive,
     }))
 }
@@ -257,6 +271,7 @@ async fn write_http(
     let reason = match status {
         200 => "OK",
         202 => "Accepted",
+        403 => "Forbidden",
         405 => "Method Not Allowed",
         _ => "OK",
     };
@@ -277,6 +292,39 @@ async fn write_http(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    async fn serve_raw_request(request: &[u8]) -> String {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            serve_conn(stream, Arc::new(ToolRegistry::new()))
+                .await
+                .unwrap();
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_all(request).await.unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        server.await.unwrap();
+        String::from_utf8(response).unwrap()
+    }
+
+    #[tokio::test]
+    async fn origin_header_is_forbidden_but_originless_request_is_unchanged() {
+        let without_origin = serve_raw_request(
+            b"POST /mcp HTTP/1.1\r\nContent-Length: 8\r\nConnection: close\r\n\r\nnot-json",
+        )
+        .await;
+        assert!(without_origin.starts_with("HTTP/1.1 200 OK\r\n"));
+
+        let with_origin = serve_raw_request(
+            b"POST /mcp HTTP/1.1\r\noRiGiN:\r\nContent-Length: 8\r\nConnection: close\r\n\r\nnot-json",
+        )
+        .await;
+        assert!(with_origin.starts_with("HTTP/1.1 403 Forbidden\r\n"));
+    }
 
     #[test]
     fn apply_session_identity_mirrors_session_to_session_id() {

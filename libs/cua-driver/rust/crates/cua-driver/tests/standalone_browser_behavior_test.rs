@@ -2908,7 +2908,9 @@ fn run_download(spec: &BrowserSpec) {
                 .map(PathBuf::from)
                 .expect("browser E2E home directory");
             let destination = tempfile::Builder::new()
-                .prefix(".cua-e2e-download-")
+                // Snap grants ordinary home-directory access but intentionally
+                // excludes arbitrary dotfiles and hidden directories.
+                .prefix("cua-e2e-download-")
                 .tempdir_in(home)
                 .expect("create approved download directory");
             let canonical =

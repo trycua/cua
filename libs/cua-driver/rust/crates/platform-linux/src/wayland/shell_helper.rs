@@ -207,9 +207,27 @@ fn is_trusted_gnome_shell(pid: u32) -> bool {
 /// can use Shell's screenshot API without confusing a stable Wayland window id
 /// for an X11 drawable.
 pub fn screenshot_display() -> Option<Vec<u8>> {
+    let raw = gdbus_call_with_timeout("Capture", &[], Duration::from_secs(5))?;
+    decode_capture(&raw)
+}
+
+/// Capture the GNOME stage only when the helper owner and current browser API
+/// have passed the same compositor-attestation checks used for mutation.
+pub fn trusted_screenshot_display() -> Option<Vec<u8>> {
+    let owner = shell_owner(true)?;
+    let raw = gdbus_call_to(
+        &owner,
+        PATH,
+        &format!("{IFACE}.Capture"),
+        &[],
+        Duration::from_secs(5),
+    )?;
+    decode_capture(&raw)
+}
+
+fn decode_capture(raw: &str) -> Option<Vec<u8>> {
     use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 
-    let raw = gdbus_call_with_timeout("Capture", &[], Duration::from_secs(5))?;
     let start = raw.find('\'')? + 1;
     let end = raw.rfind('\'')?;
     if end <= start {

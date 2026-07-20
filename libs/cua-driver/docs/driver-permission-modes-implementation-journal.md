@@ -30,12 +30,13 @@ and can be split into a reviewable PR without losing dependency history.
 
 | Environment | Public surface | Required result | Evidence state |
 |---|---|---|---|
-| macOS host | Rust unit/integration tests | Deterministic policy, mode, grant, and refusal contracts | Package gates passed; full workspace examples have a pre-existing macOS cross-target failure recorded below |
-| macOS Lume Aqua session | Installed `cua-driver` CLI/MCP/daemon | Mode/status/revoke, fail-closed protected attach, unrestricted lifecycle, provenance | Pending exact-commit certification |
-| Windows interactive session (not Session 0) | Installed CLI/MCP/daemon and Windows runner | Mode/policy parity; advertised collector and revocation behavior | Pending implementation |
-| Linux X11 | Installed CLI/MCP/daemon and Linux harness | Mode/policy parity and selected collector behavior | Pending implementation |
-| Linux Wayland | Installed CLI/MCP/daemon and Wayland harness | Mode/policy parity and selected collector behavior | Pending implementation |
-| Headless transport | CLI/raw socket/MCP | Stable refusal when no certified trusted-consent collector exists | Pending implementation |
+| macOS host | Rust unit/integration tests | Deterministic policy, mode, grant, and refusal contracts | Passed on `d29fd128f`; full workspace examples have a pre-existing macOS cross-target failure recorded below |
+| macOS Lume Aqua session | Installed `cua-driver` CLI/MCP/daemon | Mode/status/revoke, fail-closed protected attach, unrestricted lifecycle, provenance | Passed on `d29fd128f`; installed `0.9.1`, standard mode, protected collector unavailable |
+| Windows interactive session (not Session 0) | Installed CLI/MCP/daemon and Windows runner | Mode/policy parity; advertised collector and revocation behavior | Passed on `d29fd128f` in RDP session 4; installed `0.9.1`, standard mode, protected collector unavailable |
+| Linux SSH/headless | Installed CLI/MCP/daemon and Linux harness | Mode/policy parity and selected collector behavior | Passed on `d29fd128f`; installed `0.9.1`, standard mode, protected collector unavailable |
+| Linux X11 | Installed CLI/MCP/daemon and Linux harness | Mode/policy parity and selected collector behavior | Not claimed by this slice; no protected Linux GUI collector is advertised |
+| Linux Wayland | Installed CLI/MCP/daemon and Wayland harness | Mode/policy parity and selected collector behavior | Not claimed by this slice; no protected Linux GUI collector is advertised |
+| Headless transport | CLI/raw socket/MCP | Stable refusal when no certified trusted-consent collector exists | Passed on macOS, Windows, and Linux installed-daemon smoke checks |
 
 ## Execution log
 
@@ -166,9 +167,52 @@ Verification on the macOS source host:
   - live-origin decision test: 1 passed;
   - `permission_policy_startup_test`: 9 passed.
 
+### 2026-07-20 — exact-commit platform certification
+
+All three installation lanes used source commit
+`d29fd128f9b287198b3c595ebb987c9411c3af21` and Cua Driver version
+`0.9.1`. Each installed daemon reported `standard` mode and
+`protected consent collector: unavailable`; `get_config.source_sha` matched
+the synced commit. This is the intended fail-closed standalone posture, not a
+claim that a protected host provider ships in this slice.
+
+- macOS 26.5.2 arm64, disposable Lume Aqua VM
+  `cua-permission-modes-d29fd128f`:
+  - installed `/Applications/CuaDriver.app` with the repository's stable
+    signing identity and visible CLI `/Users/lume/.local/bin/cua-driver`;
+  - installed binary SHA-256
+    `fef4ca7e1574678f55ca7226e93667f0f05046f6234bdd4690bcfed89d131c3d`;
+  - `permission_policy_startup_test`: 9 passed in release mode;
+  - `daemon_required_test`: 7 passed in release mode.
+- Ubuntu 24.04 x86_64, Azure VM `cua-linux-071`:
+  - installed binary
+    `/home/azureuser/.cua-driver/packages/releases/0.0.0-local-release-x86_64-unknown-linux-gnu/cua-driver`;
+  - installed binary SHA-256
+    `0aa9f19eb0bb58e781fcdaf52a4d8c3c9aa56ca660132da4fad3390a4ef7e7be`;
+  - `permission_policy_startup_test`: 9 passed in release mode;
+  - `daemon_required_test`: 7 passed in release mode;
+  - the documented installer migration permanently swept the test VM's legacy
+    `/home/azureuser/.cua-driver-rs` directory after preserving telemetry.
+- Windows x86_64, Azure VM `cua-win-071`:
+  - established an RDP desktop with FreeRDP after independently matching its
+    TLS certificate SHA-256 to the certificate read over the trusted SSH
+    channel;
+  - ran the install and certification harness as `azureuser` in active RDP
+    session 4, with Explorer also in session 4; Session 0 was rejected by the
+    harness;
+  - installed binary
+    `C:\Users\azureuser\AppData\Local\Programs\Cua\cua-driver\bin\cua-driver.exe`;
+  - installed binary SHA-256
+    `8b3d58eb0f693f8a2eec1fed52fd2ab447419c5b165c675719e7bdcbd4550ba8`;
+  - `permission_policy_startup_test`: 9 passed in release mode;
+  - `daemon_required_test`: 7 passed in release mode;
+  - removed the temporary interactive scheduled certification task after the
+    structured result reported success.
+
 ## Current work
 
-Run the package-level macOS gate, freeze a commit, install that exact commit in
-the Lume VM and interactive Windows/Linux lanes, then publish the branch and
-open the review PR. No standalone host is advertised as a certified protected
-provider; standard/autonomous existing-profile attachment remains fail closed.
+Implementation, review fixes, documentation, and exact-commit platform
+certification are complete. The remaining delivery work is to publish the
+branch, open the review PR, update umbrella issue #2381, and monitor repository
+checks. No standalone host is advertised as a certified protected provider;
+standard/autonomous existing-profile attachment remains fail closed.

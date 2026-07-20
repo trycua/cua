@@ -414,8 +414,6 @@ where
     //
     //   * `NotShown` — historical CLI path: print the banner, auto-
     //     open Settings (when `open_settings` is true), wait.
-    //   * `ShownOpenSettings` — user clicked the primary button; open
-    //     Settings on their behalf, then wait.
     //   * `ShownDismissed` — user clicked "Continue anyway" or the red
     //     dot; skip the auto-open since the user declined the guided
     //     flow, but still wait so a later manual grant unblocks.
@@ -434,10 +432,6 @@ where
     match presentation {
         PanelPresentation::NotShown => {
             print_banner(&missing, opts.open_settings);
-            should_auto_open_settings = opts.open_settings;
-            skip_wait_loop = false;
-        }
-        PanelPresentation::ShownOpenSettings => {
             should_auto_open_settings = opts.open_settings;
             skip_wait_loop = false;
         }
@@ -476,9 +470,7 @@ fn should_report_started(
 fn progress_for_presentation(presentation: PanelPresentation) -> Option<GateProgress> {
     match presentation {
         PanelPresentation::ShownDismissed => Some(GateProgress::Dismissed),
-        PanelPresentation::NotShown
-        | PanelPresentation::ShownOpenSettings
-        | PanelPresentation::ShownAllGranted => None,
+        PanelPresentation::NotShown | PanelPresentation::ShownAllGranted => None,
     }
 }
 
@@ -489,8 +481,6 @@ enum PanelPresentation {
     /// Panel could not be shown (opt-out env var, bare-binary launch,
     /// headless, etc.). Caller should fall back to the terminal banner.
     NotShown,
-    /// Panel shown; user clicked "Open System Settings".
-    ShownOpenSettings,
     /// Panel shown; user clicked "Continue anyway" or closed the window.
     ShownDismissed,
     /// Panel shown; its 1 Hz poll loop saw both grants flip green and
@@ -508,7 +498,6 @@ fn present_panel_if_available(initial: PermissionsStatus) -> PanelPresentation {
         match panel::show_modal(panel::PanelOpts {
             initial_status: initial,
         }) {
-            panel::PanelOutcome::OpenSettings => PanelPresentation::ShownOpenSettings,
             panel::PanelOutcome::Dismissed => PanelPresentation::ShownDismissed,
             panel::PanelOutcome::AllGranted => PanelPresentation::ShownAllGranted,
         }
@@ -916,7 +905,6 @@ mod tests {
         );
         for presentation in [
             PanelPresentation::NotShown,
-            PanelPresentation::ShownOpenSettings,
             PanelPresentation::ShownAllGranted,
         ] {
             assert_eq!(progress_for_presentation(presentation), None);

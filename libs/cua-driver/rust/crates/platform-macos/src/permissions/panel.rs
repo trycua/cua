@@ -2,8 +2,7 @@
 //! auto-dismiss on all-green.
 //!
 //! Replaces the terminal banner when the daemon is launched from the
-//! bundled `/Applications/CuaDriver.app`. Mirrors the Swift gate at
-//! `libs/cua-driver/Sources/CuaDriverCore/Permissions/PermissionsGate.swift`.
+//! bundled `/Applications/CuaDriver.app`.
 //!
 //! ## UX
 //!
@@ -17,7 +16,7 @@
 //! │  ✗ Accessibility                            │
 //! │      lets cua-driver read the accessibility │
 //! │      tree of running apps …                 │
-//! │                                             │
+//! │      [CuaDriver icon — drag into Settings]  │
 //! │  ✗ Screen Recording                         │
 //! │      lets cua-driver capture per-window …   │
 //! │                                             │
@@ -30,8 +29,8 @@
 //!
 //! A 1 Hz `NSTimer` reads [`current_status`] on every tick and updates
 //! the row icons / heading / subheading / "All set" strip in place.
-//! When both grants flip green and `suppress_auto_close == false` the
-//! poll callback calls `[NSApp stopModal]` and `show_modal` returns
+//! When both grants flip green, the poll callback calls `[NSApp stopModal]`
+//! and `show_modal` returns
 //! [`PanelOutcome::AllGranted`] so the caller can skip the trailing
 //! `wait_for_grants` loop.
 //!
@@ -70,12 +69,8 @@ use crate::permissions::status::{current_status, PermissionsStatus};
 /// What the user did with the panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelOutcome {
-    /// User asked us to open System Settings — caller should invoke
-    /// `open_system_settings_for(...)` for each missing permission and
-    /// then enter the polling phase.
-    OpenSettings,
     /// User dismissed (Continue anyway button or red-dot close) — the
-    /// caller should enter the polling phase without opening Settings.
+    /// caller should enter the terminal polling phase.
     Dismissed,
     /// Both grants flipped green while the panel was up; the poll
     /// callback auto-dismissed. Caller can skip the polling phase.
@@ -92,30 +87,11 @@ pub struct PanelOpts {
     pub initial_status: PermissionsStatus,
 }
 
-/// Decide whether the panel can be shown right now. The panel is
-/// **opt-in**: the default behaviour is the terminal banner, and the
-/// panel only appears when:
-///
-///   * `CUA_DRIVER_RS_PERMISSIONS_PANEL` env var is set to an on
-///     sentinel (`1` / `true` / `yes` / `on`, case-insensitive); AND
-///   * the process is running on the main thread (a hard requirement
-///     for AppKit calls); AND
-///   * the binary lives inside an `.app` bundle (bare-binary
-///     invocations have no Info.plist / bundle id for TCC to attribute
-///     the window to, so they always use the terminal flow).
-///
-/// Rationale for opt-in: the panel relies on a chain of macOS
-/// behaviours that are easy to break in practice — TCC responsible-
-/// process attribution, session-level TCC caches that survive
-/// `tccutil reset`, ad-hoc codesign identity mismatches between dev
-/// builds and the bundle id, and AppKit modal-run-loop modes. When
-/// any link is off, the panel can present a confusing UX (e.g. shows
-/// "missing" rows because TCC returns stale cache, or auto-dismisses
-/// against the user's intent). The terminal flow has none of those
-/// failure modes, so it's the safer default until we have signals
-/// that the UI is consistently helpful across users.
+/// Decide whether the panel can be shown right now. Installed app launches
+/// use the native flow by default; `CUA_DRIVER_RS_PERMISSIONS_PANEL=0` keeps
+/// the terminal fallback available for automation and troubleshooting.
 pub fn panel_enabled() -> bool {
-    if !env_on("CUA_DRIVER_RS_PERMISSIONS_PANEL") {
+    if env_off("CUA_DRIVER_RS_PERMISSIONS_PANEL") {
         return false;
     }
     if MainThreadMarker::new().is_none() {
@@ -190,38 +166,34 @@ pub fn pump_run_loop_briefly(seconds: f64) {
 
 // ── Implementation ──────────────────────────────────────────────────────
 
-fn env_on(key: &str) -> bool {
+fn env_off(key: &str) -> bool {
     std::env::var(key)
         .ok()
         .map(|v| {
             let lower = v.to_ascii_lowercase();
-            matches!(lower.as_str(), "1" | "true" | "yes" | "on")
+            matches!(lower.as_str(), "0" | "false" | "no" | "off")
         })
         .unwrap_or(false)
 }
 
-/// Detect whether the current executable lives under a `.app` bundle.
+fn app_bundle_path() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    exe.ancestors()
+        .find(|path| path.extension().is_some_and(|extension| extension == "app"))
+        .map(std::path::Path::to_path_buf)
+}
+
 fn running_inside_app_bundle() -> bool {
-    let Ok(exe) = std::env::current_exe() else {
-        return false;
-    };
-    exe.components().any(|c| {
-        c.as_os_str()
-            .to_str()
-            .map(|s| s.ends_with(".app"))
-            .unwrap_or(false)
-    })
+    app_bundle_path().is_some()
 }
 
 // ── Layout constants ────────────────────────────────────────────────────
 //
-// Window geometry mirrors Swift's `.frame(width: 460)` plus heights
-// chosen to fit: heading (24) + subheading (40) + 2 rows (76 each) +
-// "All set" strip (32) + button row (48) + paddings (20·5). Keeping
-// the numbers as a block here so the math is auditable.
+// Window geometry fits the heading, drag source, two permission rows,
+// ready strip, button row, and their padding without relying on Auto Layout.
 
 const WIN_W: f64 = 460.0;
-const WIN_H: f64 = 360.0;
+const WIN_H: f64 = 420.0;
 const PAD: f64 = 20.0;
 const ROW_H: f64 = 76.0;
 const READY_STRIP_H: f64 = 36.0;
@@ -308,7 +280,24 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
     let secondary_color: *mut AnyObject = msg_send![class!(NSColor), secondaryLabelColor];
     let _: () = msg_send![subheading, setTextColor: secondary_color];
 
-    y -= 16.0; // gap before first row
+    y -= 16.0;
+
+    // Accessibility accepts app bundles dropped directly into its list. Keep
+    // the installed bundle one drag away instead of making users authenticate
+    // the file picker and locate /Applications/CuaDriver.app themselves.
+    let drag_source = build_app_drag_source(
+        NSPoint {
+            x: PAD + 44.0,
+            y: y - 48.0,
+        },
+        NSSize {
+            width: WIN_W - (2.0 * PAD) - 44.0,
+            height: 40.0,
+        },
+    );
+    let _: () = msg_send![content_view, addSubview: drag_source];
+    let _: () = msg_send![drag_source, setHidden: opts.initial_status.accessibility];
+    y -= 60.0;
 
     // ---- Permission rows ----
     let ax_row = build_row(
@@ -371,15 +360,17 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
     let open_settings_btn = build_button(
         "Open System Settings",
         NSPoint {
-            x: WIN_W - PAD - 180.0,
+            x: WIN_W - PAD - 220.0,
             y: 16.0,
         },
         NSSize {
-            width: 180.0,
+            width: 220.0,
             height: 32.0,
         },
         ButtonAction::OpenSettings,
     );
+    let button_title = ns_string(open_settings_title(opts.initial_status));
+    let _: () = msg_send![open_settings_btn, setTitle: button_title];
     let _: () = msg_send![content_view, addSubview: open_settings_btn];
     let _: () = msg_send![open_settings_btn, setKeyEquivalent: ns_string("\r")];
 
@@ -389,6 +380,8 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
             heading: ptr_to_usize(heading),
             subheading: ptr_to_usize(subheading),
             ready_strip: ptr_to_usize(ready_strip),
+            open_settings_button: ptr_to_usize(open_settings_btn),
+            drag_source: ptr_to_usize(drag_source),
             ax_row,
             sr_row,
             last_status: opts.initial_status,
@@ -439,6 +432,8 @@ struct PanelHandles {
     heading: usize,
     subheading: usize,
     ready_strip: usize,
+    open_settings_button: usize,
+    drag_source: usize,
     ax_row: RowHandles,
     sr_row: RowHandles,
     last_status: PermissionsStatus,
@@ -526,6 +521,9 @@ unsafe fn poll_tick_inner() {
         let _: () = msg_send![usize_to_ptr(handles.heading), setStringValue: new_heading];
         let new_subheading = ns_string(subheading_for(status));
         let _: () = msg_send![usize_to_ptr(handles.subheading), setStringValue: new_subheading];
+        let button_title = ns_string(open_settings_title(status));
+        let _: () = msg_send![usize_to_ptr(handles.open_settings_button), setTitle: button_title];
+        let _: () = msg_send![usize_to_ptr(handles.drag_source), setHidden: status.accessibility];
         // Toggle the ready strip.
         let all_green = status.accessibility && status.screen_recording;
         let _: () = msg_send![usize_to_ptr(handles.ready_strip), setHidden: !all_green];
@@ -572,6 +570,14 @@ fn heading_for(s: PermissionsStatus) -> &'static str {
         (true, true) => "CuaDriver is ready",
         (true, false) | (false, true) => "One more permission",
         (false, false) => "CuaDriver needs your permission",
+    }
+}
+
+fn open_settings_title(s: PermissionsStatus) -> &'static str {
+    if !s.accessibility {
+        "Open Accessibility Settings"
+    } else {
+        "Open Screen Recording Settings"
     }
 }
 
@@ -746,6 +752,39 @@ unsafe fn build_row(
     }
 }
 
+unsafe fn build_app_drag_source(origin: NSPoint, size: NSSize) -> *mut AnyObject {
+    let view: *mut AnyObject = msg_send![drag_source_class(), alloc];
+    let view: *mut AnyObject = msg_send![view, initWithFrame: NSRect { origin, size }];
+
+    if let Some(bundle) = app_bundle_path() {
+        let path = ns_string(&bundle.to_string_lossy());
+        let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let icon: *mut AnyObject = msg_send![workspace, iconForFile: path];
+        let icon_view: *mut AnyObject = msg_send![class!(NSImageView), alloc];
+        let icon_view: *mut AnyObject = msg_send![icon_view, initWithFrame: NSRect {
+            origin: NSPoint { x: 0.0, y: 4.0 },
+            size: NSSize { width: 32.0, height: 32.0 },
+        }];
+        let _: () = msg_send![icon_view, setImage: icon];
+        let _: () = msg_send![view, addSubview: icon_view];
+    }
+
+    let label = build_label(
+        "Drag CuaDriver.app into the Accessibility list",
+        12.0,
+        true,
+        NSPoint { x: 42.0, y: 9.0 },
+        NSSize {
+            width: size.width - 42.0,
+            height: 22.0,
+        },
+    );
+    let accent: *mut AnyObject = msg_send![class!(NSColor), systemBlueColor];
+    let _: () = msg_send![label, setTextColor: accent];
+    let _: () = msg_send![view, addSubview: label];
+    view
+}
+
 unsafe fn build_ready_strip(origin: NSPoint, width: f64) -> *mut AnyObject {
     let strip = build_label(
         "✅  All set. CuaDriver is ready to use.",
@@ -772,6 +811,86 @@ unsafe fn install_target(button: *mut AnyObject, action: ButtonAction) {
         ButtonAction::Dismiss => objc2::sel!(dismiss:),
     };
     let _: () = msg_send![button, setAction: sel];
+}
+
+fn drag_source_class() -> &'static objc2::runtime::AnyClass {
+    use objc2::declare::ClassBuilder;
+    use std::sync::OnceLock;
+
+    static CLASS: OnceLock<&'static objc2::runtime::AnyClass> = OnceLock::new();
+    CLASS.get_or_init(|| {
+        let mut builder = ClassBuilder::new("CuaDriverAppDragSourceView", class!(NSView))
+            .expect("CuaDriverAppDragSourceView already registered");
+        unsafe {
+            builder.add_method(
+                objc2::sel!(hitTest:),
+                drag_source_hit_test as extern "C" fn(_, _, NSPoint) -> *mut AnyObject,
+            );
+            builder.add_method(
+                objc2::sel!(mouseDown:),
+                on_drag_source_mouse_down as extern "C" fn(_, _, _),
+            );
+            builder.add_method(
+                objc2::sel!(draggingSession:sourceOperationMaskForDraggingContext:),
+                drag_source_operation_mask as extern "C" fn(_, _, _, _) -> usize,
+            );
+        }
+        builder.register()
+    })
+}
+
+extern "C" fn drag_source_hit_test(
+    source: *mut AnyObject,
+    _cmd: objc2::runtime::Sel,
+    _point: NSPoint,
+) -> *mut AnyObject {
+    source
+}
+
+extern "C" fn on_drag_source_mouse_down(
+    source: *mut AnyObject,
+    _cmd: objc2::runtime::Sel,
+    event: *mut AnyObject,
+) {
+    let Some(bundle) = app_bundle_path() else {
+        return;
+    };
+    unsafe {
+        let path = ns_string(&bundle.to_string_lossy());
+        let url: *mut AnyObject = msg_send![class!(NSURL), fileURLWithPath: path];
+        let item: *mut AnyObject = msg_send![class!(NSDraggingItem), alloc];
+        let item: *mut AnyObject = msg_send![item, initWithPasteboardWriter: url];
+
+        let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let icon: *mut AnyObject = msg_send![workspace, iconForFile: path];
+        let bounds: NSRect = msg_send![source, bounds];
+        let drag_frame = NSRect {
+            origin: NSPoint {
+                x: bounds.origin.x,
+                y: bounds.origin.y,
+            },
+            size: NSSize {
+                width: 40.0,
+                height: 40.0,
+            },
+        };
+        let _: () = msg_send![item, setDraggingFrame: drag_frame contents: icon];
+        let items: *mut AnyObject = msg_send![class!(NSArray), arrayWithObject: item];
+        let _: *mut AnyObject = msg_send![source,
+            beginDraggingSessionWithItems: items
+            event: event
+            source: source
+        ];
+    }
+}
+
+extern "C" fn drag_source_operation_mask(
+    _self: *mut AnyObject,
+    _cmd: objc2::runtime::Sel,
+    _session: *mut AnyObject,
+    _context: isize,
+) -> usize {
+    1 // NSDragOperationCopy
 }
 
 unsafe fn panel_target_instance() -> *mut AnyObject {
@@ -814,8 +933,18 @@ extern "C" fn on_open_settings(
     _cmd: objc2::runtime::Sel,
     _sender: *mut AnyObject,
 ) {
-    OUTCOME.with(|cell| *cell.borrow_mut() = Some(PanelOutcome::OpenSettings));
-    stop_modal();
+    let status = current_status();
+    let permission = if !status.accessibility {
+        MissingPermission::Accessibility
+    } else {
+        MissingPermission::ScreenRecording
+    };
+    if let Err(error) = crate::permissions::gate::open_system_settings_for(permission) {
+        eprintln!(
+            "[cua-driver] could not open {} settings: {error}",
+            permission.label()
+        );
+    }
 }
 
 extern "C" fn on_dismiss(
@@ -849,38 +978,38 @@ mod tests {
     }
 
     #[test]
-    fn env_on_recognises_documented_sentinels() {
+    fn env_off_recognises_documented_sentinels() {
         let _guard = env_lock();
-        for v in &["1", "true", "TRUE", "True", "yes", "YES", "on", "ON"] {
+        for v in &["0", "false", "FALSE", "False", "no", "NO", "off", "OFF"] {
             std::env::set_var("CUA_DRIVER_RS_PERMISSIONS_PANEL", v);
             assert!(
-                env_on("CUA_DRIVER_RS_PERMISSIONS_PANEL"),
-                "value {v:?} must be treated as on",
+                env_off("CUA_DRIVER_RS_PERMISSIONS_PANEL"),
+                "value {v:?} must be treated as off",
             );
         }
         std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_PANEL");
     }
 
     #[test]
-    fn env_on_ignores_falsy_and_unknown() {
+    fn env_off_ignores_enabled_and_unknown_values() {
         let _guard = env_lock();
-        for v in &["0", "false", "no", "off", "garbage", ""] {
+        for v in &["1", "true", "yes", "on", "garbage", ""] {
             std::env::set_var("CUA_DRIVER_RS_PERMISSIONS_PANEL", v);
-            assert!(
-                !env_on("CUA_DRIVER_RS_PERMISSIONS_PANEL"),
-                "value {v:?} must not be treated as on",
-            );
+            assert!(!env_off("CUA_DRIVER_RS_PERMISSIONS_PANEL"));
         }
         std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_PANEL");
     }
 
     #[test]
-    fn unset_env_keeps_panel_disabled_by_default() {
-        // Opt-in default: with no env var set, the panel does not show
-        // and the gate falls back to the terminal banner.
+    fn unset_env_keeps_panel_enabled_by_default() {
         let _guard = env_lock();
         std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_PANEL");
-        assert!(!env_on("CUA_DRIVER_RS_PERMISSIONS_PANEL"));
+        assert!(!env_off("CUA_DRIVER_RS_PERMISSIONS_PANEL"));
+    }
+
+    #[test]
+    fn drag_source_class_registers_once() {
+        assert!(std::ptr::eq(drag_source_class(), drag_source_class()));
     }
 
     #[test]
@@ -896,6 +1025,22 @@ mod tests {
         assert_eq!(
             heading_for(st(false, false)),
             "CuaDriver needs your permission"
+        );
+    }
+
+    #[test]
+    fn settings_button_follows_the_next_missing_permission() {
+        let st = |a: bool, sr: bool| PermissionsStatus {
+            accessibility: a,
+            screen_recording: sr,
+        };
+        assert_eq!(
+            open_settings_title(st(false, false)),
+            "Open Accessibility Settings"
+        );
+        assert_eq!(
+            open_settings_title(st(true, false)),
+            "Open Screen Recording Settings"
         );
     }
 

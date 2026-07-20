@@ -139,7 +139,7 @@ Fleet currently accepts only a published registry image plus optional exposed po
 | `Image.from_file(...)` | No |
 | Snapshot images | No |
 
-Fleet consumes a **prebuilt OCI artifact** instead of applying SDK layers at claim time. That OCI artifact must already contain the bootable guest image Fleet expects, including the `.img` payload used by the Fleet image pipeline.
+Fleet consumes a **prebuilt OCI artifact** instead of applying SDK layers at claim time. That OCI artifact must already carry the bootable guest image Fleet expects and must satisfy Fleet's publication/runtime requirements.
 
 If you are targeting Fleet, start from [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image) and [How Fleet images work](/concepts/how-fleet-images-work).
 

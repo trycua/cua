@@ -5,10 +5,10 @@ description: Publish a Fleet-compatible OCI image and reference it from the Sand
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Fleet does not build a sandbox environment from the full SDK image-builder surface. Instead, Fleet expects a **prebuilt OCI artifact** that already contains the bootable guest image for the pool.
+Fleet does not build a sandbox environment from the full SDK image-builder surface. Instead, Fleet expects a **prebuilt OCI artifact** that already carries the bootable guest image for the pool.
 
 <Callout type="info">
-  The current Fleet cloud path uses OAuth credentials and currently supports `us-east-1`.
+  The current Fleet cloud path uses `CUA_CLIENT_ID` plus `CUA_CLIENT_SECRET` (or `cua.configure(client_id=..., client_secret=...)`) and currently supports `us-east-1`.
 </Callout>
 
 ## What Fleet accepts today
@@ -33,7 +33,7 @@ Fleet currently does **not** accept:
 
 Prepare the operating system, installed software, startup behavior, and service layout before you ask Fleet to boot it.
 
-The important boundary is that the published OCI artifact must already contain the bootable guest image Fleet expects, including the `.img` payload used to start the guest. `Image.from_registry(...)` points at that artifact. It does not construct the `.img`, convert a disk file, or apply SDK layers on your behalf.
+The important boundary is that the published OCI artifact must already carry the bootable guest image Fleet expects. In current Fleet image pipelines that often means an OCI artifact that embeds the bootable disk payload, but the public SDK contract is simply that you publish a Fleet-compatible registry artifact and point `Image.from_registry(...)` at it. The SDK does not build that artifact, convert a disk file, or apply SDK layers on your behalf.
 
 ## 2. Publish the OCI artifact immutably
 
@@ -48,6 +48,8 @@ Pinned digests make it possible to say exactly which boot image a pool launched.
 ## 3. Reference the published image from the SDK
 
 Use `Image.from_registry(...)` with any additional Fleet services declared through `.expose(...)`.
+
+Your published image must already boot the default computer-server service on port `8000`. Fleet always creates that `server` service, probes port `8000` for readiness, and waits for the `/status` endpoint before the sandbox is considered ready. Extra `.expose(...)` ports are only for additional services your image starts.
 
 ```python
 import asyncio
@@ -70,7 +72,7 @@ asyncio.run(main())
 
 `expose()` is how you declare additional named Fleet services that your guest brings up after boot.
 
-If your image only needs the default computer-server endpoint, you do not need extra exposed ports. If it serves additional application traffic on another port, expose that port on the registry image you reference.
+If your image only needs the default computer-server endpoint on `8000`, you do not need extra exposed ports. If it serves additional application traffic on another port, expose that port on the registry image you reference.
 
 ## 5. Expect a service URL, not a localhost tunnel
 

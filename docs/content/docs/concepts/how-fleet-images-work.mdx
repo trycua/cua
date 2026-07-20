@@ -34,9 +34,9 @@ Read [Choose and build a sandbox image](/how-to-guides/sandbox/images#fleet-comp
 
 ## Fleet references an OCI artifact that carries the boot image
 
-At the pool layer, Fleet stores the registry reference as the deployed boot artifact for the pool template. In practice that means the OCI artifact you publish has to contain the bootable guest image that Fleet expects, including the `.img` payload used to start the guest.
+At the pool layer, Fleet stores the registry reference as the deployed boot artifact for the pool template. In practice that means the OCI artifact you publish has to carry the bootable guest image that Fleet expects. The SDK contract is the registry reference itself; how your build pipeline packages the bootable guest inside that artifact is part of Fleet image preparation.
 
-`Image.from_registry(...)` does not assemble that artifact for you. It only points Fleet at a prebuilt OCI image that already contains the bootable environment. Publishing the artifact is therefore part of image preparation, not part of the claim path.
+`Image.from_registry(...)` does not assemble that artifact for you. It only points Fleet at a prebuilt OCI image that already carries the bootable environment. Publishing the artifact is therefore part of image preparation, not part of the claim path.
 
 ## Image identity defines compatibility
 
@@ -57,6 +57,8 @@ A Fleet image does not only determine what operating system boots. It also deter
 That means readiness has to match the image's actual workload. A pool is only meaningfully ready when the guest started from that image has reached the service state the claimant needs. A running replica without its expected service is capacity in progress, not yet a ready environment.
 
 Ports you mark with `.expose(...)` become named Fleet services. When a client later calls `sb.tunnel.forward(...)`, Fleet returns the authenticated service URL for that exposed service. It is not creating a localhost tunnel on the caller's machine.
+
+There is also a non-optional default service contract: the published image must already start the computer-server endpoint on port `8000`. Fleet always creates that `server` service, probes port `8000` for readiness, and waits for `/status` before the sandbox is considered ready.
 
 ## Immutability improves repeatability
 

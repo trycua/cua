@@ -13,10 +13,14 @@ Use `Sandbox.ephemeral` for scripts, CI, and one-off tasks.
 
 ```python
 import asyncio
+import os
 from cua import Sandbox, Image
 
 async def main():
-    async with Sandbox.ephemeral(Image.linux()) as sb:
+    async with Sandbox.ephemeral(
+        Image.linux(),
+        api_key=os.environ["CUA_API_KEY"],
+    ) as sb:
         result = await sb.shell.run('echo hello')
         print(result.stdout)  # 'hello\n'
     # sandbox deleted here
@@ -31,7 +35,13 @@ asyncio.run(main())
 Use `Sandbox.create` when the sandbox **must outlive the script**. Call `await sb.disconnect()` to drop the connection while the sandbox keeps running.
 
 ```python
-sb = await Sandbox.create(Image.linux(), name='my-dev-sandbox')
+import os
+
+sb = await Sandbox.create(
+    Image.linux(),
+    name='my-dev-sandbox',
+    api_key=os.environ["CUA_API_KEY"],
+)
 await sb.shell.run('apt-get install -y vim')
 await sb.disconnect()  # sandbox keeps running
 ```
@@ -88,11 +98,11 @@ sandboxes = await Sandbox.list(local=True)
 
 ## Cloud vs local
 
-Use cloud by default. Set `CUA_API_KEY` in the environment before creating cloud sandboxes.
+Use cloud by default. If you want the legacy API-key cloud path specifically, pass `api_key=` explicitly so the SDK does not route the request through Fleet.
 
 ```python
-# cloud (default)
-async with Sandbox.ephemeral(Image.linux()) as sb: ...
+# legacy API-key cloud
+async with Sandbox.ephemeral(Image.linux(), api_key=os.environ["CUA_API_KEY"]) as sb: ...
 ```
 
 <Callout type="info">

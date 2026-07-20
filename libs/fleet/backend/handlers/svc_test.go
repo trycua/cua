@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -54,5 +56,25 @@ func TestSvc_Unauthenticated(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestSvcProxyErrorStatus(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "client canceled", err: context.Canceled, want: 499},
+		{name: "wrapped client canceled", err: errors.Join(errors.New("proxy"), context.Canceled), want: 499},
+		{name: "other proxy error", err: errors.New("dial tcp: no route to host"), want: http.StatusBadGateway},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := svcProxyErrorStatus(tc.err); got != tc.want {
+				t.Fatalf("svcProxyErrorStatus(%v) = %d, want %d", tc.err, got, tc.want)
+			}
+		})
 	}
 }

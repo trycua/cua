@@ -163,40 +163,85 @@ class _FleetClient:
         self, pool: dict[str, Any], time_to_start: Optional[float] = None
     ) -> dict[str, Any]:
         metadata = pool["metadata"]
+        namespace = metadata["namespace"]
+        name = metadata["name"]
+        endpoint = f"{self._pool_url(namespace)}/{name}"
         timeout = time_to_start if time_to_start is not None else 600.0
         deadline = time.monotonic() + timeout
+        last_response: Optional[httpx.Response] = None
+        last_error: Optional[httpx.RequestError] = None
         while True:
-            response = httpx.get(
-                f"{self._pool_url(metadata['namespace'])}/{metadata['name']}",
-                headers=self._headers,
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            current = response.json()
-            if (current.get("status") or {}).get("availableCount", 0) > 0:
-                return current
+            try:
+                response = httpx.get(endpoint, headers=self._headers, timeout=30.0)
+            except httpx.RequestError as error:
+                last_error = error
+            else:
+                last_response = response
+                last_error = None
+                if response.status_code not in {502, 503, 504}:
+                    try:
+                        response.raise_for_status()
+                    except httpx.HTTPStatusError as error:
+                        raise RuntimeError(
+                            "Fleet pool status read failed; "
+                            + self._poll_error_details("pool", name, namespace, endpoint, response)
+                        ) from error
+                    current = response.json()
+                    if (current.get("status") or {}).get("availableCount", 0) > 0:
+                        return current
             if time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"Fleet pool {metadata['name']!r} did not become available within {timeout} seconds"
+                message = (
+                    f"Fleet pool {name!r} did not become available within {timeout} seconds; "
+                    + self._poll_error_details(
+                        "pool", name, namespace, endpoint, last_response, last_error
+                    )
                 )
+                if last_error is not None:
+                    raise TimeoutError(message) from last_error
+                raise TimeoutError(message)
             time.sleep(2)
 
     def wait_service_ready(
         self, sandbox: dict[str, Any], service: str, time_to_start: Optional[float] = None
     ) -> None:
         client = self.service_client(sandbox, service)
+        namespace = sandbox["namespace"]
+        name = sandbox["sandbox"]
+        endpoint = f"{self.service_url(sandbox, service)}status"
         timeout = time_to_start if time_to_start is not None else 600.0
         deadline = time.monotonic() + timeout
+        last_response: Optional[httpx.Response] = None
+        last_error: Optional[httpx.RequestError] = None
         try:
             while True:
-                response = client.get("/status")
-                if response.status_code not in {502, 503, 504}:
-                    response.raise_for_status()
-                    return
+                try:
+                    response = client.get("/status")
+                except httpx.RequestError as error:
+                    last_error = error
+                else:
+                    last_response = response
+                    last_error = None
+                    if response.status_code not in {502, 503, 504}:
+                        try:
+                            response.raise_for_status()
+                        except httpx.HTTPStatusError as error:
+                            raise RuntimeError(
+                                "Fleet service status read failed; "
+                                + self._poll_error_details(
+                                    "service", name, namespace, endpoint, response
+                                )
+                            ) from error
+                        return
                 if time.monotonic() >= deadline:
-                    raise TimeoutError(
-                        f"Fleet service {service!r} did not become ready within {timeout} seconds"
+                    message = (
+                        f"Fleet service {service!r} did not become ready within {timeout} seconds; "
+                        + self._poll_error_details(
+                            "service", name, namespace, endpoint, last_response, last_error
+                        )
                     )
+                    if last_error is not None:
+                        raise TimeoutError(message) from last_error
+                    raise TimeoutError(message)
                 time.sleep(2)
         finally:
             client.close()
@@ -216,7 +261,7 @@ class _FleetClient:
         return f"{self._base_url}/api/svc/{sandbox['namespace']}/{sandbox['sandbox']}-{service}/"
 
     def get_pool(self, name: str) -> dict[str, Any]:
-        response = httpx.get(self._pool_url(name), headers=self._headers, timeout=30.0)
+        response = httpx.get(f"{self._pool_url(name)}/{name}", headers=self._headers, timeout=30.0)
         response.raise_for_status()
         return response.json()
 
@@ -232,13 +277,29 @@ class _FleetClient:
 
     def list_pools(self) -> list[dict[str, Any]]:
         response = httpx.get(
-            f"{self._base_url}/api/k8s/apis/cua.ai/v1/osgymworkspacepools",
+            f"{self._base_url}/api/namespaces",
             headers=self._headers,
             timeout=30.0,
         )
         response.raise_for_status()
-        payload = response.json()
-        return payload if isinstance(payload, list) else payload.get("items", [])
+        namespaces = response.json()
+        namespace_items = (
+            namespaces if isinstance(namespaces, list) else namespaces.get("items", [])
+        )
+        pools = []
+        for namespace_item in namespace_items:
+            namespace = (
+                namespace_item
+                if isinstance(namespace_item, str)
+                else namespace_item.get("name") or namespace_item.get("metadata", {}).get("name")
+            )
+            if not namespace:
+                continue
+            response = httpx.get(self._pool_url(namespace), headers=self._headers, timeout=30.0)
+            response.raise_for_status()
+            payload = response.json()
+            pools.extend(payload if isinstance(payload, list) else payload.get("items", []))
+        return pools
 
     def set_pool_replicas(self, pool: dict[str, Any], replicas: int) -> dict[str, Any]:
         metadata = pool["metadata"]
@@ -256,6 +317,31 @@ class _FleetClient:
 
     def _claim_url(self, namespace: str) -> str:
         return f"{self._base_url}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/{namespace}/osgymsandboxclaims"
+
+    @staticmethod
+    def _poll_error_details(
+        resource: str,
+        name: str,
+        namespace: str,
+        endpoint: str,
+        response: Optional[httpx.Response] = None,
+        error: Optional[httpx.RequestError] = None,
+    ) -> str:
+        details = [f"endpoint={endpoint!r}", f"namespace={namespace!r}", f"{resource}={name!r}"]
+        if response is not None:
+            details.extend(
+                [f"status_code={response.status_code}", f"response_body={response.text[:200]!r}"]
+            )
+            request_ids = {
+                header: value
+                for header, value in response.headers.items()
+                if "request" in header.lower() and "id" in header.lower()
+            }
+            if request_ids:
+                details.append(f"request_ids={request_ids}")
+        if error is not None:
+            details.append(f"request_error={error!s}")
+        return "; ".join(details)
 
 
 class FleetCloudTransport(FleetTransport):

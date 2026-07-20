@@ -274,6 +274,9 @@ fn main() {
     if telemetry::run_lifecycle_worker_if_requested() {
         return;
     }
+    if telemetry::run_update_event_worker_if_requested() {
+        return;
+    }
     maybe_wrap_finite_command();
 
     // ── CLI subcommand dispatch ──────────────────────────────────────────────
@@ -650,6 +653,9 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     if telemetry::run_lifecycle_worker_if_requested() {
+        return Ok(());
+    }
+    if telemetry::run_update_event_worker_if_requested() {
         return Ok(());
     }
     maybe_wrap_finite_command();

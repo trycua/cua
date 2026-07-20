@@ -2113,6 +2113,8 @@ fn run_recording_render(args: &[String]) {
 /// installer script — see [`crate::updater`] for why we go through the script
 /// instead of re-implementing the asset resolution + atomic swap + GC in Rust.
 pub fn run_update_cmd(apply: bool, json: bool) {
+    let apply_started_at = std::time::Instant::now();
+    let daemon_was_running = apply && crate::updater::daemon_is_running();
     // `--json` short-circuits the text path entirely so scripted callers
     // get a parseable payload regardless of `--apply`. The check itself
     // routes through the same `check_update_state` the `check-update`
@@ -2126,6 +2128,10 @@ pub fn run_update_cmd(apply: bool, json: bool) {
         // pre-install snapshot. Returning here when apply is false keeps
         // the existing "check + suggest" behaviour off the JSON path.
         if !apply {
+            crate::version_check::capture_update_state(
+                &state,
+                crate::telemetry::UpdateCheckSource::Cli,
+            );
             return;
         }
     }
@@ -2139,6 +2145,21 @@ pub fn run_update_cmd(apply: bool, json: bool) {
     let latest = crate::version_check::fetch_latest_version();
     match latest {
         Err(e) => {
+            crate::telemetry::capture_update_checked(
+                crate::telemetry::UpdateCheckSource::Cli,
+                crate::telemetry::UpdateCheckOutcome::Unavailable,
+                None,
+                false,
+            );
+            if apply {
+                crate::telemetry::capture_update_apply_completed(
+                    None,
+                    crate::telemetry::UpdateApplyOutcome::Failed,
+                    crate::telemetry::UpdateFailureClass::CheckFailed,
+                    daemon_was_running,
+                    apply_started_at.elapsed(),
+                );
+            }
             // The shared helper returns a human-readable error string for
             // the CLI surface — pass it through so the user can see why
             // (timeout, parse error, etc.) instead of just "unreachable".
@@ -2149,11 +2170,32 @@ pub fn run_update_cmd(apply: bool, json: bool) {
             process::exit(1);
         }
         Ok(v) if !crate::version_check::is_newer(&v, current) => {
+            crate::telemetry::capture_update_checked(
+                crate::telemetry::UpdateCheckSource::Cli,
+                crate::telemetry::UpdateCheckOutcome::UpToDate,
+                Some(&v),
+                false,
+            );
+            if apply {
+                crate::telemetry::capture_update_apply_completed(
+                    Some(&v),
+                    crate::telemetry::UpdateApplyOutcome::AlreadyCurrent,
+                    crate::telemetry::UpdateFailureClass::None,
+                    daemon_was_running,
+                    apply_started_at.elapsed(),
+                );
+            }
             if !json {
                 println!("Already up to date.");
             }
         }
         Ok(v) => {
+            crate::telemetry::capture_update_checked(
+                crate::telemetry::UpdateCheckSource::Cli,
+                crate::telemetry::UpdateCheckOutcome::Available,
+                Some(&v),
+                false,
+            );
             if !json {
                 println!("New version available: {v}");
             }
@@ -2173,9 +2215,16 @@ pub fn run_update_cmd(apply: bool, json: bool) {
             if !json {
                 println!("Downloading and installing cua-driver {v}…");
             }
-            let daemon_was_running = crate::updater::daemon_is_running();
+            crate::telemetry::capture_update_apply_started(&v, daemon_was_running);
             match crate::updater::run_install_script(&v) {
                 Ok(s) if s.success() => {
+                    crate::telemetry::capture_update_apply_completed(
+                        Some(&v),
+                        crate::telemetry::UpdateApplyOutcome::Installed,
+                        crate::telemetry::UpdateFailureClass::None,
+                        daemon_was_running,
+                        apply_started_at.elapsed(),
+                    );
                     if !json {
                         println!("Installed cua-driver {v}.");
                     }
@@ -2189,6 +2238,13 @@ pub fn run_update_cmd(apply: bool, json: bool) {
                     }
                 }
                 Ok(s) => {
+                    crate::telemetry::capture_update_apply_completed(
+                        Some(&v),
+                        crate::telemetry::UpdateApplyOutcome::Failed,
+                        crate::telemetry::UpdateFailureClass::InstallerExit,
+                        daemon_was_running,
+                        apply_started_at.elapsed(),
+                    );
                     eprintln!(
                         "Installation failed (exit {}). Re-run install manually:",
                         s.code().unwrap_or(1)
@@ -2197,6 +2253,13 @@ pub fn run_update_cmd(apply: bool, json: bool) {
                     process::exit(s.code().unwrap_or(1));
                 }
                 Err(e) => {
+                    crate::telemetry::capture_update_apply_completed(
+                        Some(&v),
+                        crate::telemetry::UpdateApplyOutcome::Failed,
+                        crate::telemetry::UpdateFailureClass::InstallerLaunch,
+                        daemon_was_running,
+                        apply_started_at.elapsed(),
+                    );
                     eprintln!("Failed to launch installer: {e}");
                     #[cfg(windows)]
                     eprintln!("  (is powershell.exe on PATH?)");
@@ -2449,6 +2512,7 @@ fn run_permissions_grant() {
 /// the payload.
 pub fn run_check_update_cmd(json: bool, no_cache: bool) {
     let state = crate::version_check::check_update_state(no_cache);
+    crate::version_check::capture_update_state(&state, crate::telemetry::UpdateCheckSource::Cli);
 
     if json {
         let val = serde_json::to_value(&state).unwrap_or_else(|_| serde_json::json!({}));

@@ -2003,11 +2003,21 @@ fn run_generic_wayland_existing_profile_refusal(spec: &BrowserSpec) {
             wait_for_observed(&server, "WEB_HARNESS_MARKER_v1");
 
             let windows = driver.call("list_windows", serde_json::json!({"pid": pid}));
+            let opaque_window = windows.structured()["windows"]
+                .as_array()
+                .and_then(|windows| windows.iter().find(|window| window["pid"] == pid))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "generic Wayland did not expose the browser's opaque native window: {}",
+                        windows.raw
+                    )
+                });
+            let opaque_unattested_window_id = opaque_window["window_id"]
+                .as_u64()
+                .expect("opaque generic Wayland window id");
             assert!(
-                windows.structured()["windows"]
-                    .as_array()
-                    .is_some_and(Vec::is_empty),
-                "generic Wayland must not invent an exact native browser identity: {}",
+                opaque_window["z_index"].is_null(),
+                "generic Wayland must not treat an AT-SPI window as compositor-attested: {}",
                 windows.raw
             );
 
@@ -2020,7 +2030,6 @@ fn run_generic_wayland_existing_profile_refusal(spec: &BrowserSpec) {
                     let started =
                         driver.call("start_session", serde_json::json!({ "session": session }));
                     assert!(!started.is_error(), "start_session failed: {}", started.raw);
-                    let opaque_unattested_window_id = u64::MAX;
                     let approval_token =
                         mint_existing_profile_approval(ExistingProfileApprovalScope {
                             pid: pid as i64,

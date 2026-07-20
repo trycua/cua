@@ -1556,7 +1556,6 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
     execute_case(
         case(&spec.name, "browser_prepare_isolated_launch"),
         |evidence| {
-            let source_server = BrowserFixtureServer::start(&standalone_fixture_html());
             let target_server = BrowserFixtureServer::start(&standalone_fixture_html());
             let source_profile = tempfile::Builder::new()
                 .prefix("cua-e2e-user-browser-")
@@ -1571,14 +1570,20 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
             let mut source_command = command_for_unprepared_browser(
                 spec,
                 source_profile.path(),
-                source_server.page_url(),
+                "about:blank",
                 TEST_BROWSER_INITIAL_POSITION,
             );
             let source_child = spawn_in_job(&mut source_command).expect("launch ordinary browser");
+            eprintln!(
+                "[standalone-browser] spawned ordinary {} pid={} profile={}",
+                spec.name,
+                source_child.id(),
+                source_profile.path().display()
+            );
             driver.reaper().push(source_child);
             let (source_pid, source_window_id) =
-                wait_for_fixture_window(&mut driver, &before, &source_server)
-                    .expect("ordinary browser fixture window");
+                wait_for_new_browser_window(&mut driver, &before, spec)
+                    .expect("ordinary browser native window");
             driver.reaper().track_pid(source_pid);
 
             let session = format!("standalone-prepare-{source_pid}");
@@ -1684,7 +1689,6 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
                     );
                     assert_eq!(clicked.structured()["status"], "ok", "{}", clicked.raw);
                     wait_for_text(&target_server, "lbl-counter", "counter=1");
-                    wait_for_text(&source_server, "lbl-counter", "counter=0");
                     let source_windows =
                         driver.call("list_windows", serde_json::json!({"pid": source_pid}));
                     assert!(

@@ -1990,7 +1990,7 @@ fn run_generic_wayland_existing_profile_refusal(spec: &BrowserSpec) {
         refusal_case(
             &spec.name,
             "browser_prepare_existing_profile_generic_wayland",
-            RefusalCode::BrowserBindingAmbiguous,
+            RefusalCode::BrowserRouteUnavailable,
         ),
         |evidence| {
             let mut driver = spawn_driver(&scenario);
@@ -2058,7 +2058,7 @@ fn run_generic_wayland_existing_profile_refusal(spec: &BrowserSpec) {
                     );
                     assert_eq!(
                         refused.structured()["refusal"]["code"],
-                        "browser_binding_ambiguous",
+                        "browser_route_unavailable",
                         "{}",
                         refused.raw
                     );
@@ -2069,7 +2069,7 @@ fn run_generic_wayland_existing_profile_refusal(spec: &BrowserSpec) {
                     );
                     wait_for_text(&server, "lbl-counter", "counter=0");
                     Observation::refused(
-                        RefusalCode::BrowserBindingAmbiguous,
+                        RefusalCode::BrowserRouteUnavailable,
                         vec![OracleKind::FixtureState],
                         refused.text(),
                         Evidence::default(),

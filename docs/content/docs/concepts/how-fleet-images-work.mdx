@@ -1,37 +1,39 @@
 ---
 title: "How Fleet images work"
-description: "How Fleet boot artifacts define the operating system, compatibility boundary, and service contract for managed sandbox capacity."
+description: "How Fleet boot images define the operating system, compatibility boundary, and service contract for managed sandbox capacity."
 ---
 
-A Fleet image is the boot artifact from which a Fleet pool starts its reusable sandbox replicas. It is an infrastructure-level input such as a VM disk or container-backed boot artifact. It is **not** the public `Image` abstraction from the Sandbox SDK.
+Fleet manages reusable sandbox capacity through **pools**. A pool is a named set of compatible sandboxes kept as shared capacity. Each started sandbox in that pool is a **replica**. A workload gets one replica by creating a **claim**, which leases one compatible sandbox from the pool.
 
-That distinction matters because the two layers solve different problems. The public Sandbox SDK `Image` describes the starting environment for a sandbox created through the SDK. A Fleet image is the deployed guest artifact that a pool repeatedly boots as shared capacity for later claims.
+A Fleet image is the boot image reference that a pool uses when it starts those replicas. In the current public Fleet flows exposed in-tree, that image is an OCI-backed `containerDiskImage` configured on the pool template. It is **not** the public `Image` abstraction from the Sandbox SDK.
+
+That distinction matters because the two layers solve different problems. The public Sandbox SDK `Image` describes the starting environment for one sandbox created through the SDK. A Fleet image is the deployed boot image that a pool repeatedly uses to create compatible shared capacity for later claims.
 
 ## Fleet images are a different boundary than Sandbox SDK Images
 
 The public `Image` type is the sandbox API's immutable environment specification. It lets you describe a sandbox's operating system, packages, copied files, setup commands, and ports before you start that sandbox.
 
-A Fleet image sits one layer lower. It is the guest boot artifact that a pool definition points at when it creates compatible replicas. A pool can keep many replicas warm from the same artifact, and later workloads claim one of those replicas. That means a Fleet image is part of capacity management and compatibility, not just one sandbox's setup sequence.
+A Fleet image sits one layer lower. It is the boot image reference stored in a pool definition and reused whenever the pool creates replicas. Because claims lease replicas from a pool rather than defining a fresh environment from scratch, the Fleet image belongs to capacity management and compatibility, not just one sandbox's setup sequence.
 
 If you need the public SDK model, read [How sandboxes work](/concepts/how-sandboxes-work#images-as-starting-state-contracts), [Choose and build a sandbox image](/how-to-guides/sandbox/images), and the [Image reference](/reference/sandbox-sdk/image).
 
 ## Image identity defines compatibility
 
-A pool's image reference is part of what makes one replica compatible with another. Two pools with different boot artifacts can differ in operating system, installed software, startup behavior, readiness checks, and service endpoints even if they request the same CPU and memory.
+A pool's image reference is part of what makes one replica compatible with another. Two pools with different boot images can differ in operating system, installed software, startup behavior, readiness checks, and service endpoints even if they request the same CPU and memory.
 
 Treat a deployed Fleet image as versioned and immutable in practice. A pinned image reference makes it possible to say exactly what environment a pool booted. Mutable tags weaken that guarantee because the same pool specification can start different software over time.
 
 ## Boot assumptions belong to the image
 
-The image and the pool's boot configuration have to agree. Firmware expectations, disk layout, guest drivers, and startup services are part of the image boundary, not optional details layered on afterward.
+The image and the pool's boot configuration have to agree. Firmware expectations, guest drivers, startup services, and disk layout assumptions are part of the image boundary, not optional details layered on afterward.
 
-This is why image choice is more than package selection. A Linux-oriented artifact and a Windows-oriented artifact can require different firmware, device expectations, and service startup contracts before a replica is actually useful to a claimant.
+This is why image choice is more than package selection. Different boot images can require different firmware or startup assumptions before a replica is actually useful to the workload that claims it.
 
 ## Service behavior starts at the image boundary
 
 A Fleet image does not only determine what operating system boots. It also determines what software is already present when a replica starts and which services can become ready inside that guest.
 
-That means readiness has to match the image's actual workload. A pool is only meaningfully ready when the guest started from that image has reached the service state the claimant needs. A running replica without its expected service is capacity in progress, not yet a ready environment.
+That means readiness has to match the image's actual workload. A pool is only meaningfully ready when the guest started from that image has reached the service state the claim needs. A running replica without its expected service is capacity in progress, not yet a ready environment.
 
 ## Immutability improves repeatability
 

@@ -236,6 +236,8 @@ fn is_scoped_action(tool_name: &str) -> bool {
             | "right_click"
             | "scroll"
             | "drag"
+            | "mouse_button_down"
+            | "mouse_button_up"
             | "mouse_drag"
             | "parallel_mouse_drag"
             | "move_cursor"
@@ -328,6 +330,19 @@ pub fn enforce_tool(tool_name: &str, args: &Value) -> Result<(), ScopeViolation>
         (_, ToolScope::Unscoped)
         | (EffectiveCaptureScope::Window, ToolScope::Window)
         | (EffectiveCaptureScope::Desktop, ToolScope::Desktop) => Ok(()),
+        (EffectiveCaptureScope::Desktop, ToolScope::Window)
+            if state.policy == CaptureScopePolicy::Auto
+                && tool_name == "mouse_button_up"
+                && ["pid", "window_id", "x", "y", "from_zoom"]
+                    .iter()
+                    .all(|key| args.get(key).is_none()) =>
+        {
+            // Releasing a button held before one-way desktop escalation is
+            // cleanup when it cannot retarget or reposition the release.
+            // Strict desktop sessions have no window phase and therefore do
+            // not receive this exception.
+            Ok(())
+        }
         (EffectiveCaptureScope::Window, ToolScope::Desktop)
             if state.policy == CaptureScopePolicy::Auto =>
         {
@@ -462,6 +477,63 @@ mod tests {
             .code,
             "window_scope_disabled"
         );
+    }
+
+    #[test]
+    fn mouse_button_actions_respect_strict_scope() {
+        let window = fresh("strict-window-mouse-buttons");
+        let desktop = fresh("strict-desktop-mouse-buttons");
+        bind_session(&window, Some(CaptureScopePolicy::Window)).unwrap();
+        bind_session(&desktop, Some(CaptureScopePolicy::Desktop)).unwrap();
+
+        for tool_name in ["mouse_button_down", "mouse_button_up"] {
+            assert!(enforce_tool(
+                tool_name,
+                &json!({"session": window, "pid": 42, "window_id": 7, "x": 4, "y": 5})
+            )
+            .is_ok());
+            assert_eq!(
+                enforce_tool(
+                    tool_name,
+                    &json!({"session": desktop, "pid": 42, "window_id": 7, "x": 4, "y": 5})
+                )
+                .unwrap_err()
+                .code,
+                "window_scope_disabled"
+            );
+        }
+    }
+
+    #[test]
+    fn auto_escalation_preserves_mouse_button_cleanup() {
+        let session = fresh("auto-mouse-button-cleanup");
+        bind_session(&session, Some(CaptureScopePolicy::Auto)).unwrap();
+        let window_args = json!({"session": session, "pid": 42, "window_id": 7, "x": 4, "y": 5});
+
+        assert!(enforce_tool("mouse_button_down", &window_args).is_ok());
+        escalate_session(&session, EscalationReason::ForegroundIneffective, None).unwrap();
+        assert_eq!(
+            enforce_tool("mouse_button_down", &window_args)
+                .unwrap_err()
+                .code,
+            "window_scope_disabled"
+        );
+        assert_eq!(
+            enforce_tool("mouse_button_up", &window_args)
+                .unwrap_err()
+                .code,
+            "window_scope_disabled"
+        );
+        assert_eq!(
+            enforce_tool(
+                "mouse_button_up",
+                &json!({"session": session, "x": 8, "y": 9})
+            )
+            .unwrap_err()
+            .code,
+            "window_scope_disabled"
+        );
+        assert!(enforce_tool("mouse_button_up", &json!({"session": session})).is_ok());
     }
 
     #[test]

@@ -1,21 +1,32 @@
 ---
 title: "How Fleet images work"
-description: "How Fleet boot images define the operating system, compatibility boundary, and service contract for managed sandbox capacity."
+description: "How Fleet boot images define compatibility and readiness for reusable sandbox capacity."
 ---
 
-Fleet manages reusable sandbox capacity through **pools**. A pool is a named set of compatible sandboxes kept as shared capacity. Each started sandbox in that pool is a **replica**. A workload gets one replica by creating a **claim**, which leases one compatible sandbox from the pool.
+Fleet manages reusable sandbox capacity through **pools**. A pool is a named set of compatible sandboxes kept warm as shared capacity. Each started sandbox in that pool is a **replica**. A workload gets one replica by creating a **claim**, which leases one compatible sandbox from the pool.
 
-A Fleet image is the boot image reference that a pool uses when it starts those replicas. In the current public Fleet flows exposed in-tree, that image is an OCI-backed `containerDiskImage` configured on the pool template. It is **not** the public `Image` abstraction from the Sandbox SDK.
+A Fleet image is the boot image reference configured on that pool. The pool uses it whenever it creates replicas. In the current public Fleet flows exposed in-tree, that boot image is configured as a `containerDiskImage` on the pool template.
 
-That distinction matters because the two layers solve different problems. The public Sandbox SDK `Image` describes the starting environment for one sandbox created through the SDK. A Fleet image is the deployed boot image that a pool repeatedly uses to create compatible shared capacity for later claims.
+## The distinction is role, not artifact type
 
-## Fleet images are a different boundary than Sandbox SDK Images
+Fleet images and the public Sandbox SDK `Image` can point at similar underlying artifacts. The SDK already exposes `Image.from_registry()` for OCI references and `Image.from_file()` for disk images. The important distinction is **deployment role**.
 
-The public `Image` type is the sandbox API's immutable environment specification. It lets you describe a sandbox's operating system, packages, copied files, setup commands, and ports before you start that sandbox.
+In the Sandbox SDK, `Image` is the per-sandbox API object you pass when creating a sandbox. It describes the starting environment for that one sandbox.
 
-A Fleet image sits one layer lower. It is the boot image reference stored in a pool definition and reused whenever the pool creates replicas. Because claims lease replicas from a pool rather than defining a fresh environment from scratch, the Fleet image belongs to capacity management and compatibility, not just one sandbox's setup sequence.
+In Fleet, the image is the boot input attached to a pool. The pool reuses that image whenever it creates replicas, and later claims lease those replicas. Fleet therefore uses an image as part of shared-capacity management, not just one sandbox's startup request.
 
 If you need the public SDK model, read [How sandboxes work](/concepts/how-sandboxes-work#images-as-starting-state-contracts), [Choose and build a sandbox image](/how-to-guides/sandbox/images), and the [Image reference](/reference/sandbox-sdk/image).
+
+## Fleet vocabulary on this page
+
+This page uses a few Fleet-specific terms that matter to image behavior:
+
+- A **pool** is the long-lived capacity definition that says which replicas belong together.
+- A **replica** is one started sandbox created from that pool's template.
+- A **claim** is the lease that assigns one compatible replica to one workload.
+- **Readiness** is the point where a replica is not only booted, but has also reached the service state the claim needs.
+
+The image matters because it affects all four: what a pool can create, what counts as a compatible replica, what a claim can lease, and what readiness actually means.
 
 ## Image identity defines compatibility
 

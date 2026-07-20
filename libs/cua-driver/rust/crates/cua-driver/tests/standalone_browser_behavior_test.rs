@@ -202,6 +202,18 @@ fn requested_browser_products() -> Option<Vec<String>> {
     )
 }
 
+fn dedupe_browser_products(browsers: Vec<BrowserSpec>) -> Vec<BrowserSpec> {
+    browsers.into_iter().fold(Vec::new(), |mut unique, spec| {
+        if !unique
+            .iter()
+            .any(|existing: &BrowserSpec| existing.name == spec.name)
+        {
+            unique.push(spec);
+        }
+        unique
+    })
+}
+
 #[test]
 fn browser_product_selection_is_ordered_and_strict() {
     assert_eq!(
@@ -211,6 +223,23 @@ fn browser_product_selection_is_ordered_and_strict() {
     assert!(parse_browser_products("").is_err());
     assert!(parse_browser_products("chrome,chrome").is_err());
     assert!(parse_browser_products("firefox").is_err());
+
+    let deduped = dedupe_browser_products(vec![
+        BrowserSpec {
+            name: "chromium".to_owned(),
+            executable: PathBuf::from("/first/chromium"),
+        },
+        BrowserSpec {
+            name: "edge".to_owned(),
+            executable: PathBuf::from("/edge"),
+        },
+        BrowserSpec {
+            name: "chromium".to_owned(),
+            executable: PathBuf::from("/second/chromium"),
+        },
+    ]);
+    assert_eq!(deduped.len(), 2);
+    assert_eq!(deduped[0].executable, PathBuf::from("/first/chromium"));
 }
 
 fn select_browser_products(
@@ -240,7 +269,11 @@ fn select_browser_products(
         // Chrome is absent. Certification runs opt into each product.
         browsers.retain(|spec| spec.name != "chromium");
     }
-    browsers
+    // A distro may expose one browser installation through several wrappers
+    // (for example /usr/bin/chromium-browser and /snap/bin/chromium). The
+    // certification matrix is product-scoped, so keep the first viable
+    // executable for each requested product instead of reporting duplicates.
+    dedupe_browser_products(browsers)
 }
 
 struct BrowserFixture {
@@ -323,7 +356,7 @@ fn browser_specs() -> Vec<BrowserSpec> {
                 }
             }
         }
-        let mut browsers = candidates
+        let browsers = candidates
             .into_iter()
             .filter(|(_, executable)| executable.is_file())
             .map(|(name, executable)| {
@@ -2866,7 +2899,18 @@ fn run_download(spec: &BrowserSpec) {
         run_with_background_oracles(&mut fixture, |fixture| {
             let session = format!("standalone-download-{}", fixture.pid);
             let (target, tab, snapshot) = bind(fixture, &session);
-            let destination = tempfile::tempdir().expect("create approved download directory");
+            // Sandboxed browser packages such as Ubuntu's Chromium snap use a
+            // private /tmp namespace. A temporary directory under HOME remains
+            // visible to both the browser and the driver while still being
+            // removed automatically when the fixture exits.
+            let home = std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(PathBuf::from)
+                .expect("browser E2E home directory");
+            let destination = tempfile::Builder::new()
+                .prefix(".cua-e2e-download-")
+                .tempdir_in(home)
+                .expect("create approved download directory");
             let canonical =
                 std::fs::canonicalize(destination.path()).expect("canonical download directory");
             let downloaded = fixture.driver.call(

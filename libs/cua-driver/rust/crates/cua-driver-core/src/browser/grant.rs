@@ -33,6 +33,10 @@ pub(crate) struct ExistingProfileGrant {
     pub endpoint_ws_url: String,
     pub generation: u64,
     pub reconnect_attempts_remaining: u8,
+    pub protected_consent: Option<crate::consent::ProtectedGrant>,
+    pub permission_mode: crate::authorization::PermissionMode,
+    pub managed_policy_sha256: Option<String>,
+    pub user_policy_sha256: Option<String>,
     created_at: Instant,
     last_used_at: Instant,
 }
@@ -47,6 +51,17 @@ impl ExistingProfileGrant {
     fn expired(&self, now: Instant) -> bool {
         now.duration_since(self.last_used_at) > GRANT_IDLE_TTL
             || now.duration_since(self.created_at) > GRANT_ABSOLUTE_TTL
+            || self
+                .protected_consent
+                .as_ref()
+                .is_some_and(|grant| !grant.is_live())
+    }
+
+    fn authorization_context_matches(&self) -> bool {
+        crate::authorization::configured_permission_mode()
+            .is_ok_and(|mode| mode == self.permission_mode)
+            && crate::policy::managed_policy_sha256().ok().flatten() == self.managed_policy_sha256
+            && crate::policy::user_policy_sha256().ok().flatten() == self.user_policy_sha256
     }
 }
 
@@ -77,6 +92,7 @@ impl ExistingProfileGrants {
         fingerprint: ProcessFingerprint,
         browser: String,
         endpoint_ws_url: String,
+        protected_consent: Option<crate::consent::ProtectedGrant>,
     ) -> ExistingProfileGrant {
         let now = Instant::now();
         let key = Self::key(public_session, transport_session, pid);
@@ -96,6 +112,11 @@ impl ExistingProfileGrants {
             endpoint_ws_url,
             generation,
             reconnect_attempts_remaining: MAX_RECONNECT_ATTEMPTS,
+            protected_consent,
+            permission_mode: crate::authorization::configured_permission_mode()
+                .unwrap_or(crate::authorization::PermissionMode::Standard),
+            managed_policy_sha256: crate::policy::managed_policy_sha256().ok().flatten(),
+            user_policy_sha256: crate::policy::user_policy_sha256().ok().flatten(),
             created_at: now,
             last_used_at: now,
         };
@@ -115,7 +136,7 @@ impl ExistingProfileGrants {
         let Some(grant) = grants.get_mut(&key) else {
             return GrantLookup::Missing;
         };
-        if grant.expired(now) {
+        if grant.expired(now) || !grant.authorization_context_matches() {
             return GrantLookup::Expired(grants.remove(&key).expect("expired grant exists"));
         }
         grant.last_used_at = now;
@@ -134,12 +155,12 @@ impl ExistingProfileGrants {
             .remove(&Self::key(public_session, transport_session, pid))
     }
 
-    pub fn remove_session(&self, session: &str) -> Vec<(String, u64)> {
+    pub fn remove_session(&self, session: &str) -> Vec<ExistingProfileGrant> {
         let mut removed = Vec::new();
         self.inner.lock().unwrap().retain(|_, grant| {
             let keep = grant.public_session != session && grant.transport_session != session;
             if !keep {
-                removed.push((grant.endpoint_ws_url.clone(), grant.generation));
+                removed.push(grant.clone());
             }
             keep
         });
@@ -196,6 +217,7 @@ mod tests {
             fingerprint(42),
             "chromium".to_owned(),
             "ws://127.0.0.1:1/devtools/browser/x".to_owned(),
+            None,
         );
         assert!(matches!(
             grants.lookup("public-a", Some("transport-a"), 42),
@@ -222,6 +244,7 @@ mod tests {
             fingerprint(42),
             "chromium".to_owned(),
             "ws://127.0.0.1:1/devtools/browser/x".to_owned(),
+            None,
         );
         assert_eq!(grants.remove_session("transport-a").len(), 1);
         assert!(matches!(
@@ -241,6 +264,7 @@ mod tests {
             fingerprint(42),
             "chromium".to_owned(),
             "ws://127.0.0.1:1/devtools/browser/x".to_owned(),
+            None,
         );
         let key = ExistingProfileGrants::key("public-a", Some("transport-a"), 42);
         grants

@@ -67,6 +67,25 @@ $RepoRoot    = (Resolve-Path "$ScriptDir\..\rust").Path
 $BinaryName  = "cua-driver.exe"
 # Always release-config — matches the binary install.ps1 hands end users.
 $Config      = "release"
+
+# Embed local-build provenance in `get_config`. Preserve an explicit value for
+# source snapshots copied to VMs without `.git`; otherwise derive the commit
+# from the checkout being built. Mark dirty developer trees honestly instead
+# of presenting their binaries as exact products of the clean commit.
+if ([string]::IsNullOrWhiteSpace($env:CUA_DRIVER_SOURCE_SHA)) {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        throw "git is required to determine CUA_DRIVER_SOURCE_SHA; set it explicitly for a source snapshot"
+    }
+    $detectedSourceSha = (& git -C $RepoRoot rev-parse --verify 'HEAD^{commit}' 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $detectedSourceSha -notmatch '^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$') {
+        throw "could not determine an exact Git commit for $RepoRoot; set CUA_DRIVER_SOURCE_SHA explicitly"
+    }
+    $dirtyState = (& git -C $RepoRoot status --porcelain --untracked-files=normal 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "could not determine whether the source tree is dirty: $RepoRoot"
+    }
+    $env:CUA_DRIVER_SOURCE_SHA = if ($dirtyState) { "$detectedSourceSha-dirty" } else { $detectedSourceSha }
+}
 # Arch detection — use $env:PROCESSOR_ARCHITECTURE rather than
 # RuntimeInformation::OSArchitecture so this works under
 # Set-StrictMode -Version Latest (same fix as install.ps1 PR #1631).
@@ -142,6 +161,7 @@ function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 
 Write-Step "cua-driver-rs local installer (Windows)"
 Write-Host "  source:    $RepoRoot"
+Write-Host "  sha:       $env:CUA_DRIVER_SOURCE_SHA"
 Write-Host "  config:    $Config"
 Write-Host "  target:    $Target"
 Write-Host "  visible:   $VisibleBinDir"

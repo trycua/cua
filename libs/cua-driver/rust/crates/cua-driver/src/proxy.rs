@@ -19,7 +19,7 @@
 
 use std::sync::Arc;
 
-use cua_driver_core::policy::{configured_policy, PolicyDecision};
+use cua_driver_core::policy::{authorize_tool_call, validate_configured_policy};
 use cua_driver_core::protocol::{initialize_result, Request, Response};
 use cua_driver_core::server::{
     observe_proxy_session_started, observe_proxy_tool_completed, tool_observation_timer,
@@ -43,7 +43,7 @@ use crate::serve::{is_daemon_listening, send_request, DaemonRequest, ToolObserva
 /// advertises zero tools and then errors on every call. Matches
 /// Swift `makeProxy`'s `fetchProxyToolList` pre-check.
 pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
-    configured_policy().map_err(anyhow::Error::msg)?;
+    validate_configured_policy()?;
     if !is_daemon_listening(&socket_path) {
         anyhow::bail!(
             "cua-driver-rs daemon not reachable on {socket_path}. Start it \
@@ -444,6 +444,18 @@ fn fetch_tools_list_from_daemon(
                         .map(serde_json::Value::String)
                         .collect()
                 });
+            let risk = t.get("risk").cloned().unwrap_or_else(|| {
+                name.as_str()
+                    .map(cua_driver_core::authorization::risk_metadata_json)
+                    .unwrap_or_else(|| {
+                        serde_json::json!({
+                            "class": "unclassified",
+                            "enforcement": "metadata_only",
+                            "operation_sensitive": false,
+                            "version": cua_driver_core::authorization::RISK_METADATA_VERSION,
+                        })
+                    })
+            });
             serde_json::json!({
                 "name": name,
                 "description": description,
@@ -455,6 +467,7 @@ fn fetch_tools_list_from_daemon(
                     "openWorldHint": open_world,
                 },
                 "capabilities": capabilities,
+                "risk": risk,
             })
         })
         .collect();
@@ -518,32 +531,8 @@ async fn handle_proxy_request(
         "tools/call" => match req.tool_call() {
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
             Ok(call) => {
-                match configured_policy() {
-                    Ok(Some(policy)) => match policy.evaluate(&call.name, &call.args) {
-                        PolicyDecision::Allow => {}
-                        PolicyDecision::Deny(reason) => {
-                            return Response::error(
-                                id,
-                                -32603,
-                                format!("Permission denied: {reason}"),
-                            );
-                        }
-                        PolicyDecision::Error(message) => {
-                            return Response::error(
-                                id,
-                                -32603,
-                                format!("Policy evaluation error: {message}"),
-                            );
-                        }
-                    },
-                    Ok(None) => {}
-                    Err(message) => {
-                        return Response::error(
-                            id,
-                            -32603,
-                            format!("Policy loading error: {message}"),
-                        );
-                    }
+                if let Err(error) = authorize_tool_call(&call.name, &call.args) {
+                    return Response::error(id, -32603, error.to_string());
                 }
                 forward_tool_call(
                     id,

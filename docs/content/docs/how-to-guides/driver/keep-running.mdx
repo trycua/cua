@@ -19,6 +19,11 @@ If you have a checkout of the [cua repo](https://github.com/trycua/cua), the hel
 bash libs/cua-driver/scripts/install-local.sh --autostart
 ```
 
+Local installers embed the checkout's full Git commit in
+`get_config.source_sha`. A build from a modified or untracked source tree uses
+`<commit>-dirty` so it cannot be mistaken for an exact commit build. Source
+snapshots without `.git` must provide `CUA_DRIVER_SOURCE_SHA` explicitly.
+
 If you installed via the one-line installer and have no checkout, create the plist yourself. Save this file at `~/Library/LaunchAgents/com.trycua.cua-driver.plist`:
 
 ```xml

@@ -72,6 +72,33 @@ in `check_permissions` output and logs — it is **not** a trust signal; trust
 comes from the OS responsibility chain, so there is nothing to spoof by
 setting it.
 
+## Choosing the agent permission mode
+
+Embedded hosts own their user-facing permission experience, but they must
+select Cua Driver's immutable daemon mode at trusted launch. The choices are:
+
+- `standard`: protected runtime approval for migrated sensitive operations.
+- `bounded`: unattended work inside an approved, exact session manifest.
+- `unrestricted`: no Cua runtime approvals; use only when the host accepts the
+  consequences of prompt injection and unintended actions.
+
+For unrestricted embedding, use the explicit two-part environment contract:
+
+```sh
+CUA_DRIVER_EMBEDDED=1 \
+CUA_DRIVER_PERMISSION_MODE=unrestricted \
+CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS=1 \
+  cua-driver serve --embedded --socket /tmp/yourapp-cua.sock
+```
+
+Both values are required and contradictory values fail before the daemon
+binds. They belong in trusted launcher configuration; never expose either as
+an agent-settable MCP or raw-socket argument. Interactive operators can use
+the equivalent single CLI shortcut, `--dangerously-bypass-approvals`, which
+selects unrestricted mode and records the acknowledgement. The older
+`autonomous` mode name remains accepted as an alias for `bounded` during
+migration.
+
 ## What embedded mode changes (and what it doesn't)
 
 |                                | Standalone                          | Embedded (`CUA_DRIVER_EMBEDDED=1`)       |

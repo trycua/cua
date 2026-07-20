@@ -92,12 +92,17 @@ The daemon owns per-process state such as element-index caches, recording state,
 | ---- | ---- | ------- | ----------- |
 | `--socket` | String | — | Override the daemon socket or named-pipe path. |
 | `--pid-file` | String | — | Override the pid-file path on Unix targets. |
+| `--permission-mode` | String | standard | Immutable agent authorization mode: standard, bounded, or unrestricted. |
+| `--session-policy` | String | — | Immutable tool manifest required in bounded mode. |
 | `--host-bundle-id` | String | — | Advisory host bundle id label echoed in check_permissions output (embedded mode). |
 
 **Flags:**
 
 | Name | Description |
 | ---- | ----------- |
+| `--dangerously-bypass-approvals` | Select unrestricted mode and acknowledge its risk. |
+| `--allow-legacy-existing-profile-approval` | Temporary migration flag for the unprotected file-backed existing-profile artifact. |
+| `--approve-session-policy` | Trusted-launcher confirmation that the exact bounded manifest was reviewed. |
 | `--no-permissions-gate` | Skip the macOS first-launch permissions gate. |
 | `--embedded` | Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1. |
 
@@ -279,6 +284,25 @@ Exit code is non-zero when any probe is an error.
 Print a pasteable install-layout and permission-attribution report.
 
 ## Other commands
+
+### `cua-driver revoke`
+
+Revoke one or all live authorization/session scopes.
+
+Revocation is deny-only and never accepts an approval token.
+
+**Options:**
+
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `--session` | String | — | Exact session id to stop and revoke. |
+| `--socket` | String | — | Override the daemon socket or named-pipe path. |
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--all` | Stop and revoke every live session. |
 
 ### `cua-driver telemetry`
 

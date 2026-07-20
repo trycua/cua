@@ -37,3 +37,28 @@ def test_tcc_reset_gates_marker_write_on_success() -> None:
     assert "reset_succeeded=0" in script
     # The marker is only written when no reset was needed or the reset succeeded.
     assert '[ "$needs_reset" = 0 ] || [ "$reset_succeeded" = 1 ]' in script
+
+
+def test_unix_local_installer_always_embeds_source_provenance() -> None:
+    """Local builds derive Git provenance but preserve VM snapshot overrides."""
+    script = (
+        Path(__file__).resolve().parents[2] / "scripts" / "_install-local-rust.sh"
+    ).read_text()
+
+    assert 'if [ -z "${CUA_DRIVER_SOURCE_SHA:-}" ]; then' in script
+    assert "rev-parse --verify 'HEAD^{commit}'" in script
+    assert "status --porcelain --untracked-files=normal" in script
+    assert 'CUA_DRIVER_SOURCE_SHA="${CUA_DRIVER_SOURCE_SHA}-dirty"' in script
+    assert "export CUA_DRIVER_SOURCE_SHA" in script
+
+
+def test_windows_local_installer_always_embeds_source_provenance() -> None:
+    """The Windows developer installer follows the same provenance contract."""
+    script = (
+        Path(__file__).resolve().parents[2] / "scripts" / "install-local.ps1"
+    ).read_text()
+
+    assert "IsNullOrWhiteSpace($env:CUA_DRIVER_SOURCE_SHA)" in script
+    assert "rev-parse --verify 'HEAD^{commit}'" in script
+    assert "status --porcelain --untracked-files=normal" in script
+    assert '"$detectedSourceSha-dirty"' in script

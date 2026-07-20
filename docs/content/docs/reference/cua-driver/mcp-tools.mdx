@@ -768,12 +768,12 @@ Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native br
 
 ### `browser_prepare`
 
-Explicitly prepare an owned DevTools endpoint for a browser pid. Existing endpoints are detected without side effects. Acting setup requires MCP-host approval or a short-lived token from the interactive browser-approve command, allow_launch=true, and a driver-owned isolated profile. It launches a separate browser and never copies, modifies, or terminates the requested user profile. Existing-profile attachment is explicit, requires an exact interactive approval artifact, and never treats ordinary MCP transport approval as profile consent. On proven platforms, that approval also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused.
+Explicitly prepare an owned DevTools endpoint for a browser pid. Existing endpoints are detected without side effects. Acting setup for an isolated profile requires host approval or a short-lived setup token plus allow_launch=true. It launches a separate browser and never copies, modifies, or terminates the requested user profile. Existing-profile attachment is explicit and follows the daemon's immutable permission mode: standard requires a certified protected-consent provider, bounded requires a launch-approved exact resource manifest plus protected indicator, and unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP transport approval never proves profile consent. On proven platforms, an authorized request also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused.
 
 **Arguments:**
 
 - `allow_launch` (boolean, optional): Allow a separate driver-owned isolated Chromium process to be launched (default false).
-- `approval_token` (string, optional): Single-use token minted by `cua-driver browser-approve` for direct CLI/raw use. Omit for an MCP-host-approved call.
+- `approval_token` (string, optional): Legacy single-use setup token. Existing-profile use is disabled unless a trusted launcher explicitly enables the same-user-writable compatibility path.
 - `pid` (integer, required): Browser process id to prepare.
 - `profile` (object, optional)
 - `session` (string, optional): Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session.

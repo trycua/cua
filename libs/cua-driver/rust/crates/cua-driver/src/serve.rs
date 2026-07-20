@@ -475,23 +475,9 @@ async fn invoke_daemon_tool(
     // Evaluate before registry lookup so a deny-by-default policy does not leak
     // whether an unapproved name happens to be registered. This also preserves
     // the MCP policy contract now that every call passes through the daemon.
-    match cua_driver_core::policy::configured_policy() {
-        Ok(Some(policy)) => match policy.evaluate(&tool_name, &args) {
-            cua_driver_core::policy::PolicyDecision::Allow => {}
-            cua_driver_core::policy::PolicyDecision::Deny(reason) => {
-                observe_daemon_error(observation, 1);
-                return DaemonResponse::err(format!("Permission denied: {reason}"), 1);
-            }
-            cua_driver_core::policy::PolicyDecision::Error(message) => {
-                observe_daemon_error(observation, 1);
-                return DaemonResponse::err(format!("Policy evaluation error: {message}"), 1);
-            }
-        },
-        Ok(None) => {}
-        Err(message) => {
-            observe_daemon_error(observation, 1);
-            return DaemonResponse::err(format!("Policy loading error: {message}"), 1);
-        }
+    if let Err(error) = cua_driver_core::authorization::authorize_tool_call(&tool_name, &args) {
+        observe_daemon_error(observation, 1);
+        return DaemonResponse::err(error.to_string(), 1);
     }
 
     if !known_tool {
@@ -740,6 +726,8 @@ pub async fn run_serve(
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixListener;
 
+    cua_driver_core::authorization::validate_startup_authorization()?;
+
     // Create parent directory.
     if let Some(dir) = std::path::Path::new(socket_path).parent() {
         std::fs::create_dir_all(dir)?;
@@ -844,6 +832,7 @@ pub async fn run_serve(
                                 let tools: Vec<serde_json::Value> = reg.iter_defs()
                                     .map(|(name, def)| {
                                         let caps = cua_driver_core::tool::default_capabilities_for(name);
+                                        let risk = cua_driver_core::authorization::risk_metadata_json(name);
                                         serde_json::json!({
                                             "name": name,
                                             "description": def.description,
@@ -853,6 +842,7 @@ pub async fn run_serve(
                                             "idempotent": def.idempotent,
                                             "open_world": def.open_world,
                                             "capabilities": caps,
+                                            "risk": risk,
                                         })
                                     })
                                     .collect();
@@ -892,6 +882,43 @@ pub async fn run_serve(
                                         ).await;
                                     }
                                 }
+                            }
+                            "authorization_status" => {
+                                let resp = DaemonResponse::ok(
+                                    cua_driver_core::authorization::status_json()
+                                );
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "revoke_authorization" => {
+                                let args = req.args.as_ref().unwrap_or(&serde_json::Value::Null);
+                                let all = args.get("all").and_then(serde_json::Value::as_bool)
+                                    .unwrap_or(false);
+                                let session = args.get("session")
+                                    .and_then(serde_json::Value::as_str)
+                                    .filter(|value| !value.is_empty());
+                                let result = if all && session.is_none() {
+                                    let count = cua_driver_core::session::revoke_all_sessions();
+                                    Ok(serde_json::json!({"revoked": count, "scope": "all"}))
+                                } else if !all {
+                                    session.map_or_else(
+                                        || Err("revoke_authorization requires session or all=true"),
+                                        |session| {
+                                            cua_driver_core::session::end_session(session);
+                                            Ok(serde_json::json!({"revoked": 1, "scope": "session"}))
+                                        },
+                                    )
+                                } else {
+                                    Err("revoke_authorization accepts exactly one of session or all=true")
+                                };
+                                let resp = match result {
+                                    Ok(value) => DaemonResponse::ok(value),
+                                    Err(error) => DaemonResponse::err(error, 64),
+                                };
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
                             }
                             "call" => {
                                 // Recording idle-TTL liveness: any serviced tool
@@ -1208,6 +1235,8 @@ pub async fn run_serve(
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::ServerOptions;
 
+    cua_driver_core::authorization::validate_startup_authorization()?;
+
     eprintln!("Cua Driver daemon listening on {socket_path}");
 
     // Build the cross-IL security descriptor once, reuse on every pipe
@@ -1323,6 +1352,7 @@ pub async fn run_serve(
                                 let tools: Vec<serde_json::Value> = reg.iter_defs()
                                     .map(|(name, def)| {
                                         let caps = cua_driver_core::tool::default_capabilities_for(name);
+                                        let risk = cua_driver_core::authorization::risk_metadata_json(name);
                                         serde_json::json!({
                                             "name": name,
                                             "description": def.description,
@@ -1332,6 +1362,7 @@ pub async fn run_serve(
                                             "idempotent": def.idempotent,
                                             "open_world": def.open_world,
                                             "capabilities": caps,
+                                            "risk": risk,
                                         })
                                     })
                                     .collect();
@@ -1357,6 +1388,43 @@ pub async fn run_serve(
                                         "input_schema": def.input_schema
                                     })),
                                     None => DaemonResponse::err(format!("Unknown tool: {name}"), 64),
+                                };
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "authorization_status" => {
+                                let resp = DaemonResponse::ok(
+                                    cua_driver_core::authorization::status_json()
+                                );
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "revoke_authorization" => {
+                                let args = req.args.as_ref().unwrap_or(&serde_json::Value::Null);
+                                let all = args.get("all").and_then(serde_json::Value::as_bool)
+                                    .unwrap_or(false);
+                                let session = args.get("session")
+                                    .and_then(serde_json::Value::as_str)
+                                    .filter(|value| !value.is_empty());
+                                let result = if all && session.is_none() {
+                                    let count = cua_driver_core::session::revoke_all_sessions();
+                                    Ok(serde_json::json!({"revoked": count, "scope": "all"}))
+                                } else if !all {
+                                    session.map_or_else(
+                                        || Err("revoke_authorization requires session or all=true"),
+                                        |session| {
+                                            cua_driver_core::session::end_session(session);
+                                            Ok(serde_json::json!({"revoked": 1, "scope": "session"}))
+                                        },
+                                    )
+                                } else {
+                                    Err("revoke_authorization accepts exactly one of session or all=true")
+                                };
+                                let resp = match result {
+                                    Ok(value) => DaemonResponse::ok(value),
+                                    Err(error) => DaemonResponse::err(error, 64),
                                 };
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
@@ -1590,9 +1658,110 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
         } else {
             println!("  pid: unknown (no pid file)");
         }
+        let request = DaemonRequest {
+            method: "authorization_status".to_owned(),
+            name: None,
+            args: None,
+            session_id: None,
+            observation_origin: Some(ToolObservationOrigin::Direct),
+        };
+        if let Ok(response) = send_request(socket_path, &request) {
+            if let Some(status) = response.result {
+                println!(
+                    "  permission mode: {} ({})",
+                    status["permission_mode"].as_str().unwrap_or("invalid"),
+                    status["permission_mode_source"]
+                        .as_str()
+                        .unwrap_or("unknown source")
+                );
+                println!(
+                    "  user policy: configured={}, active={}, valid={}",
+                    status["user_policy_configured"].as_bool().unwrap_or(false),
+                    status["user_policy_active"].as_bool().unwrap_or(false),
+                    status["user_policy_valid"].as_bool().unwrap_or(false),
+                );
+                if let Some(hash) = status["user_policy_sha256"].as_str() {
+                    println!("  user policy sha256: {hash}");
+                }
+                println!(
+                    "  managed policy: configured={}, active={}, valid={}",
+                    status["managed_policy_configured"]
+                        .as_bool()
+                        .unwrap_or(false),
+                    status["managed_policy_active"].as_bool().unwrap_or(false),
+                    status["managed_policy_valid"].as_bool().unwrap_or(false),
+                );
+                if let Some(hash) = status["managed_policy_sha256"].as_str() {
+                    println!("  managed policy sha256: {hash}");
+                }
+                println!(
+                    "  protected consent collector: {}",
+                    status["protected_consent_collector"]
+                        .as_str()
+                        .unwrap_or("unavailable")
+                );
+                println!(
+                    "  session policy: configured={}, approved_at_startup={}, valid={}",
+                    status["session_policy_configured"]
+                        .as_bool()
+                        .unwrap_or(false),
+                    status["session_policy_approved_at_startup"]
+                        .as_bool()
+                        .unwrap_or(false),
+                    status["session_policy_valid"].as_bool().unwrap_or(false),
+                );
+                if let Some(manifest) = status["session_policy"].as_object() {
+                    println!(
+                        "  session policy sha256: {}",
+                        manifest
+                            .get("sha256")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("unknown")
+                    );
+                }
+            }
+        }
     } else {
         eprintln!("Cua Driver daemon is not running");
         std::process::exit(1);
+    }
+}
+
+/// Revoke one authorization/session scope or every live scope. This local
+/// control is intentionally deny-only and never accepts a grant token.
+pub fn run_revoke_cmd(socket_path: &str, session: Option<&str>, all: bool) {
+    let request = DaemonRequest {
+        method: "revoke_authorization".to_owned(),
+        name: None,
+        args: Some(if all {
+            serde_json::json!({"all": true})
+        } else {
+            serde_json::json!({"session": session})
+        }),
+        session_id: None,
+        observation_origin: Some(ToolObservationOrigin::Direct),
+    };
+    match send_request(socket_path, &request) {
+        Ok(response) if response.ok => {
+            let result = response.result.unwrap_or_default();
+            println!(
+                "Revoked {} authorization scope(s).",
+                result["revoked"].as_u64().unwrap_or(0)
+            );
+        }
+        Ok(response) => {
+            eprintln!(
+                "{}",
+                response
+                    .error
+                    .unwrap_or_else(|| "authorization revocation failed".to_owned())
+            );
+            std::process::exit(response.exit_code.unwrap_or(1));
+        }
+        Err(error) => {
+            eprintln!("authorization revocation failed: {error}");
+            std::process::exit(1);
+        }
     }
 }
 

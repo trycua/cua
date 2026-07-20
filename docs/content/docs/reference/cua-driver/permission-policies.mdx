@@ -5,7 +5,7 @@ description: YAML and Rego permission policy schema, environment variable, evalu
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Cua Driver evaluates a permission policy for every daemon tool call when `CUA_DRIVER_POLICY_FILE` is set. The daemon loads the policy once at process startup; the MCP proxy also evaluates the same policy when it is configured in the proxy environment. CLI and MCP calls therefore share the daemon enforcement point. This page is the reference for the file format, evaluation rules, and Rego interface.
+Cua Driver evaluates every daemon tool call against the configured policy stack. The daemon loads policies once at process startup; the MCP proxy may repeat the user-policy check as defense in depth. CLI, MCP, and raw-socket calls share the daemon enforcement point. This page describes the user and managed policy formats. [Permission modes](/reference/cua-driver/permission-modes) control when a permitted call also needs protected approval.
 
 ---
 
@@ -14,12 +14,13 @@ Cua Driver evaluates a permission policy for every daemon tool call when `CUA_DR
 | Variable | Type | Default |
 |---|---|---|
 | `CUA_DRIVER_POLICY_FILE` | path to a `.yaml`, `.yml`, `.rego` file, or a directory | not set (policy disabled) |
+| `CUA_DRIVER_MANAGED_POLICY_FILE` | path to an administrator-owned policy with the same formats | not set |
 
 When the variable is absent the policy engine is disabled and every call is allowed.
 
-When the path does not exist the engine starts and logs a warning; all calls are allowed (missing file is treated as no policy).
+When either variable is explicitly set, a missing, unreadable, empty, or invalid path prevents the daemon from binding its action endpoint. An unset variable still means that layer is absent.
 
-When the path exists but cannot be parsed, the engine fails to start and the daemon exits with an error.
+When both layers are present, a call must pass both. The user policy can narrow the managed policy but cannot widen it. `cua-driver status` reports a SHA-256 content hash for each loaded layer without exposing policy contents.
 
 ---
 
@@ -233,6 +234,8 @@ export CUA_DRIVER_POLICY_FILE=~/.cua-driver/policies
 
 ## Evaluation order
 
+The daemon first checks the managed policy and then the user policy. A denial or evaluation error in either layer stops the call. Within each YAML layer, evaluation follows this order:
+
 For YAML policies:
 
 1. Check `deny.tools` — if the tool is listed, **deny** immediately.
@@ -276,4 +279,5 @@ Permission denied: tool 'launch_app' is not allowed by the Rego policy
 
 - [Restrict tool access with permission policies](/how-to-guides/driver/restrict-tool-access): step-by-step setup guide
 - [How permission policies work](/concepts/how-permission-policies-work): evaluation engine internals and trust model
+- [Permission modes and bounded autonomy](/reference/cua-driver/permission-modes): startup modes, session manifests, protected consent, and revocation
 - [MCP tools](/reference/cua-driver/mcp-tools): tool names and argument schemas

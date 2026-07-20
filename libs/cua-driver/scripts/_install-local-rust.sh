@@ -48,6 +48,27 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # under libs/cua-driver/rust/.
 REPO_ROOT="$(cd "$SCRIPT_DIR/../rust" && pwd)"
 
+# Embed local-build provenance in `get_config`. An explicit value remains
+# authoritative for source snapshots copied to VMs without `.git`; otherwise
+# derive HEAD from the checkout that is actually being built. Keep dirty local
+# developer builds honest instead of claiming byte-for-byte provenance from
+# the clean commit.
+if [ -z "${CUA_DRIVER_SOURCE_SHA:-}" ]; then
+    if ! command -v git >/dev/null 2>&1; then
+        echo "error: git is required to determine CUA_DRIVER_SOURCE_SHA; set it explicitly for a source snapshot" >&2
+        exit 1
+    fi
+    CUA_DRIVER_SOURCE_SHA="$(git -C "$REPO_ROOT" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)"
+    if ! printf '%s' "$CUA_DRIVER_SOURCE_SHA" | grep -Eq '^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$'; then
+        echo "error: could not determine an exact Git commit for $REPO_ROOT; set CUA_DRIVER_SOURCE_SHA explicitly" >&2
+        exit 1
+    fi
+    if [ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal 2>/dev/null)" ]; then
+        CUA_DRIVER_SOURCE_SHA="${CUA_DRIVER_SOURCE_SHA}-dirty"
+    fi
+fi
+export CUA_DRIVER_SOURCE_SHA
+
 # --- Load shared daemon-cleanup helpers ---------------------------------
 #
 # Sibling _install-common.sh defines stop_cua_driver_daemons +
@@ -161,6 +182,7 @@ VERSIONED_DIR="$RELEASES_DIR/$VERSION_TAG-$TARGET_TRIPLE"
 
 echo "${BOLD}${BLUE}cua-driver-rs local installer${NORMAL}"
 echo "  source:  ${BOLD}$REPO_ROOT${NORMAL}"
+echo "  sha:     ${BOLD}$CUA_DRIVER_SOURCE_SHA${NORMAL}"
 echo "  config:  ${BOLD}$BUILD_CONFIG${NORMAL}"
 echo "  target:  ${BOLD}$TARGET_TRIPLE${NORMAL}"
 echo "  bin:     ${BOLD}$BIN_DIR/cua-driver${NORMAL}"

@@ -10,6 +10,7 @@
     "browser-profile-attachment",
     "browser-semantic-snapshots",
     "action-selection-policy",
+    "permission-modes",
     "permission-policies",
     "contracts",
     "platform-support",

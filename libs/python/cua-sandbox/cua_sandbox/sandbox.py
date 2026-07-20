@@ -56,6 +56,7 @@ except ImportError:
         pass
 
 
+from cua_sandbox._config import get_client_id, get_client_secret
 from cua_sandbox.image import Image
 from cua_sandbox.interfaces import (
     Apps,
@@ -421,15 +422,16 @@ class Sandbox:
         Args:
             image: Image to run (e.g. ``Image.desktop("ubuntu")``).
             name: Optional name to assign to the sandbox.
-            api_key: CUA API key for cloud sandboxes.
+            api_key: Legacy CUA API key. Providing one uses the legacy VM API;
+                Fleet cloud sandboxes use OAuth client credentials instead.
             local: Use a local runtime instead of cloud.
             runtime: Explicit runtime backend (DockerRuntime, QEMURuntime, etc.).
             cpu: Number of CPUs for the cloud sandbox.
             memory_mb: Memory in MB for the cloud sandbox.
-            disk_gb: Disk size in GB for the cloud sandbox.
-            region: Cloud region (default ``"us-east-1"``).
-            time_to_start: Max seconds to wait for the VM to become reachable
-                (default 600). Only applies to cloud sandboxes.
+            disk_gb: Unsupported by Fleet; API-key legacy cloud only.
+            region: Fleet currently supports only ``"us-east-1"``.
+            time_to_start: Max seconds to wait for Fleet provisioning and
+                service readiness (default 600).
             request_timeout: Default HTTP request timeout in seconds for
                 commands sent to the computer-server (default 30, cloud only).
                 Individual commands with a server-side timeout automatically
@@ -541,15 +543,16 @@ class Sandbox:
         Args:
             image: Image to run (e.g. ``Image.desktop("ubuntu")``).
             name: Optional name to assign to the sandbox.
-            api_key: CUA API key for cloud sandboxes.
+            api_key: Legacy CUA API key. Providing one uses the legacy VM API;
+                Fleet cloud sandboxes use OAuth client credentials instead.
             local: Use a local runtime instead of cloud.
             runtime: Explicit runtime backend (DockerRuntime, QEMURuntime, etc.).
             cpu: Number of CPUs for the cloud sandbox.
             memory_mb: Memory in MB for the cloud sandbox.
-            disk_gb: Disk size in GB for the cloud sandbox.
-            region: Cloud region (default ``"us-east-1"``).
-            time_to_start: Max seconds to wait for the VM to become reachable
-                (default 600). Only applies to cloud sandboxes.
+            disk_gb: Unsupported by Fleet; API-key legacy cloud only.
+            region: Fleet currently supports only ``"us-east-1"``.
+            time_to_start: Max seconds to wait for Fleet provisioning and
+                service readiness (default 600).
             request_timeout: Default HTTP request timeout in seconds for
                 commands sent to the computer-server (default 30, cloud only).
                 Individual commands with a server-side timeout automatically
@@ -691,24 +694,45 @@ class Sandbox:
             )
         return results
 
+    @staticmethod
+    def _uses_fleet(api_key: Optional[str]) -> bool:
+        """Choose Fleet only for OAuth-configured calls without an explicit API key."""
+        return api_key is None and bool(get_client_id() and get_client_secret())
+
     @classmethod
     async def _list_cloud(cls, *, api_key: Optional[str] = None) -> "list[SandboxInfo]":
-        from cua_sandbox.transport.cloud import cloud_list_vms
+        if not cls._uses_fleet(api_key):
+            from cua_sandbox.transport.cloud import cloud_list_vms
 
-        vms = await cloud_list_vms(api_key=api_key)
-        results = []
-        for vm in vms:
-            raw_status = vm.get("status", "unknown")
-            results.append(
+            vms = await cloud_list_vms(api_key=api_key)
+            return [
                 SandboxInfo(
                     name=vm.get("name", ""),
-                    status=raw_status,
+                    status=vm.get("status", "unknown"),
                     source="cloud",
                     os_type=vm.get("os_type") or vm.get("os"),
                     created_at=vm.get("created_at"),
                 )
-            )
-        return results
+                for vm in vms
+            ]
+
+        pools = await FleetCloudTransport.list_sandboxes()
+        return [cls._fleet_sandbox_info(pool) for pool in pools]
+
+    @staticmethod
+    def _fleet_sandbox_info(pool: dict[str, Any]) -> SandboxInfo:
+        metadata = pool.get("metadata") or {}
+        spec = pool.get("spec") or {}
+        status = pool.get("status") or {}
+        replicas = spec.get("replicas", 1)
+        available = status.get("availableCount", 0)
+        state = "suspended" if replicas == 0 else "running" if available else "provisioning"
+        return SandboxInfo(
+            name=metadata.get("name", ""),
+            status=state,
+            source="fleet",
+            created_at=metadata.get("creationTimestamp"),
+        )
 
     @classmethod
     async def get_info(
@@ -748,16 +772,18 @@ class Sandbox:
                     ),
                 )
             raise ValueError(f"Local sandbox '{name}' not found.")
-        from cua_sandbox.transport.cloud import cloud_get_vm
+        if not cls._uses_fleet(api_key):
+            from cua_sandbox.transport.cloud import cloud_get_vm
 
-        vm = await cloud_get_vm(name, api_key=api_key)
-        return SandboxInfo(
-            name=vm.get("name", name),
-            status=vm.get("status", "unknown"),
-            source="cloud",
-            os_type=vm.get("os_type") or vm.get("os"),
-            created_at=vm.get("created_at"),
-        )
+            vm = await cloud_get_vm(name, api_key=api_key)
+            return SandboxInfo(
+                name=vm.get("name", name),
+                status=vm.get("status", "unknown"),
+                source="cloud",
+                os_type=vm.get("os_type") or vm.get("os"),
+                created_at=vm.get("created_at"),
+            )
+        return cls._fleet_sandbox_info(await FleetCloudTransport.get_sandbox_info(name))
 
     @classmethod
     async def suspend(
@@ -782,9 +808,12 @@ class Sandbox:
         if local:
             await cls._suspend_local(name)
             return
-        from cua_sandbox.transport.cloud import cloud_vm_action
+        if not cls._uses_fleet(api_key):
+            from cua_sandbox.transport.cloud import cloud_vm_action
 
-        await cloud_vm_action(name, "stop", api_key=api_key)
+            await cloud_vm_action(name, "stop", api_key=api_key)
+            return
+        await FleetCloudTransport.suspend_sandbox(name)
 
     @classmethod
     async def _suspend_local(cls, name: str) -> None:
@@ -833,10 +862,13 @@ class Sandbox:
         """
         if local:
             return await cls._resume_local(name)
-        from cua_sandbox.transport.cloud import cloud_vm_action
+        if not cls._uses_fleet(api_key):
+            from cua_sandbox.transport.cloud import cloud_vm_action
 
-        await cloud_vm_action(name, "run", api_key=api_key)
-        # Connect to the now-running cloud sandbox
+            await cloud_vm_action(name, "run", api_key=api_key)
+        else:
+            await FleetCloudTransport.resume_sandbox(name)
+        # Connect to the now-running cloud sandbox.
         sb = await cls._create(name=name, ephemeral=False, api_key=api_key)
         return sb
 
@@ -850,14 +882,12 @@ class Sandbox:
             raise ValueError(f"No local sandbox named '{name}' found in state files.")
         runtime_type = state.get("runtime_type")
         if runtime_type == "lume":
-            from cua_sandbox.image import Image
             from cua_sandbox.runtime.lume import LumeRuntime
 
             image = Image.from_dict(state["image"])
             rt = LumeRuntime()
             rt_info = await rt.resume(image, name)
         elif runtime_type == "qemu-baremetal":
-            from cua_sandbox.image import Image
             from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime
 
             image = Image.from_dict(state["image"])
@@ -911,9 +941,12 @@ class Sandbox:
         if local:
             await cls._suspend_local(name)
             return await cls._resume_local(name)
-        from cua_sandbox.transport.cloud import cloud_vm_action
+        if not cls._uses_fleet(api_key):
+            from cua_sandbox.transport.cloud import cloud_vm_action
 
-        await cloud_vm_action(name, "restart", api_key=api_key)
+            await cloud_vm_action(name, "restart", api_key=api_key)
+        else:
+            await FleetCloudTransport.restart_sandbox(name)
         sb = await cls._create(name=name, ephemeral=False, api_key=api_key)
         return sb
 
@@ -938,9 +971,12 @@ class Sandbox:
         if local:
             await cls._delete_local(name)
             return
-        from cua_sandbox.transport.cloud import cloud_vm_action
+        if not cls._uses_fleet(api_key):
+            from cua_sandbox.transport.cloud import cloud_vm_action
 
-        await cloud_vm_action(name, "delete", api_key=api_key)
+            await cloud_vm_action(name, "delete", api_key=api_key)
+            return
+        await FleetCloudTransport.delete_sandbox(name)
 
     @classmethod
     async def _delete_local(cls, name: str) -> None:
@@ -1045,12 +1081,15 @@ class Sandbox:
             runtime = _auto_runtime(image)
         if image and not runtime and not local:
             # image without runtime and not local → cloud creation
-            if not any([ws_url, http_url]):
+            if not any([ws_url, http_url]) and not api_key:
                 transport = FleetCloudTransport(
                     image=image,
                     name=name or _random_name(),
                     cpu=cpu,
                     memory_mb=memory_mb,
+                    disk_gb=disk_gb,
+                    region=region,
+                    time_to_start=time_to_start,
                     request_timeout=request_timeout,
                 )
                 sb = cls(
@@ -1073,6 +1112,23 @@ class Sandbox:
                                 vm_name,
                             )
                     raise
+                _record_sandbox_create(
+                    sb, image=image, local=False, ephemeral=bool(ephemeral), t_start=_t_start
+                )
+                return sb
+            if api_key and not any([ws_url, http_url]):
+                transport = _make_transport(
+                    api_key=api_key,
+                    name=name,
+                    cpu=cpu,
+                    memory_mb=memory_mb,
+                    disk_gb=disk_gb,
+                    region=region,
+                )
+                sb = cls(
+                    transport, name=name, _ephemeral=ephemeral, _telemetry_enabled=telemetry_enabled
+                )
+                await sb._connect()
                 _record_sandbox_create(
                     sb, image=image, local=False, ephemeral=bool(ephemeral), t_start=_t_start
                 )
@@ -1150,17 +1206,27 @@ class Sandbox:
                     container_name=container_name,
                 )
         else:
-            transport = _make_transport(
-                ws_url=ws_url,
-                http_url=http_url,
-                api_key=api_key,
-                container_name=container_name,
-                name=name,
-                cpu=cpu,
-                memory_mb=memory_mb,
-                disk_gb=disk_gb,
-                region=region,
-            )
+            if name and cls._uses_fleet(api_key) and not ws_url and not http_url:
+                transport = FleetCloudTransport(
+                    image=None,
+                    name=name,
+                    cpu=cpu,
+                    memory_mb=memory_mb,
+                    disk_gb=disk_gb,
+                    region=region,
+                )
+            else:
+                transport = _make_transport(
+                    ws_url=ws_url,
+                    http_url=http_url,
+                    api_key=api_key,
+                    container_name=container_name,
+                    name=name,
+                    cpu=cpu,
+                    memory_mb=memory_mb,
+                    disk_gb=disk_gb,
+                    region=region,
+                )
         # Write persistent state for local (non-ephemeral) sandboxes
         if not ephemeral and rt_info and local:
             from cua_sandbox import sandbox_state

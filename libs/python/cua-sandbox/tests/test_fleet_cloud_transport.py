@@ -65,10 +65,9 @@ async def test_cleanup_deletes_pool_when_claim_deletion_fails():
     with pytest.raises(RuntimeError, match="claim delete failed"):
         await transport._cleanup_resources()
 
-    assert calls == [
-        ("claim", {"metadata": {"name": "claim"}}),
-        ("pool", {"metadata": {"name": "pool"}}),
-    ]
+    assert calls == [("claim", {"metadata": {"name": "claim"}})]
+    assert transport._claim == {"metadata": {"name": "claim"}}
+    assert transport._pool == {"metadata": {"name": "pool"}}
 
 
 @pytest.mark.asyncio
@@ -94,3 +93,69 @@ async def test_inherited_command_forwards_json_and_timeout_to_service_client():
     assert captured["path"] == "/cmd"
     assert captured["json"] == {"command": "shell.run", "params": {"timeout": 15}}
     assert captured["timeout"].read == 25.0
+
+
+@pytest.mark.asyncio
+async def test_connect_keeps_provisioning_error_when_cleanup_fails(monkeypatch):
+    transport = FleetCloudTransport(
+        image=Image.from_registry("registry.example/workspace:latest"), name="demo"
+    )
+
+    class Client:
+        def create_pool(self, request):
+            return {"metadata": {"name": "demo", "namespace": "demo"}}
+
+        def create_claim(self, request):
+            return {"metadata": {"name": "demo-claim", "namespace": "demo"}}
+
+        def wait_claim(self, claim, **kwargs):
+            raise RuntimeError("provisioning failed")
+
+        def delete_claim(self, claim):
+            return None
+
+        def delete_pool(self, pool):
+            raise RuntimeError("cleanup failed")
+
+    monkeypatch.setattr("cua_sandbox.transport.fleet_cloud._FleetClient", lambda: Client())
+
+    with pytest.raises(RuntimeError, match="provisioning failed") as error:
+        await transport.connect()
+
+    assert isinstance(error.value.__cause__, RuntimeError)
+    assert str(error.value.__cause__) == "cleanup failed"
+
+
+@pytest.mark.asyncio
+async def test_forward_tunnel_returns_fleet_service_endpoint():
+    transport = FleetCloudTransport(
+        image=Image.from_registry("registry.example/workspace:latest").expose(3000), name="demo"
+    )
+    transport._provisioned = True
+    transport._bound = {
+        "namespace": "demo",
+        "sandbox": "sandbox",
+        "services": ["server", "port-3000"],
+    }
+
+    class Client:
+        def service_url(self, bound, service):
+            assert service == "port-3000"
+            return "https://run.cua.ai/api/svc/demo/sandbox-port-3000/"
+
+    transport._sdk = Client()
+    info = await transport.forward_tunnel(3000)
+
+    assert info.host == "run.cua.ai"
+    assert info.port == 443
+    assert info.url == "https://run.cua.ai/api/svc/demo/sandbox-port-3000/"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_reports_fleet_unsupported():
+    transport = FleetCloudTransport(
+        image=Image.from_registry("registry.example/workspace:latest"), name="demo"
+    )
+
+    with pytest.raises(NotImplementedError, match="Snapshots are not supported"):
+        await transport.create_snapshot()

@@ -5,6 +5,7 @@ from cua_sandbox._config import (
     configure,
     get_api_key,
     get_base_url,
+    get_fleet_base_url,
     get_client_id,
     get_client_secret,
     get_token_url,
@@ -14,7 +15,8 @@ from cua_sandbox._config import (
 class TestConfig:
     def setup_method(self):
         _global_config.api_key = None
-        _global_config.base_url = "https://run.cua.ai"
+        _global_config.base_url = "https://api.cua.ai"
+        _global_config.fleet_base_url = "https://run.cua.ai"
         _global_config.token_url = (
             "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
         )
@@ -26,7 +28,8 @@ class TestConfig:
 
         assert get_client_id() == "client-id"
         assert get_client_secret() == "client-secret"
-        assert get_base_url() == "https://run.cua.ai"
+        assert get_base_url() == "https://api.cua.ai"
+        assert get_fleet_base_url() == "https://run.cua.ai"
         assert (
             get_token_url() == "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
         )

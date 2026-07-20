@@ -78,49 +78,24 @@ async with Localhost.connect() as host:
     await host.screenshot()
 ```
 
-## Fleet provider
 
-Provision directly through the Cyclops Fleet SDK. Each Sandbox owns one
-`replicas=1` pool and one claim; the bound sandbox's named `api` service routes
-the existing computer-server protocol.
+## Cloud sandbox
+
+Fleet is the cloud backend. Configure OAuth credentials once; the Fleet and token URLs use defaults and can be overridden through `configure()`. Cloud images must use a registry reference; `expose()` declares additional Fleet services.
 
 ```python
-from cyclops_sdk import connect
-from cua_sandbox import FleetProvider, Image, Sandbox
+import os
 
-sdk = connect({
-    "base_url": "https://run.cua.ai",
-    "oauth": {
-        "token_url": "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token",
-        "client_id": "...",
-        "client_secret": "...",
-    },
-})
-provider = FleetProvider(
-    sdk=sdk,
-    templates={
-        "linux": {
-            "containerDiskImage": "registry.example/desktop-workspace-duo@sha256:...",
-            "imagePullSecret": "registry-credentials",
-            "cpuCores": 4,
-            "memory": "4Gi",
-        },
-    },
+import cua_sandbox as cua
+from cua_sandbox import Image, Sandbox
+
+cua.configure(
+    client_id=os.environ["CUA_CLIENT_ID"],
+    client_secret=os.environ["CUA_CLIENT_SECRET"],
 )
 
-try:
-    async with Sandbox.ephemeral(
-        Image.linux(),
-        name="fleet-demo",
-        provider=provider,
-    ) as sb:
-        await sb.shell.run("uname -a")
-        await sb.screenshot()
-finally:
-    sdk.close()
+async with Sandbox.ephemeral(
+    Image.from_registry("registry.example/desktop-workspace@sha256:...").expose(3000)
+) as sb:
+    await sb.shell.run("uname -a")
 ```
-
-The caller owns the Cyclops SDK lifetime. `Sandbox.destroy()` and ephemeral
-cleanup delete the claim before the pool. Fleet templates must be supplied
-explicitly; `Image` install layers, snapshots, custom disk sizes, and non-default
-regions are not yet supported by `FleetProvider`.

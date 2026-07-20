@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +16,15 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
+
+const statusClientClosedRequest = 499
+
+func svcProxyErrorStatus(err error) int {
+	if errors.Is(err, context.Canceled) {
+		return statusClientClosedRequest
+	}
+	return http.StatusBadGateway
+}
 
 // rewriteLocation prepends basePath to upstream Location header values
 // so browsers stay within the /api/svc proxy prefix. External URLs
@@ -117,10 +128,17 @@ func (h Handlers) Svc(w http.ResponseWriter, r *http.Request) {
 
 	rw := &statusCapture{ResponseWriter: w}
 	rp.ErrorHandler = func(rw http.ResponseWriter, _ *http.Request, err error) {
+		status := svcProxyErrorStatus(err)
+		if status == statusClientClosedRequest {
+			span.SetStatus(codes.Unset, "client canceled")
+			slog.Info("svc proxy canceled", "host", host, "path", upstreamPath, "err", err)
+			rw.WriteHeader(status)
+			return
+		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "upstream unavailable")
 		slog.Warn("svc proxy error", "host", host, "path", upstreamPath, "err", err)
-		http.Error(rw, "upstream unavailable", http.StatusBadGateway)
+		http.Error(rw, "upstream unavailable", status)
 	}
 
 	start := time.Now()

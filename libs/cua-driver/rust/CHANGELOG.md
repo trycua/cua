@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.9.1...cua-driver-rs-v0.10.0) (2026-07-20)
+
+
+### Features
+
+* **cua-driver:** add protected permission modes and consent grants ([#2383](https://github.com/trycua/cua/issues/2383)) ([c75e606](https://github.com/trycua/cua/commit/c75e60636c11e21ef44f1ebbe1c1350339bae295))
+
+
+### Bug Fixes
+
+* **cua-driver:** bound tool telemetry volume ([#2382](https://github.com/trycua/cua/issues/2382)) ([99d4d61](https://github.com/trycua/cua/commit/99d4d613abc35a67753d206fcf3371673fb75edd))
+* **cua-driver:** register bundle in LaunchServices before tccutil reset ([#2376](https://github.com/trycua/cua/issues/2376)) ([767acf2](https://github.com/trycua/cua/commit/767acf25f25ea668ffab428e4f2e8985896de98e))
+
 ## [0.9.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.9.0...cua-driver-rs-v0.9.1) (2026-07-20)
 
 

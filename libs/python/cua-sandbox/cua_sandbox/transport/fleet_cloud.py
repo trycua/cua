@@ -37,6 +37,15 @@ class _FleetClient:
 
     def create_pool(self, request: dict[str, Any]) -> dict[str, Any]:
         namespace = request["namespace"]
+        namespace_response = httpx.post(
+            f"{self._base_url}/api/namespaces",
+            json={"name": namespace},
+            headers=self._headers,
+            timeout=30.0,
+        )
+        if namespace_response.status_code not in {200, 201, 202, 409}:
+            namespace_response.raise_for_status()
+        namespace_created = namespace_response.status_code != 409
         body = {
             "apiVersion": "cua.ai/v1",
             "kind": "OSGymWorkspacePool",
@@ -44,11 +53,16 @@ class _FleetClient:
             "spec": request["spec"],
         }
         response = httpx.post(self._pool_url(namespace), json=body, headers=self._headers, timeout=30.0)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except BaseException:
+            if namespace_created:
+                self.delete_namespace(namespace)
+            raise
         return response.json()
 
     def create_claim(self, request: dict[str, Any]) -> dict[str, Any]:
-        pool = request["pool"]
+        pool = self.wait_pool_ready(request["pool"])
         namespace = pool["metadata"]["namespace"]
         name = f"{pool['metadata']['name']}-claim"
         body = {
@@ -73,7 +87,7 @@ class _FleetClient:
             phase = status.get("phase", "Pending")
             sandbox = (status.get("sandbox") or {}).get("name")
             if phase == "Bound" and sandbox:
-                return {"namespace": namespace, "sandbox": sandbox, "services": ["api"]}
+                return {"namespace": namespace, "sandbox": sandbox, "services": ["server"]}
             if phase in {"Failed", "Error", "Expired"}:
                 raise RuntimeError(f"Fleet claim {name!r} failed: {status}")
             if time.monotonic() >= deadline:
@@ -86,7 +100,55 @@ class _FleetClient:
 
     def delete_pool(self, pool: dict[str, Any]) -> None:
         metadata = pool["metadata"]
-        httpx.delete(f"{self._pool_url(metadata['namespace'])}/{metadata['name']}", headers=self._headers, timeout=30.0).raise_for_status()
+        response = httpx.delete(
+            f"{self._pool_url(metadata['namespace'])}/{metadata['name']}",
+            headers=self._headers,
+            timeout=30.0,
+        )
+        if response.status_code not in {200, 202, 204, 404}:
+            response.raise_for_status()
+        self.delete_namespace(metadata["namespace"])
+
+    def delete_namespace(self, namespace: str) -> None:
+        response = httpx.delete(
+            f"{self._base_url}/api/namespaces/{namespace}",
+            headers=self._headers,
+            timeout=30.0,
+        )
+        if response.status_code not in {200, 202, 204, 404}:
+            response.raise_for_status()
+
+    def wait_pool_ready(self, pool: dict[str, Any]) -> dict[str, Any]:
+        metadata = pool["metadata"]
+        deadline = time.monotonic() + 600.0
+        while True:
+            response = httpx.get(
+                f"{self._pool_url(metadata['namespace'])}/{metadata['name']}",
+                headers=self._headers,
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            current = response.json()
+            if (current.get("status") or {}).get("availableCount", 0) > 0:
+                return current
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Fleet pool {metadata['name']!r} did not become available within 600 seconds")
+            time.sleep(2)
+
+    def wait_service_ready(self, sandbox: dict[str, Any], service: str) -> None:
+        client = self.service_client(sandbox, service)
+        deadline = time.monotonic() + 600.0
+        try:
+            while True:
+                response = client.get("/status")
+                if response.status_code not in {502, 503, 504}:
+                    response.raise_for_status()
+                    return
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"Fleet service {service!r} did not become ready within 600 seconds")
+                time.sleep(2)
+        finally:
+            client.close()
 
     def service_client(self, sandbox: dict[str, Any], service: str) -> httpx.Client:
         if service not in sandbox["services"]:
@@ -134,7 +196,8 @@ class FleetCloudTransport(FleetTransport):
             except BaseException:
                 await self._cleanup_resources()
                 raise
-            FleetTransport.__init__(self, sdk=self._sdk, bound=bound, service_name="api", timeout=self._request_timeout, call_lock=self._call_lock)
+            self._sdk.wait_service_ready(bound, "server")
+            FleetTransport.__init__(self, sdk=self._sdk, bound=bound, service_name="server", timeout=self._request_timeout, call_lock=self._call_lock)
             self._provisioned = True
         await FleetTransport.connect(self)
 
@@ -142,24 +205,36 @@ class FleetCloudTransport(FleetTransport):
         await self._cleanup_resources()
 
     async def _cleanup_resources(self) -> None:
+        cleanup_error: Optional[BaseException] = None
         if self._claim is not None:
             try:
                 await self._run(self._sdk.delete_claim, self._claim)
+            except BaseException as error:
+                cleanup_error = error
             finally:
                 self._claim = None
         if self._pool is not None:
             try:
                 await self._run(self._sdk.delete_pool, self._pool)
+            except BaseException as error:
+                if cleanup_error is None:
+                    cleanup_error = error
             finally:
                 self._pool = None
+        if cleanup_error is not None:
+            raise cleanup_error
 
     def _pool_request(self) -> dict[str, Any]:
-        template: dict[str, Any] = {"containerDiskImage": self._image._registry}
+        template: dict[str, Any] = {
+            "containerDiskImage": self._image._registry,
+            "imagePullSecret": "ecr-credentials",
+            "probes": {"readinessProbe": {"tcpSocket": {"port": 8000}}},
+        }
         if self._cpu is not None:
             template["cpuCores"] = self._cpu
         if self._memory_mb is not None:
             template["memory"] = f"{self._memory_mb}Mi"
-        services = [{"name": "api", "targetPort": 8000, "protocol": "TCP"}]
+        services = [{"name": "server", "targetPort": 8000, "protocol": "TCP"}]
         services.extend({"name": f"port-{port}", "targetPort": port, "protocol": "TCP"} for port in self._image._ports if port != 8000)
         return {"namespace": self._name, "spec": {"replicas": 1, "services": services, "template": template}}
 

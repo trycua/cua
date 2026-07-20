@@ -15,6 +15,7 @@ use super::approval::{
     consume_existing_profile_approval, consume_prepare_approval, validate_profile,
     ExistingProfileApprovalScope,
 };
+use super::engine::unsupported_engine_refusal;
 use super::platform::{
     BrowserConsentOutcome, BrowserConsentRequest, ExistingProfileSetupOutcome,
     ExistingProfileSetupRequest, PrepareAction, PrepareAttachment, PrepareAttachmentKind,
@@ -601,9 +602,9 @@ impl BrowserEngine {
 
         let classification = self.platform.classify_browser(request.pid).await?;
         if !classification.supports_cdp || classification.engine != BrowserEngineFamily::Chromium {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                "isolated automatic setup is currently supported only for Chromium browsers",
+            return Err(unsupported_engine_refusal(
+                &classification,
+                "prepare_isolated_profile",
             ));
         }
         let fingerprint = self.platform.process_fingerprint(request.pid).await?;
@@ -712,9 +713,9 @@ impl BrowserEngine {
 
         let classification = self.platform.classify_browser(request.pid).await?;
         if !classification.supports_cdp || classification.engine != BrowserEngineFamily::Chromium {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                "existing-profile attachment is currently limited to Chromium browsers",
+            return Err(unsupported_engine_refusal(
+                &classification,
+                "attach_existing_profile",
             ));
         }
         self.native_window_checked(request.pid, window_id).await?;

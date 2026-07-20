@@ -57,5 +57,5 @@ if (sentinelMode) {
   window.addEventListener('contextmenu', event =>
     record('contextmenu', { x: event.clientX, y: event.clientY })
   );
-  setInterval(() => record('heartbeat'), 100);
+  ipcRenderer.on('cua-e2e-sentinel-heartbeat-probe', () => record('heartbeat'));
 }

@@ -51,7 +51,10 @@ use super::store::{
     format_ref, BrowserStore, FrameIdentity, FrameKind, FrameRef, RefEntry, SemanticContinuation,
     SnapshotRecord, TabRecord, TargetRecord,
 };
-use super::types::{BindingQuality, NativeWindowInfo, OwnedEndpoint, Rect};
+use super::types::{
+    BindingQuality, BrowserClassification, BrowserEngineFamily, NativeWindowInfo, OwnedEndpoint,
+    Rect,
+};
 
 /// Bounds tolerance (device pixels) for native ↔ CDP window correlation.
 /// Absorbs window-shadow and DIP-rounding differences.
@@ -80,6 +83,41 @@ fn route_err(context: &str, err: impl std::fmt::Display) -> BrowserRefusal {
         BrowserRefusalCode::BrowserRouteUnavailable,
         format!("{context}: {err}"),
     )
+}
+
+pub(super) fn unsupported_engine_refusal(
+    classification: &BrowserClassification,
+    operation: &'static str,
+) -> BrowserRefusal {
+    let (message, protocol, limitation) = match classification.engine {
+        BrowserEngineFamily::Gecko => (
+            "Firefox browser tools require a WebDriver BiDi or Remote Agent route; attaching to an ordinary running profile is not supported",
+            "webdriver_bidi",
+            "remote_agent_requires_launch_time_enablement",
+        ),
+        BrowserEngineFamily::Webkit => (
+            "Safari browser tools require a WebKit-native automation route; Safari does not expose an attachable CDP endpoint for an ordinary running profile",
+            "webkit_automation",
+            "no_attachable_runtime_endpoint",
+        ),
+        BrowserEngineFamily::Chromium => (
+            "this Chromium-family browser does not expose a supported CDP route",
+            "cdp",
+            "cdp_unavailable",
+        ),
+        BrowserEngineFamily::Unknown => (
+            "this browser engine has no supported typed browser route",
+            "unknown",
+            "engine_route_unavailable",
+        ),
+    };
+    BrowserRefusal::new(BrowserRefusalCode::BrowserRouteUnavailable, message).with_detail(json!({
+        "operation": operation,
+        "engine_family": classification.engine,
+        "product": classification.product_kind,
+        "required_protocol": protocol,
+        "limitation": limitation,
+    }))
 }
 
 /// Everything revalidation proves before a mutation proceeds. The
@@ -866,13 +904,7 @@ impl BrowserEngine {
             ));
         }
         if !class.supports_cdp {
-            return Err(refuse(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!(
-                    "{} does not expose a CDP route in browser-tool v1",
-                    class.product.as_deref().unwrap_or("this browser")
-                ),
-            ));
+            return Err(unsupported_engine_refusal(&class, "bind_native_window"));
         }
 
         let native = self.native_window_checked(pid, window_id).await?;

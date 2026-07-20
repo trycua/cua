@@ -475,6 +475,30 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                     },
                 });
             }
+            if let Some(window) =
+                crate::wayland::shell_helper::trusted_window_for_id(pid_u32, window_id)
+            {
+                return Ok(NativeWindowInfo {
+                    pid,
+                    window_id,
+                    title: window.title,
+                    bounds: Rect::new(
+                        f64::from(window.x),
+                        f64::from(window.y),
+                        f64::from(window.width),
+                        f64::from(window.height),
+                    ),
+                    geometry_exact: true,
+                    ownership: NativeOwnershipProof {
+                        method: NativeOwnershipMethod::PlatformAttested,
+                        owner_pid: pid,
+                        detail: Some(
+                            "verified GNOME Shell helper owner, stable window id, pid, and frame rect"
+                                .to_owned(),
+                        ),
+                    },
+                });
+            }
             let window = tokio::task::spawn_blocking(move || {
                 crate::wayland::list_windows_dispatch(Some(pid_u32))
                     .into_iter()
@@ -560,6 +584,11 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         })?;
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
             let Some(windows) = crate::wayland::sway_ipc::list_windows() else {
+                if let Some(owned) =
+                    crate::wayland::shell_helper::trusted_window_ids_for_pid(pid_u32)
+                {
+                    return Ok(Some(owned.len() == 1 && owned[0] == window_id));
+                }
                 if crate::wayland::is_inject_mode() {
                     // The private cua-compositor route owns both the native
                     // toplevel enumeration and its PID correlation. Unlike a

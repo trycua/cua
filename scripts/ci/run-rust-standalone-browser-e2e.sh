@@ -17,6 +17,7 @@ fi
 mkdir -p "${ARTIFACT_DIR}/recordings"
 export CUA_E2E_DECLARATIONS_FILE="${ARTIFACT_DIR}/cases.jsonl"
 export CUA_E2E_ENVIRONMENT_FILE="${ARTIFACT_DIR}/environment.jsonl"
+export CUA_E2E_BROWSER_PROVENANCE_FILE="${ARTIFACT_DIR}/browser-provenance.jsonl"
 export CUA_E2E_RESULTS_FILE="${ARTIFACT_DIR}/results.jsonl"
 export CUA_E2E_RECORDINGS_ROOT="${ARTIFACT_DIR}/recordings"
 export CUA_TEST_WORKSPACE_ROOT="${RUST_ROOT}"
@@ -27,13 +28,19 @@ export CUA_TEST_DRIVER_STDERR=1
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 
 HOST_OS="$(uname -s)"
+CARGO_DRIVER_FEATURE_ARGS=()
+if [[ "${HOST_OS}" == Linux ]]; then
+  # Published Linux artifacts include the portal/libei route. Compile the
+  # browser matrix with the same feature set so GNOME/KDE setup cannot be
+  # misclassified from a default-feature test binary that falls back to wtype.
+  CARGO_DRIVER_FEATURE_ARGS=(--features portal-input)
+fi
 if [[ "${HOST_OS}" == Linux ]] \
     && [[ "${XDG_SESSION_TYPE:-}" == wayland ]] \
-    && [[ -n "${WAYLAND_DISPLAY:-}" ]] \
-    && [[ -z "${DISPLAY:-}" ]]; then
-  # This lane promises native Wayland behavior. Opt into the driver's native
-  # backend explicitly so a missing caller variable cannot silently exercise
-  # the X11 fallback and time out during native-window correlation.
+    && [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+  # GNOME/KDE retain DISPLAY for XWayland even in native Wayland sessions.
+  # Session type and the Wayland socket are the authority; opt into the native
+  # backend so those desktops cannot silently exercise X11 enumeration.
   export CUA_DRIVER_RS_ENABLE_WAYLAND=1
   export ELECTRON_OZONE_PLATFORM_HINT=wayland
 fi
@@ -70,6 +77,7 @@ fi
 
 : > "${CUA_E2E_DECLARATIONS_FILE}"
 : > "${CUA_E2E_ENVIRONMENT_FILE}"
+: > "${CUA_E2E_BROWSER_PROVENANCE_FILE}"
 : > "${CUA_E2E_RESULTS_FILE}"
 
 SOURCE_MARKER="${REPO_ROOT}/.cua-e2e-source-sha"
@@ -81,40 +89,51 @@ if [[ -f "${SOURCE_MARKER}" ]]; then
 fi
 
 if [[ "${CUA_E2E_SKIP_BUILD:-0}" != 1 ]]; then
-  cargo build --release -p cua-driver --manifest-path "${RUST_ROOT}/Cargo.toml"
+  cargo build --release -p cua-driver \
+    ${CARGO_DRIVER_FEATURE_ARGS[@]+"${CARGO_DRIVER_FEATURE_ARGS[@]}"} \
+    --manifest-path "${RUST_ROOT}/Cargo.toml"
 fi
 if [[ ! -x "${CUA_TEST_DRIVER_BIN}" ]]; then
   echo "Driver binary not found: ${CUA_TEST_DRIVER_BIN}" >&2
   exit 1
 fi
 
-tests=(
-  standalone_browser_background_type
-  standalone_browser_dialogs
-)
-if [[ "${HOST_OS}" == Linux ]]; then
-  tests+=(standalone_browser_dialog_background_refusal)
+if [[ "${HOST_OS}" == Linux && "${CUA_E2E_WAYLAND_SESSION:-}" == generic ]]; then
+  if [[ "${XDG_SESSION_TYPE:-}" != wayland || -z "${WAYLAND_DISPLAY:-}" || -z "${SWAYSOCK:-}" ]]; then
+    echo "The generic Wayland lane requires native Wayland and an out-of-band Sway oracle" >&2
+    exit 2
+  fi
+  tests=(standalone_browser_generic_wayland_existing_profile_refusal)
+else
+  tests=(
+    standalone_browser_background_type
+    standalone_browser_dialogs
+  )
+  if [[ "${HOST_OS}" == Linux ]]; then
+    tests+=(standalone_browser_dialog_background_refusal)
+  fi
+  tests+=(
+    standalone_browser_download
+    standalone_browser_existing_profile
+    standalone_browser_existing_profile_setup
+    standalone_browser_frames
+    standalone_browser_multi_tab
+    standalone_browser_pointer_actions
+    standalone_browser_prepare_isolated
+    standalone_browser_roundtrip
+    standalone_browser_semantic_state
+    standalone_browser_stale_ref
+    standalone_browser_trusted_click
+    standalone_browser_upload
+    standalone_browser_window_collision
+  )
 fi
-tests+=(
-  standalone_browser_download
-  standalone_browser_existing_profile
-  standalone_browser_existing_profile_setup
-  standalone_browser_frames
-  standalone_browser_multi_tab
-  standalone_browser_pointer_actions
-  standalone_browser_prepare_isolated
-  standalone_browser_roundtrip
-  standalone_browser_semantic_state
-  standalone_browser_stale_ref
-  standalone_browser_trusted_click
-  standalone_browser_upload
-  standalone_browser_window_collision
-)
 failure_count=0
 for test_name in "${tests[@]}"; do
   echo "[RUN] ${test_name}"
   set +e
   (cd "${RUST_ROOT}" && cargo test --release -p cua-driver \
+    ${CARGO_DRIVER_FEATURE_ARGS[@]+"${CARGO_DRIVER_FEATURE_ARGS[@]}"} \
     --test standalone_browser_behavior_test "${test_name}" -- \
     --ignored --exact --nocapture --test-threads=1) \
     2>&1 | tee "${ARTIFACT_DIR}/${test_name}.log"

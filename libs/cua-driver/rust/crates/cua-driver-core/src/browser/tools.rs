@@ -397,7 +397,7 @@ impl BrowserPrepareTool {
                 token plus allow_launch=true. It launches a separate browser and never \
                 copies, modifies, or terminates the requested user profile. Existing-profile \
                 attachment is explicit and follows the daemon's immutable permission mode: \
-                standard requires a certified protected-consent provider, autonomous requires \
+                standard requires a certified protected-consent provider, bounded requires \
                 a launch-approved exact resource manifest plus protected indicator, and \
                 unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP \
                 transport approval never proves profile consent. On proven platforms, an \

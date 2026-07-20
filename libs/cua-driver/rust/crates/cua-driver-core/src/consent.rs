@@ -238,7 +238,7 @@ impl ApprovalBroker {
     }
 
     /// Activate the mandatory indicator for an operation already covered by a
-    /// launch-approved autonomous manifest. This never asks or accepts an
+    /// launch-approved bounded manifest. This never asks or accepts an
     /// in-band decision; the manifest remains the authorization and the
     /// provider supplies only persistent visible Stop state.
     pub async fn activate_preapproved(

@@ -134,7 +134,7 @@ fn danger_acknowledgement_cannot_weaken_standard_mode() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("valid only with --permission-mode unrestricted"),
+        stderr.contains("cannot be combined with a non-unrestricted --permission-mode"),
         "unexpected stderr: {stderr}"
     );
     #[cfg(unix)]
@@ -142,7 +142,7 @@ fn danger_acknowledgement_cannot_weaken_standard_mode() {
 }
 
 #[test]
-fn managed_configuration_can_disable_unrestricted_before_bind() {
+fn danger_flag_alone_selects_unrestricted_and_managed_config_can_disable_it() {
     let directory = tempfile::tempdir().expect("temporary mode test directory");
     let socket = test_socket(&directory, "unrestricted-admin-disabled");
     let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
@@ -152,8 +152,6 @@ fn managed_configuration_can_disable_unrestricted_before_bind() {
             &socket,
             "--no-overlay",
             "--no-permissions-gate",
-            "--permission-mode",
-            "unrestricted",
             "--dangerously-bypass-approvals",
         ])
         .env("CUA_DRIVER_DISABLE_UNRESTRICTED", "1")
@@ -175,7 +173,7 @@ fn write_valid_session_policy(directory: &tempfile::TempDir) -> String {
         &path,
         r#"
 version: 1
-mode: autonomous
+mode: bounded
 expires_after: 1h
 idle_timeout: 10m
 resources: {}
@@ -192,10 +190,10 @@ ask:
 }
 
 #[test]
-fn autonomous_mode_requires_a_session_policy_before_bind() {
-    let directory = tempfile::tempdir().expect("temporary autonomous test directory");
-    let socket = test_socket(&directory, "autonomous-no-policy");
-    let output = rejected_serve(&socket, &["--permission-mode", "autonomous"]);
+fn bounded_mode_requires_a_session_policy_before_bind() {
+    let directory = tempfile::tempdir().expect("temporary bounded test directory");
+    let socket = test_socket(&directory, "bounded-no-policy");
+    let output = rejected_serve(&socket, &["--permission-mode", "bounded"]);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("requires --session-policy"));
     #[cfg(unix)]
@@ -203,18 +201,13 @@ fn autonomous_mode_requires_a_session_policy_before_bind() {
 }
 
 #[test]
-fn autonomous_mode_requires_launch_time_manifest_approval_before_bind() {
-    let directory = tempfile::tempdir().expect("temporary autonomous test directory");
+fn bounded_mode_requires_launch_time_manifest_approval_before_bind() {
+    let directory = tempfile::tempdir().expect("temporary bounded test directory");
     let policy = write_valid_session_policy(&directory);
-    let socket = test_socket(&directory, "autonomous-no-approval");
+    let socket = test_socket(&directory, "bounded-no-approval");
     let output = rejected_serve(
         &socket,
-        &[
-            "--permission-mode",
-            "autonomous",
-            "--session-policy",
-            &policy,
-        ],
+        &["--permission-mode", "bounded", "--session-policy", &policy],
     );
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("requires --approve-session-policy"));
@@ -244,15 +237,15 @@ fn session_policy_cannot_be_smuggled_into_standard_mode() {
 }
 
 #[test]
-fn legacy_existing_profile_approval_cannot_bypass_autonomous_indicator() {
-    let directory = tempfile::tempdir().expect("temporary autonomous test directory");
+fn legacy_existing_profile_approval_cannot_bypass_bounded_indicator() {
+    let directory = tempfile::tempdir().expect("temporary bounded test directory");
     let policy = write_valid_session_policy(&directory);
-    let socket = test_socket(&directory, "autonomous-legacy-approval");
+    let socket = test_socket(&directory, "bounded-legacy-approval");
     let output = rejected_serve(
         &socket,
         &[
             "--permission-mode",
-            "autonomous",
+            "bounded",
             "--session-policy",
             &policy,
             "--approve-session-policy",
@@ -262,6 +255,18 @@ fn legacy_existing_profile_approval_cannot_bypass_autonomous_indicator() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr)
         .contains("valid only with --permission-mode standard"));
+    #[cfg(unix)]
+    assert!(!std::path::Path::new(&socket).exists());
+}
+
+#[test]
+fn autonomous_mode_name_remains_a_bounded_compatibility_alias() {
+    let directory = tempfile::tempdir().expect("temporary mode alias test directory");
+    let socket = test_socket(&directory, "autonomous-alias");
+    let output = rejected_serve(&socket, &["--permission-mode", "autonomous"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("permission mode bounded requires --session-policy"));
     #[cfg(unix)]
     assert!(!std::path::Path::new(&socket).exists());
 }

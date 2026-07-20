@@ -192,14 +192,14 @@ fn unrestricted_mode_skips_runtime_existing_profile_consent() {
 }
 
 #[test]
-fn autonomous_manifest_is_an_immutable_deny_by_default_layer() {
-    let directory = tempfile::tempdir().expect("temporary autonomous policy directory");
-    let policy_path = directory.path().join("autonomous.yaml");
+fn bounded_manifest_is_an_immutable_deny_by_default_layer() {
+    let directory = tempfile::tempdir().expect("temporary bounded policy directory");
+    let policy_path = directory.path().join("bounded.yaml");
     std::fs::write(
         &policy_path,
         r#"
 version: 1
-mode: autonomous
+mode: bounded
 expires_after: 1h
 idle_timeout: 10m
 resources: {}
@@ -209,14 +209,14 @@ deny:
   tools: [list_apps]
 "#,
     )
-    .expect("write autonomous policy");
+    .expect("write bounded policy");
     let policy = policy_path.display().to_string();
     let mut driver = CliDriver::with_daemon_env(&[
-        ("CUA_DRIVER_PERMISSION_MODE", "autonomous"),
+        ("CUA_DRIVER_PERMISSION_MODE", "bounded"),
         ("CUA_DRIVER_SESSION_POLICY_FILE", &policy),
         ("CUA_DRIVER_SESSION_POLICY_APPROVED", "1"),
     ]);
-    assert!(driver.available(), "autonomous test daemon failed to start");
+    assert!(driver.available(), "bounded test daemon failed to start");
 
     let allowed = driver.call("get_config", serde_json::json!({}));
     assert!(
@@ -229,11 +229,11 @@ deny:
     assert!(denied.is_error());
     assert!(denied
         .text()
-        .contains("autonomous session policy denies tool 'list_apps'"));
+        .contains("bounded session policy denies tool 'list_apps'"));
 
     let undeclared = driver.call("get_screen_size", serde_json::json!({}));
     assert!(undeclared.is_error());
     assert!(undeclared
         .text()
-        .contains("outside the autonomous session policy"));
+        .contains("outside the bounded session policy"));
 }

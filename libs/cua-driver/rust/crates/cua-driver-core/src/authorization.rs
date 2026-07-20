@@ -223,17 +223,17 @@ pub fn authorize_tool_call(
         )));
     }
     let mode = configured_permission_mode().map_err(crate::policy::AuthorizationError::Loading)?;
-    if mode == PermissionMode::Autonomous {
+    if mode == PermissionMode::Bounded {
         let manifest = crate::session_manifest::configured_session_manifest()
             .map_err(crate::policy::AuthorizationError::Loading)?
             .ok_or_else(|| {
                 crate::policy::AuthorizationError::Loading(
-                    "autonomous session policy is unavailable".to_owned(),
+                    "bounded session policy is unavailable".to_owned(),
                 )
             })?;
         if manifest.is_expired() {
             return Err(crate::policy::AuthorizationError::Denied(
-                "autonomous session policy expired".to_owned(),
+                "bounded session policy expired".to_owned(),
             ));
         }
         match manifest.decision(tool) {
@@ -247,17 +247,17 @@ pub fn authorize_tool_call(
             }
             crate::session_manifest::ManifestDecision::Deny => {
                 return Err(crate::policy::AuthorizationError::Denied(format!(
-                    "autonomous session policy denies tool '{tool}'"
+                    "bounded session policy denies tool '{tool}'"
                 )))
             }
             crate::session_manifest::ManifestDecision::Ask => {
                 return Err(crate::policy::AuthorizationError::Denied(format!(
-                    "autonomous session policy requires protected approval for tool '{tool}'; unattended dispatch cannot auto-accept"
+                    "bounded session policy requires protected approval for tool '{tool}'; unattended dispatch cannot auto-accept"
                 )))
             }
             crate::session_manifest::ManifestDecision::Undeclared => {
                 return Err(crate::policy::AuthorizationError::Denied(format!(
-                    "tool '{tool}' is outside the autonomous session policy"
+                    "tool '{tool}' is outside the bounded session policy"
                 )))
             }
         }
@@ -306,7 +306,8 @@ fn enforce_hard_invariants(
 #[serde(rename_all = "snake_case")]
 pub enum PermissionMode {
     Standard,
-    Autonomous,
+    #[serde(alias = "autonomous")]
+    Bounded,
     Unrestricted,
 }
 
@@ -314,7 +315,7 @@ impl PermissionMode {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Standard => "standard",
-            Self::Autonomous => "autonomous",
+            Self::Bounded => "bounded",
             Self::Unrestricted => "unrestricted",
         }
     }
@@ -322,23 +323,21 @@ impl PermissionMode {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PermissionModeError {
-    #[error("unknown permission mode '{0}'; expected standard, autonomous, or unrestricted")]
+    #[error("unknown permission mode '{0}'; expected standard, bounded, or unrestricted")]
     Unknown(String),
     #[error(
         "permission mode unrestricted requires --dangerously-bypass-approvals at trusted daemon startup"
     )]
     MissingDangerAcknowledgement,
-    #[error("--dangerously-bypass-approvals is valid only with --permission-mode unrestricted")]
+    #[error("--dangerously-bypass-approvals cannot be combined with a non-unrestricted --permission-mode")]
     UnexpectedDangerAcknowledgement,
-    #[error(
-        "permission mode autonomous requires --session-policy <path> at trusted daemon startup"
-    )]
+    #[error("permission mode bounded requires --session-policy <path> at trusted daemon startup")]
     MissingSessionPolicy,
-    #[error(
-        "permission mode autonomous requires --approve-session-policy at trusted daemon startup"
-    )]
+    #[error("permission mode bounded requires --approve-session-policy at trusted daemon startup")]
     MissingSessionPolicyApproval,
-    #[error("--session-policy/--approve-session-policy are valid only with --permission-mode autonomous")]
+    #[error(
+        "--session-policy/--approve-session-policy are valid only with --permission-mode bounded"
+    )]
     UnexpectedSessionPolicy,
     #[error("permission mode unrestricted is disabled by managed startup configuration")]
     UnrestrictedDisabled,
@@ -354,7 +353,7 @@ fn parse_permission_mode(
 ) -> Result<PermissionMode, PermissionModeError> {
     let mode = match configured.unwrap_or("standard") {
         "standard" => PermissionMode::Standard,
-        "autonomous" => PermissionMode::Autonomous,
+        "bounded" | "autonomous" => PermissionMode::Bounded,
         "unrestricted" | "yolo" => PermissionMode::Unrestricted,
         other => return Err(PermissionModeError::Unknown(other.to_owned())),
     };
@@ -362,7 +361,7 @@ fn parse_permission_mode(
         (PermissionMode::Unrestricted, false) => {
             Err(PermissionModeError::MissingDangerAcknowledgement)
         }
-        (PermissionMode::Standard | PermissionMode::Autonomous, true) => {
+        (PermissionMode::Standard | PermissionMode::Bounded, true) => {
             Err(PermissionModeError::UnexpectedDangerAcknowledgement)
         }
         _ => Ok(mode),
@@ -422,7 +421,7 @@ pub fn validate_startup_authorization() -> anyhow::Result<()> {
         std::env::var_os(crate::session_manifest::SESSION_POLICY_FILE_ENV).is_some();
     let session_policy_approved = env_flag(crate::session_manifest::SESSION_POLICY_APPROVED_ENV);
     match mode {
-        PermissionMode::Autonomous => {
+        PermissionMode::Bounded => {
             if !session_policy_configured {
                 return Err(PermissionModeError::MissingSessionPolicy.into());
             }
@@ -433,7 +432,7 @@ pub fn validate_startup_authorization() -> anyhow::Result<()> {
                 .map_err(anyhow::Error::msg)?
                 .ok_or(PermissionModeError::MissingSessionPolicy)?;
             if manifest.is_expired() {
-                anyhow::bail!("autonomous session policy is already expired");
+                anyhow::bail!("bounded session policy is already expired");
             }
         }
         PermissionMode::Standard | PermissionMode::Unrestricted => {
@@ -510,10 +509,26 @@ mod tests {
     }
 
     #[test]
-    fn autonomous_needs_no_bypass_flag() {
+    fn bounded_needs_no_bypass_flag() {
+        assert_eq!(
+            parse_permission_mode(Some("bounded"), false).unwrap(),
+            PermissionMode::Bounded
+        );
+    }
+
+    #[test]
+    fn autonomous_remains_a_compatibility_alias_for_bounded() {
         assert_eq!(
             parse_permission_mode(Some("autonomous"), false).unwrap(),
-            PermissionMode::Autonomous
+            PermissionMode::Bounded
+        );
+        assert_eq!(
+            serde_json::from_str::<PermissionMode>("\"autonomous\"").unwrap(),
+            PermissionMode::Bounded
+        );
+        assert_eq!(
+            serde_json::to_string(&PermissionMode::Bounded).unwrap(),
+            "\"bounded\""
         );
     }
 

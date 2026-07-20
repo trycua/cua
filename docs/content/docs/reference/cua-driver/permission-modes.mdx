@@ -1,6 +1,6 @@
 ---
 title: Permission modes and bounded autonomy
-description: Standard, autonomous, and unrestricted startup modes, protected consent, session manifests, and revocation in Cua Driver.
+description: Standard, bounded, and unrestricted startup modes, protected consent, session manifests, and revocation in Cua Driver.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -14,11 +14,14 @@ approval; permission policies still decide which calls are allowed.
 | Mode | Startup | Human intervention | Existing logged-in profile |
 | --- | --- | --- | --- |
 | `standard` | Default | Currently once for existing-profile attachment; other risk classes are metadata-only until their adapters ship | Requires a certified protected-consent provider and its persistent Stop indicator |
-| `autonomous` | `--permission-mode autonomous --session-policy <path> --approve-session-policy` | Once when a trusted launcher reviews and approves the bounded manifest | Allowed only when the manifest names the exact PID/window and a certified indicator provider is available |
-| `unrestricted` | `--permission-mode unrestricted --dangerously-bypass-approvals` | Once at trusted launch; no runtime Cua approval prompts | May attach without a protected provider after the explicit launch warning |
+| `bounded` | `--permission-mode bounded --session-policy <path> --approve-session-policy` | Once when a trusted launcher reviews and approves the bounded manifest | Allowed only when the manifest names the exact PID/window and a certified indicator provider is available |
+| `unrestricted` | `--dangerously-bypass-approvals` | Once at trusted launch; no runtime Cua approval prompts | May attach without a protected provider after the explicit launch warning |
 
-`yolo` is an alias for `unrestricted`. Scripts and managed configuration
-should use the canonical name.
+`autonomous` remains a compatibility alias for `bounded`; new launchers and
+manifests should use `bounded`. `yolo` remains a configuration alias for
+`unrestricted`. The CLI's deliberately alarming bypass flag selects
+`unrestricted` and records the launch-time risk acknowledgement in one step.
+Passing `--permission-mode unrestricted` without that flag still fails closed.
 
 <Callout type="warn">
   Unrestricted mode does not defend against prompt injection or unintended
@@ -35,7 +38,7 @@ must pass each active layer:
 1. The reviewed built-in tool and risk map.
 2. The administrator policy from `CUA_DRIVER_MANAGED_POLICY_FILE`, when set.
 3. The user policy from `CUA_DRIVER_POLICY_FILE`, when set.
-4. The autonomous session manifest, in `autonomous` mode.
+4. The bounded session manifest, in `bounded` mode.
 5. A live resource grant for adapters marked `risk.enforcement: "active"`.
 
 Each layer can narrow access. Approval and unrestricted mode cannot widen a
@@ -57,7 +60,7 @@ provider activates a persistent indicator with a Stop control.
 Ordinary MCP elicitation, MCP tool arguments, inherited standard input, a TTY,
 environment variables, and files do not satisfy this contract. They are
 writable by the calling process. If the daemon has no certified provider,
-`standard` and `autonomous` refuse existing-profile attachment.
+`standard` and `bounded` refuse existing-profile attachment.
 
 <Callout type="info">
   The current standalone CLI/MCP daemon has no certified Codex or Claude host
@@ -70,10 +73,10 @@ The old file-backed `browser-approve` artifact is disabled by default for
 existing profiles. A trusted launcher can temporarily enable it with
 `--allow-legacy-existing-profile-approval`, but the artifact is a compatibility
 mechanism, not protected human consent.
-It is accepted only in `standard` mode and cannot be combined with autonomous
+It is accepted only in `standard` mode and cannot be combined with bounded
 or unrestricted startup.
 
-## Autonomous session manifest
+## Bounded session manifest
 
 The launcher loads one YAML manifest at startup and confirms it with the
 separate `--approve-session-policy` flag. The daemon hashes the file, keeps an
@@ -85,7 +88,7 @@ revived by another call.
 
 ```yaml
 version: 1
-mode: autonomous
+mode: bounded
 expires_after: 8h
 idle_timeout: 30m
 
@@ -137,7 +140,22 @@ process identity over a long session: an OS can eventually reuse identifiers.
 Keep manifests short-lived and revoke or restart after a browser relaunch.
 Launch supervisors must preserve `--permission-mode`, the session-policy path,
 and its explicit approval flag on restart; falling back to default `standard`
-is a fail-closed change, not a continuation of the autonomous session.
+is a fail-closed change, not a continuation of the bounded session.
+
+## Embedded and managed launchers
+
+The CLI flag is intentionally convenient, but programmatic launchers retain a
+two-part contract. Set both values on the trusted daemon process:
+
+```sh
+CUA_DRIVER_PERMISSION_MODE=unrestricted \
+CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS=1 \
+  cua-driver serve --embedded --socket <private-socket>
+```
+
+Setting only the mode or only the acknowledgement fails before the daemon
+binds. Treat these as trusted-launch configuration, not tool arguments an
+agent can choose at runtime.
 
 ## Managed controls
 

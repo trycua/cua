@@ -1,5 +1,12 @@
 # Driver Permission Modes Implementation Journal
 
+> Contract update: the shipped canonical middle-mode name is `bounded`, with
+> `autonomous` retained as a compatibility alias. The interactive CLI danger
+> flag now selects `unrestricted` as well as acknowledging its risk; embedded
+> and environment-driven launchers still provide mode and acknowledgement as
+> two explicit values. Historical entries below use the names current when
+> each implementation step was recorded.
+
 ## Status
 
 - **Goal:** Implement the reviewed driver permission-mode and consent plan.

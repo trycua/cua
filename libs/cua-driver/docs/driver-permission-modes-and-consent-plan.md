@@ -15,6 +15,19 @@
   [permission-policy concept](../../../docs/content/docs/concepts/how-permission-policies-work.mdx),
   and [permission-policy reference](../../../docs/content/docs/reference/cua-driver/permission-policies.mdx)
 
+### Implemented contract amendment
+
+The implementation keeps this plan's three semantics but uses `bounded` as
+the canonical middle-mode value; `autonomous` remains a compatibility alias.
+This avoids conflating permission scope with an agent loop's task-continuation
+autonomy. For an interactive CLI launch, `--dangerously-bypass-approvals`
+selects `unrestricted` and serves as the explicit risk acknowledgement.
+Programmatic and embedded launchers retain the two-part
+`CUA_DRIVER_PERMISSION_MODE=unrestricted` plus
+`CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS=1` contract. References to
+`autonomous` below preserve the terminology used when this reviewed plan was
+written.
+
 This plan preserves the existing browser identity, endpoint, generation,
 reconnect, and cleanup work. The earlier attachment plan correctly rejects the
 generic MCP host marker as evidence of a human decision. This plan extends it

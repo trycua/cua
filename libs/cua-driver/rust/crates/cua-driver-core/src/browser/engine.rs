@@ -86,7 +86,7 @@ fn authorize_live_browser_origin(
     let manifest = manifest.ok_or_else(|| {
         refuse(
             BrowserRefusalCode::BrowserOriginOutsideScope,
-            "the autonomous session policy is unavailable",
+            "the bounded session policy is unavailable",
         )
     })?;
     manifest
@@ -1243,14 +1243,14 @@ impl BrowserEngine {
 
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
         if crate::authorization::configured_permission_mode()
-            .is_ok_and(|mode| mode == crate::authorization::PermissionMode::Autonomous)
+            .is_ok_and(|mode| mode == crate::authorization::PermissionMode::Bounded)
         {
             let frame_tree = conn
                 .call(Some(&cdp_session), "Page.getFrameTree", json!({}))
                 .await
                 .map_err(|error| {
                     route_err(
-                        "could not prove the live browser origin before autonomous input",
+                        "could not prove the live browser origin before bounded-mode input",
                         error,
                     )
                 })?;
@@ -1267,7 +1267,7 @@ impl BrowserEngine {
                 crate::session_manifest::configured_session_manifest().map_err(|error| {
                     refuse(
                         BrowserRefusalCode::BrowserOriginOutsideScope,
-                        format!("the autonomous session policy is unavailable: {error}"),
+                        format!("the bounded session policy is unavailable: {error}"),
                     )
                 })?;
             authorize_live_browser_origin(manifest, live_url)?;
@@ -2500,7 +2500,7 @@ mod tests {
             &path,
             r#"
 version: 1
-mode: autonomous
+mode: bounded
 expires_after: 1h
 idle_timeout: 10m
 resources:

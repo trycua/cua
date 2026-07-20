@@ -84,16 +84,16 @@ impl SessionManifest {
                 let pid = args
                     .get("pid")
                     .and_then(serde_json::Value::as_i64)
-                    .ok_or_else(|| "autonomous existing-profile access requires pid".to_owned())?;
+                    .ok_or_else(|| "bounded existing-profile access requires pid".to_owned())?;
                 let window_id = args
                     .get("window_id")
                     .and_then(serde_json::Value::as_u64)
                     .ok_or_else(|| {
-                        "autonomous existing-profile access requires window_id".to_owned()
+                        "bounded existing-profile access requires window_id".to_owned()
                     })?;
                 if !self.existing_profiles.contains(&(pid, window_id)) {
                     return Err(format!(
-                        "browser pid {pid} window {window_id} is outside the autonomous session policy"
+                        "browser pid {pid} window {window_id} is outside the bounded session policy"
                     ));
                 }
             }
@@ -101,7 +101,7 @@ impl SessionManifest {
                 let url = args
                     .get("url")
                     .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| "autonomous browser navigation requires url".to_owned())?;
+                    .ok_or_else(|| "bounded browser navigation requires url".to_owned())?;
                 self.authorize_browser_url(url)?;
             }
             _ => {}
@@ -116,7 +116,7 @@ impl SessionManifest {
             Ok(())
         } else {
             Err(format!(
-                "browser origin '{origin}' is outside the autonomous session policy"
+                "browser origin '{origin}' is outside the bounded session policy"
             ))
         }
     }
@@ -129,18 +129,18 @@ impl SessionManifest {
         self.idle_expired.load(Ordering::Acquire)
     }
 
-    /// Refresh the autonomous idle lease only after a call passed every
+    /// Refresh the bounded-mode idle lease only after a call passed every
     /// manifest decision and resource check. Once the idle lease expires it is
     /// terminal for this daemon instance; a tool call cannot revive it.
     pub fn authorize_dispatch(&self) -> Result<(), String> {
         if self.is_idle_expired() {
-            return Err("autonomous session policy idle timeout exceeded".to_owned());
+            return Err("bounded session policy idle timeout exceeded".to_owned());
         }
         let now = Instant::now();
         let mut last = self.last_authorized_dispatch.lock().unwrap();
         if now.duration_since(*last) > self.idle_timeout {
             self.idle_expired.store(true, Ordering::Release);
-            return Err("autonomous session policy idle timeout exceeded".to_owned());
+            return Err("bounded session policy idle timeout exceeded".to_owned());
         }
         *last = now;
         Ok(())
@@ -235,8 +235,8 @@ pub(crate) fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
                 raw.version
             ));
         }
-        if raw.mode != "autonomous" {
-            return Err("session policy mode must be autonomous".to_owned());
+        if !matches!(raw.mode.as_str(), "bounded" | "autonomous") {
+            return Err("session policy mode must be bounded".to_owned());
         }
         let expires_after = parse_duration(&raw.expires_after)?;
         let idle_timeout = parse_duration(&raw.idle_timeout)?;
@@ -320,7 +320,7 @@ pub(crate) fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
                 .find(|tool| allow.contains(**tool))
             {
                 return Err(format!(
-                    "origin-scoped autonomous manifests cannot allow '{tool}' because it bypasses the typed browser origin adapter"
+                    "origin-scoped bounded manifests cannot allow '{tool}' because it bypasses the typed browser origin adapter"
                 ));
             }
         }
@@ -445,7 +445,7 @@ mod tests {
         let loaded = manifest(
             r#"
 version: 1
-mode: autonomous
+mode: bounded
 expires_after: 8h
 idle_timeout: 30m
 resources: {}
@@ -466,11 +466,21 @@ ask:
 
     #[cfg(feature = "yaml")]
     #[test]
+    fn autonomous_manifest_mode_remains_a_compatibility_alias() {
+        let loaded = manifest(
+            "version: 1\nmode: autonomous\nexpires_after: 1h\nidle_timeout: 5m\nallow:\n  tools: [get_config]\n",
+        )
+        .unwrap();
+        assert_eq!(loaded.decision("get_config"), ManifestDecision::Allow);
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
     fn browser_resources_bind_existing_profile_and_origins() {
         let manifest = manifest(
             r#"
 version: 1
-mode: autonomous
+mode: bounded
 expires_after: 8h
 idle_timeout: 30m
 resources:
@@ -520,7 +530,7 @@ allow:
         let loaded = manifest(
             r#"
 version: 1
-mode: autonomous
+mode: bounded
 expires_after: 1h
 idle_timeout: 1s
 resources: {}
@@ -538,7 +548,7 @@ allow:
         assert!(manifest(
             r#"
 version: 1
-mode: autonomous
+mode: bounded
 expires_after: 1h
 idle_timeout: 10m
 resources:
@@ -556,13 +566,13 @@ allow:
     #[test]
     fn unknown_and_overlapping_tools_are_rejected() {
         let unknown = manifest(
-            "version: 1\nmode: autonomous\nexpires_after: 1h\nidle_timeout: 5m\nallow:\n  tools: [future_tool]\n",
+            "version: 1\nmode: bounded\nexpires_after: 1h\nidle_timeout: 5m\nallow:\n  tools: [future_tool]\n",
         )
         .unwrap_err();
         assert!(unknown.contains("unknown or unreviewed"));
 
         let overlap = manifest(
-            "version: 1\nmode: autonomous\nexpires_after: 1h\nidle_timeout: 5m\nallow:\n  tools: [click]\ndeny:\n  tools: [click]\n",
+            "version: 1\nmode: bounded\nexpires_after: 1h\nidle_timeout: 5m\nallow:\n  tools: [click]\ndeny:\n  tools: [click]\n",
         )
         .unwrap_err();
         assert!(overlap.contains("more than one decision set"));

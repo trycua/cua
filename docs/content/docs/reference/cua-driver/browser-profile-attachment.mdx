@@ -25,14 +25,14 @@ with legacy `allow_launch` or `profile` fields. Authorization depends on the
 daemon's immutable [permission mode](/reference/cua-driver/permission-modes):
 
 - `standard` requests exact protected consent from a certified host provider.
-- `autonomous` requires the launch-approved manifest to list this PID/window;
+- `bounded` requires the launch-approved manifest to list this PID/window;
   the provider activates its persistent Stop indicator without a second prompt.
 - `unrestricted` attaches without a runtime approval after the trusted launcher
   supplied `--dangerously-bypass-approvals`.
 
 The internal approval marker supplied by an MCP transport does not authorize
 this strategy. The standalone daemon currently has no certified Codex or Claude
-host provider, so `standard` and `autonomous` fail closed there. Use an isolated
+host provider, so `standard` and `bounded` fail closed there. Use an isolated
 profile or an explicitly launched unrestricted daemon.
 
 The old `browser-approve` file artifact is disabled by default. A trusted
@@ -91,7 +91,7 @@ by the previous generation.
 | --- | --- |
 | Network exposure | The accepted DevTools endpoint must be loopback-only. |
 | Process binding | The endpoint, native window, and live process fingerprint must agree before every mutation. |
-| Driver authorization | Standard and autonomous setup need a request-bound protected provider; a model-supplied Boolean, ordinary MCP approval, TTY input, and files are insufficient. |
+| Driver authorization | Standard and bounded setup need a request-bound protected provider; a model-supplied Boolean, ordinary MCP approval, TTY input, and files are insufficient. |
 | Revocation | A protected grant cannot become live until its provider activates persistent Stop UI. `cua-driver revoke` and session end provide additional deny-only paths. |
 | Capability scope | Targets, tabs, dialogs, frames, and refs are opaque, session-scoped, and invalidated after navigation or connection-generation changes. |
 | Profile handling | Cua Driver does not copy, edit, restart, or terminate the selected existing profile. |
@@ -116,7 +116,7 @@ for why Cua Driver uses CDP and which risks remain outside the driver.
 | `browser_input_incomplete` | Keystroke typing delivered only a reported prefix. |
 | `browser_route_unavailable` | The classified engine or platform has no accepted typed route. For Firefox and Safari, bounded detail identifies the required protocol and current lifecycle limitation. |
 | `browser_input_trust_unavailable` | Trusted input cannot preserve background posture. Bounded detail identifies the explicit `dom_event` alternative when a synthetic ref-targeted action is acceptable. |
-| `browser_origin_outside_scope` | An autonomous tab left the manifest's allowed origin set; further mutation pauses. |
+| `browser_origin_outside_scope` | A bounded-mode tab left the manifest's allowed origin set; further mutation pauses. |
 
 ## Recording and telemetry
 

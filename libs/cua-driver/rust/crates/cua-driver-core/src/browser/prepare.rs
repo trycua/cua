@@ -726,7 +726,7 @@ impl BrowserEngine {
         } else {
             return Err(refusal(
                 BrowserRefusalCode::BrowserConsentRequired,
-                "existing-profile attachment requires a certified trusted-consent provider in standard/autonomous mode; the legacy file-backed artifact is disabled",
+                "existing-profile attachment requires a certified trusted-consent provider in standard/bounded mode; the legacy file-backed artifact is disabled",
             )
             .with_detail(serde_json::json!({
                 "permission_mode": mode.as_str(),
@@ -889,7 +889,7 @@ impl BrowserEngine {
                 ),
             );
             Some(
-                if mode == crate::authorization::PermissionMode::Autonomous {
+                if mode == crate::authorization::PermissionMode::Bounded {
                     self.approval_broker
                         .activate_preapproved(&approval_request)
                         .await

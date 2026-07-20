@@ -52,6 +52,17 @@ fn configure_startup_permission_mode(
 ) -> anyhow::Result<()> {
     if let Some(mode) = permission_mode {
         std::env::set_var(cua_driver_core::authorization::PERMISSION_MODE_ENV, mode);
+    } else if dangerously_bypass_approvals
+        && std::env::var_os(cua_driver_core::authorization::PERMISSION_MODE_ENV).is_none()
+    {
+        // The alarming CLI flag is both the unrestricted-mode selector and
+        // the user's explicit launch-time risk acknowledgement. Embedded and
+        // environment-driven launchers retain the two-part mode + acceptance
+        // contract because they do not pass through this CLI normalization.
+        std::env::set_var(
+            cua_driver_core::authorization::PERMISSION_MODE_ENV,
+            "unrestricted",
+        );
     }
     if dangerously_bypass_approvals {
         std::env::set_var(cua_driver_core::authorization::DANGEROUS_BYPASS_ENV, "1");

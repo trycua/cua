@@ -62,7 +62,7 @@ pub enum BrowserRefusalCode {
     /// browser action.
     BrowserActionUnavailable,
     /// The live top-level document left the origin set approved in the
-    /// autonomous session manifest. Further browser input is paused.
+    /// bounded session manifest. Further browser input is paused.
     BrowserOriginOutsideScope,
 }
 

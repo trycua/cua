@@ -47,13 +47,13 @@ pub enum Command {
         /// Immutable agent-authorization mode selected at trusted daemon
         /// startup. This is distinct from the macOS OS-permissions gate.
         permission_mode: Option<String>,
-        /// Deliberate second signal required for unrestricted mode.
+        /// Deliberate unrestricted-mode selector and risk acknowledgement.
         dangerously_bypass_approvals: bool,
         /// Temporary trusted-launcher compatibility path for the forgeable
         /// file-backed existing-profile approval artifact.
         allow_legacy_existing_profile_approval: bool,
         /// Immutable bounded-autonomy manifest selected by the trusted
-        /// launcher. Valid only in autonomous mode.
+        /// launcher. Valid only in bounded mode.
         session_policy: Option<String>,
         /// Deliberate launch-time confirmation that the manifest was reviewed.
         approve_session_policy: bool,
@@ -465,11 +465,12 @@ pub fn parse_command() -> Command {
         println!("                                  Approve attachment to one exact existing browser request.");
         println!();
         println!("agent authorization (serve only):");
+        println!("  --permission-mode <mode>        standard (default), bounded, or unrestricted.");
         println!(
-            "  --permission-mode <mode>        standard (default), autonomous, or unrestricted."
+            "  --dangerously-bypass-approvals  Select unrestricted mode and acknowledge its risk."
         );
-        println!("  --dangerously-bypass-approvals  Required with unrestricted. The mode is fixed for the");
-        println!("                                  daemon lifetime and cannot be changed by a tool call.");
+        println!("                                  The mode is fixed for the daemon lifetime and cannot");
+        println!("                                  be changed by a tool call.");
         println!("  --allow-legacy-existing-profile-approval");
         println!("                                  Temporary migration flag for the forgeable file-backed");
         println!("                                  approval artifact; never treated as protected consent.");
@@ -477,7 +478,9 @@ pub fn parse_command() -> Command {
         println!(
             "                                  controls the macOS OS-permission onboarding UI."
         );
-        println!("  --session-policy <path>         Required in autonomous mode; immutable bounded tool manifest.");
+        println!(
+            "  --session-policy <path>         Required in bounded mode; immutable tool manifest."
+        );
         println!("  --approve-session-policy        Required with --session-policy; the trusted launcher asserts");
         println!("                                  that the human reviewed this exact manifest at startup.");
         println!();
@@ -1365,11 +1368,11 @@ pub fn build_manifest() -> serde_json::Value {
               "description": "Run the long-lived daemon — backs the proxy/auto-relaunch path on macOS and the autostart Session 1+ daemon on Windows.",
               "args": [
                   { "name": "--socket", "type": "string", "description": "Override the listen socket path." },
-                  { "name": "--permission-mode", "type": "string", "description": "Immutable daemon authorization mode: standard, autonomous, or unrestricted." },
-                  { "name": "--dangerously-bypass-approvals", "type": "flag", "description": "Required deliberate risk acknowledgement for unrestricted mode." },
+                  { "name": "--permission-mode", "type": "string", "description": "Immutable daemon authorization mode: standard, bounded, or unrestricted." },
+                  { "name": "--dangerously-bypass-approvals", "type": "flag", "description": "Select unrestricted mode and acknowledge its risk." },
                   { "name": "--allow-legacy-existing-profile-approval", "type": "flag", "description": "Temporary migration flag for the unprotected file-backed existing-profile artifact." },
-                  { "name": "--session-policy", "type": "string", "description": "Immutable bounded-autonomy manifest required in autonomous mode." },
-                  { "name": "--approve-session-policy", "type": "flag", "description": "Trusted-launcher confirmation that the exact autonomous manifest was reviewed." },
+                  { "name": "--session-policy", "type": "string", "description": "Immutable tool manifest required in bounded mode." },
+                  { "name": "--approve-session-policy", "type": "flag", "description": "Trusted-launcher confirmation that the exact bounded manifest was reviewed." },
                   { "name": "--no-permissions-gate", "type": "flag", "description": "Skip the macOS TCC first-launch gate." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Forwarded by the MCP proxy when the client asked for the compat surface." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
@@ -2552,14 +2555,14 @@ fn cli_docs_json() -> serde_json::Value {
                 "options": [
                     {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},
                     {"name":"pid-file","short_name":null,"help":"Override the pid-file path on Unix targets.","type":"String","default_value":null,"is_optional":true},
-                    {"name":"permission-mode","short_name":null,"help":"Immutable agent authorization mode: standard, autonomous, or unrestricted.","type":"String","default_value":"standard","is_optional":true},
-                    {"name":"session-policy","short_name":null,"help":"Immutable bounded-autonomy manifest required in autonomous mode.","type":"String","default_value":null,"is_optional":true},
+                    {"name":"permission-mode","short_name":null,"help":"Immutable agent authorization mode: standard, bounded, or unrestricted.","type":"String","default_value":"standard","is_optional":true},
+                    {"name":"session-policy","short_name":null,"help":"Immutable tool manifest required in bounded mode.","type":"String","default_value":null,"is_optional":true},
                     {"name":"host-bundle-id","short_name":null,"help":"Advisory host bundle id label echoed in check_permissions output (embedded mode).","type":"String","default_value":null,"is_optional":true}
                 ],
                 "flags": [
-                    {"name":"dangerously-bypass-approvals","short_name":null,"help":"Required deliberate risk acknowledgement for unrestricted mode.","default_value":false},
+                    {"name":"dangerously-bypass-approvals","short_name":null,"help":"Select unrestricted mode and acknowledge its risk.","default_value":false},
                     {"name":"allow-legacy-existing-profile-approval","short_name":null,"help":"Temporary migration flag for the unprotected file-backed existing-profile artifact.","default_value":false},
-                    {"name":"approve-session-policy","short_name":null,"help":"Trusted-launcher confirmation that the exact autonomous manifest was reviewed.","default_value":false},
+                    {"name":"approve-session-policy","short_name":null,"help":"Trusted-launcher confirmation that the exact bounded manifest was reviewed.","default_value":false},
                     {"name":"no-permissions-gate","short_name":null,"help":"Skip the macOS first-launch permissions gate.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.","default_value":false}
                 ],

@@ -1413,6 +1413,18 @@ fn run_trusted_click(spec: &BrowserSpec) {
                     "{}",
                     click.raw
                 );
+                assert_eq!(
+                    click.structured()["refusal"]["detail"]["alternative_route"],
+                    "dom_event",
+                    "{}",
+                    click.raw
+                );
+                assert_eq!(
+                    click.structured()["refusal"]["detail"]["trusted_delivery_attempted"],
+                    false,
+                    "{}",
+                    click.raw
+                );
                 wait_for_text(&fixture.server, "lbl-counter", "counter=0");
                 Observation::refused(
                     RefusalCode::BrowserInputTrustUnavailable,
@@ -1911,6 +1923,85 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                     windows.raw
                 );
                 Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+            })
+        },
+    );
+}
+
+#[cfg(target_os = "linux")]
+fn run_generic_wayland_existing_profile_refusal(spec: &BrowserSpec) {
+    assert!(
+        std::env::var_os("WAYLAND_DISPLAY").is_some() && std::env::var_os("SWAYSOCK").is_none(),
+        "the generic-Wayland refusal row must run in a non-Sway Wayland session"
+    );
+    let scenario = format!(
+        "{}-{}-standalone-generic-wayland-existing-profile-refusal",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(
+        refusal_case(
+            &spec.name,
+            "browser_prepare_existing_profile_generic_wayland",
+            RefusalCode::BrowserBindingAmbiguous,
+        ),
+        |evidence| {
+            let mut fixture = launch_unprepared_browser(spec, &scenario);
+            *evidence = recording_evidence(fixture.driver.recording_dir());
+            run_with_background_oracles(&mut fixture, |fixture| {
+                let session = format!("generic-wayland-refusal-{}", fixture.pid);
+                let started = fixture
+                    .driver
+                    .call("start_session", serde_json::json!({ "session": session }));
+                assert!(!started.is_error(), "start_session failed: {}", started.raw);
+                let approval_token = mint_existing_profile_approval(ExistingProfileApprovalScope {
+                    pid: fixture.pid as i64,
+                    window_id: fixture.window_id,
+                    session: session.clone(),
+                })
+                .expect("mint exact generic-Wayland approval");
+                fixture.driver.start_behavior_recording();
+                let refused = fixture.driver.call(
+                    "browser_prepare",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64,
+                        "window_id": fixture.window_id,
+                        "session": session,
+                        "strategy": {"kind": "existing_profile"},
+                        "approval_token": approval_token,
+                    }),
+                );
+                assert_eq!(
+                    refused.structured()["refusal"]["code"],
+                    "browser_binding_ambiguous",
+                    "{}",
+                    refused.raw
+                );
+                assert!(
+                    refused.structured()["refusal"]["detail"]["setup_side_effects"].is_null(),
+                    "generic Wayland must refuse before setup mutation: {}",
+                    refused.raw
+                );
+                wait_for_observed(&fixture.server, "WEB_HARNESS_MARKER_v1");
+                wait_for_text(&fixture.server, "lbl-counter", "counter=0");
+                let windows = fixture
+                    .driver
+                    .call("list_windows", serde_json::json!({"pid": fixture.pid}));
+                assert!(
+                    windows.structured()["windows"]
+                        .as_array()
+                        .is_some_and(|windows| windows.iter().any(|window| {
+                            window["window_id"].as_u64() == Some(fixture.window_id)
+                        })),
+                    "refusal must leave the approved browser window intact: {}",
+                    windows.raw
+                );
+                Observation::refused(
+                    RefusalCode::BrowserBindingAmbiguous,
+                    vec![OracleKind::FixtureState],
+                    refused.text(),
+                    Evidence::default(),
+                )
             })
         },
     );
@@ -2934,6 +3025,11 @@ standalone_browser_test!(
 standalone_browser_test!(
     standalone_browser_existing_profile_setup,
     run_existing_profile_setup
+);
+#[cfg(target_os = "linux")]
+standalone_browser_test!(
+    standalone_browser_generic_wayland_existing_profile_refusal,
+    run_generic_wayland_existing_profile_refusal
 );
 standalone_browser_test!(standalone_browser_stale_ref, run_stale_ref);
 standalone_browser_test!(standalone_browser_frames, run_frame_roundtrip);

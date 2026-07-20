@@ -32,6 +32,9 @@ support hardening branch. It is not a public support contract.
   protocol, and lifecycle detail before native-window probing.
 - Enriched pre-dispatch trusted-input refusals with the explicit synthetic
   alternative and a proof that no trusted delivery was attempted.
+- Added a real-browser generic-Wayland refusal row. It requires a non-Sway
+  native session and proves the browser window and fixture state are unchanged
+  when exact compositor identity is unavailable.
 - Added protocol and compositor identity design records.
 
 ## Local evidence

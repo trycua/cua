@@ -36,6 +36,12 @@ support hardening branch. It is not a public support contract.
   native session and proves the browser window and fixture state are unchanged
   when exact compositor identity is unavailable.
 - Added protocol and compositor identity design records.
+- Added a GNOME Wayland browser-identity candidate using WinRects helper API
+  v4. Browser-sensitive calls now prove the immutable D-Bus owner is the
+  current user's system-installed GNOME Shell process, use exact compositor
+  window identity, and restore the previously focused Shell window after each
+  bounded setup or consent operation. The public support claim remains pending
+  representative GNOME evidence.
 
 ## Local evidence
 
@@ -43,6 +49,8 @@ support hardening branch. It is not a public support contract.
 - `cargo test -p cua-driver-testkit`: 49 passed, 0 failed.
 - `cargo test -p cua-driver --test standalone_browser_behavior_test --no-run`:
   compiled successfully at the current working tree.
+- `cargo test -p platform-linux --no-default-features`: platform code compiled
+  on macOS; Linux-only helper tests are scheduled on the GNOME/Sway workers.
 
 ## Representative evidence pending
 

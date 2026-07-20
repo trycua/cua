@@ -39,14 +39,23 @@ and AT-SPI window. A generic user-provided script or title lookup is not enough.
 ### GNOME Shell and Mutter
 
 GNOME Shell has in-process APIs that can enumerate application PIDs and
-windows, but Cua Driver has no stable public external identity route today. An
-accepted implementation therefore needs a narrowly scoped, maintained Shell
-extension or an upstream compositor protocol that exports a versioned exact
-window identifier, PID, geometry, focus, and stacking state.
+windows. Cua Driver's maintained WinRects extension v4 now exposes the narrow
+candidate route needed by browser setup: a versioned stable window identifier,
+PID, geometry, focus, stacking state, and exact activation.
+
+The Linux adapter resolves the extension's immutable unique D-Bus owner,
+verifies that the owner is the current user's system-installed `gnome-shell`
+process, requires helper API v4 for browser-sensitive calls, and addresses that
+unique owner directly. This prevents an unrelated same-session process from
+replacing the public bus name between verification and activation. Setup and
+consent briefly activate one exact window, then restore and verify the prior
+Shell focus.
 
 The adapter must refuse when the component is missing, incompatible, disabled,
 or unable to distinguish multiple windows for one browser process. Enabling a
-generic unsafe-mode switch is not an acceptable production dependency.
+generic unsafe-mode switch is not an acceptable production dependency. This
+route remains a candidate until the full GNOME Wayland browser matrix supplies
+the release evidence below.
 
 ### Other Compositors
 
@@ -88,4 +97,3 @@ A compositor is listed as supported only after the canonical matrix records:
 6. before and after evidence plus playable video at the exact source commit;
 7. explicit environment results for missing APIs or accessibility trees; and
 8. generic and unknown Wayland sessions refusing before mutation.
-

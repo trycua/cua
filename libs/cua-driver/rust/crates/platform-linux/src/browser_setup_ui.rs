@@ -143,10 +143,13 @@ fn with_target_foreground<T>(
     body: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        let window = crate::wayland::sway_ipc::window_for_id(window_id)
-            .filter(|window| window.pid == pid)
-            .ok_or_else(|| anyhow::anyhow!("no exact Sway container owns the approved window"))?;
-        crate::wayland::sway_ipc::with_focused_container(window.id, body)
+        if let Some(window) =
+            crate::wayland::sway_ipc::window_for_id(window_id).filter(|window| window.pid == pid)
+        {
+            crate::wayland::sway_ipc::with_focused_container(window.id, body)
+        } else {
+            crate::wayland::shell_helper::with_focused_window(pid, window_id, body)
+        }
     } else {
         crate::input::with_x11_foreground(window_id, 80, body)
     }

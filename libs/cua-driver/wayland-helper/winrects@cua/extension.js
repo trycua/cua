@@ -11,6 +11,7 @@ Gio._promisify(Shell.Screenshot.prototype, 'screenshot_stage_to_content');
 Gio._promisify(Shell.Screenshot, 'composite_to_stream');
 
 const IFACE = `<node><interface name="org.cua.WinRects">
+<method name="GetVersion"><arg type="u" direction="out" name="version"/></method>
 <method name="GetRects"><arg type="s" direction="out" name="json"/></method>
 <method name="Capture"><arg type="s" direction="out" name="png_base64"/></method>
 <method name="Activate"><arg type="u" direction="in" name="id"/><arg type="b" direction="out" name="activated"/></method>
@@ -68,6 +69,7 @@ export default class WinRectsExtension extends Extension {
         if (this._impl) { this._impl.unexport(); this._impl = null; }
         if (this._nameId) { Gio.bus_unown_name(this._nameId); this._nameId = 0; }
     }
+    GetVersion() { return 4; }
     GetRects() {
         const actors = global.get_window_actors();
         const actorByWindow = new Map();

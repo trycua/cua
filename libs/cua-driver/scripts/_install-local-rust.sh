@@ -489,6 +489,20 @@ if [ "$OS" = "Darwin" ]; then
     fi
     echo "${GREEN}installed $APP_DEST${NORMAL}"
 
+    # --- Force LaunchServices registration of the freshly-copied bundle ----
+    #
+    # `ditto` drops the bundle on disk, but LaunchServices registers the new
+    # com.trycua.driver identity ASYNCHRONOUSLY (seconds later). Until it does,
+    # `tccutil reset com.trycua.driver` fails with -10814 ("No such bundle
+    # identifier") and the stale-grant reset below silently no-ops, and
+    # `open -n -g -a CuaDriver` (what `permissions grant` / the MCP proxy use to
+    # launch the daemon) fails with -1728. A synchronous `lsregister -f` closes
+    # that race so both the reset and the first launch resolve the bundle id.
+    LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
+    if [ -x "$LSREGISTER" ]; then
+        "$LSREGISTER" -f "$APP_DEST" >/dev/null 2>&1 || true
+    fi
+
     # --- Clear a TCC grant pinned to a PREVIOUS signing identity -----------
     #
     # TCC pins each Accessibility / Screen-Recording grant to the app's

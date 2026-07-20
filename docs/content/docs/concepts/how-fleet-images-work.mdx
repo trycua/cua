@@ -56,7 +56,7 @@ A Fleet image does not only determine what operating system boots. It also deter
 
 That means readiness has to match the image's actual workload. A pool is only meaningfully ready when the guest started from that image has reached the service state the claimant needs. A running replica without its expected service is capacity in progress, not yet a ready environment.
 
-Ports you mark with `.expose(...)` become named Fleet services. When a client later calls `sb.tunnel.forward(...)`, Fleet returns the authenticated service URL for that exposed service. It is not creating a localhost tunnel on the caller's machine.
+Ports you mark with `.expose(...)` become named Fleet services. When a client later calls `sb.tunnel.forward(...)`, Fleet returns the authenticated service URL for that exposed service. It is not creating a localhost tunnel on the caller's machine, and direct requests to that URL still need Fleet authentication.
 
 There is also a non-optional default service contract: the published image must already start the computer-server endpoint on port `8000`. Fleet always creates that `server` service, probes port `8000` for readiness, and waits for `/status` before the sandbox is considered ready.
 

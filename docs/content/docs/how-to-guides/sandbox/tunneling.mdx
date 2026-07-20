@@ -8,7 +8,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 `sb.tunnel.forward()` exposes a port (or Android abstract socket) running inside the sandbox on the local host.
 
 <Callout type="info">
-  Fleet behaves differently from the localhost examples below. For an exposed Fleet service, `sb.tunnel.forward(...)` returns the authenticated Fleet service URL rather than opening a localhost listener on the caller's machine.
+  Fleet behaves differently from the localhost examples below. For an exposed Fleet service, `sb.tunnel.forward(...)` returns the authenticated Fleet service URL rather than opening a localhost listener on the caller's machine. Direct HTTP calls to that URL still require Fleet auth; `TunnelInfo.url` is not an anonymous tunnel endpoint.
 </Callout>
 
 ## Forward a single port

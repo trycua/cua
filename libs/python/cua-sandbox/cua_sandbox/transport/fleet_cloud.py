@@ -5,17 +5,25 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+from urllib.parse import urlparse
+
+import logging
 
 import httpx
 from cua_sandbox._config import (
-    get_base_url,
     get_client_id,
     get_client_secret,
+    get_fleet_base_url,
     get_token_url,
 )
 from cua_sandbox.image import Image
 from cua_sandbox.transport.fleet import FleetTransport
+
+if TYPE_CHECKING:
+    from cua_sandbox.interfaces.tunnel import TunnelInfo
+
+logger = logging.getLogger(__name__)
 
 
 class _FleetClient:
@@ -40,7 +48,7 @@ class _FleetClient:
             timeout=30.0,
         )
         token_response.raise_for_status()
-        self._base_url = get_base_url().rstrip("/")
+        self._base_url = get_fleet_base_url().rstrip("/")
         self._headers = {"Authorization": f"Bearer {token_response.json()['access_token']}"}
 
     def create_pool(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -72,7 +80,12 @@ class _FleetClient:
         return response.json()
 
     def create_claim(self, request: dict[str, Any]) -> dict[str, Any]:
-        pool = self.wait_pool_ready(request["pool"])
+        time_to_start = request.get("time_to_start")
+        pool = (
+            self.wait_pool_ready(request["pool"], time_to_start)
+            if time_to_start is not None
+            else self.wait_pool_ready(request["pool"])
+        )
         namespace = pool["metadata"]["namespace"]
         name = f"{pool['metadata']['name']}-claim"
         body = {
@@ -87,10 +100,17 @@ class _FleetClient:
         response.raise_for_status()
         return response.json()
 
-    def wait_claim(self, claim: dict[str, Any]) -> dict[str, Any]:
+    def wait_claim(
+        self,
+        claim: dict[str, Any],
+        *,
+        services: Optional[list[str]] = None,
+        time_to_start: Optional[float] = None,
+    ) -> dict[str, Any]:
         namespace = claim["metadata"]["namespace"]
         name = claim["metadata"]["name"]
-        deadline = time.monotonic() + 600.0
+        timeout = time_to_start if time_to_start is not None else 600.0
+        deadline = time.monotonic() + timeout
         while True:
             response = httpx.get(
                 f"{self._claim_url(namespace)}/{name}", headers=self._headers, timeout=30.0
@@ -101,11 +121,15 @@ class _FleetClient:
             phase = status.get("phase", "Pending")
             sandbox = (status.get("sandbox") or {}).get("name")
             if phase == "Bound" and sandbox:
-                return {"namespace": namespace, "sandbox": sandbox, "services": ["server"]}
+                return {
+                    "namespace": namespace,
+                    "sandbox": sandbox,
+                    "services": services or ["server"],
+                }
             if phase in {"Failed", "Error", "Expired"}:
                 raise RuntimeError(f"Fleet claim {name!r} failed: {status}")
             if time.monotonic() >= deadline:
-                raise TimeoutError(f"Fleet claim {name!r} did not bind within 600 seconds")
+                raise TimeoutError(f"Fleet claim {name!r} did not bind within {timeout} seconds")
             time.sleep(1)
 
     def delete_claim(self, claim: dict[str, Any]) -> None:
@@ -136,9 +160,12 @@ class _FleetClient:
         if response.status_code not in {200, 202, 204, 404}:
             response.raise_for_status()
 
-    def wait_pool_ready(self, pool: dict[str, Any]) -> dict[str, Any]:
+    def wait_pool_ready(
+        self, pool: dict[str, Any], time_to_start: Optional[float] = None
+    ) -> dict[str, Any]:
         metadata = pool["metadata"]
-        deadline = time.monotonic() + 600.0
+        timeout = time_to_start if time_to_start is not None else 600.0
+        deadline = time.monotonic() + timeout
         while True:
             response = httpx.get(
                 f"{self._pool_url(metadata['namespace'])}/{metadata['name']}",
@@ -151,13 +178,16 @@ class _FleetClient:
                 return current
             if time.monotonic() >= deadline:
                 raise TimeoutError(
-                    f"Fleet pool {metadata['name']!r} did not become available within 600 seconds"
+                    f"Fleet pool {metadata['name']!r} did not become available within {timeout} seconds"
                 )
             time.sleep(2)
 
-    def wait_service_ready(self, sandbox: dict[str, Any], service: str) -> None:
+    def wait_service_ready(
+        self, sandbox: dict[str, Any], service: str, time_to_start: Optional[float] = None
+    ) -> None:
         client = self.service_client(sandbox, service)
-        deadline = time.monotonic() + 600.0
+        timeout = time_to_start if time_to_start is not None else 600.0
+        deadline = time.monotonic() + timeout
         try:
             while True:
                 response = client.get("/status")
@@ -166,7 +196,7 @@ class _FleetClient:
                     return
                 if time.monotonic() >= deadline:
                     raise TimeoutError(
-                        f"Fleet service {service!r} did not become ready within 600 seconds"
+                        f"Fleet service {service!r} did not become ready within {timeout} seconds"
                     )
                 time.sleep(2)
         finally:
@@ -181,6 +211,47 @@ class _FleetClient:
             timeout=30.0,
         )
 
+    def service_url(self, sandbox: dict[str, Any], service: str) -> str:
+        if service not in sandbox["services"]:
+            raise ValueError(f"Fleet sandbox does not expose service {service!r}")
+        return f"{self._base_url}/api/svc/{sandbox['namespace']}/{sandbox['sandbox']}-{service}/"
+
+    def get_pool(self, name: str) -> dict[str, Any]:
+        response = httpx.get(self._pool_url(name), headers=self._headers, timeout=30.0)
+        response.raise_for_status()
+        return response.json()
+
+    def get_claim(self, pool: dict[str, Any]) -> dict[str, Any]:
+        metadata = pool["metadata"]
+        response = httpx.get(
+            f"{self._claim_url(metadata['namespace'])}/{metadata['name']}-claim",
+            headers=self._headers,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def list_pools(self) -> list[dict[str, Any]]:
+        response = httpx.get(
+            f"{self._base_url}/api/k8s/apis/cua.ai/v1/osgymworkspacepools",
+            headers=self._headers,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return payload if isinstance(payload, list) else payload.get("items", [])
+
+    def set_pool_replicas(self, pool: dict[str, Any], replicas: int) -> dict[str, Any]:
+        metadata = pool["metadata"]
+        response = httpx.patch(
+            f"{self._pool_url(metadata['namespace'])}/{metadata['name']}",
+            json={"spec": {"replicas": replicas}},
+            headers={**self._headers, "Content-Type": "application/merge-patch+json"},
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def _pool_url(self, namespace: str) -> str:
         return f"{self._base_url}/api/k8s/apis/cua.ai/v1/namespaces/{namespace}/osgymworkspacepools"
 
@@ -189,23 +260,32 @@ class _FleetClient:
 
 
 class FleetCloudTransport(FleetTransport):
-    """Provision a registry image through Fleet, then route computer-server calls."""
+    """Provision and manage registry-image sandboxes through Fleet."""
 
     def __init__(
         self,
         *,
-        image: Image,
+        image: Optional[Image],
         name: str,
         cpu: Optional[int] = None,
         memory_mb: Optional[int] = None,
+        disk_gb: Optional[int] = None,
+        region: str = "us-east-1",
+        time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
     ) -> None:
+        if disk_gb is not None:
+            raise ValueError("disk_gb is not supported by the Fleet cloud transport")
+        if region != "us-east-1":
+            raise ValueError("Fleet cloud sandboxes currently support only region='us-east-1'")
         self._image = image
         self._name = name
         self._cpu = cpu
         self._memory_mb = memory_mb
+        self._time_to_start = time_to_start if time_to_start is not None else 600.0
         self._request_timeout = request_timeout or 30.0
         self._provisioned = False
+        self._owns_resources = image is not None
         self._pool: Any = None
         self._claim: Any = None
         self._sdk: Any = None
@@ -217,16 +297,47 @@ class FleetCloudTransport(FleetTransport):
 
     async def connect(self) -> None:
         if not self._provisioned:
-            self._validate_image(self._image)
-            self._sdk = _FleetClient()
-            self._pool = await self._run(self._sdk.create_pool, self._pool_request())
+            if self._sdk is None:
+                self._sdk = await asyncio.to_thread(_FleetClient)
             try:
-                self._claim = await self._run(self._sdk.create_claim, {"pool": self._pool})
-                bound = await self._run(self._sdk.wait_claim, self._claim)
-            except BaseException:
-                await self._cleanup_resources()
+                if self._pool is None:
+                    if self._image is None:
+                        self._pool = await self._run(self._sdk.get_pool, self._name)
+                    else:
+                        self._validate_image(self._image)
+                        self._pool = await self._run(self._sdk.create_pool, self._pool_request())
+                if self._claim is None:
+                    if self._image is None:
+                        self._claim = await self._run(self._sdk.get_claim, self._pool)
+                    else:
+                        self._claim = await self._run(
+                            self._sdk.create_claim,
+                            {"pool": self._pool, "time_to_start": self._time_to_start},
+                        )
+                bound = await self._run(
+                    self._sdk.wait_claim,
+                    self._claim,
+                    services=self._service_names(self._pool),
+                    time_to_start=self._time_to_start,
+                )
+                await self._run(
+                    self._sdk.wait_service_ready,
+                    bound,
+                    "server",
+                    self._time_to_start,
+                )
+            except BaseException as provisioning_error:
+                try:
+                    if self._owns_resources:
+                        await self._cleanup_resources()
+                except BaseException as cleanup_error:
+                    logger.warning(
+                        "Failed to clean up Fleet sandbox %r after provisioning failure: %s",
+                        self._name,
+                        cleanup_error,
+                    )
+                    raise provisioning_error from cleanup_error
                 raise
-            self._sdk.wait_service_ready(bound, "server")
             FleetTransport.__init__(
                 self,
                 sdk=self._sdk,
@@ -238,30 +349,78 @@ class FleetCloudTransport(FleetTransport):
             self._provisioned = True
         await FleetTransport.connect(self)
 
+    async def create_snapshot(self, **_: Any) -> dict[str, Any]:
+        """Fail clearly because Fleet does not expose snapshot operations."""
+        raise NotImplementedError("Snapshots are not supported by the Fleet cloud transport")
+
+    async def forward_tunnel(self, sandbox_port: int | str) -> "TunnelInfo":
+        """Return the authenticated Fleet service endpoint for an exposed TCP port."""
+        if not isinstance(sandbox_port, int):
+            raise ValueError("Fleet services can only expose numeric TCP ports")
+        service = "server" if sandbox_port == 8000 else f"port-{sandbox_port}"
+        if not self._provisioned:
+            raise ValueError("Transport not connected")
+        from cua_sandbox.interfaces.tunnel import TunnelInfo
+
+        endpoint = await self._run(self._sdk.service_url, self._bound, service)
+        parsed = urlparse(endpoint)
+        return TunnelInfo(
+            parsed.hostname or "",
+            parsed.port or (443 if parsed.scheme == "https" else 80),
+            sandbox_port,
+            url=endpoint,
+        )
+
     async def delete_vm(self) -> None:
         await self._cleanup_resources()
 
     async def _cleanup_resources(self) -> None:
-        cleanup_error: Optional[BaseException] = None
         if self._claim is not None:
-            try:
-                await self._run(self._sdk.delete_claim, self._claim)
-            except BaseException as error:
-                cleanup_error = error
-            finally:
-                self._claim = None
+            await self._run(self._sdk.delete_claim, self._claim)
+            self._claim = None
         if self._pool is not None:
-            try:
-                await self._run(self._sdk.delete_pool, self._pool)
-            except BaseException as error:
-                if cleanup_error is None:
-                    cleanup_error = error
-            finally:
-                self._pool = None
-        if cleanup_error is not None:
-            raise cleanup_error
+            await self._run(self._sdk.delete_pool, self._pool)
+            self._pool = None
+        self._provisioned = False
+
+    @classmethod
+    async def list_sandboxes(cls) -> list[dict[str, Any]]:
+        sdk = await asyncio.to_thread(_FleetClient)
+        return await asyncio.to_thread(sdk.list_pools)
+
+    @classmethod
+    async def get_sandbox_info(cls, name: str) -> dict[str, Any]:
+        sdk = await asyncio.to_thread(_FleetClient)
+        return await asyncio.to_thread(sdk.get_pool, name)
+
+    @classmethod
+    async def suspend_sandbox(cls, name: str) -> None:
+        sdk = await asyncio.to_thread(_FleetClient)
+        pool = await asyncio.to_thread(sdk.get_pool, name)
+        await asyncio.to_thread(sdk.set_pool_replicas, pool, 0)
+
+    @classmethod
+    async def resume_sandbox(cls, name: str, time_to_start: Optional[float] = None) -> None:
+        sdk = await asyncio.to_thread(_FleetClient)
+        pool = await asyncio.to_thread(sdk.get_pool, name)
+        await asyncio.to_thread(sdk.set_pool_replicas, pool, 1)
+        await asyncio.to_thread(sdk.wait_pool_ready, pool, time_to_start)
+
+    @classmethod
+    async def restart_sandbox(cls, name: str, time_to_start: Optional[float] = None) -> None:
+        await cls.suspend_sandbox(name)
+        await cls.resume_sandbox(name, time_to_start)
+
+    @classmethod
+    async def delete_sandbox(cls, name: str) -> None:
+        sdk = await asyncio.to_thread(_FleetClient)
+        pool = await asyncio.to_thread(sdk.get_pool, name)
+        claim = await asyncio.to_thread(sdk.get_claim, pool)
+        await asyncio.to_thread(sdk.delete_claim, claim)
+        await asyncio.to_thread(sdk.delete_pool, pool)
 
     def _pool_request(self) -> dict[str, Any]:
+        assert self._image is not None
         template: dict[str, Any] = {
             "containerDiskImage": self._image._registry,
             "imagePullSecret": "ecr-credentials",
@@ -281,6 +440,11 @@ class FleetCloudTransport(FleetTransport):
             "namespace": self._name,
             "spec": {"replicas": 1, "services": services, "template": template},
         }
+
+    @staticmethod
+    def _service_names(pool: dict[str, Any]) -> list[str]:
+        services = (pool.get("spec") or {}).get("services") or []
+        return [service["name"] for service in services if service.get("name")] or ["server"]
 
     async def _run(self, operation: Any, *args: Any, **kwargs: Any) -> Any:
         return await asyncio.to_thread(self._call, operation, args, kwargs)

@@ -6,7 +6,8 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
-_DEFAULT_BASE_URL = "https://run.cua.ai"
+_DEFAULT_BASE_URL = "https://api.cua.ai"
+_DEFAULT_FLEET_BASE_URL = "https://run.cua.ai"
 _DEFAULT_TOKEN_URL = "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
 
 
@@ -14,6 +15,7 @@ _DEFAULT_TOKEN_URL = "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-conn
 class _Config:
     api_key: Optional[str] = None
     base_url: str = _DEFAULT_BASE_URL
+    fleet_base_url: str = _DEFAULT_FLEET_BASE_URL
     token_url: str = _DEFAULT_TOKEN_URL
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
@@ -26,19 +28,22 @@ def configure(
     *,
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
+    fleet_base_url: Optional[str] = None,
     token_url: Optional[str] = None,
     client_id: Optional[str] = None,
     client_secret: Optional[str] = None,
 ) -> None:
     """Set global configuration for cloud sandboxes.
 
-    Fleet is the cloud backend. Its endpoint and token endpoint have defaults;
-    callers normally need only an OAuth client ID and secret.
+    API-key cloud operations use ``base_url``. Fleet uses ``fleet_base_url`` and
+    OAuth client credentials.
     """
     if api_key is not None:
         _global_config.api_key = api_key
     if base_url is not None:
         _global_config.base_url = base_url
+    if fleet_base_url is not None:
+        _global_config.fleet_base_url = fleet_base_url
     if token_url is not None:
         _global_config.token_url = token_url
     if client_id is not None:
@@ -61,6 +66,11 @@ def get_api_key(override: Optional[str] = None) -> Optional[str]:
 
 def get_base_url() -> str:
     return os.environ.get("CUA_BASE_URL") or _global_config.base_url
+
+
+def get_fleet_base_url() -> str:
+    """Return the Fleet API endpoint without changing legacy VM API routing."""
+    return os.environ.get("CUA_FLEET_BASE_URL") or _global_config.fleet_base_url
 
 
 def get_token_url() -> str:

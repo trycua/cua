@@ -10,6 +10,7 @@
     "how-permission-policies-work",
     "how-cua-driver-is-validated",
     "how-sandboxes-work",
+    "how-fleet-images-work",
     "how-lume-unattended-setup-works",
     "how-sip-works-in-lume-vms",
     "how-lume-expands-macos-disks"

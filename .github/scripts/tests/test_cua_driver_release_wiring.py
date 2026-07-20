@@ -90,6 +90,14 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('"$HEAD_REF" == release-please--branches--*', workflow)
         self.assertIn("labeled, unlabeled", workflow)
 
+    def test_agent_and_human_guidance_explain_the_release_title_contract(self) -> None:
+        for path in ("AGENTS.md", "CONTRIBUTING.md"):
+            guide = self.read(path)
+            self.assertIn("fix(cua-driver):", guide, path)
+            self.assertIn("feat(lume):", guide, path)
+            self.assertIn("no-release", guide, path)
+            self.assertIn("squash", guide, path)
+
     def test_legacy_release_routes_exclude_driver_and_lume(self) -> None:
         workflow = self.read(".github/workflows/release-bump-version.yml")
         self.assertIn('name: "Legacy packages: Bump Version"', workflow)

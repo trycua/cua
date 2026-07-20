@@ -33,11 +33,17 @@ workarounds when known.
 6. Open a focused pull request that explains behavior, validation, and known gaps.
 
 Use a Conventional Commit title because the squash-merge title becomes the
-release entry. `fix(driver): preserve input while reconnecting` produces a
+release entry. `fix(cua-driver): preserve input while reconnecting` produces a
 patch release, `feat(lume): add a VM readiness probe` produces a minor release,
-and `feat(driver)!: remove the legacy event endpoint` marks a breaking change.
-Use `docs`, `test`, `ci`, or `chore` when the pull request has no user-facing
-release entry.
+and `feat(cua-driver)!: remove the legacy event endpoint` marks a breaking
+change. `perf` and `revert` also produce releases.
+
+Use `docs`, `test`, `ci`, `chore`, `build`, `refactor`, or `style` only when the
+pull request has no user-facing release entry. A pull request that adds tests
+while changing production behavior must be titled for the production change,
+not the tests. If release-tracked Cua Driver or Lume files changed but the work
+is intentionally non-releasing, add the `no-release` label. The
+`CI: Release metadata` check enforces this contract before squash merge.
 
 ## Preserve Contributor Authorship
 

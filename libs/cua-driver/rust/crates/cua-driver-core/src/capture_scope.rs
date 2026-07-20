@@ -335,7 +335,7 @@ pub fn enforce_tool(tool_name: &str, args: &Value) -> Result<(), ScopeViolation>
                 && tool_name == "mouse_button_up"
                 && ["pid", "window_id", "x", "y", "from_zoom"]
                     .iter()
-                    .all(|key| args.get(key).is_none()) =>
+                    .all(|key| args.get(key).is_none_or(Value::is_null)) =>
         {
             // Releasing a button held before one-way desktop escalation is
             // cleanup when it cannot retarget or reposition the release.
@@ -534,6 +534,18 @@ mod tests {
             "window_scope_disabled"
         );
         assert!(enforce_tool("mouse_button_up", &json!({"session": session})).is_ok());
+        assert!(enforce_tool(
+            "mouse_button_up",
+            &json!({
+                "session": session,
+                "pid": null,
+                "window_id": null,
+                "x": null,
+                "y": null,
+                "from_zoom": null
+            })
+        )
+        .is_ok());
     }
 
     #[test]

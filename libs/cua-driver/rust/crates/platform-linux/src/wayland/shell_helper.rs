@@ -164,7 +164,11 @@ fn parse_quoted_string(raw: &str) -> Option<String> {
 }
 
 fn parse_first_u32(raw: &str) -> Option<u32> {
-    raw.split(|character: char| !character.is_ascii_digit())
+    // `gdbus call` renders typed scalars as `(uint32 6079,)`. Searching the
+    // whole string would incorrectly return the `32` in the type annotation.
+    let payload = raw.split_once("uint32").map_or(raw, |(_, payload)| payload);
+    payload
+        .split(|character: char| !character.is_ascii_digit())
         .find(|part| !part.is_empty())?
         .parse()
         .ok()
@@ -542,6 +546,7 @@ mod tests {
         );
         assert_eq!(parse_first_u32("(uint32 6079,)"), Some(6079));
         assert_eq!(parse_first_u32("(uint32 4,)"), Some(4));
+        assert_eq!(parse_first_u32("(6079,)"), Some(6079));
         assert_eq!(parse_quoted_string("(nothing,)"), None);
         assert_eq!(parse_first_u32("(nothing,)"), None);
     }

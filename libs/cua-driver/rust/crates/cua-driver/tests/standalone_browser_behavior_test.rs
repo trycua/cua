@@ -1934,6 +1934,11 @@ fn run_generic_wayland_existing_profile_refusal(spec: &BrowserSpec) {
         std::env::var_os("WAYLAND_DISPLAY").is_some() && std::env::var_os("SWAYSOCK").is_none(),
         "the generic-Wayland refusal row must run in a non-Sway Wayland session"
     );
+    assert!(
+        platform_linux::wayland::shell_helper::trusted_window_ids_for_pid(std::process::id())
+            .is_none(),
+        "the generic-Wayland refusal row requires the attested GNOME helper to be unavailable"
+    );
     let scenario = format!(
         "{}-{}-standalone-generic-wayland-existing-profile-refusal",
         std::env::consts::OS,

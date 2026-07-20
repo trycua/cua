@@ -33,10 +33,13 @@ CUA_E2E_WAYLAND_RUNNER="$PWD/scripts/ci/run-rust-standalone-browser-e2e.sh" \
 
 To prove the fail-closed boundary without a compositor-specific identity
 adapter, run the same browser runner in a native Wayland session with
-`CUA_E2E_WAYLAND_SESSION=generic` and no `SWAYSOCK`. That environment selects
-only the real-browser generic-Wayland refusal row; ordinary attachment rows are
-not applicable because the lane deliberately withholds exact compositor
-identity.
+`CUA_E2E_WAYLAND_SESSION=generic` on the Sway worker. That environment selects
+only the real-browser generic-Wayland refusal row. The harness retains
+`SWAYSOCK` as an out-of-band focus and z-order oracle, while the spawned Cua
+Driver daemon receives an intentionally unusable socket path and cannot use
+Sway identity.
+Ordinary attachment rows are not applicable because the lane deliberately
+withholds exact compositor identity from the product under test.
 
 When a Nix-store Chromium is used on a non-NixOS VM, its SUID sandbox helper
 cannot carry the required root ownership. Set `CUA_E2E_BROWSER_NO_SANDBOX=1`

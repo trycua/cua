@@ -692,7 +692,15 @@ fn profile_entries(root: &Path) -> HashSet<std::ffi::OsString> {
 fn spawn_driver(label: &str) -> McpDriver {
     #[cfg(target_os = "macos")]
     let driver = McpDriver::spawn_macos_daemon_proxy_named(label);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    let driver = if std::env::var("CUA_E2E_WAYLAND_SESSION").as_deref() == Ok("generic") {
+        // Keep Sway IPC available to the out-of-band test oracle while the
+        // product under test sees only standard/generic Wayland capabilities.
+        McpDriver::spawn_named_with_env(label, &[("SWAYSOCK", "/dev/null/cua-e2e-withheld")])
+    } else {
+        McpDriver::spawn_named(label)
+    };
+    #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
     let driver = McpDriver::spawn_named(label);
     driver.expect("cua-driver binary/daemon is required for standalone browser E2E")
 }
@@ -1964,8 +1972,9 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
 #[cfg(target_os = "linux")]
 fn run_generic_wayland_existing_profile_refusal(spec: &BrowserSpec) {
     assert!(
-        std::env::var_os("WAYLAND_DISPLAY").is_some() && std::env::var_os("SWAYSOCK").is_none(),
-        "the generic-Wayland refusal row must run in a non-Sway Wayland session"
+        std::env::var_os("WAYLAND_DISPLAY").is_some()
+            && std::env::var("CUA_E2E_WAYLAND_SESSION").as_deref() == Ok("generic"),
+        "the generic-Wayland refusal row requires its explicit native-Wayland lane"
     );
     assert!(
         platform_linux::wayland::shell_helper::trusted_window_ids_for_pid(std::process::id())

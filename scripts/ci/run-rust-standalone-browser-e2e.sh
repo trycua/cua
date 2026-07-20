@@ -91,8 +91,8 @@ if [[ ! -x "${CUA_TEST_DRIVER_BIN}" ]]; then
 fi
 
 if [[ "${HOST_OS}" == Linux && "${CUA_E2E_WAYLAND_SESSION:-}" == generic ]]; then
-  if [[ "${XDG_SESSION_TYPE:-}" != wayland || -z "${WAYLAND_DISPLAY:-}" || -n "${SWAYSOCK:-}" ]]; then
-    echo "The generic Wayland lane requires native Wayland with no compositor-specific Sway identity" >&2
+  if [[ "${XDG_SESSION_TYPE:-}" != wayland || -z "${WAYLAND_DISPLAY:-}" || -z "${SWAYSOCK:-}" ]]; then
+    echo "The generic Wayland lane requires native Wayland and an out-of-band Sway oracle" >&2
     exit 2
   fi
   tests=(standalone_browser_generic_wayland_existing_profile_refusal)

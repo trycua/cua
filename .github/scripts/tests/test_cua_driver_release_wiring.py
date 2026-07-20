@@ -65,6 +65,19 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertNotIn("if: steps.release.outputs.prs_created == 'true'", workflow)
         self.assertNotIn("RELEASE_PRS: ${{ steps.release.outputs.prs }}", workflow)
 
+    def test_release_please_exposes_targeted_bump_dropdowns(self) -> None:
+        workflow = self.read(".github/workflows/release-please.yml")
+
+        for option in ("automatic", "cua-driver-rs", "lume"):
+            self.assertIn(f"          - {option}\n", workflow)
+        for bump in ("patch", "minor", "major"):
+            self.assertIn(f"          - {bump}\n", workflow)
+        self.assertIn("resolve_release_please_request.py", workflow)
+        self.assertIn('"--path=$RELEASE_PATH"', workflow)
+        self.assertIn('ARGS+=("--release-as=$RELEASE_AS")', workflow)
+        self.assertIn("release-please@17.3.0", workflow)
+        self.assertIn("EXPECTED_INTEGRITY=", workflow)
+
     def test_required_release_metadata_check_runs_for_every_pull_request(self) -> None:
         workflow = self.read(".github/workflows/ci-release-metadata.yml")
 
@@ -75,6 +88,8 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
 
     def test_legacy_release_routes_exclude_driver_and_lume(self) -> None:
         workflow = self.read(".github/workflows/release-bump-version.yml")
+        self.assertIn('name: "Legacy packages: Bump Version"', workflow)
+        self.assertIn("Cua Driver and Lume use Release Please", workflow)
         self.assertNotIn("          - cua-driver-rs\n", workflow)
         self.assertNotIn("          - lume\n", workflow)
         self.assertNotIn("gh api -X DELETE", workflow)

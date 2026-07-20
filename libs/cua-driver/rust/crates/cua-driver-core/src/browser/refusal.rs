@@ -61,6 +61,9 @@ pub enum BrowserRefusalCode {
     /// A semantic ref is live, but it does not declare the requested typed
     /// browser action.
     BrowserActionUnavailable,
+    /// The live top-level document left the origin set approved in the
+    /// autonomous session manifest. Further browser input is paused.
+    BrowserOriginOutsideScope,
 }
 
 impl BrowserRefusalCode {
@@ -82,6 +85,7 @@ impl BrowserRefusalCode {
             Self::BrowserReconnectExhausted => "browser_reconnect_exhausted",
             Self::BrowserInputIncomplete => "browser_input_incomplete",
             Self::BrowserActionUnavailable => "browser_action_unavailable",
+            Self::BrowserOriginOutsideScope => "browser_origin_outside_scope",
         }
     }
 }
@@ -185,6 +189,10 @@ mod tests {
             (
                 BrowserRefusalCode::BrowserActionUnavailable,
                 "browser_action_unavailable",
+            ),
+            (
+                BrowserRefusalCode::BrowserOriginOutsideScope,
+                "browser_origin_outside_scope",
             ),
         ];
         for (code, wire) in all {

@@ -49,6 +49,8 @@ These run without the repo-local GUI applications:
 | Schema gate | `schema_consistency_test.rs` | Shared tool schema parity across OS backends |
 | Configuration transport | `transport_config_persistence_test.rs` | CLI and MCP configuration persistence |
 | Token and protocol surfaces | `protocol_element_token_test.rs`, related tests | JSON-RPC-visible contract behavior |
+| Permission modes and policy startup | `permission_policy_startup_test.rs`, `daemon_required_test.rs`, core `authorization`, `policy`, and `session_manifest` tests | Fail-before-bind policy loading, managed/user intersection, immutable standard/autonomous/unrestricted startup, danger acknowledgement, admin disable, deny-by-default manifests, and canonical daemon dispatch |
+| Protected browser grants | Core `consent`, `browser::grant`, `browser::engine`, and `browser::v2_tests` | Exact request digests, provider authentication seam and deadline, persistent-indicator activation, Stop/session teardown, forged legacy artifact refusal, exact PID/window manifest scope, and the live-origin decision path used before mutation |
 
 Some protocol tests spawn the driver process. They remain deterministic because
 they do not launch a real target application or require a desktop. They should

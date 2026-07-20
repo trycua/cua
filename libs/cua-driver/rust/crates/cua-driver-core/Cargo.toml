@@ -30,6 +30,8 @@ image = { workspace = true }
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
 uuid = { workspace = true }
+sha2 = "0.10"
+url = "2.5"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

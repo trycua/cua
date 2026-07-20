@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 //! cua-driver-rs — cross-platform background computer-use automation daemon.
 //!
 //! Runs a daemon-backed MCP JSON-RPC 2.0 proxy over stdio. The platform
@@ -39,6 +41,48 @@ fn init_logging() {
         .with_env_filter(EnvFilter::from_env("CUA_LOG").add_directive(tracing::Level::WARN.into()))
         .init();
     telemetry::register_stdio_observer();
+}
+
+fn configure_startup_permission_mode(
+    permission_mode: Option<&str>,
+    dangerously_bypass_approvals: bool,
+    allow_legacy_existing_profile_approval: bool,
+    session_policy: Option<&str>,
+    approve_session_policy: bool,
+) -> anyhow::Result<()> {
+    if let Some(mode) = permission_mode {
+        std::env::set_var(cua_driver_core::authorization::PERMISSION_MODE_ENV, mode);
+    }
+    if dangerously_bypass_approvals {
+        std::env::set_var(cua_driver_core::authorization::DANGEROUS_BYPASS_ENV, "1");
+    }
+    if allow_legacy_existing_profile_approval {
+        std::env::set_var(
+            cua_driver_core::authorization::LEGACY_EXISTING_PROFILE_APPROVAL_ENV,
+            "1",
+        );
+    }
+    if let Some(path) = session_policy {
+        std::env::set_var(
+            cua_driver_core::session_manifest::SESSION_POLICY_FILE_ENV,
+            path,
+        );
+    }
+    if approve_session_policy {
+        std::env::set_var(
+            cua_driver_core::session_manifest::SESSION_POLICY_APPROVED_ENV,
+            "1",
+        );
+    }
+    cua_driver_core::authorization::validate_startup_authorization()?;
+    if cua_driver_core::authorization::configured_permission_mode()
+        .is_ok_and(|mode| mode == cua_driver_core::authorization::PermissionMode::Unrestricted)
+    {
+        eprintln!(
+            "DANGER: Cua Driver is running in unrestricted mode. Runtime approval prompts are disabled; prompt injection or unintended input may act with every capability allowed by the built-in, managed, and user policy ceilings. Use only in a disposable or fully trusted environment."
+        );
+    }
+    Ok(())
 }
 
 /// Execute finite commands in a child so the parent can observe every exit,
@@ -264,9 +308,24 @@ fn main() {
         }
         cli::Command::Serve {
             socket,
+            permission_mode,
+            dangerously_bypass_approvals,
+            allow_legacy_existing_profile_approval,
+            session_policy,
+            approve_session_policy,
             no_permissions_gate,
             claude_code_compat,
         } => {
+            if let Err(error) = configure_startup_permission_mode(
+                permission_mode.as_deref(),
+                dangerously_bypass_approvals,
+                allow_legacy_existing_profile_approval,
+                session_policy.as_deref(),
+                approve_session_policy,
+            ) {
+                eprintln!("cua-driver: authorization startup error: {error}");
+                std::process::exit(64);
+            }
             responsibility::reexec_disclaimed_if_needed();
             let gate_opts =
                 platform_macos::permissions::GateOpts::from_env_and_flag(no_permissions_gate);
@@ -448,6 +507,15 @@ fn main() {
             serve::run_stop_cmd(&sp);
             return;
         }
+        cli::Command::Revoke {
+            socket,
+            session,
+            all,
+        } => {
+            let sp = socket.unwrap_or_else(serve::default_socket_path);
+            serve::run_revoke_cmd(&sp, session.as_deref(), all);
+            return;
+        }
         cli::Command::Status { socket } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();
@@ -619,9 +687,21 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Serve {
             socket,
+            permission_mode,
+            dangerously_bypass_approvals,
+            allow_legacy_existing_profile_approval,
+            session_policy,
+            approve_session_policy,
             no_permissions_gate,
             claude_code_compat,
         } => {
+            configure_startup_permission_mode(
+                permission_mode.as_deref(),
+                dangerously_bypass_approvals,
+                allow_legacy_existing_profile_approval,
+                session_policy.as_deref(),
+                approve_session_policy,
+            )?;
             responsibility::reexec_disclaimed_if_needed();
             telemetry::capture_start(
                 telemetry::event::SERVE_START_LEGACY,
@@ -653,6 +733,15 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Stop { socket } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             serve::run_stop_cmd(&sp);
+            return Ok(());
+        }
+        cli::Command::Revoke {
+            socket,
+            session,
+            all,
+        } => {
+            let sp = socket.unwrap_or_else(serve::default_socket_path);
+            serve::run_revoke_cmd(&sp, session.as_deref(), all);
             return Ok(());
         }
         cli::Command::Status { socket } => {

@@ -51,6 +51,7 @@ impl ToolDef {
         // claim is a one-file change, and sibling PRs touching
         // individual tool files don't conflict with this surface.
         let caps = default_capabilities_for(&self.name);
+        let risk = crate::authorization::risk_metadata_json(&self.name);
         serde_json::json!({
             "name": self.name,
             "description": self.description,
@@ -62,6 +63,7 @@ impl ToolDef {
                 "openWorldHint": self.open_world,
             },
             "capabilities": caps,
+            "risk": risk,
         })
     }
 }
@@ -855,6 +857,18 @@ mod capability_tests {
     }
 
     #[test]
+    fn every_known_tool_has_reviewed_risk_metadata() {
+        for name in TOOLS_REQUIRING_CAPABILITIES {
+            let risk = crate::authorization::advertised_risk_for(name);
+            assert_ne!(
+                risk.class,
+                crate::authorization::RiskClass::Unclassified,
+                "tool {name:?} must have a reviewed risk classification"
+            );
+        }
+    }
+
+    #[test]
     fn every_claimed_capability_is_in_the_canonical_vocabulary() {
         let vocab: std::collections::HashSet<&str> = CANONICAL_VOCABULARY.iter().copied().collect();
         for name in TOOLS_REQUIRING_CAPABILITIES {
@@ -955,6 +969,15 @@ mod capability_tests {
             cap_strs.contains(&"input.pointer.click.left"),
             "click missing input.pointer.click.left: {cap_strs:?}"
         );
+    }
+
+    #[test]
+    fn to_list_entry_includes_versioned_risk_metadata() {
+        let entry = dummy_def("browser_prepare").to_list_entry();
+        assert_eq!(entry["risk"]["class"], "r2");
+        assert_eq!(entry["risk"]["enforcement"], "metadata_only");
+        assert_eq!(entry["risk"]["operation_sensitive"], true);
+        assert_eq!(entry["risk"]["version"], "1");
     }
 
     #[test]

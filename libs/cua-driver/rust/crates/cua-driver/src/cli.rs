@@ -44,6 +44,19 @@ pub enum Command {
     },
     Serve {
         socket: Option<String>,
+        /// Immutable agent-authorization mode selected at trusted daemon
+        /// startup. This is distinct from the macOS OS-permissions gate.
+        permission_mode: Option<String>,
+        /// Deliberate second signal required for unrestricted mode.
+        dangerously_bypass_approvals: bool,
+        /// Temporary trusted-launcher compatibility path for the forgeable
+        /// file-backed existing-profile approval artifact.
+        allow_legacy_existing_profile_approval: bool,
+        /// Immutable bounded-autonomy manifest selected by the trusted
+        /// launcher. Valid only in autonomous mode.
+        session_policy: Option<String>,
+        /// Deliberate launch-time confirmation that the manifest was reviewed.
+        approve_session_policy: bool,
         /// True when `--no-permissions-gate` is on argv.  The env-var
         /// `CUA_DRIVER_RS_PERMISSIONS_GATE=0` short-circuits the gate too
         /// (checked inside the gate itself), so the flag is only one of
@@ -57,6 +70,11 @@ pub enum Command {
     },
     Stop {
         socket: Option<String>,
+    },
+    Revoke {
+        socket: Option<String>,
+        session: Option<String>,
+        all: bool,
     },
     Status {
         socket: Option<String>,
@@ -178,6 +196,8 @@ const VALUE_FLAGS: &[&str] = &[
     "--screenshot-out-file",
     "--client",
     "--socket",
+    "--permission-mode",
+    "--session-policy",
     "--pid-file",
     "--type",
     "--host-bundle-id",
@@ -234,6 +254,7 @@ fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
         Some("manifest") => Some("manifest"),
         Some("call") => Some("call"),
         Some("stop") => Some("stop"),
+        Some("revoke") => Some("revoke"),
         Some("status") => Some("status"),
         Some("recording") => Some("recording"),
         Some("dump-docs") => Some("dump_docs"),
@@ -396,7 +417,7 @@ pub fn parse_command() -> Command {
             env!("CARGO_PKG_VERSION")
         );
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -442,6 +463,28 @@ pub fn parse_command() -> Command {
         println!("  cua-driver browser-approve --strategy existing_profile --pid <pid>");
         println!("                                  --window-id <window_id> --session <session>");
         println!("                                  Approve attachment to one exact existing browser request.");
+        println!();
+        println!("agent authorization (serve only):");
+        println!(
+            "  --permission-mode <mode>        standard (default), autonomous, or unrestricted."
+        );
+        println!("  --dangerously-bypass-approvals  Required with unrestricted. The mode is fixed for the");
+        println!("                                  daemon lifetime and cannot be changed by a tool call.");
+        println!("  --allow-legacy-existing-profile-approval");
+        println!("                                  Temporary migration flag for the forgeable file-backed");
+        println!("                                  approval artifact; never treated as protected consent.");
+        println!("                                  This is separate from --no-permissions-gate, which only");
+        println!(
+            "                                  controls the macOS OS-permission onboarding UI."
+        );
+        println!("  --session-policy <path>         Required in autonomous mode; immutable bounded tool manifest.");
+        println!("  --approve-session-policy        Required with --session-policy; the trusted launcher asserts");
+        println!("                                  that the human reviewed this exact manifest at startup.");
+        println!();
+        println!("authorization revocation:");
+        println!("  cua-driver revoke --session <id>  Stop and revoke one session's grants.");
+        println!("  cua-driver revoke --all           Stop and revoke every live session.");
+        println!("                                      Revocation is deny-only and never needs a token.");
         println!();
         println!("mcp options:");
         println!("  --embedded              Connect to a daemon spawned by the host app (also:");
@@ -604,11 +647,32 @@ pub fn parse_command() -> Command {
         Some("mcp-config") => Command::McpConfig { client: mcp_client },
         Some("serve") => Command::Serve {
             socket,
+            permission_mode: flag_value(&args, "--permission-mode"),
+            dangerously_bypass_approvals: args
+                .iter()
+                .any(|a| a == "--dangerously-bypass-approvals"),
+            allow_legacy_existing_profile_approval: args
+                .iter()
+                .any(|a| a == "--allow-legacy-existing-profile-approval"),
+            session_policy: flag_value(&args, "--session-policy"),
+            approve_session_policy: args.iter().any(|a| a == "--approve-session-policy"),
             // Bare flag — present anywhere on argv counts as "skip the gate".
             no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
             claude_code_compat,
         },
         Some("stop") => Command::Stop { socket },
+        Some("revoke") => {
+            let all = args.iter().any(|a| a == "--all");
+            if all == approval_session.is_some() {
+                eprintln!("revoke requires exactly one of --session <id> or --all");
+                process::exit(64);
+            }
+            Command::Revoke {
+                socket,
+                session: approval_session,
+                all,
+            }
+        }
         Some("status") => Command::Status { socket },
         Some("recording") => {
             let subcommand = pos.next().unwrap_or("status").to_string();
@@ -1301,6 +1365,11 @@ pub fn build_manifest() -> serde_json::Value {
               "description": "Run the long-lived daemon — backs the proxy/auto-relaunch path on macOS and the autostart Session 1+ daemon on Windows.",
               "args": [
                   { "name": "--socket", "type": "string", "description": "Override the listen socket path." },
+                  { "name": "--permission-mode", "type": "string", "description": "Immutable daemon authorization mode: standard, autonomous, or unrestricted." },
+                  { "name": "--dangerously-bypass-approvals", "type": "flag", "description": "Required deliberate risk acknowledgement for unrestricted mode." },
+                  { "name": "--allow-legacy-existing-profile-approval", "type": "flag", "description": "Temporary migration flag for the unprotected file-backed existing-profile artifact." },
+                  { "name": "--session-policy", "type": "string", "description": "Immutable bounded-autonomy manifest required in autonomous mode." },
+                  { "name": "--approve-session-policy", "type": "flag", "description": "Trusted-launcher confirmation that the exact autonomous manifest was reviewed." },
                   { "name": "--no-permissions-gate", "type": "flag", "description": "Skip the macOS TCC first-launch gate." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Forwarded by the MCP proxy when the client asked for the compat surface." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
@@ -1309,6 +1378,13 @@ pub fn build_manifest() -> serde_json::Value {
             { "name": "stop",
               "description": "Stop a running daemon by sending it a shutdown request.",
               "args": [ { "name": "--socket", "type": "string", "description": "Override the daemon socket path." } ] },
+            { "name": "revoke",
+              "description": "Revoke one session or every live authorization scope without minting new authority.",
+              "args": [
+                  { "name": "--session", "type": "string", "description": "Exact session id to stop and revoke." },
+                  { "name": "--all", "type": "flag", "description": "Stop and revoke every live session." },
+                  { "name": "--socket", "type": "string", "description": "Override the daemon socket path." }
+              ] },
             { "name": "status",
               "description": "Report daemon status (running / not / unhealthy).",
               "args": [ { "name": "--socket", "type": "string", "description": "Override the daemon socket path." } ] },
@@ -2476,9 +2552,14 @@ fn cli_docs_json() -> serde_json::Value {
                 "options": [
                     {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},
                     {"name":"pid-file","short_name":null,"help":"Override the pid-file path on Unix targets.","type":"String","default_value":null,"is_optional":true},
+                    {"name":"permission-mode","short_name":null,"help":"Immutable agent authorization mode: standard, autonomous, or unrestricted.","type":"String","default_value":"standard","is_optional":true},
+                    {"name":"session-policy","short_name":null,"help":"Immutable bounded-autonomy manifest required in autonomous mode.","type":"String","default_value":null,"is_optional":true},
                     {"name":"host-bundle-id","short_name":null,"help":"Advisory host bundle id label echoed in check_permissions output (embedded mode).","type":"String","default_value":null,"is_optional":true}
                 ],
                 "flags": [
+                    {"name":"dangerously-bypass-approvals","short_name":null,"help":"Required deliberate risk acknowledgement for unrestricted mode.","default_value":false},
+                    {"name":"allow-legacy-existing-profile-approval","short_name":null,"help":"Temporary migration flag for the unprotected file-backed existing-profile artifact.","default_value":false},
+                    {"name":"approve-session-policy","short_name":null,"help":"Trusted-launcher confirmation that the exact autonomous manifest was reviewed.","default_value":false},
                     {"name":"no-permissions-gate","short_name":null,"help":"Skip the macOS first-launch permissions gate.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.","default_value":false}
                 ],
@@ -2491,6 +2572,20 @@ fn cli_docs_json() -> serde_json::Value {
                 "arguments": no_args,
                 "options": [{"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true}],
                 "flags": no_flags,
+                "subcommands": no_subcommands
+            },
+            {
+                "name": "revoke",
+                "abstract": "Revoke one or all live authorization/session scopes.",
+                "discussion": "Revocation is deny-only and never accepts an approval token.",
+                "arguments": no_args,
+                "options": [
+                    {"name":"session","short_name":null,"help":"Exact session id to stop and revoke.","type":"String","default_value":null,"is_optional":true},
+                    {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true}
+                ],
+                "flags": [
+                    {"name":"all","short_name":null,"help":"Stop and revoke every live session.","default_value":false}
+                ],
                 "subcommands": no_subcommands
             },
             {
@@ -3419,6 +3514,7 @@ mod tests {
             "call",
             "serve",
             "stop",
+            "revoke",
             "status",
             "mcp-config",
             "manifest",

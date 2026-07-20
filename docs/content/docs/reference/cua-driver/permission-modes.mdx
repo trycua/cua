@@ -1,0 +1,178 @@
+---
+title: Permission modes and bounded autonomy
+description: Standard, autonomous, and unrestricted startup modes, protected consent, session manifests, and revocation in Cua Driver.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Cua Driver resolves one permission mode when the daemon starts. A tool call
+cannot change the mode. The mode controls when work stops for protected human
+approval; permission policies still decide which calls are allowed.
+
+## Modes
+
+| Mode | Startup | Human intervention | Existing logged-in profile |
+| --- | --- | --- | --- |
+| `standard` | Default | Currently once for existing-profile attachment; other risk classes are metadata-only until their adapters ship | Requires a certified protected-consent provider and its persistent Stop indicator |
+| `autonomous` | `--permission-mode autonomous --session-policy <path> --approve-session-policy` | Once when a trusted launcher reviews and approves the bounded manifest | Allowed only when the manifest names the exact PID/window and a certified indicator provider is available |
+| `unrestricted` | `--permission-mode unrestricted --dangerously-bypass-approvals` | Once at trusted launch; no runtime Cua approval prompts | May attach without a protected provider after the explicit launch warning |
+
+`yolo` is an alias for `unrestricted`. Scripts and managed configuration
+should use the canonical name.
+
+<Callout type="warn">
+  Unrestricted mode does not defend against prompt injection or unintended
+  input. It suppresses Cua approval prompts inside the same built-in, managed,
+  and user-policy ceilings. Run it only in a disposable VM or with accounts and
+  data whose full compromise you accept.
+</Callout>
+
+## The authorization stack
+
+Every daemon transport reaches the same authorization coordinator. A call
+must pass each active layer:
+
+1. The reviewed built-in tool and risk map.
+2. The administrator policy from `CUA_DRIVER_MANAGED_POLICY_FILE`, when set.
+3. The user policy from `CUA_DRIVER_POLICY_FILE`, when set.
+4. The autonomous session manifest, in `autonomous` mode.
+5. A live resource grant for adapters marked `risk.enforcement: "active"`.
+
+Each layer can narrow access. Approval and unrestricted mode cannot widen a
+policy layer. An unknown tool has no reviewed risk class and is denied.
+
+Tool-list and description responses include risk metadata with `class`,
+`enforcement`, `operation_sensitive`, and `version`. The first active adapter
+is `browser_prepare` with `strategy.kind=existing_profile`. Other listed risks
+are `metadata_only` until their resource, output, and revocation adapters ship.
+
+## Protected consent
+
+A protected provider must return a decision directly to the daemon over an
+authenticated host or OS channel. The request binds the decision to the daemon
+instance, request nonce, generation, mode, policy hashes, sessions, operation,
+expiry, and exact resource. An accepted request becomes live only after the
+provider activates a persistent indicator with a Stop control.
+
+Ordinary MCP elicitation, MCP tool arguments, inherited standard input, a TTY,
+environment variables, and files do not satisfy this contract. They are
+writable by the calling process. If the daemon has no certified provider,
+`standard` and `autonomous` refuse existing-profile attachment.
+
+<Callout type="info">
+  The current standalone CLI/MCP daemon has no certified Codex or Claude host
+  provider. Its protected-consent status therefore reports `unavailable`.
+  Isolated browser profiles remain available. A trusted embedding host can
+  install the provider interface in process.
+</Callout>
+
+The old file-backed `browser-approve` artifact is disabled by default for
+existing profiles. A trusted launcher can temporarily enable it with
+`--allow-legacy-existing-profile-approval`, but the artifact is a compatibility
+mechanism, not protected human consent.
+It is accepted only in `standard` mode and cannot be combined with autonomous
+or unrestricted startup.
+
+## Autonomous session manifest
+
+The launcher loads one YAML manifest at startup and confirms it with the
+separate `--approve-session-policy` flag. The daemon hashes the file, keeps an
+immutable in-memory copy, and refuses to bind when the file is missing,
+invalid, unapproved, or already expired. The maximum lifetime is 24 hours.
+The idle timeout refreshes only after a fully authorized dispatch. Once it
+expires, the manifest is terminal for that daemon instance and cannot be
+revived by another call.
+
+```yaml
+version: 1
+mode: autonomous
+expires_after: 8h
+idle_timeout: 30m
+
+resources:
+  browser:
+    existing_profiles:
+      - pid: 844
+        window_id: 10725
+    origins:
+      - https://docs.example.com
+      - https://app.example.com
+
+allow:
+  tools:
+    - start_session
+    - end_session
+    - get_browser_state
+    - browser_prepare
+    - browser_navigate
+    - browser_click
+    - browser_type
+
+deny:
+  tools:
+    - page
+
+ask:
+  tools:
+    - browser_download
+    - browser_set_input_files
+```
+
+Tools omitted from all three sets are denied. `ask` also denies unattended
+dispatch because an agent cannot accept its own prompt. A future protected
+host adapter may resume such a call after protected approval.
+
+For existing-profile preparation, the requested PID and native window must
+match an `existing_profiles` entry. Requested navigation must use an allowed
+origin. Before every browser mutation, the daemon reads the live top-level URL
+through CDP and refuses `browser_origin_outside_scope` if a redirect moved the
+tab outside the manifest.
+
+An origin-scoped manifest cannot also allow generic `page`, desktop input, or
+desktop-state tools that bypass the typed browser-origin adapter. Use
+`browser_click`, `browser_type`, and the other typed browser tools instead.
+
+PID/window binding reduces confused-deputy risk but does not provide permanent
+process identity over a long session: an OS can eventually reuse identifiers.
+Keep manifests short-lived and revoke or restart after a browser relaunch.
+Launch supervisors must preserve `--permission-mode`, the session-policy path,
+and its explicit approval flag on restart; falling back to default `standard`
+is a fail-closed change, not a continuation of the autonomous session.
+
+## Managed controls
+
+Set `CUA_DRIVER_MANAGED_POLICY_FILE` to apply an administrator-owned YAML or
+Rego ceiling before the user policy. Both files are loaded once and intersected.
+An explicitly configured missing or invalid path prevents the daemon from
+binding its action endpoint.
+
+Administrators can also set `CUA_DRIVER_DISABLE_UNRESTRICTED=1`. The daemon
+then rejects unrestricted startup even when the danger flag is present.
+
+## Status and revocation
+
+`cua-driver status` reports the effective mode, policy hashes, session-manifest
+hash and expiry, active risk adapters, and protected-provider availability. It
+does not print policy contents or browser data.
+
+End one session and every grant it owns:
+
+```bash
+cua-driver revoke --session research-1
+```
+
+End all live authorization scopes:
+
+```bash
+cua-driver revoke --all
+```
+
+Session end, indicator Stop, grant expiry, policy-context mismatch, browser
+identity drift, reconnect exhaustion, and daemon restart also revoke the
+existing-profile grant.
+
+## Related
+
+- [Permission policies](/reference/cua-driver/permission-policies)
+- [Browser Profile Attachment](/reference/cua-driver/browser-profile-attachment)
+- [Restrict tool access](/how-to-guides/driver/restrict-tool-access)

@@ -866,6 +866,74 @@ async fn existing_profile_only_fixture() -> Fixture {
     }
 }
 
+struct FixtureProtectedProvider {
+    consent_seen: AtomicBool,
+    stopped: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl crate::consent::ProtectedConsentProvider for FixtureProtectedProvider {
+    fn provider_id(&self) -> &'static str {
+        "test.browser-protected-provider"
+    }
+
+    async fn request_consent(
+        &self,
+        request: &crate::consent::ConsentRequest,
+    ) -> Result<crate::consent::ProviderDecision, String> {
+        self.consent_seen.store(true, Ordering::SeqCst);
+        Ok(crate::consent::ProviderDecision {
+            action: crate::consent::ConsentAction::Accept,
+            request_digest: request.request_digest.clone(),
+        })
+    }
+
+    async fn activate_indicator(
+        &self,
+        _request: &crate::consent::ConsentRequest,
+    ) -> Result<crate::consent::IndicatorLease, String> {
+        Ok(crate::consent::IndicatorLease::new(
+            "browser-indicator",
+            self.stopped.clone(),
+        ))
+    }
+
+    async fn deactivate_indicator(&self, _indicator_id: &str) {
+        self.stopped.store(true, Ordering::SeqCst);
+    }
+}
+
+async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedProvider>) {
+    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    let server = MockCdpServer::start(fixture_handler(state.clone())).await;
+    let setup_invoked = Arc::new(AtomicBool::new(false));
+    let provider = Arc::new(FixtureProtectedProvider {
+        consent_seen: AtomicBool::new(false),
+        stopped: Arc::new(AtomicBool::new(false)),
+    });
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            ws_url: server.ws_url(),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
+            setup_invoked: setup_invoked.clone(),
+            setup_aborted: Arc::new(AtomicBool::new(false)),
+            stall_consent: false,
+        }),
+        Some(provider.clone()),
+    );
+    (
+        Fixture {
+            state,
+            _server: server,
+            engine,
+            setup_invoked,
+        },
+        provider,
+    )
+}
+
 async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
     let state = Arc::new(StdMutex::new(FixtureState::default()));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
@@ -953,6 +1021,44 @@ async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
         .await;
     assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
     crate::session::fire_session_end("transport-v2-attach");
+}
+
+#[tokio::test]
+async fn protected_provider_accepts_exact_attach_and_stop_revokes_the_grant() {
+    const PROTECTED_SESSION: &str = "protected-provider-v2";
+    const PROTECTED_TRANSPORT: &str = "protected-transport-v2";
+    let (f, provider) = protected_existing_profile_fixture().await;
+    let prepare = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": PROTECTED_SESSION,
+            "_transport_session_id": PROTECTED_TRANSPORT,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(
+        structured(&prepare)["status"],
+        "ok",
+        "{}",
+        structured(&prepare)
+    );
+    assert!(provider.consent_seen.load(Ordering::SeqCst));
+    assert!(!provider.stopped.load(Ordering::SeqCst));
+
+    crate::session::fire_session_end(PROTECTED_TRANSPORT);
+    tokio::task::yield_now().await;
+    assert!(provider.stopped.load(Ordering::SeqCst));
+
+    let state = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": PROTECTED_SESSION,
+            "_transport_session_id": PROTECTED_TRANSPORT
+        }))
+        .await;
+    assert_eq!(structured(&state)["status"], "refused");
 }
 
 #[tokio::test]

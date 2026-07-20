@@ -393,13 +393,15 @@ impl BrowserPrepareTool {
             name: "browser_prepare".into(),
             description: "Explicitly prepare an owned DevTools endpoint for a browser \
                 pid. Existing endpoints are detected without side effects. Acting setup \
-                requires MCP-host approval or a short-lived token from the interactive \
-                browser-approve command, allow_launch=true, and a driver-owned isolated \
-                profile. It launches a separate browser and never copies, modifies, or \
-                terminates the requested user profile. Existing-profile attachment is \
-                explicit, requires an exact interactive approval artifact, and never \
-                treats ordinary MCP transport approval as profile consent. On proven \
-                platforms, that approval also permits one bounded exact-window setup: \
+                for an isolated profile requires host approval or a short-lived setup \
+                token plus allow_launch=true. It launches a separate browser and never \
+                copies, modifies, or terminates the requested user profile. Existing-profile \
+                attachment is explicit and follows the daemon's immutable permission mode: \
+                standard requires a certified protected-consent provider, autonomous requires \
+                a launch-approved exact resource manifest plus protected indicator, and \
+                unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP \
+                transport approval never proves profile consent. On proven platforms, an \
+                authorized request also permits one bounded exact-window setup: \
                 open the recognized browser product's fixed remote-debugging page, toggle \
                 its uniquely matched per-instance checkbox, prove the PID-owned loopback \
                 endpoint, and close the temporary tab. Every visible effect is reported; \
@@ -412,7 +414,7 @@ impl BrowserPrepareTool {
                     "window_id": { "type": "integer", "description": "Exact native window approval anchor; required for strategy.kind=existing_profile." },
                     "approval_token": {
                         "type": "string",
-                        "description": "Single-use token minted by `cua-driver browser-approve` for direct CLI/raw use. Omit for an MCP-host-approved call."
+                        "description": "Legacy single-use setup token. Existing-profile use is disabled unless a trusted launcher explicitly enables the same-user-writable compatibility path."
                     },
                     "allow_launch": {
                         "type": "boolean",

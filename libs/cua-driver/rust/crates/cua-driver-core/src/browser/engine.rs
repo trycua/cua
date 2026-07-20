@@ -70,12 +70,28 @@ pub struct BrowserEngine {
     pub(crate) pool: CdpPool,
     pub(crate) managed_browsers: ManagedBrowsers,
     pub(crate) existing_profile_grants: ExistingProfileGrants,
+    pub(crate) approval_broker: crate::consent::ApprovalBroker,
     mutation_gates: MutationGates,
     reconnect_gates: ReconnectGates,
 }
 
 fn refuse(code: BrowserRefusalCode, msg: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, msg)
+}
+
+fn authorize_live_browser_origin(
+    manifest: Option<&crate::session_manifest::SessionManifest>,
+    live_url: &str,
+) -> Result<(), BrowserRefusal> {
+    let manifest = manifest.ok_or_else(|| {
+        refuse(
+            BrowserRefusalCode::BrowserOriginOutsideScope,
+            "the autonomous session policy is unavailable",
+        )
+    })?;
+    manifest
+        .authorize_browser_url(live_url)
+        .map_err(|error| refuse(BrowserRefusalCode::BrowserOriginOutsideScope, error))
 }
 
 fn route_err(context: &str, err: impl std::fmt::Display) -> BrowserRefusal {
@@ -387,12 +403,23 @@ impl BrowserEngine {
     /// capability store. Platform crates call this once and register
     /// the five tools via `register_browser_tools`.
     pub fn new(platform: Arc<dyn BrowserPlatform>) -> Arc<Self> {
+        Self::new_with_protected_consent_provider(platform, None)
+    }
+
+    /// Create an engine with a provider installed by a trusted embedding host
+    /// or platform adapter. Ordinary MCP/CLI callers cannot register or replace
+    /// this provider after daemon startup.
+    pub fn new_with_protected_consent_provider(
+        platform: Arc<dyn BrowserPlatform>,
+        provider: Option<Arc<dyn crate::consent::ProtectedConsentProvider>>,
+    ) -> Arc<Self> {
         let engine = Arc::new(Self {
             platform,
             store: BrowserStore::new(),
             pool: CdpPool::new(),
             managed_browsers: Default::default(),
             existing_profile_grants: ExistingProfileGrants::new(),
+            approval_broker: crate::consent::ApprovalBroker::new(provider),
             mutation_gates: MutationGates::new(),
             reconnect_gates: ReconnectGates::new(),
         });
@@ -401,14 +428,21 @@ impl BrowserEngine {
             if let Some(engine) = weak.upgrade() {
                 engine.store.remove_session(session_id);
                 engine.cleanup_prepared_session(session_id);
-                for (endpoint, generation) in
-                    engine.existing_profile_grants.remove_session(session_id)
-                {
-                    engine.pool.release_claim_marker(&endpoint);
+                for grant in engine.existing_profile_grants.remove_session(session_id) {
+                    engine.pool.release_claim_marker(&grant.endpoint_ws_url);
+                    if let Some(protected) = grant.protected_consent.as_ref() {
+                        protected.indicator.revoke();
+                    }
                     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
                         let engine = engine.clone();
                         runtime.spawn(async move {
-                            engine.pool.release_existing(&endpoint, generation).await;
+                            engine
+                                .pool
+                                .release_existing(&grant.endpoint_ws_url, grant.generation)
+                                .await;
+                            if let Some(protected) = grant.protected_consent.as_ref() {
+                                engine.approval_broker.revoke(protected).await;
+                            }
                         });
                     }
                 }
@@ -436,6 +470,9 @@ impl BrowserEngine {
                 self.pool
                     .release_existing(&grant.endpoint_ws_url, grant.generation)
                     .await;
+                if let Some(protected) = grant.protected_consent.as_ref() {
+                    self.approval_broker.revoke(protected).await;
+                }
                 Err(refuse(
                     BrowserRefusalCode::BrowserConsentRequired,
                     "the existing-profile grant expired; approve this attachment again",
@@ -458,6 +495,9 @@ impl BrowserEngine {
             self.pool
                 .release_existing(&grant.endpoint_ws_url, grant.generation)
                 .await;
+            if let Some(protected) = grant.protected_consent.as_ref() {
+                self.approval_broker.revoke(protected).await;
+            }
         }
     }
 
@@ -1202,6 +1242,36 @@ impl BrowserEngine {
         }
 
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
+        if crate::authorization::configured_permission_mode()
+            .is_ok_and(|mode| mode == crate::authorization::PermissionMode::Autonomous)
+        {
+            let frame_tree = conn
+                .call(Some(&cdp_session), "Page.getFrameTree", json!({}))
+                .await
+                .map_err(|error| {
+                    route_err(
+                        "could not prove the live browser origin before autonomous input",
+                        error,
+                    )
+                })?;
+            let live_url = frame_tree
+                .pointer("/frameTree/frame/url")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    refuse(
+                        BrowserRefusalCode::BrowserOriginOutsideScope,
+                        "the live top-level browser origin could not be proven",
+                    )
+                })?;
+            let manifest =
+                crate::session_manifest::configured_session_manifest().map_err(|error| {
+                    refuse(
+                        BrowserRefusalCode::BrowserOriginOutsideScope,
+                        format!("the autonomous session policy is unavailable: {error}"),
+                    )
+                })?;
+            authorize_live_browser_origin(manifest, live_url)?;
+        }
         Ok(ValidatedTab {
             conn,
             record,
@@ -2419,5 +2489,35 @@ mod tests {
             "a root without a loader id fails the parse"
         );
         assert!(parse_frame_tree(&json!({})).is_none());
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn live_browser_origin_decision_refuses_redirect_outside_manifest_scope() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session-policy.yaml");
+        std::fs::write(
+            &path,
+            r#"
+version: 1
+mode: autonomous
+expires_after: 1h
+idle_timeout: 10m
+resources:
+  browser:
+    origins: [https://app.example.com]
+allow:
+  tools: [browser_navigate, browser_click]
+"#,
+        )
+        .unwrap();
+        let manifest = crate::session_manifest::load_manifest(&path).unwrap();
+
+        authorize_live_browser_origin(Some(&manifest), "https://app.example.com/work").unwrap();
+        let refusal =
+            authorize_live_browser_origin(Some(&manifest), "https://attacker.example/redirected")
+                .unwrap_err();
+        assert_eq!(refusal.code, BrowserRefusalCode::BrowserOriginOutsideScope);
+        assert!(authorize_live_browser_origin(None, "https://app.example.com").is_err());
     }
 }

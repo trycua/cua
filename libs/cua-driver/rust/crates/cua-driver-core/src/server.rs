@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use tracing::warn;
 
-use crate::policy::{configured_policy, PolicyDecision};
+use crate::authorization::authorize_tool_call;
 use crate::protocol::{initialize_result, InitializeMetadata, Request, Response, ResponseBody};
 use crate::tool::ToolRegistry;
 
@@ -148,6 +148,7 @@ pub enum ToolRefusalCode {
     BrowserReconnectExhausted,
     BrowserInputIncomplete,
     BrowserActionUnavailable,
+    BrowserOriginOutsideScope,
     Other,
 }
 
@@ -170,6 +171,7 @@ impl ToolRefusalCode {
             Self::BrowserReconnectExhausted => "browser_reconnect_exhausted",
             Self::BrowserInputIncomplete => "browser_input_incomplete",
             Self::BrowserActionUnavailable => "browser_action_unavailable",
+            Self::BrowserOriginOutsideScope => "browser_origin_outside_scope",
             Self::Other => "other",
         }
     }
@@ -195,6 +197,7 @@ impl ToolRefusalCode {
             Some("browser_reconnect_exhausted") => Self::BrowserReconnectExhausted,
             Some("browser_input_incomplete") => Self::BrowserInputIncomplete,
             Some("browser_action_unavailable") => Self::BrowserActionUnavailable,
+            Some("browser_origin_outside_scope") => Self::BrowserOriginOutsideScope,
             Some(_) | None => Self::Other,
         }
     }
@@ -219,6 +222,7 @@ impl From<crate::browser::refusal::BrowserRefusalCode> for ToolRefusalCode {
             BrowserRefusalCode::BrowserReconnectExhausted => Self::BrowserReconnectExhausted,
             BrowserRefusalCode::BrowserInputIncomplete => Self::BrowserInputIncomplete,
             BrowserRefusalCode::BrowserActionUnavailable => Self::BrowserActionUnavailable,
+            BrowserRefusalCode::BrowserOriginOutsideScope => Self::BrowserOriginOutsideScope,
         }
     }
 }
@@ -793,32 +797,8 @@ pub async fn handle_request(
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
             Ok(mut call) => {
                 crate::tool_args::sanitize_reserved_args(&mut call.args);
-                match configured_policy() {
-                    Ok(Some(policy)) => match policy.evaluate(&call.name, &call.args) {
-                        PolicyDecision::Allow => {}
-                        PolicyDecision::Deny(reason) => {
-                            return Response::error(
-                                id,
-                                -32603,
-                                format!("Permission denied: {reason}"),
-                            );
-                        }
-                        PolicyDecision::Error(message) => {
-                            return Response::error(
-                                id,
-                                -32603,
-                                format!("Policy evaluation error: {message}"),
-                            );
-                        }
-                    },
-                    Ok(None) => {}
-                    Err(message) => {
-                        return Response::error(
-                            id,
-                            -32603,
-                            format!("Policy loading error: {message}"),
-                        );
-                    }
+                if let Err(error) = authorize_tool_call(&call.name, &call.args) {
+                    return Response::error(id, -32603, error.to_string());
                 }
 
                 let public_session = call

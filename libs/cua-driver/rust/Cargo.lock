@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -754,7 +754,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -779,7 +779,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-testkit"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "core-foundation",
  "libc",
@@ -793,7 +793,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-uia"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "cua-driver-core",
@@ -808,7 +808,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "image",
@@ -2298,7 +2298,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pip-preview"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "serde_json",
@@ -2352,7 +2352,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "platform-linux"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -2394,7 +2394,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2427,7 +2427,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-trait",

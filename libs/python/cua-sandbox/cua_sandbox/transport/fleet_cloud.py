@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 import time
 from typing import TYPE_CHECKING, Any, Optional
 from urllib.parse import urlparse
-
-import logging
 
 import httpx
 from cua_sandbox._config import (

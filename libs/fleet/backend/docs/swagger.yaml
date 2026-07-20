@@ -38,14 +38,6 @@ definitions:
         example: my-workspace
         type: string
     type: object
-  handlers.CreatePoolTemplateRequest:
-    properties:
-      config:
-        type: object
-      name:
-        example: gpu-large
-        type: string
-    type: object
   handlers.CreateUserKeyRequest:
     properties:
       name:
@@ -111,17 +103,6 @@ definitions:
       status:
         type: string
     type: object
-  handlers.PoolTemplateResponse:
-    properties:
-      config:
-        type: object
-      createdAt:
-        type: string
-      name:
-        type: string
-      user:
-        type: string
-    type: object
   handlers.UserKeyResponse:
     properties:
       client_id:
@@ -151,9 +132,9 @@ definitions:
 info:
   contact: {}
   description: Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key
-    management, service proxies (k8s / orch / svc), namespace management, and
-    deprecated gateway / batch / label routes that now return 410 Gone. All
-    pool operations use OSGymSandboxClaim CRs (Path B).
+    management, service proxies (k8s / orch / svc), namespace management, and deprecated
+    gateway / batch / label routes that now return 410 Gone. All pool operations use
+    OSGymSandboxClaim CRs (Path B).
   title: Cyclops CS Backend API
   version: "0.1"
 paths:
@@ -185,7 +166,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Deprecated batch cancellation route
+      summary: Deprecated batch delete route
       tags:
       - batch
   /api/batch/{pool}/{id}/results:
@@ -273,7 +254,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Deprecated batch lane release route
+      summary: Deprecated batch lanes route
       tags:
       - batch
     post:
@@ -298,7 +279,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Deprecated batch lane acquisition route
+      summary: Deprecated batch lanes route
       tags:
       - batch
   /api/batch/{pool}/submit:
@@ -349,43 +330,25 @@ paths:
       - config
   /api/gateway/{name}/{path}:
     get:
-      description: 'DEPRECATED (CUA-609): The per-pool orchestrator HTTP layer has
-        been removed. This route returns 410 Gone for all requests. All pool
-        operations must use OSGymSandboxClaim CRs (Path B) directly.'
+      description: The per-pool HTTP orchestrator has been deprecated and removed.
+        All pools now use OSGymSandboxClaim CRs exclusively (Path B). This endpoint
+        returns 410 Gone for any request. See CUA-609.
       parameters:
       - description: Pool name (DNS-1123 label)
         in: path
         name: name
         required: true
         type: string
-      - description: Upstream path (proxied verbatim, no validation)
+      - description: Upstream path (ignored)
         in: path
         name: path
         type: string
       responses:
-        "200":
-          description: Upstream response
-          schema:
-            type: string
-        "400":
-          description: Bad Request
+        "410":
+          description: Orchestrator HTTP layer deprecated (CUA-609)
           schema:
             $ref: '#/definitions/handlers.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "502":
-          description: Bad Gateway
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: DEPRECATED (CUA-609): per-pool orchestrator proxy — returns 410 Gone
+      summary: 'DEPRECATED: Per-pool orchestrator reverse-proxy (CUA-609)'
       tags:
       - gateway
   /api/k8s/{path}:
@@ -514,7 +477,7 @@ paths:
         name: pool
         required: true
         type: string
-      - description: Batch label
+      - description: Label
         in: path
         name: label
         required: true
@@ -530,9 +493,9 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Deprecated label cancellation route
+      summary: Deprecated label delete route
       tags:
-      - batch
+      - label
   /api/label/{pool}/{label}/batch:
     post:
       deprecated: true
@@ -545,7 +508,7 @@ paths:
         name: pool
         required: true
         type: string
-      - description: Batch label
+      - description: Label
         in: path
         name: label
         required: true
@@ -561,9 +524,9 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Deprecated label batch submission route
+      summary: Deprecated label batch route
       tags:
-      - batch
+      - label
   /api/label/{pool}/{label}/results:
     get:
       deprecated: true
@@ -576,7 +539,7 @@ paths:
         name: pool
         required: true
         type: string
-      - description: Batch label
+      - description: Label
         in: path
         name: label
         required: true
@@ -594,7 +557,7 @@ paths:
       - BearerAuth: []
       summary: Deprecated label results route
       tags:
-      - batch
+      - label
   /api/label/{pool}/{label}/status:
     get:
       deprecated: true
@@ -607,7 +570,7 @@ paths:
         name: pool
         required: true
         type: string
-      - description: Batch label
+      - description: Label
         in: path
         name: label
         required: true
@@ -625,7 +588,7 @@ paths:
       - BearerAuth: []
       summary: Deprecated label status route
       tags:
-      - batch
+      - label
   /api/namespaces:
     get:
       description: Returns namespaces owned by the caller's Capsule Tenant. The list
@@ -780,128 +743,6 @@ paths:
       summary: SPA-authenticated proxy to a per-namespace orchestrator service
       tags:
       - passthrough
-  /api/pool-templates:
-    get:
-      description: Returns every pool template owned by the calling user, newest first.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/handlers.PoolTemplateResponse'
-            type: array
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: List the calling user's pool templates
-      tags:
-      - pool-templates
-    post:
-      consumes:
-      - application/json
-      description: Stores the given pool config under a name owned by the calling
-        user. Re-saving an existing name overwrites the config while preserving the
-        original creation time. Use GET /api/pool-templates to list them and seed
-        a new pool.
-      parameters:
-      - description: Template name + pool config
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/handlers.CreatePoolTemplateRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/handlers.PoolTemplateResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Save a pool config as a reusable template
-      tags:
-      - pool-templates
-  /api/pool-templates/{name}:
-    delete:
-      parameters:
-      - description: Template name
-        in: path
-        name: name
-        required: true
-        type: string
-      responses:
-        "204":
-          description: No Content
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Delete one of the calling user's pool templates
-      tags:
-      - pool-templates
-    get:
-      parameters:
-      - description: Template name
-        in: path
-        name: name
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/handlers.PoolTemplateResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Get one of the calling user's pool templates
-      tags:
-      - pool-templates
   /api/svc/{namespace}/{service}/{path}:
     get:
       description: Proxies to {service}.{namespace}.svc.cluster.local:80. Per-key
@@ -1043,10 +884,10 @@ paths:
 securityDefinitions:
   BearerAuth:
     description: Keycloak access token. For /api/keys and /api/{k8s,orch} the token
-      is the SPA's user JWT (azp=cyclops-cs-spa). /api/gateway/{name} and the deprecated
-      /api/batch/{pool} + /api/label/{pool} routes still run through the same OPA
-      checks; per-key tokens must carry a `namespace` claim matching "pool-{name}"
-      or "pool-{pool}" respectively.
+      is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli). /api/gateway/{name}
+      requires a per-key token whose `namespace` claim equals "pool-{name}" (enforced
+      by OPA). The deprecated /api/batch/{pool} and /api/label/{pool} routes are permanently
+      retired — they return 410 Gone for every request regardless of token validity.
     in: header
     name: Authorization
     type: apiKey

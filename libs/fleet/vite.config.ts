@@ -1,11 +1,6 @@
 import { defineConfig } from "vite"
 import react from "@vitejs/plugin-react"
 
-// API requests in dev are proxied to a port-forwarded cyclops-ctrl on
-// localhost:8080:
-//   kubectl -n cyclops port-forward svc/cyclops-ctrl 8080:8080
-const CYCLOPS_CTRL = process.env.CYCLOPS_CTRL ?? "http://localhost:8080"
-
 // /api/k8s and /api/orch are served by the cyclops-cs backend sidecar
 // (Keycloak SSO + OPA), which isn't reachable from a laptop. In dev,
 // route them through the deployed cyclops-cs Tailscale ingress so the
@@ -21,37 +16,12 @@ export default defineConfig({
   server: {
     port: 5180,
     proxy: {
-      // More specific /api/* rules must come before the catchall /api so
-      // they're matched first.
-      "/api/k8s": {
-        target: ORCH_API,
-        changeOrigin: true,
-        secure: true,
-      },
-      "/api/orch": {
-        target: ORCH_API,
-        changeOrigin: true,
-        secure: true,
-      },
-      "/api/keys": {
-        target: ORCH_API,
-        changeOrigin: true,
-        secure: true,
-      },
-      "/api/gateway": {
-        target: ORCH_API,
-        changeOrigin: true,
-        secure: true,
-      },
-      "/api/swagger": {
-        target: ORCH_API,
-        changeOrigin: true,
-        secure: true,
-      },
+      // Upstream cyclops-ctrl is retired — every /api route is served by
+      // the cyclops-cs backend behind the deployed ingress.
       "/api": {
-        target: CYCLOPS_CTRL,
+        target: ORCH_API,
         changeOrigin: true,
-        rewrite: p => p.replace(/^\/api/, ""),
+        secure: true,
       },
     },
   },

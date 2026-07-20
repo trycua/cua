@@ -29,7 +29,7 @@ const docTemplate = `{
                 "tags": [
                     "batch"
                 ],
-                "summary": "Deprecated batch lane acquisition route",
+                "summary": "Deprecated batch lanes route",
                 "deprecated": true,
                 "parameters": [
                     {
@@ -65,7 +65,7 @@ const docTemplate = `{
                 "tags": [
                     "batch"
                 ],
-                "summary": "Deprecated batch lane release route",
+                "summary": "Deprecated batch lanes route",
                 "deprecated": true,
                 "parameters": [
                     {
@@ -141,7 +141,7 @@ const docTemplate = `{
                 "tags": [
                     "batch"
                 ],
-                "summary": "Deprecated batch cancellation route",
+                "summary": "Deprecated batch delete route",
                 "deprecated": true,
                 "parameters": [
                     {
@@ -295,16 +295,11 @@ const docTemplate = `{
         },
         "/api/gateway/{name}/{path}": {
             "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "DEPRECATED (CUA-609): The per-pool orchestrator HTTP layer has been removed. This route returns 410 Gone for all requests. All pool operations must use OSGymSandboxClaim CRs (Path B) directly.",
+                "description": "The per-pool HTTP orchestrator has been deprecated and removed. All pools now use OSGymSandboxClaim CRs exclusively (Path B). This endpoint returns 410 Gone for any request. See CUA-609.",
                 "tags": [
                     "gateway"
                 ],
-                "summary": "DEPRECATED (CUA-609): per-pool orchestrator proxy — returns 410 Gone",
+                "summary": "DEPRECATED: Per-pool orchestrator reverse-proxy (CUA-609)",
                 "parameters": [
                     {
                         "type": "string",
@@ -315,38 +310,14 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Upstream path (proxied verbatim, no validation)",
+                        "description": "Upstream path (ignored)",
                         "name": "path",
                         "in": "path"
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "Upstream response",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "502": {
-                        "description": "Bad Gateway",
+                    "410": {
+                        "description": "Orchestrator HTTP layer deprecated (CUA-609)",
                         "schema": {
                             "$ref": "#/definitions/handlers.ErrorResponse"
                         }
@@ -542,9 +513,9 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "batch"
+                    "label"
                 ],
-                "summary": "Deprecated label cancellation route",
+                "summary": "Deprecated label delete route",
                 "deprecated": true,
                 "parameters": [
                     {
@@ -556,7 +527,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Batch label",
+                        "description": "Label",
                         "name": "label",
                         "in": "path",
                         "required": true
@@ -587,9 +558,9 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "batch"
+                    "label"
                 ],
-                "summary": "Deprecated label batch submission route",
+                "summary": "Deprecated label batch route",
                 "deprecated": true,
                 "parameters": [
                     {
@@ -601,7 +572,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Batch label",
+                        "description": "Label",
                         "name": "label",
                         "in": "path",
                         "required": true
@@ -632,7 +603,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "batch"
+                    "label"
                 ],
                 "summary": "Deprecated label results route",
                 "deprecated": true,
@@ -646,7 +617,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Batch label",
+                        "description": "Label",
                         "name": "label",
                         "in": "path",
                         "required": true
@@ -677,7 +648,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "batch"
+                    "label"
                 ],
                 "summary": "Deprecated label status route",
                 "deprecated": true,
@@ -691,7 +662,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Batch label",
+                        "description": "Label",
                         "name": "label",
                         "in": "path",
                         "required": true
@@ -931,195 +902,6 @@ const docTemplate = `{
                     },
                     "502": {
                         "description": "Bad Gateway",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/pool-templates": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns every pool template owned by the calling user, newest first.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pool-templates"
-                ],
-                "summary": "List the calling user's pool templates",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/handlers.PoolTemplateResponse"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Stores the given pool config under a name owned by the calling user. Re-saving an existing name overwrites the config while preserving the original creation time. Use GET /api/pool-templates to list them and seed a new pool.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pool-templates"
-                ],
-                "summary": "Save a pool config as a reusable template",
-                "parameters": [
-                    {
-                        "description": "Template name + pool config",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handlers.CreatePoolTemplateRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.PoolTemplateResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/pool-templates/{name}": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pool-templates"
-                ],
-                "summary": "Get one of the calling user's pool templates",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Template name",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.PoolTemplateResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "tags": [
-                    "pool-templates"
-                ],
-                "summary": "Delete one of the calling user's pool templates",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Template name",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "No Content"
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
                         "schema": {
                             "$ref": "#/definitions/handlers.ErrorResponse"
                         }
@@ -1388,18 +1170,6 @@ const docTemplate = `{
                 }
             }
         },
-        "handlers.CreatePoolTemplateRequest": {
-            "type": "object",
-            "properties": {
-                "config": {
-                    "type": "object"
-                },
-                "name": {
-                    "type": "string",
-                    "example": "gpu-large"
-                }
-            }
-        },
         "handlers.CreateUserKeyRequest": {
             "type": "object",
             "properties": {
@@ -1500,23 +1270,6 @@ const docTemplate = `{
                 }
             }
         },
-        "handlers.PoolTemplateResponse": {
-            "type": "object",
-            "properties": {
-                "config": {
-                    "type": "object"
-                },
-                "createdAt": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "user": {
-                    "type": "string"
-                }
-            }
-        },
         "handlers.UserKeyResponse": {
             "type": "object",
             "properties": {
@@ -1560,7 +1313,7 @@ const docTemplate = `{
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "description": "Keycloak access token. For /api/keys and /api/{k8s,orch} the token is the SPA's user JWT (azp=cyclops-cs-spa). /api/gateway/{name} and the deprecated /api/batch/{pool} + /api/label/{pool} routes still run through the same OPA checks; per-key tokens must carry a ` + "`" + `namespace` + "`" + ` claim matching \"pool-{name}\" or \"pool-{pool}\" respectively.",
+            "description": "Keycloak access token. For /api/keys and /api/{k8s,orch} the token is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli). /api/gateway/{name} requires a per-key token whose ` + "`" + `namespace` + "`" + ` claim equals \"pool-{name}\" (enforced by OPA). The deprecated /api/batch/{pool} and /api/label/{pool} routes are permanently retired — they return 410 Gone for every request regardless of token validity.",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"

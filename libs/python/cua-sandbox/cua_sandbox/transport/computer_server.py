@@ -36,9 +36,7 @@ def decode_screenshot_response(payload: Dict[str, Any]) -> bytes:
     """Decode computer-server's accepted screenshot response shapes."""
     encoded = payload.get("image_data", payload.get("base64_image", payload.get("result", "")))
     if isinstance(encoded, dict):
-        encoded = encoded.get(
-            "image_data", encoded.get("base64_image", encoded.get("base64", ""))
-        )
+        encoded = encoded.get("image_data", encoded.get("base64_image", encoded.get("base64", "")))
     return base64.b64decode(encoded)
 
 

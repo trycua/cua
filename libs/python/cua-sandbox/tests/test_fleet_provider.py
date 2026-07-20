@@ -3,7 +3,6 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
-
 from cua_sandbox import Image
 from cua_sandbox.providers.fleet import FleetProvider
 from cua_sandbox.transport.fleet import FleetTransport
@@ -159,12 +158,14 @@ async def test_create_rejects_unsupported_disk_size(linux_template):
     with pytest.raises(ValueError, match="disk_gb is not supported"):
         await provider.create(Image.linux(), name="demo", disk_gb=20)
 
+
 @pytest.mark.asyncio
 async def test_create_rejects_registry_image_in_favor_of_explicit_template(linux_template):
     provider = FleetProvider(sdk=FakeSDK(), templates={"linux": linux_template})
 
     with pytest.raises(ValueError, match="uses explicit templates"):
         await provider.create(Image.from_registry("registry.example/custom:latest"), name="demo")
+
 
 @pytest.mark.asyncio
 async def test_create_rejects_custom_start_timeout(linux_template):

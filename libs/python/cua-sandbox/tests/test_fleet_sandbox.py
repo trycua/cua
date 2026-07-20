@@ -3,7 +3,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from cua_sandbox import Image, Sandbox
 from cua_sandbox.providers.base import ProvisionedSandbox
 
@@ -34,7 +33,9 @@ async def test_create_uses_explicit_provider_instead_of_cloud_transport():
     transport = make_transport()
     provider = FakeProvider(transport)
 
-    with patch("cua_sandbox.sandbox.CloudTransport", side_effect=AssertionError("unexpected cloud")):
+    with patch(
+        "cua_sandbox.sandbox.CloudTransport", side_effect=AssertionError("unexpected cloud")
+    ):
         sandbox = await Sandbox.create(
             Image.linux(),
             name="fleet-demo",
@@ -122,6 +123,7 @@ async def test_provider_creation_gets_generated_name():
 
     assert sandbox.name
     assert provider.create_calls[0][1]["name"] == sandbox.name
+
 
 @pytest.mark.asyncio
 async def test_connect_failure_deletes_provisioned_resources():

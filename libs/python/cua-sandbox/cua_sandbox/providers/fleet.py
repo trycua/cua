@@ -41,7 +41,9 @@ class FleetProvider:
         service_port: int = 8000,
     ) -> None:
         self._sdk = sdk
-        self._templates = {os_type: copy.deepcopy(template) for os_type, template in templates.items()}
+        self._templates = {
+            os_type: copy.deepcopy(template) for os_type, template in templates.items()
+        }
         self._service_name = service_name
         self._service_port = service_port
         self._call_lock = threading.Lock()

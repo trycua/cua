@@ -58,6 +58,7 @@ ipcMain.on('cua-e2e-sentinel-event', (_event, entry) => {
 });
 
 let mainWindow;
+let sentinelHeartbeatTimer;
 
 function createWindow() {
   const fixedTitle = sentinelMode
@@ -129,6 +130,18 @@ function createWindow() {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setTitle(fixedTitle);
         if (sentinelMode) {
+          // Drive the clock from the main process but require the renderer to
+          // handle each probe before it can journal a heartbeat. Native
+          // Wayland fullscreen surfaces can suspend renderer-owned interval
+          // timers even while renderer IPC remains healthy.
+          if (!sentinelHeartbeatTimer) {
+            sentinelHeartbeatTimer = setInterval(() => {
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('cua-e2e-sentinel-heartbeat-probe');
+              }
+            }, 100);
+            sentinelHeartbeatTimer.unref();
+          }
           if (process.platform !== 'darwin' && !nativeWayland) {
             mainWindow.setAlwaysOnTop(true);
           }
@@ -175,5 +188,9 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  if (sentinelHeartbeatTimer) {
+    clearInterval(sentinelHeartbeatTimer);
+    sentinelHeartbeatTimer = undefined;
+  }
   if (process.platform !== 'darwin') app.quit();
 });

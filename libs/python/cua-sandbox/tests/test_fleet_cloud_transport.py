@@ -65,3 +65,24 @@ async def test_cleanup_deletes_pool_when_claim_deletion_fails():
         await transport._cleanup_resources()
 
     assert calls == [("claim", {"metadata": {"name": "claim"}}), ("pool", {"metadata": {"name": "pool"}})]
+
+
+@pytest.mark.asyncio
+async def test_inherited_command_forwards_json_and_timeout_to_service_client():
+    transport = FleetCloudTransport(image=Image.from_registry("registry.example/workspace:latest"), name="demo")
+    captured = {}
+
+    class Client:
+        def post(self, path, **kwargs):
+            captured["path"] = path
+            captured.update(kwargs)
+            request = __import__("httpx").Request("POST", "https://run.cua.ai/cmd")
+            return __import__("httpx").Response(200, text='data: {"result": "ok"}\n', request=request)
+
+    transport._client = Client()
+    transport._timeout = 30.0
+
+    assert await transport.send("shell.run", timeout=15) == "ok"
+    assert captured["path"] == "/cmd"
+    assert captured["json"] == {"command": "shell.run", "params": {"timeout": 15}}
+    assert captured["timeout"].read == 25.0

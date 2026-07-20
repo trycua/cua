@@ -102,6 +102,8 @@ for why Cua Driver uses CDP and which risks remain outside the driver.
 | `browser_binding_stale` | A connection generation changed; bind again. |
 | `browser_reconnect_exhausted` | The bounded reconnect policy could not establish a proven socket. |
 | `browser_input_incomplete` | Keystroke typing delivered only a reported prefix. |
+| `browser_route_unavailable` | The classified engine or platform has no accepted typed route. For Firefox and Safari, bounded detail identifies the required protocol and current lifecycle limitation. |
+| `browser_input_trust_unavailable` | Trusted input cannot preserve background posture. Bounded detail identifies the explicit `dom_event` alternative when a synthetic ref-targeted action is acceptable. |
 
 ## Recording and telemetry
 
@@ -116,9 +118,10 @@ The content-free browser operation and refusal fields are documented in
 
 The prompt-assisted route is available for Google Chrome and Microsoft Edge on
 macOS and Windows. Chrome has product-specific acceptance evidence on Linux
-X11 and on the validated native-Wayland Sway lane. Chromium and Edge use the
-same descriptor-backed Linux route, but still need product-specific acceptance
-evidence before they are listed as validated. Every route requires an
+X11. Chromium has product-specific acceptance evidence on the validated
+native-Wayland Sway lane. Chromium and Edge use the same descriptor-backed
+Linux route, but still need product-specific acceptance evidence before they
+are listed as validated. Every route requires an
 exact approved PID and native window, one uniquely matched setup control, a
 loopback endpoint owned by that process, one exact browser-owned consent
 action, and a fresh native/CDP rebind.

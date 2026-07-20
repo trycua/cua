@@ -365,6 +365,13 @@ impl BrowserPointerTool {
                             "{limitation}; use input_route=\"dom_event\" with refs to explicitly request synthetic full-background pointer delivery"
                         ),
                     )
+                    .with_detail(json!({
+                        "requested_route": "trusted",
+                        "limitation": limitation,
+                        "alternative_route": "dom_event",
+                        "alternative_requires_ref": true,
+                        "trusted_delivery_attempted": false,
+                    }))
                     .to_tool_result(),
                 );
             }

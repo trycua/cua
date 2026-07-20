@@ -1647,6 +1647,14 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
         structured(&trusted)["refusal"]["code"],
         "browser_input_trust_unavailable"
     );
+    assert_eq!(
+        structured(&trusted)["refusal"]["detail"]["alternative_route"],
+        "dom_event"
+    );
+    assert_eq!(
+        structured(&trusted)["refusal"]["detail"]["trusted_delivery_attempted"],
+        false
+    );
     assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
 
     let synthetic = BrowserClickTool::new(f.engine.clone())

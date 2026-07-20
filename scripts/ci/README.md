@@ -39,6 +39,22 @@ sandbox enabled.
 Release validation sets `CUA_TEST_REQUIRE_EXTERNAL_BROWSERS=1` so a missing
 browser fails instead of silently omitting the suite.
 
+By default, Linux preserves the compatibility lane's historical product
+selection: Chrome when installed, otherwise Chromium, plus Edge when present.
+Maintainer certification runs can request an exact product set:
+
+```bash
+CUA_E2E_BROWSER_PRODUCTS=chrome,chromium,edge \
+  scripts/ci/run-rust-standalone-browser-e2e.sh
+```
+
+Every named product is mandatory. An unknown name, duplicate name, or missing
+executable fails before a behavioral row runs, so the matrix cannot silently
+shrink. Use `CUA_E2E_BROWSER_BIN` with `CUA_E2E_BROWSER_NAME` only for a
+single-product diagnostic run. Every launched product also appends its
+CDP-reported product, version, protocol version, user agent, and exact source
+SHA to `browser-provenance.jsonl` beside the matrix report.
+
 For the test layout and the distinction between unit tests, shared harnesses,
 and native harnesses, see
 `libs/cua-driver/docs/test-harnesses-guide.md`.

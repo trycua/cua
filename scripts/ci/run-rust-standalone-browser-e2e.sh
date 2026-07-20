@@ -17,6 +17,7 @@ fi
 mkdir -p "${ARTIFACT_DIR}/recordings"
 export CUA_E2E_DECLARATIONS_FILE="${ARTIFACT_DIR}/cases.jsonl"
 export CUA_E2E_ENVIRONMENT_FILE="${ARTIFACT_DIR}/environment.jsonl"
+export CUA_E2E_BROWSER_PROVENANCE_FILE="${ARTIFACT_DIR}/browser-provenance.jsonl"
 export CUA_E2E_RESULTS_FILE="${ARTIFACT_DIR}/results.jsonl"
 export CUA_E2E_RECORDINGS_ROOT="${ARTIFACT_DIR}/recordings"
 export CUA_TEST_WORKSPACE_ROOT="${RUST_ROOT}"
@@ -70,6 +71,7 @@ fi
 
 : > "${CUA_E2E_DECLARATIONS_FILE}"
 : > "${CUA_E2E_ENVIRONMENT_FILE}"
+: > "${CUA_E2E_BROWSER_PROVENANCE_FILE}"
 : > "${CUA_E2E_RESULTS_FILE}"
 
 SOURCE_MARKER="${REPO_ROOT}/.cua-e2e-source-sha"

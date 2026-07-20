@@ -273,8 +273,8 @@ cd ~/cua
 libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser
 ```
 
-This adds eight adversarial installed-browser rows and writes their separate
-typed results and MP4 evidence under
+This adds the declared adversarial installed-browser rows and writes their
+separate typed results and MP4 evidence under
 `artifacts/cua-driver/macos-standalone-browser/`. Missing external browsers are
 a hard failure for this option; they never shrink the reported matrix. On a
 repeat run, the entrypoint preserves the previous standalone-browser evidence

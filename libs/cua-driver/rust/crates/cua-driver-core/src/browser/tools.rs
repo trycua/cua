@@ -762,6 +762,13 @@ impl Tool for BrowserClickTool {
                         "{limitation}; use input_route=\"dom_event\" with a ref for a synthetic full-background click"
                     ),
                 )
+                .with_detail(json!({
+                    "requested_route": "trusted",
+                    "limitation": limitation,
+                    "alternative_route": "dom_event",
+                    "alternative_requires_ref": true,
+                    "trusted_delivery_attempted": false,
+                }))
                 .to_tool_result();
             }
         }
@@ -1827,6 +1834,14 @@ mod tests {
                     channel: None,
                     supports_cdp: false,
                 },
+                4 => BrowserClassification {
+                    is_browser: true,
+                    engine: BrowserEngineFamily::Gecko,
+                    product_kind: BrowserProduct::Firefox,
+                    product: Some("MockFirefox".into()),
+                    channel: None,
+                    supports_cdp: false,
+                },
                 _ => BrowserClassification {
                     is_browser: false,
                     engine: BrowserEngineFamily::Unknown,
@@ -1843,6 +1858,10 @@ mod tests {
             pid: i64,
             window_id: u64,
         ) -> Result<NativeWindowInfo, BrowserRefusal> {
+            assert!(
+                !matches!(pid, 3 | 4),
+                "unsupported browser engines must refuse before native-window probing"
+            );
             use crate::browser::types::{NativeOwnershipMethod, NativeOwnershipProof, Rect};
             Ok(NativeWindowInfo {
                 pid,
@@ -2072,6 +2091,35 @@ mod tests {
         assert_eq!(
             structured(&result)["refusal"]["code"],
             "browser_route_unavailable"
+        );
+        assert_eq!(
+            structured(&result)["refusal"]["detail"]["engine_family"],
+            "webkit"
+        );
+        assert_eq!(
+            structured(&result)["refusal"]["detail"]["product"],
+            "safari"
+        );
+        assert_eq!(
+            structured(&result)["refusal"]["detail"]["limitation"],
+            "no_attachable_runtime_endpoint"
+        );
+    }
+
+    #[tokio::test]
+    async fn firefox_refusal_names_the_required_protocol_without_probing_the_window() {
+        let tool = GetBrowserStateTool::new(engine());
+        let result = tool
+            .invoke(json!({ "pid": 4, "window_id": 7, "_session_id": "run-1" }))
+            .await;
+        let refusal = &structured(&result)["refusal"];
+        assert_eq!(refusal["code"], "browser_route_unavailable");
+        assert_eq!(refusal["detail"]["engine_family"], "gecko");
+        assert_eq!(refusal["detail"]["product"], "firefox");
+        assert_eq!(refusal["detail"]["required_protocol"], "webdriver_bidi");
+        assert_eq!(
+            refusal["detail"]["limitation"],
+            "remote_agent_requires_launch_time_enablement"
         );
     }
 

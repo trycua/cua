@@ -15,8 +15,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use cua_driver_testkit::e2e::{
-    execute_case, recording_evidence, write_environment_from_env, CaseSpec, Delivery, DriverRoute,
-    EnvironmentRecord, Evidence, Observation, OracleKind, RefusalCode, Scope, Targeting,
+    append_json_line, execute_case, recording_evidence, write_environment_from_env, CaseSpec,
+    Delivery, DriverRoute, EnvironmentRecord, Evidence, Observation, OracleKind, RefusalCode,
+    Scope, Targeting,
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::ForegroundSentinel;
@@ -166,6 +167,82 @@ struct BrowserSpec {
     executable: PathBuf,
 }
 
+const SUPPORTED_BROWSER_PRODUCTS: &[&str] = &["chrome", "chromium", "edge"];
+
+fn parse_browser_products(raw: &str) -> Result<Vec<String>, String> {
+    let mut products = Vec::new();
+    for product in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|product| !product.is_empty())
+    {
+        let product = product.to_ascii_lowercase();
+        if !SUPPORTED_BROWSER_PRODUCTS.contains(&product.as_str()) {
+            return Err(format!(
+                "unsupported browser product {product:?}; expected one of {}",
+                SUPPORTED_BROWSER_PRODUCTS.join(", ")
+            ));
+        }
+        if products.contains(&product) {
+            return Err(format!("duplicate browser product {product:?}"));
+        }
+        products.push(product);
+    }
+    if products.is_empty() {
+        return Err("at least one browser product is required".to_owned());
+    }
+    Ok(products)
+}
+
+fn requested_browser_products() -> Option<Vec<String>> {
+    let raw = std::env::var("CUA_E2E_BROWSER_PRODUCTS").ok()?;
+    Some(
+        parse_browser_products(&raw)
+            .unwrap_or_else(|error| panic!("invalid CUA_E2E_BROWSER_PRODUCTS={raw:?}: {error}")),
+    )
+}
+
+#[test]
+fn browser_product_selection_is_ordered_and_strict() {
+    assert_eq!(
+        parse_browser_products("Edge, chrome,chromium").unwrap(),
+        ["edge", "chrome", "chromium"]
+    );
+    assert!(parse_browser_products("").is_err());
+    assert!(parse_browser_products("chrome,chrome").is_err());
+    assert!(parse_browser_products("firefox").is_err());
+}
+
+fn select_browser_products(
+    mut browsers: Vec<BrowserSpec>,
+    prefer_chrome_over_chromium: bool,
+) -> Vec<BrowserSpec> {
+    if let Some(requested) = requested_browser_products() {
+        let missing = requested
+            .iter()
+            .filter(|product| !browsers.iter().any(|spec| &spec.name == *product))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(
+            missing.is_empty(),
+            "requested standalone browser products were not found: {}",
+            missing.join(", ")
+        );
+        browsers.retain(|spec| requested.contains(&spec.name));
+        browsers.sort_by_key(|spec| {
+            requested
+                .iter()
+                .position(|product| product == &spec.name)
+                .unwrap_or(usize::MAX)
+        });
+    } else if prefer_chrome_over_chromium && browsers.iter().any(|spec| spec.name == "chrome") {
+        // Preserve the historical default lane: Chromium is the fallback when
+        // Chrome is absent. Certification runs opt into each product.
+        browsers.retain(|spec| spec.name != "chromium");
+    }
+    browsers
+}
+
 struct BrowserFixture {
     driver: McpDriver,
     server: BrowserFixtureServer,
@@ -183,38 +260,43 @@ fn browser_specs() -> Vec<BrowserSpec> {
             "CUA_E2E_BROWSER_BIN is not a file: {}",
             executable.display()
         );
-        let name = std::env::var("CUA_E2E_BROWSER_NAME").unwrap_or_else(|_| "chromium".to_owned());
-        return vec![BrowserSpec { name, executable }];
+        let name = std::env::var("CUA_E2E_BROWSER_NAME")
+            .unwrap_or_else(|_| "chromium".to_owned())
+            .to_ascii_lowercase();
+        return select_browser_products(vec![BrowserSpec { name, executable }], false);
     }
 
     #[cfg(target_os = "macos")]
     {
         let home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
-        return [
-            (
-                "chrome",
-                PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-            ),
-            (
-                "chrome",
-                home.join("Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-            ),
-            (
-                "edge",
-                PathBuf::from("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
-            ),
-            (
-                "edge",
-                home.join("Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
-            ),
-        ]
-        .into_iter()
-        .filter(|(_, executable)| executable.is_file())
-        .map(|(name, executable)| BrowserSpec {
-            name: name.to_owned(),
-            executable,
-        })
-        .collect();
+        return select_browser_products(
+            [
+                (
+                    "chrome",
+                    PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+                ),
+                (
+                    "chrome",
+                    home.join("Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+                ),
+                (
+                    "edge",
+                    PathBuf::from("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+                ),
+                (
+                    "edge",
+                    home.join("Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+                ),
+            ]
+            .into_iter()
+            .filter(|(_, executable)| executable.is_file())
+            .map(|(name, executable)| BrowserSpec {
+                name: name.to_owned(),
+                executable,
+            })
+            .collect(),
+            false,
+        );
     }
     #[cfg(target_os = "linux")]
     {
@@ -223,6 +305,7 @@ fn browser_specs() -> Vec<BrowserSpec> {
             ("chromium", PathBuf::from("/usr/bin/chromium")),
             ("chromium", PathBuf::from("/usr/bin/chromium-browser")),
             ("edge", PathBuf::from("/usr/bin/microsoft-edge")),
+            ("edge", PathBuf::from("/usr/bin/microsoft-edge-stable")),
         ];
         if let Some(path) = std::env::var_os("PATH") {
             for (name, executable_name) in [
@@ -230,6 +313,7 @@ fn browser_specs() -> Vec<BrowserSpec> {
                 ("chromium", "chromium"),
                 ("chromium", "chromium-browser"),
                 ("edge", "microsoft-edge"),
+                ("edge", "microsoft-edge-stable"),
             ] {
                 if let Some(executable) = std::env::split_paths(&path)
                     .map(|directory| directory.join(executable_name))
@@ -267,13 +351,7 @@ fn browser_specs() -> Vec<BrowserSpec> {
             .into_iter()
             .map(|(spec, _)| spec)
             .collect::<Vec<_>>();
-        // Chromium is the open-source fallback for environments without the
-        // Chrome stable channel. Do not expand a Chrome/Edge acceptance lane
-        // merely because the host image also exposes a Chromium package shim.
-        if browsers.iter().any(|spec| spec.name == "chrome") {
-            browsers.retain(|spec| spec.name != "chromium");
-        }
-        return browsers;
+        return select_browser_products(browsers, true);
     }
     #[cfg(target_os = "windows")]
     let candidates = {
@@ -286,35 +364,38 @@ fn browser_specs() -> Vec<BrowserSpec> {
         let local_app_data = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .unwrap_or_default();
-        return [
-            (
-                "chrome",
-                program_files.join(r"Google\Chrome\Application\chrome.exe"),
-            ),
-            (
-                "chrome",
-                program_files_x86.join(r"Google\Chrome\Application\chrome.exe"),
-            ),
-            (
-                "chrome",
-                local_app_data.join(r"Google\Chrome\Application\chrome.exe"),
-            ),
-            (
-                "edge",
-                program_files_x86.join(r"Microsoft\Edge\Application\msedge.exe"),
-            ),
-            (
-                "edge",
-                program_files.join(r"Microsoft\Edge\Application\msedge.exe"),
-            ),
-        ]
-        .into_iter()
-        .filter(|(_, executable)| executable.is_file())
-        .map(|(name, executable)| BrowserSpec {
-            name: name.to_owned(),
-            executable,
-        })
-        .collect();
+        return select_browser_products(
+            [
+                (
+                    "chrome",
+                    program_files.join(r"Google\Chrome\Application\chrome.exe"),
+                ),
+                (
+                    "chrome",
+                    program_files_x86.join(r"Google\Chrome\Application\chrome.exe"),
+                ),
+                (
+                    "chrome",
+                    local_app_data.join(r"Google\Chrome\Application\chrome.exe"),
+                ),
+                (
+                    "edge",
+                    program_files_x86.join(r"Microsoft\Edge\Application\msedge.exe"),
+                ),
+                (
+                    "edge",
+                    program_files.join(r"Microsoft\Edge\Application\msedge.exe"),
+                ),
+            ]
+            .into_iter()
+            .filter(|(_, executable)| executable.is_file())
+            .map(|(name, executable)| BrowserSpec {
+                name: name.to_owned(),
+                executable,
+            })
+            .collect(),
+            false,
+        );
     };
 }
 
@@ -377,6 +458,24 @@ fn wait_for_browser_endpoint(port: u16) {
         );
         thread::sleep(Duration::from_millis(100));
     }
+}
+
+fn record_browser_provenance(spec: &BrowserSpec, port: u16) {
+    let Some(path) = std::env::var_os("CUA_E2E_BROWSER_PROVENANCE_FILE") else {
+        return;
+    };
+    let version = browser_http_json(port, "/json/version")
+        .unwrap_or_else(|error| panic!("read browser provenance: {error}"));
+    let record = serde_json::json!({
+        "schema": "cua-driver-browser-provenance-v1",
+        "source_sha": std::env::var("CUA_E2E_SOURCE_SHA").ok(),
+        "product": spec.name,
+        "browser": version.get("Browser"),
+        "protocol_version": version.get("Protocol-Version"),
+        "user_agent": version.get("User-Agent"),
+    });
+    append_json_line(Path::new(&path), &record)
+        .unwrap_or_else(|error| panic!("write browser provenance: {error}"));
 }
 
 fn harness_cdp_call_at_url(
@@ -810,6 +909,7 @@ fn launch_browser_with_html(spec: &BrowserSpec, label: &str, html: String) -> Br
         TEST_BROWSER_INITIAL_POSITION,
     );
     navigate_initial_page(cdp_port, &server);
+    record_browser_provenance(spec, cdp_port);
     let window = wait_for_fixture_window(&mut driver, &before, &server);
     let (pid, window_id) = window.unwrap_or_else(|| {
         panic!(

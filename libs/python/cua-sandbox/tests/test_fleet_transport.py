@@ -4,7 +4,6 @@ import base64
 
 import httpx
 import pytest
-
 from cua_sandbox.transport.fleet import FleetTransport
 
 
@@ -149,6 +148,7 @@ async def test_disconnect_closes_service_client():
     await transport.disconnect()
 
     assert client.closed is True
+
 
 @pytest.mark.asyncio
 async def test_concurrent_requests_are_serialized_for_shared_sdk_runner():

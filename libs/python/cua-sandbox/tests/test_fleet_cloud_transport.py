@@ -1,5 +1,4 @@
 import pytest
-
 from cua_sandbox import Image
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
 
@@ -46,7 +45,9 @@ def test_rejects_cloud_images_other_than_unmodified_registry_with_services(image
 
 @pytest.mark.asyncio
 async def test_cleanup_deletes_pool_when_claim_deletion_fails():
-    transport = FleetCloudTransport(image=Image.from_registry("registry.example/workspace:latest"), name="demo")
+    transport = FleetCloudTransport(
+        image=Image.from_registry("registry.example/workspace:latest"), name="demo"
+    )
     calls = []
 
     class Client:
@@ -64,12 +65,17 @@ async def test_cleanup_deletes_pool_when_claim_deletion_fails():
     with pytest.raises(RuntimeError, match="claim delete failed"):
         await transport._cleanup_resources()
 
-    assert calls == [("claim", {"metadata": {"name": "claim"}}), ("pool", {"metadata": {"name": "pool"}})]
+    assert calls == [
+        ("claim", {"metadata": {"name": "claim"}}),
+        ("pool", {"metadata": {"name": "pool"}}),
+    ]
 
 
 @pytest.mark.asyncio
 async def test_inherited_command_forwards_json_and_timeout_to_service_client():
-    transport = FleetCloudTransport(image=Image.from_registry("registry.example/workspace:latest"), name="demo")
+    transport = FleetCloudTransport(
+        image=Image.from_registry("registry.example/workspace:latest"), name="demo"
+    )
     captured = {}
 
     class Client:
@@ -77,7 +83,9 @@ async def test_inherited_command_forwards_json_and_timeout_to_service_client():
             captured["path"] = path
             captured.update(kwargs)
             request = __import__("httpx").Request("POST", "https://run.cua.ai/cmd")
-            return __import__("httpx").Response(200, text='data: {"result": "ok"}\n', request=request)
+            return __import__("httpx").Response(
+                200, text='data: {"result": "ok"}\n', request=request
+            )
 
     transport._client = Client()
     transport._timeout = 30.0

@@ -1,7 +1,6 @@
 import base64
 
 import pytest
-
 from cua_sandbox.transport.computer_server import (
     decode_screenshot_response,
     normalize_screen_size,
@@ -10,7 +9,9 @@ from cua_sandbox.transport.computer_server import (
 
 
 def test_parse_command_response_returns_sse_payload():
-    result = parse_command_response('event: result\ndata: {"success": true, "result": {"ok": 1}}\n\n')
+    result = parse_command_response(
+        'event: result\ndata: {"success": true, "result": {"ok": 1}}\n\n'
+    )
 
     assert result == {"success": True, "result": {"ok": 1}}
 

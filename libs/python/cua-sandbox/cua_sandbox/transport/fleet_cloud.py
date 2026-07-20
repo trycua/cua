@@ -8,8 +8,12 @@ import time
 from typing import Any, Optional
 
 import httpx
-
-from cua_sandbox._config import get_base_url, get_client_id, get_client_secret, get_token_url
+from cua_sandbox._config import (
+    get_base_url,
+    get_client_id,
+    get_client_secret,
+    get_token_url,
+)
 from cua_sandbox.image import Image
 from cua_sandbox.transport.fleet import FleetTransport
 
@@ -27,7 +31,11 @@ class _FleetClient:
             )
         token_response = httpx.post(
             get_token_url(),
-            data={"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret},
+            data={
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
             headers={"Accept": "application/json"},
             timeout=30.0,
         )
@@ -52,7 +60,9 @@ class _FleetClient:
             "metadata": {"name": namespace, "namespace": namespace},
             "spec": request["spec"],
         }
-        response = httpx.post(self._pool_url(namespace), json=body, headers=self._headers, timeout=30.0)
+        response = httpx.post(
+            self._pool_url(namespace), json=body, headers=self._headers, timeout=30.0
+        )
         try:
             response.raise_for_status()
         except BaseException:
@@ -71,7 +81,9 @@ class _FleetClient:
             "metadata": {"name": name, "namespace": namespace},
             "spec": {"sandboxTemplateRef": {"name": f"{pool['metadata']['name']}-template"}},
         }
-        response = httpx.post(self._claim_url(namespace), json=body, headers=self._headers, timeout=30.0)
+        response = httpx.post(
+            self._claim_url(namespace), json=body, headers=self._headers, timeout=30.0
+        )
         response.raise_for_status()
         return response.json()
 
@@ -80,7 +92,9 @@ class _FleetClient:
         name = claim["metadata"]["name"]
         deadline = time.monotonic() + 600.0
         while True:
-            response = httpx.get(f"{self._claim_url(namespace)}/{name}", headers=self._headers, timeout=30.0)
+            response = httpx.get(
+                f"{self._claim_url(namespace)}/{name}", headers=self._headers, timeout=30.0
+            )
             response.raise_for_status()
             current = response.json()
             status = current.get("status") or {}
@@ -96,7 +110,11 @@ class _FleetClient:
 
     def delete_claim(self, claim: dict[str, Any]) -> None:
         metadata = claim["metadata"]
-        httpx.delete(f"{self._claim_url(metadata['namespace'])}/{metadata['name']}", headers=self._headers, timeout=30.0).raise_for_status()
+        httpx.delete(
+            f"{self._claim_url(metadata['namespace'])}/{metadata['name']}",
+            headers=self._headers,
+            timeout=30.0,
+        ).raise_for_status()
 
     def delete_pool(self, pool: dict[str, Any]) -> None:
         metadata = pool["metadata"]
@@ -132,7 +150,9 @@ class _FleetClient:
             if (current.get("status") or {}).get("availableCount", 0) > 0:
                 return current
             if time.monotonic() >= deadline:
-                raise TimeoutError(f"Fleet pool {metadata['name']!r} did not become available within 600 seconds")
+                raise TimeoutError(
+                    f"Fleet pool {metadata['name']!r} did not become available within 600 seconds"
+                )
             time.sleep(2)
 
     def wait_service_ready(self, sandbox: dict[str, Any], service: str) -> None:
@@ -145,7 +165,9 @@ class _FleetClient:
                     response.raise_for_status()
                     return
                 if time.monotonic() >= deadline:
-                    raise TimeoutError(f"Fleet service {service!r} did not become ready within 600 seconds")
+                    raise TimeoutError(
+                        f"Fleet service {service!r} did not become ready within 600 seconds"
+                    )
                 time.sleep(2)
         finally:
             client.close()
@@ -169,7 +191,15 @@ class _FleetClient:
 class FleetCloudTransport(FleetTransport):
     """Provision a registry image through Fleet, then route computer-server calls."""
 
-    def __init__(self, *, image: Image, name: str, cpu: Optional[int] = None, memory_mb: Optional[int] = None, request_timeout: Optional[float] = None) -> None:
+    def __init__(
+        self,
+        *,
+        image: Image,
+        name: str,
+        cpu: Optional[int] = None,
+        memory_mb: Optional[int] = None,
+        request_timeout: Optional[float] = None,
+    ) -> None:
         self._image = image
         self._name = name
         self._cpu = cpu
@@ -197,7 +227,14 @@ class FleetCloudTransport(FleetTransport):
                 await self._cleanup_resources()
                 raise
             self._sdk.wait_service_ready(bound, "server")
-            FleetTransport.__init__(self, sdk=self._sdk, bound=bound, service_name="server", timeout=self._request_timeout, call_lock=self._call_lock)
+            FleetTransport.__init__(
+                self,
+                sdk=self._sdk,
+                bound=bound,
+                service_name="server",
+                timeout=self._request_timeout,
+                call_lock=self._call_lock,
+            )
             self._provisioned = True
         await FleetTransport.connect(self)
 
@@ -235,8 +272,15 @@ class FleetCloudTransport(FleetTransport):
         if self._memory_mb is not None:
             template["memory"] = f"{self._memory_mb}Mi"
         services = [{"name": "server", "targetPort": 8000, "protocol": "TCP"}]
-        services.extend({"name": f"port-{port}", "targetPort": port, "protocol": "TCP"} for port in self._image._ports if port != 8000)
-        return {"namespace": self._name, "spec": {"replicas": 1, "services": services, "template": template}}
+        services.extend(
+            {"name": f"port-{port}", "targetPort": port, "protocol": "TCP"}
+            for port in self._image._ports
+            if port != 8000
+        )
+        return {
+            "namespace": self._name,
+            "spec": {"replicas": 1, "services": services, "template": template},
+        }
 
     async def _run(self, operation: Any, *args: Any, **kwargs: Any) -> Any:
         return await asyncio.to_thread(self._call, operation, args, kwargs)
@@ -249,5 +293,13 @@ class FleetCloudTransport(FleetTransport):
     def _validate_image(image: Image) -> None:
         if not image._registry:
             raise ValueError("Fleet cloud sandboxes require Image.from_registry(...)")
-        if image._layers or image._env or image._files or image._snapshot_source or image._disk_path:
-            raise ValueError("Fleet cloud supports registry images with optional exposed services only")
+        if (
+            image._layers
+            or image._env
+            or image._files
+            or image._snapshot_source
+            or image._disk_path
+        ):
+            raise ValueError(
+                "Fleet cloud supports registry images with optional exposed services only"
+            )

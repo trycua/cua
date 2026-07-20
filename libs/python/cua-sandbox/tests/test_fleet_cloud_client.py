@@ -2,7 +2,6 @@ from unittest.mock import Mock
 
 import httpx
 import pytest
-
 from cua_sandbox.transport.fleet_cloud import _FleetClient
 
 
@@ -65,9 +64,16 @@ def test_delete_pool_deletes_pool_then_namespace(monkeypatch):
 def test_create_claim_waits_for_available_pool_before_post(monkeypatch):
     client = make_client()
     pool = {"metadata": {"namespace": "demo", "name": "demo"}}
-    ready_pool = {"metadata": {"namespace": "demo", "name": "demo"}, "status": {"availableCount": 1}}
+    ready_pool = {
+        "metadata": {"namespace": "demo", "name": "demo"},
+        "status": {"availableCount": 1},
+    }
     monkeypatch.setattr(client, "wait_pool_ready", Mock(return_value=ready_pool))
-    monkeypatch.setattr(httpx, "post", Mock(return_value=response(201, {"metadata": {"namespace": "demo", "name": "claim"}})))
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        Mock(return_value=response(201, {"metadata": {"namespace": "demo", "name": "claim"}})),
+    )
 
     client.create_claim({"pool": pool})
 
@@ -78,9 +84,11 @@ def test_create_claim_waits_for_available_pool_before_post(monkeypatch):
 def test_wait_claim_reports_server_service():
     client = make_client()
     claim = {"metadata": {"namespace": "demo", "name": "claim"}}
-    statuses = iter([
-        response(200, {"status": {"phase": "Bound", "sandbox": {"name": "sandbox"}}}),
-    ])
+    statuses = iter(
+        [
+            response(200, {"status": {"phase": "Bound", "sandbox": {"name": "sandbox"}}}),
+        ]
+    )
 
     import cua_sandbox.transport.fleet_cloud as module
 

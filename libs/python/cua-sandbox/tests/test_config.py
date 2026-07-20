@@ -28,8 +28,7 @@ class TestConfig:
         assert get_client_secret() == "client-secret"
         assert get_base_url() == "https://run.cua.ai"
         assert (
-            get_token_url()
-            == "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
+            get_token_url() == "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
         )
 
     def test_configure_api_key(self):

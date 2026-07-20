@@ -7,7 +7,6 @@ import threading
 from typing import Any, Dict, Optional
 
 import httpx
-
 from cua_sandbox.transport.base import Transport
 from cua_sandbox.transport.computer_server import (
     decode_screenshot_response,

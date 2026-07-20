@@ -36,6 +36,11 @@ support hardening branch. It is not a public support contract.
 - Added a real-browser generic-Wayland refusal row. It withholds all
   compositor-specific identity from the driver and proves the browser window
   and fixture state are unchanged when exact identity is unavailable.
+- Made the shared loopback fixture complete a real HTTP readiness round trip
+  before it is returned to browser tests.
+- Corrected the existing-profile setup row to model the user workflow: launch
+  an ordinary browser page without CDP, prepare that exact native window, then
+  navigate to the oracle fixture through the newly attached browser route.
 - Added protocol and compositor identity design records.
 - Added a GNOME Wayland browser-identity route using WinRects helper API
   v4. Browser-sensitive calls now prove the immutable D-Bus owner is the
@@ -76,11 +81,17 @@ support hardening branch. It is not a public support contract.
   and playable video. The harness retained Sway IPC only as an out-of-band
   focus and z-order oracle; the Cua Driver child received an unusable socket
   path and could not use compositor-specific identity.
+- macOS Tahoe existing-profile setup at source `75c40845`: the corrected Chrome
+  row completed setup, exact attachment, typed navigation, external fixture
+  mutation, and video/report validation with no failure or skip.
+- macOS Tahoe standalone Chrome and Edge matrix at source `86d799b8`: 26
+  delivered, 4 expected policy refusals, 0 failures, 0 skips, and 30 playable
+  videos. Both ordinary-profile setup and isolated-profile launch passed for
+  both products after the harness began from an ordinary `about:blank` window
+  and navigated through the prepared browser route.
 
 ## Evidence still pending
 
-- macOS Tahoe Lume worker: finish the standalone Chrome and Edge matrix in the
-  same logged-in Aqua session.
 - Windows interactive desktop: replay Chrome and Edge from the exact branch.
 - Linux X11: final hosted Chrome regression at the pushed source commit.
 - Non-Sway Wayland: record only fail-closed evidence unless an exact compositor

@@ -77,3 +77,50 @@ async with Localhost.connect() as host:
     await host.shell.run("echo hello")
     await host.screenshot()
 ```
+
+## Fleet provider
+
+Provision directly through the Cyclops Fleet SDK. Each Sandbox owns one
+`replicas=1` pool and one claim; the bound sandbox's named `api` service routes
+the existing computer-server protocol.
+
+```python
+from cyclops_sdk import connect
+from cua_sandbox import FleetProvider, Image, Sandbox
+
+sdk = connect({
+    "base_url": "https://run.cua.ai",
+    "oauth": {
+        "token_url": "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token",
+        "client_id": "...",
+        "client_secret": "...",
+    },
+})
+provider = FleetProvider(
+    sdk=sdk,
+    templates={
+        "linux": {
+            "containerDiskImage": "registry.example/desktop-workspace-duo@sha256:...",
+            "imagePullSecret": "registry-credentials",
+            "cpuCores": 4,
+            "memory": "4Gi",
+        },
+    },
+)
+
+try:
+    async with Sandbox.ephemeral(
+        Image.linux(),
+        name="fleet-demo",
+        provider=provider,
+    ) as sb:
+        await sb.shell.run("uname -a")
+        await sb.screenshot()
+finally:
+    sdk.close()
+```
+
+The caller owns the Cyclops SDK lifetime. `Sandbox.destroy()` and ephemeral
+cleanup delete the claim before the pool. Fleet templates must be supplied
+explicitly; `Image` install layers, snapshots, custom disk sizes, and non-default
+regions are not yet supported by `FleetProvider`.

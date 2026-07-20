@@ -22,6 +22,7 @@ from cua_sandbox._auth import login, whoami
 from cua_sandbox._config import configure
 from cua_sandbox.image import Image
 from cua_sandbox.localhost import Localhost, localhost
+from cua_sandbox.providers import FleetProvider, SandboxProvider
 from cua_sandbox.runtime.compat import (
     RuntimeSupport,
     check_local_support,
@@ -41,6 +42,8 @@ __all__ = [
     "Localhost",
     "localhost",
     "CloudTransport",
+    "FleetProvider",
+    "SandboxProvider",
     "RuntimeSupport",
     "check_local_support",
     "skip_if_unsupported",

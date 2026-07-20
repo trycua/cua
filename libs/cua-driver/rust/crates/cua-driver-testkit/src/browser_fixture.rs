@@ -1,9 +1,9 @@
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Loopback HTTP host for the repo-owned browser fixture and its state oracle.
 ///
@@ -71,6 +71,8 @@ impl BrowserFixtureServer {
                 }
             }
         });
+
+        wait_until_ready(address);
 
         Self {
             page_url,
@@ -146,6 +148,34 @@ impl BrowserFixtureServer {
             .expect("lock browser fixture history")
             .iter()
             .any(|state| state.to_string().contains(marker))
+    }
+}
+
+fn wait_until_ready(address: SocketAddr) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let ready = TcpStream::connect_timeout(&address, Duration::from_millis(200))
+            .and_then(|mut stream| {
+                stream.set_read_timeout(Some(Duration::from_millis(500)))?;
+                stream.write_all(
+                    format!(
+                        "GET /fixture HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )?;
+                let mut response = String::new();
+                stream.read_to_string(&mut response)?;
+                Ok(response.starts_with("HTTP/1.1 200 OK"))
+            })
+            .unwrap_or(false);
+        if ready {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "browser fixture server did not complete its startup probe"
+        );
+        thread::sleep(Duration::from_millis(10));
     }
 }
 

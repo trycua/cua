@@ -5,9 +5,9 @@
 
 ### Bug Fixes
 
-* **cua-driver:** fail closed for unsupported browser and Wayland routes ([2b06a78](https://github.com/trycua/cua/commit/2b06a782544e9fc742bf2e90c80d65d9b5c6f721))
-* **cua-driver:** harden exact-profile browser attachment across Chrome and Edge ([2b06a78](https://github.com/trycua/cua/commit/2b06a782544e9fc742bf2e90c80d65d9b5c6f721))
-* **cua-driver:** restore focus after bounded browser setup ([2b06a78](https://github.com/trycua/cua/commit/2b06a782544e9fc742bf2e90c80d65d9b5c6f721))
+* **cua-driver:** fail closed for unsupported browser and Wayland routes ([#2367](https://github.com/trycua/cua/pull/2367))
+* **cua-driver:** harden exact-profile browser attachment across Chrome and Edge ([#2367](https://github.com/trycua/cua/pull/2367))
+* **cua-driver:** restore focus after bounded browser setup ([#2367](https://github.com/trycua/cua/pull/2367))
 
 ## [0.9.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.8.3...cua-driver-rs-v0.9.0) (2026-07-19)
 

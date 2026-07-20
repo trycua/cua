@@ -125,6 +125,21 @@ maybe_reset_tcc() {
         log "TCC reset: tccutil not found; skipping"
         return 0
     fi
+    # `tccutil reset <svc> com.trycua.driver` resolves the bundle id through
+    # LaunchServices. If the bundle isn't registered — or this runs AFTER the
+    # app was removed — tccutil fails with -10814 and the grant silently
+    # survives. This MUST run while /Applications/CuaDriver.app still exists;
+    # force a synchronous LaunchServices registration first so a present-but-
+    # not-yet-registered bundle (fresh install race) still resolves.
+    local app_bundle="/Applications/CuaDriver.app"
+    if [[ -d "$app_bundle" ]]; then
+        local lsregister="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
+        if [[ -x "$lsregister" ]]; then
+            "$lsregister" -f "$app_bundle" >/dev/null 2>&1 || true
+        fi
+    else
+        log "  warning: CuaDriver.app already removed; TCC reset may not resolve the bundle id"
+    fi
     log "revoking TCC grants for com.trycua.driver"
     log "  note: com.trycua.driver is shared with the retired Swift driver;"
     log "  this clears grants for both. Pass --keep-tcc to preserve them."
@@ -293,6 +308,13 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
             log "no current or legacy LaunchAgent found (skipping)"
         fi
     fi
+
+    # --- Revoke TCC grants BEFORE removing the app ---
+    # tccutil resolves com.trycua.driver through LaunchServices, so the reset
+    # only works while /Applications/CuaDriver.app is still installed. Running
+    # it here (not at the closing message) is what makes the revoke actually
+    # take — otherwise it fails with -10814 and the grant silently survives.
+    maybe_reset_tcc
 
     # --- .app bundle (macOS only) ---
     # Legacy /Applications/CuaDriverRs.app is unambiguously Rust and
@@ -560,7 +582,8 @@ PY
     fi
 
     # --- Closing message ---
-    maybe_reset_tcc
+    # TCC grants were already revoked above, before the app was removed, so
+    # the reset could still resolve the bundle id through LaunchServices.
     if [[ "$OS" == "Darwin" ]]; then
         echo ""
         echo "cua-driver uninstalled."

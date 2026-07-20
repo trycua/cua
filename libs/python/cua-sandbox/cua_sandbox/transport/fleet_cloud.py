@@ -238,12 +238,12 @@ class FleetCloudTransport(FleetTransport):
         services.extend({"name": f"port-{port}", "targetPort": port, "protocol": "TCP"} for port in self._image._ports if port != 8000)
         return {"namespace": self._name, "spec": {"replicas": 1, "services": services, "template": template}}
 
-    async def _run(self, operation: Any, *args: Any) -> Any:
-        return await asyncio.to_thread(self._call, operation, args)
+    async def _run(self, operation: Any, *args: Any, **kwargs: Any) -> Any:
+        return await asyncio.to_thread(self._call, operation, args, kwargs)
 
-    def _call(self, operation: Any, args: tuple[Any, ...]) -> Any:
+    def _call(self, operation: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
         with self._call_lock:
-            return operation(*args)
+            return operation(*args, **kwargs)
 
     @staticmethod
     def _validate_image(image: Image) -> None:

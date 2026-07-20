@@ -5,6 +5,26 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      component:
+        description: "Component to prepare (automatic checks both)"
+        required: true
+        type: choice
+        default: automatic
+        options:
+          - automatic
+          - cua-driver-rs
+          - lume
+      bump:
+        description: "Version bump for the selected component"
+        required: true
+        type: choice
+        default: automatic
+        options:
+          - automatic
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
@@ -32,14 +52,72 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
-      # release-please-action v4.4.1, embedding release-please ^17.3.0.
-      - name: Open or update release pull requests
-        id: release
+      - name: Reject an ambiguous manual release request
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.component == 'automatic' &&
+          inputs.bump != 'automatic'
+        run: |
+          echo "::error::Select cua-driver-rs or lume when forcing a bump type."
+          exit 1
+
+      - name: Resolve targeted release request
+        id: request
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.component != 'automatic'
+        run: |
+          REQUEST=$(python3 .github/scripts/resolve_release_please_request.py \
+            --manifest .release-please-manifest.json \
+            --component "${{ inputs.component }}" \
+            --bump "${{ inputs.bump }}")
+          echo "path=$(jq -r .path <<<"$REQUEST")" >> "$GITHUB_OUTPUT"
+          echo "current_version=$(jq -r .current_version <<<"$REQUEST")" >> "$GITHUB_OUTPUT"
+          echo "release_as=$(jq -r '.release_as // ""' <<<"$REQUEST")" >> "$GITHUB_OUTPUT"
+
+      # release-please-action v4.4.1, embedding release-please 17.3.0.
+      - name: Open or update automatic release pull requests
+        id: release-auto
+        if: >-
+          github.event_name == 'push' ||
+          (inputs.component == 'automatic' && inputs.bump == 'automatic')
         uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071
         with:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      - name: Open or update the targeted release pull request
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.component != 'automatic'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          NPM_CONFIG_IGNORE_SCRIPTS: "true"
+          RELEASE_PATH: ${{ steps.request.outputs.path }}
+          RELEASE_AS: ${{ steps.request.outputs.release_as }}
+        run: |
+          set -euo pipefail
+          EXPECTED_INTEGRITY='sha512-dB7HsFUpAvU1Wj9RGCINUz8Zi2qQDZiGbDEEVnJ7baNfJmk5XdYhuUFL6RcuDGjReGhp1gzY8Tc2g7vHlM4zpg=='
+          ACTUAL_INTEGRITY=$(npm view release-please@17.3.0 dist.integrity)
+          if [[ "$ACTUAL_INTEGRITY" != "$EXPECTED_INTEGRITY" ]]; then
+            echo "::error::release-please@17.3.0 integrity mismatch"
+            exit 1
+          fi
+
+          ARGS=(
+            release-pr
+            "--token=$GH_TOKEN"
+            "--repo-url=$GITHUB_REPOSITORY"
+            "--target-branch=${{ github.event.repository.default_branch }}"
+            "--config-file=release-please-config.json"
+            "--manifest-file=.release-please-manifest.json"
+            "--path=$RELEASE_PATH"
+          )
+          if [[ -n "$RELEASE_AS" ]]; then
+            ARGS+=("--release-as=$RELEASE_AS")
+          fi
+          npx --yes release-please@17.3.0 "${ARGS[@]}"
 
       - name: Synchronize generated files on release pull requests
         env:
@@ -102,5 +180,4 @@ jobs:
           done < <(gh pr list --state open --base main --limit 100 --json number --jq '.[].number')
 
       - name: Verify repository release versions
-        if: steps.release.outputs.prs_created != 'true'
         run: python3 .github/scripts/validate_release_versions.py --product all

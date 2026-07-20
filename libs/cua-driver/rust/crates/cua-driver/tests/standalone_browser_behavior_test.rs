@@ -873,6 +873,7 @@ fn wait_for_new_browser_window(
     driver: &mut McpDriver,
     before: &HashSet<u64>,
     spec: &BrowserSpec,
+    launched_pid: u32,
 ) -> Option<(u32, u64)> {
     let deadline = Instant::now() + Duration::from_secs(40);
     loop {
@@ -887,9 +888,10 @@ fn wait_for_new_browser_window(
                         && window["is_on_screen"] == true
                         && window["bounds"]["width"].as_f64().unwrap_or_default() > 0.0
                         && window["bounds"]["height"].as_f64().unwrap_or_default() > 0.0
-                        && window["app_name"]
-                            .as_str()
-                            .is_some_and(|app_name| browser_app_name_matches(spec, app_name))
+                        && (window["pid"].as_u64() == Some(u64::from(launched_pid))
+                            || window["app_name"]
+                                .as_str()
+                                .is_some_and(|app_name| browser_app_name_matches(spec, app_name)))
                 })
             })
         {
@@ -900,8 +902,9 @@ fn wait_for_new_browser_window(
         }
         if Instant::now() >= deadline {
             eprintln!(
-                "unprepared browser window timed out; product={}; before={before:?}; windows={}",
-                spec.name, windows.raw
+                "unprepared browser window timed out; product={}; launched_pid={launched_pid}; before={before:?}; windows={}",
+                spec.name,
+                windows.raw
             );
             return None;
         }
@@ -1043,6 +1046,7 @@ fn launch_unprepared_browser(spec: &BrowserSpec, label: &str) -> BrowserFixture 
         TEST_BROWSER_INITIAL_POSITION,
     );
     let child = spawn_in_job(&mut command).expect("launch unprepared standalone browser");
+    let launched_pid = child.id();
     eprintln!(
         "[standalone-browser] spawned unprepared {} pid={} profile={}",
         spec.name,
@@ -1050,7 +1054,7 @@ fn launch_unprepared_browser(spec: &BrowserSpec, label: &str) -> BrowserFixture 
         profile.path().display()
     );
     driver.reaper().push(child);
-    let (pid, window_id) = wait_for_new_browser_window(&mut driver, &before, spec)
+    let (pid, window_id) = wait_for_new_browser_window(&mut driver, &before, spec, launched_pid)
         .expect("unprepared browser native window");
     driver.reaper().track_pid(pid);
     BrowserFixture {
@@ -1574,6 +1578,7 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
                 TEST_BROWSER_INITIAL_POSITION,
             );
             let source_child = spawn_in_job(&mut source_command).expect("launch ordinary browser");
+            let launched_pid = source_child.id();
             eprintln!(
                 "[standalone-browser] spawned ordinary {} pid={} profile={}",
                 spec.name,
@@ -1582,7 +1587,7 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
             );
             driver.reaper().push(source_child);
             let (source_pid, source_window_id) =
-                wait_for_new_browser_window(&mut driver, &before, spec)
+                wait_for_new_browser_window(&mut driver, &before, spec, launched_pid)
                     .expect("ordinary browser native window");
             driver.reaper().track_pid(source_pid);
 

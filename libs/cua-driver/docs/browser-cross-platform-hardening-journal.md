@@ -33,9 +33,9 @@ support hardening branch. It is not a public support contract.
   protocol, and lifecycle detail before native-window probing.
 - Enriched pre-dispatch trusted-input refusals with the explicit synthetic
   alternative and a proof that no trusted delivery was attempted.
-- Added a real-browser generic-Wayland refusal row. It requires a non-Sway
-  native session and proves the browser window and fixture state are unchanged
-  when exact compositor identity is unavailable.
+- Added a real-browser generic-Wayland refusal row. It withholds all
+  compositor-specific identity from the driver and proves the browser window
+  and fixture state are unchanged when exact identity is unavailable.
 - Added protocol and compositor identity design records.
 - Added a GNOME Wayland browser-identity route using WinRects helper API
   v4. Browser-sensitive calls now prove the immutable D-Bus owner is the
@@ -71,6 +71,11 @@ support hardening branch. It is not a public support contract.
 - macOS Tahoe canonical desktop matrix at source `f3413ac0`: 140 delivered, 8
   expected refusals, 0 failures, 0 skips, and playable video for every declared
   row. Later branch changes before `2ca38aea` affect only Linux test paths.
+- Generic native Wayland at source `2f48888d`: one real Chromium existing-profile
+  setup attempt refused with `browser_route_unavailable`, 0 failures, 0 skips,
+  and playable video. The harness retained Sway IPC only as an out-of-band
+  focus and z-order oracle; the Cua Driver child received an unusable socket
+  path and could not use compositor-specific identity.
 
 ## Evidence still pending
 
@@ -78,7 +83,5 @@ support hardening branch. It is not a public support contract.
   same logged-in Aqua session.
 - Windows interactive desktop: replay Chrome and Edge from the exact branch.
 - Linux X11: final hosted Chrome regression at the pushed source commit.
-- Linux Wayland: run the canonical generic-compositor refusal row with
-  compositor-specific identity deliberately unavailable.
 - Non-Sway Wayland: record only fail-closed evidence unless an exact compositor
   identity adapter is implemented and separately accepted.

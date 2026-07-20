@@ -741,11 +741,7 @@ fn command_for_browser(
     position: (i32, i32),
 ) -> Command {
     let mut command = Command::new(&spec.executable);
-    let output = if std::env::var_os("CUA_E2E_BROWSER_STDERR").is_some() {
-        Stdio::inherit()
-    } else {
-        Stdio::null()
-    };
+    let output = browser_stderr();
     command
         .arg(format!("--remote-debugging-port={cdp_port}"))
         .arg(format!("--user-data-dir={}", profile.display()))
@@ -797,8 +793,16 @@ fn command_for_unprepared_browser(
         .arg(url)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(browser_stderr());
     command
+}
+
+fn browser_stderr() -> Stdio {
+    if std::env::var_os("CUA_E2E_BROWSER_STDERR").is_some() {
+        Stdio::inherit()
+    } else {
+        Stdio::null()
+    }
 }
 
 fn window_ids(driver: &mut McpDriver) -> HashSet<u64> {
@@ -844,6 +848,11 @@ fn wait_for_fixture_window(
             }
         }
         if Instant::now() >= deadline {
+            eprintln!(
+                "standalone browser fixture window timed out; before={before:?}; windows={}; journal={}",
+                windows.raw,
+                server.snapshot()
+            );
             return None;
         }
         thread::sleep(Duration::from_millis(100));
@@ -984,6 +993,12 @@ fn launch_unprepared_browser(spec: &BrowserSpec, label: &str) -> BrowserFixture 
         TEST_BROWSER_INITIAL_POSITION,
     );
     let child = spawn_in_job(&mut command).expect("launch unprepared standalone browser");
+    eprintln!(
+        "[standalone-browser] spawned unprepared {} pid={} profile={}",
+        spec.name,
+        child.id(),
+        profile.path().display()
+    );
     driver.reaper().push(child);
     let (pid, window_id) = wait_for_fixture_window(&mut driver, &before, &server)
         .expect("unprepared browser fixture window");

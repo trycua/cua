@@ -12,6 +12,7 @@
     "restrict-tool-access",
     "personalize-cursor",
     "update",
+    "troubleshoot-stale-macos-permissions",
     "windows-ssh"
   ]
 }

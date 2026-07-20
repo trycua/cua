@@ -859,6 +859,56 @@ fn wait_for_fixture_window(
     }
 }
 
+fn browser_app_name_matches(spec: &BrowserSpec, app_name: &str) -> bool {
+    let app_name = app_name.to_ascii_lowercase();
+    match spec.name.as_str() {
+        "chrome" => app_name.contains("chrome"),
+        "chromium" => app_name.contains("chromium"),
+        "edge" => app_name.contains("edge"),
+        _ => false,
+    }
+}
+
+fn wait_for_new_browser_window(
+    driver: &mut McpDriver,
+    before: &HashSet<u64>,
+    spec: &BrowserSpec,
+) -> Option<(u32, u64)> {
+    let deadline = Instant::now() + Duration::from_secs(40);
+    loop {
+        let windows = driver.call("list_windows", serde_json::json!({}));
+        if let Some(window) = windows.structured()["windows"]
+            .as_array()
+            .and_then(|windows| {
+                windows.iter().find(|window| {
+                    window["window_id"]
+                        .as_u64()
+                        .is_some_and(|id| !before.contains(&id))
+                        && window["is_on_screen"] == true
+                        && window["bounds"]["width"].as_f64().unwrap_or_default() > 0.0
+                        && window["bounds"]["height"].as_f64().unwrap_or_default() > 0.0
+                        && window["app_name"]
+                            .as_str()
+                            .is_some_and(|app_name| browser_app_name_matches(spec, app_name))
+                })
+            })
+        {
+            return Some((
+                window["pid"].as_u64().expect("browser window pid") as u32,
+                window["window_id"].as_u64().expect("browser window id"),
+            ));
+        }
+        if Instant::now() >= deadline {
+            eprintln!(
+                "unprepared browser window timed out; product={}; before={before:?}; windows={}",
+                spec.name, windows.raw
+            );
+            return None;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
 fn wait_for_exact_browser_binding(
     driver: &mut McpDriver,
     pid: u32,
@@ -989,7 +1039,7 @@ fn launch_unprepared_browser(spec: &BrowserSpec, label: &str) -> BrowserFixture 
     let mut command = command_for_unprepared_browser(
         spec,
         profile.path(),
-        server.page_url(),
+        "about:blank",
         TEST_BROWSER_INITIAL_POSITION,
     );
     let child = spawn_in_job(&mut command).expect("launch unprepared standalone browser");
@@ -1000,8 +1050,8 @@ fn launch_unprepared_browser(spec: &BrowserSpec, label: &str) -> BrowserFixture 
         profile.path().display()
     );
     driver.reaper().push(child);
-    let (pid, window_id) = wait_for_fixture_window(&mut driver, &before, &server)
-        .expect("unprepared browser fixture window");
+    let (pid, window_id) = wait_for_new_browser_window(&mut driver, &before, spec)
+        .expect("unprepared browser native window");
     driver.reaper().track_pid(pid);
     BrowserFixture {
         driver,
@@ -1940,6 +1990,17 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                     .and_then(|tab| tab["tab_id"].as_str())
                     .expect("existing-profile setup active tab")
                     .to_owned();
+                let navigated = fixture.driver.call(
+                    "browser_navigate",
+                    serde_json::json!({
+                        "target_id": target,
+                        "tab_id": tab,
+                        "url": fixture.server.page_url(),
+                        "session": session,
+                    }),
+                );
+                assert_eq!(navigated.structured()["status"], "ok", "{}", navigated.raw);
+                wait_for_observed(&fixture.server, "WEB_HARNESS_MARKER_v1");
                 let snapshot = fixture.driver.call(
                     "get_browser_state",
                     serde_json::json!({

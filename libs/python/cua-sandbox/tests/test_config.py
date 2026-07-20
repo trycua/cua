@@ -5,9 +5,9 @@ from cua_sandbox._config import (
     configure,
     get_api_key,
     get_base_url,
-    get_fleet_base_url,
     get_client_id,
     get_client_secret,
+    get_fleet_base_url,
     get_token_url,
 )
 

@@ -12,7 +12,8 @@ support hardening branch. It is not a public support contract.
   Firefox existing-profile attachment cannot enable its Remote Agent on an
   already-running ordinary process; Mozilla requires launch-time enablement.
 - Generic Wayland remains refused until a compositor can attest exact window
-  identity. Sway remains the only accepted native-Wayland browser setup route.
+  identity. Sway and the maintained GNOME helper are the accepted native
+  Wayland identity routes.
 - macOS and Linux trusted Chromium pointer delivery remains an exact refusal
   when Chromium would activate the standalone browser. Synthetic ref-targeted
   `dom_event` delivery is a distinct explicit route, not trusted input.
@@ -36,12 +37,11 @@ support hardening branch. It is not a public support contract.
   native session and proves the browser window and fixture state are unchanged
   when exact compositor identity is unavailable.
 - Added protocol and compositor identity design records.
-- Added a GNOME Wayland browser-identity candidate using WinRects helper API
+- Added a GNOME Wayland browser-identity route using WinRects helper API
   v4. Browser-sensitive calls now prove the immutable D-Bus owner is the
   current user's system-installed GNOME Shell process, use exact compositor
   window identity, and restore the previously focused Shell window after each
-  bounded setup or consent operation. The public support claim remains pending
-  representative GNOME evidence.
+  bounded setup or consent operation.
 
 ## Local evidence
 
@@ -52,12 +52,33 @@ support hardening branch. It is not a public support contract.
 - `cargo test -p platform-linux --no-default-features`: platform code compiled
   on macOS; Linux-only helper tests are scheduled on the GNOME/Sway workers.
 
-## Representative evidence pending
+## Representative evidence
 
-- macOS Tahoe Lume worker: install exact source, verify TCC, run the standalone
-  Chrome and Edge matrix in the logged-in Aqua session.
+- GNOME Wayland with Google Chrome at source `2ca38aea`: 13 delivered, 3
+  expected policy refusals, 0 failures, 0 skips, and 16 playable videos. This
+  accepts the GNOME helper route for Chrome without making a generic Wayland
+  claim.
+- Native Sway with Chromium at source `2ca38aea`: 13 delivered, 3 expected
+  policy refusals, 0 failures, 0 skips, and 16 playable videos.
+- Native Sway with Google Chrome and Microsoft Edge at source `2ca38aea`: 26
+  delivered, 6 expected policy refusals, 0 failures, 0 skips, and 32 playable
+  videos. Together these runs accept Chrome, Chromium, and Edge on Sway.
+- Linux X11 with Microsoft Edge at source `2ca38aea`: 13 delivered, 3 expected
+  policy refusals, 0 failures, 0 skips, and 16 playable videos. Snap Chromium
+  could not start its CDP endpoint in an SSH-created Xvfb session because the
+  snap required a real login-session cgroup; that preflight failure is not a
+  Cua Driver behavioral result.
+- macOS Tahoe canonical desktop matrix at source `f3413ac0`: 140 delivered, 8
+  expected refusals, 0 failures, 0 skips, and playable video for every declared
+  row. Later branch changes before `2ca38aea` affect only Linux test paths.
+
+## Evidence still pending
+
+- macOS Tahoe Lume worker: finish the standalone Chrome and Edge matrix in the
+  same logged-in Aqua session.
 - Windows interactive desktop: replay Chrome and Edge from the exact branch.
-- Linux X11: Chrome regression plus explicit Chromium and Edge attempts.
-- Linux Wayland/Sway: Chromium regression plus explicit Chrome attempt.
+- Linux X11: final hosted Chrome regression at the pushed source commit.
+- Linux Wayland: run the canonical generic-compositor refusal row with
+  compositor-specific identity deliberately unavailable.
 - Non-Sway Wayland: record only fail-closed evidence unless an exact compositor
   identity adapter is implemented and separately accepted.

@@ -20,8 +20,32 @@ page or sending input.
 The existing Sway adapter uses compositor IPC to correlate the exact container,
 PID, and rectangle with the AT-SPI tree. Setup may briefly focus that attested
 container for fixed browser-owned internal navigation, then restores the prior
-container. Canonical Sway evidence is product-specific; the accepted lane is
-Chromium until another product completes the same matrix.
+container. Canonical Sway evidence accepts Google Chrome, Chromium, and
+Microsoft Edge after each product completed the same full matrix with playable
+video and no unexpected results.
+
+## Accepted GNOME Route
+
+The maintained WinRects extension v4 exposes the narrow identity route Cua
+Driver needs on GNOME Shell and Mutter: a stable window identifier, PID,
+geometry, focus and stacking state, and exact activation.
+
+The Linux adapter resolves the extension's immutable unique D-Bus owner,
+verifies that the owner is the current user's system-installed `gnome-shell`
+process, requires helper API v4 for browser-sensitive calls, and addresses that
+unique owner directly. This prevents an unrelated same-session process from
+replacing the public bus name between verification and activation. Setup and
+consent briefly activate one exact window, then restore and verify the prior
+Shell focus.
+
+The route is accepted for Google Chrome after the full standalone-browser
+matrix recorded 13 delivered behaviors, 3 policy refusals, 0 failures, and 0
+skips with 16 playable videos at one source commit. Other Chromium-family
+products still require their own product-specific evidence on GNOME.
+
+The adapter refuses when the component is missing, incompatible, disabled, or
+unable to distinguish multiple windows for one browser process. Enabling a
+generic unsafe-mode switch is not an acceptable production dependency.
 
 ## Candidate Compositors
 
@@ -35,27 +59,6 @@ A maintained Cua Driver KWin component could return a versioned, read-only
 identity record and perform one exact focus-and-restore transition. The adapter
 must bind its D-Bus peer, KWin generation, internal window ID, PID, geometry,
 and AT-SPI window. A generic user-provided script or title lookup is not enough.
-
-### GNOME Shell and Mutter
-
-GNOME Shell has in-process APIs that can enumerate application PIDs and
-windows. Cua Driver's maintained WinRects extension v4 now exposes the narrow
-candidate route needed by browser setup: a versioned stable window identifier,
-PID, geometry, focus, stacking state, and exact activation.
-
-The Linux adapter resolves the extension's immutable unique D-Bus owner,
-verifies that the owner is the current user's system-installed `gnome-shell`
-process, requires helper API v4 for browser-sensitive calls, and addresses that
-unique owner directly. This prevents an unrelated same-session process from
-replacing the public bus name between verification and activation. Setup and
-consent briefly activate one exact window, then restore and verify the prior
-Shell focus.
-
-The adapter must refuse when the component is missing, incompatible, disabled,
-or unable to distinguish multiple windows for one browser process. Enabling a
-generic unsafe-mode switch is not an acceptable production dependency. This
-route remains a candidate until the full GNOME Wayland browser matrix supplies
-the release evidence below.
 
 ### Other Compositors
 

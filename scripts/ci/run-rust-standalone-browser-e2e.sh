@@ -90,28 +90,36 @@ if [[ ! -x "${CUA_TEST_DRIVER_BIN}" ]]; then
   exit 1
 fi
 
-tests=(
-  standalone_browser_background_type
-  standalone_browser_dialogs
-)
-if [[ "${HOST_OS}" == Linux ]]; then
-  tests+=(standalone_browser_dialog_background_refusal)
+if [[ "${HOST_OS}" == Linux && "${CUA_E2E_WAYLAND_SESSION:-}" == generic ]]; then
+  if [[ "${XDG_SESSION_TYPE:-}" != wayland || -z "${WAYLAND_DISPLAY:-}" || -n "${SWAYSOCK:-}" ]]; then
+    echo "The generic Wayland lane requires native Wayland with no compositor-specific Sway identity" >&2
+    exit 2
+  fi
+  tests=(standalone_browser_generic_wayland_existing_profile_refusal)
+else
+  tests=(
+    standalone_browser_background_type
+    standalone_browser_dialogs
+  )
+  if [[ "${HOST_OS}" == Linux ]]; then
+    tests+=(standalone_browser_dialog_background_refusal)
+  fi
+  tests+=(
+    standalone_browser_download
+    standalone_browser_existing_profile
+    standalone_browser_existing_profile_setup
+    standalone_browser_frames
+    standalone_browser_multi_tab
+    standalone_browser_pointer_actions
+    standalone_browser_prepare_isolated
+    standalone_browser_roundtrip
+    standalone_browser_semantic_state
+    standalone_browser_stale_ref
+    standalone_browser_trusted_click
+    standalone_browser_upload
+    standalone_browser_window_collision
+  )
 fi
-tests+=(
-  standalone_browser_download
-  standalone_browser_existing_profile
-  standalone_browser_existing_profile_setup
-  standalone_browser_frames
-  standalone_browser_multi_tab
-  standalone_browser_pointer_actions
-  standalone_browser_prepare_isolated
-  standalone_browser_roundtrip
-  standalone_browser_semantic_state
-  standalone_browser_stale_ref
-  standalone_browser_trusted_click
-  standalone_browser_upload
-  standalone_browser_window_collision
-)
 failure_count=0
 for test_name in "${tests[@]}"; do
   echo "[RUN] ${test_name}"

@@ -89,4 +89,3 @@ An engine becomes supported only when representative real-browser rows prove:
 - non-mutating structured refusals for unavailable actions and environments;
 - redacted screenshots, trajectories, logs, and telemetry; and
 - playable video evidence at the exact source commit.
-

@@ -117,22 +117,26 @@ The content-free browser operation and refusal fields are documented in
 ## Platform scope
 
 The prompt-assisted route is available for Google Chrome and Microsoft Edge on
-macOS and Windows. Chrome has product-specific acceptance evidence on Linux
-X11. Chromium has product-specific acceptance evidence on the validated
-native-Wayland Sway lane. Chromium and Edge use the same descriptor-backed
-Linux route, but still need product-specific acceptance evidence before they
-are listed as validated. Every route requires an
+macOS and Windows. Chrome and Edge have product-specific acceptance evidence
+on Linux X11. Chrome is also accepted on GNOME Wayland, and Chromium is
+accepted alongside Chrome and Edge on the validated native-Wayland Sway lane.
+The Chromium-family products use the same descriptor-backed Linux route, but
+still need product-specific acceptance evidence on each desktop before they
+are listed as validated. Every route
+requires an
 exact approved PID and native window, one uniquely matched setup control, a
 loopback endpoint owned by that process, one exact browser-owned consent
 action, and a fresh native/CDP rebind.
 
 Linux additionally requires the browser's complete AT-SPI renderer tree. Start
 the Chromium-family process with `--force-renderer-accessibility`, or run a
-screen reader that enables full renderer accessibility. On Sway, Cua Driver
-briefly focuses the exact compositor-attested container for fixed internal-page
-navigation and restores the previous container before continuing. It refuses
-generic Wayland sessions that cannot prove exact process, window, and geometry
-identity.
+screen reader that enables full renderer accessibility. On Sway and validated
+GNOME Shell sessions, Cua Driver briefly focuses the exact
+compositor-attested window for fixed internal-page navigation and restores the
+previous window before continuing. GNOME requires the maintained WinRects
+helper API v4 and an immutable D-Bus owner that resolves to the current user's
+system-installed GNOME Shell process. Cua Driver refuses generic Wayland
+sessions that cannot prove exact process, window, and geometry identity.
 
 The setup adapters currently recognize the products' English accessibility
 labels. Other UI locales fail closed without toggling an unrecognized control.

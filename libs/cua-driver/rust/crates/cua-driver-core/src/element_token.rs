@@ -365,6 +365,15 @@ pub fn token_for(generation: u32, element_index: usize) -> String {
         .expect("token requested for an unregistered snapshot element")
 }
 
+pub fn snapshot_id(generation: u32) -> String {
+    format!("s{generation:08x}")
+}
+
+pub fn add_snapshot_metadata(structured: &mut serde_json::Value, generation: u32) {
+    structured["snapshot_id"] = serde_json::json!(snapshot_id(generation));
+    structured["generation"] = serde_json::json!(generation);
+}
+
 pub fn format_token(generation: u32, element_index: usize) -> String {
     token_for(generation, element_index)
 }
@@ -449,6 +458,23 @@ mod tests {
         assert!(!first.contains("10"));
         assert!(!first.contains(":0"));
         assert!(!first.contains(&format!("{generation:08x}")));
+    }
+
+    #[test]
+    fn empty_snapshot_preserves_cross_platform_metadata_schema_without_element_token() {
+        let registry = TokenRegistry::new();
+        let generation = registry.register_snapshot(10, 20, 0);
+        assert_eq!(registry.token_for(generation, 0), None);
+
+        let mut structured = serde_json::json!({});
+        add_snapshot_metadata(&mut structured, generation);
+        assert_eq!(
+            structured["snapshot_id"],
+            serde_json::json!(format!("s{generation:08x}"))
+        );
+        assert!(structured["snapshot_id"].is_string());
+        assert_eq!(structured["generation"], serde_json::json!(generation));
+        assert!(structured["generation"].is_number());
     }
 
     #[test]

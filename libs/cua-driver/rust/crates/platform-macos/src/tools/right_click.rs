@@ -104,24 +104,20 @@ impl Tool for RightClickTool {
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match super::resolve_element_target(
+            &self.state,
             pid,
+            window_id_arg,
             element_index_arg,
             element_token_arg.as_deref(),
-            window_id_arg,
-            "right_click",
         ) {
             Ok(r) => r,
             Err(e) => return e,
         };
-        let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid,
-                element_index: idx,
-                via_token: _,
-            } => (Some(idx), wid),
-        };
+        let token_targeted = resolved.via_token;
+        let element_index = resolved.element_index;
+        let window_id = resolved.window_id;
+        let token_guard = resolved.retained;
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
         let has_xy = x.is_some() && y.is_some();
@@ -147,7 +143,9 @@ impl Tool for RightClickTool {
         if let (Some(idx), Some(wid)) = (element_index, window_id) {
             // Retain out of the cache so a concurrent get_window_state can't
             // free the element mid-action (use-after-free → daemon crash).
-            let element_guard = match self.state.element_cache.get_element_retained(pid, wid, idx) {
+            let element_guard = match token_guard
+                .or_else(|| self.state.element_cache.get_element_retained(pid, wid, idx))
+            {
                 Some(e) => e,
                 None => {
                     return ToolResult::error(format!(
@@ -157,8 +155,16 @@ impl Tool for RightClickTool {
             };
             let element_ptr = element_guard.as_ptr();
 
-            let result =
-                tokio::task::spawn_blocking(move || ax_show_menu(element_ptr, idx, pid, wid)).await;
+            let result = tokio::task::spawn_blocking(move || {
+                ax_show_menu(
+                    element_ptr,
+                    idx,
+                    pid,
+                    wid,
+                    super::allow_pixel_fallback(token_targeted),
+                )
+            })
+            .await;
 
             return match result {
                 Ok(Ok(msg)) => ToolResult::text(msg),
@@ -284,7 +290,13 @@ impl Tool for RightClickTool {
 
 // ── Blocking AX path ─────────────────────────────────────────────────────────
 
-fn ax_show_menu(element_ptr: usize, idx: usize, pid: i32, wid: u32) -> anyhow::Result<String> {
+fn ax_show_menu(
+    element_ptr: usize,
+    idx: usize,
+    pid: i32,
+    wid: u32,
+    allow_pixel_fallback: bool,
+) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
 
     let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
@@ -311,6 +323,11 @@ fn ax_show_menu(element_ptr: usize, idx: usize, pid: i32, wid: u32) -> anyhow::R
         // Advertised but the action failed — fall through to the pixel path
         // rather than erroring out.
         tracing::debug!("AXShowMenu returned {err} for [{idx}]; falling back to pixel right-click");
+    }
+    if !allow_pixel_fallback {
+        anyhow::bail!(
+            "token-targeted right_click requires AXShowMenu; refusing pixel fallback for exact-node capability"
+        );
     }
 
     // Pixel right-click at the element's screen-space center.

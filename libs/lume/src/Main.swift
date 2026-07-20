@@ -59,10 +59,12 @@ extension Lume {
 // MARK: - Command Execution
 extension Lume {
     public static func main() {
-        if let vmName = nativeDisplayVMName() {
-            ProcessInfo.processInfo.processName = "Lume — \(vmName)"
+        if let runContext = directRunContext() {
+            ProcessInfo.processInfo.processName = "Lume — \(runContext.vmName)"
             do {
-                try NativeApplicationLoop.run {
+                try NativeApplicationLoop.run(
+                    showsStartupWindow: runContext.showsNativeDisplayAtLaunch
+                ) {
                     await executeInvocation()
                 }
             } catch {
@@ -106,24 +108,26 @@ extension Lume {
         }
     }
 
-    private static func nativeDisplayVMName() -> String? {
+    private static func directRunContext() -> (
+        vmName: String,
+        showsNativeDisplayAtLaunch: Bool
+    )? {
         let args = Array(CommandLine.arguments.dropFirst())
-        guard args.first == "run", !args.contains("--no-display") else {
-            return nil
-        }
-        let usesNativeDisplay = args.contains("--display=native")
-            || args.indices.contains { index in
-                args[index] == "--display"
-                    && args.index(after: index) < args.endIndex
-                    && args[args.index(after: index)] == "native"
-            }
-        guard usesNativeDisplay else { return nil }
+        guard args.first == "run" else { return nil }
 
-        // The Run command's first positional argument is the VM name.
-        guard args.count > 1, !args[1].hasPrefix("-") else {
-            return "VM"
-        }
-        return args[1]
+        let noDisplay = args.contains("--no-display") || args.contains("-d")
+        let usesNativeDisplay = !noDisplay
+            && (args.contains("--display=native")
+                || args.indices.contains { index in
+                    args[index] == "--display"
+                        && args.index(after: index) < args.endIndex
+                        && args[args.index(after: index)] == "native"
+                })
+
+        // The conventional form is `lume run VM_NAME [options]`. ArgumentParser
+        // still produces a useful validation error if the positional name is absent.
+        let vmName = args.count > 1 && !args[1].hasPrefix("-") ? args[1] : "VM"
+        return (vmName, usesNativeDisplay)
     }
 
     private static func isTelemetryManagementInvocation() -> Bool {

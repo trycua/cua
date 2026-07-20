@@ -51,6 +51,8 @@ class VM {
     internal let vncService: VNCService
     private var clipboardWatcher: ClipboardWatcher?
     private var displayPresenter: VMDisplayPresenter?
+    private var displayContext: VMDisplayContext?
+    private var nativeAttachRegistered = false
     private var activeSharedDirectories: [SharedDirectory] = []
     private var scopedSharedDirectoryURLs: [URL] = []
     private var sessionCleanedUp = true
@@ -354,11 +356,7 @@ class VM {
                 osType: getOSType(),
                 explicitlyRequested: clipboard
             ) {
-                clipboardWatcher = ClipboardWatcher(
-                    vmName: vmDirContext.name,
-                    storage: vmDirContext.storage
-                )
-                await clipboardWatcher?.start()
+                await startClipboardWatcherIfNeeded()
             }
 
             if displayMode == .vnc {
@@ -366,29 +364,47 @@ class VM {
             }
             // Attach VZVirtualMachineView only once the guest has entered its live state.
             // Attaching a native view to a stopped VM can leave its display black.
-            try await presenter.show(
-                context: VMDisplayContext(
-                    virtualMachine: service.displayVirtualMachine,
-                    vncURL: vncInfo,
-                    resolution: vmDirContext.config.display,
-                    vmName: vmDirContext.name,
-                    copyFromGuest: { [weak self] in
-                        guard let self else { throw ClipboardSyncError.unavailable }
-                        try await self.copyClipboardFromGuest()
-                    },
-                    pasteIntoGuest: { [weak self] in
-                        guard let self else { throw ClipboardSyncError.unavailable }
-                        try await self.pasteClipboardIntoGuest()
-                    },
-                    addSharedFolder: { [weak self] url, readOnly in
-                        guard let self else {
-                            throw VMError.internalError("The VM session is no longer available")
-                        }
-                        try await self.addSharedFolder(url, readOnly: readOnly)
+            let context = VMDisplayContext(
+                virtualMachine: service.displayVirtualMachine,
+                vncURL: vncInfo,
+                resolution: vmDirContext.config.display,
+                vmName: vmDirContext.name,
+                copyFromGuest: { [weak self] in
+                    guard let self else { throw ClipboardSyncError.unavailable }
+                    try await self.copyClipboardFromGuest()
+                },
+                pasteIntoGuest: { [weak self] in
+                    guard let self else { throw ClipboardSyncError.unavailable }
+                    try await self.pasteClipboardIntoGuest()
+                },
+                addSharedFolder: { [weak self] url, readOnly in
+                    guard let self else {
+                        throw VMError.internalError("The VM session is no longer available")
                     }
-                )
+                    try await self.addSharedFolder(url, readOnly: readOnly)
+                }
             )
+            displayContext = context
+            try await presenter.show(context: context)
             presenter.virtualMachineDidStart()
+
+            if NativeApplicationLoop.isActive {
+                do {
+                    try NativeDisplayAttachService.register(
+                        vmDirectory: vmDirContext.dir
+                    ) { [weak self] in
+                        await self?.showNativeDisplay()
+                    }
+                    nativeAttachRegistered = true
+                } catch {
+                    Logger.debug(
+                        "Live native display attachment is unavailable",
+                        metadata: [
+                            "name": vmDirContext.name,
+                            "error": error.localizedDescription,
+                        ])
+                }
+            }
 
             // Write VNC config into VM via SSH (background task).
             // VirtioFS mounts are blocked by macOS TCC for LaunchAgent processes,
@@ -423,6 +439,50 @@ class VM {
             await cleanupSession()
             throw error
         }
+    }
+
+    private func showNativeDisplay() async {
+        guard let context = displayContext else {
+            Logger.error(
+                "Cannot attach native display without an active VM context",
+                metadata: ["name": vmDirContext.name])
+            return
+        }
+
+        do {
+            if getOSType().caseInsensitiveCompare("macOS") == .orderedSame {
+                await startClipboardWatcherIfNeeded()
+            }
+
+            if let nativePresenter = displayPresenter as? NativeVMDisplayPresenter {
+                try await nativePresenter.show(context: context)
+            } else {
+                let nativePresenter = NativeVMDisplayPresenter()
+                try await nativePresenter.show(context: context)
+                displayPresenter?.hide()
+                displayPresenter = nativePresenter
+            }
+            Logger.info(
+                "Attached native display to running VM",
+                metadata: ["name": vmDirContext.name])
+        } catch {
+            Logger.error(
+                "Failed to attach native display",
+                metadata: [
+                    "name": vmDirContext.name,
+                    "error": error.localizedDescription,
+                ])
+        }
+    }
+
+    private func startClipboardWatcherIfNeeded() async {
+        guard clipboardWatcher == nil else { return }
+        let watcher = ClipboardWatcher(
+            vmName: vmDirContext.name,
+            storage: vmDirContext.storage
+        )
+        clipboardWatcher = watcher
+        await watcher.start()
     }
 
     private func copyClipboardFromGuest() async throws {
@@ -495,8 +555,13 @@ class VM {
         sessionCleanedUp = true
 
         // Detach native display before releasing the framework VM.
+        if nativeAttachRegistered {
+            NativeDisplayAttachService.unregister()
+            nativeAttachRegistered = false
+        }
         displayPresenter?.hide()
         displayPresenter = nil
+        displayContext = nil
         await clipboardWatcher?.stop()
         clipboardWatcher = nil
         for url in scopedSharedDirectoryURLs {

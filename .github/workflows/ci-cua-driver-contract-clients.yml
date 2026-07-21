@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "libs/cua-driver/contract/**"
+      - "libs/cua-driver/examples/agent-sdks/**"
       - "libs/cua-driver/typescript/**"
       - "libs/cua-driver/python/**"
       - "libs/cua-driver/rust/Cargo.toml"
@@ -20,6 +21,7 @@ on:
     branches: [main]
     paths:
       - "libs/cua-driver/contract/**"
+      - "libs/cua-driver/examples/agent-sdks/**"
       - "libs/cua-driver/typescript/**"
       - "libs/cua-driver/python/**"
       - "libs/cua-driver/rust/Cargo.toml"
@@ -84,7 +86,9 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: libs/cua-driver/typescript/package-lock.json
+          cache-dependency-path: |
+            libs/cua-driver/typescript/package-lock.json
+            libs/cua-driver/examples/agent-sdks/package-lock.json
 
       - name: Verify generated files
         working-directory: libs/cua-driver/rust
@@ -109,3 +113,14 @@ jobs:
       - name: Test TypeScript SDK
         working-directory: libs/cua-driver/typescript
         run: npm run typecheck && npm test
+
+      - name: Check Python agent SDK example
+        run: python -m py_compile libs/cua-driver/examples/agent-sdks/claude_agent.py
+
+      - name: Install agent SDK example dependencies
+        working-directory: libs/cua-driver/examples/agent-sdks
+        run: npm ci
+
+      - name: Check TypeScript agent SDK example
+        working-directory: libs/cua-driver/examples/agent-sdks
+        run: npm run typecheck

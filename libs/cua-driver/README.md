@@ -4,14 +4,24 @@ Background computer-use driver for any agents. Speaks MCP over stdio; drives nat
 
 **[Documentation](https://cua.ai/docs/cua-driver)** - Installation, guides, and API reference.
 
+## Integration surfaces
+
+- **Cua as an agent MCP or CLI:** MCP-capable agents connect directly to
+  `cua-driver mcp`; shell-oriented agents and automation can use
+  `cua-driver call`. No generated Cua language client is required.
+- **Cua as an application SDK:** Python applications can import `cua-driver`
+  and TypeScript applications can import `@trycua/cua-driver` for generated,
+  typed methods. These packages are typed MCP clients today, not native Rust
+  implementation bindings.
+
 ## Repository Layout
 
 | Path                            | Purpose                                                                |
 | ------------------------------- | ---------------------------------------------------------------------- |
 | `rust/`                         | Cargo workspace for the driver daemon, platform crates, and Rust tests |
-| `python/`                       | Python SDK, bundled-binary wrapper, and package tests                   |
+| `python/`                       | Python SDK, bundled-binary wrapper, and package tests                  |
 | `contract/`                     | Experimental generated SDK contract and fixtures                       |
-| `typescript/`                   | Generated TypeScript SDK                                                |
+| `typescript/`                   | Generated TypeScript SDK                                               |
 | `tests/fixtures/`               | Source-built GUI harness apps and shared fixtures                      |
 | `rust/crates/cua-driver/tests/` | Rust integration tests for the driver and GUI harnesses                |
 | `scripts/`                      | Install, uninstall, local build, and VM sync helpers                   |
@@ -24,6 +34,11 @@ The experimental contract-first SDK prototype is documented in
 [`contract/README.md`](contract/README.md). Its checked-in Python SDK surface
 and TypeScript SDK are generated from the Rust contract crate and communicate
 over the public `cua-driver mcp` stdio transport.
+
+For direct agent integrations, see the
+[`examples/agent-sdks`](examples/agent-sdks/README.md) Codex and Claude Agent
+SDK examples. They connect the agent to `cua-driver mcp` without importing a
+generated Cua client.
 
 Contributor documentation:
 

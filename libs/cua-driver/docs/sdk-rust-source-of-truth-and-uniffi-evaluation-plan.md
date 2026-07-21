@@ -6,10 +6,13 @@ Applies to: PR #2341 and follow-up SDK/runtime work
 
 Primary objective: eliminate manual contract/runtime bookkeeping before publishing the Python and TypeScript SDKs
 
+Decision rationale: [Cua Driver integration surfaces: MCP/CLI and SDK bindings](why-cua-driver-uses-mcp-instead-of-uniffi.md)
+
 ## Executive decision
 
-Proceed with the Rust source-of-truth work, but keep the current process/MCP
-boundary as the default SDK architecture.
+Proceed with the Rust source-of-truth work while separating the agent boundary
+from the imported SDK boundary. MCP/CLI is the baseline agent architecture;
+UniFFI remains a candidate for distributing a Rust SDK/server implementation.
 
 The recommended sequence is:
 
@@ -21,16 +24,23 @@ The recommended sequence is:
 3. Move live platform implementations onto those shared types incrementally,
    beginning with the four already-canonical session tools and then a genuinely
    divergent desktop slice.
-4. Keep the thin Python and TypeScript MCP clients as the baseline.
-5. Run a time-boxed, language-split UniFFI spike. Treat Python as the mature
-   target and TypeScript as a separate third-party toolchain evaluation.
-6. Adopt UniFFI for a language only if it is reproducible, materially reduces
-   maintained behavior, and passes the packaging and runtime gates below.
+4. Keep MCP and the CLI as the canonical agent integration. MCP-capable agents
+   do not need a generated Cua client; prove this with Python Claude Agent SDK
+   and TypeScript Codex SDK examples.
+5. Keep the generated Python and TypeScript packages as typed MCP client SDKs
+   for application code, without claiming that they add runtime portability.
+6. Run a time-boxed, language-split UniFFI spike for consumers that want a
+   shared Rust implementation, especially server-hosting or embedded SDK
+   consumers. Treat Python as the mature target and TypeScript as a separate
+   third-party toolchain evaluation.
+7. Adopt UniFFI for a language only if it is reproducible, centralizes
+   meaningful Rust behavior, and passes the packaging and runtime gates below.
 
-Directly embedding the GUI engine is not part of this plan. The existing
-runtime assumes a shared daemon, process-global state, and OS-specific
-main-thread and permission behavior that a host-process library cannot safely
-inherit without a separate design.
+Directly embedding the GUI engine is not part of the current client-generation
+work. The existing runtime assumes a shared daemon, process-global state, and
+OS-specific main-thread and permission behavior that a host-process library
+cannot safely inherit without a separate design. A UniFFI facade over a shared
+Rust daemon client and a UniFFI embedded/server SDK are distinct candidates.
 
 ## Confirmed current state
 
@@ -127,7 +137,7 @@ Therefore:
 10. Mixed MCP content remains a transport envelope: typed structured results do
     not erase text, images, refusals, degraded results, or diagnostics.
 
-## Target architecture
+## Target architecture and public surfaces
 
 ```text
 Transport-free Rust ToolSpec + typed inputs/results
@@ -137,12 +147,19 @@ Transport-free Rust ToolSpec + typed inputs/results
                   +--> structured-result validation
                   +--> portable and platform-rich projections
                   +--> contract manifest
-                  +--> Python/TypeScript SDK generation
-                  +--> optional UniFFI export facade
+                  +--> optional typed MCP-client generation
+                  +--> optional UniFFI implementation exports
 
-Python/TS SDK ---- MCP stdio ---- native cua-driver daemon ---- OS APIs
+Agent surface:
+Codex / Claude / other agent ---- MCP stdio ---- native daemon ---- OS APIs
+Shell automation ---------------- CLI call ----- native daemon ---- OS APIs
+
+Imported application SDK surface:
+Python/TS typed client ----------- MCP stdio ---- native daemon ---- OS APIs
         or
-Python/TS SDK ---- UniFFI ---- Rust MCP client ---- native daemon ---- OS APIs
+Language binding ---------------- UniFFI ------- Rust daemon client ---- daemon
+        or, after a separate host-runtime design
+Language binding ---------------- UniFFI ------- embedded Rust engine ---- OS APIs
 ```
 
 The transport-free specifications should live in the existing
@@ -158,7 +175,8 @@ The typed layer must distinguish:
 - the MCP content envelope that can contain text, images, and diagnostics.
 
 A blanket adapter must not pretend every tool result is one serializable success
-object.
+object. Agent examples must use the existing agent SDK's MCP client directly;
+otherwise they would obscure the distinction this plan depends on.
 
 ## Workstream A0: close PR #2341's immediate parity gap
 
@@ -285,9 +303,20 @@ Each runtime roster entry must be classified as stable typed, experimental
 generic-only, compatibility alias, or internal/hidden. Do not encode one global
 tool count.
 
-## Workstream B: compare SDK binding mechanisms
+## Workstream B: separate agent integration from SDK distribution
 
-### Option 1: thin generated MCP SDKs — baseline recommendation
+### Agent integration: direct MCP/CLI — baseline recommendation
+
+Configure each agent runtime's existing MCP client with `cua-driver mcp`, or
+use `cua-driver call` from shell-oriented agents. Do not require generated Cua
+language clients in this path. Maintain runnable Python Claude Agent SDK and
+TypeScript Codex SDK examples as proof.
+
+This is the O(1) agent-protocol surface: one MCP server is consumable from N
+MCP-capable runtimes. Generated clients add ergonomics for applications, not
+interoperability for these agents.
+
+### SDK option 1: thin generated MCP clients
 
 Continue generating Python and TypeScript types/methods while small native
 transports speak MCP stdio directly.
@@ -301,9 +330,10 @@ This preserves:
 - Cua Driver's already-reproducible TypeScript generation/check pipeline.
 
 The remaining handwritten language code is a few small transport, result, and
-facade modules. Measure it before assuming an FFI layer is cheaper to maintain.
+facade modules. This is a typed remote-client SDK, not a native implementation
+binding. Measure it against the actual application SDK requirement.
 
-### Option 2: UniFFI facade over a Rust MCP client — gated spike
+### SDK option 2: UniFFI facade over a Rust daemon client — gated spike
 
 Build a platform-neutral Rust client that owns MCP framing and result
 normalization while still launching or connecting to the native driver daemon.
@@ -327,10 +357,16 @@ not from Fleet's manual artifacts. It must add:
 Do not implement browser/WASM packaging for local desktop automation in this
 spike.
 
-### Option 3: directly embed the GUI engine — out of scope
+The purpose of this option is to implement application client behavior once in
+Rust and distribute that implementation to N runtimes. Merely moving JSON-RPC
+framing into Rust is insufficient benefit; the spike must identify the shared
+lifecycle, normalization, policy, or server-composition behavior it owns.
 
-Do not use direct embedding as a fallback. A separate proposal would first need
-to eliminate or explicitly host:
+### SDK option 3: UniFFI embedded/server implementation — separate proposal
+
+This is the path for application developers who want to create or embed a Cua
+server. Do not treat it as a fallback transport change. A separate proposal
+would first need to eliminate or explicitly host:
 
 - process-global session and element-token state;
 - one-registry assumptions and concurrent-session cleanup hazards;
@@ -339,9 +375,9 @@ to eliminate or explicitly host:
 - Linux compositor, X11/Wayland, and session-bus integration; and
 - host crash, runtime, and cancellation coupling.
 
-### B1. Measure both supported candidates
+### B1. Measure the SDK candidates
 
-For Option 1 and each language-specific Option 2 spike, record:
+For SDK option 1 and each language-specific SDK option 2 spike, record:
 
 - generated and handwritten maintained source lines;
 - wheel/npm artifact size by platform and architecture;
@@ -353,12 +389,12 @@ For Option 1 and each language-specific Option 2 spike, record:
 - release-matrix and CI duration changes; and
 - current timeout/deadline behavior without implying tool cancellation.
 
-### B2. Language-split decision gate
+### B2. Language-split SDK decision gate
 
 Decide Python and TypeScript independently. UniFFI may pass for Python and fail
 for TypeScript.
 
-Adopt Option 2 for a language only if:
+Adopt SDK option 2 for a language only if:
 
 - it materially reduces maintained SDK behavior;
 - generated outputs are reproducible and drift-checked in-repository;
@@ -370,8 +406,9 @@ Adopt Option 2 for a language only if:
 For TypeScript, failure to provide pinned deterministic generation and CI
 checking is an automatic rejection regardless of runtime benchmark results.
 
-Otherwise retain Option 1. The source-of-truth work is complete and valuable
-regardless of this decision.
+Otherwise retain SDK option 1. The source-of-truth work is complete and
+valuable regardless of this decision. Neither outcome changes direct MCP/CLI
+as the recommended agent integration.
 
 ## Workstream D: define cancellation and timeout semantics
 
@@ -468,7 +505,7 @@ Keep commits independently reviewable:
 4. `refactor(cua-driver): route session tools through typed runtime adapter`
 5. `refactor(cua-driver): migrate divergent desktop vertical slice`
 6. `refactor(cua-driver): migrate current portable desktop SDK tools`
-7. `test(cua-driver): spike UniFFI Python MCP client`
+7. `test(cua-driver): spike UniFFI Python Rust daemon client`
 8. `test(cua-driver): evaluate reproducible UniFFI Node bindings`
 9. Decision commit: remove each rejected spike or adopt its production wiring.
 10. Follow-up PRs: migrate stable tool families.
@@ -499,8 +536,10 @@ the current manifest as full runtime parity.
 
 ### UniFFI evaluation is complete when
 
-- thin MCP and each language-specific UniFFI prototype pass equivalent behavior
-  and artifact tests;
+- the target product is explicit: typed daemon client or embedded/server SDK;
+- direct agent MCP examples remain independent of every generated client;
+- thin typed clients and each language-specific UniFFI prototype pass
+  equivalent behavior and artifact tests for the selected SDK target;
 - measurements and platform matrices are recorded;
 - Python and TypeScript decisions are documented independently;
 - any adopted TypeScript pipeline is pinned, reproducible, and CI-checked; and
@@ -514,17 +553,17 @@ entry on any supported OS.
 
 ## Principal risks
 
-| Risk | Mitigation |
-| --- | --- |
-| Portable declarations drift before the refactor finishes | Land A0 first and trigger it on platform/runtime changes. |
-| Derived schema dialect differs from existing contracts | Gate `schemars` on a dialect-reproduction spike; keep bounded explicit builders if needed. |
-| Platform richness creates unusable public unions | Model separate typed commands and explicit per-platform presence from one spec family. |
-| Mixed MCP results do not fit one typed output | Type only structured payloads and stable errors; preserve the content envelope. |
-| Migration scope expands across large platform files | Start with session tools, prove one divergent slice, then migrate by family. |
-| TypeScript UniFFI inherits an immature toolchain | Treat it as green-field, pin everything, require deterministic generation and CI checking. |
-| Native client libraries complicate distribution | Measure the full matrix and retain thin MCP unless benefit is material. |
-| Cancellation is claimed but not implemented | Complete Workstream D or document non-cancelling deadline semantics. |
-| Direct embedding breaks permission or global-state assumptions | Keep it outside this plan and require a separate OS-specific proof. |
+| Risk                                                           | Mitigation                                                                                 |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Portable declarations drift before the refactor finishes       | Land A0 first and trigger it on platform/runtime changes.                                  |
+| Derived schema dialect differs from existing contracts         | Gate `schemars` on a dialect-reproduction spike; keep bounded explicit builders if needed. |
+| Platform richness creates unusable public unions               | Model separate typed commands and explicit per-platform presence from one spec family.     |
+| Mixed MCP results do not fit one typed output                  | Type only structured payloads and stable errors; preserve the content envelope.            |
+| Migration scope expands across large platform files            | Start with session tools, prove one divergent slice, then migrate by family.               |
+| TypeScript UniFFI inherits an immature toolchain               | Treat it as green-field, pin everything, require deterministic generation and CI checking. |
+| Native client libraries complicate distribution                | Measure the full matrix and retain thin MCP unless benefit is material.                    |
+| Cancellation is claimed but not implemented                    | Complete Workstream D or document non-cancelling deadline semantics.                       |
+| Direct embedding breaks permission or global-state assumptions | Keep it outside this plan and require a separate OS-specific proof.                        |
 
 ## Non-goals
 
@@ -549,12 +588,13 @@ artifacts. This revision incorporates its must-fix findings:
 - schema derivation is gated instead of assumed;
 - typed structured output is separated from mixed MCP content;
 - cancellation is treated as missing runtime design work; and
-- UniFFI adoption is language-split with thin MCP as the baseline.
+- UniFFI adoption is language-split; direct MCP/CLI remains the agent baseline,
+  while thin MCP and UniFFI are compared only for imported application SDKs.
 
 ## Implementation outcome and binding decision (2026-07-21)
 
-The implementation keeps MCP as the public boundary and makes typed Rust the
-source for the current fourteen-tool SDK surface:
+The implementation keeps MCP/CLI as the public agent boundary and makes typed
+Rust the source for the current fourteen-tool typed-client SDK surface:
 
 - Schemars-derived Rust input and structured-output types deterministically
   generate the checked-in manifest and Python/TypeScript sources.
@@ -570,15 +610,15 @@ source for the current fourteen-tool SDK surface:
 - Capability tokens for all fourteen tools resolve from the contract; the
   legacy runtime capability map now covers only non-SDK tools.
 
-### Measured thin-MCP baseline
+### Measured typed MCP-client baseline
 
 Measurements were taken from this checkout at version `0.10.0` before package
 publication:
 
-| Candidate | Maintained source | Generated source | Universal package |
-| --- | ---: | ---: | ---: |
-| Python MCP SDK | 676 lines | 331 lines | 10,666-byte pure-Python wheel |
-| TypeScript MCP SDK | 278 lines | 275 lines | 4,923-byte npm tarball; 19,506 bytes unpacked |
+| Candidate          | Maintained source | Generated source |                             Universal package |
+| ------------------ | ----------------: | ---------------: | --------------------------------------------: |
+| Python MCP SDK     |         676 lines |        331 lines |                 10,666-byte pure-Python wheel |
+| TypeScript MCP SDK |         278 lines |        275 lines | 4,923-byte npm tarball; 19,506 bytes unpacked |
 
 Both clients retain generic `call_tool` access and preserve the full MCP
 content/result envelope. Their executable fixture suites cover initialization,
@@ -602,24 +642,30 @@ throwaway binding implementation with the same toolchain:
   larger API. Those source sizes are toolchain evidence, not a like-for-like
   API-size benchmark.
 
-### Per-language decision
+### Current pull-request package decision
 
-**Python: retain thin MCP.** UniFFI itself passes the feasibility and
-reproducibility gate, but cua-driver has no shared Rust MCP client whose reuse
-would offset native distribution. A facade today would add a per-platform,
-per-architecture cdylib and native-loader failure mode to a 10.4 KiB universal
-wheel, only to spawn and speak MCP to the existing native driver. It does not
-materially reduce maintained product behavior at the current surface.
+**Python: retain the typed MCP client in this pull request.** UniFFI itself
+passes the feasibility and reproducibility gate, but Cua Driver does not yet
+have a shared Rust daemon client with meaningful application behavior. A
+facade over today's transport would add a per-platform, per-architecture cdylib
+and native-loader failure mode to a 10.4 KiB universal wheel while still
+speaking to the existing daemon.
 
-**TypeScript: retain thin MCP.** The current precedent fails the plan's
-automatic adoption gate: generation is outside the pinned drift-check script,
-the runtime packages are unpinned, and consumers must locate a host-native
-library. Technical feasibility does not yet make it a reproducible npm release
-pipeline.
+**TypeScript: retain the typed MCP client in this pull request.** The current
+precedent fails the plan's automatic adoption gate: generation is outside the
+pinned drift-check script, the runtime packages are unpinned, and consumers
+must locate a host-native library. Technical feasibility does not yet make it a
+reproducible npm release pipeline.
+
+This package decision does not reject a UniFFI embedded/server SDK and does not
+claim the generated clients improve MCP interoperability. MCP-capable agents
+should connect directly, as the agent examples demonstrate. A follow-up SDK
+proposal must decide whether its consumer needs a shared Rust daemon client or
+an embedded/server implementation, then evaluate UniFFI against that target.
 
 No rejected UniFFI spike code is retained. Cold-start and steady-state
 comparisons are intentionally not claimed: neither native candidate passed the
 packaging/reproducibility pre-gates that justify producing a release-matrix
-prototype. Reconsider Python if a reusable Rust MCP client exists for another
-shipping consumer; reconsider TypeScript after pinned generation, deterministic
-CI checking, and native package loading land in the repository.
+prototype. Reconsider Python when a reusable Rust daemon client or supported
+embedded host exists; reconsider TypeScript after pinned generation,
+deterministic CI checking, and native package loading land in the repository.

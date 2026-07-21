@@ -21,6 +21,7 @@ export class McpResponseError extends Error {
 type Pending = {
   resolve(value: Record<string, unknown>): void
   reject(error: Error): void
+  timer: ReturnType<typeof setTimeout>
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -38,9 +39,10 @@ export class StdioMcpTransport implements Transport {
 
   constructor(
     private readonly command: readonly string[] = ["cua-driver", "mcp"],
-    private readonly options: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
+    private readonly options: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
   ) {
     if (command.length === 0) throw new TypeError("command must not be empty")
+    if ((options.timeoutMs ?? 30_000) <= 0) throw new TypeError("timeoutMs must be positive")
   }
 
   async request(
@@ -61,6 +63,7 @@ export class StdioMcpTransport implements Transport {
     child.stdin?.end()
     if (child.exitCode === null) child.kill("SIGTERM")
     for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer)
       pending.reject(new Error("cua-driver MCP transport closed"))
     }
     this.pending.clear()
@@ -108,11 +111,16 @@ export class StdioMcpTransport implements Transport {
     const payload: Record<string, unknown> = { jsonrpc: "2.0", id, method }
     if (params !== undefined) payload.params = params
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
+      const timer = setTimeout(() => {
+        this.pending.delete(id)
+        reject(new Error(`cua-driver MCP request timed out: ${method}`))
+      }, this.options.timeoutMs ?? 30_000)
+      this.pending.set(id, { resolve, reject, timer })
       try {
         this.write(payload)
       } catch (error) {
         this.pending.delete(id)
+        clearTimeout(timer)
         reject(error instanceof Error ? error : new Error(String(error)))
       }
     })
@@ -143,6 +151,7 @@ export class StdioMcpTransport implements Transport {
     const pending = this.pending.get(id)
     if (!pending) return
     this.pending.delete(id)
+    clearTimeout(pending.timer)
     const error = record(response?.error)
     if (error) {
       pending.reject(
@@ -162,7 +171,10 @@ export class StdioMcpTransport implements Transport {
   }
 
   private failAll(error: Error): void {
-    for (const pending of this.pending.values()) pending.reject(error)
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(error)
+    }
     this.pending.clear()
   }
 }

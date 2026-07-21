@@ -36,6 +36,11 @@ impl ToolDef {
     /// Only migrated tools use this bridge; platform-specific tools continue
     /// to own their live schemas until they can pass parity checks.
     pub fn from_contract(contract: &cua_driver_contract::ToolContract) -> Self {
+        assert_eq!(
+            contract.schema_mode,
+            cua_driver_contract::SchemaMode::CanonicalRuntime,
+            "portable subset contracts cannot replace live runtime schemas"
+        );
         Self {
             name: contract.name.clone(),
             description: contract.description.clone(),

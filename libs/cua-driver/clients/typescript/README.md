@@ -9,7 +9,9 @@ import { CuaDriverClient } from "@trycua/cua-driver-client"
 const client = CuaDriverClient.stdio()
 try {
   const result = await client.startSession({ session: "demo", captureScope: "auto" })
-  console.log(result.structured)
+  const desktop = await client.getDesktopState({ session: "demo" })
+  await client.click({ x: 420, y: 240, scope: "desktop", session: "demo" })
+  console.log(desktop.images[0]?.mimeType)
 } finally {
   await client.close()
 }
@@ -17,3 +19,4 @@ try {
 
 The native driver remains the execution, policy, and approval boundary. This
 experimental package must not be published from the draft branch.
+Requests have bounded timeouts, and action calls are never retried automatically.

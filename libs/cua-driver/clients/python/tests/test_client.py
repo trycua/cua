@@ -1,14 +1,25 @@
 from __future__ import annotations
 
 import json
+import sys
 import unittest
 from pathlib import Path
 from typing import Any, Mapping
 
-from cua_driver_client import CuaDriverClient, StartSessionArgs, ToolResult
+from cua_driver_client import (
+    AsyncCuaDriverClient,
+    AsyncStdioMcpTransport,
+    CuaDriverClient,
+    ClickArgs,
+    HotkeyArgs,
+    StartSessionArgs,
+    StdioMcpTransport,
+    ToolResult,
+)
 
 
 FIXTURES = Path(__file__).parents[3] / "contract" / "fixtures"
+MCP_FIXTURE = Path(__file__).with_name("mcp_fixture.py")
 
 
 class FakeTransport:
@@ -55,6 +66,72 @@ class ClientTests(unittest.TestCase):
         refused = ToolResult.from_mcp(fixture("tool-refusal.json"))
         self.assertTrue(refused.is_error)
         self.assertEqual(refused.error_code, "foreground_required")
+
+    def test_generated_hotkey_preserves_string_array(self) -> None:
+        transport = FakeTransport(fixture("session-success.json"))
+        client = CuaDriverClient(transport)
+        client.hotkey(HotkeyArgs(["ctrl", "l"], "desktop", session="demo"))
+        self.assertEqual(
+            transport.calls[0][1],
+            {
+                "name": "hotkey",
+                "arguments": {
+                    "keys": ["ctrl", "l"],
+                    "scope": "desktop",
+                    "session": "demo",
+                },
+            },
+        )
+
+    def test_stdio_transport_executes_initialize_and_desktop_call(self) -> None:
+        transport = StdioMcpTransport((sys.executable, str(MCP_FIXTURE)))
+        try:
+            client = CuaDriverClient(transport)
+            result = client.click(ClickArgs(12.5, 20.0, "desktop", session="demo"))
+            self.assertEqual(result.structured["name"], "click")
+            self.assertEqual(
+                result.structured["arguments"],
+                {"x": 12.5, "y": 20.0, "scope": "desktop", "session": "demo"},
+            )
+        finally:
+            transport.close()
+
+    def test_stdio_transport_times_out(self) -> None:
+        transport = StdioMcpTransport(
+            (sys.executable, str(MCP_FIXTURE)), timeout=0.05
+        )
+        try:
+            with self.assertRaisesRegex(TimeoutError, "request timed out"):
+                transport.request("test/hang")
+        finally:
+            transport.close()
+
+
+class AsyncClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_async_stdio_transport_executes_generated_call(self) -> None:
+        transport = AsyncStdioMcpTransport(
+            (sys.executable, str(MCP_FIXTURE)), timeout=2.0
+        )
+        try:
+            client = AsyncCuaDriverClient(transport)
+            result = await client.click(ClickArgs(4.0, 8.0, "desktop"))
+            self.assertEqual(result.structured["name"], "click")
+            self.assertEqual(
+                result.structured["arguments"],
+                {"x": 4.0, "y": 8.0, "scope": "desktop"},
+            )
+        finally:
+            await transport.close()
+
+    async def test_async_stdio_transport_times_out(self) -> None:
+        transport = AsyncStdioMcpTransport(
+            (sys.executable, str(MCP_FIXTURE)), timeout=0.05
+        )
+        try:
+            with self.assertRaises(TimeoutError):
+                await transport.request("test/hang")
+        finally:
+            await transport.close()
 
 
 if __name__ == "__main__":

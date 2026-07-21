@@ -55,6 +55,10 @@ jobs:
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver-contract
 
+      - name: Test live contract parity
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p cua-driver-core --test contract_parity
+
       - name: Test Python reference client
         working-directory: libs/cua-driver/clients/python
         run: PYTHONPATH=src python -m unittest discover -s tests -v

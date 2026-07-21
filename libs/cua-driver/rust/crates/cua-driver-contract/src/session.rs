@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-use crate::{schema, Platform, ToolAnnotations, ToolContract};
+use crate::{schema, Platform, SchemaMode, ToolAnnotations, ToolContract};
 use serde_json::json;
 
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
@@ -25,6 +25,7 @@ fn contract(
         aliases: Vec::new(),
         capabilities: capabilities.iter().map(|value| (*value).into()).collect(),
         annotations,
+        schema_mode: SchemaMode::CanonicalRuntime,
         input_schema,
         success_output_schema: Some(success_output_schema),
     }

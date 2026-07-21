@@ -12,12 +12,27 @@ socket or embed platform code.
 
 ## Scope and compatibility
 
-The typed slice currently covers the cross-platform session lifecycle tools:
+The typed slice covers the cross-platform session lifecycle tools:
 
 - `start_session`
 - `escalate_session`
 - `get_session_state`
 - `end_session`
+
+It also covers the portable whole-desktop loop:
+
+- `get_desktop_state`
+- `get_screen_size`
+- `get_cursor_position`
+- `move_cursor` with the required `scope="desktop"`
+- `click` with the required `scope="desktop"`
+- `drag` and `scroll` in native desktop coordinates
+- `type_text`, `press_key`, and `hotkey` against the foreground application
+
+Session contracts are marked `canonical_runtime`: the same declaration builds
+the live MCP tool. Desktop contracts are marked `portable_subset`: they are a
+deliberately narrower intersection of the richer macOS, Linux, and Windows
+runtime schemas and must never replace those live definitions.
 
 Both clients retain a generic tool call so runtime-discovered and
 platform-specific tools remain usable. The generated manifest records tool
@@ -29,7 +44,7 @@ Compatibility is tracked separately at each boundary:
 
 | Field | Current | Meaning |
 | --- | --- | --- |
-| `contract_version` | `0.1.0` | Generated manifest and typed-client shape |
+| `contract_version` | `0.2.0` | Generated manifest and typed-client shape |
 | `tools_list_schema_version` | `1` | cua-driver `tools/list` extension shape |
 | `capability_version` | `1` | Additive capability-token vocabulary |
 | `mcp_protocol_version` | `2025-06-18` | MCP initialization protocol requested by clients |
@@ -54,4 +69,7 @@ cargo test -p cua-driver-core --test contract_parity
 
 Client tests live in `clients/python` and `clients/typescript`. CI runs the
 generator in check mode so hand-edited or stale generated files fail the pull
-request.
+request. Each client package also contains a generated ownership manifest. The
+generator renders and validates the complete plan before atomic replacement,
+rejects unsafe or symlinked paths, detects stale owned files in check mode, and
+prunes only previously declared generated files in write mode.

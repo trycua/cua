@@ -41,6 +41,15 @@ pub fn object(
     })
 }
 
+pub fn closed_object(
+    required: &[&str],
+    properties: impl IntoIterator<Item = (&'static str, Value)>,
+) -> Value {
+    let mut value = object(required, properties);
+    value["additionalProperties"] = Value::Bool(false);
+    value
+}
+
 pub fn session_state_output(extra: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
     let mut required = vec![
         Value::String("session".into()),

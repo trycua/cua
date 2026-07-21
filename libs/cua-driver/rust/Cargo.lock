@@ -754,7 +754,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-contract"
-version = "0.8.3"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",

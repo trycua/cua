@@ -12,6 +12,16 @@ use crate::permissions::status::{
 
 pub struct CheckPermissionsTool;
 
+fn driver_bundle_id_for_executable(executable: &str) -> Option<&'static str> {
+    if executable.contains("/CuaDriverLocal.app/Contents/MacOS/") {
+        Some("com.trycua.driver.local")
+    } else if executable.contains("/CuaDriver.app/Contents/MacOS/") {
+        Some("com.trycua.driver")
+    } else {
+        None
+    }
+}
+
 /// (A) Real ScreenCaptureKit capability probe — what THIS process can
 /// actually capture right now, independent of the CGPreflight cache.
 ///
@@ -77,24 +87,27 @@ fn permission_source() -> serde_json::Value {
     // — outside the bundle — the env var must NOT grant daemon attribution, or
     // a caller could pre-set it and spoof the TCC source. Fail closed to
     // "caller" whenever the bundle signal is absent.
-    let inside_bundle = exe.contains("/CuaDriver.app/Contents/MacOS/");
-    let is_driver_daemon = inside_bundle && (ppid == 1 || disclaimed);
+    let driver_bundle_id = driver_bundle_id_for_executable(&exe);
+    let is_driver_daemon = driver_bundle_id.is_some() && (ppid == 1 || disclaimed);
 
     let (attribution, note) = if is_driver_daemon {
         (
             "driver-daemon",
-            "These booleans reflect the CuaDriver daemon's own TCC identity \
-             (com.trycua.driver) because this process is its own responsible \
-             process.",
+            format!(
+                "These booleans reflect the CuaDriver daemon's own TCC identity \
+                 ({}) because this process is its own responsible process.",
+                driver_bundle_id.expect("driver daemon must have a bundle id")
+            ),
         )
     } else {
         (
             "caller",
             "These booleans reflect the TCC identity of the app that launched \
-             this process (e.g. your terminal/IDE), NOT the CuaDriver daemon \
-             (com.trycua.driver). A standalone check can read `true` here while \
-             `tccutil … com.trycua.driver` reports no record. To grant for the \
-             driver, run `cua-driver permissions grant`.",
+             this process (e.g. your terminal/IDE), NOT an installed CuaDriver \
+             app bundle. A standalone check can read `true` here while the \
+             driver's bundle has no grant. To grant for the driver, run \
+             `cua-driver permissions grant`."
+                .to_owned(),
         )
     };
 
@@ -104,6 +117,7 @@ fn permission_source() -> serde_json::Value {
         "responsible_ppid": ppid,
         "executable": exe,
         "disclaim_env": disclaimed,
+        "bundle_id": driver_bundle_id,
         "note": note,
     })
 }
@@ -244,6 +258,26 @@ mod tests {
             Some(value) => std::env::set_var(var, value),
             None => std::env::remove_var(var),
         }
+    }
+
+    #[test]
+    fn recognizes_release_and_local_driver_bundles() {
+        assert_eq!(
+            driver_bundle_id_for_executable(
+                "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"
+            ),
+            Some("com.trycua.driver")
+        );
+        assert_eq!(
+            driver_bundle_id_for_executable(
+                "/Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local"
+            ),
+            Some("com.trycua.driver.local")
+        );
+        assert_eq!(
+            driver_bundle_id_for_executable("/Users/test/.local/bin/cua-driver-local"),
+            None
+        );
     }
 
     #[test]

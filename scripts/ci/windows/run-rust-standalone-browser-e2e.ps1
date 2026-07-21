@@ -24,6 +24,7 @@ $recordings = Join-Path $artifactDir "recordings"
 New-Item -ItemType Directory -Force $recordings | Out-Null
 $env:CUA_E2E_DECLARATIONS_FILE = Join-Path $artifactDir "cases.jsonl"
 $env:CUA_E2E_ENVIRONMENT_FILE = Join-Path $artifactDir "environment.jsonl"
+$env:CUA_E2E_BROWSER_PROVENANCE_FILE = Join-Path $artifactDir "browser-provenance.jsonl"
 $env:CUA_E2E_RESULTS_FILE = Join-Path $artifactDir "results.jsonl"
 $env:CUA_E2E_RECORDINGS_ROOT = $recordings
 $env:CUA_TEST_WORKSPACE_ROOT = $rustRoot
@@ -36,6 +37,7 @@ $env:CUA_TEST_DRIVER_STDERR = "1"
 foreach ($path in @(
     $env:CUA_E2E_DECLARATIONS_FILE,
     $env:CUA_E2E_ENVIRONMENT_FILE,
+    $env:CUA_E2E_BROWSER_PROVENANCE_FILE,
     $env:CUA_E2E_RESULTS_FILE
 )) {
     New-Item -ItemType File -Path $path | Out-Null

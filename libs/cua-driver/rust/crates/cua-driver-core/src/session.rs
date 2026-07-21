@@ -311,6 +311,17 @@ pub fn fire_session_end(session_id: &str) -> bool {
     true
 }
 
+/// Revoke every currently tracked session. This is intentionally callable by
+/// a local operator control path without requiring an authorization grant:
+/// revocation can only remove authority, never create it.
+pub fn revoke_all_sessions() -> usize {
+    let sessions: Vec<String> = activity().lock().unwrap().keys().cloned().collect();
+    for session in &sessions {
+        end_session(session);
+    }
+    sessions.len()
+}
+
 /// Whether `fire_session_end` has already run for this `session_id`. The
 /// daemon-side authority for "this session is permanently gone"; the macOS
 /// overlay keeps its own render-side tombstone keyed on the same id.

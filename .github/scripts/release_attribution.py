@@ -197,7 +197,12 @@ def release_entries(subject: str, commit_body: str, pull_body: str) -> list[Conv
     return [entry for entry in entries if entry.change_type in RELEASING_TYPES]
 
 
-def validate_pr_title(title: str) -> None:
+def validate_pr_title(
+    title: str,
+    *,
+    require_release: bool = False,
+    allow_non_release: bool = False,
+) -> None:
     entry = parse_conventional_line(title)
     if not entry:
         raise ReleaseError(
@@ -208,6 +213,14 @@ def validate_pr_title(title: str) -> None:
         allowed = ", ".join(sorted(ALLOWED_TITLE_TYPES))
         raise ReleaseError(
             f"unsupported pull request type '{entry.change_type}'; use one of: {allowed}"
+        )
+    if require_release and entry.change_type not in RELEASING_TYPES and not allow_non_release:
+        raise ReleaseError(
+            f"pull request type '{entry.change_type}' makes Release Please skip changes to "
+            "release-tracked product files; use 'fix(scope): ...' for a patch, "
+            "'feat(scope): ...' for a minor release, 'feat(scope)!: ...' for a breaking "
+            "release, or add the 'no-release' label when the change is intentionally "
+            "non-releasing"
         )
 
 
@@ -266,7 +279,9 @@ def resolve_pull_for_commit(
     github: GitHubClient,
     repository: str,
     commit: CommitRecord,
-) -> Mapping[str, Any]:
+    *,
+    required: bool = True,
+) -> Mapping[str, Any] | None:
     """Resolve a commit to its merged PR, including an exact squash-title fallback."""
     pulls = github.pulls_for_commit(repository, commit.sha)
     if pulls:
@@ -275,6 +290,8 @@ def resolve_pull_for_commit(
 
     reference = TRAILING_PR_RE.search(commit.subject)
     if not reference:
+        if not required:
+            return None
         raise ReleaseError(f"commit {commit.sha} is not associated with a pull request")
 
     pull = github.pull(repository, int(reference.group("number")))
@@ -480,12 +497,22 @@ def build_manifest(
         ) or LEGACY_RELEASE_BUMP_RE.match(commit.subject):
             continue
         parsed_subject = parse_conventional_line(commit.subject)
-        if parsed_subject and parsed_subject.change_type not in RELEASING_TYPES:
+        subject_is_releasing = bool(
+            parsed_subject and parsed_subject.change_type in RELEASING_TYPES
+        )
+        pull = resolve_pull_for_commit(
+            github,
+            repository,
+            commit,
+            required=subject_is_releasing,
+        )
+        if pull is None:
             continue
-
-        pull = resolve_pull_for_commit(github, repository, commit)
+        pull_body = str(pull.get("body") or "")
+        if not subject_is_releasing and not OVERRIDE_RE.search(pull_body):
+            continue
         pull_number = int(pull["number"])
-        entries = release_entries(commit.subject, commit.body, str(pull.get("body") or ""))
+        entries = release_entries(commit.subject, commit.body, pull_body)
         if not entries:
             continue
         contributors, issues, pull_visual = _change_contributors(
@@ -769,6 +796,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate = subparsers.add_parser("validate-title")
     validate.add_argument("--title", required=True)
+    validate.add_argument("--require-release", action="store_true")
+    validate.add_argument("--allow-non-release", action="store_true")
 
     collect = subparsers.add_parser("collect")
     collect.add_argument("--repo-root", type=Path, default=Path.cwd())
@@ -805,7 +834,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "validate-title":
-            validate_pr_title(args.title)
+            validate_pr_title(
+                args.title,
+                require_release=args.require_release,
+                allow_non_release=args.allow_non_release,
+            )
             print("release title is valid")
         elif args.command == "collect":
             collect_command(args)

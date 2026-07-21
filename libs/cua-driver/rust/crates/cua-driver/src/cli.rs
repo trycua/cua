@@ -44,6 +44,19 @@ pub enum Command {
     },
     Serve {
         socket: Option<String>,
+        /// Immutable agent-authorization mode selected at trusted daemon
+        /// startup. This is distinct from the macOS OS-permissions gate.
+        permission_mode: Option<String>,
+        /// Deliberate unrestricted-mode selector and risk acknowledgement.
+        dangerously_bypass_approvals: bool,
+        /// Temporary trusted-launcher compatibility path for the forgeable
+        /// file-backed existing-profile approval artifact.
+        allow_legacy_existing_profile_approval: bool,
+        /// Immutable bounded-autonomy manifest selected by the trusted
+        /// launcher. Valid only in bounded mode.
+        session_policy: Option<String>,
+        /// Deliberate launch-time confirmation that the manifest was reviewed.
+        approve_session_policy: bool,
         /// True when `--no-permissions-gate` is on argv.  The env-var
         /// `CUA_DRIVER_RS_PERMISSIONS_GATE=0` short-circuits the gate too
         /// (checked inside the gate itself), so the flag is only one of
@@ -57,6 +70,11 @@ pub enum Command {
     },
     Stop {
         socket: Option<String>,
+    },
+    Revoke {
+        socket: Option<String>,
+        session: Option<String>,
+        all: bool,
     },
     Status {
         socket: Option<String>,
@@ -178,6 +196,8 @@ const VALUE_FLAGS: &[&str] = &[
     "--screenshot-out-file",
     "--client",
     "--socket",
+    "--permission-mode",
+    "--session-policy",
     "--pid-file",
     "--type",
     "--host-bundle-id",
@@ -234,6 +254,7 @@ fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
         Some("manifest") => Some("manifest"),
         Some("call") => Some("call"),
         Some("stop") => Some("stop"),
+        Some("revoke") => Some("revoke"),
         Some("status") => Some("status"),
         Some("recording") => Some("recording"),
         Some("dump-docs") => Some("dump_docs"),
@@ -396,7 +417,7 @@ pub fn parse_command() -> Command {
             env!("CARGO_PKG_VERSION")
         );
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -442,6 +463,31 @@ pub fn parse_command() -> Command {
         println!("  cua-driver browser-approve --strategy existing_profile --pid <pid>");
         println!("                                  --window-id <window_id> --session <session>");
         println!("                                  Approve attachment to one exact existing browser request.");
+        println!();
+        println!("agent authorization (serve only):");
+        println!("  --permission-mode <mode>        standard (default), bounded, or unrestricted.");
+        println!(
+            "  --dangerously-bypass-approvals  Select unrestricted mode and acknowledge its risk."
+        );
+        println!("                                  The mode is fixed for the daemon lifetime and cannot");
+        println!("                                  be changed by a tool call.");
+        println!("  --allow-legacy-existing-profile-approval");
+        println!("                                  Temporary migration flag for the forgeable file-backed");
+        println!("                                  approval artifact; never treated as protected consent.");
+        println!("                                  This is separate from --no-permissions-gate, which only");
+        println!(
+            "                                  controls the macOS OS-permission onboarding UI."
+        );
+        println!(
+            "  --session-policy <path>         Required in bounded mode; immutable tool manifest."
+        );
+        println!("  --approve-session-policy        Required with --session-policy; the trusted launcher asserts");
+        println!("                                  that the human reviewed this exact manifest at startup.");
+        println!();
+        println!("authorization revocation:");
+        println!("  cua-driver revoke --session <id>  Stop and revoke one session's grants.");
+        println!("  cua-driver revoke --all           Stop and revoke every live session.");
+        println!("                                      Revocation is deny-only and never needs a token.");
         println!();
         println!("mcp options:");
         println!("  --embedded              Connect to a daemon spawned by the host app (also:");
@@ -604,11 +650,32 @@ pub fn parse_command() -> Command {
         Some("mcp-config") => Command::McpConfig { client: mcp_client },
         Some("serve") => Command::Serve {
             socket,
+            permission_mode: flag_value(&args, "--permission-mode"),
+            dangerously_bypass_approvals: args
+                .iter()
+                .any(|a| a == "--dangerously-bypass-approvals"),
+            allow_legacy_existing_profile_approval: args
+                .iter()
+                .any(|a| a == "--allow-legacy-existing-profile-approval"),
+            session_policy: flag_value(&args, "--session-policy"),
+            approve_session_policy: args.iter().any(|a| a == "--approve-session-policy"),
             // Bare flag — present anywhere on argv counts as "skip the gate".
             no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
             claude_code_compat,
         },
         Some("stop") => Command::Stop { socket },
+        Some("revoke") => {
+            let all = args.iter().any(|a| a == "--all");
+            if all == approval_session.is_some() {
+                eprintln!("revoke requires exactly one of --session <id> or --all");
+                process::exit(64);
+            }
+            Command::Revoke {
+                socket,
+                session: approval_session,
+                all,
+            }
+        }
         Some("status") => Command::Status { socket },
         Some("recording") => {
             let subcommand = pos.next().unwrap_or("status").to_string();
@@ -985,7 +1052,8 @@ pub fn run_describe(registry: &ToolRegistry, name: &str) {
     }
 }
 
-/// Spawn `/usr/bin/open -n -g -a CuaDriver --args serve` to launch
+/// Launch the release or local app through LaunchServices so the daemon uses
+/// the matching TCC identity and namespace.
 /// the daemon under `LaunchServices` (so it inherits the bundle's
 /// TCC attribution), then poll the socket for up to `timeout_secs`
 /// seconds. Returns Err with a diagnostic message if `open` failed
@@ -1035,7 +1103,9 @@ pub fn launch_daemon_and_wait(
     // actually differs from the default, so the common case keeps the
     // shorter `open` argv (and matches Swift's invocation byte-for-byte).
     let pass_socket = socket_path != crate::serve::default_socket_path();
-    let mut open_args: Vec<&str> = vec!["-n", "-g", "-a", "CuaDriver", "--args", "serve"];
+    let app_name = crate::bundle::app_name();
+    let app_path = crate::bundle::app_bundle_path();
+    let mut open_args: Vec<&str> = vec!["-n", "-g", "-a", app_name, "--args", "serve"];
     if pass_socket {
         open_args.push("--socket");
         open_args.push(socket_path);
@@ -1076,8 +1146,8 @@ pub fn launch_daemon_and_wait(
         return Err(LaunchDaemonError {
             kind: LaunchDaemonErrorKind::Failed,
             message: format!(
-                "`open -n -g -a CuaDriver --args serve{}` exited {:?}. \
-             Check that `/Applications/CuaDriver.app` is installed.",
+                "`open -n -g -a {app_name} --args serve{}` exited {:?}. \
+             Check that `{app_path}` is installed.",
                 if pass_socket {
                     format!(" --socket {socket_path}")
                 } else {
@@ -1103,7 +1173,7 @@ pub fn launch_daemon_and_wait(
         message: format!(
             "daemon did not appear on {socket_path} within {timeout_secs}s. If this \
          is the first launch, grant Accessibility + Screen Recording to \
-         CuaDriver.app in System Settings and retry."
+         {app_name}.app in System Settings and retry."
         ),
     })
 }
@@ -1184,15 +1254,17 @@ where
         }
         #[cfg(target_os = "macos")]
         {
+            let app_name = crate::bundle::app_name();
             let socket_suffix = if socket_path != crate::serve::default_socket_path() {
                 format!(" --socket {socket_path}")
             } else {
                 String::new()
             };
             eprintln!(
-                "cua-driver-rs: mcp launched without CuaDriver.app's TCC grants; \
-                 auto-launching the daemon via `open -n -g -a CuaDriver --args serve{socket_suffix}` \
-                 and proxying MCP requests through it."
+                "{}: mcp launched without {app_name}.app's TCC grants; \
+                 auto-launching the daemon via `open -n -g -a {app_name} --args serve{socket_suffix}` \
+                 and proxying MCP requests through it.",
+                crate::bundle::cli_name()
             );
             if let Err(error) = launch_daemon_and_wait(&socket_path, 10, claude_code_compat) {
                 if let Some(on_startup) = on_startup.take() {
@@ -1301,6 +1373,11 @@ pub fn build_manifest() -> serde_json::Value {
               "description": "Run the long-lived daemon — backs the proxy/auto-relaunch path on macOS and the autostart Session 1+ daemon on Windows.",
               "args": [
                   { "name": "--socket", "type": "string", "description": "Override the listen socket path." },
+                  { "name": "--permission-mode", "type": "string", "description": "Immutable daemon authorization mode: standard, bounded, or unrestricted." },
+                  { "name": "--dangerously-bypass-approvals", "type": "flag", "description": "Select unrestricted mode and acknowledge its risk." },
+                  { "name": "--allow-legacy-existing-profile-approval", "type": "flag", "description": "Temporary migration flag for the unprotected file-backed existing-profile artifact." },
+                  { "name": "--session-policy", "type": "string", "description": "Immutable tool manifest required in bounded mode." },
+                  { "name": "--approve-session-policy", "type": "flag", "description": "Trusted-launcher confirmation that the exact bounded manifest was reviewed." },
                   { "name": "--no-permissions-gate", "type": "flag", "description": "Skip the macOS TCC first-launch gate." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Forwarded by the MCP proxy when the client asked for the compat surface." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
@@ -1309,6 +1386,13 @@ pub fn build_manifest() -> serde_json::Value {
             { "name": "stop",
               "description": "Stop a running daemon by sending it a shutdown request.",
               "args": [ { "name": "--socket", "type": "string", "description": "Override the daemon socket path." } ] },
+            { "name": "revoke",
+              "description": "Revoke one session or every live authorization scope without minting new authority.",
+              "args": [
+                  { "name": "--session", "type": "string", "description": "Exact session id to stop and revoke." },
+                  { "name": "--all", "type": "flag", "description": "Stop and revoke every live session." },
+                  { "name": "--socket", "type": "string", "description": "Override the daemon socket path." }
+              ] },
             { "name": "status",
               "description": "Report daemon status (running / not / unhealthy).",
               "args": [ { "name": "--socket", "type": "string", "description": "Override the daemon socket path." } ] },
@@ -2034,6 +2118,15 @@ fn run_recording_render(args: &[String]) {
 /// installer script — see [`crate::updater`] for why we go through the script
 /// instead of re-implementing the asset resolution + atomic swap + GC in Rust.
 pub fn run_update_cmd(apply: bool, json: bool) {
+    if apply && crate::bundle::is_local_installation() {
+        eprintln!(
+            "cua-driver-local is managed by scripts/install-local.sh (or install-local.ps1); \
+             refusing to run the release installer from the local product."
+        );
+        process::exit(2);
+    }
+    let apply_started_at = std::time::Instant::now();
+    let daemon_was_running = apply && crate::updater::daemon_is_running();
     // `--json` short-circuits the text path entirely so scripted callers
     // get a parseable payload regardless of `--apply`. The check itself
     // routes through the same `check_update_state` the `check-update`
@@ -2047,6 +2140,10 @@ pub fn run_update_cmd(apply: bool, json: bool) {
         // pre-install snapshot. Returning here when apply is false keeps
         // the existing "check + suggest" behaviour off the JSON path.
         if !apply {
+            crate::version_check::capture_update_state(
+                &state,
+                crate::telemetry::UpdateCheckSource::Cli,
+            );
             return;
         }
     }
@@ -2060,6 +2157,21 @@ pub fn run_update_cmd(apply: bool, json: bool) {
     let latest = crate::version_check::fetch_latest_version();
     match latest {
         Err(e) => {
+            crate::telemetry::capture_update_checked(
+                crate::telemetry::UpdateCheckSource::Cli,
+                crate::telemetry::UpdateCheckOutcome::Unavailable,
+                None,
+                false,
+            );
+            if apply {
+                crate::telemetry::capture_update_apply_completed(
+                    None,
+                    crate::telemetry::UpdateApplyOutcome::Failed,
+                    crate::telemetry::UpdateFailureClass::CheckFailed,
+                    daemon_was_running,
+                    apply_started_at.elapsed(),
+                );
+            }
             // The shared helper returns a human-readable error string for
             // the CLI surface — pass it through so the user can see why
             // (timeout, parse error, etc.) instead of just "unreachable".
@@ -2070,11 +2182,32 @@ pub fn run_update_cmd(apply: bool, json: bool) {
             process::exit(1);
         }
         Ok(v) if !crate::version_check::is_newer(&v, current) => {
+            crate::telemetry::capture_update_checked(
+                crate::telemetry::UpdateCheckSource::Cli,
+                crate::telemetry::UpdateCheckOutcome::UpToDate,
+                Some(&v),
+                false,
+            );
+            if apply {
+                crate::telemetry::capture_update_apply_completed(
+                    Some(&v),
+                    crate::telemetry::UpdateApplyOutcome::AlreadyCurrent,
+                    crate::telemetry::UpdateFailureClass::None,
+                    daemon_was_running,
+                    apply_started_at.elapsed(),
+                );
+            }
             if !json {
                 println!("Already up to date.");
             }
         }
         Ok(v) => {
+            crate::telemetry::capture_update_checked(
+                crate::telemetry::UpdateCheckSource::Cli,
+                crate::telemetry::UpdateCheckOutcome::Available,
+                Some(&v),
+                false,
+            );
             if !json {
                 println!("New version available: {v}");
             }
@@ -2094,9 +2227,16 @@ pub fn run_update_cmd(apply: bool, json: bool) {
             if !json {
                 println!("Downloading and installing cua-driver {v}…");
             }
-            let daemon_was_running = crate::updater::daemon_is_running();
+            crate::telemetry::capture_update_apply_started(&v, daemon_was_running);
             match crate::updater::run_install_script(&v) {
                 Ok(s) if s.success() => {
+                    crate::telemetry::capture_update_apply_completed(
+                        Some(&v),
+                        crate::telemetry::UpdateApplyOutcome::Installed,
+                        crate::telemetry::UpdateFailureClass::None,
+                        daemon_was_running,
+                        apply_started_at.elapsed(),
+                    );
                     if !json {
                         println!("Installed cua-driver {v}.");
                     }
@@ -2110,6 +2250,13 @@ pub fn run_update_cmd(apply: bool, json: bool) {
                     }
                 }
                 Ok(s) => {
+                    crate::telemetry::capture_update_apply_completed(
+                        Some(&v),
+                        crate::telemetry::UpdateApplyOutcome::Failed,
+                        crate::telemetry::UpdateFailureClass::InstallerExit,
+                        daemon_was_running,
+                        apply_started_at.elapsed(),
+                    );
                     eprintln!(
                         "Installation failed (exit {}). Re-run install manually:",
                         s.code().unwrap_or(1)
@@ -2118,6 +2265,13 @@ pub fn run_update_cmd(apply: bool, json: bool) {
                     process::exit(s.code().unwrap_or(1));
                 }
                 Err(e) => {
+                    crate::telemetry::capture_update_apply_completed(
+                        Some(&v),
+                        crate::telemetry::UpdateApplyOutcome::Failed,
+                        crate::telemetry::UpdateFailureClass::InstallerLaunch,
+                        daemon_was_running,
+                        apply_started_at.elapsed(),
+                    );
                     eprintln!("Failed to launch installer: {e}");
                     #[cfg(windows)]
                     eprintln!("  (is powershell.exe on PATH?)");
@@ -2156,6 +2310,9 @@ pub fn run_permissions_cmd(subcommand: &str, json: bool) {
 /// Never raises a prompt.
 fn run_permissions_status(json: bool) {
     let socket = crate::serve::default_socket_path();
+    let cli_name = crate::bundle::cli_name();
+    let app_name = crate::bundle::app_name();
+    let bundle_id = crate::bundle::bundle_id();
 
     // Only a listening daemon can answer for com.trycua.driver. A failed/!ok
     // response (e.g. daemon mid-re-exec during the gate's recheck window) is
@@ -2196,9 +2353,9 @@ fn run_permissions_status(json: bool) {
             let payload = serde_json::json!({
                 "daemon_running": false,
                 "status": "unknown",
-                "reason": "no CuaDriver daemon is running under the driver's own identity \
-                           (com.trycua.driver), so its real TCC status can't be read from this \
-                           process. Run `cua-driver permissions grant` to grant + verify.",
+                "reason": format!("no {app_name} daemon is running under the driver's own identity \
+                           ({bundle_id}), so its real TCC status can't be read from this \
+                           process. Run `{cli_name} permissions grant` to grant + verify."),
             });
             println!(
                 "{}",
@@ -2209,15 +2366,15 @@ fn run_permissions_status(json: bool) {
         println!("Accessibility:    ❓ unknown");
         println!("Screen Recording: ❓ unknown");
         println!(
-            "No CuaDriver daemon is running under the driver's own identity (com.trycua.driver), \
+            "No {app_name} daemon is running under the driver's own identity ({bundle_id}), \
              so its real TCC status can't be read."
         );
         println!(
             "(A status check from this terminal would report the terminal's grants, not the \
              driver's.)"
         );
-        println!("  → Run `cua-driver permissions grant` to grant + verify, or start the daemon");
-        println!("    (`open -n -g -a CuaDriver --args serve`) and re-run this command.");
+        println!("  → Run `{cli_name} permissions grant` to grant + verify, or start the daemon");
+        println!("    (`open -n -g -a {app_name} --args serve`) and re-run this command.");
         return;
     };
 
@@ -2255,7 +2412,7 @@ fn run_permissions_status(json: bool) {
     }
     println!("Source: {attribution}");
     if !(ax && sr) {
-        println!("  → To grant for the driver, run: cua-driver permissions grant");
+        println!("  → To grant for the driver, run: {cli_name} permissions grant");
     }
 }
 
@@ -2266,21 +2423,23 @@ fn run_permissions_status(json: bool) {
 fn run_permissions_grant() {
     #[cfg(target_os = "macos")]
     {
+        let cli_name = crate::bundle::cli_name();
+        let app_name = crate::bundle::app_name();
         let socket = crate::serve::default_socket_path();
         if crate::serve::is_daemon_listening(&socket) {
-            println!("CuaDriver daemon already running — checking its permissions…");
+            println!("{app_name} daemon already running — checking its permissions…");
         } else {
-            println!("Launching CuaDriver to request permissions.");
+            println!("Launching {app_name} to request permissions.");
             println!(
-                "A dialog titled \u{201c}Cua Driver\u{201d} will appear — approve Accessibility \
+                "A dialog for {app_name} will appear — approve Accessibility \
                  and Screen Recording in System Settings, then this command continues."
             );
             // Permissions-grant launch never needs the compat screenshot surface.
             if let Err(e) = launch_daemon_and_wait(&socket, 180, false) {
-                eprintln!("\nDidn't detect the CuaDriver daemon: {e}");
+                eprintln!("\nDidn't detect the {app_name} daemon: {e}");
                 eprintln!(
-                    "If you haven't yet, grant Accessibility + Screen Recording to CuaDriver \
-                     in System Settings, then re-run `cua-driver permissions grant`."
+                    "If you haven't yet, grant Accessibility + Screen Recording to {app_name} \
+                     in System Settings, then re-run `{cli_name} permissions grant`."
                 );
                 process::exit(1);
             }
@@ -2370,6 +2529,7 @@ fn run_permissions_grant() {
 /// the payload.
 pub fn run_check_update_cmd(json: bool, no_cache: bool) {
     let state = crate::version_check::check_update_state(no_cache);
+    crate::version_check::capture_update_state(&state, crate::telemetry::UpdateCheckSource::Cli);
 
     if json {
         let val = serde_json::to_value(&state).unwrap_or_else(|_| serde_json::json!({}));
@@ -2476,9 +2636,14 @@ fn cli_docs_json() -> serde_json::Value {
                 "options": [
                     {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},
                     {"name":"pid-file","short_name":null,"help":"Override the pid-file path on Unix targets.","type":"String","default_value":null,"is_optional":true},
+                    {"name":"permission-mode","short_name":null,"help":"Immutable agent authorization mode: standard, bounded, or unrestricted.","type":"String","default_value":"standard","is_optional":true},
+                    {"name":"session-policy","short_name":null,"help":"Immutable tool manifest required in bounded mode.","type":"String","default_value":null,"is_optional":true},
                     {"name":"host-bundle-id","short_name":null,"help":"Advisory host bundle id label echoed in check_permissions output (embedded mode).","type":"String","default_value":null,"is_optional":true}
                 ],
                 "flags": [
+                    {"name":"dangerously-bypass-approvals","short_name":null,"help":"Select unrestricted mode and acknowledge its risk.","default_value":false},
+                    {"name":"allow-legacy-existing-profile-approval","short_name":null,"help":"Temporary migration flag for the unprotected file-backed existing-profile artifact.","default_value":false},
+                    {"name":"approve-session-policy","short_name":null,"help":"Trusted-launcher confirmation that the exact bounded manifest was reviewed.","default_value":false},
                     {"name":"no-permissions-gate","short_name":null,"help":"Skip the macOS first-launch permissions gate.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.","default_value":false}
                 ],
@@ -2491,6 +2656,20 @@ fn cli_docs_json() -> serde_json::Value {
                 "arguments": no_args,
                 "options": [{"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true}],
                 "flags": no_flags,
+                "subcommands": no_subcommands
+            },
+            {
+                "name": "revoke",
+                "abstract": "Revoke one or all live authorization/session scopes.",
+                "discussion": "Revocation is deny-only and never accepts an approval token.",
+                "arguments": no_args,
+                "options": [
+                    {"name":"session","short_name":null,"help":"Exact session id to stop and revoke.","type":"String","default_value":null,"is_optional":true},
+                    {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true}
+                ],
+                "flags": [
+                    {"name":"all","short_name":null,"help":"Stop and revoke every live session.","default_value":false}
+                ],
                 "subcommands": no_subcommands
             },
             {
@@ -2929,9 +3108,21 @@ fn diagnose_tcc_db_section() -> String {
 fn diagnose_config_paths_section() -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let paths: &[(&str, String)] = &[
-        ("user data dir", format!("{home}/.cua-driver")),
-        ("config cache", format!("{home}/Library/Caches/cua-driver")),
-        ("telemetry id", format!("{home}/.cua-driver/.telemetry_id")),
+        (
+            "user data dir",
+            format!("{home}/{}", crate::bundle::user_home_subdirectory()),
+        ),
+        (
+            "config cache",
+            format!("{home}/Library/Caches/{}", crate::bundle::state_namespace()),
+        ),
+        (
+            "telemetry id",
+            format!(
+                "{home}/{}/.telemetry_id",
+                crate::bundle::user_home_subdirectory()
+            ),
+        ),
         (
             "updater plist",
             format!("{home}/Library/LaunchAgents/com.trycua.cua_driver_updater.plist"),
@@ -3419,6 +3610,7 @@ mod tests {
             "call",
             "serve",
             "stop",
+            "revoke",
             "status",
             "mcp-config",
             "manifest",

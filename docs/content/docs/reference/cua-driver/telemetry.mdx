@@ -89,6 +89,9 @@ The client does not send an IP address as an event property. PostHog derives a c
 | `cua_driver_permissions_gate_started`    | missing-permission booleans                                                                                                                                  |
 | `cua_driver_permissions_gate_dismissed`  | missing-permission booleans and duration bucket                                                                                                              |
 | `cua_driver_permissions_gate_completed`  | missing-permission booleans, panel and dismissal flags, fixed resolution, and duration bucket                                                               |
+| `cua_driver_update_checked`              | fixed source and outcome, strict public target release version or `unknown`, and cache-hit flag                                                              |
+| `cua_driver_update_apply_started`        | strict public target release version and whether a daemon was running                                                                                        |
+| `cua_driver_update_apply_completed`      | strict public target release version or `unknown`, fixed outcome and failure class, prior daemon state, and duration bucket                                   |
 
 The transitional `cua_driver_serve` event carries the common event properties and no additional properties. It does not contain command arguments or process output.
 
@@ -130,6 +133,14 @@ The end event includes `used_browser` and a bounded `browser_refusal_count_bucke
 Per-call `computer_action` is derived from the same fixed classifier used by the session aggregate. It describes the tool category; combine it with `success=true` when measuring value. Cua-owned automated tests can set `CUA_DRIVER_TELEMETRY_SYNTHETIC=true`. This marks every event from that process with `is_synthetic=true` so product metrics can exclude test traffic without relying on installation IDs. Third-party CI remains independently identified by `is_ci`.
 
 For finite CLI commands, `operation` distinguishes only reviewed verbs for recording, permissions, config, autostart, skills, and update. `client_kind` is populated only for `mcp-config`. Unknown values become `other`; commands without a meaningful sub-operation use `not_applicable`.
+
+## Update funnel
+
+Explicit CLI and MCP update checks emit `cua_driver_update_checked`. Its `source` is `cli` or `mcp`; its `outcome` is `up_to_date`, `available`, or `unavailable`. Background checks emit only `available` on the freshness-bounded network path, rather than on every startup. Cached startup banners do not emit another event.
+
+`cua-driver update --apply` emits `cua_driver_update_apply_started` immediately before launching the canonical installer and `cua_driver_update_apply_completed` after the attempt. Completion outcomes are `installed`, `already_current`, or `failed`. Failure classes are limited to `none`, `check_failed`, `installer_exit`, or `installer_launch`; raw errors and exit codes are not collected.
+
+The common `product_version` is the version that initiated the check or update. `target_version` is accepted only when it is a strict public SemVer value. The existing `cua_driver_release_installed` event with `install_channel=update_apply` independently confirms that the new binary recorded the installed release. Together these events support the funnel from update availability through apply and first use of the installed release.
 
 For the compound `page` tool, `operation` is one of `execute_javascript`, `get_text`, `query_dom`, `click_element`, `insert_text`, `type_keystrokes`, `enable_javascript_apple_events`, or `other`.
 
@@ -176,6 +187,8 @@ A browser refusal is a successful MCP exchange with a behavioral result of `refu
 Routine telemetry excludes task text, prompts, tool arguments, tool response bodies, typed text, screenshots, accessibility trees, window titles, application names, file paths, URLs, arbitrary MCP metadata, raw cursor IDs, labels, colors, icon paths, numeric motion values, and raw error messages. Browser telemetry also excludes target, tab, frame, ref, process, window, and session identifiers; profile names and paths; queries and coordinates; approval tokens; endpoint URLs and ports; refusal messages and details; and requested or delivered text lengths.
 
 Tool-completion events retain only coarse result shape: text, image, mixed, empty, or unknown; a size bucket; a duration bucket; a fixed error class; and, for reviewed structured browser refusals, the fixed code above. The content itself never crosses the telemetry observer boundary. A proxy and daemon negotiate one completion-event owner. Mixed-version pairs retain proxy ownership, which prevents duplicate events during upgrades.
+
+To bound client and ingestion load, each Cua Driver process emits at most 1,000 routine tool-completion events in an hour. If that ceiling is reached before a successful computer action, the process may emit that first value event as well. Lifecycle, permissions, and aggregate session events are not subject to this ceiling.
 
 A CLI `call` is always delegated to the daemon. The daemon owns the completion event and reports `transport=daemon`, so the event is emitted only once.
 

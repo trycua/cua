@@ -40,12 +40,6 @@ export interface HandlersCreateNamespaceRequest {
   name?: string;
 }
 
-export interface HandlersCreatePoolTemplateRequest {
-  config?: object;
-  /** @example "gpu-large" */
-  name?: string;
-}
-
 export interface HandlersCreateUserKeyRequest {
   /** @example "my-ci-key" */
   name?: string;
@@ -84,13 +78,6 @@ export interface HandlersNamespaceResponse {
   status?: string;
 }
 
-export interface HandlersPoolTemplateResponse {
-  config?: object;
-  createdAt?: string;
-  name?: string;
-  user?: string;
-}
-
 export interface HandlersUserKeyResponse {
   client_id?: string;
   id?: string;
@@ -121,8 +108,6 @@ export type BatchStatusListError = Record<string, string>;
 export type ConfigListData = HandlersConfigResponse;
 
 export type ConfigListError = HandlersErrorResponse;
-
-export type GatewayDetailData = string;
 
 export type GatewayDetailError = HandlersErrorResponse;
 
@@ -165,22 +150,6 @@ export type NamespacesDeleteError = HandlersErrorResponse;
 export type OrchDetailData = string;
 
 export type OrchDetailError = HandlersErrorResponse;
-
-export type PoolTemplatesListData = HandlersPoolTemplateResponse[];
-
-export type PoolTemplatesListError = HandlersErrorResponse;
-
-export type PoolTemplatesCreateData = HandlersPoolTemplateResponse;
-
-export type PoolTemplatesCreateError = HandlersErrorResponse;
-
-export type PoolTemplatesDetailData = HandlersPoolTemplateResponse;
-
-export type PoolTemplatesDetailError = HandlersErrorResponse;
-
-export type PoolTemplatesDeleteData = any;
-
-export type PoolTemplatesDeleteError = HandlersErrorResponse;
 
 export type GetSvcData = string;
 
@@ -482,7 +451,7 @@ export class Api<
      *
      * @tags batch
      * @name BatchLanesCreate
-     * @summary Deprecated batch lane acquisition route
+     * @summary Deprecated batch lanes route
      * @request POST:/api/batch/{pool}/lanes
      * @deprecated
      * @secure
@@ -500,7 +469,7 @@ export class Api<
      *
      * @tags batch
      * @name BatchLanesDelete
-     * @summary Deprecated batch lane release route
+     * @summary Deprecated batch lanes route
      * @request DELETE:/api/batch/{pool}/lanes
      * @deprecated
      * @secure
@@ -536,7 +505,7 @@ export class Api<
      *
      * @tags batch
      * @name BatchDelete
-     * @summary Deprecated batch cancellation route
+     * @summary Deprecated batch delete route
      * @request DELETE:/api/batch/{pool}/{id}
      * @deprecated
      * @secure
@@ -606,19 +575,17 @@ export class Api<
   };
   gateway = {
     /**
-     * @description DEPRECATED (CUA-609): The per-pool orchestrator HTTP layer has been removed. This route returns 410 Gone for all requests. All pool operations must use OSGymSandboxClaim CRs (Path B) directly.
+     * @description The per-pool HTTP orchestrator has been deprecated and removed. All pools now use OSGymSandboxClaim CRs exclusively (Path B). This endpoint returns 410 Gone for any request. See CUA-609.
      *
      * @tags gateway
      * @name GatewayDetail
-     * @summary Reverse-proxy to the per-pool orchestrator (sole ingress path — CUA-527)
+     * @summary DEPRECATED: Per-pool orchestrator reverse-proxy (CUA-609)
      * @request GET:/api/gateway/{name}/{path}
-     * @secure
      */
     gatewayDetail: (name: string, path?: string, params: RequestParams = {}) =>
-      this.request<GatewayDetailData, GatewayDetailError>({
+      this.request<any, GatewayDetailError>({
         path: `/api/gateway/${name}/${path}`,
         method: "GET",
-        secure: true,
         ...params,
       }),
   };
@@ -700,9 +667,9 @@ export class Api<
     /**
      * @description Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.
      *
-     * @tags batch
+     * @tags label
      * @name LabelDelete
-     * @summary Deprecated label cancellation route
+     * @summary Deprecated label delete route
      * @request DELETE:/api/label/{pool}/{label}
      * @deprecated
      * @secure
@@ -718,9 +685,9 @@ export class Api<
     /**
      * @description Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.
      *
-     * @tags batch
+     * @tags label
      * @name LabelBatchCreate
-     * @summary Deprecated label batch submission route
+     * @summary Deprecated label batch route
      * @request POST:/api/label/{pool}/{label}/batch
      * @deprecated
      * @secure
@@ -740,7 +707,7 @@ export class Api<
     /**
      * @description Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.
      *
-     * @tags batch
+     * @tags label
      * @name LabelResultsList
      * @summary Deprecated label results route
      * @request GET:/api/label/{pool}/{label}/results
@@ -762,7 +729,7 @@ export class Api<
     /**
      * @description Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.
      *
-     * @tags batch
+     * @tags label
      * @name LabelStatusList
      * @summary Deprecated label status route
      * @request GET:/api/label/{pool}/{label}/status
@@ -859,83 +826,6 @@ export class Api<
       this.request<OrchDetailData, OrchDetailError>({
         path: `/api/orch/${namespace}/${service}/${path}`,
         method: "GET",
-        secure: true,
-        ...params,
-      }),
-  };
-  poolTemplates = {
-    /**
-     * @description Returns every pool template owned by the calling user, newest first.
-     *
-     * @tags pool-templates
-     * @name PoolTemplatesList
-     * @summary List the calling user's pool templates
-     * @request GET:/api/pool-templates
-     * @secure
-     */
-    poolTemplatesList: (params: RequestParams = {}) =>
-      this.request<PoolTemplatesListData, PoolTemplatesListError>({
-        path: `/api/pool-templates`,
-        method: "GET",
-        secure: true,
-        format: "json",
-        ...params,
-      }),
-
-    /**
-     * @description Stores the given pool config under a name owned by the calling user. Re-saving an existing name overwrites the config while preserving the original creation time. Use GET /api/pool-templates to list them and seed a new pool.
-     *
-     * @tags pool-templates
-     * @name PoolTemplatesCreate
-     * @summary Save a pool config as a reusable template
-     * @request POST:/api/pool-templates
-     * @secure
-     */
-    poolTemplatesCreate: (
-      body: HandlersCreatePoolTemplateRequest,
-      params: RequestParams = {},
-    ) =>
-      this.request<PoolTemplatesCreateData, PoolTemplatesCreateError>({
-        path: `/api/pool-templates`,
-        method: "POST",
-        body: body,
-        secure: true,
-        type: ContentType.Json,
-        format: "json",
-        ...params,
-      }),
-
-    /**
-     * No description
-     *
-     * @tags pool-templates
-     * @name PoolTemplatesDetail
-     * @summary Get one of the calling user's pool templates
-     * @request GET:/api/pool-templates/{name}
-     * @secure
-     */
-    poolTemplatesDetail: (name: string, params: RequestParams = {}) =>
-      this.request<PoolTemplatesDetailData, PoolTemplatesDetailError>({
-        path: `/api/pool-templates/${name}`,
-        method: "GET",
-        secure: true,
-        format: "json",
-        ...params,
-      }),
-
-    /**
-     * No description
-     *
-     * @tags pool-templates
-     * @name PoolTemplatesDelete
-     * @summary Delete one of the calling user's pool templates
-     * @request DELETE:/api/pool-templates/{name}
-     * @secure
-     */
-    poolTemplatesDelete: (name: string, params: RequestParams = {}) =>
-      this.request<PoolTemplatesDeleteData, PoolTemplatesDeleteError>({
-        path: `/api/pool-templates/${name}`,
-        method: "DELETE",
         secure: true,
         ...params,
       }),

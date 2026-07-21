@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver"
-version = "0.8.3"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -754,7 +754,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.8.3"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -766,18 +766,20 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "sha2",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-tungstenite",
  "tracing",
+ "url",
  "uuid",
  "windows 0.58.0",
 ]
 
 [[package]]
 name = "cua-driver-testkit"
-version = "0.8.3"
+version = "0.10.0"
 dependencies = [
  "core-foundation",
  "libc",
@@ -791,7 +793,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-uia"
-version = "0.8.3"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "cua-driver-core",
@@ -806,7 +808,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.8.3"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "image",
@@ -2296,7 +2298,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pip-preview"
-version = "0.8.3"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "serde_json",
@@ -2350,7 +2352,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "platform-linux"
-version = "0.8.3"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -2392,7 +2394,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.8.3"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2425,7 +2427,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.8.3"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3054,6 +3056,17 @@ name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "digest",
+]
+
+[[package]]
+name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",

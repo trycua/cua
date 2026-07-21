@@ -7,6 +7,9 @@ these things globally.
 
 It exposes `org.cua.WinRects` on the session bus:
 
+- `GetVersion() -> uint` — a browser-sensitive API version. cua-driver only
+  accepts it after resolving the immutable D-Bus owner and proving the owner is
+  the current user's system-installed `gnome-shell` process.
 - `GetRects() -> json` — every window's frame geometry and surface-buffer
   origin. cua-driver combines the buffer origin with AT-SPI
   `CoordType::Window` per-widget coords: `screen = origin + window_xy`. This is
@@ -37,6 +40,13 @@ cua-driver auto-detects it at runtime (`wayland::shell_helper`). AX operations
 still work when it is absent, but pixel geometry, the Shell cursor, and safe
 foreground portal input are unavailable. cua-driver refuses focus-bound input
 instead of injecting into an unverified target.
+
+Browser setup and consent are held to a stricter boundary: helper API v4 or
+newer must be served by the verified GNOME Shell owner. The driver addresses
+that owner's unique D-Bus name, so another same-session process cannot replace
+the public name between verification and an activation request. One exact
+target is activated only for the bounded operation, then the previously
+focused Shell window is restored and verified.
 
 wlroots compositors such as Sway and labwc do not need it: cua-driver uses
 foreign-toplevel activation, virtual-pointer input, and layer-shell there.

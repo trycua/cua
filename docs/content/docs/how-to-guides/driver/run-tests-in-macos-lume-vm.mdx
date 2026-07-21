@@ -153,6 +153,11 @@ Open Keychain Access in the VM display. Select the `cua-driver-signing`
 keychain, open `CuaDriver Local Signing (cua-driver-rs)`, and set Trust to
 **Always Trust**.
 
+The installer discovers this self-signed identity even when it is untrusted, so
+the **Always Trust** step is no longer required for signing — `codesign` uses
+the private key regardless. Setting trust remains useful if other Apple tooling
+in the VM validates the certificate chain.
+
 Return to Terminal and allow Apple tooling to use the private key:
 
 ```bash

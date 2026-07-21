@@ -1,0 +1,27 @@
+[package]
+name = "cyclops-sdk-schema"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "generate-crds"
+path = "src/generate_crds.rs"
+
+[dependencies]
+anyhow.workspace = true
+k8s-openapi.workspace = true
+kube.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+uniffi.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

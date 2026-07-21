@@ -32,10 +32,12 @@ pub fn embedded_mode() -> bool {
     std::env::var_os(EMBEDDED_ENV).is_some_and(|v| v == "1")
 }
 
+pub mod authorization;
 pub mod browser;
 pub mod capture_mode;
 pub mod capture_scope;
 pub mod cdp;
+pub mod consent;
 pub mod cursor_sampler;
 pub mod element_cache;
 pub mod element_token;
@@ -53,6 +55,7 @@ pub mod recording_tools;
 pub mod recording_zoom;
 pub mod server;
 pub mod session;
+pub mod session_manifest;
 pub mod session_tools;
 pub mod socket_io;
 pub mod text_sanitize;

@@ -15,6 +15,7 @@ use super::approval::{
     consume_existing_profile_approval, consume_prepare_approval, validate_profile,
     ExistingProfileApprovalScope,
 };
+use super::engine::unsupported_engine_refusal;
 use super::platform::{
     BrowserConsentOutcome, BrowserConsentRequest, ExistingProfileSetupOutcome,
     ExistingProfileSetupRequest, PrepareAction, PrepareAttachment, PrepareAttachmentKind,
@@ -601,9 +602,9 @@ impl BrowserEngine {
 
         let classification = self.platform.classify_browser(request.pid).await?;
         if !classification.supports_cdp || classification.engine != BrowserEngineFamily::Chromium {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                "isolated automatic setup is currently supported only for Chromium browsers",
+            return Err(unsupported_engine_refusal(
+                &classification,
+                "prepare_isolated_profile",
             ));
         }
         let fingerprint = self.platform.process_fingerprint(request.pid).await?;
@@ -674,6 +675,12 @@ impl BrowserEngine {
         &self,
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
+        enum ConsentPath {
+            Protected,
+            LegacyArtifact,
+            Unrestricted,
+        }
+
         let window_id = request.window_id.ok_or_else(|| {
             refusal(
                 BrowserRefusalCode::BrowserConsentRequired,
@@ -685,24 +692,49 @@ impl BrowserEngine {
             window_id,
             session: request.session.clone(),
         };
-        match request.authorization.as_ref() {
-            Some(PrepareAuthorization::ApprovalArtifact(token)) => {
-                consume_existing_profile_approval(token, &scope)?;
+        let mode = crate::authorization::configured_permission_mode().map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserConsentRequired,
+                format!("permission mode is unavailable: {error}"),
+            )
+        })?;
+        let consent_path = if mode == crate::authorization::PermissionMode::Unrestricted {
+            ConsentPath::Unrestricted
+        } else if self.approval_broker.provider_id().is_some() {
+            ConsentPath::Protected
+        } else if crate::authorization::legacy_existing_profile_approval_enabled() {
+            match request.authorization.as_ref() {
+                Some(PrepareAuthorization::ApprovalArtifact(token)) => {
+                    consume_existing_profile_approval(token, &scope)?;
+                    ConsentPath::LegacyArtifact
+                }
+                // The ordinary MCP destructive-tool marker proves transport
+                // provenance, not a person's approval of their authenticated
+                // profile. It is deliberately insufficient here.
+                Some(PrepareAuthorization::McpHost) | None => {
+                    return Err(refusal(
+                        BrowserRefusalCode::BrowserConsentRequired,
+                        "legacy existing-profile compatibility requires a fresh operation-bound browser-approve artifact",
+                    )
+                    .with_detail(serde_json::json!({
+                        "approval_request_id": uuid::Uuid::new_v4().to_string(),
+                        "approval_command": "cua-driver browser-approve --strategy existing_profile --pid <pid> --window-id <window_id> --session <session>",
+                        "legacy_approval_enabled": true,
+                    })));
+                }
             }
-            // The ordinary MCP destructive-tool marker proves transport
-            // provenance, not a person's approval of their authenticated
-            // profile. It is deliberately insufficient here.
-            Some(PrepareAuthorization::McpHost) | None => {
-                return Err(refusal(
-                    BrowserRefusalCode::BrowserConsentRequired,
-                    "existing-profile attachment requires a fresh operation-bound browser-approve artifact",
-                )
-                .with_detail(serde_json::json!({
-                    "approval_request_id": uuid::Uuid::new_v4().to_string(),
-                    "approval_command": "cua-driver browser-approve --strategy existing_profile --pid <pid> --window-id <window_id> --session <session>",
-                })));
-            }
-        }
+        } else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserConsentRequired,
+                "existing-profile attachment requires a certified trusted-consent provider in standard/bounded mode; the legacy file-backed artifact is disabled",
+            )
+            .with_detail(serde_json::json!({
+                "permission_mode": mode.as_str(),
+                "trusted_consent_required": true,
+                "legacy_approval_enabled": false,
+                "protected_consent_collector": self.approval_broker.provider_id(),
+            })));
+        };
         if request.profile.is_some() || request.allow_launch {
             return Err(refusal(
                 BrowserRefusalCode::BrowserConsentRequired,
@@ -712,9 +744,9 @@ impl BrowserEngine {
 
         let classification = self.platform.classify_browser(request.pid).await?;
         if !classification.supports_cdp || classification.engine != BrowserEngineFamily::Chromium {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                "existing-profile attachment is currently limited to Chromium browsers",
+            return Err(unsupported_engine_refusal(
+                &classification,
+                "attach_existing_profile",
             ));
         }
         self.native_window_checked(request.pid, window_id).await?;
@@ -829,6 +861,58 @@ impl BrowserEngine {
             return Err(error);
         }
 
+        // Consent is collected only after the exact process, native window,
+        // browser product, and endpoint owner have all been proven. This keeps
+        // the human-visible request exact and avoids activating an indicator
+        // for a target that cannot be attached.
+        let protected_consent = if matches!(consent_path, ConsentPath::Protected) {
+            let transport_session = request
+                .transport_session
+                .as_deref()
+                .unwrap_or(request.session.as_str());
+            let approval_request = self.approval_broker.request(
+                mode,
+                "browser_prepare.existing_profile",
+                crate::authorization::RiskClass::R2,
+                request.session.clone(),
+                transport_session.to_owned(),
+                serde_json::json!({
+                    "pid": request.pid,
+                    "window_id": window_id,
+                    "process_fingerprint": fingerprint.clone(),
+                    "browser_product": classification.product_kind,
+                    "endpoint_owner_pid": endpoint.ownership.owner_pid,
+                }),
+                format!(
+                    "Attach Cua Driver to {:?} window {} using its logged-in profile",
+                    classification.product_kind, window_id
+                ),
+            );
+            Some(
+                if mode == crate::authorization::PermissionMode::Bounded {
+                    self.approval_broker
+                        .activate_preapproved(&approval_request)
+                        .await
+                } else {
+                    self.approval_broker.approve(&approval_request).await
+                }
+                .map_err(|error| {
+                    refusal(
+                        BrowserRefusalCode::BrowserConsentRequired,
+                        format!("protected existing-profile consent was not granted: {error}"),
+                    )
+                    .with_detail(serde_json::json!({
+                        "permission_mode": mode.as_str(),
+                        "trusted_consent_required": true,
+                        "provider": self.approval_broker.provider_id(),
+                        "approval_request_id": approval_request.nonce,
+                    }))
+                })?,
+            )
+        } else {
+            None
+        };
+
         let previous_grant = self
             .existing_profile_grant(
                 &request.session,
@@ -839,6 +923,9 @@ impl BrowserEngine {
         let previous_grant = match previous_grant {
             Ok(grant) => grant,
             Err(error) => {
+                if let Some(protected) = protected_consent.as_ref() {
+                    self.approval_broker.revoke(protected).await;
+                }
                 let error = with_setup_side_effects(error, &setup);
                 if setup_pending {
                     return Err(setup_guard
@@ -859,11 +946,15 @@ impl BrowserEngine {
             fingerprint,
             "chromium".to_owned(),
             endpoint.ws_url.clone(),
+            protected_consent,
         );
         if let Some(previous) = previous_grant {
             self.pool
                 .release_existing(&previous.endpoint_ws_url, previous.generation)
                 .await;
+            if let Some(protected) = previous.protected_consent.as_ref() {
+                self.approval_broker.revoke(protected).await;
+            }
             if previous.endpoint_ws_url != endpoint.ws_url {
                 self.pool.release_claim_marker(&previous.endpoint_ws_url);
             }

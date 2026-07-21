@@ -16,3 +16,28 @@ Preserve contributor credit when external code or design ships in Cua.
   disclosure is permitted.
 
 Do not reimplement submitted work solely to remove its authorship history.
+
+## Pull request titles and component releases
+
+Pull requests are squash-merged, so the pull request title becomes the commit
+subject on `main`. Release Please uses that subject to decide whether Cua Driver
+or Lume receives a release. Treat the live pull request title as release
+metadata, not as a cosmetic summary.
+
+- Use `fix(cua-driver): ...` or `fix(lume): ...` for user-visible corrections
+  that require a patch release.
+- Use `feat(cua-driver): ...` or `feat(lume): ...` for new capabilities that
+  require a minor release. Add `!` before `:` for a breaking release.
+- `perf` and `revert` also produce releases. `test`, `docs`, `chore`, `ci`,
+  `build`, `refactor`, and `style` do not.
+- If release-tracked product files changed but the work is intentionally
+  non-releasing, keep the accurate non-releasing type and add the `no-release`
+  label. Do not use that label to hide a user-visible change.
+- A pull request that mixes tests with production behavior must be titled for
+  the production behavior. For example, browser fixes plus certification tests
+  use `fix(cua-driver): ...`, not `test(cua-driver): ...`.
+
+Before declaring a pull request ready or merging it, inspect its final changed
+files and query its current GitHub title. Correct the title yourself when the
+scope or release impact changed during implementation, and wait for
+`CI: Release metadata` to pass. Do not leave title correction for a maintainer.

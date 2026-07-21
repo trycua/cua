@@ -1,10 +1,10 @@
-name: "CD: Bump Version"
+name: "Legacy packages: Bump Version"
 
 on:
   workflow_dispatch:
     inputs:
       service:
-        description: "Service/Package to bump"
+        description: "Legacy package (Cua Driver and Lume use Release Please)"
         required: true
         type: choice
         options:

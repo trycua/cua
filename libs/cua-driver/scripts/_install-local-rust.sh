@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 #
 # cua-driver-rs local/debug installer (macOS + Linux). Builds from the
-# current source tree and drops the resulting cua-driver binary into the
-# same install layout that scripts/install.sh produces — so a local build
-# and a release install can coexist + the `current` symlink can flip
-# between them.
+# current source tree into a durable, separate local-product namespace.
 #
 # Private helper — invoked by install-local.sh (the multi-backend
 # dispatcher) when the user picks --backend=rust / --experimental-rust
@@ -23,20 +20,14 @@
 #
 # Linux layout produced (matches install.sh):
 #
-#   ${CUA_DRIVER_HOME:-$HOME/.cua-driver}/packages/
-#       releases/<version>-local-<config>-<target>/cua-driver
-#       current/cua-driver  -> ../releases/<active>/cua-driver
-#   ${CUA_DRIVER_INSTALL_DIR:-$HOME/.local/bin}/cua-driver
-#       -> ../current/cua-driver
-#
-# Legacy env vars `CUA_DRIVER_RS_HOME` / `CUA_DRIVER_RS_INSTALL_DIR` /
-# `CUA_DRIVER_RS_BIN_DIR` are still accepted for backwards compat
-# (rename from v0.2.16 per PR #1644; this helper was missed in the
-# initial rename and ported in PR #1717).
+#   ${CUA_DRIVER_LOCAL_HOME:-$HOME/.cua-driver-local}/packages/
+#       releases/<version>-local-<config>-<target>/cua-driver-local
+#       current/cua-driver-local
+#   ${CUA_DRIVER_LOCAL_INSTALL_DIR:-$HOME/.local/bin}/cua-driver-local
 #
 # macOS layout produced:
-#   /Applications/CuaDriver.app/Contents/MacOS/cua-driver  (bundle replaced wholesale)
-#   $HOME/.local/bin/cua-driver -> .../CuaDriver.app/Contents/MacOS/cua-driver
+#   /Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local
+#   $HOME/.local/bin/cua-driver-local -> .../CuaDriverLocal.app/Contents/MacOS/cua-driver-local
 #
 # The version string carries `-local-debug` / `-local-release` so it
 # never collides with a real release dir and is trivial to GC.
@@ -48,23 +39,26 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # under libs/cua-driver/rust/.
 REPO_ROOT="$(cd "$SCRIPT_DIR/../rust" && pwd)"
 
-# --- Load shared daemon-cleanup helpers ---------------------------------
-#
-# Sibling _install-common.sh defines stop_cua_driver_daemons +
-# show_cua_driver_daemon_survivors, mirroring CuaDriverInstall.psm1.
-# This is a dev-only path always invoked from a checked-out tree (the
-# `install-local.sh` dispatcher only runs from a clone), so the on-disk
-# load is the only branch we need — no curl fallback like _install-rust.sh.
-# Define no-op stubs if the file is missing so call sites stay
-# unconditional and a stale clone doesn't fail the install.
-if [ -f "$SCRIPT_DIR/_install-common.sh" ]; then
-    # shellcheck source=_install-common.sh
-    . "$SCRIPT_DIR/_install-common.sh"
-else
-    echo "warning: $SCRIPT_DIR/_install-common.sh missing; daemon kill skipped" >&2
-    stop_cua_driver_daemons() { :; }
-    show_cua_driver_daemon_survivors() { :; }
+# Embed local-build provenance in `get_config`. An explicit value remains
+# authoritative for source snapshots copied to VMs without `.git`; otherwise
+# derive HEAD from the checkout that is actually being built. Keep dirty local
+# developer builds honest instead of claiming byte-for-byte provenance from
+# the clean commit.
+if [ -z "${CUA_DRIVER_SOURCE_SHA:-}" ]; then
+    if ! command -v git >/dev/null 2>&1; then
+        echo "error: git is required to determine CUA_DRIVER_SOURCE_SHA; set it explicitly for a source snapshot" >&2
+        exit 1
+    fi
+    CUA_DRIVER_SOURCE_SHA="$(git -C "$REPO_ROOT" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)"
+    if ! printf '%s' "$CUA_DRIVER_SOURCE_SHA" | grep -Eq '^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$'; then
+        echo "error: could not determine an exact Git commit for $REPO_ROOT; set CUA_DRIVER_SOURCE_SHA explicitly" >&2
+        exit 1
+    fi
+    if [ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal 2>/dev/null)" ]; then
+        CUA_DRIVER_SOURCE_SHA="${CUA_DRIVER_SOURCE_SHA}-dirty"
+    fi
 fi
+export CUA_DRIVER_SOURCE_SHA
 
 BOLD=$(tput bold 2>/dev/null || true)
 NORMAL=$(tput sgr0 2>/dev/null || true)
@@ -102,9 +96,9 @@ while [ "$#" -gt 0 ]; do
             echo "                  macOS: LaunchAgent under ~/Library/LaunchAgents"
             echo "                  Linux: systemd --user unit"
             echo "                On macOS this also fixes TCC: a launchd-started daemon"
-            echo "                is attributed to com.trycua.driver (not your terminal),"
+            echo "                is attributed to com.trycua.driver.local (not your terminal),"
             echo "                so you grant Accessibility + Screen Recording once and"
-            echo "                every cua-driver call/mcp routes through it correctly."
+            echo "                every cua-driver-local call/mcp routes through it correctly."
             echo "  --help        Show this help."
             echo ""
             echo "Examples:"
@@ -130,40 +124,20 @@ case "$OS" in
     *)      echo "${RED}Unsupported OS: $OS${NORMAL}"; exit 1 ;;
 esac
 
-# Canonical home is `~/.cua-driver/` (renamed from `~/.cua-driver-rs/`
-# in v0.2.16 — PR #1644). Accept the legacy `CUA_DRIVER_RS_HOME` env var
-# too so any dev scripts that still set it keep working.
-HOME_DIR="${CUA_DRIVER_HOME:-${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver}}"
-BIN_DIR="${CUA_DRIVER_INSTALL_DIR:-${CUA_DRIVER_BIN_DIR:-${CUA_DRIVER_RS_INSTALL_DIR:-${CUA_DRIVER_RS_BIN_DIR:-$HOME/.local/bin}}}}"
+HOME_DIR="${CUA_DRIVER_LOCAL_HOME:-$HOME/.cua-driver-local}"
+BIN_DIR="${CUA_DRIVER_LOCAL_INSTALL_DIR:-$HOME/.local/bin}"
 RELEASES_DIR="$HOME_DIR/packages/releases"
 CURRENT_LINK="$HOME_DIR/packages/current"
-
-# Best-effort sweep: if a previous install left a stale `~/.cua-driver-rs/`
-# (the pre-v0.2.16 home), remove it. The runtime sweeps it on first call
-# too (see telemetry.rs::migrate_legacy_telemetry_home) so this is belt-
-# and-braces — keeps the home dir layout single-rooted for the user.
-LEGACY_HOME_DIR="$HOME/.cua-driver-rs"
-if [ -d "$LEGACY_HOME_DIR" ] && [ "$HOME_DIR" != "$LEGACY_HOME_DIR" ]; then
-    mkdir -p "$HOME_DIR"
-    for telemetry_file in .telemetry_id .installation_recorded; do
-        if [ -f "$LEGACY_HOME_DIR/$telemetry_file" ] && [ ! -e "$HOME_DIR/$telemetry_file" ]; then
-            cp -p "$LEGACY_HOME_DIR/$telemetry_file" "$HOME_DIR/$telemetry_file" 2>/dev/null \
-                && echo "  Preserved legacy telemetry state $telemetry_file" \
-                || echo "  Could not preserve legacy telemetry state $telemetry_file"
-        fi
-    done
-    echo "  Sweeping legacy install dir $LEGACY_HOME_DIR"
-    rm -rf "$LEGACY_HOME_DIR"
-fi
 
 VERSION_TAG="0.0.0-local-$BUILD_CONFIG"
 VERSIONED_DIR="$RELEASES_DIR/$VERSION_TAG-$TARGET_TRIPLE"
 
 echo "${BOLD}${BLUE}cua-driver-rs local installer${NORMAL}"
 echo "  source:  ${BOLD}$REPO_ROOT${NORMAL}"
+echo "  sha:     ${BOLD}$CUA_DRIVER_SOURCE_SHA${NORMAL}"
 echo "  config:  ${BOLD}$BUILD_CONFIG${NORMAL}"
 echo "  target:  ${BOLD}$TARGET_TRIPLE${NORMAL}"
-echo "  bin:     ${BOLD}$BIN_DIR/cua-driver${NORMAL}"
+echo "  bin:     ${BOLD}$BIN_DIR/cua-driver-local${NORMAL}"
 echo "  current: ${BOLD}$CURRENT_LINK${NORMAL}"
 echo ""
 
@@ -215,8 +189,8 @@ echo ""
 
 echo "${BOLD}Staging into $VERSIONED_DIR${NORMAL}"
 mkdir -p "$VERSIONED_DIR"
-cp "$BUILT_BINARY" "$VERSIONED_DIR/cua-driver"
-chmod +x "$VERSIONED_DIR/cua-driver"
+cp "$BUILT_BINARY" "$VERSIONED_DIR/cua-driver-local"
+chmod +x "$VERSIONED_DIR/cua-driver-local"
 
 # Re-sign with a fresh ad-hoc signature.
 #
@@ -231,7 +205,7 @@ chmod +x "$VERSIONED_DIR/cua-driver"
 # accepts. Cheap (~50ms on a 40MB binary). macOS-only — no-op on Linux.
 if [ "$OS" = "Darwin" ]; then
     if command -v codesign >/dev/null 2>&1; then
-        codesign --force --sign - "$VERSIONED_DIR/cua-driver" 2>/dev/null \
+        codesign --force --sign - "$VERSIONED_DIR/cua-driver-local" 2>/dev/null \
             || echo "${YELLOW}warning: codesign --force --sign - failed; first run may fail with SIGKILL on macOS 26+${NORMAL}" >&2
     fi
 fi
@@ -282,11 +256,14 @@ echo ""
 # this avoids image-specific login-keychain ACL failures. Local dev only;
 # releases are CI-signed.
 #
-# Echoes the `codesign --sign` argument: the valid identity's SHA-1 when
+# Echoes the `codesign --sign` argument: a matching identity's SHA-1 when
 # available, or "-" when it can't be created — no codesign/openssl, CI,
-# locked keychain. Use the identity hash rather than the certificate name:
-# stale certificate-only duplicates can share the same name and make codesign
-# reject an otherwise valid identity as ambiguous.
+# locked keychain. The installer creates a self-signed local certificate, which
+# `security find-identity -v` filters out as untrusted even when its private key
+# is present and codesign can use it. Query matching code-signing identities
+# without the valid-only filter; the bounded codesign call below remains the
+# authoritative usability check. Use the identity hash rather than the
+# certificate name because duplicate certificate names are ambiguous.
 CUA_LOCAL_SIGN_CN="CuaDriver Local Signing (cua-driver-rs)"
 ensure_local_signing_identity() {
     { [ "$OS" = "Darwin" ] && command -v codesign >/dev/null 2>&1; } || { printf -- '-'; return; }
@@ -296,7 +273,7 @@ ensure_local_signing_identity() {
     fi
     [ -f "$kc" ] || { printf -- '-'; return; }
     local identity
-    identity="$(security find-identity -v -p codesigning "$kc" 2>/dev/null \
+    identity="$(security find-identity -p codesigning "$kc" 2>/dev/null \
         | awk -v cn="$CUA_LOCAL_SIGN_CN" 'index($0, "\"" cn "\"") { print $2; exit }')"
     if [ -n "$identity" ]; then
         printf '%s' "$identity"; return
@@ -318,7 +295,7 @@ ensure_local_signing_identity() {
             || openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
                 -out "$tmp/id.p12" -passout pass:"$pw" -name "$CUA_LOCAL_SIGN_CN" >/dev/null 2>&1; } \
        && security import "$tmp/id.p12" -k "$kc" -P "$pw" -A -T /usr/bin/codesign >/dev/null 2>&1; then
-        identity="$(security find-identity -v -p codesigning "$kc" 2>/dev/null \
+        identity="$(security find-identity -p codesigning "$kc" 2>/dev/null \
             | awk -v cn="$CUA_LOCAL_SIGN_CN" 'index($0, "\"" cn "\"") { print $2; exit }')"
         rm -rf "$tmp"
         if [ -n "$identity" ]; then
@@ -370,10 +347,10 @@ clean_partial_bundle_signature() {
     find "$app" -type f -name '*.cstemp' -delete
 }
 
-# --- macOS: wrap the binary in CuaDriver.app for a stable TCC identity ---
+# --- macOS: wrap the binary in CuaDriverLocal.app for a stable TCC identity ---
 #
 # TCC keys Accessibility / Screen-Recording grants on the bundle
-# identifier (com.trycua.driver), not the bare executable path. A loose
+# identifier (com.trycua.driver.local), not the bare executable path. A loose
 # binary gets grants attributed to its ad-hoc cdhash, which changes on
 # every rebuild — so permissions silently reset and never appear cleanly
 # under System Settings. Mirror the production path (install.sh) + the CD
@@ -381,19 +358,19 @@ clean_partial_bundle_signature() {
 # CuaDriverBundle skeleton, install the bundle to /Applications, and point
 # the visible bin at the binary INSIDE the bundle. Linux/Windows have no
 # .app concept and keep the bare-binary symlink below.
-APP_DEST="/Applications/CuaDriver.app"
+APP_DEST="/Applications/CuaDriverLocal.app"
 if [ "$OS" = "Darwin" ]; then
     SKELETON="$REPO_ROOT/scripts/CuaDriverBundle"
     if [ ! -d "$SKELETON/Contents" ]; then
         echo "${RED}Error: bundle skeleton missing at $SKELETON${NORMAL}" >&2
         exit 1
     fi
-    APP_STAGE="$VERSIONED_DIR/CuaDriver.app"
+    APP_STAGE="$VERSIONED_DIR/CuaDriverLocal.app"
     rm -rf "$APP_STAGE"
     mkdir -p "$APP_STAGE/Contents/MacOS"
     cp -R "$SKELETON/Contents/." "$APP_STAGE/Contents/"
-    cp "$VERSIONED_DIR/cua-driver" "$APP_STAGE/Contents/MacOS/cua-driver"
-    chmod +x "$APP_STAGE/Contents/MacOS/cua-driver"
+    cp "$VERSIONED_DIR/cua-driver-local" "$APP_STAGE/Contents/MacOS/cua-driver-local"
+    chmod +x "$APP_STAGE/Contents/MacOS/cua-driver-local"
     rm -f "$APP_STAGE/Contents/MacOS/.gitkeep"
     # Stamp the local build version so the bundle reports something sane.
     if command -v plutil >/dev/null 2>&1; then
@@ -401,6 +378,14 @@ if [ "$OS" = "Darwin" ]; then
             "$APP_STAGE/Contents/Info.plist" 2>/dev/null || true
         plutil -replace CFBundleVersion -string "$VERSION_TAG" \
             "$APP_STAGE/Contents/Info.plist" 2>/dev/null || true
+        plutil -replace CFBundleExecutable -string "cua-driver-local" \
+            "$APP_STAGE/Contents/Info.plist"
+        plutil -replace CFBundleIdentifier -string "com.trycua.driver.local" \
+            "$APP_STAGE/Contents/Info.plist"
+        plutil -replace CFBundleName -string "Cua Driver Local" \
+            "$APP_STAGE/Contents/Info.plist"
+        plutil -replace CFBundleDisplayName -string "Cua Driver Local" \
+            "$APP_STAGE/Contents/Info.plist"
     fi
     # Sign the staged bundle before touching the live installation. Required on
     # macOS 26+ where Taskgated rejects a copied binary's stale signature.
@@ -425,12 +410,12 @@ if [ "$OS" = "Darwin" ]; then
                 fi
             else
                 clean_partial_bundle_signature "$APP_STAGE"
-                echo "${RED}Error: codesign of staged CuaDriver.app failed; live installation was not changed.${NORMAL}" >&2
+                echo "${RED}Error: codesign of staged CuaDriverLocal.app failed; live installation was not changed.${NORMAL}" >&2
                 exit 1
             fi
         fi
         if ! codesign --verify --deep --strict "$APP_STAGE" 2>/dev/null; then
-            echo "${RED}Error: staged CuaDriver.app failed signature verification; live installation was not changed.${NORMAL}" >&2
+            echo "${RED}Error: staged CuaDriverLocal.app failed signature verification; live installation was not changed.${NORMAL}" >&2
             exit 1
         fi
     fi
@@ -450,67 +435,41 @@ if [ "$OS" = "Darwin" ]; then
         if [ -d "$APP_BACKUP" ]; then
             mv "$APP_BACKUP" "$APP_DEST"
         fi
-        echo "${RED}Error: failed to install CuaDriver.app; restored the previous bundle.${NORMAL}" >&2
+        echo "${RED}Error: failed to install CuaDriverLocal.app; restored the previous bundle.${NORMAL}" >&2
         exit 1
     fi
     echo "${GREEN}installed $APP_DEST${NORMAL}"
 
-    # --- Clear a TCC grant pinned to a PREVIOUS signing identity -----------
+    # --- Force LaunchServices registration of the freshly-copied bundle ----
     #
-    # TCC pins each Accessibility / Screen-Recording grant to the app's
-    # designated requirement AT GRANT TIME. A user who granted while the app
-    # was ad-hoc signed has a grant whose csreq is a bare `cdhash H"..."`
-    # (changes every rebuild); a user who granted under a different cert has
-    # one pinned to that leaf. After we re-sign with the stable cert above,
-    # that old row survives with auth_value=allowed but a csreq that no longer
-    # matches THIS build — so the daemon reads "not granted" while System
-    # Settings still shows the toggle ON. That's a dead end: re-toggling
-    # doesn't help because the row already records a decision, so the grant
-    # prompt never re-fires. Detect a signing-identity change vs the last
-    # install and `tccutil reset` once, so the next `permissions grant`
-    # prompts cleanly and re-pins to the current (stable cert) identity —
-    # after which cert-pinned grants survive all future rebuilds.
-    #
-    # `tccutil reset` needs no sudo / Full Disk Access, and is a no-op when
-    # nothing was granted. We only reset when moving TO a cert identity (the
-    # case a clean re-grant durably fixes); an ad-hoc build churns its cdhash
-    # every rebuild regardless, so resetting it would just add friction.
-    if command -v tccutil >/dev/null 2>&1; then
-        IDENTITY_MARKER="$HOME_DIR/.tcc-signing-identity"
-        NEW_IDENTITY="$(codesign -d -r- "$APP_DEST" 2>&1 \
-            | sed -n 's/.*certificate leaf = H"\([0-9a-fA-F]*\)".*/cert:\1/p' | head -1)"
-        [ -n "$NEW_IDENTITY" ] || NEW_IDENTITY="adhoc"
-        OLD_IDENTITY="$(cat "$IDENTITY_MARKER" 2>/dev/null || true)"
-        case "$NEW_IDENTITY" in
-            cert:*)
-                if [ "$NEW_IDENTITY" != "$OLD_IDENTITY" ]; then
-                    tccutil reset Accessibility com.trycua.driver >/dev/null 2>&1 || true
-                    tccutil reset ScreenCapture com.trycua.driver >/dev/null 2>&1 || true
-                    echo "${BOLD}cleared any stale Accessibility / Screen-Recording grant pinned to a previous build.${NORMAL}"
-                    echo "  Grant once more (System Settings → Privacy & Security) and it will${BOLD} stick across every future rebuild${NORMAL} — the grant now pins to a stable signing certificate, not the per-build cdhash."
-                fi
-                ;;
-        esac
-        printf '%s\n' "$NEW_IDENTITY" > "$IDENTITY_MARKER" 2>/dev/null || true
+    # `ditto` drops the bundle on disk, but LaunchServices registers the new
+    # com.trycua.driver.local identity ASYNCHRONOUSLY (seconds later). Until it
+    # does, `open -n -g -a CuaDriverLocal` (what `permissions grant` / MCP use to
+    # launch the daemon) fails with -1728. A synchronous `lsregister -f` closes
+    # that race so both the reset and the first launch resolve the bundle id.
+    LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
+    if [ -x "$LSREGISTER" ]; then
+        "$LSREGISTER" -f "$APP_DEST" >/dev/null 2>&1 || true
     fi
+
 fi
 
 # --- Visible-bin symlink ------------------------------------------------
 #
 # On macOS point at the binary INSIDE the installed bundle so the process
-# that actually runs carries the com.trycua.driver identity (TCC keys
+# that actually runs carries the com.trycua.driver.local identity (TCC keys
 # grants on it). On Linux/Windows point at the versioned-store binary.
 mkdir -p "$BIN_DIR"
 if [ "$OS" = "Darwin" ]; then
-    BIN_TARGET="$APP_DEST/Contents/MacOS/cua-driver"
+    BIN_TARGET="$APP_DEST/Contents/MacOS/cua-driver-local"
 else
-    BIN_TARGET="$CURRENT_LINK/cua-driver"
+    BIN_TARGET="$CURRENT_LINK/cua-driver-local"
 fi
-ln -sf "$BIN_TARGET" "$BIN_DIR/cua-driver"
-echo "${GREEN}$BIN_DIR/cua-driver -> $BIN_TARGET${NORMAL}"
+ln -sf "$BIN_TARGET" "$BIN_DIR/cua-driver-local"
+echo "${GREEN}$BIN_DIR/cua-driver-local -> $BIN_TARGET${NORMAL}"
 echo ""
 
-INSTALLED_BIN="$BIN_DIR/cua-driver"
+INSTALLED_BIN="$BIN_DIR/cua-driver-local"
 
 # --- Stop any pre-swap cua-driver daemons ------------------------------
 #
@@ -520,8 +479,12 @@ INSTALLED_BIN="$BIN_DIR/cua-driver"
 # so the next invocation picks up this build. Best-effort, never
 # fails the install. Survivors (rare on Unix — `pkill` reaches all
 # user-owned procs without elevation) get a yellow hint.
-stop_cua_driver_daemons
-show_cua_driver_daemon_survivors
+if [ "$OS" = "Darwin" ]; then
+    launchctl unload "$HOME/Library/LaunchAgents/com.trycua.cua-driver-local.plist" 2>/dev/null || true
+elif [ "$OS" = "Linux" ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl --user stop cua-driver-local.service >/dev/null 2>&1 || true
+fi
+pkill -x cua-driver-local >/dev/null 2>&1 || true
 
 # Agent skill pack symlinks: NOT auto-created. Run
 # `cua-driver skills install --local` to symlink agent dirs to the
@@ -532,14 +495,7 @@ echo ""
 
 if [ "$INSTALL_AUTOSTART" = true ]; then
     if [ "$OS" = "Darwin" ]; then
-        # Unload + remove any stale LaunchAgent from the pre-rename install
-        # so the new label doesn't race the old one.
-        LEGACY_PLIST_PATH="$HOME/Library/LaunchAgents/com.trycua.cua-driver-rs.plist"
-        if [ -f "$LEGACY_PLIST_PATH" ]; then
-            launchctl unload "$LEGACY_PLIST_PATH" 2>/dev/null || true
-            rm -f "$LEGACY_PLIST_PATH"
-        fi
-        PLIST_PATH="$HOME/Library/LaunchAgents/com.trycua.cua-driver.plist"
+        PLIST_PATH="$HOME/Library/LaunchAgents/com.trycua.cua-driver-local.plist"
         echo "${BOLD}Writing LaunchAgent → $PLIST_PATH${NORMAL}"
         mkdir -p "$(dirname "$PLIST_PATH")"
         cat >"$PLIST_PATH" <<EOF
@@ -547,7 +503,7 @@ if [ "$INSTALL_AUTOSTART" = true ]; then
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.trycua.cua-driver</string>
+  <key>Label</key><string>com.trycua.cua-driver-local</string>
   <key>ProgramArguments</key>
   <array>
     <string>$INSTALLED_BIN</string>
@@ -564,19 +520,12 @@ EOF
         launchctl load "$PLIST_PATH"
         echo "${GREEN}Loaded.${NORMAL} Manage with launchctl load / unload \"$PLIST_PATH\"."
     elif [ "$OS" = "Linux" ]; then
-        # Stop + remove any pre-rename systemd unit so the new one doesn't
-        # race the old one.
-        LEGACY_UNIT_PATH="$HOME/.config/systemd/user/cua-driver-rs.service"
-        if [ -f "$LEGACY_UNIT_PATH" ]; then
-            systemctl --user disable --now cua-driver-rs.service 2>/dev/null || true
-            rm -f "$LEGACY_UNIT_PATH"
-        fi
-        UNIT_PATH="$HOME/.config/systemd/user/cua-driver.service"
+        UNIT_PATH="$HOME/.config/systemd/user/cua-driver-local.service"
         echo "${BOLD}Writing systemd user unit → $UNIT_PATH${NORMAL}"
         mkdir -p "$(dirname "$UNIT_PATH")"
         cat >"$UNIT_PATH" <<EOF
 [Unit]
-Description=cua-driver serve daemon
+Description=cua-driver-local serve daemon
 After=graphical-session.target
 
 [Service]
@@ -588,8 +537,8 @@ RestartSec=2
 WantedBy=default.target
 EOF
         systemctl --user daemon-reload
-        systemctl --user enable --now cua-driver.service
-        echo "${GREEN}Enabled.${NORMAL} Manage with systemctl --user {start|stop|status} cua-driver."
+        systemctl --user enable --now cua-driver-local.service
+        echo "${GREEN}Enabled.${NORMAL} Manage with systemctl --user {start|stop|status} cua-driver-local."
     fi
     echo ""
 fi
@@ -620,9 +569,9 @@ if [ "$INSTALL_AUTOSTART" != true ]; then
     echo ""
     if [ "$OS" = "Darwin" ]; then
         echo "Auto-start (recommended on macOS): re-run with --autostart to register a LaunchAgent."
-        echo "  A launchd-started daemon is attributed to com.trycua.driver (not your terminal),"
+        echo "  A launchd-started daemon is attributed to com.trycua.driver.local (not your terminal),"
         echo "  so permission prompts say \"Cua Driver\" and grants stick — grant Accessibility +"
-        echo "  Screen Recording once and every cua-driver call/mcp routes through it correctly."
+        echo "  Screen Recording once and every cua-driver-local call/mcp routes through it correctly."
         echo "  (Without it, a prompt raised from a terminal attributes to the terminal instead.)"
     else
         echo "Auto-start (optional): re-run with --autostart to register a systemd user unit."

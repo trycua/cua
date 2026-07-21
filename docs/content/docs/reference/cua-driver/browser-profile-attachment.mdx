@@ -3,8 +3,6 @@ title: Browser Profile Attachment
 description: Contract, lifetimes, refusals, and platform scope for attaching Cua Driver to an existing Chromium profile.
 ---
 
-# Browser Profile Attachment
-
 Existing-profile attachment is an additive `browser_prepare` strategy. It does
 not change the lifecycle of driver-owned `isolated_new` and `isolated_named`
 profiles.
@@ -16,18 +14,29 @@ profiles.
   "pid": 844,
   "window_id": 10725,
   "session": "research-1",
-  "strategy": {"kind": "existing_profile"},
-  "approval_token": "<interactive one-use token>"
+  "strategy": {"kind": "existing_profile"}
 }
 ```
 
 `pid`, `window_id`, and `session` are required. `strategy` cannot be combined
-with legacy `allow_launch` or `profile` fields. The approval token must be
-minted by `cua-driver browser-approve` for the exact same values. It expires
-after five minutes, is consumed once, and is consumed by a mismatched attempt.
+with legacy `allow_launch` or `profile` fields. Authorization depends on the
+daemon's immutable [permission mode](/reference/cua-driver/permission-modes):
+
+- `standard` requests exact protected consent from a certified host provider.
+- `bounded` requires the launch-approved manifest to list this PID/window;
+  the provider activates its persistent Stop indicator without a second prompt.
+- `unrestricted` attaches without a runtime approval after the trusted launcher
+  supplied `--dangerously-bypass-approvals`.
 
 The internal approval marker supplied by an MCP transport does not authorize
-this strategy.
+this strategy. The standalone daemon currently has no certified Codex or Claude
+host provider, so `standard` and `bounded` fail closed there. Use an isolated
+profile or an explicitly launched unrestricted daemon.
+
+The old `browser-approve` file artifact is disabled by default. A trusted
+launcher can temporarily enable it with
+`--allow-legacy-existing-profile-approval`. The artifact is same-user writable
+and is not protected human consent.
 
 ## Success result
 
@@ -80,7 +89,8 @@ by the previous generation.
 | --- | --- |
 | Network exposure | The accepted DevTools endpoint must be loopback-only. |
 | Process binding | The endpoint, native window, and live process fingerprint must agree before every mutation. |
-| Driver authorization | Existing-profile setup needs a single-use interactive artifact; a model-supplied Boolean and ordinary MCP approval are insufficient. |
+| Driver authorization | Standard and bounded setup need a request-bound protected provider; a model-supplied Boolean, ordinary MCP approval, TTY input, and files are insufficient. |
+| Revocation | A protected grant cannot become live until its provider activates persistent Stop UI. `cua-driver revoke` and session end provide additional deny-only paths. |
 | Capability scope | Targets, tabs, dialogs, frames, and refs are opaque, session-scoped, and invalidated after navigation or connection-generation changes. |
 | Profile handling | Cua Driver does not copy, edit, restart, or terminate the selected existing profile. |
 | Residual local risk | CDP itself is not authenticated. Another process running as the same OS user may connect to an exposed endpoint outside Cua Driver. |
@@ -102,6 +112,9 @@ for why Cua Driver uses CDP and which risks remain outside the driver.
 | `browser_binding_stale` | A connection generation changed; bind again. |
 | `browser_reconnect_exhausted` | The bounded reconnect policy could not establish a proven socket. |
 | `browser_input_incomplete` | Keystroke typing delivered only a reported prefix. |
+| `browser_route_unavailable` | The classified engine or platform has no accepted typed route. For Firefox and Safari, bounded detail identifies the required protocol and current lifecycle limitation. |
+| `browser_input_trust_unavailable` | Trusted input cannot preserve background posture. Bounded detail identifies the explicit `dom_event` alternative when a synthetic ref-targeted action is acceptable. |
+| `browser_origin_outside_scope` | A bounded-mode tab left the manifest's allowed origin set; further mutation pauses. |
 
 ## Recording and telemetry
 
@@ -114,22 +127,27 @@ The content-free browser operation and refusal fields are documented in
 
 ## Platform scope
 
-The prompt-assisted route is available for Google Chrome and Microsoft Edge on
-macOS and Windows. Chrome has product-specific acceptance evidence on Linux
-X11 and on the validated native-Wayland Sway lane. Chromium and Edge use the
-same descriptor-backed Linux route, but still need product-specific acceptance
-evidence before they are listed as validated. Every route requires an
-exact approved PID and native window, one uniquely matched setup control, a
+The browser-setup route is implemented for Google Chrome and Microsoft Edge on
+macOS and Windows. Chrome and Edge have product-specific acceptance evidence
+on Linux X11. Chrome is also accepted on GNOME Wayland, and Chromium is
+accepted alongside Chrome and Edge on the validated native-Wayland Sway lane.
+The Chromium-family products use the same descriptor-backed Linux route, but
+still need product-specific acceptance evidence on each desktop before they
+are listed as validated. Every route
+requires an
+exact authorized PID and native window, one uniquely matched setup control, a
 loopback endpoint owned by that process, one exact browser-owned consent
 action, and a fresh native/CDP rebind.
 
 Linux additionally requires the browser's complete AT-SPI renderer tree. Start
 the Chromium-family process with `--force-renderer-accessibility`, or run a
-screen reader that enables full renderer accessibility. On Sway, Cua Driver
-briefly focuses the exact compositor-attested container for fixed internal-page
-navigation and restores the previous container before continuing. It refuses
-generic Wayland sessions that cannot prove exact process, window, and geometry
-identity.
+screen reader that enables full renderer accessibility. On Sway and validated
+GNOME Shell sessions, Cua Driver briefly focuses the exact
+compositor-attested window for fixed internal-page navigation and restores the
+previous window before continuing. GNOME requires the maintained WinRects
+helper API v4 and an immutable D-Bus owner that resolves to the current user's
+system-installed GNOME Shell process. Cua Driver refuses generic Wayland
+sessions that cannot prove exact process, window, and geometry identity.
 
 The setup adapters currently recognize the products' English accessibility
 labels. Other UI locales fail closed without toggling an unrecognized control.

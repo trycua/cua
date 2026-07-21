@@ -27,8 +27,20 @@ async function main() {
     const abs = path.join(CONTENT_DIR, file);
     const content = await fs.readFile(abs, 'utf8');
     const lines = content.split(/\r?\n/);
+    let inFence = false;
 
     for (const [lineIndex, line] of lines.entries()) {
+      if (/^\s*(?:```|~~~)/.test(line)) {
+        inFence = !inFence;
+        continue;
+      }
+
+      if (!inFence && /^#\s+/.test(line)) {
+        failures.push(
+          `${file}:${lineIndex + 1}: body-level H1 duplicates the renderer-owned frontmatter title: ${line.trim()}`
+        );
+      }
+
       for (const [pattern, reason] of bannedPatterns) {
         if (pattern.test(line)) {
           failures.push(`${file}:${lineIndex + 1}: ${reason}: ${line.trim()}`);

@@ -393,13 +393,15 @@ impl BrowserPrepareTool {
             name: "browser_prepare".into(),
             description: "Explicitly prepare an owned DevTools endpoint for a browser \
                 pid. Existing endpoints are detected without side effects. Acting setup \
-                requires MCP-host approval or a short-lived token from the interactive \
-                browser-approve command, allow_launch=true, and a driver-owned isolated \
-                profile. It launches a separate browser and never copies, modifies, or \
-                terminates the requested user profile. Existing-profile attachment is \
-                explicit, requires an exact interactive approval artifact, and never \
-                treats ordinary MCP transport approval as profile consent. On proven \
-                platforms, that approval also permits one bounded exact-window setup: \
+                for an isolated profile requires host approval or a short-lived setup \
+                token plus allow_launch=true. It launches a separate browser and never \
+                copies, modifies, or terminates the requested user profile. Existing-profile \
+                attachment is explicit and follows the daemon's immutable permission mode: \
+                standard requires a certified protected-consent provider, bounded requires \
+                a launch-approved exact resource manifest plus protected indicator, and \
+                unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP \
+                transport approval never proves profile consent. On proven platforms, an \
+                authorized request also permits one bounded exact-window setup: \
                 open the recognized browser product's fixed remote-debugging page, toggle \
                 its uniquely matched per-instance checkbox, prove the PID-owned loopback \
                 endpoint, and close the temporary tab. Every visible effect is reported; \
@@ -412,7 +414,7 @@ impl BrowserPrepareTool {
                     "window_id": { "type": "integer", "description": "Exact native window approval anchor; required for strategy.kind=existing_profile." },
                     "approval_token": {
                         "type": "string",
-                        "description": "Single-use token minted by `cua-driver browser-approve` for direct CLI/raw use. Omit for an MCP-host-approved call."
+                        "description": "Legacy single-use setup token. Existing-profile use is disabled unless a trusted launcher explicitly enables the same-user-writable compatibility path."
                     },
                     "allow_launch": {
                         "type": "boolean",
@@ -762,6 +764,13 @@ impl Tool for BrowserClickTool {
                         "{limitation}; use input_route=\"dom_event\" with a ref for a synthetic full-background click"
                     ),
                 )
+                .with_detail(json!({
+                    "requested_route": "trusted",
+                    "limitation": limitation,
+                    "alternative_route": "dom_event",
+                    "alternative_requires_ref": true,
+                    "trusted_delivery_attempted": false,
+                }))
                 .to_tool_result();
             }
         }
@@ -1827,6 +1836,14 @@ mod tests {
                     channel: None,
                     supports_cdp: false,
                 },
+                4 => BrowserClassification {
+                    is_browser: true,
+                    engine: BrowserEngineFamily::Gecko,
+                    product_kind: BrowserProduct::Firefox,
+                    product: Some("MockFirefox".into()),
+                    channel: None,
+                    supports_cdp: false,
+                },
                 _ => BrowserClassification {
                     is_browser: false,
                     engine: BrowserEngineFamily::Unknown,
@@ -1843,6 +1860,10 @@ mod tests {
             pid: i64,
             window_id: u64,
         ) -> Result<NativeWindowInfo, BrowserRefusal> {
+            assert!(
+                !matches!(pid, 3 | 4),
+                "unsupported browser engines must refuse before native-window probing"
+            );
             use crate::browser::types::{NativeOwnershipMethod, NativeOwnershipProof, Rect};
             Ok(NativeWindowInfo {
                 pid,
@@ -2072,6 +2093,35 @@ mod tests {
         assert_eq!(
             structured(&result)["refusal"]["code"],
             "browser_route_unavailable"
+        );
+        assert_eq!(
+            structured(&result)["refusal"]["detail"]["engine_family"],
+            "webkit"
+        );
+        assert_eq!(
+            structured(&result)["refusal"]["detail"]["product"],
+            "safari"
+        );
+        assert_eq!(
+            structured(&result)["refusal"]["detail"]["limitation"],
+            "no_attachable_runtime_endpoint"
+        );
+    }
+
+    #[tokio::test]
+    async fn firefox_refusal_names_the_required_protocol_without_probing_the_window() {
+        let tool = GetBrowserStateTool::new(engine());
+        let result = tool
+            .invoke(json!({ "pid": 4, "window_id": 7, "_session_id": "run-1" }))
+            .await;
+        let refusal = &structured(&result)["refusal"];
+        assert_eq!(refusal["code"], "browser_route_unavailable");
+        assert_eq!(refusal["detail"]["engine_family"], "gecko");
+        assert_eq!(refusal["detail"]["product"], "firefox");
+        assert_eq!(refusal["detail"]["required_protocol"], "webdriver_bidi");
+        assert_eq!(
+            refusal["detail"]["limitation"],
+            "remote_agent_requires_launch_time_enablement"
         );
     }
 

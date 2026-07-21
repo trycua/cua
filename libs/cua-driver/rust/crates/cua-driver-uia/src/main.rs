@@ -67,7 +67,18 @@ impl PipeResponse {
 }
 
 #[cfg(target_os = "windows")]
-const PIPE_PATH: &str = r"\\.\pipe\cua-driver-uia";
+fn pipe_path() -> &'static str {
+    let is_local = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.file_name().map(|name| name.to_owned()))
+        .and_then(|name| name.to_str().map(str::to_owned))
+        .is_some_and(|name| name.eq_ignore_ascii_case("cua-driver-uia-local.exe"));
+    if is_local {
+        r"\\.\pipe\cua-driver-local-uia"
+    } else {
+        r"\\.\pipe\cua-driver-uia"
+    }
+}
 
 #[cfg(target_os = "windows")]
 fn main() -> anyhow::Result<()> {
@@ -92,13 +103,14 @@ async fn async_main() -> anyhow::Result<()> {
 
     let registry = std::sync::Arc::new(platform_windows::register_tools());
     let tool_count = registry.iter_defs().count();
-    eprintln!("cua-driver-uia: {tool_count} tools registered; listening on {PIPE_PATH}");
+    let pipe_path = pipe_path();
+    eprintln!("cua-driver-uia: {tool_count} tools registered; listening on {pipe_path}");
 
     loop {
         let server = ServerOptions::new()
             .first_pipe_instance(false)
-            .create(PIPE_PATH)
-            .map_err(|e| anyhow::anyhow!("create named pipe {PIPE_PATH}: {e}"))?;
+            .create(pipe_path)
+            .map_err(|e| anyhow::anyhow!("create named pipe {pipe_path}: {e}"))?;
 
         server
             .connect()

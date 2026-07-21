@@ -3,8 +3,6 @@ title: 'Drive a Web Page'
 description: 'Bind an exact browser window, inspect its active tab, and navigate, click, or type without foregrounding it.'
 ---
 
-# Drive a Web Page
-
 Use the browser tools when an agent must act inside Chromium or an Electron
 page without raising the native window. The tools bind the `(pid, window_id)`
 you selected to a DevTools target, then issue page input through that exact
@@ -80,29 +78,38 @@ that is already running and authenticated. Cua Driver does not restart the
 browser, copy the profile, or modify profile files. The route supports Chrome
 and Edge on macOS and Windows, plus Chrome in the validated Linux X11 and Sway
 configurations. Chromium and Edge have descriptor-backed Linux routes but are
-not yet product-validated there. Start a named driver session and mint an approval
-artifact for the exact process, native window, and session:
+not yet product-validated there. Start a named driver session and choose the
+permission mode before launching the daemon. The standalone daemon has no
+certified protected host provider, so `standard` and `autonomous` refuse
+logged-in profile attachment. For a disposable VM where you accept the risk,
+launch unrestricted mode explicitly:
 
 ```bash
-cua-driver browser-approve \
-  --strategy existing_profile \
-  --pid 844 \
-  --window-id 10725 \
-  --session research-1
+cua-driver serve \
+  --permission-mode unrestricted \
+  --dangerously-bypass-approvals
 ```
 
-The command requires an interactive terminal and asks you to type `APPROVE`.
-Pass its five-minute, single-use token to `browser_prepare`:
+Then request the exact process and native window:
 
 ```jsonc
 browser_prepare({
   "pid": 844,
   "window_id": 10725,
   "session": "research-1",
-  "strategy": {"kind": "existing_profile"},
-  "approval_token": "<token>"
+  "strategy": {"kind": "existing_profile"}
 })
 ```
+
+> **Warning:** Unrestricted mode has no runtime Cua approval prompts and makes
+> no prompt-injection safety claim. Prefer `isolated_new`. Use unrestricted
+> existing-profile attachment only in an environment whose account and data
+> exposure you accept.
+
+A trusted embedding host can install the protected-consent provider described
+in [Permission modes and bounded autonomy](/reference/cua-driver/permission-modes).
+In that configuration, `standard` prompts once for the bound browser resource,
+and `autonomous` uses the launch-approved session manifest.
 
 The browser may display its own remote-debugging consent prompt. Cua Driver will
 press only the exact browser-owned semantic allow action for this approved

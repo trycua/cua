@@ -495,7 +495,7 @@ impl Tool for ScrollTool {
             )
             .await;
 
-            let changes = snapshot.detect_async().await;
+            let changes = super::finish_window_observation(snapshot, &args).await;
             let mode_label = if fg {
                 " (delivery_mode:foreground)"
             } else {
@@ -567,7 +567,7 @@ impl Tool for ScrollTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        let changes = super::finish_window_observation(snapshot, &args).await;
 
         match result {
             Ok(Ok(())) => ToolResult::text(format!(

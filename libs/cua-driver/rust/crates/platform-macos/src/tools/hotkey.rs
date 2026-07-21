@@ -256,7 +256,7 @@ impl Tool for HotkeyTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        let changes = super::finish_window_observation(snapshot, &args).await;
 
         match result {
             Ok(Ok(())) => {

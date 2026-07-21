@@ -469,7 +469,7 @@ impl Tool for ClickTool {
             .await;
 
             // Drop the wildcard lease + detect window/foreground side-effects.
-            let changes = snapshot.detect_async().await;
+            let changes = super::finish_window_observation(snapshot, &args).await;
 
             match result {
                 Ok(Ok(((mut msg, needs_webkit_delay, suspected_noop), fronted))) => {
@@ -790,7 +790,7 @@ impl Tool for ClickTool {
             )
             .await;
 
-            let changes = snapshot.detect_async().await;
+            let changes = super::finish_window_observation(snapshot, &args).await;
 
             let button_label = match button_str.as_str() {
                 "right" => "right-click",

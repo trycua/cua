@@ -95,6 +95,42 @@ impl DeliveryMode {
     }
 }
 
+/// Finish the post-action observation window. Embedded interactive clients
+/// that already observe the target continuously may opt out through the
+/// private registry argument to avoid adding a one-second acknowledgement
+/// delay to every input event. Regular MCP callers retain the full observer.
+pub(crate) async fn finish_window_observation(
+    snapshot: crate::window_change_detector::Snapshot,
+    args: &serde_json::Value,
+) -> crate::window_change_detector::Changes {
+    if args
+        .get("_skip_window_change_detection")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        drop(snapshot);
+        crate::window_change_detector::Changes::no_change()
+    } else {
+        snapshot.detect_async().await
+    }
+}
+
+#[cfg(test)]
+mod interactive_observation_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn embedded_interactive_input_can_finish_without_polling() {
+        let snapshot = crate::window_change_detector::WindowChangeDetector::snapshot(None);
+        let changes = finish_window_observation(
+            snapshot,
+            &serde_json::json!({"_skip_window_change_detection": true}),
+        )
+        .await;
+        assert!(!changes.needs_restore());
+    }
+}
+
 /// px-focus for the keyboard family (type_text / press_key / hotkey): pixel-click
 /// at (x,y) to establish real renderer focus before a keystroke — the *element px
 /// action* form of a keyboard tool. Reuses ClickTool's exact coordinate

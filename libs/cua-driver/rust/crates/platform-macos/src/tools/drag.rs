@@ -383,7 +383,7 @@ impl Tool for DragTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        let changes = super::finish_window_observation(snapshot, &args).await;
 
         // Animate cursor to end position.
         crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), to_sx, to_sy).await;

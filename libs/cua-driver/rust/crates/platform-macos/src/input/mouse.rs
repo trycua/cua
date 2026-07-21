@@ -842,7 +842,7 @@ fn right_click_at_xy_inner(
 /// `button_number` MUST match the button encoded in the event type (right-down
 /// stamped with f3=0 routes as a left-click on the receiving side — this was the
 /// right-click-lands-as-nothing bug). Left=0, Right=1, Middle=2.
-fn post_mouse_event(
+pub(super) fn post_mouse_event(
     pid: i32,
     event: &CGEvent,
     window_local: Option<(f64, f64)>,

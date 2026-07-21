@@ -53,9 +53,11 @@ class cuaComputerHandler(AsyncComputerHandler):
             await self.interface.left_click(x, y)
         elif button == "right":
             await self.interface.right_click(x, y)
+        elif button == "middle":
+            await self.interface.mouse_down(x, y, button="middle")
+            await self.interface.mouse_up(x, y, button="middle")
         else:
-            # Default to left click for unknown buttons
-            await self.interface.left_click(x, y)
+            raise ValueError(f"Unsupported mouse button: {button}")
 
     async def double_click(self, x: int, y: int) -> None:
         """Double click at coordinates."""

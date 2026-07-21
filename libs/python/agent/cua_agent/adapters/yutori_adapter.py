@@ -19,15 +19,15 @@ class YutoriAdapter(CustomLLM):
         self.api_key = api_key or os.environ.get("YUTORI_API_KEY")
 
     def _normalize_model(self, model: str) -> str:
-        """Strip the yutori/ prefix and pin bare model names to their -latest alias.
+        """Strip the yutori/ prefix and pin the stable bare n1.5 alias.
 
-        The Yutori API only accepts versioned model names (e.g. "n1.5-latest",
-        "n1.5-20260428") and rejects bare names like "n1.5".
+        n2 intentionally has no bare ``n2`` → ``n2-latest`` alias; preview
+        callers must request ``n2-preview`` explicitly.
         """
         if model.startswith("yutori/"):
             model = model[len("yutori/") :]
-        if "-" not in model:
-            model = f"{model}-latest"
+        if model == "n1.5":
+            model = "n1.5-latest"
         return model
 
     def _resolve_api_key(self, kwargs: dict | None = None) -> str:

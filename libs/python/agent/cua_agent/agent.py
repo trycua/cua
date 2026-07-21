@@ -279,6 +279,7 @@ class ComputerAgent:
         trust_remote_code: Optional[bool] = False,
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
+        action_confirmation_callback: Optional[Callable[[Dict[str, Any]], Any]] = None,
         **additional_generation_kwargs,
     ):
         """
@@ -301,6 +302,8 @@ class ComputerAgent:
             trust_remote_code: If set, trust remote code when loading local models. Disabled by default.
             api_key: Optional API key override for the model provider
             api_base: Optional API base URL override for the model provider
+            action_confirmation_callback: Optional sync or async callback for
+                model actions explicitly marked as requiring confirmation.
             **additional_generation_kwargs: Additional arguments passed to the model provider
         """
         # If the loop is "human/human", we need to prefix a grounding model fallback
@@ -323,6 +326,7 @@ class ComputerAgent:
         self.trust_remote_code = trust_remote_code
         self.api_key = api_key
         self.api_base = api_base
+        self.action_confirmation_callback = action_confirmation_callback
 
         # == Add built-in callbacks ==
 
@@ -442,6 +446,8 @@ class ComputerAgent:
                 args_provided.append("api_key")
             if api_base:
                 args_provided.append("api_base")
+            if action_confirmation_callback:
+                args_provided.append("action_confirmation_callback")
             if additional_generation_kwargs:
                 args_provided.extend(additional_generation_kwargs.keys())
 
@@ -730,6 +736,139 @@ class ComputerAgent:
     # AGENT OUTPUT PROCESSING
     # ============================================================================
 
+    async def _confirm_computer_item(self, item: Dict[str, Any]) -> bool:
+        """Run the opt-in confirmation hook for a fully validated action item."""
+        if not item.get("_requires_confirmation") or self.action_confirmation_callback is None:
+            return True
+        request = {
+            "call_id": item.get("call_id"),
+            "tool_name": item.get("name"),
+            "arguments": item.get("arguments"),
+            "actions": item.get("_batch_actions") or item.get("_computer_actions") or [],
+        }
+        decision = self.action_confirmation_callback(request)
+        if inspect.isawaitable(decision):
+            decision = await decision
+        return bool(decision)
+
+    async def _handle_attached_computer_actions(
+        self,
+        item: Dict[str, Any],
+        computer: Optional[AsyncComputerHandler],
+    ) -> List[Dict[str, Any]]:
+        """Execute one validated Yutori call and capture exactly one result frame."""
+        call_id = item.get("call_id")
+        if not computer:
+            return [
+                make_tool_error_item("Computer handler is required for computer calls", call_id)
+            ]
+
+        await self._on_computer_call_start(item)
+        if not await self._confirm_computer_item(item):
+            result = [
+                {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": "[ERROR] Action was not confirmed by the user.",
+                }
+            ]
+            await self._on_computer_call_end(item, result)
+            return result
+
+        actions = item.get("_computer_actions") or []
+        batch_actions = item.get("_batch_actions")
+        batch_size = len(batch_actions) if isinstance(batch_actions, list) else 1
+        action_counts: Dict[int, int] = {}
+        if isinstance(batch_actions, list):
+            for action in actions:
+                batch_index = action.get("batch_index")
+                if isinstance(batch_index, int):
+                    action_counts[batch_index] = action_counts.get(batch_index, 0) + 1
+        else:
+            action_counts[0] = len(actions)
+
+        completed_members: Set[int] = set()
+        failed_index: Optional[int] = None
+        stopped_reason: Optional[str] = None
+        screenshot_base64: Optional[str] = None
+        started_at = time.monotonic()
+
+        for action in actions:
+            current_task = asyncio.current_task()
+            if current_task is not None and current_task.cancelling():
+                stopped_reason = "cancelled"
+                break
+            deadline = item.get("_execution_deadline")
+            if isinstance(deadline, (int, float)) and time.monotonic() >= deadline:
+                stopped_reason = "deadline_reached"
+                break
+
+            action_type = action.get("type")
+            batch_index = action.get("batch_index")
+            action_args = {
+                key: value for key, value in action.items() if key not in {"type", "batch_index"}
+            }
+            try:
+                if action_type == "screenshot":
+                    screenshot_base64 = await computer.screenshot()
+                    action_result = None
+                else:
+                    computer_method = getattr(computer, action_type, None)
+                    if computer_method is None:
+                        raise ToolError(f"Unknown computer action: {action_type}")
+                    assert_callable_with(computer_method, **action_args)
+                    action_result = await computer_method(**action_args)
+                    if isinstance(action_result, dict) and action_result.get("success") is False:
+                        raise ToolError(str(action_result.get("error") or action_result))
+
+                member_index = batch_index if isinstance(batch_index, int) else 0
+                action_counts[member_index] -= 1
+                if action_counts[member_index] == 0:
+                    completed_members.add(member_index)
+
+                if self.telemetry_enabled and is_telemetry_enabled():
+                    record_event(
+                        "computer_action_executed",
+                        {"action_type": action_type, "batch_length": batch_size},
+                    )
+            except Exception as error:
+                failed_index = batch_index if isinstance(batch_index, int) else 0
+                stopped_reason = str(error)
+                break
+
+        if screenshot_base64 is None:
+            if self.screenshot_delay and self.screenshot_delay > 0:
+                await asyncio.sleep(self.screenshot_delay)
+            screenshot_base64 = await computer.screenshot()
+        await self._on_screenshot(screenshot_base64, "screenshot_after")
+
+        completed = len(completed_members)
+        failed = 1 if failed_index is not None else 0
+        skipped = max(0, batch_size - completed - failed)
+        metadata = {
+            "completed": completed,
+            "failed": failed,
+            "skipped": skipped,
+            "failed_action_index": failed_index,
+            "status": "completed" if stopped_reason is None else "stopped",
+            "error": stopped_reason,
+            "duration_ms": round((time.monotonic() - started_at) * 1000),
+        }
+        output = {
+            "type": "input_image",
+            "image_url": f"data:image/png;base64,{screenshot_base64}",
+            "result": metadata,
+        }
+        result = [
+            {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": output,
+            }
+        ]
+        await self._on_computer_call_end(item, result)
+        return result
+
     async def _handle_item(
         self,
         item: Any,
@@ -742,6 +881,9 @@ class ComputerAgent:
             return []
 
         item_type = item.get("type", None)
+
+        if item_type == "function_call" and item.get("_computer_actions") is not None:
+            return await self._handle_attached_computer_actions(item, computer)
 
         if item_type == "message":
             await self._on_text(item)

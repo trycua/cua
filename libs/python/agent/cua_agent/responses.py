@@ -284,7 +284,6 @@ def replace_failed_computer_calls_with_function_calls(
     # Replace computer_call items that have matching call_ids
     for i, msg in enumerate(messages):
         if msg.get("type") == "computer_call" and msg.get("call_id") in failed_call_ids:
-
             # Extract action from computer_call
             action = msg.get("action", {})
             call_id = msg.get("call_id")
@@ -392,7 +391,6 @@ def convert_computer_calls_xy2desc(
                     and "x" in end_point
                     and "y" in end_point
                 ):
-
                     start_coords = (start_point["x"], start_point["y"])
                     end_coords = (end_point["x"], end_point["y"])
 
@@ -459,9 +457,9 @@ def convert_responses_items_to_completion_messages(
     """
     # Assert that allow_images_in_tool_results is False when use_xml_tools is True
     if use_xml_tools:
-        assert (
-            not allow_images_in_tool_results
-        ), "allow_images_in_tool_results must be False when use_xml_tools is True"
+        assert not allow_images_in_tool_results, (
+            "allow_images_in_tool_results must be False when use_xml_tools is True"
+        )
     completion_messages = []
 
     for i, message in enumerate(messages):
@@ -626,16 +624,30 @@ def convert_responses_items_to_completion_messages(
                 if isinstance(output, dict) and output.get("type") == "input_image":
                     if allow_images_in_tool_results:
                         # Handle image output as tool response (may not work with all APIs)
+                        content = []
+                        result_metadata = output.get("result")
+                        if result_metadata is not None:
+                            content.append(
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(
+                                        result_metadata,
+                                        separators=(",", ":"),
+                                        ensure_ascii=False,
+                                    ),
+                                }
+                            )
+                        content.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": output.get("image_url")},
+                            }
+                        )
                         completion_messages.append(
                             {
                                 "role": "tool",
                                 "tool_call_id": call_id,
-                                "content": [
-                                    {
-                                        "type": "image_url",
-                                        "image_url": {"url": output.get("image_url")},
-                                    }
-                                ],
+                                "content": content,
                             }
                         )
                     else:

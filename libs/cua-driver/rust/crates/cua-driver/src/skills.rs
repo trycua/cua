@@ -822,6 +822,33 @@ mod tests {
     }
 
     #[test]
+    fn macos_skill_keeps_ax_only_and_non_prompting_permission_guidance() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let macos = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/MACOS.md"))
+            .expect("canonical macOS skill must be readable");
+        let limits = std::fs::read_to_string(
+            crate_dir.join("../../../../../docs/content/docs/reference/cua-driver/limits.mdx"),
+        )
+        .expect("limits reference must be readable");
+
+        for required in [
+            "screen_recording_capturable` is `null",
+            "direct_capture_status` is `\"not_checked\"",
+            "include_screenshot:false",
+            "element-indexed AX actions",
+        ] {
+            assert!(
+                macos.contains(required),
+                "macOS skill lost required permission guidance: {required}"
+            );
+        }
+        assert!(
+            limits.contains("without this grant it returns the tree only (no PNG)"),
+            "limits reference must preserve the AX-only degraded path"
+        );
+    }
+
+    #[test]
     fn extract_flat_tarball_v_0_2_20_plus() {
         // Post-fix shape: one wrapper dir, files directly under it.
         //   cua-driver-rs-v0.2.20-skills/SKILL.md

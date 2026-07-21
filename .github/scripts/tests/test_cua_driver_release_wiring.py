@@ -34,6 +34,15 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("os: ubuntu-24.04-arm", workflow)
         self.assertIn("arch: arm64", workflow)
 
+    def test_macos_bundle_explains_screen_capture_and_automation_prompts(self) -> None:
+        plist = self.read(
+            "libs/cua-driver/rust/scripts/CuaDriverBundle/Contents/Info.plist"
+        )
+
+        self.assertIn("NSScreenCaptureUsageDescription", plist)
+        self.assertIn("NSAppleEventsUsageDescription", plist)
+        self.assertNotIn("NSMicrophoneUsageDescription", plist)
+
     def test_release_please_owns_driver_and_lume(self) -> None:
         config = self.read("release-please-config.json")
         workflow = self.read(".github/workflows/release-please.yml")

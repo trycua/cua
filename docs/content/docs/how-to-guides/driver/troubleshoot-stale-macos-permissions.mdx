@@ -117,8 +117,11 @@ cua-driver permissions status --json
 ```
 
 The result should report `accessibility: true`, `screen_recording: true`, and
-`source.attribution: "driver-daemon"`. The permissions status should also
-report `screen_recording_capturable: true`.
+`source.attribution: "driver-daemon"`. Because status is read-only, it should
+report `screen_recording_capturable: null` and
+`direct_capture_status: "not_checked"`. Run `cua-driver permissions grant` to
+request and verify direct ScreenCaptureKit access explicitly; do not use a
+read-only diagnostic as a prompt-capable probe.
 
 If either permission remains false, run `cua-driver diagnose` again and confirm
 that the reported executable and bundle are the installed

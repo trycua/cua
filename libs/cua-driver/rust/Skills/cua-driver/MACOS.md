@@ -222,20 +222,28 @@ editor state.
 
 1. `cua-driver` is on `$PATH` (`which cua-driver`). If not, point the
    user at `scripts/install-local.sh` and stop.
-2. Run `cua-driver check_permissions` (with the daemon up — see step 3).
-   The default behavior also raises the system permission dialogs for
-   any missing grants, so the user can grant on the spot. If either
-   grant still reads `false` after that (user dismissed the dialog),
-   tell them to open System Settings → Privacy & Security and grant
-   Accessibility and Screen Recording to `CuaDriver.app`, then stop.
-   Pass `'{"prompt":false}'` for a purely read-only status check that
-   won't steal focus.
-3. Start the daemon with `open -n -g -a CuaDriver --args serve` (the
+2. Start the daemon with `open -n -g -a CuaDriver --args serve` (the
    recommended form — goes through LaunchServices so TCC attributes
    the process to CuaDriver.app). `cua-driver serve &` also works;
    the CLI auto-relaunches through `open -n -g -a CuaDriver` when it
    detects a wrong-TCC context (any IDE-spawned shell: Claude Code,
    Cursor, VS Code, Conductor). Verify with `cua-driver status`.
+3. Run `cua-driver permissions status --json`. This
+   path is read-only: it checks Accessibility and Screen Recording but
+   deliberately does not run Tahoe's prompt-capable direct-capture probe.
+   Therefore `screen_recording_capturable` is `null` and
+   `direct_capture_status` is `"not_checked"` until the explicit grant flow.
+   - If Accessibility is `false`, stop. AX reads and actions cannot work;
+     tell the user to run `cua-driver permissions grant` and approve it.
+   - If Screen Recording is `false`, continue only when the task can be
+     completed and verified from the AX tree. Call `get_window_state` with
+     `include_screenshot:false` and use element-indexed AX actions. Do not use
+     screenshots, pixel coordinates, or pixel-based verification.
+   - If the task materially needs pixels, stop and ask the user to run
+     `cua-driver permissions grant`. That command explains and deliberately
+     triggers the additional private-window-picker bypass dialog before
+     verifying live capture. macOS mentions screen and audio in the combined
+     consent, although Cua Driver's current recorder does not enable audio.
 
 ## Resolve target pid — always via `launch_app`
 
@@ -299,9 +307,10 @@ macOS-specific residuals worth knowing (the rest of the capture/dispatch/
 addressing params are a shared cross-platform contract — see `SKILL.md` →
 *Cross-platform parameter contract*):
 
-- **`check_permissions.prompt` is macOS-only.** It raises the TCC
-  Accessibility / Screen-Recording dialogs; pass `{"prompt":false}` for a
-  read-only status check. There is no Windows/Linux equivalent — TCC is a
+- **`check_permissions.prompt` is macOS-only.** `true` raises the TCC
+  Accessibility / Screen-Recording dialogs and runs the prompt-capable direct
+  ScreenCaptureKit probe. `false` is read-only and returns direct-capture
+  readiness as not checked. There is no Windows/Linux equivalent — TCC is a
   macOS construct, so the param is intentionally absent from the shared
   contract.
 - **`session` always worked on macOS;** the cross-platform change is that
@@ -514,7 +523,7 @@ starting point for new browser workflows.
 |---|---|---|
 | macOS system-alert beep on `press_key` with no visible change | Target window is minimized; Return / Space / Tab commits don't establish real renderer focus on minimized windows | AX-click a clickable equivalent (Go button, Submit button, checkbox) instead of pressing the key; see "Keyboard commits on minimized windows" under the Browser section |
 | `Accessibility permission not granted` | TCC not granted | Stop; tell user to grant in System Settings |
-| `Screen Recording permission not granted` | TCC not granted for capture | Affects `screenshot` and `get_window_state` (which always captures). Grant in System Settings — the driver can't operate without it |
+| `Screen Recording permission not granted` | TCC not granted for capture | Screenshots and pixel actions are unavailable. If the task is AX-completable, use `get_window_state({include_screenshot:false})` and element-indexed actions; otherwise stop and ask the user to run `cua-driver permissions grant` |
 
 ## Example end-to-end task (macOS)
 

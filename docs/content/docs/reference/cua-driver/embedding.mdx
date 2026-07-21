@@ -68,7 +68,8 @@ Call the `check_permissions` MCP tool after the proxy connects to the embedded d
 {
   "accessibility": true,
   "screen_recording": true,
-  "screen_recording_capturable": true,
+  "screen_recording_capturable": null,
+  "direct_capture_status": "not_checked",
   "source": {
     "attribution": "host",
     "host_bundle_id": "com.yourco.yourapp",
@@ -76,6 +77,11 @@ Call the `check_permissions` MCP tool after the proxy connects to the embedded d
   }
 }
 ```
+
+Embedded mode never lets the driver raise consent dialogs, so this read-only
+call deliberately does not run the prompt-capable ScreenCaptureKit probe. The
+host should present its own consent context and verify pixels with an explicit
+screenshot/capture operation.
 
 If `source.attribution` is not `host` on macOS, embedded mode is not active in the daemon handling your MCP calls. Check that `CUA_DRIVER_EMBEDDED=1` is passed to the `serve` child, that the daemon was spawned directly, and that the proxy uses the intended private socket.
 

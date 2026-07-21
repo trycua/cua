@@ -38,6 +38,10 @@ fn screen_recording_capturable() -> bool {
         .unwrap_or(false)
 }
 
+fn should_probe_direct_capture(should_prompt: bool, screen_recording: bool) -> bool {
+    should_prompt && screen_recording
+}
+
 /// (B) Which TCC identity the booleans in this response reflect.
 ///
 /// macOS attributes Accessibility / Screen-Recording to the *responsible
@@ -135,11 +139,13 @@ fn def() -> &'static ToolDef {
             status check.\n\n\
             Returns: `accessibility` + `screen_recording` (booleans from the TCC \
             preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit \
-            probe — if it disagrees with `screen_recording`, the preflight grant \
-            belongs to a different process), and `source` (which TCC identity the \
+            probe when `prompt` is true; null on read-only calls), \
+            `direct_capture_status` (`ready`, `unavailable`, \
+            `blocked_by_screen_recording`, or `not_checked`), and `source` (which TCC identity the \
             booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). \
             macOS attributes grants to the responsible process, so a standalone call \
-            from a terminal reports the terminal's grants, not the driver's.".into(),
+            from a terminal reports the terminal's grants, not the driver's. The \
+            prompt-capable ScreenCaptureKit probe never runs when `prompt` is false.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -180,7 +186,23 @@ impl Tool for CheckPermissionsTool {
         let accessibility = accessibility_granted();
         let screen_recording = screen_recording_granted();
         // (A) Authoritative live probe — see `screen_recording_capturable`.
-        let screen_recording_capturable = screen_recording_capturable();
+        // SCShareableContent::get() can itself raise Tahoe's separate
+        // private-window-picker bypass consent. A status/read-only call must
+        // therefore never execute it. The explicit grant path opts in with
+        // `prompt:true`, explains the dialog first, and verifies the result.
+        let (screen_recording_capturable, direct_capture_status) = if !should_prompt {
+            (None, "not_checked")
+        } else if !screen_recording {
+            (None, "blocked_by_screen_recording")
+        } else if should_probe_direct_capture(should_prompt, screen_recording) {
+            let capturable = screen_recording_capturable();
+            (
+                Some(capturable),
+                if capturable { "ready" } else { "unavailable" },
+            )
+        } else {
+            unreachable!("all non-probing direct-capture states were handled")
+        };
         // (B) Which identity the booleans above belong to.
         let source = permission_source();
         let is_caller = source.get("attribution").and_then(|v| v.as_str()) == Some("caller");
@@ -203,10 +225,16 @@ impl Tool for CheckPermissionsTool {
             "{ax_prefix} Accessibility: {ax_state}.\n{sr_prefix} Screen Recording: {sr_state}."
         );
         // Flag a preflight/probe disagreement (the false-positive tell).
-        if screen_recording && !screen_recording_capturable {
+        if screen_recording_capturable == Some(false) {
             summary.push_str(
                 "\n⚠️  Screen Recording reads granted but a live capture probe failed — \
                  the grant likely belongs to a different process, not this one.",
+            );
+        } else if screen_recording_capturable.is_none() && !should_prompt {
+            summary.push_str(
+                "\nℹ️  Direct ScreenCaptureKit readiness was not probed because this is a \
+                 read-only check. Run `cua-driver permissions grant` to request and \
+                 verify direct capture explicitly.",
             );
         }
         // Make the attribution explicit when answering for a host or caller
@@ -229,6 +257,7 @@ impl Tool for CheckPermissionsTool {
             "accessibility":               accessibility,
             "screen_recording":            screen_recording,
             "screen_recording_capturable": screen_recording_capturable,
+            "direct_capture_status":        direct_capture_status,
             "source":                      source,
         }))
     }
@@ -278,6 +307,14 @@ mod tests {
             driver_bundle_id_for_executable("/Users/test/.local/bin/cua-driver-local"),
             None
         );
+    }
+
+    #[test]
+    fn read_only_checks_never_run_the_prompt_capable_direct_capture_probe() {
+        assert!(!should_probe_direct_capture(false, false));
+        assert!(!should_probe_direct_capture(false, true));
+        assert!(!should_probe_direct_capture(true, false));
+        assert!(should_probe_direct_capture(true, true));
     }
 
     #[test]

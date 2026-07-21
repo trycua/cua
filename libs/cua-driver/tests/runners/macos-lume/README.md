@@ -171,7 +171,8 @@ remaining consent paths before freezing the seed:
 osascript -e \
   'tell application "System Events" to get name of first application process whose frontmost is true'
 
-# The installed app owns driver-side app enumeration.
+# The installed app owns driver-side app enumeration. This uses NSWorkspace and
+# must not require Automation access to System Events.
 ~/.local/bin/cua-driver-local list_apps '{}'
 
 # A desktop screenshot triggers Tahoe's direct-capture/private-window prompt.
@@ -189,24 +190,34 @@ jq -e '
 ' /tmp/cua-driver-seed-desktop-state.json >/dev/null
 ```
 
-Choose Allow for both `Terminal` -> `System Events` and `CuaDriverLocal` ->
-`System Events`, and choose Allow on the CuaDriverLocal direct-capture prompt. These
-are normal macOS consent flows; do not edit `TCC.db`. Rerun the commands and
-require them to finish without another prompt. Then verify the daemon's own
-identity, live capture permission, stable signature, and SIP state:
+Choose Allow for `Terminal` -> `System Events` and on the CuaDriverLocal
+direct-capture prompt. CuaDriverLocal app enumeration must not ask for System
+Events. Target-specific Automation prompts may still appear later when a user
+explicitly requests an Apple Events-backed browser or app operation; do not
+pre-grant those in the seed. These are normal macOS consent flows; do not edit
+`TCC.db`. Rerun the commands and require them to finish without another prompt.
+Then verify the daemon's own
+identity and the read-only status contract before running the explicit live
+capture probe. The first command must not raise a dialog; the second is
+intentionally prompt-capable:
 
 ```bash
 ~/.local/bin/cua-driver-local permissions status --json | jq -e '
   .accessibility == true
   and .screen_recording == true
-  and .screen_recording_capturable == true
+  and .screen_recording_capturable == null
+  and .direct_capture_status == "not_checked"
   and .source.attribution == "driver-daemon"
+'
+~/.local/bin/cua-driver-local call check_permissions '{"prompt":true}' | jq -e '
+  .structuredContent.screen_recording_capturable == true
+  and .structuredContent.direct_capture_status == "ready"
 '
 codesign -d -r- /Applications/CuaDriverLocal.app 2>&1 | grep 'certificate leaf'
 csrutil status
 ```
 
-All three commands must succeed, and `csrutil status` must report disabled.
+All four commands must succeed, and `csrutil status` must report disabled.
 Stop the builder and clone it to a date/version-named private seed plus two
 stopped backups:
 
@@ -229,8 +240,9 @@ granted and then rerun without prompts:
 
 - `CuaDriverLocal.app`: Accessibility and Screen Recording
 - Terminal controlling System Events
-- CuaDriverLocal controlling System Events
-- CuaDriverLocal direct screen and audio capture without the system picker
+- CuaDriverLocal direct screen capture without the system picker. macOS labels
+  this combined consent as screen and system-audio access even though Cua
+  Driver's current ScreenCaptureKit recorder does not enable audio capture.
 
 Build a new seed instead of updating one in place.
 

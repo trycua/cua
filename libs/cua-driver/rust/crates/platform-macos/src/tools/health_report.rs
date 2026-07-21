@@ -57,7 +57,7 @@ impl HealthCheckProvider for MacosHealthProvider {
             NAME_TCC_ACCESSIBILITY => check_tcc_accessibility(),
             NAME_TCC_SCREEN_RECORDING => check_tcc_screen_recording(),
             NAME_AX_CAPABILITY => check_ax_capability(),
-            NAME_SCREEN_CAPTURE_CAPABILITY => check_screen_capture_capability().await,
+            NAME_SCREEN_CAPTURE_CAPABILITY => check_screen_capture_capability(),
             // Defensive: the dispatcher only forwards names in
             // `check_names()`, so this branch should be unreachable.
             other => CheckEntry::skip(
@@ -203,50 +203,19 @@ fn check_ax_capability() -> CheckEntry {
     )
 }
 
-async fn check_screen_capture_capability() -> CheckEntry {
-    // Live ScreenCaptureKit probe — same shape as `check_permissions`'s
-    // `screen_recording_capturable`, but answer the consumer-facing
-    // capability question and surface the display count.
-    //
-    // `SCShareableContent::get()` is a synchronous C call; wrap it in
-    // spawn_blocking so the async runtime isn't held by a system call
-    // that can take 10-100ms on first invocation.
-    let result = tokio::task::spawn_blocking(probe_shareable_displays)
-        .await
-        .unwrap_or(Err("probe task panicked".to_owned()));
-    match result {
-        Ok(count) => CheckEntry::pass(
-            NAME_SCREEN_CAPTURE_CAPABILITY,
-            format!("ScreenCaptureKit reachable; {count} display(s) shareable."),
-        )
-        .with_data(CheckData {
-            display_count: Some(count),
-            ..Default::default()
-        }),
-        Err(detail) => CheckEntry::fail(
-            NAME_SCREEN_CAPTURE_CAPABILITY,
-            "ScreenCaptureKit probe failed.",
-            "Confirm tcc_screen_recording is granted. If it is, this is an SCK regression — \
-             set capture_mode to `ax` to skip screen capture entirely.",
-        )
-        .with_data(CheckData {
-            error_detail: Some(detail),
-            ..Default::default()
-        }),
-    }
+fn check_screen_capture_capability() -> CheckEntry {
+    // SCShareableContent::get() is not a read-only probe on recent macOS:
+    // Tahoe may display the separate private-window-picker bypass consent.
+    // `health_report` is declared read-only, so fail closed to an explicit
+    // unknown/skip state. `permissions grant` is the sole flow allowed to
+    // explain, request, and verify direct capture.
+    CheckEntry::skip(
+        NAME_SCREEN_CAPTURE_CAPABILITY,
+        "Direct ScreenCaptureKit readiness was not probed because health_report is read-only; run `cua-driver permissions grant` to request and verify it explicitly.",
+    )
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-/// Live ScreenCaptureKit probe — enumerates shareable displays. Writes
-/// nothing to disk; we never start a stream. Returns display count on
-/// success, error string on failure.
-fn probe_shareable_displays() -> Result<u32, String> {
-    use screencapturekit::prelude::SCShareableContent;
-    let content =
-        SCShareableContent::get().map_err(|e| format!("SCShareableContent::get: {e:?}"))?;
-    Ok(content.displays().len() as u32)
-}
 
 /// Read the running process's `CFBundleIdentifier` via CoreFoundation.
 /// Returns `None` when the process has no associated bundle (e.g.
@@ -337,6 +306,13 @@ mod tests {
     fn session_active_passes() {
         let entry = check_session_active();
         assert_eq!(entry.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn screen_capture_capability_is_not_probed_by_read_only_health_report() {
+        let entry = check_screen_capture_capability();
+        assert_eq!(entry.status, CheckStatus::Skip);
+        assert!(entry.message.contains("permissions grant"));
     }
 
     #[test]

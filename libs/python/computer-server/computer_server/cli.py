@@ -56,9 +56,13 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     # Backend selection
     parser.add_argument(
         "--backend",
-        choices=["native", "vnc"],
+        choices=["native", "vnc", "cua-driver"],
         default="native",
-        help="Handler backend: 'native' uses OS-specific handlers, 'vnc' uses VNC (default: native)",
+        help=(
+            "Handler backend: 'native' uses OS-specific handlers, 'vnc' uses VNC, "
+            "and 'cua-driver' delegates portable GUI actions to Cua Driver "
+            "(default: native)"
+        ),
     )
 
     # VNC backend options
@@ -110,6 +114,9 @@ def main() -> None:
             os.environ["CUA_VNC_PASSWORD"] = args.vnc_password
         vnc_host = args.vnc_host or os.environ.get("CUA_VNC_HOST")
         logger.info(f"VNC backend enabled → {vnc_host}:{args.vnc_port}")
+    elif args.backend == "cua-driver":
+        os.environ["CUA_BACKEND"] = "cua-driver"
+        logger.info("Cua Driver compatibility backend enabled")
 
     # Create and start the server
     logger.info(f"Starting Cua Computer API server on {args.host}:{args.port}...")

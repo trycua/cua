@@ -41,6 +41,53 @@ class HandlerFactory:
     """Factory for creating OS-specific handlers."""
 
     @staticmethod
+    def _create_native_handlers() -> Tuple[
+        BaseAccessibilityHandler,
+        BaseAutomationHandler,
+        BaseDioramaHandler,
+        BaseFileHandler,
+        BaseDesktopHandler,
+        BaseWindowHandler,
+    ]:
+        if OS_TYPE == "android":
+            return (
+                AndroidAccessibilityHandler(),
+                AndroidAutomationHandler(),
+                BaseDioramaHandler(),
+                AndroidFileHandler(),
+                AndroidDesktopHandler(),
+                AndroidWindowHandler(),
+            )
+        if OS_TYPE == "darwin":
+            return (
+                MacOSAccessibilityHandler(),
+                MacOSAutomationHandler(),
+                MacOSDioramaHandler(),
+                GenericFileHandler(),
+                GenericDesktopHandler(),
+                GenericWindowHandler(),
+            )
+        if OS_TYPE == "linux":
+            return (
+                LinuxAccessibilityHandler(),
+                LinuxAutomationHandler(),
+                BaseDioramaHandler(),
+                GenericFileHandler(),
+                GenericDesktopHandler(),
+                GenericWindowHandler(),
+            )
+        if OS_TYPE == "windows":
+            return (
+                WindowsAccessibilityHandler(),
+                WindowsAutomationHandler(),
+                BaseDioramaHandler(),
+                GenericFileHandler(),
+                GenericDesktopHandler(),
+                GenericWindowHandler(),
+            )
+        raise NotImplementedError(f"OS '{OS_TYPE}' is not supported")
+
+    @staticmethod
     def create_handlers() -> Tuple[
         BaseAccessibilityHandler,
         BaseAutomationHandler,
@@ -52,8 +99,8 @@ class HandlerFactory:
         """Create and return appropriate handlers for the current OS.
 
         Returns:
-            Tuple[BaseAccessibilityHandler, BaseAutomationHandler, BaseDioramaHandler, BaseFileHandler]: A tuple containing
-            the appropriate accessibility, automation, diorama, and file handlers for the current OS.
+            The accessibility, automation, diorama, file, desktop, and window
+            handlers for the current OS.
 
         Raises:
             NotImplementedError: If the current OS is not supported
@@ -80,41 +127,24 @@ class HandlerFactory:
                 GenericDesktopHandler(),
                 GenericWindowHandler(),
             )
-        elif OS_TYPE == "android":
-            return (
-                AndroidAccessibilityHandler(),
-                AndroidAutomationHandler(),
-                BaseDioramaHandler(),
-                AndroidFileHandler(),
-                AndroidDesktopHandler(),
-                AndroidWindowHandler(),
-            )
-        elif OS_TYPE == "darwin":
-            return (
-                MacOSAccessibilityHandler(),
-                MacOSAutomationHandler(),
-                MacOSDioramaHandler(),
-                GenericFileHandler(),
-                GenericDesktopHandler(),
-                GenericWindowHandler(),
-            )
-        elif OS_TYPE == "linux":
-            return (
-                LinuxAccessibilityHandler(),
-                LinuxAutomationHandler(),
-                BaseDioramaHandler(),
-                GenericFileHandler(),
-                GenericDesktopHandler(),
-                GenericWindowHandler(),
-            )
-        elif OS_TYPE == "windows":
-            return (
-                WindowsAccessibilityHandler(),
-                WindowsAutomationHandler(),
-                BaseDioramaHandler(),
-                GenericFileHandler(),
-                GenericDesktopHandler(),
-                GenericWindowHandler(),
-            )
-        else:
-            raise NotImplementedError(f"OS '{OS_TYPE}' is not supported")
+
+        native_handlers = HandlerFactory._create_native_handlers()
+        if backend != "cua-driver":
+            if backend != "native":
+                raise ValueError("CUA_BACKEND must be native, vnc, or cua-driver")
+            return native_handlers
+
+        if OS_TYPE == "android":
+            raise NotImplementedError("The cua-driver backend does not support Android")
+
+        from .cua_driver import CuaDriverAutomationHandler
+
+        accessibility, automation, diorama, files, desktop, windows = native_handlers
+        return (
+            accessibility,
+            CuaDriverAutomationHandler(automation),
+            diorama,
+            files,
+            desktop,
+            windows,
+        )

@@ -1105,6 +1105,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+driver = [
+    { name = "cua-driver" },
+]
 linux = [
     { name = "python-xlib" },
 ]
@@ -1125,6 +1128,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.9.1" },
     { name = "cua-auto", editable = "libs/python/cua-auto" },
     { name = "cua-core", editable = "libs/python/core" },
+    { name = "cua-driver", marker = "extra == 'driver'", editable = "libs/cua-driver/python" },
     { name = "fastapi", specifier = ">=0.111.0" },
     { name = "fastmcp", specifier = ">=3.2.0,<3.3.0" },
     { name = "grpcio", specifier = "==1.78.0" },
@@ -1150,7 +1154,7 @@ requires-dist = [
     { name = "vncdotool", marker = "extra == 'vnc'", specifier = ">=1.2.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]
-provides-extras = ["macos", "linux", "windows", "vnc"]
+provides-extras = ["macos", "linux", "windows", "vnc", "driver"]
 
 [[package]]
 name = "cua-core"
@@ -1191,6 +1195,15 @@ provides-extras = ["otel", "telemetry"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.3.5" }]
+
+[[package]]
+name = "cua-driver"
+version = "0.10.0"
+source = { editable = "libs/cua-driver/python" }
+
+[package.metadata]
+requires-dist = [{ name = "pytest", marker = "extra == 'test'" }]
+provides-extras = ["test"]
 
 [[package]]
 name = "cua-mcp-server"

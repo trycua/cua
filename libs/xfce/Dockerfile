@@ -16,6 +16,12 @@ ENV API_PORT=8000
 ENV VNC_RESOLUTION=1024x768
 ENV VNC_COL_DEPTH=24
 
+# POC selector. The default preserves the published image contract. Building
+# with --build-arg CUA_GUI_RUNTIME=cua-driver omits computer-server and runs the
+# local Rust daemon for co-located SDK clients instead.
+ARG CUA_GUI_RUNTIME=computer-server
+ENV CUA_GUI_RUNTIME=${CUA_GUI_RUNTIME}
+
 USER root
 
 # Install system dependencies
@@ -103,9 +109,20 @@ RUN git clone https://github.com/trycua/noVNC.git /opt/noVNC && \
     git clone https://github.com/novnc/websockify /opt/noVNC/utils/websockify && \
     ln -s /opt/noVNC/vnc.html /opt/noVNC/index.html
 
-# Install Python packages into /opt/venv (Python 3.13)
+# Install exactly one GUI runtime. cua-driver includes its Rust daemon and the
+# Python UniFFI SDK; it intentionally does not expose computer-server's port
+# 8000 remote API.
+RUN if [ "$CUA_GUI_RUNTIME" = "cua-driver" ]; then \
+        uv pip install --python /opt/venv/bin/python3 "cua-driver>=0.10.0,<0.11.0"; \
+    elif [ "$CUA_GUI_RUNTIME" = "computer-server" ]; then \
+        uv pip install --python /opt/venv/bin/python3 cua-computer-server; \
+    else \
+        echo "CUA_GUI_RUNTIME must be computer-server or cua-driver" >&2; \
+        exit 2; \
+    fi
+
+# Install common Python packages into /opt/venv (Python 3.13)
 RUN uv pip install --python /opt/venv/bin/python3 \
-    cua-computer-server \
     "cua-agent[all]" \
     "pywebview[gtk]" \
     "cua-bench-ui>=0.7.0" \
@@ -129,7 +146,7 @@ RUN uv pip install --python /opt/venv/bin/python3 \
 # Copy startup scripts
 COPY src/supervisor/ /etc/supervisor/conf.d/
 COPY src/scripts/ /usr/local/bin/
-RUN chmod +x /usr/local/bin/*.sh
+RUN chmod +x /usr/local/bin/*.sh /usr/local/bin/verify-cua-driver-sdk.py
 
 # Set ownership and switch to cua user
 RUN chown -R cua:cua /home/cua
@@ -158,7 +175,9 @@ RUN mkdir -p $HOME/storage $HOME/shared $HOME/.cache/dconf $HOME/.mozilla/firefo
 
 USER root
 
-# Expose ports
+# Port 8000 is useful only in the default computer-server build. Dockerfile
+# cannot make EXPOSE conditional, so direct-driver users should publish only
+# the VNC/noVNC ports.
 EXPOSE $VNC_PORT $NOVNC_PORT $API_PORT
 
 # Start services via supervisor

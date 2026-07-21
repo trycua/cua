@@ -54,6 +54,9 @@ windows = [
 vnc = [
     "vncdotool>=1.2.0"
 ]
+driver = [
+    "cua-driver>=0.10.0,<0.11.0"
+]
 
 [project.urls]
 homepage = "https://github.com/trycua/cua"
@@ -90,3 +93,4 @@ api = "python -m computer_server"
 [tool.uv.sources]
 cua-core = { workspace = true }
 cua-auto = { path = "../cua-auto", editable = true }
+cua-driver = { path = "../../cua-driver/python", editable = true }

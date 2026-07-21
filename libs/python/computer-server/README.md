@@ -21,6 +21,9 @@ pip install cua-computer-server
 
 # With MCP support
 pip install cua-computer-server[mcp]
+
+# Experimental: keep the server protocol but delegate GUI actions to Cua Driver
+pip install cua-computer-server[driver]
 ```
 
 ## Usage
@@ -48,6 +51,28 @@ This provides:
 - MCP server at `/mcp` endpoint (requires `fastmcp` package)
 
 MCP clients can connect via streamable HTTP at `http://localhost:8000/mcp`.
+
+### Experimental Cua Driver backend
+
+The driver backend keeps computer-server's HTTP/WebSocket compatibility API,
+PTY, files, shell, clipboard, and window services while routing overlapping
+desktop input and capture operations through the local Rust Cua Driver daemon:
+
+```bash
+cua-driver serve --permission-mode standard
+python -m computer_server --backend cua-driver --port 8000
+```
+
+Grant the daemon the OS permissions required on the host before starting it.
+The example selects the normal `standard` authorization mode explicitly.
+
+It uses a desktop-scope session by default to preserve computer-server's
+whole-screen behavior. The session can be configured with
+`CUA_DRIVER_SESSION_ID` and `CUA_DRIVER_SOCKET`. Window and auto scopes are not
+offered by this backend because the legacy protocol does not carry window
+targets or the agent-ladder escalation signal. This is a migration bridge, not
+a protocol replacement: remote clients still connect to computer-server, while
+unsupported driver operations fall back to the existing native handlers.
 
 #### Resolution Scaling
 

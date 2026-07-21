@@ -166,23 +166,17 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('"path": "scripts/install.ps1"', config)
         self.assertIn('"path": "rust/Skills/cua-driver/SKILL.md"', config)
 
-    def test_installers_preserve_legacy_telemetry_state_before_cleanup(self) -> None:
-        for relative_path in (
-            "libs/cua-driver/scripts/_install-rust.sh",
-            "libs/cua-driver/scripts/_install-local-rust.sh",
-        ):
-            installer = self.read(relative_path)
-            cleanup = installer.index('rm -rf "$LEGACY_HOME_DIR"')
-            self.assertLess(
-                installer.index("for telemetry_file in .telemetry_id .installation_recorded"),
-                cleanup,
-                relative_path,
-            )
-            self.assertLess(
-                installer.index('cp -p "$LEGACY_HOME_DIR/$telemetry_file"'),
-                cleanup,
-                relative_path,
-            )
+    def test_release_installers_preserve_legacy_telemetry_state_before_cleanup(self) -> None:
+        installer = self.read("libs/cua-driver/scripts/_install-rust.sh")
+        cleanup = installer.index('rm -rf "$LEGACY_HOME_DIR"')
+        self.assertLess(
+            installer.index("for telemetry_file in .telemetry_id .installation_recorded"),
+            cleanup,
+        )
+        self.assertLess(
+            installer.index('cp -p "$LEGACY_HOME_DIR/$telemetry_file"'),
+            cleanup,
+        )
 
         powershell = self.read("libs/cua-driver/scripts/install.ps1")
         cleanup = powershell.index("Remove-Item -LiteralPath $LegacyHomeDir -Recurse -Force")
@@ -196,6 +190,17 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             powershell.index("Copy-Item -LiteralPath $legacyTelemetryPath"),
             cleanup,
         )
+
+    def test_local_installer_does_not_clean_release_or_legacy_homes(self) -> None:
+        installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")
+
+        self.assertIn(
+            'HOME_DIR="${CUA_DRIVER_LOCAL_HOME:-$HOME/.cua-driver-local}"',
+            installer,
+        )
+        self.assertNotIn("LEGACY_HOME_DIR", installer)
+        self.assertNotIn(".cua-driver-rs", installer)
+        self.assertNotIn('rm -rf "$HOME/.cua-driver"', installer)
 
     def test_local_macos_signing_uses_an_unambiguous_identity_hash(self) -> None:
         installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")

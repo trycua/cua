@@ -30,14 +30,14 @@ that exact commit.
 - Keep the named golden VM stopped and never run tests in it directly.
 - Put no repository credentials, signing secrets, or maintainer private SSH
   keys in the guest. A host public key is sufficient for source sync.
-- Grant TCC permissions through `CuaDriver.app`. Do not edit `TCC.db`.
+- Grant TCC permissions through `CuaDriverLocal.app`. Do not edit `TCC.db`.
 - Require a certificate-backed local signature. An ad-hoc signature invalidates
   the inherited grants on the next build.
 - Clone one worker per run, retrieve its evidence, then delete the worker.
 
 SIP-off does not grant or bypass TCC. It makes the disposable behavior lane
 repeatable while the private seed carries grants obtained through the normal
-`CuaDriver.app` prompt flow. The SIP-on check below owns the separate claim that
+`CuaDriverLocal.app` prompt flow. The SIP-on check below owns the separate claim that
 the supported permission flow still works with normal platform protection.
 
 ## Create the private seed
@@ -159,7 +159,7 @@ identity` message before granting permissions through the app-owned flow:
 
 ```bash
 bash libs/cua-driver/scripts/install-local.sh --release --autostart
-~/.local/bin/cua-driver permissions grant
+~/.local/bin/cua-driver-local permissions grant
 ```
 
 Complete the Accessibility and Screen Recording prompts. Tahoe 26 also asks
@@ -172,15 +172,15 @@ osascript -e \
   'tell application "System Events" to get name of first application process whose frontmost is true'
 
 # The installed app owns driver-side app enumeration.
-~/.local/bin/cua-driver list_apps '{}'
+~/.local/bin/cua-driver-local list_apps '{}'
 
 # A desktop screenshot triggers Tahoe's direct-capture/private-window prompt.
-~/.local/bin/cua-driver call start_session \
+~/.local/bin/cua-driver-local call start_session \
   '{"session":"seed-desktop-consent","capture_scope":"desktop"}'
-~/.local/bin/cua-driver call get_desktop_state \
+~/.local/bin/cua-driver-local call get_desktop_state \
   '{"session":"seed-desktop-consent"}' \
   > /tmp/cua-driver-seed-desktop-state.json
-~/.local/bin/cua-driver call end_session '{"session":"seed-desktop-consent"}'
+~/.local/bin/cua-driver-local call end_session '{"session":"seed-desktop-consent"}'
 jq -e '
   .screenshot_mime_type == "image/png"
   and .screenshot_width > 0
@@ -189,20 +189,20 @@ jq -e '
 ' /tmp/cua-driver-seed-desktop-state.json >/dev/null
 ```
 
-Choose Allow for both `Terminal` -> `System Events` and `CuaDriver` ->
-`System Events`, and choose Allow on the CuaDriver direct-capture prompt. These
+Choose Allow for both `Terminal` -> `System Events` and `CuaDriverLocal` ->
+`System Events`, and choose Allow on the CuaDriverLocal direct-capture prompt. These
 are normal macOS consent flows; do not edit `TCC.db`. Rerun the commands and
 require them to finish without another prompt. Then verify the daemon's own
 identity, live capture permission, stable signature, and SIP state:
 
 ```bash
-~/.local/bin/cua-driver permissions status --json | jq -e '
+~/.local/bin/cua-driver-local permissions status --json | jq -e '
   .accessibility == true
   and .screen_recording == true
   and .screen_recording_capturable == true
   and .source.attribution == "driver-daemon"
 '
-codesign -d -r- /Applications/CuaDriver.app 2>&1 | grep 'certificate leaf'
+codesign -d -r- /Applications/CuaDriverLocal.app 2>&1 | grep 'certificate leaf'
 csrutil status
 ```
 
@@ -227,10 +227,10 @@ Lume version, CLT version, Rust version, Node version, and signing-certificate
 hash in the maintainer log. Also record that the following consent paths were
 granted and then rerun without prompts:
 
-- `CuaDriver.app`: Accessibility and Screen Recording
+- `CuaDriverLocal.app`: Accessibility and Screen Recording
 - Terminal controlling System Events
-- CuaDriver controlling System Events
-- CuaDriver direct screen and audio capture without the system picker
+- CuaDriverLocal controlling System Events
+- CuaDriverLocal direct screen and audio capture without the system picker
 
 Build a new seed instead of updating one in place.
 
@@ -317,9 +317,9 @@ golden image's inherited grants.
 4. In the VM display, reset only the disposable worker's grants:
 
    ```bash
-   tccutil reset Accessibility com.trycua.driver
-   tccutil reset ScreenCapture com.trycua.driver
-   ~/.local/bin/cua-driver permissions grant
+   tccutil reset Accessibility com.trycua.driver.local
+   tccutil reset ScreenCapture com.trycua.driver.local
+   ~/.local/bin/cua-driver-local permissions grant
    ```
 
 5. Complete the prompts and require the same four-field

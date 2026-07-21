@@ -255,7 +255,9 @@ pub fn reset_id() -> Result<(), String> {
     let Some(home) = telemetry_home_dir() else {
         return Ok(());
     };
-    let legacy = if std::env::var_os(ENV_TELEMETRY_HOME).is_none() {
+    let legacy = if std::env::var_os(ENV_TELEMETRY_HOME).is_none()
+        && !crate::bundle::is_local_installation()
+    {
         home_root().map(|root| root.join(LEGACY_HOME_SUBDIRECTORY))
     } else {
         None
@@ -2070,7 +2072,7 @@ fn telemetry_home_dir() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os(ENV_TELEMETRY_HOME) {
         return Some(PathBuf::from(path));
     }
-    home_root().map(|home| home.join(HOME_SUBDIRECTORY))
+    home_root().map(|home| home.join(crate::bundle::user_home_subdirectory()))
 }
 
 fn home_root() -> Option<PathBuf> {
@@ -2181,7 +2183,7 @@ fn try_lifecycle_lock(home: &Path) -> Option<File> {
 }
 
 fn migrate_legacy_telemetry_home() {
-    if std::env::var_os(ENV_TELEMETRY_HOME).is_some() {
+    if std::env::var_os(ENV_TELEMETRY_HOME).is_some() || crate::bundle::is_local_installation() {
         return;
     }
     let Some(root) = home_root() else {

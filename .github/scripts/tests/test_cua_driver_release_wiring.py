@@ -47,6 +47,9 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("missing from Screen & System Audio Recording", cli)
         self.assertIn("add {app_path}", cli)
 
+        limits = self.read("docs/content/docs/reference/cua-driver/limits.mdx")
+        self.assertIn("without this grant it returns the tree only (no PNG)", limits)
+
     def test_release_please_owns_driver_and_lume(self) -> None:
         config = self.read("release-please-config.json")
         workflow = self.read(".github/workflows/release-please.yml")

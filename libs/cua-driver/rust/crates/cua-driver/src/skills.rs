@@ -826,10 +826,6 @@ mod tests {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let macos = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/MACOS.md"))
             .expect("canonical macOS skill must be readable");
-        let limits = std::fs::read_to_string(
-            crate_dir.join("../../../../../docs/content/docs/reference/cua-driver/limits.mdx"),
-        )
-        .expect("limits reference must be readable");
 
         for required in [
             "screen_recording_capturable` is `null",
@@ -842,10 +838,6 @@ mod tests {
                 "macOS skill lost required permission guidance: {required}"
             );
         }
-        assert!(
-            limits.contains("without this grant it returns the tree only (no PNG)"),
-            "limits reference must preserve the AX-only degraded path"
-        );
     }
 
     #[test]

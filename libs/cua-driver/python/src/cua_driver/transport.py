@@ -139,7 +139,7 @@ class StdioMcpTransport:
                 {
                     "protocolVersion": MCP_PROTOCOL_VERSION,
                     "capabilities": {},
-                    "clientInfo": {"name": "cua-driver-python-client", "version": "0.0.0"},
+                    "clientInfo": {"name": "cua-driver-python", "version": "0.0.0"},
                 },
             )
             self._notify("notifications/initialized")
@@ -283,7 +283,7 @@ class AsyncStdioMcpTransport:
                     "protocolVersion": MCP_PROTOCOL_VERSION,
                     "capabilities": {},
                     "clientInfo": {
-                        "name": "cua-driver-python-async-client",
+                        "name": "cua-driver-python-async",
                         "version": "0.0.0",
                     },
                 },

@@ -94,7 +94,7 @@ export class StdioMcpTransport implements Transport {
       await this.exchange("initialize", {
         protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: "cua-driver-typescript-client", version: "0.0.0" },
+        clientInfo: { name: "cua-driver-typescript", version: "0.0.0" },
       })
       this.notify("notifications/initialized")
     } catch (error) {

@@ -1,7 +1,7 @@
 """Python SDK and binary wrapper for the cross-platform cua-driver MCP server.
 
 The package bundles the native Rust binary and provides synchronous and async
-clients for its MCP stdio protocol.
+SDK interfaces for its MCP stdio protocol.
 """
 
 __version__ = "0.10.0"  # x-release-please-version
@@ -24,7 +24,7 @@ from ._generated import (
     StartSessionArgs,
     TypeTextArgs,
 )
-from .client import AsyncCuaDriverClient, CuaDriverClient
+from .driver import AsyncCuaDriver, CuaDriver
 from .result import ImageContent, ToolResult
 from .transport import (
     AsyncStdioMcpTransport,
@@ -36,12 +36,12 @@ from .transport import (
 from .wrapper import get_binary_path, run_cua_driver
 
 __all__ = [
-    "AsyncCuaDriverClient",
+    "AsyncCuaDriver",
     "AsyncStdioMcpTransport",
     "AsyncTransport",
     "ClickArgs",
     "CONTRACT_VERSION",
-    "CuaDriverClient",
+    "CuaDriver",
     "DragArgs",
     "EndSessionArgs",
     "EscalateSessionArgs",

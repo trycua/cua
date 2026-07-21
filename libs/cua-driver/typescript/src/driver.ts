@@ -1,14 +1,14 @@
-import { GeneratedClient } from "./generated.js"
+import { GeneratedDriver } from "./generated.js"
 import { normalizeToolResult, type ToolResult } from "./result.js"
 import { StdioMcpTransport, type Transport } from "./transport.js"
 
-export class CuaDriverClient extends GeneratedClient {
+export class CuaDriver extends GeneratedDriver {
   constructor(private readonly transport: Transport) {
     super()
   }
 
-  static stdio(command: readonly string[] = ["cua-driver", "mcp"]): CuaDriverClient {
-    return new CuaDriverClient(new StdioMcpTransport(command))
+  static stdio(command: readonly string[] = ["cua-driver", "mcp"]): CuaDriver {
+    return new CuaDriver(new StdioMcpTransport(command))
   }
 
   async callTool(

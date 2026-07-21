@@ -34,17 +34,17 @@
         },
         {
           "type": "json",
-          "path": "clients/typescript/package.json",
+          "path": "typescript/package.json",
           "jsonpath": "$.version"
         },
         {
           "type": "json",
-          "path": "clients/typescript/package-lock.json",
+          "path": "typescript/package-lock.json",
           "jsonpath": "$.version"
         },
         {
           "type": "json",
-          "path": "clients/typescript/package-lock.json",
+          "path": "typescript/package-lock.json",
           "jsonpath": "$.packages[''].version"
         },
         {

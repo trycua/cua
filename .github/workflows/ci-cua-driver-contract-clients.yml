@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - "libs/cua-driver/contract/**"
-      - "libs/cua-driver/clients/**"
+      - "libs/cua-driver/typescript/**"
       - "libs/cua-driver/python/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
@@ -14,7 +14,7 @@ on:
     branches: [main]
     paths:
       - "libs/cua-driver/contract/**"
-      - "libs/cua-driver/clients/**"
+      - "libs/cua-driver/typescript/**"
       - "libs/cua-driver/python/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
@@ -47,7 +47,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: libs/cua-driver/clients/typescript/package-lock.json
+          cache-dependency-path: libs/cua-driver/typescript/package-lock.json
 
       - name: Verify generated files
         working-directory: libs/cua-driver/rust
@@ -61,14 +61,14 @@ jobs:
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver-core --test contract_parity
 
-      - name: Test Python reference client
+      - name: Test Python SDK
         working-directory: libs/cua-driver/python
-        run: PYTHONPATH=src python -m unittest discover -s tests -p 'test_client.py' -v
+        run: PYTHONPATH=src python -m unittest discover -s tests -p 'test_driver.py' -v
 
-      - name: Install TypeScript reference client dependencies
-        working-directory: libs/cua-driver/clients/typescript
+      - name: Install TypeScript SDK dependencies
+        working-directory: libs/cua-driver/typescript
         run: npm ci
 
-      - name: Test TypeScript reference client
-        working-directory: libs/cua-driver/clients/typescript
+      - name: Test TypeScript SDK
+        working-directory: libs/cua-driver/typescript
         run: npm run typecheck && npm test

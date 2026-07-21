@@ -209,7 +209,7 @@ function typeTextToWire(input: TypeTextArgs): Record<string, unknown> {
   return output
 }
 
-export abstract class GeneratedClient {
+export abstract class GeneratedDriver {
   abstract callTool(name: string, input?: Record<string, unknown>): Promise<ToolResult>
 
   click(input: ClickArgs): Promise<ToolResult> {

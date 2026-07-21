@@ -12,28 +12,28 @@ and https://cua.ai/docs/reference/cua-driver/mcp-tools.
 The package provides a `cua-driver` command that wraps the native Rust binary.
 See the canonical tool reference at https://cua.ai/docs/reference/cua-driver/mcp-tools.
 
-## Python client
+## Python SDK
 
-The synchronous and async clients launch the bundled driver and speak MCP over
+The synchronous and async interfaces launch the bundled driver and speak MCP over
 stdio. The generated typed methods cover the portable contract, while
 `call_tool` remains available for runtime-discovered and platform-specific tools.
 
 ```python
-from cua_driver import CuaDriverClient, GetDesktopStateArgs, StartSessionArgs
+from cua_driver import CuaDriver, GetDesktopStateArgs, StartSessionArgs
 
-with CuaDriverClient.stdio() as client:
-    client.start_session(StartSessionArgs("demo", capture_scope="auto"))
-    desktop = client.get_desktop_state(GetDesktopStateArgs(session="demo"))
+with CuaDriver.stdio() as driver:
+    driver.start_session(StartSessionArgs("demo", capture_scope="auto"))
+    desktop = driver.get_desktop_state(GetDesktopStateArgs(session="demo"))
     print(desktop.images[0].mime_type)
 ```
 
 Async applications can use the native asyncio transport:
 
 ```python
-from cua_driver import AsyncCuaDriverClient, GetDesktopStateArgs
+from cua_driver import AsyncCuaDriver, GetDesktopStateArgs
 
-async with AsyncCuaDriverClient.stdio() as client:
-    desktop = await client.get_desktop_state(GetDesktopStateArgs(session="demo"))
+async with AsyncCuaDriver.stdio() as driver:
+    desktop = await driver.get_desktop_state(GetDesktopStateArgs(session="demo"))
 ```
 
 ## Binary wrapper
@@ -54,7 +54,7 @@ binary_path = get_binary_path()
 
 - **Cross-platform**: Works on macOS (universal), Linux (x86_64), and Windows (x86_64/ARM64)
 - **Zero dependencies**: Pure Python SDK with no external dependencies
-- **Typed client**: Generated synchronous and async MCP methods
+- **Typed SDK**: Generated synchronous and async MCP methods
 - **Stdio passthrough**: Transparent piping for MCP protocol communication
 - **Bundled binary**: No separate installation required - the Rust binary is included in the wheel
 

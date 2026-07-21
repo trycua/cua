@@ -231,7 +231,7 @@ class TypeTextArgs:
         return arguments
 
 
-class GeneratedClientMixin:
+class GeneratedDriverMixin:
     def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         raise NotImplementedError
 
@@ -278,7 +278,7 @@ class GeneratedClientMixin:
         return self.call_tool("type_text", arguments.to_arguments())
 
 
-class GeneratedAsyncClientMixin:
+class GeneratedAsyncDriverMixin:
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         raise NotImplementedError
 

@@ -41,10 +41,10 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
     cargo = tomllib.loads((base / "rust/Cargo.toml").read_text())
     python_project = tomllib.loads((base / "python/pyproject.toml").read_text())
     typescript_package = json.loads(
-        (base / "clients/typescript/package.json").read_text()
+        (base / "typescript/package.json").read_text()
     )
     typescript_lock = json.loads(
-        (base / "clients/typescript/package-lock.json").read_text()
+        (base / "typescript/package-lock.json").read_text()
     )
     values = {
         "rust/Cargo.toml": str(cargo["workspace"]["package"]["version"]),
@@ -52,9 +52,9 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
         "python/src/cua_driver/__init__.py": read_match(
             base / "python/src/cua_driver/__init__.py", r'^__version__\s*=\s*"([^"]+)"'
         ),
-        "clients/typescript/package.json": str(typescript_package["version"]),
-        "clients/typescript/package-lock.json": str(typescript_lock["version"]),
-        "clients/typescript/package-lock.json:root": str(
+        "typescript/package.json": str(typescript_package["version"]),
+        "typescript/package-lock.json": str(typescript_lock["version"]),
+        "typescript/package-lock.json:root": str(
             typescript_lock["packages"][""]["version"]
         ),
         "scripts/_install-rust.sh": read_match(

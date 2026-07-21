@@ -1,7 +1,7 @@
 {
   "name": "@trycua/cua-driver",
   "version": "0.10.0",
-  "description": "Generated TypeScript client for cua-driver",
+  "description": "Generated TypeScript SDK for cua-driver",
   "type": "module",
   "license": "MIT",
   "main": "./dist/index.js",
@@ -21,7 +21,7 @@
     "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test test/*.test.mjs",
-    "generate:check": "cargo run --manifest-path ../../rust/Cargo.toml -p cua-driver-contract --bin cua-contract-gen -- clients --check"
+    "generate:check": "cargo run --manifest-path ../rust/Cargo.toml -p cua-driver-contract --bin cua-contract-gen -- sdks --check"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

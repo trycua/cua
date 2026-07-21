@@ -37,8 +37,8 @@ fn run() -> Result<(), String> {
         .find(|arg| !arg.starts_with('-'))
         .map(String::as_str)
         .unwrap_or("all");
-    if !matches!(target, "all" | "manifest" | "clients") {
-        return Err("usage: cua-contract-gen [all|manifest|clients] [--check]".into());
+    if !matches!(target, "all" | "manifest" | "sdks") {
+        return Err("usage: cua-contract-gen [all|manifest|sdks] [--check]".into());
     }
 
     let root = driver_root()?;
@@ -52,13 +52,13 @@ fn run() -> Result<(), String> {
             contents,
         });
     }
-    if matches!(target, "all" | "clients") {
+    if matches!(target, "all" | "sdks") {
         files.push(GeneratedFile {
             path: root.join("python/src/cua_driver/_generated.py"),
             contents: generate_python(&contract)?,
         });
         files.push(GeneratedFile {
-            path: root.join("clients/typescript/src/generated.ts"),
+            path: root.join("typescript/src/generated.ts"),
             contents: generate_typescript(&contract)?,
         });
     }
@@ -80,7 +80,7 @@ fn apply_plan(root: &Path, files: Vec<GeneratedFile>, check: bool) -> Result<(),
     let mut ordinary = Vec::new();
     let mut groups = BTreeMap::<PathBuf, OwnershipGroup>::new();
     for file in files {
-        if let Some(owner) = client_owner(root, &file.path) {
+        if let Some(owner) = sdk_owner(root, &file.path) {
             let relative = file
                 .path
                 .strip_prefix(&owner)
@@ -100,7 +100,7 @@ fn apply_plan(root: &Path, files: Vec<GeneratedFile>, check: bool) -> Result<(),
         }
     }
 
-    // Rendering and validation finish before any mutation. Client packages
+    // Rendering and validation finish before any mutation. SDK packages
     // additionally carry an ownership inventory so stale generated files are
     // detected (or pruned) without touching hand-written files.
     for group in groups.values_mut() {
@@ -117,8 +117,8 @@ fn apply_plan(root: &Path, files: Vec<GeneratedFile>, check: bool) -> Result<(),
     Ok(())
 }
 
-fn client_owner(root: &Path, path: &Path) -> Option<PathBuf> {
-    [root.join("python"), root.join("clients/typescript")]
+fn sdk_owner(root: &Path, path: &Path) -> Option<PathBuf> {
+    [root.join("python"), root.join("typescript")]
         .into_iter()
         .find(|candidate| path.starts_with(candidate))
 }
@@ -289,7 +289,7 @@ MCP_PROTOCOL_VERSION = \"{}\"\n\n",
         }
         writeln!(out, "        return arguments\n\n").unwrap();
     }
-    out.push_str("class GeneratedClientMixin:\n");
+    out.push_str("class GeneratedDriverMixin:\n");
     out.push_str("    def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:\n");
     out.push_str("        raise NotImplementedError\n\n");
     for tool in &manifest.tools {
@@ -301,7 +301,7 @@ MCP_PROTOCOL_VERSION = \"{}\"\n\n",
         )
         .unwrap();
     }
-    out.push_str("\nclass GeneratedAsyncClientMixin:\n");
+    out.push_str("\nclass GeneratedAsyncDriverMixin:\n");
     out.push_str("    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:\n");
     out.push_str("        raise NotImplementedError\n\n");
     for tool in &manifest.tools {
@@ -361,7 +361,7 @@ export const MCP_PROTOCOL_VERSION = \"{}\" as const\n\n",
         }
         writeln!(out, "  return output\n}}\n").unwrap();
     }
-    out.push_str("export abstract class GeneratedClient {\n");
+    out.push_str("export abstract class GeneratedDriver {\n");
     out.push_str("  abstract callTool(name: string, input?: Record<string, unknown>): Promise<ToolResult>\n\n");
     for tool in &manifest.tools {
         let type_name = format!("{}Args", pascal_case(&tool.name));

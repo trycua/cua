@@ -8,9 +8,9 @@ from typing import Any, Mapping
 from unittest.mock import patch
 
 from cua_driver import (
-    AsyncCuaDriverClient,
+    AsyncCuaDriver,
     AsyncStdioMcpTransport,
-    CuaDriverClient,
+    CuaDriver,
     ClickArgs,
     HotkeyArgs,
     StartSessionArgs,
@@ -40,20 +40,20 @@ def fixture(name: str) -> Mapping[str, Any]:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))["result"]
 
 
-class ClientTests(unittest.TestCase):
+class DriverTests(unittest.TestCase):
     def test_default_stdio_uses_bundled_binary(self) -> None:
         binary = Path("/tmp/cua-driver-test-binary")
-        with patch("cua_driver.client.get_binary_path", return_value=binary):
-            client = CuaDriverClient.stdio()
+        with patch("cua_driver.driver.get_binary_path", return_value=binary):
+            driver = CuaDriver.stdio()
         try:
-            self.assertEqual(client._transport._command, (str(binary), "mcp"))
+            self.assertEqual(driver._transport._command, (str(binary), "mcp"))
         finally:
-            client.close()
+            driver.close()
 
     def test_generated_session_method_uses_wire_names(self) -> None:
         transport = FakeTransport(fixture("session-success.json"))
-        client = CuaDriverClient(transport)
-        result = client.start_session(StartSessionArgs("demo", capture_scope="auto"))
+        driver = CuaDriver(transport)
+        result = driver.start_session(StartSessionArgs("demo", capture_scope="auto"))
         self.assertFalse(result.is_error)
         self.assertEqual(result.structured["session"], "demo")
         self.assertEqual(
@@ -79,8 +79,8 @@ class ClientTests(unittest.TestCase):
 
     def test_generated_hotkey_preserves_string_array(self) -> None:
         transport = FakeTransport(fixture("session-success.json"))
-        client = CuaDriverClient(transport)
-        client.hotkey(HotkeyArgs(["ctrl", "l"], "desktop", session="demo"))
+        driver = CuaDriver(transport)
+        driver.hotkey(HotkeyArgs(["ctrl", "l"], "desktop", session="demo"))
         self.assertEqual(
             transport.calls[0][1],
             {
@@ -96,8 +96,8 @@ class ClientTests(unittest.TestCase):
     def test_stdio_transport_executes_initialize_and_desktop_call(self) -> None:
         transport = StdioMcpTransport((sys.executable, str(MCP_FIXTURE)))
         try:
-            client = CuaDriverClient(transport)
-            result = client.click(ClickArgs(12.5, 20.0, "desktop", session="demo"))
+            driver = CuaDriver(transport)
+            result = driver.click(ClickArgs(12.5, 20.0, "desktop", session="demo"))
             self.assertEqual(result.structured["name"], "click")
             self.assertEqual(
                 result.structured["arguments"],
@@ -117,14 +117,14 @@ class ClientTests(unittest.TestCase):
             transport.close()
 
 
-class AsyncClientTests(unittest.IsolatedAsyncioTestCase):
+class AsyncDriverTests(unittest.IsolatedAsyncioTestCase):
     async def test_async_stdio_transport_executes_generated_call(self) -> None:
         transport = AsyncStdioMcpTransport(
             (sys.executable, str(MCP_FIXTURE)), timeout=2.0
         )
         try:
-            client = AsyncCuaDriverClient(transport)
-            result = await client.click(ClickArgs(4.0, 8.0, "desktop"))
+            driver = AsyncCuaDriver(transport)
+            result = await driver.click(ClickArgs(4.0, 8.0, "desktop"))
             self.assertEqual(result.structured["name"], "click")
             self.assertEqual(
                 result.structured["arguments"],

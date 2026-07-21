@@ -4,16 +4,16 @@ This package is generated from the canonical cua-driver contract and speaks MCP
 over a spawned `cua-driver mcp` stdio process.
 
 ```ts
-import { CuaDriverClient } from "@trycua/cua-driver"
+import { CuaDriver } from "@trycua/cua-driver"
 
-const client = CuaDriverClient.stdio()
+const driver = CuaDriver.stdio()
 try {
-  const result = await client.startSession({ session: "demo", captureScope: "auto" })
-  const desktop = await client.getDesktopState({ session: "demo" })
-  await client.click({ x: 420, y: 240, scope: "desktop", session: "demo" })
+  const result = await driver.startSession({ session: "demo", captureScope: "auto" })
+  const desktop = await driver.getDesktopState({ session: "demo" })
+  await driver.click({ x: 420, y: 240, scope: "desktop", session: "demo" })
   console.log(desktop.images[0]?.mimeType)
 } finally {
-  await client.close()
+  await driver.close()
 }
 ```
 

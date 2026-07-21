@@ -178,9 +178,9 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('"path": "rust/Cargo.toml"', config)
         self.assertIn('"path": "python/pyproject.toml"', config)
         self.assertIn('"path": "python/src/cua_driver/__init__.py"', config)
-        self.assertIn('"path": "clients/typescript/package.json"', config)
+        self.assertIn('"path": "typescript/package.json"', config)
         self.assertEqual(
-            config.count('"path": "clients/typescript/package-lock.json"'), 2
+            config.count('"path": "typescript/package-lock.json"'), 2
         )
         self.assertIn('"path": "scripts/_install-rust.sh"', config)
         self.assertIn('"path": "scripts/install.ps1"', config)

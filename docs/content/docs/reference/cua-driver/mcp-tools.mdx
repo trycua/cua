@@ -179,7 +179,7 @@ Force-terminate a process by pid (kill -9 equivalent on macOS / Linux; taskkill 
 
 ### `bring_to_front`
 
-Persistently activate an app so it genuinely holds macOS foreground, then leave it there. Most input does NOT need this — every macOS dispatch reaches backgrounded windows, and `dispatch:"foreground"` does its own brief front→act→restore. Reach for `bring_to_front` only for a focus-proxy surface that re-arms its own input channel on activation and must stay frontmost across the interaction — chiefly a remote-desktop client (Microsoft Windows App / RDP), where the brief flash drops keystrokes. Activates the owning app by pid (`NSRunningApplication.activate`); `window_id` is accepted for parity but activation is app-level. This DOES steal foreground — explicit opt-in, never used by the input ladder.
+Persistently activate an app so it genuinely holds macOS foreground, then leave it there. Most input does NOT need this — every macOS dispatch reaches backgrounded windows, and `dispatch:"foreground"` does its own brief front→act→restore. Reach for `bring_to_front` only for a focus-proxy surface that re-arms its own input channel on activation and must stay frontmost across the interaction — chiefly a remote-desktop client (Microsoft Windows App / RDP), where the brief flash drops keystrokes. Fronts the exact macOS window through WindowServer when `window_id` is present, with app-level Cocoa activation as a fallback. This DOES steal foreground — explicit opt-in, never used by the input ladder.
 
 **Arguments:**
 

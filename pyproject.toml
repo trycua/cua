@@ -46,7 +46,7 @@ docs-scripts = [
     "markdown-it-py>=3.0.0",
     "markitdown>=0.0.1",
     "modal>=0.63.0",
-    "gitpython>=3.1.43",
+    "gitpython>=3.1.51",
     "griffe>=2.0.0",
 ]
 test = [

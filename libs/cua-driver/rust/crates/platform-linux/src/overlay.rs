@@ -586,6 +586,17 @@ fn next_maintenance_deadline(
 }
 
 #[cfg(target_os = "linux")]
+fn z_order_reassertion_needed(
+    had_msg: bool,
+    screen_changed: bool,
+    pin_changed: bool,
+    periodic_tick_needed: bool,
+    periodic_tick_due: bool,
+) -> bool {
+    had_msg || screen_changed || pin_changed || (periodic_tick_needed && periodic_tick_due)
+}
+
+#[cfg(target_os = "linux")]
 enum OverlayWake {
     Frame,
     Message(OverlayMsg),
@@ -998,11 +1009,17 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         };
 
         // Reassert immediately after a command or target change, then at most
-        // every 80 ms while any cursor remains visible. Maintenance wakes keep
-        // that stacking contract without authorizing a repaint.
+        // every 80 ms while any cursor remains visible. Hidden event-service
+        // heartbeats neither reassert z-order nor authorize a repaint.
         let pin_changed = pinned_wid != last_pinned;
         last_pinned = pinned_wid;
-        if had_msg || screen_changed || pin_changed || last_ztick.elapsed() >= z_order_interval {
+        if z_order_reassertion_needed(
+            had_msg,
+            screen_changed,
+            pin_changed,
+            next_z_order_tick_needed,
+            last_ztick.elapsed() >= z_order_interval,
+        ) {
             last_ztick = Instant::now();
             z_enforcer.reassert(pinned_wid);
         }
@@ -1567,6 +1584,20 @@ mod tests {
         );
 
         assert_eq!(deadline, state_tick + X11_EVENT_POLL_INTERVAL);
+    }
+
+    #[test]
+    fn hidden_heartbeat_does_not_request_z_order_reassertion() {
+        assert!(!z_order_reassertion_needed(
+            false, false, false, false, true,
+        ));
+        assert!(z_order_reassertion_needed(false, false, false, true, true,));
+        assert!(!z_order_reassertion_needed(
+            false, false, false, true, false,
+        ));
+        assert!(z_order_reassertion_needed(true, false, false, false, false,));
+        assert!(z_order_reassertion_needed(false, true, false, false, false,));
+        assert!(z_order_reassertion_needed(false, false, true, false, false,));
     }
 
     #[test]

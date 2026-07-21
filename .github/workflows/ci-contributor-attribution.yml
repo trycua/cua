@@ -1,0 +1,36 @@
+name: "CI: Contributor attribution"
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  contributor-attribution:
+    name: contributor-attribution
+    runs-on: ubuntu-latest
+    steps:
+      # pull_request_target supplies a read token for fork PR metadata. Check out
+      # only the trusted base commit; the PR head is read as inert API data and is
+      # never executed or checked out in this job.
+      - name: Check out trusted base validator
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate contributor attribution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 .github/scripts/release_attribution.py validate-pr
+          --event "$GITHUB_EVENT_PATH"

@@ -72,7 +72,7 @@ func testVMVirtualizationServiceFailures() async throws {
 }
 
 @MainActor
-@Test("Shared directories with one tag use a disambiguated multiple-directory share")
+@Test("macOS automount directories keep a live-update placeholder and disambiguate names")
 func testSharedDirectoryGrouping() throws {
     let tag = VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag
     let sharedDirectories = [
@@ -89,7 +89,26 @@ func testSharedDirectoryGrouping() throws {
     #expect(devices.count == 1)
     #expect(device.tag == tag)
     let names = Swift.Set<String>(share.directories.keys)
-    #expect(names == Swift.Set(["Shared", "Shared (2)"]))
+    #expect(names == Swift.Set([".lume-live-share", "Shared", "Shared (2)"]))
+    #expect(share.directories[".lume-live-share"]?.isReadOnly == true)
+    #expect(share.directories[".lume-live-share"]?.url.path == "/var/empty")
     #expect(share.directories["Shared"]?.isReadOnly == false)
     #expect(share.directories["Shared (2)"]?.isReadOnly == true)
+}
+
+@MainActor
+@Test("Only live macOS automount shares receive the placeholder")
+func testLiveSharePlaceholderScope() throws {
+    let automountShare = try #require(
+        BaseVirtualizationService.createDirectoryShare(
+            [],
+            withLiveUpdatePlaceholder: true
+        ) as? VZMultipleDirectoryShare
+    )
+    let regularShare = try #require(
+        BaseVirtualizationService.createDirectoryShare([]) as? VZMultipleDirectoryShare
+    )
+
+    #expect(Swift.Set(automountShare.directories.keys) == [".lume-live-share"])
+    #expect(regularShare.directories.isEmpty)
 }

@@ -1052,7 +1052,8 @@ pub fn run_describe(registry: &ToolRegistry, name: &str) {
     }
 }
 
-/// Spawn `/usr/bin/open -n -g -a CuaDriver --args serve` to launch
+/// Launch the release or local app through LaunchServices so the daemon uses
+/// the matching TCC identity and namespace.
 /// the daemon under `LaunchServices` (so it inherits the bundle's
 /// TCC attribution), then poll the socket for up to `timeout_secs`
 /// seconds. Returns Err with a diagnostic message if `open` failed
@@ -1102,7 +1103,9 @@ pub fn launch_daemon_and_wait(
     // actually differs from the default, so the common case keeps the
     // shorter `open` argv (and matches Swift's invocation byte-for-byte).
     let pass_socket = socket_path != crate::serve::default_socket_path();
-    let mut open_args: Vec<&str> = vec!["-n", "-g", "-a", "CuaDriver", "--args", "serve"];
+    let app_name = crate::bundle::app_name();
+    let app_path = crate::bundle::app_bundle_path();
+    let mut open_args: Vec<&str> = vec!["-n", "-g", "-a", app_name, "--args", "serve"];
     if pass_socket {
         open_args.push("--socket");
         open_args.push(socket_path);
@@ -1143,8 +1146,8 @@ pub fn launch_daemon_and_wait(
         return Err(LaunchDaemonError {
             kind: LaunchDaemonErrorKind::Failed,
             message: format!(
-                "`open -n -g -a CuaDriver --args serve{}` exited {:?}. \
-             Check that `/Applications/CuaDriver.app` is installed.",
+                "`open -n -g -a {app_name} --args serve{}` exited {:?}. \
+             Check that `{app_path}` is installed.",
                 if pass_socket {
                     format!(" --socket {socket_path}")
                 } else {
@@ -1170,7 +1173,7 @@ pub fn launch_daemon_and_wait(
         message: format!(
             "daemon did not appear on {socket_path} within {timeout_secs}s. If this \
          is the first launch, grant Accessibility + Screen Recording to \
-         CuaDriver.app in System Settings and retry."
+         {app_name}.app in System Settings and retry."
         ),
     })
 }
@@ -1251,15 +1254,17 @@ where
         }
         #[cfg(target_os = "macos")]
         {
+            let app_name = crate::bundle::app_name();
             let socket_suffix = if socket_path != crate::serve::default_socket_path() {
                 format!(" --socket {socket_path}")
             } else {
                 String::new()
             };
             eprintln!(
-                "cua-driver-rs: mcp launched without CuaDriver.app's TCC grants; \
-                 auto-launching the daemon via `open -n -g -a CuaDriver --args serve{socket_suffix}` \
-                 and proxying MCP requests through it."
+                "{}: mcp launched without {app_name}.app's TCC grants; \
+                 auto-launching the daemon via `open -n -g -a {app_name} --args serve{socket_suffix}` \
+                 and proxying MCP requests through it.",
+                crate::bundle::cli_name()
             );
             if let Err(error) = launch_daemon_and_wait(&socket_path, 10, claude_code_compat) {
                 if let Some(on_startup) = on_startup.take() {
@@ -2113,6 +2118,13 @@ fn run_recording_render(args: &[String]) {
 /// installer script — see [`crate::updater`] for why we go through the script
 /// instead of re-implementing the asset resolution + atomic swap + GC in Rust.
 pub fn run_update_cmd(apply: bool, json: bool) {
+    if apply && crate::bundle::is_local_installation() {
+        eprintln!(
+            "cua-driver-local is managed by scripts/install-local.sh (or install-local.ps1); \
+             refusing to run the release installer from the local product."
+        );
+        process::exit(2);
+    }
     let apply_started_at = std::time::Instant::now();
     let daemon_was_running = apply && crate::updater::daemon_is_running();
     // `--json` short-circuits the text path entirely so scripted callers
@@ -2298,6 +2310,9 @@ pub fn run_permissions_cmd(subcommand: &str, json: bool) {
 /// Never raises a prompt.
 fn run_permissions_status(json: bool) {
     let socket = crate::serve::default_socket_path();
+    let cli_name = crate::bundle::cli_name();
+    let app_name = crate::bundle::app_name();
+    let bundle_id = crate::bundle::bundle_id();
 
     // Only a listening daemon can answer for com.trycua.driver. A failed/!ok
     // response (e.g. daemon mid-re-exec during the gate's recheck window) is
@@ -2338,9 +2353,9 @@ fn run_permissions_status(json: bool) {
             let payload = serde_json::json!({
                 "daemon_running": false,
                 "status": "unknown",
-                "reason": "no CuaDriver daemon is running under the driver's own identity \
-                           (com.trycua.driver), so its real TCC status can't be read from this \
-                           process. Run `cua-driver permissions grant` to grant + verify.",
+                "reason": format!("no {app_name} daemon is running under the driver's own identity \
+                           ({bundle_id}), so its real TCC status can't be read from this \
+                           process. Run `{cli_name} permissions grant` to grant + verify."),
             });
             println!(
                 "{}",
@@ -2351,15 +2366,15 @@ fn run_permissions_status(json: bool) {
         println!("Accessibility:    ❓ unknown");
         println!("Screen Recording: ❓ unknown");
         println!(
-            "No CuaDriver daemon is running under the driver's own identity (com.trycua.driver), \
+            "No {app_name} daemon is running under the driver's own identity ({bundle_id}), \
              so its real TCC status can't be read."
         );
         println!(
             "(A status check from this terminal would report the terminal's grants, not the \
              driver's.)"
         );
-        println!("  → Run `cua-driver permissions grant` to grant + verify, or start the daemon");
-        println!("    (`open -n -g -a CuaDriver --args serve`) and re-run this command.");
+        println!("  → Run `{cli_name} permissions grant` to grant + verify, or start the daemon");
+        println!("    (`open -n -g -a {app_name} --args serve`) and re-run this command.");
         return;
     };
 
@@ -2397,7 +2412,7 @@ fn run_permissions_status(json: bool) {
     }
     println!("Source: {attribution}");
     if !(ax && sr) {
-        println!("  → To grant for the driver, run: cua-driver permissions grant");
+        println!("  → To grant for the driver, run: {cli_name} permissions grant");
     }
 }
 
@@ -2408,21 +2423,23 @@ fn run_permissions_status(json: bool) {
 fn run_permissions_grant() {
     #[cfg(target_os = "macos")]
     {
+        let cli_name = crate::bundle::cli_name();
+        let app_name = crate::bundle::app_name();
         let socket = crate::serve::default_socket_path();
         if crate::serve::is_daemon_listening(&socket) {
-            println!("CuaDriver daemon already running — checking its permissions…");
+            println!("{app_name} daemon already running — checking its permissions…");
         } else {
-            println!("Launching CuaDriver to request permissions.");
+            println!("Launching {app_name} to request permissions.");
             println!(
-                "A dialog titled \u{201c}Cua Driver\u{201d} will appear — approve Accessibility \
+                "A dialog for {app_name} will appear — approve Accessibility \
                  and Screen Recording in System Settings, then this command continues."
             );
             // Permissions-grant launch never needs the compat screenshot surface.
             if let Err(e) = launch_daemon_and_wait(&socket, 180, false) {
-                eprintln!("\nDidn't detect the CuaDriver daemon: {e}");
+                eprintln!("\nDidn't detect the {app_name} daemon: {e}");
                 eprintln!(
-                    "If you haven't yet, grant Accessibility + Screen Recording to CuaDriver \
-                     in System Settings, then re-run `cua-driver permissions grant`."
+                    "If you haven't yet, grant Accessibility + Screen Recording to {app_name} \
+                     in System Settings, then re-run `{cli_name} permissions grant`."
                 );
                 process::exit(1);
             }
@@ -3091,9 +3108,21 @@ fn diagnose_tcc_db_section() -> String {
 fn diagnose_config_paths_section() -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let paths: &[(&str, String)] = &[
-        ("user data dir", format!("{home}/.cua-driver")),
-        ("config cache", format!("{home}/Library/Caches/cua-driver")),
-        ("telemetry id", format!("{home}/.cua-driver/.telemetry_id")),
+        (
+            "user data dir",
+            format!("{home}/{}", crate::bundle::user_home_subdirectory()),
+        ),
+        (
+            "config cache",
+            format!("{home}/Library/Caches/{}", crate::bundle::state_namespace()),
+        ),
+        (
+            "telemetry id",
+            format!(
+                "{home}/{}/.telemetry_id",
+                crate::bundle::user_home_subdirectory()
+            ),
+        ),
         (
             "updater plist",
             format!("{home}/Library/LaunchAgents/com.trycua.cua_driver_updater.plist"),

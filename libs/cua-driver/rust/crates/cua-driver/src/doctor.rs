@@ -203,7 +203,7 @@ fn probe_home_dir() -> Probe {
         Some(h) => h,
         None => return Probe::warn("home dir", "neither HOME nor USERPROFILE set"),
     };
-    let cua_home = home.join(".cua-driver");
+    let cua_home = home.join(crate::bundle::user_home_subdirectory());
     if !cua_home.exists() {
         return Probe::warn(
             "home dir",

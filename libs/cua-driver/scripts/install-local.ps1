@@ -1,12 +1,9 @@
 # cua-driver-rs local installer (Windows). Builds release-mode from the
-# current source tree and drops the resulting cua-driver.exe into the same
-# install layout that scripts/install.ps1 produces — so a local build and
-# a release install can coexist + the `current` junction can flip between
-# them.
+# current source tree into a durable, separate local-product namespace.
 #
 # Params mirror scripts/install.ps1 so the developer loop matches what
 # end users experience:
-#   -AutoStart      register the cua-driver-serve Scheduled Task at logon
+#   -AutoStart      register the cua-driver-local-serve Scheduled Task at logon
 #                   (Windows-native equivalent of macOS LaunchAgent).
 #                   Default off; the post-install message prints the
 #                   registration recipe so you can opt in later.
@@ -22,12 +19,12 @@
 # signed/built release from GitHub. This script is for the developer
 # loop (rapid edit/build/test on a Windows host).
 #
-# Layout produced (matches install.ps1 — see its header for details):
+# Separate local layout produced:
 #
 #   <visibleBinDir>            [junction → currentDir]
 #   <currentDir>               [junction → release dir, retargeted here]
 #   <release dir>              [real dir, this script's output]
-#     0.0.0-local-release-<target>\cua-driver.exe
+#     0.0.0-local-release-<target>\cua-driver-local.exe
 #
 # The version-string carries `-local-release` so it never collides with
 # a real release dir and is trivial to garbage-collect.
@@ -64,7 +61,9 @@ $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 # libs/cua-driver/scripts/; the Cargo workspace lives one level deeper
 # under libs/cua-driver/rust/.
 $RepoRoot    = (Resolve-Path "$ScriptDir\..\rust").Path
-$BinaryName  = "cua-driver.exe"
+$BinaryName  = "cua-driver-local.exe"
+$BuiltBinaryName = "cua-driver.exe"
+$UiaBinaryName = "cua-driver-uia-local.exe"
 # Always release-config — matches the binary install.ps1 hands end users.
 $Config      = "release"
 
@@ -97,17 +96,15 @@ $Target = switch -Regex ($archEnv) {
 
 # ---------- Paths (must match install.ps1's defaults) ----------------------
 
-if ($env:CUA_DRIVER_RS_INSTALL_DIR) {
-    $VisibleBinDir = $env:CUA_DRIVER_RS_INSTALL_DIR
+if ($env:CUA_DRIVER_LOCAL_INSTALL_DIR) {
+    $VisibleBinDir = $env:CUA_DRIVER_LOCAL_INSTALL_DIR
 } else {
-    # Path layout matches install.ps1's v0.2.14+ rename
-    # (trycua\cua-driver-rs → Cua\cua-driver). See PR #1644.
-    $VisibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver\bin"
+    $VisibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver-local\bin"
 }
-if ($env:CUA_DRIVER_RS_HOME) {
-    $PackageHome = $env:CUA_DRIVER_RS_HOME
+if ($env:CUA_DRIVER_LOCAL_HOME) {
+    $PackageHome = $env:CUA_DRIVER_LOCAL_HOME
 } else {
-    $PackageHome = Join-Path $env:USERPROFILE ".cua-driver"
+    $PackageHome = Join-Path $env:USERPROFILE ".cua-driver-local"
 }
 $CurrentDir  = Join-Path $PackageHome "packages\current"
 $ReleasesDir = Join-Path $PackageHome "packages\releases"
@@ -145,15 +142,15 @@ function Register-CuaDriverAutostart {
     }
     & $InstalledBinary autostart enable
     if ($LASTEXITCODE -ne 0) {
-        throw "cua-driver autostart enable failed (exit $LASTEXITCODE)"
+        throw "cua-driver-local autostart enable failed (exit $LASTEXITCODE)"
     }
 }
 
-# Stop-CuaDriverDaemons + Show-CuaDriverDaemonSurvivors are defined in
-# the sibling _install-common.psm1 module - shared with install.ps1
-# so the daemon-cleanup logic stays in one place. Local dev runs from
-# a checked-out tree, so we always have the file on disk.
-Import-Module -Name (Join-Path $ScriptDir "_install-common.psm1") -Force
+function Stop-CuaDriverLocalDaemons {
+    & schtasks.exe /End /TN "cua-driver-local-serve" 2>$null | Out-Null
+    Get-Process -Name "cua-driver-local","cua-driver-uia-local" -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+}
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 
@@ -175,10 +172,10 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 
 # ---------- Build ----------------------------------------------------------
 
-Write-Step "cargo build --release -p cua-driver"
+Write-Step "cargo build --release -p cua-driver -p cua-driver-uia"
 Push-Location $RepoRoot
 try {
-    & cargo build --release -p cua-driver
+    & cargo build --release -p cua-driver -p cua-driver-uia
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Error: cargo build failed." -ForegroundColor Red
         exit $LASTEXITCODE
@@ -187,7 +184,8 @@ try {
 finally {
     Pop-Location
 }
-$BuiltBinary = Join-Path $RepoRoot "target\$Config\$BinaryName"
+$BuiltBinary = Join-Path $RepoRoot "target\$Config\$BuiltBinaryName"
+$BuiltUiaBinary = Join-Path $RepoRoot "target\$Config\cua-driver-uia.exe"
 if (-not (Test-Path -LiteralPath $BuiltBinary)) {
     Write-Host "Error: build produced no binary at $BuiltBinary" -ForegroundColor Red
     exit 1
@@ -200,7 +198,7 @@ $VersionedDir = Join-Path $ReleasesDir "$VersionTag-$Target"
 $DestBinary = Join-Path $VersionedDir $BinaryName
 
 # If a previous install-local left a binary here and it's currently
-# being executed (typical: `cua-driver autostart kick` spawned a
+# being executed (typical: `cua-driver-local autostart kick` spawned a
 # High-IL daemon at logon, which we can't terminate from this
 # Medium-IL shell without UAC), the Copy-Item below fails with
 # "The process cannot access the file ... because it is being used by
@@ -218,8 +216,8 @@ if (Test-Path -LiteralPath $DestBinary) {
     } catch {
         Write-Host "Note: could not rename previous binary at $DestBinary." -ForegroundColor Yellow
         Write-Host "      ($($_.Exception.Message))" -ForegroundColor Yellow
-        Write-Host "      Most likely a running cua-driver daemon is holding it." -ForegroundColor Yellow
-        Write-Host "      Stop it first (e.g. ``schtasks /End /TN cua-driver-serve`` then re-run)." -ForegroundColor Yellow
+        Write-Host "      Most likely a running cua-driver-local daemon is holding it." -ForegroundColor Yellow
+        Write-Host "      Stop it first (e.g. ``schtasks /End /TN cua-driver-local-serve`` then re-run)." -ForegroundColor Yellow
     }
     # Best-effort GC of stale-* siblings older than this run. Cheap;
     # keeps the dir from growing unbounded over many re-builds.
@@ -227,22 +225,17 @@ if (Test-Path -LiteralPath $DestBinary) {
         Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } |
         ForEach-Object { try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue } catch {} }
 
-    Write-Step "killing previous cua-driver processes (best-effort; High-IL needs admin)"
-    # Repair- variant does Stop-CuaDriverDaemonsWithHealth + stale
-    # detection + UAC self-elevation when wedged: if survivors are
-    # present AND the pipe is dead, prompts the user (y/n), and on
-    # yes triggers a UAC prompt to spawn a brief elevated
-    # PowerShell that kills the High-IL pids and re-runs the
-    # scheduled task. On UAC accept + healthy pipe afterward, the
-    # install proceeds at Medium IL like nothing happened. On UAC
-    # cancel / failure, falls back to the same printed manual
-    # recovery instructions the previous flow used.
-    $null = Repair-CuaDriverStaleDaemon
+    Write-Step "killing previous cua-driver-local processes (best-effort; High-IL needs admin)"
+    Stop-CuaDriverLocalDaemons
 }
 
 Write-Step "staging into $VersionedDir"
 New-Item -ItemType Directory -Path $VersionedDir -Force | Out-Null
 Copy-Item -LiteralPath $BuiltBinary -Destination $DestBinary -Force
+$DestUiaBinary = Join-Path $VersionedDir $UiaBinaryName
+if (Test-Path -LiteralPath $BuiltUiaBinary) {
+    Copy-Item -LiteralPath $BuiltUiaBinary -Destination $DestUiaBinary -Force
+}
 $installedBinary = $DestBinary
 
 # Stage the skill pack alongside the binary. install-local mirrors what
@@ -310,41 +303,40 @@ Write-Host "  source: $installedBinary"
 Write-Host ""
 
 if ($AutoStart) {
-    Write-Step "registering Scheduled Task 'cua-driver-serve'"
+    Write-Step "registering Scheduled Task 'cua-driver-local-serve'"
     try {
         Register-CuaDriverAutostart -InstalledBinary (Join-Path $VisibleBinDir $BinaryName)
-        Write-Host "  Registered. cua-driver serve auto-starts at every interactive logon." -ForegroundColor Green
+        Write-Host "  Registered. cua-driver-local serve auto-starts at every interactive logon." -ForegroundColor Green
     }
     catch {
         Write-Host "  Failed to register: $($_.Exception.Message)" -ForegroundColor Red
     }
 } else {
-    # User didn't pass -AutoStart, but if a `cua-driver-serve` task is
-    # ALREADY registered (from a previous `install.ps1 -AutoStart` or
-    # `cua-driver autostart enable`), re-register it pointing at this
+    # User didn't pass -AutoStart, but if a local task is already registered,
+    # re-register it pointing at this
     # fresh binary. Otherwise the user ends up with a task whose
     # <Command> path is the OLD release-install dir, running the OLD
-    # binary - even though `cua-driver` on PATH now resolves to the
+    # binary - even though `cua-driver-local` on PATH now resolves to the
     # fresh one. See trycua/cua#1654 (hidden-console wrapper landed
     # later - old tasks that survived an upgrade still produce the
     # visible console window at logon).
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        & schtasks.exe /Query /TN "cua-driver-serve" 2>$null | Out-Null
+        & schtasks.exe /Query /TN "cua-driver-local-serve" 2>$null | Out-Null
         $hasTask = ($LASTEXITCODE -eq 0)
     } finally {
         $ErrorActionPreference = $prevEAP
     }
     if ($hasTask) {
-        Write-Step "found existing 'cua-driver-serve' task - re-registering against fresh binary"
+        Write-Step "found existing 'cua-driver-local-serve' task - re-registering against fresh binary"
         try {
             Register-CuaDriverAutostart -InstalledBinary (Join-Path $VisibleBinDir $BinaryName)
             Write-Host "  Re-registered. Task action now uses this build's hidden-console wrapper." -ForegroundColor Green
         }
         catch {
             Write-Host "  Failed to re-register: $($_.Exception.Message)" -ForegroundColor Red
-            Write-Host "  The existing task still points at the previous binary. Run 'cua-driver autostart enable' from an elevated shell to update."
+            Write-Host "  The existing task still points at the previous binary. Run 'cua-driver-local autostart enable' from an elevated shell to update."
         }
     }
 }
@@ -378,18 +370,18 @@ if ($AutoStart) {
     # Surface the management subcommands so the user knows how to inspect /
     # disable later without digging through Task Scheduler.
     Write-Host ""
-    Write-Host "Auto-start: 'cua-driver-serve' is registered at RunLevel=Highest." -ForegroundColor Cyan
-    Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Cyan
-    Write-Host "  cua-driver autostart disable   (remove)" -ForegroundColor Cyan
-    Write-Host "  cua-driver autostart kick      (start now without re-logging)" -ForegroundColor Cyan
+    Write-Host "Auto-start: 'cua-driver-local-serve' is registered at RunLevel=Highest." -ForegroundColor Cyan
+    Write-Host "  cua-driver-local autostart status    (inspect)" -ForegroundColor Cyan
+    Write-Host "  cua-driver-local autostart disable   (remove)" -ForegroundColor Cyan
+    Write-Host "  cua-driver-local autostart kick      (start now without re-logging)" -ForegroundColor Cyan
     Write-Host ""
 } else {
     # Opt-out branch (-NoAutoStart or -AutoStart:`$false`).
     Write-Host ""
     Write-Host "Auto-start at logon (NOT enabled - re-run without -NoAutoStart to register, or:):" -ForegroundColor Cyan
-    Write-Host "  cua-driver autostart enable    (register Scheduled Task at RunLevel=Highest)" -ForegroundColor Cyan
-    Write-Host "  cua-driver autostart kick      (start now without re-logging)" -ForegroundColor Cyan
-    Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Cyan
-    Write-Host "  cua-driver autostart disable   (remove)" -ForegroundColor Cyan
+    Write-Host "  cua-driver-local autostart enable    (register Scheduled Task at RunLevel=Highest)" -ForegroundColor Cyan
+    Write-Host "  cua-driver-local autostart kick      (start now without re-logging)" -ForegroundColor Cyan
+    Write-Host "  cua-driver-local autostart status    (inspect)" -ForegroundColor Cyan
+    Write-Host "  cua-driver-local autostart disable   (remove)" -ForegroundColor Cyan
     Write-Host ""
 }

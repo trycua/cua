@@ -30,8 +30,17 @@
 
 use anyhow::{anyhow, Result};
 
-/// Canonical task / unit name. Used by every platform.
-pub const TASK_NAME: &str = "cua-driver-serve";
+/// Canonical task name for this installed product.
+pub fn task_name() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        crate::bundle::autostart_task_name()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "cua-driver-serve"
+    }
+}
 
 /// Reported by `status`.
 ///
@@ -213,8 +222,8 @@ $action = New-ScheduledTaskAction `
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Hours 0)
-Unregister-ScheduledTask -TaskName 'cua-driver-serve' -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'cua-driver-rs: serve daemon, auto-start at interactive logon, RunLevel=Highest for UWP/AppContainer support' | Out-Null
+Unregister-ScheduledTask -TaskName $env:CUA_DRIVER_AS_TASK -Confirm:$false -ErrorAction SilentlyContinue
+Register-ScheduledTask -TaskName $env:CUA_DRIVER_AS_TASK -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "${env:CUA_DRIVER_AS_CLI}: serve daemon, auto-start at interactive logon, RunLevel=Highest for UWP/AppContainer support" | Out-Null
 
 # Note: the uiAccess'd worker (`cua-driver-uia.exe`) does NOT get its own
 # scheduled task. uiAccess PEs can only be launched via ShellExecute, and
@@ -234,6 +243,8 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
         let out = Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", REGISTER_PS])
             .env("CUA_DRIVER_AS_EXE", exe)
+            .env("CUA_DRIVER_AS_TASK", task_name())
+            .env("CUA_DRIVER_AS_CLI", crate::bundle::cli_name())
             .output()
             .map_err(|e| anyhow!("failed to invoke powershell: {e}"))?;
         if out.status.success() {
@@ -304,14 +315,15 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
     }
 
     pub fn disable() -> Result<()> {
-        // Tear down any legacy `cua-driver-uia` task from earlier autostart
-        // versions that registered a separate scheduled task for the uia
-        // worker. Current versions don't register one (serve.rs spawns the
-        // worker as a child), but `disable` should still clean up old
-        // installs. Best-effort — "task not found" is ignored.
-        let _ = Command::new("schtasks")
-            .args(["/Delete", "/TN", "cua-driver-uia", "/F"])
-            .output();
+        // Tear down the legacy release `cua-driver-uia` task only when
+        // managing the release product. Older versions registered a separate
+        // task for the worker; current versions spawn it from serve.rs. Local
+        // management must never alter that release task.
+        if !crate::bundle::is_local_installation() {
+            let _ = Command::new("schtasks")
+                .args(["/Delete", "/TN", "cua-driver-uia", "/F"])
+                .output();
+        }
 
         // schtasks /Delete returns 0 on success, 1 on "task not found"
         // (which we treat as success: the goal is "no task registered"
@@ -319,7 +331,7 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
         // code because schtasks doesn't distinguish "doesn't exist" from
         // "permission denied" via exit code.
         let out = Command::new("schtasks")
-            .args(["/Delete", "/TN", TASK_NAME, "/F"])
+            .args(["/Delete", "/TN", task_name(), "/F"])
             .output()
             .map_err(|e| anyhow!("failed to invoke schtasks: {e}"))?;
         if out.status.success() {
@@ -349,7 +361,7 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
         // scheduler namespace could not be inspected and therefore stays
         // unknown.
         let out = Command::new("schtasks")
-            .args(["/Query", "/TN", TASK_NAME, "/HRESULT"])
+            .args(["/Query", "/TN", task_name(), "/HRESULT"])
             .output()
             .map_err(|e| anyhow!("unknown: failed to invoke schtasks: {e}"))?;
 
@@ -394,7 +406,7 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
 
     pub fn kick() -> Result<()> {
         let out = Command::new("schtasks")
-            .args(["/Run", "/TN", TASK_NAME])
+            .args(["/Run", "/TN", task_name()])
             .output()
             .map_err(|e| anyhow!("failed to invoke schtasks: {e}"))?;
         if !out.status.success() {
@@ -444,13 +456,18 @@ pub fn run_autostart_cmd(subcommand: &str) {
         "enable" => (
             enable(),
             format!(
-                "Registered autostart entry '{TASK_NAME}'.\n  \
-             cua-driver serve will start at every interactive logon."
+                "Registered autostart entry '{}'.\n  \
+             {} serve will start at every interactive logon.",
+                task_name(),
+                crate::bundle::cli_name()
             ),
         ),
         "disable" => (
             disable(),
-            format!("Removed autostart entry '{TASK_NAME}' (no-op if it was already absent)."),
+            format!(
+                "Removed autostart entry '{}' (no-op if it was already absent).",
+                task_name()
+            ),
         ),
         "status" => match status() {
             Ok(s) => {
@@ -464,7 +481,10 @@ pub fn run_autostart_cmd(subcommand: &str) {
         },
         "kick" => (
             kick(),
-            format!("Started autostart entry '{TASK_NAME}' for the current session."),
+            format!(
+                "Started autostart entry '{}' for the current session.",
+                task_name()
+            ),
         ),
         other => {
             eprintln!("Unknown autostart subcommand: {other:?}");

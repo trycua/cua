@@ -139,14 +139,14 @@ echo "[INSTALL] Building and installing ${SOURCE_SHA} with the golden signing id
 bash "${DRIVER_ROOT}/scripts/install-local.sh" --release --autostart \
   2>&1 | tee "${ARTIFACT_DIR}/install-local.log"
 
-codesign -d -r- /Applications/CuaDriver.app \
+codesign -d -r- /Applications/CuaDriverLocal.app \
   > "${ARTIFACT_DIR}/codesign-requirement.txt" 2>&1
 if ! grep -Fq "certificate leaf" "${ARTIFACT_DIR}/codesign-requirement.txt"; then
-  echo "CuaDriver.app is not signed with the golden image's stable certificate identity" >&2
+  echo "CuaDriverLocal.app is not signed with the golden image's stable certificate identity" >&2
   exit 1
 fi
 
-INSTALLED_BIN="${HOME}/.local/bin/cua-driver"
+INSTALLED_BIN="${HOME}/.local/bin/cua-driver-local"
 PERMISSIONS_FILE="${ARTIFACT_DIR}/permissions.json"
 PERMISSIONS_READY=0
 for _ in 1 2 3 4 5 6 7 8 9 10; do

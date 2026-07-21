@@ -13,30 +13,29 @@ def test_local_installer_accepts_untrusted_self_signed_identity() -> None:
     assert script.count("security find-identity -p codesigning") >= 2
 
 
-def test_tcc_reset_compares_live_designated_requirement() -> None:
-    """The TCC-reset decision inspects the live app's requirement, not just the marker (#2230)."""
+def test_local_installer_uses_a_separate_macos_identity() -> None:
+    """Local rebuilds never replace or reset the release app identity (#2230)."""
     script = (
         Path(__file__).resolve().parents[2] / "scripts" / "_install-local-rust.sh"
     ).read_text()
 
-    # A classifier collapses a designated requirement to a stable identity class.
-    assert "classify_designated_requirement()" in script
-    # The old live requirement is captured before the app is replaced and drives
-    # the comparison (so a Developer ID -> local transition is detected).
-    assert "OLD_LIVE_IDENTITY=" in script
-    assert 'OLD_IDENTITY="$OLD_LIVE_IDENTITY"' in script
+    assert 'APP_DEST="/Applications/CuaDriverLocal.app"' in script
+    assert 'CFBundleIdentifier -string "com.trycua.driver.local"' in script
+    assert 'CFBundleExecutable -string "cua-driver-local"' in script
+    assert "tccutil reset" not in script
 
 
-def test_tcc_reset_gates_marker_write_on_success() -> None:
-    """A failed `tccutil reset` must not advance the identity marker, so it retries (#2230)."""
+def test_unix_local_installer_uses_separate_paths_and_autostart() -> None:
+    """Local install state, command, and service names coexist with release."""
     script = (
         Path(__file__).resolve().parents[2] / "scripts" / "_install-local-rust.sh"
     ).read_text()
 
-    # The reset exit status is tracked instead of being discarded with `|| true`.
-    assert "reset_succeeded=0" in script
-    # The marker is only written when no reset was needed or the reset succeeded.
-    assert '[ "$needs_reset" = 0 ] || [ "$reset_succeeded" = 1 ]' in script
+    assert 'HOME_DIR="${CUA_DRIVER_LOCAL_HOME:-$HOME/.cua-driver-local}"' in script
+    assert 'BIN_DIR/cua-driver-local' in script
+    assert "com.trycua.cua-driver-local.plist" in script
+    assert "cua-driver-local.service" in script
+    assert "stop_cua_driver_daemons" not in script
 
 
 def test_unix_local_installer_always_embeds_source_provenance() -> None:
@@ -62,3 +61,24 @@ def test_windows_local_installer_always_embeds_source_provenance() -> None:
     assert "rev-parse --verify 'HEAD^{commit}'" in script
     assert "status --porcelain --untracked-files=normal" in script
     assert '"$detectedSourceSha-dirty"' in script
+
+
+def test_windows_local_installer_uses_separate_paths_and_autostart() -> None:
+    script = (
+        Path(__file__).resolve().parents[2] / "scripts" / "install-local.ps1"
+    ).read_text()
+
+    assert '$BinaryName  = "cua-driver-local.exe"' in script
+    assert '"Programs\\Cua\\cua-driver-local\\bin"' in script
+    assert '".cua-driver-local"' in script
+    assert '"cua-driver-local-serve"' in script
+    assert "Repair-CuaDriverStaleDaemon" not in script
+
+
+def test_release_installers_do_not_target_local_product_artifacts() -> None:
+    scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    for name in ("_install-rust.sh", "install.ps1"):
+        script = (scripts_dir / name).read_text()
+        assert "CuaDriverLocal" not in script
+        assert ".cua-driver-local" not in script
+        assert "cua-driver-local-serve" not in script

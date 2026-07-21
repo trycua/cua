@@ -416,7 +416,9 @@ fn is_enabled() -> bool {
 /// the file is missing, unreadable, or doesn't have the key.
 fn read_config_flag() -> Option<bool> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-    let path = PathBuf::from(home).join(".cua-driver").join("config.json");
+    let path = PathBuf::from(home)
+        .join(crate::bundle::user_home_subdirectory())
+        .join("config.json");
     let raw = std::fs::read_to_string(&path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
     json.get("update_check_enabled").and_then(|v| v.as_bool())
@@ -510,7 +512,11 @@ fn cache_path() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
     Some(
         PathBuf::from(home)
-            .join(HOME_SUBDIRECTORY)
+            .join(if crate::bundle::is_local_installation() {
+                ".cua-driver-local"
+            } else {
+                HOME_SUBDIRECTORY
+            })
             .join(CACHE_FILE_NAME),
     )
 }

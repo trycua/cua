@@ -92,7 +92,7 @@ pub fn maybe_announce_update() {
     let current = env!("CARGO_PKG_VERSION").to_owned();
 
     let task = move || {
-        run_check_and_announce(&current, fetch_latest_version, std::io::stderr());
+        run_check_and_announce(&current, fetch_latest_version, std::io::stderr(), true);
     };
 
     if tokio::runtime::Handle::try_current().is_ok() {
@@ -139,6 +139,28 @@ pub struct UpdateState {
     /// Human-readable error string when the network fetch failed AND no
     /// cache was available. `None` on success / cache fallback.
     pub error: Option<String>,
+}
+
+/// Emit the bounded result of an explicit update check. The structured state
+/// remains the source of truth for CLI/MCP output; telemetry receives only a
+/// closed outcome, a strict public release version, and the cache flag.
+pub(crate) fn capture_update_state(
+    state: &UpdateState,
+    source: crate::telemetry::UpdateCheckSource,
+) {
+    let outcome = if state.update_available {
+        crate::telemetry::UpdateCheckOutcome::Available
+    } else if state.latest_version.is_some() {
+        crate::telemetry::UpdateCheckOutcome::UpToDate
+    } else {
+        crate::telemetry::UpdateCheckOutcome::Unavailable
+    };
+    crate::telemetry::capture_update_checked(
+        source,
+        outcome,
+        state.latest_version.as_deref(),
+        state.cache_hit,
+    );
 }
 
 /// Build the canonical install one-liner for the current target.
@@ -275,7 +297,7 @@ pub fn dismiss_version(version: &str) {
 /// against a stubbed fetcher and capture the banner into an in-memory
 /// buffer. Errors here never propagate — the function consumes them
 /// and converts to `tracing::debug!` lines.
-fn run_check_and_announce<F, W>(current: &str, fetch: F, mut writer: W)
+fn run_check_and_announce<F, W>(current: &str, fetch: F, mut writer: W, capture_telemetry: bool)
 where
     F: FnOnce() -> Result<String, String>,
     W: std::io::Write,
@@ -289,7 +311,7 @@ where
         .map(|t| now.saturating_sub(t) >= CACHE_REFRESH_SECONDS)
         .unwrap_or(true);
 
-    let latest = if needs_refresh {
+    let (latest, cache_hit) = if needs_refresh {
         match fetch() {
             Ok(v) => {
                 // Persist on success so the next launch re-uses the answer.
@@ -303,7 +325,7 @@ where
                     tracing::debug!(target: "cua_driver::version_check",
                                     "failed to write cache: {e}");
                 }
-                v
+                (v, false)
             }
             Err(e) => {
                 tracing::debug!(target: "cua_driver::version_check",
@@ -311,14 +333,14 @@ where
                 // Fall back to the cached value if any — better an old
                 // banner than none on a brief network blip.
                 match cached.latest_version.clone() {
-                    Some(v) => v,
+                    Some(v) => (v, true),
                     None => return,
                 }
             }
         }
     } else {
         match cached.latest_version.clone() {
-            Some(v) => v,
+            Some(v) => (v, true),
             None => return,
         }
     };
@@ -336,6 +358,17 @@ where
         tracing::debug!(target: "cua_driver::version_check",
                         "newer version {latest} dismissed; skipping banner");
         return;
+    }
+
+    // Background entry points can be hot-restarted. Record availability only
+    // on the freshness-bounded network check, not on every cached banner.
+    if capture_telemetry && !cache_hit {
+        crate::telemetry::capture_update_checked(
+            crate::telemetry::UpdateCheckSource::Background,
+            crate::telemetry::UpdateCheckOutcome::Available,
+            Some(&latest),
+            false,
+        );
     }
 
     let banner = format_banner(&latest, current);
@@ -764,6 +797,7 @@ mod tests {
                     Ok("0.1.4".to_owned()) // newer version returned by network
                 },
                 &mut buf,
+                false,
             );
 
             assert_eq!(
@@ -800,6 +834,7 @@ mod tests {
                     Ok("0.1.5".to_owned())
                 },
                 &mut buf,
+                false,
             );
 
             assert_eq!(
@@ -829,7 +864,7 @@ mod tests {
             write_cache(&cache).unwrap();
 
             let mut buf: Vec<u8> = Vec::new();
-            run_check_and_announce("0.1.3", || Ok("0.1.4".to_owned()), &mut buf);
+            run_check_and_announce("0.1.3", || Ok("0.1.4".to_owned()), &mut buf, false);
             assert!(buf.is_empty(), "dismissed version must suppress banner");
         });
     }

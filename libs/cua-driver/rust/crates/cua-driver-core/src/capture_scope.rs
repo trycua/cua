@@ -236,8 +236,6 @@ fn is_scoped_action(tool_name: &str) -> bool {
             | "right_click"
             | "scroll"
             | "drag"
-            | "mouse_button_down"
-            | "mouse_button_up"
             | "mouse_drag"
             | "parallel_mouse_drag"
             | "move_cursor"
@@ -269,6 +267,11 @@ fn tool_scope(tool_name: &str, args: &Value) -> ToolScope {
         || (tool_name.starts_with("browser_")
             && !matches!(tool_name, "browser_prepare" | "browser_download"))
     {
+        return ToolScope::Window;
+    }
+    if matches!(tool_name, "mouse_button_down" | "mouse_button_up") {
+        // These stateful primitives only deliver to a window or to the window
+        // retained by a prior button-down; neither implements desktop scope.
         return ToolScope::Window;
     }
     if is_scoped_action(tool_name) {
@@ -502,6 +505,15 @@ mod tests {
                 "window_scope_disabled"
             );
         }
+        assert_eq!(
+            enforce_tool(
+                "mouse_button_up",
+                &json!({"session": desktop, "scope": "desktop"})
+            )
+            .unwrap_err()
+            .code,
+            "window_scope_disabled"
+        );
     }
 
     #[test]
@@ -524,15 +536,17 @@ mod tests {
                 .code,
             "window_scope_disabled"
         );
-        assert_eq!(
-            enforce_tool(
-                "mouse_button_up",
-                &json!({"session": session, "x": 8, "y": 9})
-            )
-            .unwrap_err()
-            .code,
-            "window_scope_disabled"
-        );
+        for positioned_args in [
+            json!({"session": session, "x": 8, "y": 9}),
+            json!({"session": session, "scope": "desktop", "x": 8, "y": 9}),
+        ] {
+            assert_eq!(
+                enforce_tool("mouse_button_up", &positioned_args)
+                    .unwrap_err()
+                    .code,
+                "window_scope_disabled"
+            );
+        }
         assert!(enforce_tool("mouse_button_up", &json!({"session": session})).is_ok());
         assert!(enforce_tool(
             "mouse_button_up",

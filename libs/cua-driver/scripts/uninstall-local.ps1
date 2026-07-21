@@ -156,7 +156,9 @@ if (Test-Path -LiteralPath $LocalHomeMarker) {
     }
     foreach ($file in @(
         ".installation_recorded", ".telemetry_enabled", ".telemetry_id",
-        ".telemetry_install_channel", ".tcc-signing-identity", "config.json",
+        ".telemetry_identity.lock", ".telemetry_install_channel",
+        ".telemetry_lifecycle.lock", ".telemetry_retry_after",
+        ".tcc-signing-identity", "config.json",
         "serve.err.log", "serve.out.log", "version_check.json"
     )) {
         $path = Join-Path $HomeDir $file

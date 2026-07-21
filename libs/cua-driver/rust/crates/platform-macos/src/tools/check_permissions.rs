@@ -38,8 +38,12 @@ fn screen_recording_capturable() -> bool {
         .unwrap_or(false)
 }
 
-fn should_probe_direct_capture(should_prompt: bool, screen_recording: bool) -> bool {
-    should_prompt && screen_recording
+fn should_probe_direct_capture(
+    should_prompt: bool,
+    screen_recording: bool,
+    probe_direct_capture: bool,
+) -> bool {
+    should_prompt && screen_recording && probe_direct_capture
 }
 
 /// (B) Which TCC identity the booleans in this response reflect.
@@ -145,13 +149,20 @@ fn def() -> &'static ToolDef {
             booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). \
             macOS attributes grants to the responsible process, so a standalone call \
             from a terminal reports the terminal's grants, not the driver's. The \
-            prompt-capable ScreenCaptureKit probe never runs when `prompt` is false.".into(),
+            prompt-capable ScreenCaptureKit probe never runs when `prompt` is false. \
+            Pass `probe_direct_capture:false` with `prompt:true` to register/request only \
+            the two required TCC grants before separately explaining Tahoe's direct-capture \
+            consent.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "prompt": {
                     "type": "boolean",
                     "description": "Raise the system permission prompts for missing grants. Default true.",
+                },
+                "probe_direct_capture": {
+                    "type": "boolean",
+                    "description": "When prompting and Screen Recording is granted, also run the live ScreenCaptureKit probe that may raise Tahoe's direct-capture consent. Default true. Set false for a staged Accessibility/Screen Recording request.",
                 }
             },
             "additionalProperties": false,
@@ -179,6 +190,7 @@ impl Tool for CheckPermissionsTool {
         // `request_*` call sites, so both being gated makes prompts
         // unreachable when embedded.
         let should_prompt = args.bool_or("prompt", true) && !cua_driver_core::embedded_mode();
+        let probe_direct_capture = args.bool_or("probe_direct_capture", true);
         if should_prompt {
             let _ = request_accessibility();
             let _ = request_screen_recording();
@@ -194,14 +206,15 @@ impl Tool for CheckPermissionsTool {
             (None, "not_checked")
         } else if !screen_recording {
             (None, "blocked_by_screen_recording")
-        } else if should_probe_direct_capture(should_prompt, screen_recording) {
+        } else if should_probe_direct_capture(should_prompt, screen_recording, probe_direct_capture)
+        {
             let capturable = screen_recording_capturable();
             (
                 Some(capturable),
                 if capturable { "ready" } else { "unavailable" },
             )
         } else {
-            unreachable!("all non-probing direct-capture states were handled")
+            (None, "not_checked")
         };
         // (B) Which identity the booleans above belong to.
         let source = permission_source();
@@ -230,11 +243,12 @@ impl Tool for CheckPermissionsTool {
                 "\n⚠️  Screen Recording reads granted but a live capture probe failed — \
                  the grant likely belongs to a different process, not this one.",
             );
-        } else if screen_recording_capturable.is_none() && !should_prompt {
+        } else if screen_recording_capturable.is_none() && (!should_prompt || !probe_direct_capture)
+        {
             summary.push_str(
                 "\nℹ️  Direct ScreenCaptureKit readiness was not probed because this is a \
-                 read-only check. Run `cua-driver permissions grant` to request and \
-                 verify direct capture explicitly.",
+                 staged or read-only check. Run `cua-driver permissions grant` to request \
+                 and verify direct capture explicitly.",
             );
         }
         // Make the attribution explicit when answering for a host or caller
@@ -311,10 +325,16 @@ mod tests {
 
     #[test]
     fn read_only_checks_never_run_the_prompt_capable_direct_capture_probe() {
-        assert!(!should_probe_direct_capture(false, false));
-        assert!(!should_probe_direct_capture(false, true));
-        assert!(!should_probe_direct_capture(true, false));
-        assert!(should_probe_direct_capture(true, true));
+        assert!(!should_probe_direct_capture(false, false, true));
+        assert!(!should_probe_direct_capture(false, true, true));
+        assert!(!should_probe_direct_capture(true, false, true));
+        assert!(should_probe_direct_capture(true, true, true));
+    }
+
+    #[test]
+    fn staged_prompt_never_runs_the_direct_capture_probe() {
+        assert!(!should_probe_direct_capture(true, false, false));
+        assert!(!should_probe_direct_capture(true, true, false));
     }
 
     #[test]

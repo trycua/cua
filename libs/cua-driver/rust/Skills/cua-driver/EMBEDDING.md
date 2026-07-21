@@ -118,12 +118,22 @@ const connection = await driver.start();
 await driver.stop();
 ```
 
+The package does not install or bundle cua-driver. Ship a compatible executable
+outside Electron's ASAR archive, preserve its executable bit, and sign the
+nested executable before signing and notarizing the enclosing macOS app.
 Electron main processes can use the package's `/electron` entry point to
-request Accessibility and check Screen Recording after `app.whenReady()`.
-Some macOS releases refuse to raise a Screen Recording prompt; in that case,
-open the Screen Recording settings pane with
-`openMacOSScreenRecordingSettings()`, ask the user to add the host app, and
-start the driver only after both checks return true.
+request Accessibility and check Screen Recording after `app.whenReady()`; its
+native `ffi-rs` module must also remain outside ASAR. Some macOS releases refuse
+to raise a Screen Recording prompt; in that case, open the Screen Recording
+settings pane with `openMacOSScreenRecordingSettings()`, ask the user to add the
+host app, and start the driver only after both checks return true.
+
+Call `await driver.stop()` from every orderly shutdown path. Electron hosts
+must defer their first `before-quit` event until cleanup completes because
+asynchronous cleanup cannot run after the host process exits. Normal OpenClaw
+gateway and Hermes YAML configurations remain standalone integrations; use the
+package only when their signed Node or Electron app process directly owns the
+daemon child.
 
 ## What embedded mode changes (and what it doesn't)
 

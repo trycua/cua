@@ -26,6 +26,25 @@ cua-driver mcp --embedded --socket /tmp/yourapp-cua.sock \
 
 You can pass `--embedded --host-bundle-id com.yourco.yourapp` to `serve` instead of the environment variables. Only the exact value `CUA_DRIVER_EMBEDDED=1` enables environment-based embedded mode. The host bundle id is an advisory label echoed in `check_permissions`; trust still comes from macOS's responsibility chain.
 
+## Node and Electron hosts
+
+Use `@trycua/cua-driver-embedded` instead of duplicating socket naming, readiness checks, restart handling, and process cleanup:
+
+```ts
+import { EmbeddedCuaDriver } from '@trycua/cua-driver-embedded';
+
+const driver = new EmbeddedCuaDriver({
+  binaryPath: '/path/inside/YourApp.app/cua-driver',
+  hostBundleId: 'com.example.your-app',
+});
+const connection = await driver.start();
+// Register connection.mcp with the host's MCP client.
+```
+
+The package does not install or bundle cua-driver. Ship a compatible executable outside Electron's ASAR archive, preserve its executable bit, and sign the nested executable before signing and notarizing the enclosing macOS app. The `/electron` entry point requests Accessibility and Screen Recording from Electron's main process; its native `ffi-rs` module must also remain outside ASAR.
+
+Call `await driver.stop()` from every orderly shutdown path. Electron hosts should defer their first `before-quit` event until `stop()` completes because asynchronous cleanup cannot run after the host process has exited. If grants change while the daemon is running, use `driver.restart()` so macOS re-evaluates them in a fresh process.
+
 ## Host requirements
 
 - Spawn `cua-driver serve --embedded` directly from your app, for example with `Process` / `NSTask`, `posix_spawn`, or `fork` / `exec`.
@@ -38,6 +57,8 @@ If macOS grants are added after the daemon has started, restart the daemon so TC
 ## App + gateway architectures
 
 `--embedded` does not transfer a GUI app's grants to the driver; it only keeps the daemon inside its spawner's macOS responsibility chain. If a separate gateway or Node process spawns the daemon, the daemon inherits the gateway's identity, not the app's. Spawn `cua-driver serve --embedded` from the app process.
+
+Normal OpenClaw gateway and Hermes YAML MCP configurations remain standalone integrations; do not set embedded mode merely because one of those agents is the client. A signed Node or Electron desktop host may use `@trycua/cua-driver-embedded`, but only its permission-owning app process may start the daemon. The MCP client can then launch the proxy described by `connection.mcp`.
 
 ```text
 Wrong (inherits the gateway's identity):        Right:

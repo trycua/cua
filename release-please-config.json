@@ -43,6 +43,11 @@
         {
           "type": "generic",
           "path": "rust/Skills/cua-driver/SKILL.md"
+        },
+        {
+          "type": "json",
+          "path": "node/package.json",
+          "jsonpath": "$.version"
         }
       ]
     },

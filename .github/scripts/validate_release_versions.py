@@ -40,9 +40,11 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
     expected = (base / "rust/VERSION").read_text().strip()
     cargo = tomllib.loads((base / "rust/Cargo.toml").read_text())
     python_project = tomllib.loads((base / "python/pyproject.toml").read_text())
+    node_package = json.loads((base / "node/package.json").read_text())
     values = {
         "rust/Cargo.toml": str(cargo["workspace"]["package"]["version"]),
         "python/pyproject.toml": str(python_project["project"]["version"]),
+        "node/package.json": str(node_package["version"]),
         "python/src/cua_driver/__init__.py": read_match(
             base / "python/src/cua_driver/__init__.py", r'^__version__\s*=\s*"([^"]+)"'
         ),

@@ -20,6 +20,18 @@
 
 </div>
 
+<!-- Keep these links, translations synced daily. -->
+<p align="center">
+<a href="https://zdoc.app/de/trycua/cua">Deutsch</a> |
+<a href="https://zdoc.app/es/trycua/cua">Español</a> |
+<a href="https://zdoc.app/fr/trycua/cua">français</a> |
+<a href="https://zdoc.app/ja/trycua/cua">日本語</a> |
+<a href="https://zdoc.app/ko/trycua/cua">한국어</a> |
+<a href="https://zdoc.app/pt/trycua/cua">Português</a> |
+<a href="https://zdoc.app/ru/trycua/cua">Русский</a> |
+<a href="https://zdoc.app/zh/trycua/cua">中文</a>
+</p>
+
 ## Choose Your Path
 
 <div align="center">

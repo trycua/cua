@@ -172,6 +172,27 @@ impl Tool for TypeTextTool {
         // cua_driver_core::text_sanitize docs for rationale.
         let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
+        // Fail before any element focus or pixel-click can redirect subsequent
+        // key events. The guard remains live until the delivery worker exits.
+        let input_guard = match cua_driver_core::type_text_lock::try_acquire(pid as i64) {
+            Ok(guard) => guard,
+            Err(refusal) => return refusal,
+        };
+        input_guard
+            .run_until_complete(Self::invoke_locked(self.state.clone(), args, pid, text))
+            .await
+    }
+}
+
+impl TypeTextTool {
+    async fn invoke_locked(
+        tool_state: Arc<ToolState>,
+        args: Value,
+        pid: i32,
+        text: String,
+    ) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+
         // Surface 6: element_token / element_index precedence resolution.
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
@@ -217,7 +238,7 @@ impl Tool for TypeTextTool {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             if let Err(e) = super::focus_by_pixel(
-                &self.state,
+                &tool_state,
                 pid,
                 window_id,
                 cx,
@@ -246,7 +267,7 @@ impl Tool for TypeTextTool {
         // the blocking type below dereferences it (use-after-free → daemon
         // crash). The guard lives to method end, past type_text_blocking.
         let element_guard = if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            match self.state.element_cache.get_element_retained(pid, wid, idx) {
+            match tool_state.element_cache.get_element_retained(pid, wid, idx) {
                 Some(e) => Some((e, idx)),
                 None => {
                     return ToolResult::error(format!(

@@ -62,6 +62,7 @@ pub mod text_sanitize;
 pub mod tool;
 pub mod tool_args;
 pub mod tool_schema;
+pub mod type_text_lock;
 pub mod video;
 pub mod video_ffmpeg;
 

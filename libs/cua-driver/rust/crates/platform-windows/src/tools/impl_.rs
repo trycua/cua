@@ -3469,7 +3469,6 @@ impl Tool for TypeTextTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use crate::input::delivery::{DeliveryMode, EventKind};
         use cua_driver_core::tool_args::ArgsExt;
         let text_raw = match args.require_str("text") {
             Ok(v) => v,
@@ -3508,11 +3507,42 @@ impl Tool for TypeTextTool {
                 Err(error) => ToolResult::error(format!("desktop type task failed: {error}")),
             };
         }
-        let raw_pid = match args.require_i64("pid") {
+        let pid = match args.require_u32("pid") {
             Ok(v) => v,
             Err(e) => return e,
         };
-        let pid = raw_pid as u32;
+        let raw_pid = i64::from(pid);
+        // Fail before any element focus or pixel-click can redirect subsequent
+        // key events. The guard remains live until the delivery worker exits.
+        let input_guard = match cua_driver_core::type_text_lock::try_acquire(raw_pid) {
+            Ok(guard) => guard,
+            Err(refusal) => return refusal,
+        };
+        input_guard
+            .run_until_complete(Self::invoke_locked(
+                self.state.clone(),
+                args,
+                pid,
+                raw_pid,
+                text,
+                cursor_key,
+            ))
+            .await
+    }
+}
+
+impl TypeTextTool {
+    async fn invoke_locked(
+        tool_state: Arc<ToolState>,
+        args: Value,
+        pid: u32,
+        raw_pid: i64,
+        text: String,
+        cursor_key: String,
+    ) -> ToolResult {
+        use crate::input::delivery::{DeliveryMode, EventKind};
+        use cua_driver_core::tool_args::ArgsExt;
+
         // Surface 6: element_token / element_index precedence resolution.
         let resolved = match cua_driver_core::element_token::resolve_element_args(
             pid as i32,
@@ -3558,7 +3588,7 @@ impl Tool for TypeTextTool {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
                 if let Err(e) = focus_by_pixel(
-                    &self.state,
+                    &tool_state,
                     pid,
                     hwnd_opt,
                     cx,
@@ -3642,8 +3672,7 @@ impl Tool for TypeTextTool {
             // actuator used by an indexed click before sending Unicode input.
             if let Some(idx) = elem_idx {
                 let (cx, cy) =
-                    match self
-                        .state
+                    match tool_state
                         .element_cache
                         .get_element_center(pid, hwnd, idx as usize)
                     {
@@ -3655,7 +3684,7 @@ impl Tool for TypeTextTool {
                         }
                     };
                 let (cx, cy) = match resolve_onscreen_point_with_scroll(
-                    &self.state.element_cache,
+                    &tool_state.element_cache,
                     pid,
                     hwnd,
                     idx as usize,
@@ -3715,7 +3744,7 @@ impl Tool for TypeTextTool {
         // the focused-element path has no resolvable position to point at.
         if let Some(idx) = elem_idx {
             if let Some((cx, cy)) =
-                self.state
+                tool_state
                     .element_cache
                     .get_element_center(pid, hwnd, idx as usize)
             {
@@ -3760,7 +3789,7 @@ impl Tool for TypeTextTool {
         //    (most legacy Win32 EDITs consume WM_CHAR fine without focus steal).
         if let Some(idx) = elem_idx {
             let idx = idx as usize;
-            let state = self.state.clone();
+            let state = tool_state.clone();
             let text_for_uia = text.clone();
             let set_ok = tokio::task::spawn_blocking(move || -> bool {
                 // Retain the element under the cache lock so a concurrent
@@ -3812,7 +3841,7 @@ impl Tool for TypeTextTool {
                 // (works regardless of which window is foreground), proving the
                 // a11y write actually took rather than trusting SetValue's
                 // return alone.
-                let state_rb = self.state.clone();
+                let state_rb = tool_state.clone();
                 let text_rb = text.clone();
                 let verify = tokio::task::spawn_blocking(move || {
                     match read_cached_element_value(&state_rb, pid, hwnd, idx) {
@@ -3925,7 +3954,7 @@ impl Tool for TypeTextTool {
         let text_for_post = text.clone();
         let verify_pid = pid;
         let verify_idx = elem_idx.map(|i| i as usize);
-        let state_rb = self.state.clone();
+        let state_rb = tool_state.clone();
         let result = tokio::task::spawn_blocking(move || {
             // Prefer a focus-independent read of the *specific* cached element
             // when we have its index; only fall back to the (flaky, focus-

@@ -2262,6 +2262,27 @@ impl Tool for TypeTextTool {
         // cua_driver_core::text_sanitize docs for rationale.
         let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
+        // Fail before any element focus or pixel-click can redirect subsequent
+        // key events. The guard remains live until the delivery worker exits.
+        let input_guard = match cua_driver_core::type_text_lock::try_acquire(pid as i64) {
+            Ok(guard) => guard,
+            Err(refusal) => return refusal,
+        };
+        input_guard
+            .run_until_complete(Self::invoke_locked(self.state.clone(), args, pid, text))
+            .await
+    }
+}
+
+impl TypeTextTool {
+    async fn invoke_locked(
+        tool_state: Arc<ToolState>,
+        args: Value,
+        pid: u32,
+        text: String,
+    ) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+
         // Surface 6: resolve element_token / element_index for the
         // optional pre-typing focus glide below. The token also carries
         // the window_id when supplied so the caller can omit window_id.
@@ -2384,7 +2405,7 @@ impl Tool for TypeTextTool {
             }
             let from_zoom = args.bool_or("from_zoom", false);
             if let Err(e) = focus_by_pixel(
-                &self.state,
+                &tool_state,
                 pid,
                 Some(xid),
                 cx,

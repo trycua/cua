@@ -14,8 +14,7 @@
 # helpers directly inline like we're doing here.
 
 require 'ffi'
-require 'set'
-require 'monitor'
+
 
 module CyclopsSdk
   def self.uniffi_in_range(i, type_name, min, max)
@@ -37,125 +36,21 @@ def self.uniffi_bytes(v)
   v.to_str
 end
 
-# Callback return codes
-UNIFFI_CALLBACK_SUCCESS = 0
-UNIFFI_CALLBACK_ERROR = 1
-UNIFFI_CALLBACK_UNEXPECTED_ERROR = 2
-
-# Call a method on a callback interface object, catching and reporting errors
-# to Rust via the call_status.
-# If error_type is provided, known errors of that type are reported as UNIFFI_CALLBACK_ERROR;
-# all other errors are reported as UNIFFI_CALLBACK_UNEXPECTED_ERROR.
-def self.uniffi_trait_interface_call(call_status, make_call, write_return_value, error_type = nil, lower_error = nil)
-  begin
-    write_return_value.call make_call.call
-  rescue StandardError => e
-    buf = if !error_type.nil? && uniffi_is_error_type?(e, error_type)
-      call_status[:code] = UNIFFI_CALLBACK_ERROR
-      lower_error.call e
-    else
-      call_status[:code] = UNIFFI_CALLBACK_UNEXPECTED_ERROR
-      RustBuffer.alloc_from_string(e.inspect)
-    end
-
-    error_buf = call_status[:error_buf]
-    error_buf[:capacity] = buf[:capacity]
-    error_buf[:len] = buf[:len]
-    error_buf[:data] = buf[:data]
-  end
-end
-
-# Check if an exception is a variant of the given error type.
-# Error types in Ruby are either modules (non-flat enums) or classes (flat enums),
-# with variant classes as constant within them.
-def self.uniffi_is_error_type?(e, error_type)
-  # Object-as-error: error_type is a class itself (e.g. MyError < StandardError)
-  if error_type.is_a?(Class) && e.is_a?(error_type)
-    return true
-  end
-
-  # Enum error: error_type is a module with class constants for each variant
-  error_type.constants.any? do |c|
-    klass = error_type.const_get c
-    klass.is_a?(Class) && e.is_a?(klass)
-  end
-end
-  # A handle map for converting Ruby objects to/from integer handles.
-#
-# When passing callback interface or trait interface objects to Ruby, we store
-# the Ruby object in this map and pass the integer handle to Rust. When Rust
-# calls back, we look up the Ruby object by its handle.
-#
-# Ruby-created handles are always odd (staring at 1, incrementing by 2).
-# Rust-created handles are always even. This convention lets us distinguish
-# the source in lift/lower without extra metadata.
-
-
-class UniffiHandleMap
-  def initialize
-    @lock = Monitor.new
-    @map = {}
-    @counter = 1 # Start at 1 (odd), increment by 2
-  end
-
-  def insert(obj)
-    @lock.synchronize do
-      handle = @counter
-      @counter += 2
-      @map[handle] = obj
-      handle
-    end
-  end
-
-  def get(handle)
-    @lock.synchronize do
-      obj = @map[handle]
-      raise InternalError, "UniffiHandleMap.get: invalid handle #{handle}" if obj.nil?
-      obj
-    end
-  end
-
-  def clone_handle(handle)
-    @lock.synchronize do
-      obj = @map[handle]
-      raise InternalError, "UniffiHandleMap.clone_handle: invalid handle #{handle}" if obj.nil?
-      new_handle = @counter
-      @counter += 2
-      @map[new_handle] = obj
-      new_handle
-    end
-  end
-
-  def remove(handle)
-    @lock.synchronize do
-      obj = @map.delete(handle)
-      raise InternalError, "UniffiHandleMap.remove: invalid handle #{handle}" if obj.nil?
-      obj
-    end
-  end
-
-  # Used for testing/debugging purposes
-  def size
-    @lock.synchronize { @map.size }
-  end
-end
-
-private_constant :UniffiHandleMap
   class RustBuffer < FFI::Struct
   layout :capacity, :uint64,
          :len,      :uint64,
          :data,     :pointer
 
   def self.alloc(size)
-    return ::CyclopsSdk.rust_call(:ffi_cyclops_sdk_rustbuffer_alloc, size)
+    return CyclopsSdk.rust_call(:ffi_cyclops_sdk_rustbuffer_alloc, size)
   end
 
   def self.reserve(rbuf, additional)
-    return ::CyclopsSdk.rust_call(:ffi_cyclops_sdk_rustbuffer_reserve, rbuf, additional)
+    return CyclopsSdk.rust_call(:ffi_cyclops_sdk_rustbuffer_reserve, rbuf, additional)
   end
 
   def free
-    ::CyclopsSdk.rust_call(:ffi_cyclops_sdk_rustbuffer_free, self)
+    CyclopsSdk.rust_call(:ffi_cyclops_sdk_rustbuffer_free, self)
   end
 
   def capacity
@@ -203,14 +98,14 @@ private_constant :UniffiHandleMap
     free
   end# The primitive String type.
 
-  def self.alloc_from_string(value)
+  def self.allocFromString(value)
     RustBuffer.allocWithBuilder do |builder|
       builder.write value.encode('utf-8')
       return builder.finalize
     end
   end
 
-  def consume_into_string
+  def consumeIntoString
     consumeWithStream do |stream|
       return stream.read(stream.remaining).force_encoding(Encoding::UTF_8)
     end
@@ -218,16 +113,16 @@ private_constant :UniffiHandleMap
 
   # The primitive Bytes type.
 
-  def self.alloc_from_bytes(value)
+  def self.allocFromBytes(value)
     RustBuffer.allocWithBuilder do |builder|
-      builder.write_bytes(value)
+      builder.write_Bytes(value)
       return builder.finalize
     end
   end
 
-  def consume_into_bytes
+  def consumeIntoBytes
     consumeWithStream do |stream|
-      return stream.read_bytes
+      return stream.readBytes
     end
   end
 
@@ -238,7 +133,7 @@ private_constant :UniffiHandleMap
 
     RustBuffer.check_lower_TypeResourceMetadata(v.metadata)
     RustBuffer.check_lower_TypeClaimSpec(v.spec)
-    RustBuffer.check_lower_OptionalTypeOSGymSandboxClaimStatus(v.status)
+    RustBuffer.check_lower_OptionalTypeOsGymSandboxClaimStatus(v.status)
   end
 
   def self.alloc_from_TypeClaim(v)
@@ -248,9 +143,9 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_TypeClaim
+  def consumeIntoTypeClaim
     consumeWithStream do |stream|
-      return stream.read_TypeClaim
+      return stream.readTypeClaim
     end
   end
 
@@ -268,9 +163,9 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_TypeCreateClaimRequest
+  def consumeIntoTypeCreateClaimRequest
     consumeWithStream do |stream|
-      return stream.read_TypeCreateClaimRequest
+      return stream.readTypeCreateClaimRequest
     end
   end
 
@@ -288,9 +183,9 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_TypeCreatePoolRequest
+  def consumeIntoTypeCreatePoolRequest
     consumeWithStream do |stream|
-      return stream.read_TypeCreatePoolRequest
+      return stream.readTypeCreatePoolRequest
     end
   end
 
@@ -313,9 +208,9 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_TypeCyclopsConfiguration
+  def consumeIntoTypeCyclopsConfiguration
     consumeWithStream do |stream|
-      return stream.read_TypeCyclopsConfiguration
+      return stream.readTypeCyclopsConfiguration
     end
   end
 
@@ -333,9 +228,9 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_TypeHttpHeader
+  def consumeIntoTypeHttpHeader
     consumeWithStream do |stream|
-      return stream.read_TypeHttpHeader
+      return stream.readTypeHttpHeader
     end
   end
 
@@ -355,9 +250,9 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_TypeHttpRequest
+  def consumeIntoTypeHttpRequest
     consumeWithStream do |stream|
-      return stream.read_TypeHttpRequest
+      return stream.readTypeHttpRequest
     end
   end
 
@@ -376,9 +271,9 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_TypeHttpResponse
+  def consumeIntoTypeHttpResponse
     consumeWithStream do |stream|
-      return stream.read_TypeHttpResponse
+      return stream.readTypeHttpResponse
     end
   end
 
@@ -389,7 +284,7 @@ private_constant :UniffiHandleMap
 
     RustBuffer.check_lower_TypeResourceMetadata(v.metadata)
     RustBuffer.check_lower_TypePoolSpec(v.spec)
-    RustBuffer.check_lower_OptionalTypeOSGymWorkspacePoolStatus(v.status)
+    RustBuffer.check_lower_OptionalTypeOsGymWorkspacePoolStatus(v.status)
   end
 
   def self.alloc_from_TypePool(v)
@@ -399,9 +294,9 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_TypePool
+  def consumeIntoTypePool
     consumeWithStream do |stream|
-      return stream.read_TypePool
+      return stream.readTypePool
     end
   end
 
@@ -420,9 +315,9 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_TypeResourceMetadata
+  def consumeIntoTypeResourceMetadata
     consumeWithStream do |stream|
-      return stream.read_TypeResourceMetadata
+      return stream.readTypeResourceMetadata
     end
   end
 
@@ -442,48 +337,20 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_TypeSandbox
+  def consumeIntoTypeSandbox
     consumeWithStream do |stream|
-      return stream.read_TypeSandbox
-    end
-  end
-
-  # Error enum - generate alloc_from for callback error serialization
-  def self.alloc_from_TypeHttpError(v)
-    RustBuffer.allocWithBuilder do |builder|
-      builder.write_TypeHttpError(v)
-      return builder.finalize
-    end
-  end
-
-  # Enum used as error - generate consume_into_ for use as a return value
-  def consume_into_TypeHttpError
-    consumeWithStream do |stream|
-      return stream.read_TypeHttpError
+      return stream.readTypeSandbox
     end
   end
 
 
-  # Error enum - generate alloc_from for callback error serialization
-  def self.alloc_from_TypeSdkError(v)
-    RustBuffer.allocWithBuilder do |builder|
-      builder.write_TypeSdkError(v)
-      return builder.finalize
-    end
-  end
 
-  # Enum used as error - generate consume_into_ for use as a return value
-  def consume_into_TypeSdkError
-    consumeWithStream do |stream|
-      return stream.read_TypeSdkError
-    end
-  end
 
 
   # The Optional<T> type for bytes.
 
   def self.check_lower_Optionalbytes(v)
-    if !v.nil?
+    if not v.nil?
 
     end
   end
@@ -495,16 +362,16 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_Optionalbytes
+  def consumeIntoOptionalbytes
     consumeWithStream do |stream|
-      return stream.read_Optionalbytes
+      return stream.readOptionalbytes
     end
   end
 
   # The Optional<T> type for TypeClaimSpec.
 
   def self.check_lower_OptionalTypeClaimSpec(v)
-    if !v.nil?
+    if not v.nil?
       RustBuffer.check_lower_TypeClaimSpec(v)
     end
   end
@@ -516,16 +383,16 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_OptionalTypeClaimSpec
+  def consumeIntoOptionalTypeClaimSpec
     consumeWithStream do |stream|
-      return stream.read_OptionalTypeClaimSpec
+      return stream.readOptionalTypeClaimSpec
     end
   end
 
   # The Optional<T> type for TypeOSGymSandboxClaimStatus.
 
   def self.check_lower_OptionalTypeOSGymSandboxClaimStatus(v)
-    if !v.nil?
+    if not v.nil?
       RustBuffer.check_lower_TypeOSGymSandboxClaimStatus(v)
     end
   end
@@ -537,16 +404,16 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_OptionalTypeOSGymSandboxClaimStatus
+  def consumeIntoOptionalTypeOSGymSandboxClaimStatus
     consumeWithStream do |stream|
-      return stream.read_OptionalTypeOSGymSandboxClaimStatus
+      return stream.readOptionalTypeOSGymSandboxClaimStatus
     end
   end
 
   # The Optional<T> type for TypeOSGymWorkspacePoolStatus.
 
   def self.check_lower_OptionalTypeOSGymWorkspacePoolStatus(v)
-    if !v.nil?
+    if not v.nil?
       RustBuffer.check_lower_TypeOSGymWorkspacePoolStatus(v)
     end
   end
@@ -558,16 +425,16 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_OptionalTypeOSGymWorkspacePoolStatus
+  def consumeIntoOptionalTypeOSGymWorkspacePoolStatus
     consumeWithStream do |stream|
-      return stream.read_OptionalTypeOSGymWorkspacePoolStatus
+      return stream.readOptionalTypeOSGymWorkspacePoolStatus
     end
   end
 
   # The Optional<T> type for MapStringString.
 
   def self.check_lower_OptionalMapStringString(v)
-    if !v.nil?
+    if not v.nil?
       RustBuffer.check_lower_MapStringString(v)
     end
   end
@@ -579,9 +446,9 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_OptionalMapStringString
+  def consumeIntoOptionalMapStringString
     consumeWithStream do |stream|
-      return stream.read_OptionalMapStringString
+      return stream.readOptionalMapStringString
     end
   end
 
@@ -600,9 +467,9 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_Sequencestring
+  def consumeIntoSequencestring
     consumeWithStream do |stream|
-      return stream.read_Sequencestring
+      return stream.readSequencestring
     end
   end
 
@@ -621,9 +488,9 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_SequenceTypeClaim
+  def consumeIntoSequenceTypeClaim
     consumeWithStream do |stream|
-      return stream.read_SequenceTypeClaim
+      return stream.readSequenceTypeClaim
     end
   end
 
@@ -642,9 +509,9 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_SequenceTypeHttpHeader
+  def consumeIntoSequenceTypeHttpHeader
     consumeWithStream do |stream|
-      return stream.read_SequenceTypeHttpHeader
+      return stream.readSequenceTypeHttpHeader
     end
   end
 
@@ -663,14 +530,13 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_SequenceTypePool
+  def consumeIntoSequenceTypePool
     consumeWithStream do |stream|
-      return stream.read_SequenceTypePool
+      return stream.readSequenceTypePool
     end
   end
 
-
-  # The Map<T> type for MapStringString.
+  # The Map<T> type for string.
 
   def self.check_lower_MapStringString(v)
     v.each do |k, v|
@@ -686,9 +552,9 @@ private_constant :UniffiHandleMap
     end
   end
 
-  def consume_into_MapStringString
+  def consumeIntoMapStringString
     consumeWithStream do |stream|
-      return stream.read_MapStringString
+      return stream.readMapStringString
     end
   end
 end
@@ -736,19 +602,19 @@ class RustBufferStream
     data
   end
 
-  def read_u16
+  def readU16
     unpack_from 2, 'S>'
   end
 
-  def read_u32
+  def readU32
     unpack_from 4, 'L>'
   end
 
-  def read_u64
+  def readU64
     unpack_from 8, 'Q>'
   end
 
-  def read_string
+  def readString
     size = unpack_from 4, 'l>'
 
     raise InternalError, 'Unexpected negative string length' if size.negative?
@@ -756,7 +622,7 @@ class RustBufferStream
     read(size).force_encoding(Encoding::UTF_8)
   end
 
-  def read_bytes
+  def readBytes
     size = unpack_from 4, 'l>'
 
     raise InternalError, 'Unexpected negative byte string length' if size.negative?
@@ -766,129 +632,129 @@ class RustBufferStream
 
   # The Object type CyclopsClient.
 
-  def read_TypeCyclopsClient
+  def readTypeCyclopsClient
     handle = unpack_from 8, 'Q>'
-    return CyclopsClient.uniffi_lift(handle)
+    return CyclopsClient.uniffi_allocate(handle)
   end
 
   # The Object type CyclopsCredentials.
 
-  def read_TypeCyclopsCredentials
+  def readTypeCyclopsCredentials
     handle = unpack_from 8, 'Q>'
-    return CyclopsCredentials.uniffi_lift(handle)
+    return CyclopsCredentials.uniffi_allocate(handle)
   end
 
   # The Object type HttpClient.
 
-  def read_TypeHttpClient
+  def readTypeHttpClient
     handle = unpack_from 8, 'Q>'
-    return HttpClient.uniffi_lift(handle)
+    return HttpClient.uniffi_allocate(handle)
   end
 
   # The Record type Claim.
 
-  def read_TypeClaim
+  def readTypeClaim
     Claim.new(
-      api_version: read_string,
-      kind: read_string,
-      metadata: read_TypeResourceMetadata,
-      spec: read_TypeClaimSpec,
-      status: read_OptionalTypeOSGymSandboxClaimStatus
+      api_version: readString,
+      kind: readString,
+      metadata: readTypeResourceMetadata,
+      spec: readTypeClaimSpec,
+      status: readOptionalTypeOsGymSandboxClaimStatus
     )
   end
 
   # The Record type CreateClaimRequest.
 
-  def read_TypeCreateClaimRequest
+  def readTypeCreateClaimRequest
     CreateClaimRequest.new(
-      pool: read_TypePool,
-      spec: read_OptionalTypeClaimSpec
+      pool: readTypePool,
+      spec: readOptionalTypeClaimSpec
     )
   end
 
   # The Record type CreatePoolRequest.
 
-  def read_TypeCreatePoolRequest
+  def readTypeCreatePoolRequest
     CreatePoolRequest.new(
-      namespace: read_string,
-      spec: read_TypePoolSpec
+      namespace: readString,
+      spec: readTypePoolSpec
     )
   end
 
   # The Record type CyclopsConfiguration.
 
-  def read_TypeCyclopsConfiguration
+  def readTypeCyclopsConfiguration
     CyclopsConfiguration.new(
-      base_url: read_string,
-      token_url: read_string,
-      credentials: read_TypeCyclopsCredentials,
-      pool_poll_interval_ms: read_u64,
-      pool_poll_limit: read_u32,
-      claim_poll_interval_ms: read_u64,
-      claim_poll_limit: read_u32
+      base_url: readString,
+      token_url: readString,
+      credentials: readTypeCyclopsCredentials,
+      pool_poll_interval_ms: readU64,
+      pool_poll_limit: readU32,
+      claim_poll_interval_ms: readU64,
+      claim_poll_limit: readU32
     )
   end
 
   # The Record type HttpHeader.
 
-  def read_TypeHttpHeader
+  def readTypeHttpHeader
     HttpHeader.new(
-      name: read_string,
-      value: read_string
+      name: readString,
+      value: readString
     )
   end
 
   # The Record type HttpRequest.
 
-  def read_TypeHttpRequest
+  def readTypeHttpRequest
     HttpRequest.new(
-      method: read_string,
-      url: read_string,
-      headers: read_SequenceTypeHttpHeader,
-      body: read_Optionalbytes
+      method: readString,
+      url: readString,
+      headers: readSequenceTypeHttpHeader,
+      body: readOptionalbytes
     )
   end
 
   # The Record type HttpResponse.
 
-  def read_TypeHttpResponse
+  def readTypeHttpResponse
     HttpResponse.new(
-      status: read_u16,
-      headers: read_SequenceTypeHttpHeader,
-      body: read_bytes
+      status: readU16,
+      headers: readSequenceTypeHttpHeader,
+      body: readBytes
     )
   end
 
   # The Record type Pool.
 
-  def read_TypePool
+  def readTypePool
     Pool.new(
-      api_version: read_string,
-      kind: read_string,
-      metadata: read_TypeResourceMetadata,
-      spec: read_TypePoolSpec,
-      status: read_OptionalTypeOSGymWorkspacePoolStatus
+      api_version: readString,
+      kind: readString,
+      metadata: readTypeResourceMetadata,
+      spec: readTypePoolSpec,
+      status: readOptionalTypeOsGymWorkspacePoolStatus
     )
   end
 
   # The Record type ResourceMetadata.
 
-  def read_TypeResourceMetadata
+  def readTypeResourceMetadata
     ResourceMetadata.new(
-      namespace: read_string,
-      name: read_string,
-      labels: read_OptionalMapStringString
+      namespace: readString,
+      name: readString,
+      labels: readOptionalMapStringString
     )
   end
 
   # The Record type Sandbox.
 
-  def read_TypeSandbox
+  def readTypeSandbox
     Sandbox.new(
-      namespace: read_string,
-      claim: read_string,
-      name: read_string,
-      services: read_Sequencestring
+      namespace: readString,
+      claim: readString,
+      name: readString,
+      services: readSequencestring
     )
   end
 
@@ -898,12 +764,12 @@ class RustBufferStream
 
   # The Error type HttpError
 
-  def read_TypeHttpError
+  def readTypeHttpError
     variant = unpack_from 4, 'l>'
 
     if variant == 1
         return HttpError::Transport.new(
-            reason: read_string()
+            readString()
         )
     end
 
@@ -917,58 +783,58 @@ class RustBufferStream
 
   # The Error type SdkError
 
-  def read_TypeSdkError
+  def readTypeSdkError
     variant = unpack_from 4, 'l>'
 
     if variant == 1
         return SdkError::Configuration.new(
-            reason: read_string()
+            readString()
         )
     end
     if variant == 2
         return SdkError::InvalidResourceName.new(
-            field: read_string(),
-            value: read_string(),
-            reason: read_string()
+            readString(),
+            readString(),
+            readString()
         )
     end
     if variant == 3
         return SdkError::Transport.new(
-            reason: read_string()
+            readString()
         )
     end
     if variant == 4
         return SdkError::Token.new(
-            reason: read_string()
+            readString()
         )
     end
     if variant == 5
         return SdkError::Body.new(
-            reason: read_string()
+            readString()
         )
     end
     if variant == 6
         return SdkError::Status.new(
-            operation: read_string(),
-            status: read_u16(),
-            body: read_string()
+            readString(),
+            readU16(),
+            readString()
         )
     end
     if variant == 7
         return SdkError::UnknownService.new(
-            requested: read_string(),
-            available: read_Sequencestring()
+            readString(),
+            readSequencestring()
         )
     end
     if variant == 8
         return SdkError::InvalidServicePath.new(
-            path: read_string()
+            readString()
         )
     end
     if variant == 9
         return SdkError::ClaimFailed.new(
-            phase: read_string(),
-            status: read_string()
+            readString(),
+            readString()
         )
     end
     if variant == 10
@@ -979,76 +845,71 @@ class RustBufferStream
   end
 
 
-
   # The Optional<T> type for bytes.
 
-  def read_Optionalbytes
+  def readOptionalbytes
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_bytes
+      return readBytes
     else
       raise InternalError, 'Unexpected flag byte for Optionalbytes'
     end
   end
 
-
   # The Optional<T> type for TypeClaimSpec.
 
-  def read_OptionalTypeClaimSpec
+  def readOptionalTypeClaimSpec
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_TypeClaimSpec
+      return readTypeClaimSpec
     else
       raise InternalError, 'Unexpected flag byte for OptionalTypeClaimSpec'
     end
   end
 
-
   # The Optional<T> type for TypeOSGymSandboxClaimStatus.
 
-  def read_OptionalTypeOSGymSandboxClaimStatus
+  def readOptionalTypeOsGymSandboxClaimStatus
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_TypeOSGymSandboxClaimStatus
+      return readTypeOsGymSandboxClaimStatus
     else
-      raise InternalError, 'Unexpected flag byte for OptionalTypeOSGymSandboxClaimStatus'
+      raise InternalError, 'Unexpected flag byte for OptionalTypeOsGymSandboxClaimStatus'
     end
   end
-
 
   # The Optional<T> type for TypeOSGymWorkspacePoolStatus.
 
-  def read_OptionalTypeOSGymWorkspacePoolStatus
+  def readOptionalTypeOsGymWorkspacePoolStatus
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_TypeOSGymWorkspacePoolStatus
+      return readTypeOsGymWorkspacePoolStatus
     else
-      raise InternalError, 'Unexpected flag byte for OptionalTypeOSGymWorkspacePoolStatus'
+      raise InternalError, 'Unexpected flag byte for OptionalTypeOsGymWorkspacePoolStatus'
     end
   end
 
-
   # The Optional<T> type for MapStringString.
 
-  def read_OptionalMapStringString
+  def readOptionalMapStringString
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return read_MapStringString
+      return readMapStringString
     else
       raise InternalError, 'Unexpected flag byte for OptionalMapStringString'
     end
@@ -1056,7 +917,7 @@ class RustBufferStream
 
   # The Sequence<T> type for string.
 
-  def read_Sequencestring
+  def readSequencestring
     count = unpack_from 4, 'l>'
 
     raise InternalError, 'Unexpected negative sequence length' if count.negative?
@@ -1064,7 +925,7 @@ class RustBufferStream
     items = []
 
     count.times do
-      items.append read_string
+      items.append readString
     end
 
     items
@@ -1072,7 +933,7 @@ class RustBufferStream
 
   # The Sequence<T> type for TypeClaim.
 
-  def read_SequenceTypeClaim
+  def readSequenceTypeClaim
     count = unpack_from 4, 'l>'
 
     raise InternalError, 'Unexpected negative sequence length' if count.negative?
@@ -1080,7 +941,7 @@ class RustBufferStream
     items = []
 
     count.times do
-      items.append read_TypeClaim
+      items.append readTypeClaim
     end
 
     items
@@ -1088,7 +949,7 @@ class RustBufferStream
 
   # The Sequence<T> type for TypeHttpHeader.
 
-  def read_SequenceTypeHttpHeader
+  def readSequenceTypeHttpHeader
     count = unpack_from 4, 'l>'
 
     raise InternalError, 'Unexpected negative sequence length' if count.negative?
@@ -1096,7 +957,7 @@ class RustBufferStream
     items = []
 
     count.times do
-      items.append read_TypeHttpHeader
+      items.append readTypeHttpHeader
     end
 
     items
@@ -1104,7 +965,7 @@ class RustBufferStream
 
   # The Sequence<T> type for TypePool.
 
-  def read_SequenceTypePool
+  def readSequenceTypePool
     count = unpack_from 4, 'l>'
 
     raise InternalError, 'Unexpected negative sequence length' if count.negative?
@@ -1112,28 +973,26 @@ class RustBufferStream
     items = []
 
     count.times do
-      items.append read_TypePool
+      items.append readTypePool
     end
 
     items
   end
 
-  # The Map<T> type for MapStringString.
+  # The Map<T> type for string.
 
-  def read_MapStringString
+  def readMapStringString
     count = unpack_from 4, 'l>'
     raise InternalError, 'Unexpected negative map size' if count.negative?
 
     items = {}
     count.times do
-      key = read_string
-      items[key] = read_string
+      key = readString
+      items[key] = readString
     end
 
     items
   end
-
-
 
   def unpack_from(size, format)
     raise InternalError, 'read past end of rust buffer' if @offset + size > @rbuf.len
@@ -1179,29 +1038,29 @@ class RustBufferBuilder
     end
   end
 
-  def write_u16(v)
-    v = ::CyclopsSdk::uniffi_in_range(v, "u16", 0, 2**16)
+  def write_U16(v)
+    v = CyclopsSdk::uniffi_in_range(v, "u16", 0, 2**16)
     pack_into(2, 'S>', v)
   end
 
-  def write_u32(v)
-    v = ::CyclopsSdk::uniffi_in_range(v, "u32", 0, 2**32)
+  def write_U32(v)
+    v = CyclopsSdk::uniffi_in_range(v, "u32", 0, 2**32)
     pack_into(4, 'L>', v)
   end
 
-  def write_u64(v)
-    v = ::CyclopsSdk::uniffi_in_range(v, "u64", 0, 2**64)
+  def write_U64(v)
+    v = CyclopsSdk::uniffi_in_range(v, "u64", 0, 2**64)
     pack_into(8, 'Q>', v)
   end
 
-  def write_string(v)
-    v = ::CyclopsSdk::uniffi_utf8(v)
+  def write_String(v)
+    v = CyclopsSdk::uniffi_utf8(v)
     pack_into 4, 'l>', v.bytes.size
     write v
   end
 
-  def write_bytes(v)
-    v = ::CyclopsSdk::uniffi_bytes(v)
+  def write_Bytes(v)
+    v = CyclopsSdk::uniffi_bytes(v)
     pack_into 4, 'l>', v.bytes.size
     write v
   end
@@ -1230,11 +1089,11 @@ class RustBufferBuilder
   # The Record type Claim.
 
   def write_TypeClaim(v)
-    self.write_string(v.api_version)
-    self.write_string(v.kind)
+    self.write_String(v.api_version)
+    self.write_String(v.kind)
     self.write_TypeResourceMetadata(v.metadata)
     self.write_TypeClaimSpec(v.spec)
-    self.write_OptionalTypeOSGymSandboxClaimStatus(v.status)
+    self.write_OptionalTypeOsGymSandboxClaimStatus(v.status)
   end
 
   # The Record type CreateClaimRequest.
@@ -1247,34 +1106,34 @@ class RustBufferBuilder
   # The Record type CreatePoolRequest.
 
   def write_TypeCreatePoolRequest(v)
-    self.write_string(v.namespace)
+    self.write_String(v.namespace)
     self.write_TypePoolSpec(v.spec)
   end
 
   # The Record type CyclopsConfiguration.
 
   def write_TypeCyclopsConfiguration(v)
-    self.write_string(v.base_url)
-    self.write_string(v.token_url)
+    self.write_String(v.base_url)
+    self.write_String(v.token_url)
     self.write_TypeCyclopsCredentials(v.credentials)
-    self.write_u64(v.pool_poll_interval_ms)
-    self.write_u32(v.pool_poll_limit)
-    self.write_u64(v.claim_poll_interval_ms)
-    self.write_u32(v.claim_poll_limit)
+    self.write_U64(v.pool_poll_interval_ms)
+    self.write_U32(v.pool_poll_limit)
+    self.write_U64(v.claim_poll_interval_ms)
+    self.write_U32(v.claim_poll_limit)
   end
 
   # The Record type HttpHeader.
 
   def write_TypeHttpHeader(v)
-    self.write_string(v.name)
-    self.write_string(v.value)
+    self.write_String(v.name)
+    self.write_String(v.value)
   end
 
   # The Record type HttpRequest.
 
   def write_TypeHttpRequest(v)
-    self.write_string(v.method)
-    self.write_string(v.url)
+    self.write_String(v.method)
+    self.write_String(v.url)
     self.write_SequenceTypeHttpHeader(v.headers)
     self.write_Optionalbytes(v.body)
   end
@@ -1282,108 +1141,40 @@ class RustBufferBuilder
   # The Record type HttpResponse.
 
   def write_TypeHttpResponse(v)
-    self.write_u16(v.status)
+    self.write_U16(v.status)
     self.write_SequenceTypeHttpHeader(v.headers)
-    self.write_bytes(v.body)
+    self.write_Bytes(v.body)
   end
 
   # The Record type Pool.
 
   def write_TypePool(v)
-    self.write_string(v.api_version)
-    self.write_string(v.kind)
+    self.write_String(v.api_version)
+    self.write_String(v.kind)
     self.write_TypeResourceMetadata(v.metadata)
     self.write_TypePoolSpec(v.spec)
-    self.write_OptionalTypeOSGymWorkspacePoolStatus(v.status)
+    self.write_OptionalTypeOsGymWorkspacePoolStatus(v.status)
   end
 
   # The Record type ResourceMetadata.
 
   def write_TypeResourceMetadata(v)
-    self.write_string(v.namespace)
-    self.write_string(v.name)
+    self.write_String(v.namespace)
+    self.write_String(v.name)
     self.write_OptionalMapStringString(v.labels)
   end
 
   # The Record type Sandbox.
 
   def write_TypeSandbox(v)
-    self.write_string(v.namespace)
-    self.write_string(v.claim)
-    self.write_string(v.name)
+    self.write_String(v.namespace)
+    self.write_String(v.claim)
+    self.write_String(v.name)
     self.write_Sequencestring(v.services)
   end
 
-  # The Error type HttpError - write for callback error returns.
-
-  def write_TypeHttpError(v)
-    if v.is_a?(HttpError::Transport)
-      pack_into 4, 'l>', 1
-        self.write_string(v.reason)
-      return
-    end
-  end
 
 
-  # The Error type SdkError - write for callback error returns.
-
-  def write_TypeSdkError(v)
-    if v.is_a?(SdkError::Configuration)
-      pack_into 4, 'l>', 1
-        self.write_string(v.reason)
-      return
-    end
-    if v.is_a?(SdkError::InvalidResourceName)
-      pack_into 4, 'l>', 2
-        self.write_string(v.field)
-        self.write_string(v.value)
-        self.write_string(v.reason)
-      return
-    end
-    if v.is_a?(SdkError::Transport)
-      pack_into 4, 'l>', 3
-        self.write_string(v.reason)
-      return
-    end
-    if v.is_a?(SdkError::Token)
-      pack_into 4, 'l>', 4
-        self.write_string(v.reason)
-      return
-    end
-    if v.is_a?(SdkError::Body)
-      pack_into 4, 'l>', 5
-        self.write_string(v.reason)
-      return
-    end
-    if v.is_a?(SdkError::Status)
-      pack_into 4, 'l>', 6
-        self.write_string(v.operation)
-        self.write_u16(v.status)
-        self.write_string(v.body)
-      return
-    end
-    if v.is_a?(SdkError::UnknownService)
-      pack_into 4, 'l>', 7
-        self.write_string(v.requested)
-        self.write_Sequencestring(v.available)
-      return
-    end
-    if v.is_a?(SdkError::InvalidServicePath)
-      pack_into 4, 'l>', 8
-        self.write_string(v.path)
-      return
-    end
-    if v.is_a?(SdkError::ClaimFailed)
-      pack_into 4, 'l>', 9
-        self.write_string(v.phase)
-        self.write_string(v.status)
-      return
-    end
-    if v.is_a?(SdkError::ClaimTimeout)
-      pack_into 4, 'l>', 10
-      return
-    end
-  end
 
 
   # The Optional<T> type for bytes.
@@ -1393,7 +1184,7 @@ class RustBufferBuilder
       pack_into(1, 'c', 0)
     else
       pack_into(1, 'c', 1)
-      self.write_bytes(v)
+      self.write_Bytes(v)
     end
   end
 
@@ -1410,23 +1201,23 @@ class RustBufferBuilder
 
   # The Optional<T> type for TypeOSGymSandboxClaimStatus.
 
-  def write_OptionalTypeOSGymSandboxClaimStatus(v)
+  def write_OptionalTypeOsGymSandboxClaimStatus(v)
     if v.nil?
       pack_into(1, 'c', 0)
     else
       pack_into(1, 'c', 1)
-      self.write_TypeOSGymSandboxClaimStatus(v)
+      self.write_TypeOsGymSandboxClaimStatus(v)
     end
   end
 
   # The Optional<T> type for TypeOSGymWorkspacePoolStatus.
 
-  def write_OptionalTypeOSGymWorkspacePoolStatus(v)
+  def write_OptionalTypeOsGymWorkspacePoolStatus(v)
     if v.nil?
       pack_into(1, 'c', 0)
     else
       pack_into(1, 'c', 1)
-      self.write_TypeOSGymWorkspacePoolStatus(v)
+      self.write_TypeOsGymWorkspacePoolStatus(v)
     end
   end
 
@@ -1447,7 +1238,7 @@ class RustBufferBuilder
     pack_into(4, 'l>', items.size)
 
     items.each do |item|
-      self.write_string(item)
+      self.write_String(item)
     end
   end
 
@@ -1481,18 +1272,16 @@ class RustBufferBuilder
     end
   end
 
-  # The Map<T> type for MapStringString.
+  # The Map<T> type for string.
 
   def write_MapStringString(items)
     pack_into(4, 'l>', items.size)
 
     items.each do |k, v|
-      self.write_string(k)
-      self.write_string(v)
+      write_String(k)
+      self.write_String(v)
     end
   end
-
-
 
   private
 
@@ -1541,20 +1330,16 @@ CALL_PANIC = 2
 
 module HttpError
   class Transport < StandardError
-    def initialize(reason:)
-
+    def initialize(reason)
         @reason = reason
-
         super()
-    end
-
+      end
 
     attr_reader :reason
 
 
     def to_s
-        "#{self.class.name}(reason=#{@reason.inspect})"
-
+     "#{self.class.name}(reason=#{@reason.inspect})"
     end
   end
 
@@ -1564,180 +1349,135 @@ end
 
 module SdkError
   class Configuration < StandardError
-    def initialize(reason:)
-
+    def initialize(reason)
         @reason = reason
-
         super()
-    end
-
+      end
 
     attr_reader :reason
 
 
     def to_s
-        "#{self.class.name}(reason=#{@reason.inspect})"
-
+     "#{self.class.name}(reason=#{@reason.inspect})"
     end
   end
   class InvalidResourceName < StandardError
-    def initialize(field:, value:, reason:)
-
+    def initialize(field, value, reason)
         @field = field
-
         @value = value
-
         @reason = reason
-
         super()
-    end
-
+      end
 
     attr_reader :field, :value, :reason
 
 
     def to_s
-        "#{self.class.name}(field=#{@field.inspect}, value=#{@value.inspect}, reason=#{@reason.inspect})"
-
+     "#{self.class.name}(field=#{@field.inspect}, value=#{@value.inspect}, reason=#{@reason.inspect})"
     end
   end
   class Transport < StandardError
-    def initialize(reason:)
-
+    def initialize(reason)
         @reason = reason
-
         super()
-    end
-
+      end
 
     attr_reader :reason
 
 
     def to_s
-        "#{self.class.name}(reason=#{@reason.inspect})"
-
+     "#{self.class.name}(reason=#{@reason.inspect})"
     end
   end
   class Token < StandardError
-    def initialize(reason:)
-
+    def initialize(reason)
         @reason = reason
-
         super()
-    end
-
+      end
 
     attr_reader :reason
 
 
     def to_s
-        "#{self.class.name}(reason=#{@reason.inspect})"
-
+     "#{self.class.name}(reason=#{@reason.inspect})"
     end
   end
   class Body < StandardError
-    def initialize(reason:)
-
+    def initialize(reason)
         @reason = reason
-
         super()
-    end
-
+      end
 
     attr_reader :reason
 
 
     def to_s
-        "#{self.class.name}(reason=#{@reason.inspect})"
-
+     "#{self.class.name}(reason=#{@reason.inspect})"
     end
   end
   class Status < StandardError
-    def initialize(operation:, status:, body:)
-
+    def initialize(operation, status, body)
         @operation = operation
-
         @status = status
-
         @body = body
-
         super()
-    end
-
+      end
 
     attr_reader :operation, :status, :body
 
 
     def to_s
-        "#{self.class.name}(operation=#{@operation.inspect}, status=#{@status.inspect}, body=#{@body.inspect})"
-
+     "#{self.class.name}(operation=#{@operation.inspect}, status=#{@status.inspect}, body=#{@body.inspect})"
     end
   end
   class UnknownService < StandardError
-    def initialize(requested:, available:)
-
+    def initialize(requested, available)
         @requested = requested
-
         @available = available
-
         super()
-    end
-
+      end
 
     attr_reader :requested, :available
 
 
     def to_s
-        "#{self.class.name}(requested=#{@requested.inspect}, available=#{@available.inspect})"
-
+     "#{self.class.name}(requested=#{@requested.inspect}, available=#{@available.inspect})"
     end
   end
   class InvalidServicePath < StandardError
-    def initialize(path:)
-
+    def initialize(path)
         @path = path
-
         super()
-    end
-
+      end
 
     attr_reader :path
 
 
     def to_s
-        "#{self.class.name}(path=#{@path.inspect})"
-
+     "#{self.class.name}(path=#{@path.inspect})"
     end
   end
   class ClaimFailed < StandardError
-    def initialize(phase:, status:)
-
+    def initialize(phase, status)
         @phase = phase
-
         @status = status
-
         super()
-    end
-
+      end
 
     attr_reader :phase, :status
 
 
     def to_s
-        "#{self.class.name}(phase=#{@phase.inspect}, status=#{@status.inspect})"
-
+     "#{self.class.name}(phase=#{@phase.inspect}, status=#{@status.inspect})"
     end
   end
   class ClaimTimeout < StandardError
     def initialize()
-
         super()
-    end
-
+      end
 
     def to_s
-        "#{self.class.name}()"
-
+     "#{self.class.name}()"
     end
   end
 
@@ -1746,8 +1486,12 @@ end
 
 # Map error modules to the RustBuffer method name that reads them
 ERROR_MODULE_TO_READER_METHOD = {
-HttpError => :read_TypeHttpError,
-SdkError => :read_TypeSdkError,
+
+  HttpError => :readTypeHttpError,
+
+
+  SdkError => :readTypeSdkError,
+
 }
 
 private_constant :ERROR_MODULE_TO_READER_METHOD, :CALL_SUCCESS, :CALL_ERROR, :CALL_PANIC,
@@ -1755,8 +1499,7 @@ private_constant :ERROR_MODULE_TO_READER_METHOD, :CALL_SUCCESS, :CALL_ERROR, :CA
 
 def self.consume_buffer_into_error(error_module, rust_buffer)
   rust_buffer.consumeWithStream do |stream|
-    reader_method = ERROR_MODULE_TO_READER_METHOD[error_module] ||
-                    ERROR_MODULE_TO_READER_METHOD[error_module.name&.split('::')&.last]
+    reader_method = ERROR_MODULE_TO_READER_METHOD[error_module]
     return stream.send(reader_method)
   end
 end
@@ -1798,7 +1541,7 @@ def self.rust_call_with_error(error_module, fn_name, *args)
     # with the message.  But if that code panics, then it just sends back
     # an empty buffer.
     if status.error_buf.len > 0
-      raise InternalError, status.error_buf.consume_into_string
+      raise InternalError, status.error_buf.consumeIntoString()
     else
       raise InternalError, "Rust panic"
     end
@@ -1818,730 +1561,128 @@ module UniFFILib
   ffi_lib 'cyclops_sdk'
 
 
-  # Define FFI callback types and structs (vtables, etc.)
-
-  callback :RustFutureContinuationCallback,
-    [:uint64, :int8, ],
-    :void
-
-  callback :ForeignFutureDroppedCallback,
-    [:uint64, ],
-    :void
-
-  callback :CallbackInterfaceFree,
-    [:uint64, ],
-    :void
-
-  callback :CallbackInterfaceClone,
-    [:uint64, ],
-    :uint64
-
-  class ForeignFutureDroppedCallbackStruct < FFI::Struct
-    layout(
-      :handle, :uint64,
-      :free, :ForeignFutureDroppedCallback
-    )
-  end
-
-  class ForeignFutureResultU8 < FFI::Struct
-    layout(
-      :return_value, :uint8,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteU8,
-    [:uint64, ForeignFutureResultU8.by_value, ],
-    :void
-
-  class ForeignFutureResultI8 < FFI::Struct
-    layout(
-      :return_value, :int8,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteI8,
-    [:uint64, ForeignFutureResultI8.by_value, ],
-    :void
-
-  class ForeignFutureResultU16 < FFI::Struct
-    layout(
-      :return_value, :uint16,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteU16,
-    [:uint64, ForeignFutureResultU16.by_value, ],
-    :void
-
-  class ForeignFutureResultI16 < FFI::Struct
-    layout(
-      :return_value, :int16,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteI16,
-    [:uint64, ForeignFutureResultI16.by_value, ],
-    :void
-
-  class ForeignFutureResultU32 < FFI::Struct
-    layout(
-      :return_value, :uint32,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteU32,
-    [:uint64, ForeignFutureResultU32.by_value, ],
-    :void
-
-  class ForeignFutureResultI32 < FFI::Struct
-    layout(
-      :return_value, :int32,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteI32,
-    [:uint64, ForeignFutureResultI32.by_value, ],
-    :void
-
-  class ForeignFutureResultU64 < FFI::Struct
-    layout(
-      :return_value, :uint64,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteU64,
-    [:uint64, ForeignFutureResultU64.by_value, ],
-    :void
-
-  class ForeignFutureResultI64 < FFI::Struct
-    layout(
-      :return_value, :int64,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteI64,
-    [:uint64, ForeignFutureResultI64.by_value, ],
-    :void
-
-  class ForeignFutureResultF32 < FFI::Struct
-    layout(
-      :return_value, :float,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteF32,
-    [:uint64, ForeignFutureResultF32.by_value, ],
-    :void
-
-  class ForeignFutureResultF64 < FFI::Struct
-    layout(
-      :return_value, :double,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteF64,
-    [:uint64, ForeignFutureResultF64.by_value, ],
-    :void
-
-  class ForeignFutureResultRustBuffer < FFI::Struct
-    layout(
-      :return_value, RustBuffer.by_value,
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteRustBuffer,
-    [:uint64, ForeignFutureResultRustBuffer.by_value, ],
-    :void
-
-  class ForeignFutureResultVoid < FFI::Struct
-    layout(
-      :call_status, RustCallStatus
-    )
-  end
-
-  callback :ForeignFutureCompleteVoid,
-    [:uint64, ForeignFutureResultVoid.by_value, ],
-    :void
-
-  callback :CallbackInterfaceHttpClientMethod0,
-    [:uint64, RustBuffer.by_value, :ForeignFutureCompleteRustBuffer, :uint64, ForeignFutureDroppedCallbackStruct.by_ref, ],
-    :void
-
-  class VTableCallbackInterfaceHttpClient < FFI::Struct
-    layout(
-      :uniffi_free, :CallbackInterfaceFree,
-      :uniffi_clone, :CallbackInterfaceClone,
-      :execute, :CallbackInterfaceHttpClientMethod0
-    )
-  end
-
   attach_function :uniffi_cyclops_sdk_fn_clone_cyclopsclient,
     [:uint64, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_fn_free_cyclopsclient,
     [:uint64, RustCallStatus.by_ref],
     :void
-
   attach_function :uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect,
     [RustBuffer.by_value, :uint64, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim,
-    [:uint64, RustBuffer.by_value, ],
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim,
-    [:uint64, RustBuffer.by_value, ],
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim,
-    [:uint64, RustBuffer.by_value, ],
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims,
-    [:uint64, RustBuffer.by_value, ],
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim,
-    [:uint64, RustBuffer.by_value, ],
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool,
-    [:uint64, RustBuffer.by_value, ],
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool,
-    [:uint64, RustBuffer.by_value, ],
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool,
-    [:uint64, RustBuffer.by_value, ],
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools,
-    [:uint64, RustBuffer.by_value, ],
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool,
-    [:uint64, RustBuffer.by_value, ],
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request,
-    [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustBuffer.by_value, RustBuffer.by_value, ],
+    [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_fn_clone_httpclient,
     [:uint64, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_fn_free_httpclient,
     [:uint64, RustCallStatus.by_ref],
     :void
-
   attach_function :uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient,
-    [VTableCallbackInterfaceHttpClient.by_ref, ],
+    [:pointer, RustCallStatus.by_ref],
     :void
-
   attach_function :uniffi_cyclops_sdk_fn_method_httpclient_execute,
-    [:uint64, RustBuffer.by_value, ],
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_fn_clone_cyclopscredentials,
     [:uint64, RustCallStatus.by_ref],
     :uint64
-
   attach_function :uniffi_cyclops_sdk_fn_free_cyclopscredentials,
     [:uint64, RustCallStatus.by_ref],
     :void
-
   attach_function :uniffi_cyclops_sdk_fn_constructor_cyclopscredentials_new,
     [RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
-
   attach_function :ffi_cyclops_sdk_rustbuffer_alloc,
     [:uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
-
   attach_function :ffi_cyclops_sdk_rustbuffer_from_bytes,
     [ForeignBytes, RustCallStatus.by_ref],
     RustBuffer.by_value
-
   attach_function :ffi_cyclops_sdk_rustbuffer_free,
     [RustBuffer.by_value, RustCallStatus.by_ref],
     :void
-
   attach_function :ffi_cyclops_sdk_rustbuffer_reserve,
     [RustBuffer.by_value, :uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
-
-  attach_function :ffi_cyclops_sdk_rust_future_poll_u8,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_cancel_u8,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_free_u8,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_complete_u8,
-    [:uint64, RustCallStatus.by_ref],
-    :uint8
-
-  attach_function :ffi_cyclops_sdk_rust_future_poll_i8,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_cancel_i8,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_free_i8,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_complete_i8,
-    [:uint64, RustCallStatus.by_ref],
-    :int8
-
-  attach_function :ffi_cyclops_sdk_rust_future_poll_u16,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_cancel_u16,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_free_u16,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_complete_u16,
-    [:uint64, RustCallStatus.by_ref],
-    :uint16
-
-  attach_function :ffi_cyclops_sdk_rust_future_poll_i16,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_cancel_i16,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_free_i16,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_complete_i16,
-    [:uint64, RustCallStatus.by_ref],
-    :int16
-
-  attach_function :ffi_cyclops_sdk_rust_future_poll_u32,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_cancel_u32,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_free_u32,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_complete_u32,
-    [:uint64, RustCallStatus.by_ref],
-    :uint32
-
-  attach_function :ffi_cyclops_sdk_rust_future_poll_i32,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_cancel_i32,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_free_i32,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_complete_i32,
-    [:uint64, RustCallStatus.by_ref],
-    :int32
-
-  attach_function :ffi_cyclops_sdk_rust_future_poll_u64,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_cancel_u64,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_free_u64,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_complete_u64,
-    [:uint64, RustCallStatus.by_ref],
-    :uint64
-
-  attach_function :ffi_cyclops_sdk_rust_future_poll_i64,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_cancel_i64,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_free_i64,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_complete_i64,
-    [:uint64, RustCallStatus.by_ref],
-    :int64
-
-  attach_function :ffi_cyclops_sdk_rust_future_poll_f32,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_cancel_f32,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_free_f32,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_complete_f32,
-    [:uint64, RustCallStatus.by_ref],
-    :float
-
-  attach_function :ffi_cyclops_sdk_rust_future_poll_f64,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_cancel_f64,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_free_f64,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_complete_f64,
-    [:uint64, RustCallStatus.by_ref],
-    :double
-
-  attach_function :ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_free_rust_buffer,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-    [:uint64, RustCallStatus.by_ref],
-    RustBuffer.by_value
-
-  attach_function :ffi_cyclops_sdk_rust_future_poll_void,
-    [:uint64, :RustFutureContinuationCallback, :uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_cancel_void,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_free_void,
-    [:uint64, ],
-    :void
-
-  attach_function :ffi_cyclops_sdk_rust_future_complete_void,
-    [:uint64, RustCallStatus.by_ref],
-    :void
-
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim,
-    [],
+    [RustCallStatus.by_ref],
     :uint16
-
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim,
-    [],
+    [RustCallStatus.by_ref],
     :uint16
-
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim,
-    [],
+    [RustCallStatus.by_ref],
     :uint16
-
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims,
-    [],
+    [RustCallStatus.by_ref],
     :uint16
-
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim,
-    [],
+    [RustCallStatus.by_ref],
     :uint16
-
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool,
-    [],
+    [RustCallStatus.by_ref],
     :uint16
-
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool,
-    [],
+    [RustCallStatus.by_ref],
     :uint16
-
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool,
-    [],
+    [RustCallStatus.by_ref],
     :uint16
-
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools,
-    [],
+    [RustCallStatus.by_ref],
     :uint16
-
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool,
-    [],
+    [RustCallStatus.by_ref],
     :uint16
-
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request,
-    [],
+    [RustCallStatus.by_ref],
     :uint16
-
   attach_function :uniffi_cyclops_sdk_checksum_method_httpclient_execute,
-    [],
+    [RustCallStatus.by_ref],
     :uint16
-
   attach_function :uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect,
-    [],
+    [RustCallStatus.by_ref],
     :uint16
-
   attach_function :uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new,
-    [],
+    [RustCallStatus.by_ref],
     :uint16
-
   attach_function :ffi_cyclops_sdk_uniffi_contract_version,
-    [],
+    [RustCallStatus.by_ref],
     :uint32
 
 end
-  # RustFuture poll codes
-UNIFFI_RUST_FUTURE_POLL_READY = 0
-UNIFFI_RUST_FUTURE_POLL_WAKE = 1
-
-# Handle map for storing write-end IO objects used by the continuation callbacks.
-UNIFFI_ASYNC_HANDLE_MAP = UniffiHandleMap.new
-
-# Continuation callback for async functions.
-# Called by Rust when the future is ready to make progress.
-# Writes the poll code to the pipe so the waiting thread/fiber can continue.
-#
-# Exceptions must never escape this Proc.
-# Rust invokes it directly via FFI, so any unhandled Ruby exception would be caught
-# by Ruby-FFI, which swallows it (prints a warning) and returns a garbage value to Rust.
-# The poll code Rust receives would be invalid, causing the Ruby polling loop to
-# never see POLL_READY and block forever.
-UNIFFI_CONTINUATION_CALLBACK = Proc.new do |data, poll_code|
-  begin
-    wr = UNIFFI_ASYNC_HANDLE_MAP.get data
-
-    # This can only be blocking if pipe if full. Rust will never try to call continuation
-    # callback more than once (so will not fill it up), hence this call should never block.
-    wr.putc poll_code
-  rescue Exception
-    # Swallow exception. A leak or a hang is better than a hard VM segfault.
-  end
-end
-
-# Poll a Rust future to completion.
-#
-# This works both with and without a Fiber::Scheduler:
-# - Without scheduler: wait_readable blocks with a timeout, releasing the GVL
-#   so the callback can fire from foreign threads (works around MRI limitation
-#   where rb_thread_call_with_gvl cannot wake up threads in indefinite sleep).
-# - With scheduler: wait_readable hooks into io_wait, yielding the fiber.
-#
-# cancel_fn is called in the ensure block when exception interrupts an in-flight poll.
-# This guarantees Rust fires the continuation callback so the handle-map entry is released
-# and the pipe is drained before we free the future.
-def self.uniffi_rust_call_async(rust_future, poll_fn, cancel_fn, complete_fn, free_fn, lift_func, error_ffi_converter)
-  rd = wr = nil
-  handle = nil
-  poll_in_flight = false
-
-  begin
-    rd, wr = IO.pipe
-    wr.sync = true # avoid buffering and delayed read for rd.wait_readable
-    handle = UNIFFI_ASYNC_HANDLE_MAP.insert wr
-
-    loop do
-      poll_in_flight = true
-      UniFFILib.public_send(poll_fn, rust_future, UNIFFI_CONTINUATION_CALLBACK, handle)
-
-      # Blocks until the continuation callback writes to the pipe.
-      # Releases the GVL so the callback can fire from foreign threads.
-      # With a Fiber::Scheduler, this hooks into io_wait for non-blocking concurrency.
-      rd.wait_readable
-      poll_code = rd.getbyte
-      poll_in_flight = false
-
-      break if poll_code == UNIFFI_RUST_FUTURE_POLL_READY
-    end
-
-    result = if error_ffi_converter.nil?
-      ::CyclopsSdk.rust_call(complete_fn, rust_future)
-    else
-      ::CyclopsSdk.rust_call_with_error(error_ffi_converter, complete_fn, rust_future)
-    end
-
-    lift_func.call(result)
-  ensure
-    # Defer any further Thread#raise / Timeout during cleanup so all steps execute
-    # automatically. Without this, a second raise during wait_readable(0.5) would skip
-    # handle-map removal, pipe close, and free_fn - leaking FDs and Rust memory.
-    Thread.handle_interrupt(Exception => :never) do
-      if poll_in_flight
-        # An exception interrupted an in-flight poll. Cancel and drain the byte
-        # the continuation callback will write so we don't leak the pipe.
-        UniFFILib.public_send(cancel_fn, rust_future)
-        # rd.wait_readable may time out and return nil if the poll was never actually sent
-        # (raise landed between poll_in_flight=true and the FFI call).
-        if rd.wait_readable(0.5)
-          rd.getbyte
-        end
-      end
-
-      # Remove handle first so any late-firing callback's `get` raises (swallowed by rescue).
-      UNIFFI_ASYNC_HANDLE_MAP.remove(handle) rescue nil if handle
-      rd&.close rescue nil
-      wr&.close rescue nil
-      UniFFILib.public_send(free_fn, rust_future)
-    end
-  end
-end
-# Exception raised when a foreign future is canceled.
-class UniffiInternalCancelled < RuntimeError; end
-
-# User callback that raises it will be considered a Rust-side cancellation.
-private_constant :UniffiInternalCancelled
-
-# Handle map for storing Threads executing foreign async callbacks.
-UNIFFI_FOREIGN_FUTURE_HANDLE_MAP = UniffiHandleMap.new
-
-# One-shot claim flag: the first caller to `claim!` wins; all subsequent callers
-# are no-ops. Used to enforce the at-most-once contract on uniffi_future_callback.
-class UniffiOnceFlag
-  def initialize
-    @mutex = Mutex.new
-    @claimed = false
-  end
-
-  # Returns true if this caller won the race (first to claim), false otherwise.
-  def claim!
-    @mutex.synchronize do
-      first = !@claimed
-      @claimed = true
-      first
-    end
-  end
-end
-
-# Called by Rust when the foreign future is dropped (i.e. canceled or completed successfully).
-# Raises UniffiInternalCancelled in the worker thread so make_call can exit early,
-# but only if the thread hasn't already completed and claimed the once flag.
-# Stored as a constant to prevent GC from collecting the Proc while Rust holds the pointer.
-UNIFFI_FOREIGN_FUTURE_DROPPED_CALLBACK = Proc.new do |handle|
-  thread, once = UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.remove handle
-  thread.raise(UniffiInternalCancelled, 'Future was canceled') if once.claim! && thread&.alive?
-end
-
-# Execute a foreign async callback method in a background thread.
-# Enforces the at-most-once guarantee on handle_success / handle_error: whichever
-# fires first (normal completion or Rust-side drop) suppresses the other.
-def self.uniffi_trait_interface_call_async(make_call, uniffi_out_dropped_callback, handle_success, handle_error, error_type = nil, lower_error = nil)
-  once = UniffiOnceFlag.new
-
-  thread = Thread.new do
-    begin
-      # Phase 1: run the user's async method.
-      # UniffiInternalCancelled exits silently. Other exceptions are forwarded as errors.
-      # handle_success is intentionally called outside this rescue so exceptions from it
-      # cannot re-enter handle_error (which would be a double-call on the Rust sender).
-      begin
-        result = make_call.call
-      rescue UniffiInternalCancelled
-        next
-      rescue Exception => e # We have to catch all errors to prevent Rust future from hanging forever.
-        next unless once.claim!
-
-        if !error_type.nil? && ::CyclopsSdk.uniffi_is_error_type?(e, error_type)
-          handle_error.call(UNIFFI_CALLBACK_ERROR, lower_error.call(e))
-        else
-          handle_error.call(UNIFFI_CALLBACK_UNEXPECTED_ERROR, RustBuffer.alloc_from_string(e.inspect))
-        end
-        next
-      end
-
-      # Phase 2: deliver the result to Rust. Skipped if dropped_callback already fired.
-      handle_success.call(result) if once.claim!
-    rescue UniffiInternalCancelled
-      # Thread#raise landed between phases or during Phase 2 - silently exit.
-      # Rust already dropped the future (that's why dropped_callback fired), so no response needed.
-    rescue Exception => e
-      # handle_success/handle_error/lower_error raised - send a generic error so Rust doesn't hang.
-      # once was already claimed, so only attempt this if we can still claim (e.g. lowering failed
-      # before handle_error was called due to short-circuit evaluation).
-      begin
-        handle_error.call(UNIFFI_CALLBACK_UNEXPECTED_ERROR, RustBuffer.alloc_from_string(e.inspect))
-      rescue Exception
-        # If even this fails, Rust will hang. Nothing more we can do.
-      end
-    end
-  end
-
-  # Note: the thread may have already completed by this point, but that's safe.
-  # Rust cannot invoke dropped_callback until this function returns.
-  # possesses the ForeignFuture struct we're populating here.
-  handle = UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.insert([thread, once])
-  uniffi_out_dropped_callback[:handle] = handle
-  uniffi_out_dropped_callback[:free] = UNIFFI_FOREIGN_FUTURE_DROPPED_CALLBACK
-end
-  # Base class for callback interface FfiConverters.
-# Stores Ruby callback objects in a handle map, and converts to/from integer handles.
-
-class CallbackInterfaceFfiConverter
-  attr_reader :handle_map
-
-  def initialize
-    @handle_map = UniffiHandleMap.new
-  end
-
-  def lift(handle)
-    @handle_map.get handle
-  end
-
-  def lower(cb)
-    @handle_map.insert cb
-  end
-end
-
-private_constant :CallbackInterfaceFfiConverter
-
-  # Custom type definitions.
 
   # Public interface members begin here.
 
@@ -2579,7 +1720,6 @@ class Claim
 
     true
   end
-
 end
 
   # Record type CreateClaimRequest
@@ -2601,7 +1741,6 @@ class CreateClaimRequest
 
     true
   end
-
 end
 
   # Record type CreatePoolRequest
@@ -2623,7 +1762,6 @@ class CreatePoolRequest
 
     true
   end
-
 end
 
   # Record type CyclopsConfiguration
@@ -2665,7 +1803,6 @@ class CyclopsConfiguration
 
     true
   end
-
 end
 
   # Record type HttpHeader
@@ -2687,7 +1824,6 @@ class HttpHeader
 
     true
   end
-
 end
 
   # Record type HttpRequest
@@ -2717,7 +1853,6 @@ class HttpRequest
 
     true
   end
-
 end
 
   # Record type HttpResponse
@@ -2743,7 +1878,6 @@ class HttpResponse
 
     true
   end
-
 end
 
   # Record type Pool
@@ -2777,7 +1911,6 @@ class Pool
 
     true
   end
-
 end
 
   # Record type ResourceMetadata
@@ -2803,7 +1936,6 @@ class ResourceMetadata
 
     true
   end
-
 end
 
   # Record type Sandbox
@@ -2833,7 +1965,6 @@ class Sandbox
 
     true
   end
-
 end
 
 
@@ -2856,23 +1987,24 @@ end
   # to the actual instance, only its underlying handle.
   def self.uniffi_define_finalizer_by_handle(handle, object_id)
     Proc.new do |_id|
-      ::CyclopsSdk.rust_call(
+      CyclopsSdk.rust_call(
         :uniffi_cyclops_sdk_fn_free_cyclopsclient,
         handle
       )
     end
   end
+
   # A private helper for lowering instances into a raw handle.
   # This does an explicit typecheck, because accidentally lowering a different type of
   # object in a place where this type is expected, could lead to memory unsafety.
   def self.uniffi_check_lower(inst)
-    if !inst.is_a? self
+    if not inst.is_a? self
       raise TypeError.new "Expected a CyclopsClient instance, got #{inst}"
     end
   end
 
   def uniffi_clone_handle()
-    return ::CyclopsSdk.rust_call(
+    return CyclopsSdk.rust_call(
       :uniffi_cyclops_sdk_fn_clone_cyclopsclient,
       @handle
     )
@@ -2882,11 +2014,6 @@ end
     return inst.uniffi_clone_handle()
   end
 
-  def self.uniffi_lift(handle)
-    uniffi_allocate handle
-  end
-
-
   def self.connect(configuration, http_client)
         configuration = configuration
         RustBuffer.check_lower_TypeCyclopsConfiguration(configuration)
@@ -2895,169 +2022,81 @@ end
     # Call the (fallible) function before creating any half-baked object instances.
     # Lightly yucky way to bypass the usual "initialize" logic
     # and just create a new instance with the required handle.
-    return uniffi_allocate(::CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect,RustBuffer.alloc_from_TypeCyclopsConfiguration(configuration),(HttpClient.uniffi_lower http_client)))
+    return uniffi_allocate(CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect,RustBuffer.alloc_from_TypeCyclopsConfiguration(configuration),(HttpClient.uniffi_lower http_client)))
   end
-
 
 
   def create_claim(request)
         request = request
         RustBuffer.check_lower_TypeCreateClaimRequest(request)
-    ::CyclopsSdk.uniffi_rust_call_async(
-      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim(uniffi_clone_handle(),RustBuffer.alloc_from_TypeCreateClaimRequest(request)),
-      :ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      Proc.new { |v| v.consume_into_TypeClaim },
-    SdkError
-    )
+    result = CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim,uniffi_clone_handle(),RustBuffer.alloc_from_TypeCreateClaimRequest(request))
+    return result.consumeIntoTypeClaim
   end
-
   def delete_claim(claim)
         claim = claim
         RustBuffer.check_lower_TypeClaim(claim)
-    ::CyclopsSdk.uniffi_rust_call_async(
-      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim(uniffi_clone_handle(),RustBuffer.alloc_from_TypeClaim(claim)),
-      :ffi_cyclops_sdk_rust_future_poll_void,
-      :ffi_cyclops_sdk_rust_future_cancel_void,
-      :ffi_cyclops_sdk_rust_future_complete_void,
-      :ffi_cyclops_sdk_rust_future_free_void,
-      Proc.new { |v| nil },
-    SdkError
-    )
+      CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim,uniffi_clone_handle(),RustBuffer.alloc_from_TypeClaim(claim))
   end
 
   def get_claim(claim)
         claim = claim
         RustBuffer.check_lower_TypeClaim(claim)
-    ::CyclopsSdk.uniffi_rust_call_async(
-      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim(uniffi_clone_handle(),RustBuffer.alloc_from_TypeClaim(claim)),
-      :ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      Proc.new { |v| v.consume_into_TypeClaim },
-    SdkError
-    )
+    result = CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim,uniffi_clone_handle(),RustBuffer.alloc_from_TypeClaim(claim))
+    return result.consumeIntoTypeClaim
   end
-
   def list_claims(namespace)
-        namespace = ::CyclopsSdk::uniffi_utf8(namespace)
+        namespace = CyclopsSdk::uniffi_utf8(namespace)
 
-    ::CyclopsSdk.uniffi_rust_call_async(
-      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims(uniffi_clone_handle(),RustBuffer.alloc_from_string(namespace)),
-      :ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      Proc.new { |v| v.consume_into_SequenceTypeClaim },
-    SdkError
-    )
+    result = CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims,uniffi_clone_handle(),RustBuffer.allocFromString(namespace))
+    return result.consumeIntoSequenceTypeClaim
   end
-
   def wait_claim(claim)
         claim = claim
         RustBuffer.check_lower_TypeClaim(claim)
-    ::CyclopsSdk.uniffi_rust_call_async(
-      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(uniffi_clone_handle(),RustBuffer.alloc_from_TypeClaim(claim)),
-      :ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      Proc.new { |v| v.consume_into_TypeSandbox },
-    SdkError
-    )
+    result = CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim,uniffi_clone_handle(),RustBuffer.alloc_from_TypeClaim(claim))
+    return result.consumeIntoTypeSandbox
   end
-
   def create_pool(request)
         request = request
         RustBuffer.check_lower_TypeCreatePoolRequest(request)
-    ::CyclopsSdk.uniffi_rust_call_async(
-      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool(uniffi_clone_handle(),RustBuffer.alloc_from_TypeCreatePoolRequest(request)),
-      :ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      Proc.new { |v| v.consume_into_TypePool },
-    SdkError
-    )
+    result = CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool,uniffi_clone_handle(),RustBuffer.alloc_from_TypeCreatePoolRequest(request))
+    return result.consumeIntoTypePool
   end
-
   def delete_pool(pool)
         pool = pool
         RustBuffer.check_lower_TypePool(pool)
-    ::CyclopsSdk.uniffi_rust_call_async(
-      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool(uniffi_clone_handle(),RustBuffer.alloc_from_TypePool(pool)),
-      :ffi_cyclops_sdk_rust_future_poll_void,
-      :ffi_cyclops_sdk_rust_future_cancel_void,
-      :ffi_cyclops_sdk_rust_future_complete_void,
-      :ffi_cyclops_sdk_rust_future_free_void,
-      Proc.new { |v| nil },
-    SdkError
-    )
+      CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool,uniffi_clone_handle(),RustBuffer.alloc_from_TypePool(pool))
   end
 
   def get_pool(pool)
         pool = pool
         RustBuffer.check_lower_TypePool(pool)
-    ::CyclopsSdk.uniffi_rust_call_async(
-      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(uniffi_clone_handle(),RustBuffer.alloc_from_TypePool(pool)),
-      :ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      Proc.new { |v| v.consume_into_TypePool },
-    SdkError
-    )
+    result = CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool,uniffi_clone_handle(),RustBuffer.alloc_from_TypePool(pool))
+    return result.consumeIntoTypePool
   end
-
   def list_pools(namespace)
-        namespace = ::CyclopsSdk::uniffi_utf8(namespace)
+        namespace = CyclopsSdk::uniffi_utf8(namespace)
 
-    ::CyclopsSdk.uniffi_rust_call_async(
-      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools(uniffi_clone_handle(),RustBuffer.alloc_from_string(namespace)),
-      :ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      Proc.new { |v| v.consume_into_SequenceTypePool },
-    SdkError
-    )
+    result = CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools,uniffi_clone_handle(),RustBuffer.allocFromString(namespace))
+    return result.consumeIntoSequenceTypePool
   end
-
   def update_pool(pool)
         pool = pool
         RustBuffer.check_lower_TypePool(pool)
-    ::CyclopsSdk.uniffi_rust_call_async(
-      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool(uniffi_clone_handle(),RustBuffer.alloc_from_TypePool(pool)),
-      :ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      Proc.new { |v| v.consume_into_TypePool },
-    SdkError
-    )
+    result = CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool,uniffi_clone_handle(),RustBuffer.alloc_from_TypePool(pool))
+    return result.consumeIntoTypePool
   end
-
   def service_request(sandbox, service, path, request)
         sandbox = sandbox
         RustBuffer.check_lower_TypeSandbox(sandbox)
-        service = ::CyclopsSdk::uniffi_utf8(service)
+        service = CyclopsSdk::uniffi_utf8(service)
 
-        path = ::CyclopsSdk::uniffi_utf8(path)
+        path = CyclopsSdk::uniffi_utf8(path)
 
         request = request
         RustBuffer.check_lower_TypeHttpRequest(request)
-    ::CyclopsSdk.uniffi_rust_call_async(
-      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(uniffi_clone_handle(),RustBuffer.alloc_from_TypeSandbox(sandbox),RustBuffer.alloc_from_string(service),RustBuffer.alloc_from_string(path),RustBuffer.alloc_from_TypeHttpRequest(request)),
-      :ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      Proc.new { |v| v.consume_into_TypeHttpResponse },
-    SdkError
-    )
+    result = CyclopsSdk.rust_call_with_error(SdkError,:uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request,uniffi_clone_handle(),RustBuffer.alloc_from_TypeSandbox(sandbox),RustBuffer.allocFromString(service),RustBuffer.allocFromString(path),RustBuffer.alloc_from_TypeHttpRequest(request))
+    return result.consumeIntoTypeHttpResponse
   end
 
 end
@@ -3078,128 +2117,43 @@ end
   # to the actual instance, only its underlying handle.
   def self.uniffi_define_finalizer_by_handle(handle, object_id)
     Proc.new do |_id|
-      ::CyclopsSdk.rust_call(
+      CyclopsSdk.rust_call(
         :uniffi_cyclops_sdk_fn_free_httpclient,
         handle
       )
     end
   end
-  # HandleMap for trait interface: stores Ruby-native objects keyed by odd handles.
-  @uniffi_handle_map = UniffiHandleMap.new
 
-  class << self
-    attr_reader :uniffi_handle_map
-  end
-
-  # For trait interfaces: check that the object is either a Rust-backed instance or
-  # responds to the required interface methods.
+  # A private helper for lowering instances into a raw handle.
+  # This does an explicit typecheck, because accidentally lowering a different type of
+  # object in a place where this type is expected, could lead to memory unsafety.
   def self.uniffi_check_lower(inst)
-    if !inst.respond_to?(:execute)
-      raise TypeError.new "Expected a HttpClient instance or an object implementing the interface, got #{inst}"
+    if not inst.is_a? self
+      raise TypeError.new "Expected a HttpClient instance, got #{inst}"
     end
   end
 
-  def uniffi_clone_handle
-    return ::CyclopsSdk.rust_call(
+  def uniffi_clone_handle()
+    return 0 if @handle.nil?
+    return CyclopsSdk.rust_call(
       :uniffi_cyclops_sdk_fn_clone_httpclient,
       @handle
     )
   end
 
-  # For trait interfaces: lowering distinguishes between Rust-backed and Ruby-native instances.
   def self.uniffi_lower(inst)
-    if inst.is_a?(self) && inst.instance_variable_defined?(:@handle)
-      inst.uniffi_clone_handle()
-    else
-      @uniffi_handle_map.insert(inst)
-    end
+    return inst.uniffi_clone_handle()
   end
-
-  # For trait interfaces: lifting distinguishes even handles (Rust) from odd handles (Ruby).
-  def self.uniffi_lift(handle)
-    if (handle & 1) == 0
-      uniffi_allocate handle
-    else
-      @uniffi_handle_map.remove handle
-    end
-  end
-
 
 
 
   def execute(request)
         request = request
         RustBuffer.check_lower_TypeHttpRequest(request)
-    ::CyclopsSdk.uniffi_rust_call_async(
-      UniFFILib.uniffi_cyclops_sdk_fn_method_httpclient_execute(uniffi_clone_handle(),RustBuffer.alloc_from_TypeHttpRequest(request)),
-      :ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      :ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      Proc.new { |v| v.consume_into_TypeHttpResponse },
-    HttpError
-    )
+    result = CyclopsSdk.rust_call_with_error(HttpError,:uniffi_cyclops_sdk_fn_method_httpclient_execute,uniffi_clone_handle(),RustBuffer.alloc_from_TypeHttpRequest(request))
+    return result.consumeIntoTypeHttpResponse
   end
 
-end
-
-
-# Trait interface vtable implementation for HttpClient.
-module UniffiCallbackInterfaceHttpClient
-  # Async callback method for execute
-  EXECUTE_CALLBACK = Proc.new do |uniffi_handle, request, uniffi_future_callback, uniffi_callback_data, uniffi_out_dropped_callback|
-    uniffi_obj = HttpClient.uniffi_handle_map.get(uniffi_handle)
-    make_call = Proc.new do
-      uniffi_obj.execute(
-        request.consume_into_TypeHttpRequest
-      )
-    end
-    handle_success = Proc.new do |return_value|
-      result_struct = UniFFILib::ForeignFutureResultRustBuffer.new
-      result_struct[:return_value] = RustBuffer.alloc_from_TypeHttpResponse(return_value)
-      result_struct[:call_status] = RustCallStatus.new
-      uniffi_future_callback.call(uniffi_callback_data, result_struct)
-    end
-    handle_error = Proc.new do |status_code, error_buf|
-      result_struct = UniFFILib::ForeignFutureResultRustBuffer.new
-      result_struct[:return_value] = RustBuffer.new
-
-      error_status = RustCallStatus.new
-      error_status[:code] = status_code
-      error_status[:error_buf] = error_buf
-
-      result_struct[:call_status] = error_status
-
-      uniffi_future_callback.call(uniffi_callback_data, result_struct)
-    end
-    ::CyclopsSdk.uniffi_trait_interface_call_async(
-      make_call,
-      uniffi_out_dropped_callback,
-      handle_success,
-      handle_error,
-      HttpError,
-      Proc.new { |e| RustBuffer.alloc_from_TypeHttpError(e) }
-    )
-  end
-
-  # Free callback: removes the handle from the map.
-  UNIFFI_FREE_CALLBACK = Proc.new do |uniffi_handle|
-    HttpClient.uniffi_handle_map.remove uniffi_handle
-  end
-
-  # Clone callback: clones the handle in the map.
-  UNIFFI_CLONE_CALLBACK = Proc.new do |uniffi_handle|
-    HttpClient.uniffi_handle_map.clone_handle(uniffi_handle)
-  end
-
-  # Create the VTable struct instance.
-  UNIFFI_VTABLE = UniFFILib::VTableCallbackInterfaceHttpClient.new
-  UNIFFI_VTABLE[:uniffi_free] = UNIFFI_FREE_CALLBACK
-  UNIFFI_VTABLE[:uniffi_clone] = UNIFFI_CLONE_CALLBACK
-  UNIFFI_VTABLE[:execute] = EXECUTE_CALLBACK
-
-  # Register the VTable with Rust.
-  UniFFILib.uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient(UNIFFI_VTABLE)
 end
 
   class CyclopsCredentials
@@ -3218,23 +2172,24 @@ end
   # to the actual instance, only its underlying handle.
   def self.uniffi_define_finalizer_by_handle(handle, object_id)
     Proc.new do |_id|
-      ::CyclopsSdk.rust_call(
+      CyclopsSdk.rust_call(
         :uniffi_cyclops_sdk_fn_free_cyclopscredentials,
         handle
       )
     end
   end
+
   # A private helper for lowering instances into a raw handle.
   # This does an explicit typecheck, because accidentally lowering a different type of
   # object in a place where this type is expected, could lead to memory unsafety.
   def self.uniffi_check_lower(inst)
-    if !inst.is_a? self
+    if not inst.is_a? self
       raise TypeError.new "Expected a CyclopsCredentials instance, got #{inst}"
     end
   end
 
   def uniffi_clone_handle()
-    return ::CyclopsSdk.rust_call(
+    return CyclopsSdk.rust_call(
       :uniffi_cyclops_sdk_fn_clone_cyclopscredentials,
       @handle
     )
@@ -3243,16 +2198,12 @@ end
   def self.uniffi_lower(inst)
     return inst.uniffi_clone_handle()
   end
-
-  def self.uniffi_lift(handle)
-    uniffi_allocate handle
-  end
   def initialize(client_id, client_secret)
-        client_id = ::CyclopsSdk::uniffi_utf8(client_id)
+        client_id = CyclopsSdk::uniffi_utf8(client_id)
 
-        client_secret = ::CyclopsSdk::uniffi_utf8(client_secret)
+        client_secret = CyclopsSdk::uniffi_utf8(client_secret)
 
-    handle = ::CyclopsSdk.rust_call(:uniffi_cyclops_sdk_fn_constructor_cyclopscredentials_new,RustBuffer.alloc_from_string(client_id),RustBuffer.alloc_from_string(client_secret))
+    handle = CyclopsSdk.rust_call(:uniffi_cyclops_sdk_fn_constructor_cyclopscredentials_new,RustBuffer.allocFromString(client_id),RustBuffer.allocFromString(client_secret))
     @handle = handle
     ObjectSpace.define_finalizer(self, self.class.uniffi_define_finalizer_by_handle(handle, self.object_id))
   end
@@ -3261,7 +2212,5 @@ end
 
 
 end
-
-
 
 end

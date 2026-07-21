@@ -32,8 +32,6 @@ import platform
 # Used for default argument values
 _DEFAULT = object() # type: typing.Any
 
-import ctypes
-import struct
 
 class _UniffiRustBuffer(ctypes.Structure):
     _fields_ = [
@@ -113,49 +111,6 @@ class _UniffiForeignBytes(ctypes.Structure):
 
     def __str__(self):
         return "_UniffiForeignBytes(len={}, data={})".format(self.len, self.data[0:self.len])
-
-
-class _UniffiFfiConverterByRefBytes:
-    """Zero-copy converter for `&[u8]` / `[ByRef] bytes` arguments.
-
-    Only `lower` and `check_lower` are valid — zero-copy byte buffers only
-    flow foreign -> Rust, and only in argument position. `lift`, `read`, and
-    `write` have no sound implementation here.
-
-    CPython `bytes` objects are immutable and their internal buffer doesn't
-    move for the lifetime of the object; the caller must keep the source
-    `bytes` alive for the duration of the FFI call.
-    """
-
-    @staticmethod
-    def check_lower(value):
-        # Tighter than `bytes-like`: `lower` uses `ctypes.c_char_p` which only
-        # accepts `bytes`/`None`, so fail fast with a matching check.
-        if not isinstance(value, bytes):
-            raise TypeError("a bytes object is required, not {!r}".format(type(value).__name__))
-
-    @staticmethod
-    def lower(value):
-        fb = _UniffiForeignBytes()
-        if len(value) == 0:
-            fb.len = 0
-            fb.data = None
-        else:
-            fb.len = len(value)
-            fb.data = ctypes.cast(ctypes.c_char_p(value), ctypes.POINTER(ctypes.c_char))
-        return fb
-
-    @staticmethod
-    def lift(value):
-        raise NotImplementedError("ByRef bytes cannot be lifted: zero-copy &[u8] only flows foreign->Rust")
-
-    @staticmethod
-    def read(buf):
-        raise NotImplementedError("ByRef bytes cannot be read from a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
-
-    @staticmethod
-    def write(value, buf):
-        raise NotImplementedError("ByRef bytes cannot be written to a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
 
 
 class _UniffiRustBufferStream:
@@ -248,15 +203,14 @@ class _UniffiRustBufferBuilder:
 
     def _pack_into(self, size, format, value):
         with self._reserve(size):
-            packed = struct.pack(format, value)
-            if size > 0:
-                ctypes.memmove(ctypes.addressof(self.rbuf.data.contents) + self.rbuf.len, packed, size)
+            # XXX TODO: I feel like I should be able to use `struct.pack_into` here but can't figure it out.
+            for i, byte in enumerate(struct.pack(format, value)):
+                self.rbuf.data[self.rbuf.len + i] = byte
 
     def write(self, value):
-        length = len(value)
-        with self._reserve(length):
-            if length > 0:
-                ctypes.memmove(ctypes.addressof(self.rbuf.data.contents) + self.rbuf.len, value, length)
+        with self._reserve(len(value)):
+            for i, byte in enumerate(value):
+                self.rbuf.data[self.rbuf.len + i] = byte
 
     def write_i8(self, v):
         self._pack_into(1, ">b", v)
@@ -524,9 +478,9 @@ def _uniffi_check_contract_api_version(lib):
         raise InternalError("UniFFI contract version mismatch: try cleaning and rebuilding your project")
 
 def _uniffi_check_api_checksums(lib):
-    if lib.uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json() != 675:
+    if lib.uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json() != 24064:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json() != 56364:
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json() != 8252:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
 
 # A ctypes library to expose the extern-C FFI definitions.
@@ -554,25 +508,253 @@ _UniffiLib.ffi_cyclops_sdk_schema_rustbuffer_reserve.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.ffi_cyclops_sdk_schema_rustbuffer_reserve.restype = _UniffiRustBuffer
-_UniffiLib.ffi_cyclops_sdk_schema_uniffi_contract_version.argtypes = (
+_UNIFFI_RUST_FUTURE_CONTINUATION_CALLBACK = ctypes.CFUNCTYPE(None,ctypes.c_uint64,ctypes.c_int8,
 )
-_UniffiLib.ffi_cyclops_sdk_schema_uniffi_contract_version.restype = ctypes.c_uint32
-_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json.argtypes = (
+_UNIFFI_FOREIGN_FUTURE_DROPPED_CALLBACK = ctypes.CFUNCTYPE(None,ctypes.c_uint64,
 )
-_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json.argtypes = (
+class _UniffiForeignFutureDroppedCallbackStruct(ctypes.Structure):
+    _fields_ = [
+        ("handle", ctypes.c_uint64),
+        ("free", _UNIFFI_FOREIGN_FUTURE_DROPPED_CALLBACK),
+    ]
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_u8.argtypes = (
+    ctypes.c_uint64,
+    _UNIFFI_RUST_FUTURE_CONTINUATION_CALLBACK,
+    ctypes.c_uint64,
 )
-_UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json.argtypes = (
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_u8.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_u8.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_u8.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_u8.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
 )
-_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json.restype = _UniffiRustBuffer
-_UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json.argtypes = (
-    _UniffiRustBuffer,
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_u8.restype = ctypes.c_uint8
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_u8.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_u8.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_i8.argtypes = (
+    ctypes.c_uint64,
+    _UNIFFI_RUST_FUTURE_CONTINUATION_CALLBACK,
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_i8.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_i8.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_i8.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_i8.argtypes = (
+    ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
 )
-_UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json.restype = ctypes.c_uint64
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_i8.restype = ctypes.c_int8
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_i8.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_i8.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_u16.argtypes = (
+    ctypes.c_uint64,
+    _UNIFFI_RUST_FUTURE_CONTINUATION_CALLBACK,
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_u16.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_u16.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_u16.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_u16.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_u16.restype = ctypes.c_uint16
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_u16.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_u16.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_i16.argtypes = (
+    ctypes.c_uint64,
+    _UNIFFI_RUST_FUTURE_CONTINUATION_CALLBACK,
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_i16.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_i16.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_i16.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_i16.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_i16.restype = ctypes.c_int16
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_i16.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_i16.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_u32.argtypes = (
+    ctypes.c_uint64,
+    _UNIFFI_RUST_FUTURE_CONTINUATION_CALLBACK,
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_u32.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_u32.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_u32.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_u32.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_u32.restype = ctypes.c_uint32
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_u32.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_u32.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_i32.argtypes = (
+    ctypes.c_uint64,
+    _UNIFFI_RUST_FUTURE_CONTINUATION_CALLBACK,
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_i32.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_i32.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_i32.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_i32.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_i32.restype = ctypes.c_int32
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_i32.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_i32.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_u64.argtypes = (
+    ctypes.c_uint64,
+    _UNIFFI_RUST_FUTURE_CONTINUATION_CALLBACK,
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_u64.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_u64.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_u64.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_u64.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_u64.restype = ctypes.c_uint64
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_u64.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_u64.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_i64.argtypes = (
+    ctypes.c_uint64,
+    _UNIFFI_RUST_FUTURE_CONTINUATION_CALLBACK,
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_i64.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_i64.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_i64.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_i64.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_i64.restype = ctypes.c_int64
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_i64.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_i64.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_f32.argtypes = (
+    ctypes.c_uint64,
+    _UNIFFI_RUST_FUTURE_CONTINUATION_CALLBACK,
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_f32.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_f32.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_f32.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_f32.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_f32.restype = ctypes.c_float
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_f32.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_f32.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_f64.argtypes = (
+    ctypes.c_uint64,
+    _UNIFFI_RUST_FUTURE_CONTINUATION_CALLBACK,
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_f64.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_f64.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_f64.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_f64.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_f64.restype = ctypes.c_double
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_f64.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_f64.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_rust_buffer.argtypes = (
+    ctypes.c_uint64,
+    _UNIFFI_RUST_FUTURE_CONTINUATION_CALLBACK,
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_rust_buffer.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_rust_buffer.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_rust_buffer.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_rust_buffer.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_rust_buffer.restype = _UniffiRustBuffer
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_rust_buffer.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_rust_buffer.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_void.argtypes = (
+    ctypes.c_uint64,
+    _UNIFFI_RUST_FUTURE_CONTINUATION_CALLBACK,
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_poll_void.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_void.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_cancel_void.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_void.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_complete_void.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_void.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.ffi_cyclops_sdk_schema_rust_future_free_void.restype = None
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_preservedjson.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_preservedjson.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_preservedjson.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_preservedjson.restype = None
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_eq_eq.argtypes = (
     _UniffiRustBuffer,
     _UniffiRustBuffer,
@@ -590,16 +772,25 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_hash.argtyp
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_hash.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_preservedjson.argtypes = (
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json.argtypes = (
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
 )
-_UniffiLib.uniffi_cyclops_sdk_schema_fn_clone_preservedjson.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_preservedjson.argtypes = (
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json.restype = _UniffiRustBuffer
+_UniffiLib.ffi_cyclops_sdk_schema_uniffi_contract_version.argtypes = (
 )
-_UniffiLib.uniffi_cyclops_sdk_schema_fn_free_preservedjson.restype = None
+_UniffiLib.ffi_cyclops_sdk_schema_uniffi_contract_version.restype = ctypes.c_uint32
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json.restype = ctypes.c_uint16
 
 _uniffi_check_contract_api_version(_UniffiLib)
 # _uniffi_check_api_checksums(_UniffiLib)
@@ -2510,6 +2701,19 @@ class _UniffiFfiConverterUInt64(_UniffiConverterPrimitiveInt):
     @staticmethod
     def write(value, buf):
         buf.write_u64(value)
+
+class _UniffiFfiConverterUInt8(_UniffiConverterPrimitiveInt):
+    CLASS_NAME = "u8"
+    VALUE_MIN = 0
+    VALUE_MAX = 2**8
+
+    @staticmethod
+    def read(buf):
+        return buf.read_u8()
+
+    @staticmethod
+    def write(value, buf):
+        buf.write_u8(value)
 
 __all__ = [
     "InternalError",

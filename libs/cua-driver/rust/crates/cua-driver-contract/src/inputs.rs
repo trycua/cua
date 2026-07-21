@@ -73,8 +73,8 @@ fn scroll_by_schema(generator: &mut SchemaGenerator) -> Schema {
     ScrollBy::json_schema(generator)
 }
 
-fn positive_integer_schema(_: &mut SchemaGenerator) -> Schema {
-    json_schema!({ "type": "integer", "minimum": 1 })
+fn click_count_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "integer", "minimum": 1, "maximum": 3 })
 }
 
 fn drag_duration_schema(_: &mut SchemaGenerator) -> Schema {
@@ -362,7 +362,7 @@ pub struct ClickInput {
     #[schemars(schema_with = "click_button_schema")]
     pub button: Option<ClickButton>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "positive_integer_schema")]
+    #[schemars(schema_with = "click_count_schema")]
     pub count: Option<u32>,
 }
 
@@ -497,7 +497,7 @@ mod tests {
         );
         assert_eq!(
             schema["properties"]["count"],
-            json!({ "type": "integer", "minimum": 1 })
+            json!({ "type": "integer", "minimum": 1, "maximum": 3 })
         );
     }
 

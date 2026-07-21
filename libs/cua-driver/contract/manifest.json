@@ -39,6 +39,7 @@
             "type": "string"
           },
           "count": {
+            "maximum": 3,
             "minimum": 1,
             "type": "integer"
           },

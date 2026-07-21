@@ -382,6 +382,12 @@ class VM {
                         throw VMError.internalError("The VM session is no longer available")
                     }
                     try await self.addSharedFolder(url, readOnly: readOnly)
+                },
+                copyFilesToGuestDesktop: { [weak self] urls in
+                    guard let self else {
+                        throw VMError.internalError("The VM session is no longer available")
+                    }
+                    try await self.copyFilesToGuestDesktop(urls)
                 }
             )
             displayContext = context
@@ -548,6 +554,45 @@ class VM {
         if let sessionURL = vncService.url {
             saveSessionData(url: sessionURL, sharedDirectories: updated)
         }
+    }
+
+    private func copyFilesToGuestDesktop(_ urls: [URL]) async throws {
+        guard !urls.isEmpty else {
+            throw VMError.internalError("Drop at least one file or folder")
+        }
+        for url in urls {
+            guard url.isFileURL, FileManager.default.fileExists(atPath: url.path) else {
+                throw VMError.internalError("A dropped item is no longer available")
+            }
+        }
+
+        let vmDetails = details
+        guard vmDetails.status == "running" else {
+            throw SSHError.vmNotRunning(vmDirContext.name)
+        }
+        guard let ipAddress = vmDetails.ipAddress, !ipAddress.isEmpty else {
+            throw SSHError.noIPAddress(vmDirContext.name)
+        }
+        guard vmDetails.sshAvailable == true else {
+            throw SSHError.sshNotAvailable(vmDirContext.name)
+        }
+
+        let client = SystemSSHClient(
+            host: ipAddress,
+            port: 22,
+            user: "lume",
+            password: "lume"
+        )
+        try await Task.detached(priority: .userInitiated) {
+            try client.copyToRemoteDesktop(urls)
+        }.value
+
+        Logger.info(
+            "Copied dropped items to VM Desktop",
+            metadata: [
+                "name": vmDirContext.name,
+                "count": "\(urls.count)",
+            ])
     }
 
     private func cleanupSession() async {

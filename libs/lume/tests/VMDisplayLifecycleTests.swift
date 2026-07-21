@@ -11,10 +11,12 @@ private enum PresenterTestError: Error {
 private final class MockDisplayPresenter: VMDisplayPresenter {
   private(set) var showCount = 0
   private(set) var hideCount = 0
+  private(set) var lastContext: VMDisplayContext?
   var showError: Error?
 
   func show(context: VMDisplayContext) async throws {
     showCount += 1
+    lastContext = context
     if let showError { throw showError }
   }
 
@@ -100,6 +102,7 @@ func presenterSelectionAndGuestShutdownCleanup() async throws {
     #expect(selectedMode == mode)
     #expect(presenter.showCount == 1)
     #expect(presenter.hideCount == 1)
+    #expect(presenter.lastContext?.copyFilesToGuestDesktop != nil)
     #expect(vnc.startCallCount == 1)
     #expect(vnc.stopCallCount == 1)
     #expect(service.stopCallCount == 0)

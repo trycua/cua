@@ -174,7 +174,7 @@ pub fn type_text_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<
 
 /// Post a keyboard event to `pid` via SLEventPostToPid (with auth message for
 /// Chromium/Electron support) or fall back to CGEvent::post_to_pid.
-fn post_keyboard_event(pid: i32, event: &CGEvent) {
+pub(super) fn post_keyboard_event(pid: i32, event: &CGEvent) {
     let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
     // attachAuthMessage = true: required for Chromium keyboard on macOS 14+.
     if !crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, true) {
@@ -229,7 +229,7 @@ fn modifier_flags(modifiers: &[&str]) -> CGEventFlags {
     flags
 }
 
-fn key_name_to_code(key: &str) -> anyhow::Result<u16> {
+pub(super) fn key_name_to_code(key: &str) -> anyhow::Result<u16> {
     let code = match key.to_lowercase().as_str() {
         "return" | "enter" => 36,
         "tab" => 48,

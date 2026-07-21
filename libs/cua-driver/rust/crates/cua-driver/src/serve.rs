@@ -495,6 +495,10 @@ pub async fn run_serve(
 
     let listener =
         UnixListener::bind(socket_path).map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
+    use std::os::unix::fs::PermissionsExt as _;
+    let permissions = std::fs::Permissions::from_mode(0o600);
+    std::fs::set_permissions(socket_path, permissions)
+        .map_err(|e| anyhow::anyhow!("secure daemon socket {socket_path}: {e}"))?;
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
 
@@ -1622,6 +1626,14 @@ mod gate_tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
+
+        use std::os::unix::fs::PermissionsExt as _;
+        let socket_mode = std::fs::metadata(&socket)
+            .expect("daemon socket metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(socket_mode, 0o600, "daemon socket must be host-private");
 
         let sid = "gate-test-session-A1B2C3";
 

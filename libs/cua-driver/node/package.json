@@ -1,0 +1,70 @@
+{
+  "name": "@trycua/cua-driver-embedded",
+  "version": "0.1.0",
+  "description": "Host-owned cua-driver lifecycle for Node and Electron applications",
+  "type": "module",
+  "packageManager": "pnpm@10.12.3",
+  "license": "MIT",
+  "homepage": "https://github.com/trycua/cua/tree/main/libs/cua-driver/node",
+  "bugs": {
+    "url": "https://github.com/trycua/cua/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trycua/cua.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.js"
+    },
+    "./electron": {
+      "types": "./dist/electron.d.ts",
+      "import": "./dist/electron.js",
+      "require": "./dist/electron.cjs",
+      "default": "./dist/electron.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsdown src/index.ts src/electron.ts --format esm --no-dts && tsdown src/index.ts src/electron.ts --format cjs --no-dts --no-clean && tsc --emitDeclarationOnly --outDir dist",
+    "lint": "prettier --check .",
+    "lint:fix": "prettier --write .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "ffi-rs": "1.3.2"
+  },
+  "peerDependencies": {
+    "electron": ">=30"
+  },
+  "peerDependenciesMeta": {
+    "electron": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "electron": "41.5.0",
+    "prettier": "^3.6.2",
+    "tsdown": "^0.14.1",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.0"
+  }
+}

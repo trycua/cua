@@ -81,6 +81,77 @@ public final class SystemSSHClient: Sendable {
         )
     }
 
+    /// Copy host files or directories to the guest user's Desktop using system scp.
+    public func copyToRemoteDesktop(_ urls: [URL]) throws {
+        guard !urls.isEmpty else {
+            throw SSHError.commandFailed(exitCode: -1, message: "No files were selected")
+        }
+
+        let fileManager = FileManager.default
+        for url in urls {
+            guard url.isFileURL, fileManager.fileExists(atPath: url.path) else {
+                throw SSHError.commandFailed(
+                    exitCode: -1,
+                    message: "A dropped item is no longer available"
+                )
+            }
+        }
+
+        let itemNames = urls.map(\.lastPathComponent)
+        guard Swift.Set(itemNames.map { $0.lowercased() }).count == itemNames.count else {
+            throw SSHError.commandFailed(
+                exitCode: -1,
+                message: "Dropped items must have unique names"
+            )
+        }
+
+        let preparation = try execute(
+            command: desktopPreparationCommand(itemNames: itemNames),
+            timeout: 30
+        )
+        guard preparation.exitCode == 0 else {
+            if preparation.exitCode == 73 {
+                throw SSHError.commandFailed(
+                    exitCode: 73,
+                    message: "An item with the same name already exists on the VM Desktop"
+                )
+            }
+            throw SSHError.connectionFailed(
+                preparation.output.isEmpty ? "Could not prepare the VM Desktop" : preparation.output
+            )
+        }
+
+        let askpassPath = try createAskpassScript()
+        defer { try? fileManager.removeItem(atPath: askpassPath) }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
+        process.arguments = scpArguments(sourcePaths: urls.map(\.path))
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["SSH_ASKPASS"] = askpassPath
+        environment["SSH_ASKPASS_REQUIRE"] = "force"
+        environment["DISPLAY"] = ":0"
+        process.environment = environment
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+
+        let stderrPipe = Pipe()
+        process.standardError = stderrPipe
+
+        try process.run()
+        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            let stderr = String(data: stderrData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let message = stderr.flatMap { $0.isEmpty ? nil : $0 }
+                ?? "SCP exited with code \(process.terminationStatus)"
+            throw SSHError.connectionFailed(message)
+        }
+    }
+
     /// Start an interactive SSH session using system ssh
     public func interactive() throws {
         let askpassPath = try createAskpassScript()
@@ -127,6 +198,36 @@ public final class SystemSSHClient: Sendable {
 
         args += extraArgs
         return args
+    }
+
+    func desktopPreparationCommand(itemNames: [String]) -> String {
+        let checks = itemNames.map {
+            "if [ -e \"$HOME/Desktop/\"\(Self.shellQuote($0)) ]; then exit 73; fi"
+        }
+        return (["mkdir -p \"$HOME/Desktop\""] + checks).joined(separator: "; ")
+    }
+
+    func scpArguments(sourcePaths: [String]) -> [String] {
+        var args = [
+            "-q", "-r",
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "LogLevel=ERROR",
+            "-o", "ConnectTimeout=10",
+        ]
+
+        if port != 22 {
+            args += ["-P", "\(port)"]
+        }
+
+        args.append("--")
+        args.append(contentsOf: sourcePaths)
+        args.append("\(user)@\(host):Desktop/")
+        return args
+    }
+
+    private static func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// Creates a temporary script that outputs the password for SSH_ASKPASS

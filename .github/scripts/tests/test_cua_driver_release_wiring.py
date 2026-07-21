@@ -211,6 +211,15 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertNotIn(".cua-driver-rs", installer)
         self.assertNotIn('rm -rf "$HOME/.cua-driver"', installer)
 
+    def test_local_install_hints_name_the_local_permission_identity(self) -> None:
+        installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")
+        shared_hints = self.read("libs/cua-driver/scripts/post-install-hints.txt")
+
+        self.assertIn('permission prompts say \\"Cua Driver Local\\"', installer)
+        self.assertNotIn('permission prompts say \\"Cua Driver\\"', installer)
+        self.assertIn("launches the installed", shared_hints)
+        self.assertNotIn("launches CuaDriver", shared_hints)
+
     def test_local_macos_signing_uses_an_unambiguous_identity_hash(self) -> None:
         installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")
 

@@ -51,7 +51,9 @@ enum DetachedVMRunner {
       fileURLWithPath: FileManager.default.currentDirectoryPath,
       isDirectory: true
     )
-    process.environment = ProcessInfo.processInfo.environment
+    var environment = ProcessInfo.processInfo.environment
+    environment["NSUnbufferedIO"] = "YES"
+    process.environment = environment
     process.standardInput = FileHandle.nullDevice
     process.standardOutput = logHandle
     process.standardError = logHandle

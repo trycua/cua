@@ -59,6 +59,7 @@ public actor ClipboardWatcher {
     // Cached SSH client to avoid reconnecting every poll cycle.
     private var cachedSSHClient: SSHClient?
     private var cachedIPAddress: String?
+    private var sshCommandInProgress = false
 
     // Error suppression to avoid flooding logs with repeated failures.
     private var consecutiveFailures = 0
@@ -220,10 +221,6 @@ public actor ClipboardWatcher {
     }
 
     private func writePayloadToVM(_ payload: ClipboardPayload) async throws {
-        guard let sshClient = await getSSHClient() else {
-            throw ClipboardSyncError.unavailable
-        }
-
         let command: String
         let timeout: TimeInterval
         switch payload {
@@ -258,7 +255,7 @@ public actor ClipboardWatcher {
             timeout = 30
         }
 
-        let result = try await sshClient.execute(command: command, timeout: timeout)
+        let result = try await executeSSHCommand(command: command, timeout: timeout)
         guard result.exitCode == 0 else {
             throw ClipboardSyncError.transferFailed
         }
@@ -272,12 +269,9 @@ public actor ClipboardWatcher {
     }
 
     private func readVMChangeCount() async throws -> Int {
-        guard let sshClient = await getSSHClient() else {
-            throw ClipboardSyncError.unavailable
-        }
         let command =
             "osascript -l JavaScript -e 'ObjC.import(\"AppKit\"); $.NSPasteboard.generalPasteboard.changeCount'"
-        let result = try await sshClient.execute(command: command, timeout: 5)
+        let result = try await executeSSHCommand(command: command, timeout: 5)
         guard result.exitCode == 0,
               let value = Int(result.output.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             throw ClipboardSyncError.transferFailed
@@ -286,10 +280,6 @@ public actor ClipboardWatcher {
     }
 
     private func readPayloadFromVM() async throws -> ClipboardPayload {
-        guard let sshClient = await getSSHClient() else {
-            throw ClipboardSyncError.unavailable
-        }
-
         let path = "/tmp/lume-clipboard-\(UUID().uuidString).png"
         let command = """
             if /usr/bin/osascript \\
@@ -307,7 +297,7 @@ public actor ClipboardWatcher {
             rm -f '\(path)'
             """
 
-        let result = try await sshClient.execute(command: command, timeout: 30)
+        let result = try await executeSSHCommand(command: command, timeout: 30)
         guard result.exitCode == 0,
               let separator = result.output.firstIndex(of: "\n") else {
             throw ClipboardSyncError.transferFailed
@@ -383,6 +373,41 @@ public actor ClipboardWatcher {
         case .png:
             return payload.byteCount <= Self.maxImageSize
         }
+    }
+
+    private func executeSSHCommand(
+        command: String,
+        timeout: TimeInterval
+    ) async throws -> SSHResult {
+        while sshCommandInProgress {
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(25))
+        }
+
+        sshCommandInProgress = true
+        defer { sshCommandInProgress = false }
+
+        for attempt in 0..<2 {
+            guard let sshClient = await getSSHClient() else {
+                throw ClipboardSyncError.unavailable
+            }
+            do {
+                return try await sshClient.execute(command: command, timeout: timeout)
+            } catch {
+                cachedSSHClient = nil
+                cachedIPAddress = nil
+                guard attempt == 0 else { throw error }
+                Logger.debug(
+                    "Retrying clipboard SSH command after a transient failure",
+                    metadata: [
+                        "vm": vmName,
+                        "error": error.localizedDescription,
+                    ])
+                try await Task.sleep(for: .milliseconds(250))
+            }
+        }
+
+        throw ClipboardSyncError.transferFailed
     }
 
     private func handleSyncError(_ message: String, error: Error) {

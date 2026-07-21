@@ -448,6 +448,12 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
                     try await addSharedFolderAction(url, readOnly)
                     self?.showOverlay("Shared in /Volumes/My Shared Files")
                 } catch {
+                    Logger.error(
+                        "Native shared-folder action failed",
+                        metadata: [
+                            "vm": self?.vmName ?? "unknown",
+                            "error": error.localizedDescription,
+                        ])
                     self?.showOverlay("Share failed — \(error.localizedDescription)")
                 }
             }
@@ -465,6 +471,12 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
                 try await copyFromGuestAction()
                 self?.showOverlay("Copied from VM")
             } catch {
+                Logger.error(
+                    "Native clipboard copy failed",
+                    metadata: [
+                        "vm": self?.vmName ?? "unknown",
+                        "error": error.localizedDescription,
+                    ])
                 self?.showOverlay("Copy failed — \(error.localizedDescription)")
             }
         }
@@ -481,6 +493,12 @@ final class NativeVMDisplayPresenter: NSObject, VMDisplayPresenter, NSWindowDele
                 try await pasteIntoGuestAction()
                 self?.showOverlay("Pasted into VM")
             } catch {
+                Logger.error(
+                    "Native clipboard paste failed",
+                    metadata: [
+                        "vm": self?.vmName ?? "unknown",
+                        "error": error.localizedDescription,
+                    ])
                 self?.showOverlay("Paste failed — \(error.localizedDescription)")
             }
         }

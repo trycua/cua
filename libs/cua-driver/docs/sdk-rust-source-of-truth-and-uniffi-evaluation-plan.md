@@ -556,8 +556,8 @@ artifacts. This revision incorporates its must-fix findings:
 The implementation keeps MCP as the public boundary and makes typed Rust the
 source for the current fourteen-tool SDK surface:
 
-- Schemars-derived Rust input and structured-output types reproduce the
-  existing checked-in manifest and generated Python/TypeScript bytes.
+- Schemars-derived Rust input and structured-output types deterministically
+  generate the checked-in manifest and Python/TypeScript sources.
 - The four session tools consume the types directly. Each OS desktop branch
   deserializes the shared portable projection before acting, while its richer
   window/element path remains available to generic MCP callers.
@@ -577,8 +577,8 @@ publication:
 
 | Candidate | Maintained source | Generated source | Universal package |
 | --- | ---: | ---: | ---: |
-| Python MCP SDK | 676 lines | 325 lines | 10,663-byte pure-Python wheel |
-| TypeScript MCP SDK | 278 lines | 271 lines | 4,926-byte npm tarball; 19,308 bytes unpacked |
+| Python MCP SDK | 676 lines | 331 lines | 10,666-byte pure-Python wheel |
+| TypeScript MCP SDK | 278 lines | 275 lines | 4,923-byte npm tarball; 19,506 bytes unpacked |
 
 Both clients retain generic `call_tool` access and preserve the full MCP
 content/result envelope. Their executable fixture suites cover initialization,

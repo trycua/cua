@@ -1,0 +1,25 @@
+name: Trigger Copybara Import
+
+on:
+  pull_request:
+    types: [labeled]
+    paths:
+      - "fleet/**"
+
+permissions:
+  actions: write
+
+jobs:
+  trigger:
+    if: contains(github.event.label.name, 'copybara-import')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger cloud reverse sync
+        env:
+          GH_TOKEN: ${{ secrets.COPYBARA_DISPATCH_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh workflow run copybara-reverse-sync.yml \
+            --repo trycua/cloud \
+            --field pr_number="${PR_NUMBER}"

@@ -927,7 +927,7 @@ class Sandbox:
         """Permanently delete a sandbox.
 
         For local sandboxes, stops the VM and removes the state file.
-        For cloud sandboxes, calls DELETE /v1/vms/{name}.
+        For cloud sandboxes, calls DELETE /api/sbx/{name}.
 
         Args:
             name: Sandbox name.
@@ -1067,7 +1067,7 @@ class Sandbox:
                     # polling for "running" status).  Delete the orphan so it
                     # doesn't leak.
                     vm_name = transport._name
-                    if vm_name:
+                    if vm_name and getattr(transport, "_created_by_connect", False):
                         try:
                             await transport.delete_vm()
                         except Exception:

@@ -4,8 +4,11 @@ Usage::
 
     import cua_sandbox as cua
 
-    # Configure API access
+    # Configure legacy cloud API access
     cua.configure(api_key="sk-...")
+
+    # Fleet-backed cloud sandboxes use per-user cyclops-cs credentials
+    cua.configure(sandbox_client_id="ukey-...", sandbox_client_secret="...")
 
     # Local sandbox
     async with cua.sandbox(local=True) as sb:

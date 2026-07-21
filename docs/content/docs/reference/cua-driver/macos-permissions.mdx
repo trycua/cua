@@ -35,6 +35,12 @@ Cua Driver's current ScreenCaptureKit recorder captures screen video only and
 does not enable audio capture. The consent is limited to macOS capture; it does
 not authorize browser-profile access, browser data, or CDP attachment.
 
+If the installed app is not listed under **Screen & System Audio Recording**
+after the prompt, click **+**, add `/Applications/CuaDriver.app` (or
+`/Applications/CuaDriverLocal.app` for a local build), enable it, and run
+`permissions grant` again. This recovers a stale or missing macOS registration
+without granting the terminal or another build identity.
+
 Automation prompts can also appear when an explicitly requested browser or app
 operation uses Apple Events. Those grants are target-specific and remain
 outside the core `permissions status` payload.

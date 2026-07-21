@@ -2454,6 +2454,7 @@ fn run_permissions_grant() {
     {
         let cli_name = crate::bundle::cli_name();
         let app_name = crate::bundle::app_name();
+        let app_path = crate::bundle::app_bundle_path();
         let bundle_id = crate::bundle::bundle_id();
         let socket = crate::serve::default_socket_path();
         if crate::serve::is_daemon_listening(&socket) {
@@ -2528,6 +2529,12 @@ fn run_permissions_grant() {
                 "Approve {app_name} in System Settings \u{2192} Privacy & Security, then \
                  re-run `{cli_name} permissions grant`."
             );
+            if !sr {
+                println!(
+                    "If {app_name} is missing from Screen & System Audio Recording, click +, \
+                     add {app_path}, enable it, then re-run the command."
+                );
+            }
             process::exit(1);
         }
 

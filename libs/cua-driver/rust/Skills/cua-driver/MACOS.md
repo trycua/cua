@@ -244,6 +244,9 @@ editor state.
      triggers the additional private-window-picker bypass dialog before
      verifying live capture. macOS mentions screen and audio in the combined
      consent, although Cua Driver's current recorder does not enable audio.
+     If the installed app is absent from **Screen & System Audio Recording**,
+     the user should click **+**, add `/Applications/CuaDriver.app` (or
+     `/Applications/CuaDriverLocal.app`), enable it, and rerun the command.
 
 ## Resolve target pid — always via `launch_app`
 

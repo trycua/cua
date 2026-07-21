@@ -43,6 +43,10 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("NSAppleEventsUsageDescription", plist)
         self.assertNotIn("NSMicrophoneUsageDescription", plist)
 
+        cli = self.read("libs/cua-driver/rust/crates/cua-driver/src/cli.rs")
+        self.assertIn("missing from Screen & System Audio Recording", cli)
+        self.assertIn("add {app_path}", cli)
+
     def test_release_please_owns_driver_and_lume(self) -> None:
         config = self.read("release-please-config.json")
         workflow = self.read(".github/workflows/release-please.yml")

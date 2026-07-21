@@ -248,10 +248,12 @@ def _coordinate(value: Any, path: str) -> Tuple[int, int]:
 
 
 def _native_point(value: Any, path: str, width: int, height: int) -> Tuple[int, int]:
+    if width <= 0 or height <= 0:
+        raise N2ActionValidationError("native screenshot dimensions must be positive")
     x, y = _coordinate(value, path)
     return (
-        round((x / N2_COORDINATE_SCALE) * width),
-        round((y / N2_COORDINATE_SCALE) * height),
+        min(width - 1, round((x / N2_COORDINATE_SCALE) * width)),
+        min(height - 1, round((y / N2_COORDINATE_SCALE) * height)),
     )
 
 

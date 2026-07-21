@@ -84,6 +84,7 @@ class TestRouting:
     def test_adapter_does_not_invent_n2_latest_alias(self):
         adapter = YutoriAdapter(api_key="test")
 
+        assert adapter._normalize_model("yutori/n1") == "n1-latest"
         assert adapter._normalize_model("yutori/n1.5") == "n1.5-latest"
         assert adapter._normalize_model("yutori/n2") == "n2"
         assert adapter._normalize_model("yutori/n2-preview") == "n2-preview"
@@ -115,6 +116,17 @@ class TestTranslation:
         actions = translate_n2_action("left_click", {"coordinates": [500, 500]}, 2880, 1800)
 
         assert actions == [{"type": "click", "x": 1440, "y": 900, "button": "left"}]
+
+    def test_coordinate_corners_are_valid_native_pixel_indices(self):
+        top_left = translate_n2_action("mouse_move", {"coordinates": [0, 0]}, 1280, 800)
+        bottom_right = translate_n2_action("mouse_move", {"coordinates": [1000, 1000]}, 1280, 800)
+
+        assert top_left == [{"type": "move", "x": 0, "y": 0}]
+        assert bottom_right == [{"type": "move", "x": 1279, "y": 799}]
+
+    def test_non_positive_native_dimensions_are_rejected(self):
+        with pytest.raises(N2ActionValidationError, match="dimensions must be positive"):
+            translate_n2_action("mouse_move", {"coordinates": [500, 500]}, 0, 800)
 
     @pytest.mark.parametrize(
         ("action", "arguments", "expected_type"),

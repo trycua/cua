@@ -15,7 +15,7 @@ struct Run: AsyncParsableCommand {
     @Option(
         help: "Local viewer to open: 'vnc', 'native', or 'none'. The VNC server remains available in every mode."
     )
-    var display: DisplayMode = .none
+    var display: DisplayMode = .native
 
     @Flag(
         name: [.customShort("d"), .customLong("no-display")],

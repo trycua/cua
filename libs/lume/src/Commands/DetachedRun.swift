@@ -87,6 +87,14 @@ enum DetachedVMRunner {
         }
       }
     }
+    let hasExplicitDisplay = childArguments.contains("--display")
+      || childArguments.contains("--no-display")
+      || childArguments.contains("-d")
+      || childArguments.contains(where: { $0.hasPrefix("--display=") })
+    if !hasExplicitDisplay {
+      childArguments += ["--display", "none"]
+    }
+
     return childArguments
   }
 

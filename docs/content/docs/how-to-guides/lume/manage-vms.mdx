@@ -25,15 +25,16 @@ SSH availability when the VM is running.
 
 ## Run, attach to, and stop a VM
 
-Run Tahoe without automatically opening a viewer. The owning process remains
-attached to the terminal by default:
+Run Tahoe with the low-latency native viewer. VNC remains available for
+automation and remote access, and the owning process stays attached to the
+terminal:
 
 ```bash
 lume run macos-tahoe
 ```
 
-Use `--detach` to run it in the background. Lume prints its PID and writes logs
-to `~/Library/Logs/lume/macos-tahoe.log` by default:
+Use `--detach` to run it in the background without opening a viewer. Lume prints
+its PID and writes logs to `~/Library/Logs/lume/macos-tahoe.log` by default:
 
 ```bash
 lume run macos-tahoe --detach
@@ -54,11 +55,11 @@ lume attach macos-tahoe --display native
 lume attach macos-tahoe --display vnc
 ```
 
-You can also start and immediately open a viewer:
+Select Screen Sharing or suppress the startup viewer explicitly when needed:
 
 ```bash
-lume run macos-tahoe --display native
 lume run macos-tahoe --display vnc
+lume run macos-tahoe --display none
 ```
 
 Closing the native window only hides it; it does not stop the guest. Reopen it

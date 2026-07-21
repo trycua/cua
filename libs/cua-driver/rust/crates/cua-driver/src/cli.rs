@@ -2338,6 +2338,24 @@ fn run_permissions_status(json: bool) {
     }
 }
 
+fn permission_flag(structured: &serde_json::Value, key: &str) -> bool {
+    structured
+        .get(key)
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+fn permission_grant_is_ready(structured: &serde_json::Value) -> bool {
+    permission_flag(structured, "accessibility")
+        && permission_flag(structured, "screen_recording")
+        && permission_flag(structured, "screen_recording_capturable")
+}
+
+fn permission_grant_has_stale_screen_recording(structured: &serde_json::Value) -> bool {
+    permission_flag(structured, "screen_recording")
+        && !permission_flag(structured, "screen_recording_capturable")
+}
+
 /// Launch CuaDriver via LaunchServices so the permission prompt attributes to
 /// com.trycua.driver, wait (user-paced) for the daemon to come up — its socket
 /// only appears once the permissions gate passes, i.e. the grant was given —
@@ -2346,7 +2364,8 @@ fn run_permissions_grant() {
     #[cfg(target_os = "macos")]
     {
         let socket = crate::serve::default_socket_path();
-        if crate::serve::is_daemon_listening(&socket) {
+        let daemon_was_running = crate::serve::is_daemon_listening(&socket);
+        if daemon_was_running {
             println!("CuaDriver daemon already running — checking its permissions…");
         } else {
             println!("Launching CuaDriver to request permissions.");
@@ -2367,7 +2386,8 @@ fn run_permissions_grant() {
         // Since #1761 the daemon binds its socket IMMEDIATELY — before the
         // permissions gate completes — so the first `check_permissions`
         // query returns "pending" while the grant is still missing. Poll
-        // the daemon until both grants flip true (success) or we time out.
+        // the daemon until both grants and the live capture probe flip true
+        // (success) or we time out.
         //
         // The gate re-execs the daemon (~every 25s) to pick up an
         // Accessibility grant — `AXIsProcessTrusted` is cached per process
@@ -2384,6 +2404,8 @@ fn run_permissions_grant() {
         let poll_deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
         let mut ax = false;
         let mut sr = false;
+        let mut cap = false;
+        let mut stale_screen_recording = false;
         loop {
             if let Some(structured) = crate::serve::send_request(&socket, &req)
                 .ok()
@@ -2391,15 +2413,18 @@ fn run_permissions_grant() {
                 .and_then(|r| r.result)
                 .and_then(|res| res.get("structuredContent").cloned())
             {
-                ax = structured
-                    .get("accessibility")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                sr = structured
-                    .get("screen_recording")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                if ax && sr {
+                ax = permission_flag(&structured, "accessibility");
+                sr = permission_flag(&structured, "screen_recording");
+                cap = permission_flag(&structured, "screen_recording_capturable");
+                if permission_grant_is_ready(&structured) {
+                    break;
+                }
+                // A daemon that was already running has had time to settle.
+                // If its cached preflight says Screen Recording is granted
+                // while the authoritative live probe fails, another prompt
+                // cannot repair the stale TCC decision until it is reset.
+                if daemon_was_running && permission_grant_has_stale_screen_recording(&structured) {
+                    stale_screen_recording = true;
                     break;
                 }
             }
@@ -2410,8 +2435,15 @@ fn run_permissions_grant() {
             }
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
-        if ax && sr {
+        if ax && sr && cap {
             println!("\n✅ CuaDriver has Accessibility + Screen Recording. You're set.");
+        } else if stale_screen_recording || (sr && !cap) {
+            eprintln!("\n❌ Screen Recording looks granted, but CuaDriver cannot capture pixels.");
+            eprintln!("The cached macOS TCC decision is stale. Run:");
+            eprintln!("  tccutil reset ScreenCapture com.trycua.driver");
+            eprintln!("  cua-driver stop");
+            eprintln!("  cua-driver permissions grant");
+            process::exit(1);
         } else {
             let missing = match (ax, sr) {
                 (false, false) => "Accessibility + Screen Recording",
@@ -3420,6 +3452,40 @@ mod tests {
             finite_client_kind_from_args(&args(&["doctor", "--client", "claude"])),
             "not_applicable"
         );
+    }
+
+    #[test]
+    fn permission_grant_requires_live_capture_probe() {
+        let stale = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "screen_recording_capturable": false
+        });
+
+        assert!(!permission_grant_is_ready(&stale));
+        assert!(permission_grant_has_stale_screen_recording(&stale));
+    }
+
+    #[test]
+    fn permission_grant_accepts_all_live_checks() {
+        let ready = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "screen_recording_capturable": true
+        });
+
+        assert!(permission_grant_is_ready(&ready));
+        assert!(!permission_grant_has_stale_screen_recording(&ready));
+    }
+
+    #[test]
+    fn permission_grant_missing_live_probe_is_not_ready() {
+        let incomplete = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true
+        });
+
+        assert!(!permission_grant_is_ready(&incomplete));
     }
 
     #[test]

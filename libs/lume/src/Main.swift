@@ -116,13 +116,14 @@ extension Lume {
         guard args.first == "run", !args.contains("--detach") else { return nil }
 
         let noDisplay = args.contains("--no-display") || args.contains("-d")
+        let inlineDisplay = args.first(where: { $0.hasPrefix("--display=") })
+            .map { String($0.dropFirst("--display=".count)) }
+        let separatedDisplay = args.indices.first(where: { index in
+            args[index] == "--display" && args.index(after: index) < args.endIndex
+        }).map { args[args.index(after: $0)] }
+        let requestedDisplay = inlineDisplay ?? separatedDisplay
         let usesNativeDisplay = !noDisplay
-            && (args.contains("--display=native")
-                || args.indices.contains { index in
-                    args[index] == "--display"
-                        && args.index(after: index) < args.endIndex
-                        && args[args.index(after: index)] == "native"
-                })
+            && (requestedDisplay == nil || requestedDisplay == DisplayMode.native.rawValue)
 
         // The conventional form is `lume run VM_NAME [options]`. ArgumentParser
         // still produces a useful validation error if the positional name is absent.

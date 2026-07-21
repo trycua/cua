@@ -37,9 +37,9 @@ lume ls
 lume ssh macos-tahoe 'sw_vers; id -un'
 ```
 
-`lume run` starts without opening a viewer while keeping VNC available. Use
-`lume attach macos-tahoe` to open the preferred viewer, or select one explicitly
-with `--display native` or `--display vnc`.
+`lume run` opens the native viewer by default while keeping VNC available for
+automation and remote access. Use `--display vnc` to open Screen Sharing instead,
+or `--display none` (or `--no-display`) to start without a viewer.
 
 ## Stop or remove it
 

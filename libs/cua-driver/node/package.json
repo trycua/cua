@@ -45,6 +45,7 @@
     "lint": "prettier --check .",
     "lint:fix": "prettier --write .",
     "test": "vitest run",
+    "test:package": "node --input-type=module --eval \"await import('./dist/index.js')\" && node --eval \"require('./dist/index.cjs')\"",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "pnpm run build"
   },

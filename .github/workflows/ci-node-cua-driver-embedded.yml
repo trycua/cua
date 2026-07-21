@@ -38,4 +38,5 @@ jobs:
           pnpm typecheck
           pnpm test
           pnpm build
+          pnpm test:package
           pnpm pack --pack-destination "${{ runner.temp }}"

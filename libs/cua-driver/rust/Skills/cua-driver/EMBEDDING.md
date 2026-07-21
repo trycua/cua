@@ -99,6 +99,32 @@ selects unrestricted mode and records the acknowledgement. The older
 `autonomous` mode name remains accepted as an alias for `bounded` during
 migration.
 
+### Node and Electron hosts
+
+Use `@trycua/cua-driver-embedded` instead of implementing process and socket
+management in every host. The package starts a private daemon directly, waits
+until its socket accepts connections, returns the MCP configuration, and owns
+restart and cleanup:
+
+```ts
+import { EmbeddedCuaDriver } from '@trycua/cua-driver-embedded';
+
+const driver = new EmbeddedCuaDriver({
+  binaryPath: '/path/inside/YourApp.app/cua-driver',
+  hostBundleId: 'com.example.your-app',
+});
+const connection = await driver.start();
+// Register connection.mcp with the host's MCP client.
+await driver.stop();
+```
+
+Electron main processes can use the package's `/electron` entry point to
+request Accessibility and check Screen Recording after `app.whenReady()`.
+Some macOS releases refuse to raise a Screen Recording prompt; in that case,
+open the Screen Recording settings pane with
+`openMacOSScreenRecordingSettings()`, ask the user to add the host app, and
+start the driver only after both checks return true.
+
 ## What embedded mode changes (and what it doesn't)
 
 |                                | Standalone                          | Embedded (`CUA_DRIVER_EMBEDDED=1`)       |

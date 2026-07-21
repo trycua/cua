@@ -33,6 +33,21 @@
           "path": "python/src/cua_driver/__init__.py"
         },
         {
+          "type": "json",
+          "path": "clients/typescript/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "clients/typescript/package-lock.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "clients/typescript/package-lock.json",
+          "jsonpath": "$.packages[''].version"
+        },
+        {
           "type": "generic",
           "path": "scripts/_install-rust.sh"
         },

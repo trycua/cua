@@ -13,14 +13,14 @@ jobs:
     name: contributor-attribution
     runs-on: ubuntu-latest
     steps:
-      # pull_request_target supplies a read token for fork PR metadata. Check out
-      # only the trusted base commit; the PR head is read as inert API data and is
-      # never executed or checked out in this job.
+      # For pull_request_target, github.sha is the current commit on the trusted
+      # base branch. The PR's recorded base.sha can be stale after main advances.
+      # The PR head remains inert API data and is never checked out or executed.
       - name: Check out trusted base validator
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Set up Python

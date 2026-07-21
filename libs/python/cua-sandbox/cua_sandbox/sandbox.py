@@ -38,6 +38,7 @@ from typing import (
     AsyncIterator,
     Callable,
     Coroutine,
+    Dict,
     Optional,
     TypeVar,
 )
@@ -410,6 +411,7 @@ class Sandbox:
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
         telemetry_enabled: bool = True,
+        metadata: Optional[Dict[str, str]] = None,
     ) -> "Sandbox":
         """Provision a new persistent sandbox and return it connected.
 
@@ -456,6 +458,7 @@ class Sandbox:
             time_to_start=time_to_start,
             request_timeout=request_timeout,
             telemetry_enabled=telemetry_enabled,
+            metadata=metadata,
         )
 
     @classmethod
@@ -534,6 +537,7 @@ class Sandbox:
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
         telemetry_enabled: bool = True,
+        metadata: Optional[Dict[str, str]] = None,
     ) -> AsyncIterator["Sandbox"]:
         """Create an ephemeral sandbox that is automatically destroyed on exit.
 
@@ -560,6 +564,9 @@ class Sandbox:
                 await sb.shell.run("whoami")
             # sandbox is destroyed here
         """
+        # Auto-inject ephemeral=true into metadata so the API can
+        # stamp it on the VM image annotation for observability.
+        merged_metadata = {"ephemeral": "true", **(metadata or {})}
         sb = await cls._create(
             image=image,
             name=name,
@@ -574,6 +581,7 @@ class Sandbox:
             time_to_start=time_to_start,
             request_timeout=request_timeout,
             telemetry_enabled=telemetry_enabled,
+            metadata=merged_metadata,
         )
         try:
             yield sb
@@ -989,6 +997,7 @@ class Sandbox:
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
         telemetry_enabled: bool = True,
+        metadata: Optional[Dict[str, str]] = None,
     ) -> "Sandbox":
         """Internal workhorse — all public factories delegate here."""
         _t_start = time.monotonic()
@@ -1055,6 +1064,7 @@ class Sandbox:
                     region=region,
                     time_to_start=time_to_start,
                     request_timeout=request_timeout,
+                    metadata=metadata,
                 )
                 sb = cls(
                     transport, name=name, _ephemeral=ephemeral, _telemetry_enabled=telemetry_enabled

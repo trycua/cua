@@ -83,6 +83,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "get_agent_cursor_state"
         | "get_recording_state"
         | "check_for_update"
+        | "health_report"
         | "probe" => RiskClass::R0,
 
         // Local reversible control and lifecycle operations.
@@ -584,6 +585,14 @@ mod tests {
         assert!(error
             .to_string()
             .contains("no reviewed risk classification"));
+    }
+
+    #[test]
+    fn health_report_is_r0_read_only_diagnostics() {
+        let risk = advertised_risk_for("health_report");
+        assert_eq!(risk.class, RiskClass::R0);
+        assert_eq!(risk.enforcement, RiskEnforcement::MetadataOnly);
+        assert!(!risk.operation_sensitive);
     }
 
     #[test]

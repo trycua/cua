@@ -34,6 +34,22 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("os: ubuntu-24.04-arm", workflow)
         self.assertIn("arch: arm64", workflow)
 
+    def test_macos_bundle_explains_screen_capture_and_automation_prompts(self) -> None:
+        plist = self.read(
+            "libs/cua-driver/rust/scripts/CuaDriverBundle/Contents/Info.plist"
+        )
+
+        self.assertIn("NSScreenCaptureUsageDescription", plist)
+        self.assertIn("NSAppleEventsUsageDescription", plist)
+        self.assertNotIn("NSMicrophoneUsageDescription", plist)
+
+        cli = self.read("libs/cua-driver/rust/crates/cua-driver/src/cli.rs")
+        self.assertIn("missing from Screen & System Audio Recording", cli)
+        self.assertIn("add {app_path}", cli)
+
+        limits = self.read("docs/content/docs/reference/cua-driver/limits.mdx")
+        self.assertIn("without this grant it returns the tree only (no PNG)", limits)
+
     def test_release_please_owns_driver_and_lume(self) -> None:
         config = self.read("release-please-config.json")
         workflow = self.read(".github/workflows/release-please.yml")
@@ -201,6 +217,15 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertNotIn("LEGACY_HOME_DIR", installer)
         self.assertNotIn(".cua-driver-rs", installer)
         self.assertNotIn('rm -rf "$HOME/.cua-driver"', installer)
+
+    def test_local_install_hints_name_the_local_permission_identity(self) -> None:
+        installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")
+        shared_hints = self.read("libs/cua-driver/scripts/post-install-hints.txt")
+
+        self.assertIn('permission prompts say \\"Cua Driver Local\\"', installer)
+        self.assertNotIn('permission prompts say \\"Cua Driver\\"', installer)
+        self.assertIn("launches the installed", shared_hints)
+        self.assertNotIn("launches CuaDriver", shared_hints)
 
     def test_local_macos_signing_uses_an_unambiguous_identity_hash(self) -> None:
         installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")

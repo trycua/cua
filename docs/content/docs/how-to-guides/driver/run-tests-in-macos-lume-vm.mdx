@@ -207,8 +207,7 @@ DRIVER=/Users/lume/.local/bin/cua-driver
 Choose **Allow** for:
 
 - Terminal controlling System Events;
-- CuaDriver controlling System Events; and
-- CuaDriver capturing screen and audio without the system picker.
+- CuaDriver direct screen capture without the system picker.
 
 These are normal macOS consent flows. Do not edit `TCC.db`. Rerun all three
 probes and require them to finish without another prompt.
@@ -219,8 +218,14 @@ Verify the app-owned grants, signature, capture result, and SIP state:
 "$DRIVER" permissions status --json | jq -e '
   .accessibility == true
   and .screen_recording == true
-  and .screen_recording_capturable == true
+  and .screen_recording_capturable == null
+  and .direct_capture_status == "not_checked"
   and .source.attribution == "driver-daemon"
+'
+
+"$DRIVER" call check_permissions '{"prompt":true}' | jq -e '
+  .structuredContent.screen_recording_capturable == true
+  and .structuredContent.direct_capture_status == "ready"
 '
 
 jq -e '

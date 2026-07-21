@@ -6,7 +6,7 @@ import sys
 import time
 
 from cua_cli import __version__
-from cua_cli.commands import auth, do, image, mcp, platform, sandbox, skills, trajectory
+from cua_cli.commands import auth, do, image, info, mcp, platform, sandbox, skills, trajectory
 from cua_cli.commands import workspace as workspace_cmd
 from cua_cli.utils.output import print_error
 
@@ -47,6 +47,7 @@ def create_parser() -> argparse.ArgumentParser:
     sandbox.register_parser(subparsers)
     image.register_parser(subparsers)
     platform.register_parser(subparsers)
+    info.register_parser(subparsers)
     skills.register_parser(subparsers)
     mcp.register_parser(subparsers)
     do.register_parser(subparsers)
@@ -85,6 +86,8 @@ def main() -> int:
             exit_code = image.execute(args)
         elif args.command == "platform":
             exit_code = platform.execute(args)
+        elif args.command == "info":
+            exit_code = info.execute(args)
         elif args.command == "skills":
             exit_code = skills.execute(args)
         elif args.command == "serve-mcp":

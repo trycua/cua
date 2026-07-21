@@ -8,9 +8,9 @@ Next steps:
   2. Grant permissions (macOS — Accessibility + Screen Recording):
        {{BINARY}} permissions status   # report status (read-only; tells you which
                                        # identity the grants belong to)
-       {{BINARY}} permissions grant    # the correct way to grant — launches CuaDriver
-                                       # so the dialog says "Cua Driver" and the grant
-                                       # sticks to the driver, not your terminal.
+       {{BINARY}} permissions grant    # the correct way to grant — launches the installed
+                                       # app so every dialog and Settings entry matches
+                                       # this driver identity, not your terminal.
                                    # Tip: `--autostart` (above) keeps a launchd daemon
                                    # running so you grant once and it persists.
 

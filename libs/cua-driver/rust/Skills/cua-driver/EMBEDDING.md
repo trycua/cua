@@ -164,7 +164,8 @@ a dialog (the `prompt` argument is ignored) and returns:
 {
   "accessibility": true,
   "screen_recording": true,
-  "screen_recording_capturable": true,
+  "screen_recording_capturable": null,
+  "direct_capture_status": "not_checked",
   "source": {
     "attribution": "host",
     "host_bundle_id": "com.yourco.yourapp",
@@ -181,10 +182,11 @@ a dialog (the `prompt` argument is ignored) and returns:
 - `accessibility` / `screen_recording` — the live TCC state *of your app's
   grant*, answered from inside the driver process (which shares your
   identity). If both are true, it is safe to drive the desktop.
-- `screen_recording_capturable` — a live ScreenCaptureKit probe
-  (`SCShareableContent`), the authoritative signal. If it disagrees with
-  `screen_recording`, the preflight boolean is stale or belongs to a
-  different identity — see troubleshooting.
+- `screen_recording_capturable` / `direct_capture_status` — embedded
+  `check_permissions` is read-only and never runs Tahoe's prompt-capable
+  ScreenCaptureKit probe, so these are `null` / `not_checked`. The host owns
+  the consent UX and should verify pixels with an explicit screenshot or
+  capture operation after explaining the prompt.
 - `source.attribution` values:
   - `host` — embedded mode; booleans reflect the host's grant. What you
     should always see when embedding.
@@ -414,15 +416,13 @@ that the proxy uses the host's private socket. To see exactly which identity mac
 run: `log stream --debug --predicate 'subsystem == "com.apple.TCC" AND
 eventMessage BEGINSWITH "AttributionChain"'` and trigger the action again.
 
-**"Screenshots come back black (or `screen_recording: true` but
-`screen_recording_capturable: false`)."**
-The preflight boolean and the live probe disagree, which means the Screen
-Recording grant TCC found does not belong to the driver's current
-responsible identity. Either the host never actually got the grant (check
-System Settings), the grant was reset (`tccutil reset ScreenCapture`) after
-the app cached a `true`, or the driver escaped the host's chain (see the
-previous item). Restart the driver child after any grant change — TCC
-answers are cached per process.
+**"Screenshots come back black even though `screen_recording: true`."**
+The read-only permission check cannot verify direct ScreenCaptureKit access
+without risking a system dialog. Exercise an explicit screenshot only after
+the host has explained and requested consent. If that fails, the grant may not
+belong to the driver's current responsible identity, may have been reset, or
+the driver may have escaped the host's chain (see the previous item). Restart
+the driver child after any grant change — TCC answers are cached per process.
 
 **"The AX tree comes back empty / clicks do nothing."**
 `AXIsProcessTrusted()` is false for the effective identity. The host hasn't

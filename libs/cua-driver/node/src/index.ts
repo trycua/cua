@@ -89,6 +89,15 @@ const waitForExit = (child: ChildProcess, timeoutMs: number): Promise<boolean> =
     child.once('exit', onExit);
   });
 
+const terminateChild = async (child: ChildProcess, timeoutMs: number): Promise<void> => {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill('SIGTERM');
+  if (!(await waitForExit(child, timeoutMs))) {
+    child.kill('SIGKILL');
+    await waitForExit(child, timeoutMs);
+  }
+};
+
 export class EmbeddedCuaDriver {
   readonly #options: Required<
     Pick<EmbeddedDriverOptions, 'startupTimeoutMs' | 'shutdownTimeoutMs' | 'stderr'>
@@ -211,8 +220,7 @@ export class EmbeddedCuaDriver {
       this.#connection = connection;
       return connection;
     } catch (cause) {
-      child.kill('SIGTERM');
-      await waitForExit(child, this.#options.shutdownTimeoutMs);
+      await terminateChild(child, this.#options.shutdownTimeoutMs);
       this.#child = undefined;
       await removeSocket(socketPath);
       throw cause;
@@ -250,13 +258,7 @@ export class EmbeddedCuaDriver {
     this.#connection = undefined;
     this.#child = undefined;
 
-    if (child && child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGTERM');
-      if (!(await waitForExit(child, this.#options.shutdownTimeoutMs))) {
-        child.kill('SIGKILL');
-        await waitForExit(child, this.#options.shutdownTimeoutMs);
-      }
-    }
+    if (child) await terminateChild(child, this.#options.shutdownTimeoutMs);
     if (socketPath) await removeSocket(socketPath);
   }
 

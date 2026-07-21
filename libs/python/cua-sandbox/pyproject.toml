@@ -38,6 +38,7 @@ dependencies = [
     "grpcio==1.78.0",
     "protobuf==6.33.6",
     "pycdlib>=1.14.0",
+    "cyclops-sdk>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -96,3 +97,4 @@ dev = [
 
 [tool.uv.sources]
 cua-agent = { path = "../agent", editable = true }
+cyclops-sdk = { path = "../../../lib/fleets", editable = true }

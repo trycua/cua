@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import threading
+import json
 from typing import Any, Dict, Optional
 
 import httpx
+from cyclops_sdk import HttpHeader, HttpRequest
 from cua_sandbox.transport.base import Transport
 from cua_sandbox.transport.computer_server import (
     decode_screenshot_response,
@@ -19,7 +20,7 @@ _CMD_RETRY_BACKOFF_S = 0.5
 
 
 class FleetTransport(Transport):
-    """Route computer-server requests through ``SDK.service_client``."""
+    """Route computer-server requests through ``CyclopsClient.service_request``."""
 
     def __init__(
         self,
@@ -28,43 +29,51 @@ class FleetTransport(Transport):
         bound: Any,
         service_name: str = "api",
         timeout: float = 30.0,
-        call_lock: Optional[threading.Lock] = None,
+        **_: Any,
     ) -> None:
         self._sdk = sdk
         self._bound = bound
         self._service_name = service_name
         self._timeout = timeout
-        self._call_lock = call_lock or threading.Lock()
-        self._client: Any = None
+        self._connected = False
 
     async def connect(self) -> None:
-        if self._client is None:
-            self._client = await self._run(
-                self._sdk.service_client, self._bound, self._service_name
-            )
+        if self._service_name not in self._bound.services:
+            raise ValueError(f"Fleet sandbox does not expose service {self._service_name!r}")
+        self._connected = True
 
     async def disconnect(self) -> None:
-        if self._client is not None:
-            await self._run(self._client.close)
-            self._client = None
+        self._connected = False
+
+    async def _request(self, method: str, path: str, *, json_body: Any = None) -> httpx.Response:
+        assert self._connected, "Transport not connected"
+        body = None if json_body is None else json.dumps(json_body).encode()
+        headers = [] if body is None else [HttpHeader(name="content-type", value="application/json")]
+        result = await self._sdk.service_request(
+            self._bound,
+            self._service_name,
+            path,
+            HttpRequest(method=method, url=f"https://service.invalid{path}", headers=headers, body=body),
+        )
+        request = httpx.Request(method, f"https://service.invalid{path}")
+        return httpx.Response(
+            result.status,
+            headers={header.name: header.value for header in result.headers},
+            content=result.body,
+            request=request,
+        )
 
     async def _cmd(self, command: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        client = self._require_client()
         body: Dict[str, Any] = {"command": command}
         if params:
             body["params"] = params
-        server_timeout = (params or {}).get("timeout")
-        timeout = (
-            httpx.Timeout(self._timeout, read=float(server_timeout) + 10)
-            if server_timeout is not None
-            else None
-        )
         response = None
         for attempt in range(_CMD_MAX_RETRIES):
-            response = await self._run(client.post, "/cmd", json=body, timeout=timeout)
+            response = await self._request("POST", "/cmd", json_body=body)
             if response.status_code < 500 or attempt == _CMD_MAX_RETRIES - 1:
                 break
             await asyncio.sleep(_CMD_RETRY_BACKOFF_S * (2**attempt))
+        assert response is not None
         response.raise_for_status()
         return parse_command_response(response.text)
 
@@ -81,7 +90,7 @@ class FleetTransport(Transport):
 
     async def get_environment(self) -> str:
         try:
-            response = await self._run(self._require_client().get, "/status")
+            response = await self._request("GET", "/status")
             response.raise_for_status()
             payload = response.json()
             return payload.get("os_type", payload.get("platform", "linux"))
@@ -103,35 +112,22 @@ class FleetTransport(Transport):
             body["cwd"] = cwd
         if envs is not None:
             body["envs"] = envs
-        response = await self._run(self._require_client().post, "/pty", json=body)
+        response = await self._request("POST", "/pty", json_body=body)
         response.raise_for_status()
         return response.json()
 
     async def pty_send(self, pid: int, data: str) -> None:
-        response = await self._run(
-            self._require_client().post, f"/pty/{pid}/stdin", json={"data": data}
-        )
+        response = await self._request("POST", f"/pty/{pid}/stdin", json_body={"data": data})
         response.raise_for_status()
 
     async def pty_kill(self, pid: int) -> bool:
-        response = await self._run(self._require_client().delete, f"/pty/{pid}")
+        response = await self._request("DELETE", f"/pty/{pid}")
         response.raise_for_status()
         return bool(response.json().get("killed", True))
 
     async def pty_info(self, pid: int) -> Optional[Dict[str, Any]]:
-        response = await self._run(self._require_client().get, f"/pty/{pid}")
+        response = await self._request("GET", f"/pty/{pid}")
         if response.status_code == 404:
             return None
         response.raise_for_status()
         return response.json()
-
-    async def _run(self, operation: Any, *args: Any, **kwargs: Any) -> Any:
-        return await asyncio.to_thread(self._call_locked, operation, args, kwargs)
-
-    def _call_locked(self, operation: Any, args: tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
-        with self._call_lock:
-            return operation(*args, **kwargs)
-
-    def _require_client(self) -> Any:
-        assert self._client is not None, "Transport not connected"
-        return self._client

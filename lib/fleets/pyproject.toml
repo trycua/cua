@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cyclops-sdk"
+version = "0.1.0"
+description = "Vendored Cyclops UniFFI Python bindings"
+requires-python = ">=3.11"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cyclops_sdk"]
+artifacts = ["cyclops_sdk/libcyclops_sdk.*", "cyclops_sdk/libcyclops_sdk_schema.*"]

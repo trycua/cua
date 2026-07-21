@@ -39,6 +39,7 @@ pub mod capture_scope;
 pub mod cdp;
 pub mod consent;
 pub mod cursor_sampler;
+pub mod daemon;
 pub mod element_cache;
 pub mod element_token;
 pub mod ffmpeg_install;

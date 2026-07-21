@@ -45,7 +45,7 @@ fn strip_schema_titles(value: &mut Value) {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
 #[serde(rename_all = "snake_case")]
 pub enum EffectiveScope {
     Window,
@@ -62,7 +62,7 @@ impl EffectiveScope {
 }
 
 /// Successful structured result shared by session state and escalation tools.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
 pub struct SessionStateOutput {
     pub session: String,
     pub capture_scope: CaptureScope,
@@ -77,7 +77,7 @@ pub struct SessionStateOutput {
 impl ToolOutput for SessionStateOutput {}
 
 /// Successful structured result returned by `start_session`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
 pub struct StartSessionOutput {
     #[serde(flatten)]
     pub state: SessionStateOutput,
@@ -88,7 +88,7 @@ pub struct StartSessionOutput {
 impl ToolOutput for StartSessionOutput {}
 
 /// Successful structured result returned by `end_session`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
 pub struct EndSessionOutput {
     pub session: String,
     #[schemars(schema_with = "inactive_schema")]

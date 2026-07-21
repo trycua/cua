@@ -36,6 +36,26 @@ async with AsyncCuaDriver.stdio() as driver:
     desktop = await driver.get_desktop_state(GetDesktopStateArgs(session="demo"))
 ```
 
+## Experimental native SDK
+
+The wheel also contains generated UniFFI bindings and a host-native Rust
+library. This path bypasses the language-native MCP client but still calls the
+installed Cua Driver daemon, preserving its permissions and shared session
+state:
+
+```python
+from cua_driver.native import CuaDriver, GetDesktopStateInput
+
+driver = CuaDriver.connect(None)  # or pass an explicit daemon socket path
+desktop = driver.get_desktop_state(
+    GetDesktopStateInput(session="demo", screenshot_out_file=None)
+)
+print(desktop.images[0].mime_type)
+```
+
+The daemon must already be running. This surface is experimental and does not
+yet replace `CuaDriver.stdio()` or `AsyncCuaDriver`.
+
 ## Binary wrapper
 
 The existing wrapper API remains available:
@@ -53,7 +73,7 @@ binary_path = get_binary_path()
 ## Features
 
 - **Cross-platform**: Works on macOS (universal), Linux (x86_64), and Windows (x86_64/ARM64)
-- **Zero dependencies**: Pure Python SDK with no external dependencies
+- **Zero Python dependencies**: Generated bindings use the standard library
 - **Typed SDK**: Generated synchronous and async MCP methods
 - **Stdio passthrough**: Transparent piping for MCP protocol communication
 - **Bundled binary**: No separate installation required - the Rust binary is included in the wheel

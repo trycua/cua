@@ -17,9 +17,13 @@
 //!   Linux  — ~/.cache/cua-driver/cua-driver.sock
 //!   Windows — \\.\pipe\cua-driver  (TODO: use named pipe; stubs only for now)
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
+
+pub use cua_driver_core::daemon::{
+    is_daemon_listening, send_request, socket_path_for_namespace, DaemonRequest, DaemonResponse,
+    ToolObservationOrigin,
+};
 
 static ACTIVE_PROXY_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
@@ -245,25 +249,7 @@ fn register_recording_session_end_hook(
 
 /// Returns the platform default socket/pipe path.
 pub fn default_socket_path() -> String {
-    let namespace = crate::bundle::state_namespace();
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        format!("{home}/Library/Caches/{namespace}/{namespace}.sock")
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        format!("{home}/.cache/{namespace}/{namespace}.sock")
-    }
-    #[cfg(target_os = "windows")]
-    {
-        format!(r"\\.\pipe\{namespace}")
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        "/tmp/cua-driver.sock".to_owned()
-    }
+    socket_path_for_namespace(crate::bundle::state_namespace())
 }
 
 /// On Windows, returns the named-pipe path of the uiAccess-elevated worker
@@ -308,68 +294,6 @@ pub fn default_pid_file_path() -> String {
 }
 
 // ── Protocol types ────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolObservationOrigin {
-    McpProxy,
-    Direct,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DaemonRequest {
-    pub method: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub args: Option<serde_json::Value>,
-    /// MCP-session identity minted once per `cua-driver mcp` proxy process and
-    /// stamped on every forwarded request. The daemon uses it to OWN and CLEAN
-    /// UP session-scoped state (recording, config overrides). Absent (`None`)
-    /// means an anonymous/"global" session — a one-shot `cua-driver call` or a
-    /// legacy proxy that predates this field — which keeps today's behavior.
-    /// `skip_serializing_if = Option::is_none` makes the absent case
-    /// byte-identical on the wire, so old clients and daemons interoperate.
-    /// serde defaults a missing field to `None` on deserialize.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-    /// Bounded internal routing metadata for exactly-once completion
-    /// observation. New proxies set `mcp_proxy` only after the daemon
-    /// advertises ownership; direct protocol clients may set `direct`.
-    /// Older peers ignore the additive field.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observation_origin: Option<ToolObservationOrigin>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DaemonResponse {
-    pub ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exit_code: Option<i32>,
-}
-
-impl DaemonResponse {
-    pub fn ok(result: serde_json::Value) -> Self {
-        Self {
-            ok: true,
-            result: Some(result),
-            error: None,
-            exit_code: None,
-        }
-    }
-    pub fn err(msg: impl Into<String>, code: i32) -> Self {
-        Self {
-            ok: false,
-            result: None,
-            error: Some(msg.into()),
-            exit_code: Some(code),
-        }
-    }
-}
 
 fn daemon_observation_transport(req: &DaemonRequest) -> Option<crate::telemetry::Transport> {
     match req.observation_origin {
@@ -537,184 +461,11 @@ async fn invoke_daemon_tool(
     ))
 }
 
-// ── Client ────────────────────────────────────────────────────────────────────
-
-/// Probe whether a daemon is listening on `socket_path`.
-///
-/// On Windows this uses `WaitNamedPipeW` with a tiny timeout, which checks
-/// whether a pipe instance is available **without consuming one**. The
-/// previous design (sending a `list` request) opened a pipe instance,
-/// then the immediately-following real `send_request` had to wait for the
-/// daemon to spin up its NEXT instance — that race made real tool calls
-/// (especially state-dependent ones like `click` that need the daemon's
-/// element_index cache) miss the shared daemon state. See the conversation around the
-/// "Element 3 not in cache" bug for the diagnosis.
-///
-/// `WaitNamedPipeW(name, 1)`:
-///   - Returns TRUE if an instance is currently available.
-///   - Returns FALSE if not available within 1 ms.
-///   - Does NOT consume the instance — that's reserved for the actual call.
-pub fn is_daemon_listening(socket_path: &str) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::ffi::OsStrExt;
-
-        // Raw FFI to `WaitNamedPipeW` so this crate doesn't have to pull in
-        // the `windows` crate as a direct dependency just for one probe.
-        // `kernel32.dll` is implicitly linked on Windows targets.
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn WaitNamedPipeW(lpNamedPipeName: *const u16, nTimeOut: u32) -> i32;
-        }
-
-        let wide: Vec<u16> = std::ffi::OsStr::new(socket_path)
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        // NMPWAIT_NOWAIT == 1: "do not wait at all"; returns nonzero only if an
-        // instance is immediately available. We don't want to block here —
-        // this is a one-shot existence probe.
-        unsafe { WaitNamedPipeW(wide.as_ptr(), 1) != 0 }
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let req = DaemonRequest {
-            method: "list".into(),
-            name: None,
-            args: None,
-            session_id: None,
-            observation_origin: None,
-        };
-        send_request(socket_path, &req)
-            .ok()
-            .map(|r| r.ok)
-            .unwrap_or(false)
-    }
-}
-
 /// Read the PID stored in `pid_file_path`, if any.
 pub fn read_pid_file(pid_file_path: &str) -> Option<u32> {
     std::fs::read_to_string(pid_file_path)
         .ok()
         .and_then(|s| s.trim().parse().ok())
-}
-
-/// Send a request to the daemon and return the response.
-/// Uses a 3-second connect timeout (by polling) and a 10-second read timeout.
-#[cfg(unix)]
-pub fn send_request(socket_path: &str, req: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
-    use std::io::Read;
-    use std::os::unix::net::UnixStream;
-    use std::time::{Duration, Instant};
-
-    let mut stream = UnixStream::connect(socket_path)
-        .map_err(|e| anyhow::anyhow!("connect to {socket_path}: {e}"))?;
-    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-    // Per-read timeout acts as a liveness poll, NOT a hard cap on the whole
-    // response: an AX-heavy `get_window_state` (slow tree walk) or a multi-MB
-    // SOM screenshot can legitimately take longer than one window to produce.
-    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-
-    let mut w = stream.try_clone()?;
-    let line = serde_json::to_string(req)? + "\n";
-    // EAGAIN-aware write: a daemon momentarily too busy to read our request
-    // (backpressure under concurrent slow tools) makes the 5s SO_SNDTIMEO write
-    // time out. Treat that like the read loop below does (#1997) — keep retrying
-    // until an overall deadline — instead of failing with a fatal "Resource
-    // temporarily unavailable (os error 35)" transport error. Mirrors the 120s
-    // read budget.
-    let write_deadline = Instant::now() + Duration::from_secs(120);
-    cua_driver_core::socket_io::write_all_with_retry(&mut w, line.as_bytes(), write_deadline)?;
-
-    // Read the single newline-terminated response line. A blocking UnixStream
-    // with SO_RCVTIMEO returns `WouldBlock`/`TimedOut` (EAGAIN, os error 35)
-    // when the timeout elapses with no bytes ready — that is NOT a transport
-    // failure, just "the daemon is still working". Previously this surfaced as
-    // a fatal `daemon transport error … Resource temporarily unavailable`
-    // (#1864). Loop and keep waiting (re-arming the per-read poll) until we
-    // have a full line, the daemon closes the connection, or an overall
-    // deadline generous enough for the slowest AX walk / largest response.
-    let overall_deadline = Instant::now() + Duration::from_secs(120);
-    let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
-    let mut chunk = [0u8; 64 * 1024];
-    let resp_line = loop {
-        if let Some(nl) = buf.iter().position(|&b| b == b'\n') {
-            break String::from_utf8_lossy(&buf[..nl]).into_owned();
-        }
-        match stream.read(&mut chunk) {
-            Ok(0) => {
-                // EOF. Use whatever we buffered (some daemons close right after
-                // a final unterminated line); otherwise the daemon hung up.
-                if buf.is_empty() {
-                    anyhow::bail!("daemon closed connection without response");
-                }
-                break String::from_utf8_lossy(&buf).into_owned();
-            }
-            Ok(n) => buf.extend_from_slice(&chunk[..n]),
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                if Instant::now() >= overall_deadline {
-                    anyhow::bail!(
-                        "timed out after 120s waiting for daemon response \
-                         (received {} bytes so far)",
-                        buf.len()
-                    );
-                }
-                continue;
-            }
-            Err(e) => return Err(e.into()),
-        }
-    };
-    let resp: DaemonResponse = serde_json::from_str(&resp_line)?;
-    Ok(resp)
-}
-
-#[cfg(not(unix))]
-pub fn send_request(socket_path: &str, req: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
-    #[cfg(target_os = "windows")]
-    {
-        use std::io::{BufRead, BufReader, Write};
-        use std::time::Duration;
-
-        // Retry opening the pipe — server may still be starting.
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        let pipe = loop {
-            match std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(socket_path)
-            {
-                Ok(f) => break f,
-                Err(_) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-                Err(e) => anyhow::bail!("connect to named pipe {socket_path}: {e}"),
-            }
-        };
-
-        let mut writer = pipe.try_clone()?;
-        let line = serde_json::to_string(req)? + "\n";
-        writer.write_all(line.as_bytes())?;
-        writer.flush()?;
-
-        // Server writes one JSON line then flushes; pipe stays open until we drop it.
-        let reader = BufReader::new(pipe);
-        let resp_line = reader
-            .lines()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("daemon closed connection without response"))??;
-        let resp: DaemonResponse = serde_json::from_str(&resp_line)?;
-        Ok(resp)
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        anyhow::bail!("daemon client not supported on this platform (socket path: {socket_path})");
-    }
 }
 
 // ── Server ────────────────────────────────────────────────────────────────────

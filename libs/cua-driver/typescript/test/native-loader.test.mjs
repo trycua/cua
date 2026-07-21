@@ -1,0 +1,92 @@
+import assert from "node:assert/strict"
+import { spawn } from "node:child_process"
+import { existsSync, mkdtempSync, rmSync } from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import test from "node:test"
+import { fileURLToPath } from "node:url"
+
+const testDirectory = path.dirname(fileURLToPath(import.meta.url))
+const libraryName =
+  process.platform === "darwin"
+    ? "libcua_driver_sdk.dylib"
+    : process.platform === "win32"
+      ? "cua_driver_sdk.dll"
+      : "libcua_driver_sdk.so"
+const library = path.resolve(testDirectory, "../dist/native", libraryName)
+
+if (process.env.CUA_DRIVER_REQUIRE_UNIFFI === "1" && !existsSync(library)) {
+  throw new Error(`required staged UniFFI library is missing: ${library}`)
+}
+
+test(
+  "generated Node bindings call the Rust daemon interface",
+  { skip: process.platform === "win32" || !existsSync(library), timeout: 10_000 },
+  async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "cua-driver-node-ffi-"))
+    const socketPath = path.join(directory, "driver.sock")
+    const fixture = spawn(
+      process.execPath,
+      [path.join(testDirectory, "native-daemon-fixture.mjs"), socketPath],
+      { stdio: ["ignore", "inherit", "inherit", "ipc"] },
+    )
+    const readyPromise = new Promise((resolve, reject) => {
+      fixture.on("error", reject)
+      fixture.on("message", (message) => {
+        if (message.ready) resolve(null)
+      })
+    })
+    const requestPromise = readyPromise.then(
+      () =>
+        new Promise((resolve, reject) => {
+          fixture.on("error", reject)
+          fixture.on("message", (message) => {
+            if (message.request) resolve(message.request)
+          })
+        }),
+    )
+
+    try {
+      await readyPromise
+      assert.equal(existsSync(socketPath), true)
+      const { CuaDriver, GetDesktopStateInput } = await import(
+        "@trycua/cua-driver/native"
+      )
+      const driver = CuaDriver.connect(socketPath)
+      const expectedMethods = [
+        "startSession",
+        "escalateSession",
+        "getSessionState",
+        "endSession",
+        "getDesktopState",
+        "getScreenSize",
+        "getCursorPosition",
+        "moveCursor",
+        "click",
+        "drag",
+        "scroll",
+        "typeText",
+        "pressKey",
+        "hotkey",
+      ]
+      assert.equal(
+        expectedMethods.every((name) => typeof driver[name] === "function"),
+        true,
+      )
+      const result = driver.getDesktopState(
+        GetDesktopStateInput.new({ session: "node-run" }),
+      )
+      const request = await requestPromise
+      driver.uniffiDestroy()
+
+      assert.equal(result.text, "node ffi")
+      assert.equal(result.images[0].mimeType, "image/png")
+      assert.equal(result.verified, true)
+      assert.equal(request.name, "get_desktop_state")
+      assert.deepEqual(request.args, { session: "node-run" })
+    } finally {
+      fixture.kill()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  },
+)

@@ -12,3 +12,4 @@ path = "src/bin/cua-contract-gen.rs"
 serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = "1.2.1"
+uniffi.workspace = true

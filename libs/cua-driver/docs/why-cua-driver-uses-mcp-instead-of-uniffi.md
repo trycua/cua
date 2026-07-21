@@ -1,6 +1,6 @@
 # Cua Driver integration surfaces: MCP/CLI and SDK bindings
 
-Status: accepted for the experimental Python and TypeScript Cua Driver SDKs
+Status: accepted and implemented as an experimental imported-SDK vertical slice
 
 Decision date: 2026-07-21
 
@@ -14,7 +14,7 @@ are not competing protocol choices.
 | Surface                    | Consumer                                                  | Public shape                                        | What provides runtime portability                                                                                              |
 | -------------------------- | --------------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | Cua as an agent MCP or CLI | Codex, Claude Code, another agent, or a shell             | `cua-driver mcp` and `cua-driver call`              | MCP and the executable protocol already work from any capable runtime.                                                         |
-| Cua as an imported SDK     | Python, TypeScript, Swift, Kotlin, or another application | Native or typed methods such as `get_desktop_state` | Today Python and TypeScript use generated MCP clients. UniFFI could instead generate bindings to a shared Rust implementation. |
+| Cua as an imported SDK     | Python, TypeScript, Swift, Kotlin, or another application | Native or typed methods such as `get_desktop_state` | Python and Node can now call a shared Rust daemon-client implementation through experimental UniFFI bindings.                  |
 
 The [Codex and Claude Agent SDK examples](../examples/agent-sdks/README.md)
 make the first surface concrete. Each agent SDK receives the same stdio MCP
@@ -25,16 +25,18 @@ imports a generated Cua client.
 
 1. Keep MCP and the CLI as the canonical agent boundary. Do not require a Cua
    language package merely to connect an MCP-capable agent.
-2. Describe the current `cua-driver` and `@trycua/cua-driver` packages exactly
-   as generated, typed MCP client SDKs. They add discoverability, type checking,
-   lifecycle helpers, and packaging convenience; they do not create
-   cross-runtime interoperability that MCP lacked.
-3. Keep shared Rust request/result types as the source for the live runtime,
-   contract manifest, and generated clients in this pull request.
-4. Evaluate UniFFI as an SDK/server-distribution architecture, not as a
-   replacement for the agent MCP boundary. It is the relevant option when an
-   application needs to embed, host, or compose the Rust implementation.
-5. Do not claim that direct engine bindings are ready today. Daemon-owned
+2. Keep the existing generated MCP facades in `cua-driver` and
+   `@trycua/cua-driver` for compatibility, and add the UniFFI implementation as
+   an explicitly experimental imported-SDK surface. The MCP facades do not
+   create cross-runtime interoperability that MCP lacked.
+3. Export the shared Rust request records for all 14 typed tools and the shared
+   typed session results. Desktop structured results retain platform extension
+   fields, so the native SDK preserves them in `ToolResult.structured_json`
+   while the live registry validates them with the canonical Rust result types.
+4. Use UniFFI as an SDK/server-composition architecture, not as a replacement
+   for the agent MCP boundary. The first slice exports a shared Rust daemon
+   client that application-owned servers can compose.
+5. Do not claim that direct engine embedding is ready today. Daemon-owned
    state, permission identity, and OS event-loop behavior still require an
    explicit embedding design.
 
@@ -80,15 +82,17 @@ application
   -> native driver daemon
 ```
 
-A native implementation binding:
+A native daemon-SDK binding implemented by this change:
 
 ```text
 application
   -> generated UniFFI binding
-  -> shared Rust Cua library
-       - server/client behavior implemented once
+  -> libcua_driver_sdk
        - exported typed interfaces
-  -> daemon IPC or embedded OS implementation
+       - result normalization and error mapping
+       - shared daemon framing, timeouts, and observation metadata
+  -> native driver daemon
+  -> OS APIs
 ```
 
 The second architecture is where the O(1)-implementation-to-N-runtimes argument
@@ -99,11 +103,12 @@ work, so packaging is not literally constant effort. The important benefit is
 that behavior and interfaces do not get independently reimplemented in every
 language.
 
-If consumers only want to call the existing daemon, a UniFFI facade over a Rust
-MCP client may still centralize lifecycle, normalization, retry, and policy
-logic once that Rust client owns meaningful behavior. If consumers want to
-create or embed a server, UniFFI is more directly valuable because the binding
-exports the Rust implementation rather than another MCP client.
+The implementation calls the daemon's direct socket protocol, not MCP. The CLI,
+MCP proxy, and UniFFI library now import the same Rust request/response and
+socket implementation from `cua-driver-core`, so timeout or framing changes
+cannot drift by language. Application code can compose that object behind its
+own server without reimplementing the Cua protocol. Direct engine embedding
+remains a separate future architecture.
 
 ## MCP and UniFFI are orthogonal
 
@@ -164,9 +169,9 @@ consumers that want the shared implementation, including consumers that may
 create a server. MCP clients do not need those bindings merely to call an
 already-running MCP server.
 
-## What the current generated clients add
+## What the two SDK paths add
 
-The current Cua Driver language packages add:
+The existing MCP facades add:
 
 - typed request records and method names generated from Rust contracts;
 - autocomplete and compile-time checking for a portable tool subset;
@@ -174,25 +179,33 @@ The current Cua Driver language packages add:
 - normalization of the MCP content/result envelope; and
 - Python binary-bundling and application lifecycle convenience.
 
-They do not add:
+The UniFFI surface additionally adds:
+
+- one Rust implementation of daemon discovery, calls, error mapping, and result
+  normalization for Python and Node;
+- generated bindings for every one of the 14 published typed request records;
+- canonical typed session results generated from the same Rust records returned
+  by the live handlers; and
+- an open-ended `call_tool` JSON escape hatch for runtime and server adapters.
+
+Neither path adds:
 
 - agent/runtime interoperability, because MCP already provides it;
-- a Rust implementation callable inside the host process;
-- a way for the host language to create a Cua server; or
-- O(1) distribution of new SDK behavior across future languages.
+- an in-process GUI engine; or
+- automatic publication of every native OS/architecture artifact.
 
-This makes the current work useful but narrower than a UniFFI SDK. Rust
-source-of-truth and parity checks remove manual schema bookkeeping for the
-published typed projection. They do not automate native implementation
-distribution across runtimes.
+The host application now calls Rust in process, but Rust deliberately delegates
+GUI execution to the daemon. A host can build a server around this library; it
+does not receive an embedded automation engine.
 
-## Compatibility if Cua Driver adds UniFFI later
+## Compatibility of the additive UniFFI surface
 
-A future UniFFI transport does not have to break source compatibility. The
-public `CuaDriver` and `AsyncCuaDriver` classes can keep their current methods,
-argument types, result types, and generic `call_tool` entry point. The existing
-Python and TypeScript transport interfaces provide a seam for another client
-implementation.
+Adding UniFFI is source-compatible because the existing `CuaDriver` and
+`AsyncCuaDriver` MCP facades remain intact. Python opts in through
+`cua_driver.native`; TypeScript opts in through
+`@trycua/cua-driver/native`. The TypeScript package root deliberately does not
+load the native module. Both opt-in surfaces expose a generated `CuaDriver`
+without adding the rejected `Client` suffix.
 
 Package and runtime compatibility are harder to preserve. Native bindings add
 failure modes that JavaScript and Python code can encounter before the SDK
@@ -214,12 +227,10 @@ library lookup failure can stop the application before it makes a driver call.
 The TypeScript method signatures could remain unchanged while installation and
 startup behavior break for that consumer.
 
-For a typed remote-client package, the compatibility-preserving path is an
-opt-in UniFFI transport behind the current facade, tested by the same transport
-conformance suite, with MCP available as a fallback. It can become the default
-only after the complete platform and host matrix loads successfully. This can
-avoid a source-level breaking change if methods, results, errors, discovery,
-and lifecycle behavior stay compatible.
+The native path must remain opt-in until the complete platform and host matrix
+loads successfully. Making it the default can still avoid a source-level break
+if methods, results, errors, discovery, and lifecycle stay compatible, but
+loader failures would be a behavioral/package compatibility risk.
 
 An embedded/server SDK is a new product surface and should be versioned as
 such. Moving existing consumers from an out-of-process daemon to an in-process
@@ -262,12 +273,21 @@ The MCP choice has costs that should remain visible:
 - Stable typed methods and the open-ended MCP envelope need separate modeling.
 - Large screenshots pass through the protocol instead of an in-process buffer.
 
-For the current typed remote-client design, UniFFI over an MCP client would
-retain most of these costs because the GUI engine would still live in the
-daemon. Its benefit would depend on how much shared Rust client behavior it
-owns. For an embedded/server SDK, UniFFI could remove the MCP hop, but only
-after the runtime issues above are solved. No performance claim is part of this
-decision without a comparable implementation and benchmark.
+The implemented UniFFI SDK removes the language-native MCP hop but retains the
+daemon process and JSON socket boundary. Its benefit is implementation and
+interface distribution, not a claimed screenshot-throughput improvement. An
+embedded/server SDK could remove the process hop only after the runtime issues
+above are solved. No performance claim is part of this decision without a
+comparable implementation and benchmark.
+
+Desktop successful results also remain an extensible protocol envelope rather
+than closed UniFFI records. Their canonical Rust validators intentionally carry
+per-platform extension maps, which UniFFI cannot export as arbitrary
+`serde_json::Value`. The SDK therefore returns typed text/image/error metadata
+plus `structured_json` and `raw_json`; only the stable session results cross FFI
+as dedicated records. Converting desktop results to closed records later would
+require either a versioned stable core plus an extension JSON field or a
+breaking removal of currently preserved platform data.
 
 ## Why Rust and the runtime still have parity
 
@@ -288,20 +308,45 @@ clients while retaining MCP as the process boundary. It does not provide
 UniFFI's implementation-distribution benefit. The contract architecture is
 described in the [contract README](../contract/README.md).
 
+## Implemented generation and packaging boundary
+
+Mozilla UniFFI `0.31.0` generates Python from the compiled `cdylib` metadata.
+Node generation uses the separately maintained
+`uniffi-bindgen-react-native`/UBRN `0.31.0-3` N-API target plus pinned
+`@ubjs/core` and `@ubjs/node` runtimes. The checked-in outputs are regenerated
+into temporary roots, tracked by ownership manifests, and compared byte for
+byte in CI.
+
+One current UBRN limitation is explicit and tested: version `0.31.0-3` cannot
+configure an external UniFFI component to load symbols from the parent SDK
+`cdylib`. The generator therefore performs one asserted post-processing step so
+the contract namespace and SDK namespace both load `libcua_driver_sdk`. If the
+expected generated selector changes, generation fails instead of silently
+patching an unrelated string.
+
+Python wheels are already platform-specific and the Rust release workflow now
+places the matching SDK library beside the CLI in each release runtime archive.
+The wheel builder moves that library next to the generated Python modules, and
+CI inspects the wheel and runs it across the FFI boundary. Node host-native
+assembly, `npm pack` inspection, and a real N-API loader test are also present.
+The npm package must not be published from a single developer host: release CI
+still needs to assemble the full Node OS/architecture matrix or split native
+artifacts into optional platform packages.
+
 ## UniFFI follow-up gates
 
 Evaluate the two SDK targets separately.
 
-For a UniFFI facade over a shared Rust daemon client, proceed when at least one
-of these conditions is true:
+Before making the UniFFI path the default or publishing it as production-ready:
 
-1. The language transports acquire enough policy, retry, normalization, or
-   lifecycle behavior that implementations begin to diverge.
-2. A reusable Rust daemon client ships for another supported consumer, making
-   a UniFFI facade share meaningful maintained behavior.
-3. The Node UniFFI pipeline has pinned generators and runtimes, deterministic
-   drift checks, native package assembly, loader tests, signing, and a supported
-   platform matrix.
+1. Assemble and load-test the Node native artifact on every supported release
+   OS and architecture.
+2. Decide whether Node ships one multi-platform package or optional platform
+   packages and verify installation in Node-based desktop runtimes.
+3. Add release signing/notarization evidence for the native library everywhere
+   the platform requires it.
+4. Run the existing MCP facade and UniFFI facade through the same daemon
+   conformance corpus before changing defaults.
 
 For a UniFFI embedded/server SDK, proceed only after there is an officially
 supported host model with documented permission identity, event-loop ownership,

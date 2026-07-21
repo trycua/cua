@@ -44,7 +44,17 @@ pub const CONTRACT_VERSION: &str = "0.2.0";
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 #[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq, PartialOrd, Ord,
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    uniffi::Enum,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Platform {
@@ -52,6 +62,8 @@ pub enum Platform {
     Windows,
     Linux,
 }
+
+uniffi::setup_scaffolding!("cua_driver_contract");
 
 /// Whether a client contract is also the canonical live MCP schema, or a
 /// deliberately narrower cross-platform subset accepted by every backend.

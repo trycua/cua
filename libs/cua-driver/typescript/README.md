@@ -19,3 +19,25 @@ try {
 
 The native driver remains the execution, policy, and approval boundary.
 Requests have bounded timeouts, and action calls are never retried automatically.
+
+## Experimental native SDK
+
+The opt-in `/native` subpath is generated from the Rust UniFFI interface and
+calls the daemon through the shared Rust socket protocol. The package root does
+not load a native library, so existing MCP-only consumers remain portable:
+
+```ts
+import { CuaDriver, GetDesktopStateInput } from "@trycua/cua-driver/native"
+
+const driver = CuaDriver.connect(undefined)
+const desktop = driver.getDesktopState(
+  GetDesktopStateInput.new({ session: "demo" }),
+)
+console.log(desktop.images[0]?.mimeType)
+driver.uniffiDestroy()
+```
+
+The package must contain a native library matching the host OS and architecture,
+and the daemon must already be running. Host-native assembly and loader tests
+are implemented; publishing the npm package requires building the complete
+platform library matrix rather than packing a developer's local library.

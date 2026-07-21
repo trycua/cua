@@ -20,6 +20,11 @@ class FakeTransport {
   async close() {}
 }
 
+test("package root keeps the native loader opt-in", async () => {
+  const root = await import("../dist/index.js")
+  assert.equal("native" in root, false)
+})
+
 test("generated session method converts camelCase to wire names", async () => {
   const transport = new FakeTransport(await fixture("session-success.json"))
   const driver = new CuaDriver(transport)

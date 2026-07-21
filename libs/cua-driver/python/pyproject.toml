@@ -53,6 +53,9 @@ cua-driver = "cua_driver.__main__:main"
 packages = ["src/cua_driver"]
 artifacts = [
     "src/cua_driver/bin/*",
+    "src/cua_driver/*.dylib",
+    "src/cua_driver/*.so",
+    "src/cua_driver/*.dll",
 ]
 pure-python = false
 

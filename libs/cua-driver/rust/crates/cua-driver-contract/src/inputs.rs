@@ -101,7 +101,9 @@ fn capture_scope_schema(_: &mut SchemaGenerator) -> Schema {
     })
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureScope {
     #[default]
@@ -135,7 +137,7 @@ impl std::fmt::Display for CaptureScope {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
 #[serde(rename_all = "snake_case")]
 pub enum EscalationReason {
     AxTreePixelMismatch,
@@ -168,7 +170,7 @@ impl EscalationReason {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, uniffi::Enum)]
 pub enum DesktopScope {
     #[serde(rename = "desktop")]
     Desktop,
@@ -184,7 +186,7 @@ impl JsonSchema for DesktopScope {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
 #[serde(rename_all = "snake_case")]
 pub enum ClickButton {
     Left,
@@ -202,7 +204,7 @@ impl ClickButton {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
 #[serde(rename_all = "snake_case")]
 pub enum ScrollDirection {
     Up,
@@ -222,7 +224,7 @@ impl ScrollDirection {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
 #[serde(rename_all = "snake_case")]
 pub enum ScrollBy {
     Line,
@@ -238,7 +240,7 @@ impl ScrollBy {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 pub struct StartSessionInput {
     /// Stable session id for this run (e.g. "research-run-1").
     pub session: String,
@@ -252,7 +254,7 @@ impl ToolInput for StartSessionInput {
     const TOOL_NAME: &'static str = "start_session";
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 pub struct EscalateSessionInput {
     pub session: String,
     pub reason: EscalationReason,
@@ -266,7 +268,7 @@ impl ToolInput for EscalateSessionInput {
     const TOOL_NAME: &'static str = "escalate_session";
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 pub struct GetSessionStateInput {
     pub session: String,
 }
@@ -275,7 +277,7 @@ impl ToolInput for GetSessionStateInput {
     const TOOL_NAME: &'static str = "get_session_state";
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 pub struct EndSessionInput {
     /// The session id to end.
     pub session: String,
@@ -285,7 +287,7 @@ impl ToolInput for EndSessionInput {
     const TOOL_NAME: &'static str = "end_session";
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GetDesktopStateInput {
     /// Optional session id.
@@ -302,7 +304,7 @@ impl ToolInput for GetDesktopStateInput {
     const TOOL_NAME: &'static str = "get_desktop_state";
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GetScreenSizeInput {
     /// Optional session id.
@@ -315,7 +317,7 @@ impl ToolInput for GetScreenSizeInput {
     const TOOL_NAME: &'static str = "get_screen_size";
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GetCursorPositionInput {
     /// Optional session id.
@@ -328,7 +330,7 @@ impl ToolInput for GetCursorPositionInput {
     const TOOL_NAME: &'static str = "get_cursor_position";
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct MoveCursorInput {
     #[schemars(schema_with = "number_schema")]
@@ -346,7 +348,7 @@ impl ToolInput for MoveCursorInput {
     const TOOL_NAME: &'static str = "move_cursor";
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ClickInput {
     #[schemars(schema_with = "number_schema")]
@@ -370,7 +372,7 @@ impl ToolInput for ClickInput {
     const TOOL_NAME: &'static str = "click";
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DragInput {
     #[schemars(schema_with = "number_schema")]
@@ -404,7 +406,7 @@ impl ToolInput for DragInput {
     const TOOL_NAME: &'static str = "drag";
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ScrollInput {
     #[schemars(schema_with = "number_schema")]
@@ -429,7 +431,7 @@ impl ToolInput for ScrollInput {
     const TOOL_NAME: &'static str = "scroll";
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TypeTextInput {
     pub text: String,
@@ -444,7 +446,7 @@ impl ToolInput for TypeTextInput {
     const TOOL_NAME: &'static str = "type_text";
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PressKeyInput {
     pub key: String,
@@ -462,7 +464,7 @@ impl ToolInput for PressKeyInput {
     const TOOL_NAME: &'static str = "press_key";
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HotkeyInput {
     #[schemars(length(min = 2))]

@@ -3,13 +3,15 @@
 This directory contains the checked-in, generated contract for the first
 portable cua-driver SDK slice. The Rust crate at
 `rust/crates/cua-driver-contract` is the source of truth. It generates this
-manifest, the Python SDK surface under `python/`, and the TypeScript SDK under
-`typescript/`.
+manifest and exports the request/result records consumed by the live daemon and
+the UniFFI SDK. Python and TypeScript bindings are generated from the compiled
+Rust library by `scripts/generate-uniffi-bindings.mjs`.
 
 The prototype intentionally keeps execution, platform integration, policy, and
-permission handling in the native cua-driver process. Clients communicate with
-the public `cua-driver mcp` stdio surface; they do not call a private daemon
-socket or embed platform code.
+permission handling in the native Cua Driver process. Imported SDKs call the
+daemon through the shared Rust socket client; they do not route through MCP or
+embed platform code. Agents independently use the public `cua-driver mcp`
+surface through their runtime's existing MCP client.
 
 ## Scope and compatibility
 
@@ -57,14 +59,12 @@ Compatibility is tracked separately at each boundary:
 | `contract_version` | `0.2.0` | Generated manifest and typed SDK shape |
 | `tools_list_schema_version` | `1` | cua-driver `tools/list` extension shape |
 | `capability_version` | `1` | Additive capability-token vocabulary |
-| `mcp_protocol_version` | `2025-06-18` | MCP initialization protocol requested by SDKs |
+| `mcp_protocol_version` | `2025-06-18` | MCP initialization protocol served to agent runtimes |
 
-This experiment does not use WASM. Fleet benefits from a portable core that
-owns HTTP behavior and secrets; cua-driver already has a native process that
-owns GUI execution and exposes MCP. Generated declarations plus thin MCP
-SDKs give harnesses one contract without introducing a second runtime. WASM
-can be reconsidered if future in-process integration surfaces need shared
-executable policy rather than shared types.
+This implementation does not use WASM. UniFFI distributes one Rust
+daemon-client implementation to Python and Node while preserving the daemon's
+permission identity and runtime ownership. The language packages do not
+generate or maintain separate MCP transports.
 
 ## Generate and verify
 
@@ -79,9 +79,8 @@ cargo test -p cua-driver --test schema_consistency_test \
   portable_desktop_contracts_are_accepted_by_active_backend
 ```
 
-SDK tests live in `python/tests/test_driver.py` and `typescript`. CI
-runs the generator in check mode so hand-edited or stale generated files fail
-the pull request. Each SDK package also contains a generated ownership
-manifest. The generator renders and validates the complete plan before atomic
-replacement, rejects unsafe or symlinked paths, detects stale owned files in
-check mode, and prunes only previously declared generated files in write mode.
+SDK loader tests live in `python/tests/test_uniffi_loader.py` and
+`typescript/test/native-loader.test.mjs`. CI checks the manifest generator,
+deterministically regenerates both UniFFI binding sets, verifies parity against
+the live tool registry, and crosses the real Python and Node FFI loaders into a
+deterministic daemon-socket fixture.

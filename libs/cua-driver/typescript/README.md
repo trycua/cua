@@ -1,43 +1,63 @@
 # cua-driver TypeScript SDK
 
-This package is generated from the canonical cua-driver contract and speaks MCP
-over a spawned `cua-driver mcp` stdio process.
+Rust-backed TypeScript/Node SDK for Cua Driver client applications.
+
+## Product boundary
+
+This package has one public entrypoint:
 
 ```ts
 import { CuaDriver } from "@trycua/cua-driver"
+```
 
-const driver = CuaDriver.stdio()
+It does not contain a TypeScript MCP client. Agents already have
+runtime-neutral MCP clients and should configure the executable directly:
+
+```text
+cua-driver mcp
+```
+
+The removed pre-release MCP facade used `CuaDriver.stdio()`, async methods,
+`*Args` interfaces, and a TypeScript stdio transport. Application code migrates
+to the synchronous Rust-backed methods shown below; agent code removes the Cua
+package import and supplies `cua-driver mcp` to its agent SDK.
+
+## SDK example
+
+```ts
+import {
+  CaptureScope,
+  CuaDriver,
+  EndSessionInput,
+  GetDesktopStateInput,
+  StartSessionInput,
+} from "@trycua/cua-driver"
+
+const driver = CuaDriver.connect(undefined) // default installed daemon socket
+driver.startSession(
+  StartSessionInput.new({
+    session: "demo",
+    captureScope: CaptureScope.Desktop,
+  }),
+)
+
 try {
-  const result = await driver.startSession({ session: "demo", captureScope: "auto" })
-  const desktop = await driver.getDesktopState({ session: "demo" })
-  await driver.click({ x: 420, y: 240, scope: "desktop", session: "demo" })
+  const desktop = driver.getDesktopState(
+    GetDesktopStateInput.new({ session: "demo" }),
+  )
   console.log(desktop.images[0]?.mimeType)
 } finally {
-  await driver.close()
+  driver.endSession(EndSessionInput.new({ session: "demo" }))
+  driver.uniffiDestroy()
 }
 ```
 
-The native driver remains the execution, policy, and approval boundary.
-Requests have bounded timeouts, and action calls are never retried automatically.
+The SDK is currently synchronous and requires a native library matching the
+host OS and architecture. Desktop calls return a typed `ToolResult` with text,
+images, verification/error metadata, and `structuredJson` / `rawJson` for
+platform-extensible results. Session lifecycle calls return dedicated
+generated records.
 
-## Experimental native SDK
-
-The opt-in `/native` subpath is generated from the Rust UniFFI interface and
-calls the daemon through the shared Rust socket protocol. The package root does
-not load a native library, so existing MCP-only consumers remain portable:
-
-```ts
-import { CuaDriver, GetDesktopStateInput } from "@trycua/cua-driver/native"
-
-const driver = CuaDriver.connect(undefined)
-const desktop = driver.getDesktopState(
-  GetDesktopStateInput.new({ session: "demo" }),
-)
-console.log(desktop.images[0]?.mimeType)
-driver.uniffiDestroy()
-```
-
-The package must contain a native library matching the host OS and architecture,
-and the daemon must already be running. Host-native assembly and loader tests
-are implemented; publishing the npm package requires building the complete
-platform library matrix rather than packing a developer's local library.
+Host-native assembly and loader tests are implemented. Publishing the npm
+package still requires assembling and testing the complete platform-library
+matrix rather than packing a developer's local library.

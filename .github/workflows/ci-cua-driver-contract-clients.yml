@@ -82,7 +82,7 @@ jobs:
         run: cargo check --locked -p cua-driver-sdk
 
   verify:
-    name: Generated contract and reference clients
+    name: Generated contract and SDK bindings
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -126,10 +126,6 @@ jobs:
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver-core --test contract_parity
 
-      - name: Test Python SDK
-        working-directory: libs/cua-driver/python
-        run: PYTHONPATH=src python -m unittest discover -s tests -p 'test_driver.py' -v
-
       - name: Test Python release packaging helpers
         working-directory: libs/cua-driver/python
         run: |
@@ -159,7 +155,7 @@ jobs:
           unzip -l /tmp/cua-driver-wheels/*.whl | grep -F 'cua_driver/libcua_driver_sdk.so'
           python -m pip install --target /tmp/cua-driver-wheel-smoke /tmp/cua-driver-wheels/*.whl
           PYTHONPATH=/tmp/cua-driver-wheel-smoke python -c \
-            "from cua_driver.native import CuaDriver; print(CuaDriver.connect(None).socket_path())"
+            "from cua_driver import CuaDriver; print(CuaDriver.connect(None).socket_path())"
 
       - name: Verify Node native package contents
         working-directory: libs/cua-driver/typescript
@@ -170,7 +166,7 @@ jobs:
           npm install --prefix /tmp/cua-driver-npm/smoke /tmp/cua-driver-npm/*.tgz
           cd /tmp/cua-driver-npm/smoke
           node --input-type=module -e \
-            "const native = await import('@trycua/cua-driver/native'); const driver = native.CuaDriver.connect(undefined); console.log(driver.socketPath()); driver.uniffiDestroy()"
+            "const sdk = await import('@trycua/cua-driver'); const driver = sdk.CuaDriver.connect(undefined); console.log(driver.socketPath()); driver.uniffiDestroy()"
 
       - name: Check Python agent SDK example
         run: python -m py_compile libs/cua-driver/examples/agent-sdks/claude_agent.py

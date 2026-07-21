@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "cua-driver"
 version = "0.10.0"
-description = "Python SDK and bundled binary for cross-platform computer-use automation"
+description = "Rust-backed Cua Driver SDK and bundled executable for client applications"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [

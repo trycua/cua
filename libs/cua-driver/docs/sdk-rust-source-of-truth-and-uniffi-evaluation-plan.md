@@ -1,12 +1,20 @@
 # Cua Driver SDK Rust source-of-truth and UniFFI evaluation plan
 
-Status: implemented in PR #2341; binding decision recorded on 2026-07-21
+Status: superseded by the final package-boundary decision in PR #2341
 
 Applies to: PR #2341 and follow-up SDK/runtime work
 
 Primary objective: eliminate manual contract/runtime bookkeeping before publishing the Python and TypeScript SDKs
 
 Decision rationale: [Cua Driver integration surfaces: MCP/CLI and SDK bindings](why-cua-driver-uses-mcp-instead-of-uniffi.md)
+
+> **Final decision update (2026-07-21):** the evaluation below records the
+> sequence and evidence that led to the implementation, but its interim
+> recommendation to retain Python and TypeScript MCP facades is no longer
+> current. The language packages now expose only the Rust-backed UniFFI SDK at
+> their package roots. Agents use `cua-driver mcp` through their runtime's
+> existing MCP client. The thin language MCP clients and their generator were
+> removed before publication.
 
 ## Executive decision
 

@@ -1,7 +1,7 @@
 {
   "name": "@trycua/cua-driver",
   "version": "0.10.0",
-  "description": "Generated TypeScript SDK for cua-driver",
+  "description": "Rust-backed Cua Driver SDK for client applications",
   "type": "module",
   "license": "MIT",
   "main": "./dist/index.js",
@@ -10,14 +10,12 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./native": {
-      "types": "./dist/native/index.d.ts",
-      "import": "./dist/native/index.js"
     }
   },
   "files": [
-    "dist",
+    "dist/index.js",
+    "dist/index.d.ts",
+    "dist/native",
     "README.md"
   ],
   "publishConfig": {
@@ -28,7 +26,6 @@
     "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test test/*.test.mjs",
-    "generate:check": "cargo run --manifest-path ../rust/Cargo.toml -p cua-driver-contract --bin cua-contract-gen -- sdks --check",
     "generate:uniffi": "node ../scripts/generate-uniffi-bindings.mjs",
     "generate:uniffi:check": "node ../scripts/generate-uniffi-bindings.mjs --check",
     "stage:uniffi": "node ../scripts/stage-uniffi-library.mjs"

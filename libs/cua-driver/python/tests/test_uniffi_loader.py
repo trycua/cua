@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import platform
@@ -23,9 +24,10 @@ LIBRARY = Path(__file__).parents[1] / "src" / "cua_driver" / _library_name()
 
 @unittest.skipUnless(LIBRARY.exists(), "host-native UniFFI library is not staged")
 @unittest.skipIf(os.name == "nt", "Unix socket fixture")
-class UniFfiLoaderTests(unittest.TestCase):
-    def test_generated_python_calls_the_rust_daemon_interface(self) -> None:
-        from cua_driver.native import (
+class SdkLoaderTests(unittest.TestCase):
+    def test_generated_python_sdk_calls_the_rust_daemon_interface(self) -> None:
+        import cua_driver
+        from cua_driver import (
             CuaDriver,
             EffectiveScope,
             GetDesktopStateInput,
@@ -34,6 +36,11 @@ class UniFfiLoaderTests(unittest.TestCase):
 
         self.assertIsNotNone(EffectiveScope)
         self.assertIsNotNone(StartSessionOutput)
+        self.assertIs(cua_driver.CuaDriver, CuaDriver)
+        self.assertFalse(hasattr(cua_driver, "AsyncCuaDriver"))
+        self.assertFalse(hasattr(cua_driver, "StdioMcpTransport"))
+        self.assertIsNone(importlib.util.find_spec("cua_driver.sdk"))
+        self.assertIsNone(importlib.util.find_spec("cua_driver.native"))
 
         with tempfile.TemporaryDirectory() as directory:
             socket_path = str(Path(directory) / "driver.sock")

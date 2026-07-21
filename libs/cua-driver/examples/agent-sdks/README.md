@@ -6,10 +6,8 @@ surface through `tools/list`.
 
 This is intentionally different from **Cua as an imported SDK**. An application
 that wants typed, programmatic calls can import the Python `cua-driver` package
-or the TypeScript `@trycua/cua-driver` package. Those packages are typed MCP
-clients today. A future UniFFI binding would address a different problem:
-embedding or distributing a Rust implementation to applications that want to
-host or compose a Cua server.
+or the TypeScript `@trycua/cua-driver` package. Those packages are Rust-backed
+UniFFI SDKs that call the daemon directly; they do not provide MCP clients.
 
 ## Prerequisites
 
@@ -71,7 +69,7 @@ python3.10 -m py_compile claude_agent.py
 npm run typecheck
 ```
 
-The examples intentionally do not import the generated Cua Driver clients.
+The examples intentionally do not import the Cua Driver language packages.
 That absence is the architectural point: an MCP-capable agent already has a
-runtime-neutral client. Use the generated packages when application code wants
+runtime-neutral client. Use the packages only when application code wants
 typed direct calls rather than an agent-controlled tool loop.

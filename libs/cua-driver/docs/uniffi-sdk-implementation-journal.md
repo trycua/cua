@@ -1,6 +1,6 @@
 # UniFFI imported-SDK implementation journal
 
-Status: local implementation complete; pull-request CI pending
+Status: package-root SDK cleanup validated locally; pull-request exact-head CI pending
 
 ## Definition of done
 
@@ -30,6 +30,16 @@ The public integration split remains:
 - Agent MCP/CLI: language-neutral protocol boundary, no generated client required.
 - Imported SDK: generated Python and Node/TypeScript bindings backed by one Rust implementation.
 
+The product boundary is reflected directly in packaging:
+
+- Python client applications import the Rust-backed SDK from `cua_driver`.
+- TypeScript client applications import it from `@trycua/cua-driver`.
+- Agents configure `cua-driver mcp` through their runtime's existing MCP client
+  and do not import either language package.
+- The language-native MCP facades and their contract generator were removed.
+- No public `.sdk`, `/sdk`, `.mcp`, `/mcp`, `.native`, or `/native` alias exists;
+  `native` remains only an internal loader/artifact term.
+
 ## Initial audit
 
 - The live session handlers and desktop backends already deserialize `cua-driver-contract` request types.
@@ -57,23 +67,29 @@ The public integration split remains:
 
 ### Language loaders and packages
 
-- Existing Python MCP facade tests: 8 passed.
 - Python generated-loader test: 1 passed across `ctypes` -> UniFFI -> Rust ->
   Unix socket, and asserted all 14 typed methods are exported.
 - Python release-helper tests: 3 passed, including native-library membership
   for every release archive target.
-- TypeScript typecheck passed; Node tests: 7 passed, including the actual N-API
-  call, all 14 methods, and proof that the package root does not eagerly load
-  the native module.
+- TypeScript typecheck and the actual N-API loader call passed, including all
+  14 methods and proof that the removed package subpaths are not exported.
 - `npm audit --audit-level=high`: 0 vulnerabilities.
 - A built macOS arm64 wheel was installed into a clean Python 3.12 environment;
-  `cua_driver.native.CuaDriver.connect(None)` loaded the packaged library and
+  `cua_driver.CuaDriver.connect(None)` loaded the packaged library and
   returned the canonical daemon socket path.
 - An actual 382.3 kB npm tarball (1.2 MB unpacked) was installed into a clean
   project; the root imported without native code and
-  `@trycua/cua-driver/native` loaded the packaged dylib successfully.
+  `@trycua/cua-driver` loaded the packaged dylib successfully.
 - The macOS dylib install ID is the relocatable
   `@rpath/libcua_driver_sdk.dylib`, and release CI asserts it before signing.
+- After promoting the SDK to each package root, a fresh macOS arm64 wheel and
+  npm tarball were installed into clean Python 3.12 and Node projects. Both
+  roots loaded the Rust library and returned the canonical socket path; Python
+  contained no `sdk` or `native` module, Node exported no `/sdk`, `/native`, or
+  `/mcp` subpath, and neither artifact contained the removed MCP facade files.
+- Package-root cleanup validation passed: Python real-loader test (1), Python
+  packaging/wrapper tests (13 passed, 3 binary-dependent skips), TypeScript
+  typecheck, Node real-loader test (1), and `npm audit` (0 vulnerabilities).
 
 ### CI and release boundary
 
@@ -85,5 +101,5 @@ The public integration split remains:
   generated binding before PyPI publication.
 - Full multi-OS/architecture assembly for one npm publication remains a stated
   release gate. This pull request must not publish a host-local npm tarball.
-- MCP/CLI remains unchanged as the agent boundary; the native bindings are an
-  explicit Python module or TypeScript package subpath.
+- MCP/CLI remains unchanged as the agent boundary; the language package roots
+  are the Rust-backed application SDK.

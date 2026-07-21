@@ -20,7 +20,7 @@ if (process.env.CUA_DRIVER_REQUIRE_UNIFFI === "1" && !existsSync(library)) {
 }
 
 test(
-  "generated Node bindings call the Rust daemon interface",
+  "generated Node SDK bindings call the Rust daemon interface",
   { skip: process.platform === "win32" || !existsSync(library), timeout: 10_000 },
   async () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "cua-driver-node-ffi-"))
@@ -49,8 +49,16 @@ test(
     try {
       await readyPromise
       assert.equal(existsSync(socketPath), true)
-      const { CuaDriver, GetDesktopStateInput } = await import(
-        "@trycua/cua-driver/native"
+      const sdk = await import("@trycua/cua-driver")
+      const { CuaDriver, GetDesktopStateInput } = sdk
+      assert.equal("StdioMcpTransport" in sdk, false)
+      await assert.rejects(
+        import("@trycua/cua-driver/sdk"),
+        error => error?.code === "ERR_PACKAGE_PATH_NOT_EXPORTED",
+      )
+      await assert.rejects(
+        import("@trycua/cua-driver/native"),
+        error => error?.code === "ERR_PACKAGE_PATH_NOT_EXPORTED",
       )
       const driver = CuaDriver.connect(socketPath)
       const expectedMethods = [

@@ -133,7 +133,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --force-reinstall libs/cua-driver/python/dist/*.whl
-          python -c "from cua_driver.native import CuaDriver; print(CuaDriver.connect(None).socket_path())"
+          python -c "from cua_driver import CuaDriver; print(CuaDriver.connect(None).socket_path())"
 
       - name: List built artifacts
         shell: bash

@@ -11,13 +11,15 @@
 //! fields, but lifecycle and policy tools accept only the public `session`
 //! name. Transport metadata can never mint or alter capture policy.
 
-use crate::capture_scope::{
-    bind_session, escalate_session, get_session, BindError, CaptureScopePolicy, EscalateError,
-    EscalationReason,
-};
+use crate::capture_scope::{bind_session, escalate_session, get_session, BindError, EscalateError};
 use crate::protocol::ToolResult;
 use crate::tool::{Tool, ToolDef};
+use crate::tool_args::parse_typed_input;
 use async_trait::async_trait;
+use cua_driver_contract::{
+    CaptureScope, EndSessionInput, EscalateSessionInput, EscalationReason, GetSessionStateInput,
+    StartSessionInput,
+};
 use serde_json::{json, Value};
 use std::sync::OnceLock;
 
@@ -29,27 +31,6 @@ fn session_id_of(args: &Value) -> Option<String> {
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty() && *s != "default")
         .map(|s| s.to_owned())
-}
-
-fn capture_scope_arg(args: &Value) -> Result<Option<CaptureScopePolicy>, ToolResult> {
-    let Some(raw) = args.get("capture_scope") else {
-        return Ok(None);
-    };
-    let Some(raw) = raw.as_str() else {
-        return Err(ToolResult::error(
-            "start_session.capture_scope must be one of: auto, window, desktop.",
-        )
-        .with_structured(json!({ "code": "invalid_capture_scope" })));
-    };
-    CaptureScopePolicy::parse(raw).map(Some).ok_or_else(|| {
-        ToolResult::error(format!(
-            "invalid capture_scope '{raw}'; expected auto, window, or desktop"
-        ))
-        .with_structured(json!({
-            "code": "invalid_capture_scope",
-            "capture_scope": raw,
-        }))
-    })
 }
 
 // ── start_session ─────────────────────────────────────────────────────────────
@@ -68,10 +49,28 @@ impl Tool for StartSessionTool {
         let Some(id) = session_id_of(&args) else {
             return ToolResult::error("start_session requires a non-empty `session` id.");
         };
-        let requested = match capture_scope_arg(&args) {
-            Ok(scope) => scope,
+        if let Some(raw) = args.get("capture_scope") {
+            let Some(raw) = raw.as_str() else {
+                return ToolResult::error(
+                    "start_session.capture_scope must be one of: auto, window, desktop.",
+                )
+                .with_structured(json!({ "code": "invalid_capture_scope" }));
+            };
+            if CaptureScope::parse(raw).is_none() {
+                return ToolResult::error(format!(
+                    "invalid capture_scope '{raw}'; expected auto, window, or desktop"
+                ))
+                .with_structured(json!({
+                    "code": "invalid_capture_scope",
+                    "capture_scope": raw,
+                }));
+            }
+        }
+        let input = match parse_typed_input::<StartSessionInput>("start_session", args) {
+            Ok(input) => input,
             Err(result) => return result,
         };
+        let requested = input.capture_scope;
         let was_ended = crate::session::is_session_ended(&id);
         if !was_ended {
             match bind_session(&id, requested) {
@@ -159,16 +158,28 @@ impl Tool for EscalateSessionTool {
             return ToolResult::error("escalate_session requires a public `session` id.")
                 .with_structured(json!({ "code": "session_required" }));
         };
-        let Some(reason) = args
+        if args
             .get("reason")
             .and_then(Value::as_str)
             .and_then(EscalationReason::parse)
-        else {
+            .is_none()
+        {
             return ToolResult::error("escalate_session.reason is invalid.")
                 .with_structured(json!({ "code": "invalid_escalation_reason" }));
+        }
+        let input = match parse_typed_input::<EscalateSessionInput>("escalate_session", args) {
+            Ok(input) => input,
+            Err(result) => return result,
         };
-        let detail = args.get("detail").and_then(Value::as_str);
-        match escalate_session(&id, reason, detail) {
+        if input
+            .detail
+            .as_ref()
+            .is_some_and(|detail| detail.chars().count() > 200)
+        {
+            return ToolResult::error("escalate_session.detail must be at most 200 characters.")
+                .with_structured(json!({ "code": "invalid_escalation_detail" }));
+        }
+        match escalate_session(&id, input.reason, input.detail.as_deref()) {
             Ok(state) => ToolResult::text(format!("✅ Session '{id}' escalated to desktop scope."))
                 .with_structured(state.as_json(&id)),
             Err(error) => {
@@ -216,6 +227,9 @@ impl Tool for GetSessionStateTool {
             return ToolResult::error("get_session_state requires a public `session` id.")
                 .with_structured(json!({ "code": "session_required" }));
         };
+        if let Err(result) = parse_typed_input::<GetSessionStateInput>("get_session_state", args) {
+            return result;
+        }
         let Some(state) = get_session(&id) else {
             return ToolResult::error(format!("session '{id}' is not active"))
                 .with_structured(json!({ "code": "session_not_started", "session": id }));
@@ -245,6 +259,9 @@ impl Tool for EndSessionTool {
         let Some(id) = session_id_of(&args) else {
             return ToolResult::error("end_session requires a non-empty `session` id.");
         };
+        if let Err(result) = parse_typed_input::<EndSessionInput>("end_session", args) {
+            return result;
+        }
         crate::session::end_session(&id);
         ToolResult::text(format!("✅ Session '{id}' ended.")).with_structured(
             serde_json::to_value(cua_driver_contract::EndSessionOutput {

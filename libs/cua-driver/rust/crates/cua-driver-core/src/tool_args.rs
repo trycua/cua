@@ -26,9 +26,53 @@
 //! See `libs/cua-driver/rust/docs/dedup-audit.md` for the audit trail
 //! that motivated this extraction.
 
-use serde_json::Value;
+use serde::de::DeserializeOwned;
+use serde_json::{json, Value};
 
 use crate::protocol::ToolResult;
+
+/// Deserialize one transport-free Rust input type from MCP arguments.
+///
+/// Published SDK tools use this before invoking platform behavior, so the
+/// generated schema and the live parser share the same Rust definition.
+pub fn parse_typed_input<T: DeserializeOwned>(
+    tool_name: &str,
+    args: Value,
+) -> Result<T, ToolResult> {
+    serde_json::from_value(args).map_err(|error| {
+        ToolResult::error(format!("{tool_name}: invalid arguments: {error}")).with_structured(
+            json!({
+                "code": "invalid_arguments",
+                "tool": tool_name,
+                "detail": error.to_string(),
+            }),
+        )
+    })
+}
+
+/// Deserialize the portable portion of a richer live tool input.
+///
+/// Platform handlers may accept window-targeting or diagnostic fields that are
+/// intentionally absent from the generated cross-platform SDK method. This
+/// projects only fields owned by the portable Rust type, then deserializes that
+/// type so both surfaces share field names, types, enums, and defaults without
+/// rejecting legitimate platform-rich arguments.
+pub fn parse_typed_projection<T: cua_driver_contract::ToolInput>(
+    tool_name: &str,
+    args: &Value,
+) -> Result<T, ToolResult> {
+    let Some(source) = args.as_object() else {
+        return parse_typed_input(tool_name, args.clone());
+    };
+    let properties = cua_driver_contract::tool_input_fields(T::TOOL_NAME)
+        .expect("typed tool input is indexed in the published contract");
+    let projected = source
+        .iter()
+        .filter(|(name, _)| properties.contains(*name))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    parse_typed_input(tool_name, Value::Object(projected))
+}
 
 /// Remove transport-reserved arguments supplied by a public caller. Trusted
 /// ingress code calls this before injecting session or approval context, so a
@@ -41,7 +85,8 @@ pub fn sanitize_reserved_args(args: &mut Value) {
 
 #[cfg(test)]
 mod reserved_args_tests {
-    use super::sanitize_reserved_args;
+    use super::{parse_typed_projection, sanitize_reserved_args};
+    use cua_driver_contract::{ClickButton, ClickInput};
     use serde_json::json;
 
     #[test]
@@ -59,6 +104,38 @@ mod reserved_args_tests {
                 "pid": 42,
                 "profile": {"mode": "isolated_new", "_future_public_field": "retained"}
             })
+        );
+    }
+
+    #[test]
+    fn typed_projection_preserves_rich_platform_fields_without_bypassing_portable_types() {
+        let input = parse_typed_projection::<ClickInput>(
+            "click",
+            &json!({
+                "x": 10,
+                "y": 20.5,
+                "scope": "desktop",
+                "button": "right",
+                "pid": 42,
+                "delivery_mode": "foreground"
+            }),
+        )
+        .expect("rich fields are projected away");
+        assert_eq!(input.x, 10.0);
+        assert_eq!(input.button, Some(ClickButton::Right));
+
+        let error = parse_typed_projection::<ClickInput>(
+            "click",
+            &json!({"x": "10", "y": 20, "scope": "desktop", "pid": 42}),
+        )
+        .expect_err("portable field types are still enforced");
+        assert_eq!(error.is_error, Some(true));
+        assert_eq!(
+            error
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("code")),
+            Some(&json!("invalid_arguments"))
         );
     }
 }

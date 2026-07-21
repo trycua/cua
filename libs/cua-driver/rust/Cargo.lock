@@ -725,6 +725,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64",
+ "cua-driver-contract",
  "cua-driver-core",
  "cua-driver-testkit",
  "cursor-overlay",
@@ -756,6 +757,7 @@ dependencies = [
 name = "cua-driver-contract"
 version = "0.10.0"
 dependencies = [
+ "schemars",
  "serde",
  "serde_json",
 ]
@@ -916,6 +918,12 @@ name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
+
+[[package]]
+name = "dyn-clone"
+version = "1.0.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "either"
@@ -2370,6 +2378,7 @@ dependencies = [
  "base64",
  "calloop",
  "crossbeam-channel",
+ "cua-driver-contract",
  "cua-driver-core",
  "cursor-overlay",
  "dirs",
@@ -2411,6 +2420,7 @@ dependencies = [
  "block2",
  "core-foundation",
  "core-graphics",
+ "cua-driver-contract",
  "cua-driver-core",
  "cursor-overlay",
  "foreign-types 0.5.0",
@@ -2441,6 +2451,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64",
+ "cua-driver-contract",
  "cua-driver-core",
  "cursor-overlay",
  "image",
@@ -2927,6 +2938,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "schemars"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2b42f36aa1cd011945615b92222f6bf73c599a102a300334cd7f8dbeec726cc"
+dependencies = [
+ "dyn-clone",
+ "ref-cast",
+ "schemars_derive",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "schemars_derive"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d115b50f4aaeea07e79c1912f645c7513d81715d0420f8bc77a18c6260b307f"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_derive_internals",
+ "syn",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2995,6 +3031,17 @@ name = "serde_derive"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "serde_derive_internals"
+version = "0.29.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18d26a20a969b9e3fdf2fc2d9f21eda6c40e2de84c9408bb5d3b05d499aae711"
 dependencies = [
  "proc-macro2",
  "quote",

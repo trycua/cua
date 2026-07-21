@@ -30,10 +30,19 @@ It also covers the portable whole-desktop loop:
 - `drag` and `scroll` in native desktop coordinates
 - `type_text`, `press_key`, and `hotkey` against the foreground application
 
-Session contracts are marked `canonical_runtime`: the same declaration builds
-the live MCP tool. Desktop contracts are marked `portable_subset`: they are a
-deliberately narrower intersection of the richer macOS, Linux, and Windows
-runtime schemas and must never replace those live definitions.
+Session contracts are marked `canonical_runtime`: the same typed Rust input,
+output, and metadata declaration builds the live MCP tool. Desktop contracts
+are marked `portable_subset`: their typed Rust inputs are a deliberately
+narrower projection of the richer macOS, Linux, and Windows runtime schemas.
+Each platform's desktop branch deserializes that projection before acting,
+while window/element-only fields remain in the richer live schema. Successful
+SDK-path structured payloads are validated against the shared Rust output
+types in the live registry.
+
+The platform schemas remain richer by design; they are not an independent SDK
+manifest. A cross-platform CI matrix proves every portable schema is accepted
+by each live registry, and the published tools resolve their capability tokens
+from the contract rather than a second runtime map.
 
 Both SDKs retain a generic tool call so runtime-discovered and
 platform-specific tools remain usable. The generated manifest records tool
@@ -66,6 +75,8 @@ cargo run -p cua-driver-contract --bin cua-contract-gen -- all
 cargo run -p cua-driver-contract --bin cua-contract-gen -- all --check
 cargo test -p cua-driver-contract
 cargo test -p cua-driver-core --test contract_parity
+cargo test -p cua-driver --test schema_consistency_test \
+  portable_desktop_contracts_are_accepted_by_active_backend
 ```
 
 SDK tests live in `python/tests/test_driver.py` and `typescript`. CI

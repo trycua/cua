@@ -5,17 +5,31 @@
 //!
 //! This crate deliberately contains no transport or platform implementation.
 //! The native driver remains the only execution engine; this package owns the
-//! versioned declarations used to generate experimental client SDKs.
+//! typed inputs/results and versioned declarations used by the live runtime
+//! and to generate experimental client SDKs.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
 
+pub mod compatibility;
 mod desktop;
+mod inputs;
 mod outputs;
-pub mod schema;
 mod session;
 
-pub use outputs::{EndSessionOutput, SessionStateOutput, StartSessionOutput};
+pub use inputs::{
+    CaptureScope, ClickButton, ClickInput, DesktopScope, DragInput, EndSessionInput,
+    EscalateSessionInput, EscalationReason, GetCursorPositionInput, GetDesktopStateInput,
+    GetScreenSizeInput, GetSessionStateInput, HotkeyInput, MoveCursorInput, PressKeyInput,
+    ScrollBy, ScrollDirection, ScrollInput, StartSessionInput, ToolInput, TypeTextInput,
+};
+pub use outputs::{
+    ClickOutput, CursorPositionOutput, DesktopActionOutput, DesktopStateOutput, EffectiveScope,
+    EndSessionOutput, MoveCursorOutput, ScreenSizeOutput, SessionStateOutput, StartSessionOutput,
+    ToolOutput,
+};
 
 /// Shape version for the MCP `tools/list` result emitted by cua-driver.
 pub const TOOLS_LIST_SCHEMA_VERSION: &str = "1";
@@ -29,7 +43,9 @@ pub const CONTRACT_VERSION: &str = "0.2.0";
 /// MCP protocol version used by current cua-driver clients.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq, PartialOrd, Ord,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Platform {
     Macos,
@@ -54,7 +70,18 @@ pub struct ToolAnnotations {
     pub open_world: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub type OutputValidator = fn(Value) -> Result<(), String>;
+
+fn default_output_validator() -> OutputValidator {
+    |_| Ok(())
+}
+
+pub(crate) fn validate_typed_output<T: ToolOutput>(value: Value) -> Result<(), String> {
+    let output = serde_json::from_value::<T>(value).map_err(|error| error.to_string())?;
+    output.validate()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolContract {
     pub name: String,
     pub description: String,
@@ -69,9 +96,13 @@ pub struct ToolContract {
     /// is not advertised as MCP `outputSchema` until transport parity is proven.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub success_output_schema: Option<Value>,
+    /// Runtime-only validator bound to the same Rust output type that produced
+    /// `success_output_schema`; omitted from the generated manifest.
+    #[serde(skip, default = "default_output_validator")]
+    pub(crate) output_validator: OutputValidator,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContractManifest {
     pub generated_notice: String,
     pub experimental: bool,
@@ -101,6 +132,65 @@ pub fn manifest() -> ContractManifest {
 
 pub fn tool_contract(name: &str) -> Option<ToolContract> {
     manifest().tools.into_iter().find(|tool| tool.name == name)
+}
+
+#[derive(Debug)]
+struct ToolIndexEntry {
+    capabilities: Vec<String>,
+    input_fields: BTreeSet<String>,
+    output_validator: OutputValidator,
+}
+
+fn tool_index() -> &'static BTreeMap<String, ToolIndexEntry> {
+    static INDEX: OnceLock<BTreeMap<String, ToolIndexEntry>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        manifest()
+            .tools
+            .into_iter()
+            .map(|tool| {
+                let input_fields = tool
+                    .input_schema
+                    .get("properties")
+                    .and_then(Value::as_object)
+                    .into_iter()
+                    .flatten()
+                    .map(|(name, _)| name.clone())
+                    .collect();
+                (
+                    tool.name,
+                    ToolIndexEntry {
+                        capabilities: tool.capabilities,
+                        input_fields,
+                        output_validator: tool.output_validator,
+                    },
+                )
+            })
+            .collect()
+    })
+}
+
+/// Return capability tokens for one published tool without rebuilding schemas
+/// on every live `tools/list` entry.
+pub fn tool_capabilities(name: &str) -> Option<Vec<String>> {
+    tool_index()
+        .get(name)
+        .map(|entry| entry.capabilities.clone())
+}
+
+/// Names owned by a published portable input projection.
+pub fn tool_input_fields(name: &str) -> Option<&'static BTreeSet<String>> {
+    tool_index().get(name).map(|entry| &entry.input_fields)
+}
+
+/// Validate a successful structured payload against the Rust output type that
+/// also generates its SDK schema. Returns `Ok(false)` for non-SDK tools.
+pub fn validate_success_output(name: &str, value: Value) -> Result<bool, String> {
+    if let Some(entry) = tool_index().get(name) {
+        (entry.output_validator)(value)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 #[cfg(test)]
@@ -179,5 +269,47 @@ mod tests {
                 "revived",
             ]
         );
+    }
+
+    #[test]
+    fn typed_success_outputs_accept_extensions_and_reject_wrong_common_fields() {
+        assert_eq!(
+            validate_success_output(
+                "get_screen_size",
+                serde_json::json!({
+                    "width": 1512,
+                    "height": 982,
+                    "scale_factor": 2,
+                    "backend": "core_graphics"
+                }),
+            ),
+            Ok(true)
+        );
+        assert!(validate_success_output(
+            "get_screen_size",
+            serde_json::json!({
+                "width": "1512",
+                "height": 982,
+                "scale_factor": 2
+            }),
+        )
+        .is_err());
+        assert!(validate_success_output(
+            "end_session",
+            serde_json::json!({"session": "run", "active": true}),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn every_published_tool_has_a_live_typed_output_validator() {
+        for contract in manifest().tools {
+            let invalid = serde_json::json!([]);
+            assert!(
+                validate_success_output(&contract.name, invalid).is_err(),
+                "{} has no typed output validator",
+                contract.name
+            );
+        }
     }
 }

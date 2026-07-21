@@ -1,10 +1,14 @@
 //! Real Linux tool implementations (compiled only on Linux).
 
 use async_trait::async_trait;
+use cua_driver_contract::{
+    ClickButton, ClickInput, DragInput, GetCursorPositionInput, GetDesktopStateInput,
+    GetScreenSizeInput, HotkeyInput, MoveCursorInput, PressKeyInput, ScrollInput, TypeTextInput,
+};
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef, ToolRegistry},
-    tool_args::ArgsExt,
+    tool_args::{parse_typed_input, parse_typed_projection, ArgsExt},
 };
 use serde_json::{json, Value};
 use std::fs;
@@ -1775,20 +1779,18 @@ impl Tool for ClickTool {
                     "suggestion": "pass scope=desktop",
                 }));
             }
-            let button_raw = args.str_or("button", "left").to_lowercase();
-            if !matches!(button_raw.as_str(), "" | "left" | "right" | "middle") {
-                return ToolResult::error(format!(
-                    "click: unknown button \"{button_raw}\" — expected one of left, right, middle."
-                ));
+            let input = match parse_typed_projection::<ClickInput>("click", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let button = parse_mouse_button(input.button.unwrap_or(ClickButton::Left).as_str());
+            let sx = input.x as i32;
+            let sy = input.y as i32;
+            let n = input.count.unwrap_or(1) as usize;
+            if n == 0 {
+                return ToolResult::error("click.count must be at least 1.")
+                    .with_structured(json!({ "code": "invalid_arguments" }));
             }
-            let button = parse_mouse_button(if button_raw.is_empty() {
-                "left"
-            } else {
-                &button_raw
-            });
-            let sx = args.f64_or("x", 0.0) as i32;
-            let sy = args.f64_or("y", 0.0) as i32;
-            let n = args.u64_or("count", 1) as usize;
             // Glide the agent-cursor overlay to the click point first (the macOS
             // / Windows desktop paths already do this). Without it the overlay
             // sits idle elsewhere while only the real pointer warps, so a viewer
@@ -2227,13 +2229,13 @@ impl Tool for TypeTextTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         if args.opt_str("scope").as_deref() == Some("desktop") && args.get("pid").is_none() {
-            let text = match args.require_str("text") {
-                Ok(value) => {
-                    cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&value)
-                        .into_owned()
-                }
-                Err(error) => return error,
+            let input = match parse_typed_projection::<TypeTextInput>("type_text", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
             };
+            let text =
+                cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&input.text)
+                    .into_owned();
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_focused" } else { "xtest" };
             let result = tokio::task::spawn_blocking(move || {
@@ -2806,12 +2808,13 @@ impl Tool for PressKeyTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         if args.opt_str("scope").as_deref() == Some("desktop") && args.get("pid").is_none() {
-            let key = match args.require_str("key") {
-                Ok(value) => value,
-                Err(error) => return error,
+            let input = match parse_typed_projection::<PressKeyInput>("press_key", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
             };
+            let key = input.key;
             let display = key.clone();
-            let modifiers: Vec<String> = args.str_array("modifiers");
+            let modifiers = input.modifiers.unwrap_or_default();
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_focused" } else { "xtest" };
             let result = tokio::task::spawn_blocking(move || {
@@ -3099,7 +3102,15 @@ impl Tool for HotkeyTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         if args.opt_str("scope").as_deref() == Some("desktop") && args.get("pid").is_none() {
-            let keys: Vec<String> = args.str_array("keys");
+            let input = match parse_typed_projection::<HotkeyInput>("hotkey", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let keys = input.keys;
+            if keys.len() < 2 {
+                return ToolResult::error("hotkey.keys must contain at least two keys.")
+                    .with_structured(json!({ "code": "invalid_arguments" }));
+            }
             let modifiers: Vec<String> = keys
                 .iter()
                 .filter(|key| is_modifier(key))
@@ -3491,19 +3502,14 @@ impl Tool for ScrollTool {
             && args.get("pid").is_none()
             && args.get("window_id").is_none()
         {
-            let direction = match args.require_str("direction") {
-                Ok(value) => value,
-                Err(error) => return error,
+            let input = match parse_typed_projection::<ScrollInput>("scroll", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
             };
-            let x = match args.require_f64("x") {
-                Ok(value) => value.round() as i32,
-                Err(error) => return error,
-            };
-            let y = match args.require_f64("y") {
-                Ok(value) => value.round() as i32,
-                Err(error) => return error,
-            };
-            let amount = args.u64_or("amount", 3).clamp(1, 50) as usize;
+            let direction = input.direction.as_str().to_owned();
+            let x = input.x.round() as i32;
+            let y = input.y.round() as i32;
+            let amount = input.amount.unwrap_or(3).clamp(1, 50) as usize;
             let display = direction.clone();
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_desktop" } else { "xtest" };
@@ -4348,25 +4354,14 @@ impl Tool for DragTool {
             && args.get("pid").is_none()
             && args.get("window_id").is_none()
         {
-            let coordinate = |key: &str| {
-                args.opt_f64(key)
-                    .or_else(|| args.opt_i64(key).map(|value| value as f64))
+            let input = match parse_typed_projection::<DragInput>("drag", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
             };
-            let Some(from_x) = coordinate("from_x") else {
-                return ToolResult::error("Missing: from_x");
-            };
-            let Some(from_y) = coordinate("from_y") else {
-                return ToolResult::error("Missing: from_y");
-            };
-            let Some(to_x) = coordinate("to_x") else {
-                return ToolResult::error("Missing: to_x");
-            };
-            let Some(to_y) = coordinate("to_y") else {
-                return ToolResult::error("Missing: to_y");
-            };
-            let button = parse_mouse_button(&args.str_or("button", "left"));
-            let duration_ms = args.u64_or("duration_ms", 500).min(10_000);
-            let steps = args.u64_or("steps", 20).clamp(1, 200) as usize;
+            let (from_x, from_y, to_x, to_y) = (input.from_x, input.from_y, input.to_x, input.to_y);
+            let button = parse_mouse_button(input.button.unwrap_or(ClickButton::Left).as_str());
+            let duration_ms = input.duration_ms.unwrap_or(500).min(10_000);
+            let steps = input.steps.unwrap_or(20).clamp(1, 200) as usize;
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_desktop" } else { "xtest" };
             let result = tokio::task::spawn_blocking(move || {
@@ -5563,7 +5558,10 @@ impl Tool for GetScreenSizeTool {
             open_world: false,
         })
     }
-    async fn invoke(&self, _args: Value) -> ToolResult {
+    async fn invoke(&self, args: Value) -> ToolResult {
+        if let Err(result) = parse_typed_input::<GetScreenSizeInput>("get_screen_size", args) {
+            return result;
+        }
         let result = tokio::task::spawn_blocking(|| {
             // X11 reports pixel dimensions; scale factor on X11 is not
             // well-defined per-monitor, so report 1.0 (matches DPI-unaware
@@ -5637,7 +5635,11 @@ impl Tool for GetDesktopStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let out_file = args.opt_str("screenshot_out_file");
+        let input = match parse_typed_input::<GetDesktopStateInput>("get_desktop_state", args) {
+            Ok(input) => input,
+            Err(result) => return result,
+        };
+        let out_file = input.screenshot_out_file;
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             // Vision-only: capture the FULL DISPLAY at native size. No downscale
@@ -5733,7 +5735,12 @@ impl Tool for GetCursorPositionTool {
             open_world: false,
         })
     }
-    async fn invoke(&self, _args: Value) -> ToolResult {
+    async fn invoke(&self, args: Value) -> ToolResult {
+        if let Err(result) =
+            parse_typed_input::<GetCursorPositionInput>("get_cursor_position", args)
+        {
+            return result;
+        }
         // Native Wayland: there's no protocol for clients to query the real
         // global cursor position. Fall back to the synthetic registry that
         // records every `motion_absolute` this process emits.
@@ -5791,9 +5798,12 @@ impl Tool for MoveCursorTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let x = args.f64_or("x", 0.0);
-        let y = args.f64_or("y", 0.0);
         if args.opt_str("scope").as_deref() == Some("desktop") {
+            let input = match parse_typed_projection::<MoveCursorInput>("move_cursor", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let (x, y) = (input.x, input.y);
             let xi = x.round() as i32;
             let yi = y.round() as i32;
             let result = if crate::wayland::wayland_input_enabled() {
@@ -5816,6 +5826,8 @@ impl Tool for MoveCursorTool {
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             };
         }
+        let x = args.f64_or("x", 0.0);
+        let y = args.f64_or("y", 0.0);
         let window_id = args.get("window_id").and_then(|v| v.as_u64());
         let cursor_id = resolve_cursor_key(&args);
         self.state.cursor_registry.update_position(&cursor_id, x, y);

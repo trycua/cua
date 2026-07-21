@@ -1,7 +1,9 @@
 use async_trait::async_trait;
+use cua_driver_contract::GetCursorPositionInput;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
+    tool_args::parse_typed_input,
 };
 use serde_json::Value;
 
@@ -27,7 +29,12 @@ impl Tool for GetCursorPositionTool {
         def()
     }
 
-    async fn invoke(&self, _args: Value) -> ToolResult {
+    async fn invoke(&self, args: Value) -> ToolResult {
+        if let Err(result) =
+            parse_typed_input::<GetCursorPositionInput>("get_cursor_position", args)
+        {
+            return result;
+        }
         // Create a null event and query its location to get cursor position.
         use core_graphics::{
             event::CGEvent,

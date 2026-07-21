@@ -1,7 +1,9 @@
 use async_trait::async_trait;
+use cua_driver_contract::HotkeyInput;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
+    tool_args::parse_typed_projection,
 };
 use libc;
 use serde_json::Value;
@@ -103,7 +105,15 @@ impl Tool for HotkeyTool {
             && args.get("pid").is_none()
             && args.get("window_id").is_none()
         {
-            let raw_keys = args.str_array("keys");
+            let input = match parse_typed_projection::<HotkeyInput>("hotkey", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let raw_keys = input.keys;
+            if raw_keys.len() < 2 {
+                return ToolResult::error("hotkey.keys must contain at least two keys.")
+                    .with_structured(serde_json::json!({ "code": "invalid_arguments" }));
+            }
             let modifiers: Vec<String> = raw_keys
                 .iter()
                 .filter(|key| is_modifier(key))

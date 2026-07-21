@@ -1,7 +1,9 @@
 use async_trait::async_trait;
+use cua_driver_contract::GetScreenSizeInput;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
+    tool_args::parse_typed_input,
 };
 use serde_json::Value;
 
@@ -30,7 +32,10 @@ impl Tool for GetScreenSizeTool {
         def()
     }
 
-    async fn invoke(&self, _args: Value) -> ToolResult {
+    async fn invoke(&self, args: Value) -> ToolResult {
+        if let Err(result) = parse_typed_input::<GetScreenSizeInput>("get_screen_size", args) {
+            return result;
+        }
         match main_screen_size() {
             Some((w, h, scale)) => {
                 // Matches Swift text format 1:1.

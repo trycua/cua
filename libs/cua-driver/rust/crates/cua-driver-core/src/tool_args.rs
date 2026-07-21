@@ -37,8 +37,12 @@ use crate::protocol::ToolResult;
 /// generated schema and the live parser share the same Rust definition.
 pub fn parse_typed_input<T: DeserializeOwned>(
     tool_name: &str,
-    args: Value,
+    mut args: Value,
 ) -> Result<T, ToolResult> {
+    // Public callers cannot supply reserved arguments: ingress strips them
+    // before trusted session/approval context is injected. Keep that internal
+    // transport metadata out of the transport-free contract types as well.
+    sanitize_reserved_args(&mut args);
     serde_json::from_value(args).map_err(|error| {
         ToolResult::error(format!("{tool_name}: invalid arguments: {error}")).with_structured(
             json!({
@@ -85,8 +89,8 @@ pub fn sanitize_reserved_args(args: &mut Value) {
 
 #[cfg(test)]
 mod reserved_args_tests {
-    use super::{parse_typed_projection, sanitize_reserved_args};
-    use cua_driver_contract::{ClickButton, ClickInput};
+    use super::{parse_typed_input, parse_typed_projection, sanitize_reserved_args};
+    use cua_driver_contract::{ClickButton, ClickInput, GetScreenSizeInput};
     use serde_json::json;
 
     #[test]
@@ -105,6 +109,28 @@ mod reserved_args_tests {
                 "profile": {"mode": "isolated_new", "_future_public_field": "retained"}
             })
         );
+    }
+
+    #[test]
+    fn typed_input_ignores_trusted_transport_metadata_but_rejects_public_unknown_fields() {
+        let input = parse_typed_input::<GetScreenSizeInput>(
+            "get_screen_size",
+            json!({"session": "public", "_session_id": "trusted"}),
+        )
+        .expect("trusted transport metadata is not part of the public contract");
+        assert_eq!(input.session.as_deref(), Some("public"));
+
+        let error = parse_typed_input::<GetScreenSizeInput>(
+            "get_screen_size",
+            json!({"pid": 42, "_session_id": "trusted"}),
+        )
+        .expect_err("ordinary unknown fields remain invalid");
+        assert_eq!(error.is_error, Some(true));
+        assert!(matches!(
+            &error.content[0],
+            crate::protocol::Content::Text { text, .. }
+                if text.contains("unknown field `pid`")
+        ));
     }
 
     #[test]

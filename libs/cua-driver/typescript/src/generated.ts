@@ -78,10 +78,12 @@ function escalateSessionToWire(input: EscalateSessionArgs): Record<string, unkno
 }
 
 export interface GetCursorPositionArgs {
+  session?: string
 }
 
 function getCursorPositionToWire(input: GetCursorPositionArgs): Record<string, unknown> {
   const output: Record<string, unknown> = {}
+  if (input.session !== undefined) output.session = input.session
   return output
 }
 
@@ -98,10 +100,12 @@ function getDesktopStateToWire(input: GetDesktopStateArgs): Record<string, unkno
 }
 
 export interface GetScreenSizeArgs {
+  session?: string
 }
 
 function getScreenSizeToWire(input: GetScreenSizeArgs): Record<string, unknown> {
   const output: Record<string, unknown> = {}
+  if (input.session !== undefined) output.session = input.session
   return output
 }
 

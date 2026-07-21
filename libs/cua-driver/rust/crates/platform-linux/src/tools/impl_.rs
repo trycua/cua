@@ -5551,7 +5551,9 @@ impl Tool for GetScreenSizeTool {
                 scale factor. Agents click in points; Retina displays have scale_factor 2.0. \
                 Requires no TCC permissions."
                 .into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{
+                "session": cua_driver_core::tool_schema::session_schema()
+            },"additionalProperties":false}),
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -5728,7 +5730,9 @@ impl Tool for GetCursorPositionTool {
             description:
                 "Return the current mouse cursor position in screen points (origin top-left)."
                     .into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{
+                "session": cua_driver_core::tool_schema::session_schema()
+            },"additionalProperties":false}),
             read_only: true,
             destructive: false,
             idempotent: true,

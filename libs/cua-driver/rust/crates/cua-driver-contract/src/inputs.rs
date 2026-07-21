@@ -304,7 +304,12 @@ impl ToolInput for GetDesktopStateInput {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct GetScreenSizeInput {}
+pub struct GetScreenSizeInput {
+    /// Optional session id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    pub session: Option<String>,
+}
 
 impl ToolInput for GetScreenSizeInput {
     const TOOL_NAME: &'static str = "get_screen_size";
@@ -312,7 +317,12 @@ impl ToolInput for GetScreenSizeInput {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct GetCursorPositionInput {}
+pub struct GetCursorPositionInput {
+    /// Optional session id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    pub session: Option<String>,
+}
 
 impl ToolInput for GetCursorPositionInput {
     const TOOL_NAME: &'static str = "get_cursor_position";

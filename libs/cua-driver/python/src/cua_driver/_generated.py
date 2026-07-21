@@ -90,9 +90,12 @@ class EscalateSessionArgs:
 
 @dataclass(frozen=True)
 class GetCursorPositionArgs:
+    session: str | None = None
 
     def to_arguments(self) -> dict[str, Any]:
         arguments: dict[str, Any] = {}
+        if self.session is not None:
+            arguments["session"] = self.session
         return arguments
 
 
@@ -112,9 +115,12 @@ class GetDesktopStateArgs:
 
 @dataclass(frozen=True)
 class GetScreenSizeArgs:
+    session: str | None = None
 
     def to_arguments(self) -> dict[str, Any]:
         arguments: dict[str, Any] = {}
+        if self.session is not None:
+            arguments["session"] = self.session
         return arguments
 
 

@@ -14,8 +14,11 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_cursor_position".into(),
-        description: "Return the current mouse cursor position in screen points (origin top-left).".into(),
-        input_schema: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
+        description: "Return the current mouse cursor position in screen points (origin top-left)."
+            .into(),
+        input_schema: serde_json::json!({"type":"object","properties":{
+            "session": cua_driver_core::tool_schema::session_schema()
+        },"additionalProperties":false}),
         read_only: true,
         destructive: false,
         idempotent: true,

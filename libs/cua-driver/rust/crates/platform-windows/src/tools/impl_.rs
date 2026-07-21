@@ -6581,7 +6581,9 @@ impl Tool for GetScreenSizeTool {
             description: "Return the size of the main display in physical pixels plus its display \
                 scale factor. On Windows, screenshots and pixel clicks use this same physical-pixel \
                 coordinate space. Requires no special permissions.".into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{
+                "session": cua_driver_core::tool_schema::session_schema()
+            },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
     }
@@ -6724,7 +6726,9 @@ impl Tool for GetCursorPositionTool {
             description:
                 "Return the current mouse cursor position in screen points (origin top-left)."
                     .into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{
+                "session": cua_driver_core::tool_schema::session_schema()
+            },"additionalProperties":false}),
             read_only: true,
             destructive: false,
             idempotent: true,

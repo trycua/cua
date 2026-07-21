@@ -17,8 +17,11 @@ fn def() -> &'static ToolDef {
         name: "get_screen_size".into(),
         description: "Return the logical size of the main display in points plus its backing \
             scale factor. Agents click in points; Retina displays have scale_factor 2.0. \
-            Requires no TCC permissions.".into(),
-        input_schema: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
+            Requires no TCC permissions."
+            .into(),
+        input_schema: serde_json::json!({"type":"object","properties":{
+            "session": cua_driver_core::tool_schema::session_schema()
+        },"additionalProperties":false}),
         read_only: true,
         destructive: false,
         idempotent: true,

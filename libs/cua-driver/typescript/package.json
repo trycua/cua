@@ -1,0 +1,42 @@
+{
+  "name": "@trycua/cua-driver",
+  "version": "0.10.0",
+  "description": "Rust-backed Cua Driver SDK for client applications",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "dist/native",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "generate:uniffi": "node ../scripts/generate-uniffi-bindings.mjs",
+    "generate:uniffi:check": "node ../scripts/generate-uniffi-bindings.mjs --check",
+    "stage:uniffi": "node ../scripts/stage-uniffi-library.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "uniffi-bindgen-react-native": "0.31.0-3"
+  },
+  "dependencies": {
+    "@ubjs/core": "0.31.0-3",
+    "@ubjs/node": "0.31.0-3"
+  }
+}

@@ -13,9 +13,12 @@
 //! drift in the first place. It is NOT `#[ignore]`d — `tools/list` needs no GUI,
 //! permissions, or display, so it runs in normal CI.
 
+use cua_driver_contract::{
+    compatibility::schema_subset_violations, manifest, Platform, SchemaMode,
+};
 use cua_driver_core::tool_schema::shared_schema_violations;
 use cua_driver_testkit::RawDriver;
-use serde_json::json;
+use serde_json::{json, Value};
 
 #[test]
 fn registered_tool_contracts_match_on_active_backend() {
@@ -66,6 +69,113 @@ fn registered_tool_contracts_match_on_active_backend() {
     assert!(
         violations.is_empty(),
         "tool-contract drift on this backend ({} violation(s)):\n  {}",
+        violations.len(),
+        violations.join("\n  ")
+    );
+}
+
+#[test]
+fn portable_desktop_contracts_are_accepted_by_active_backend() {
+    let Some(mut driver) = RawDriver::spawn() else {
+        // Binary not built — testkit already printed a skip note.
+        return;
+    };
+
+    driver.send(&json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": { "name": "portable-contract-gate", "version": "1" }
+        }
+    }));
+    let _ = driver.recv();
+
+    driver.send(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }));
+    let response = driver.recv();
+    let live_tools = response["result"]["tools"]
+        .as_array()
+        .expect("tools/list must return result.tools");
+
+    let active_platform = if cfg!(target_os = "macos") {
+        Platform::Macos
+    } else if cfg!(target_os = "windows") {
+        Platform::Windows
+    } else if cfg!(target_os = "linux") {
+        Platform::Linux
+    } else {
+        panic!("portable contract parity is unsupported on this target")
+    };
+
+    let mut violations = Vec::new();
+    for contract in manifest()
+        .tools
+        .into_iter()
+        .filter(|contract| contract.schema_mode == SchemaMode::PortableSubset)
+        .filter(|contract| contract.platforms.contains(&active_platform))
+    {
+        let Some(live) = live_tools
+            .iter()
+            .find(|entry| entry["name"].as_str() == Some(&contract.name))
+        else {
+            violations.push(format!("{}: missing from live registry", contract.name));
+            continue;
+        };
+
+        let live_schema = live
+            .get("inputSchema")
+            .or_else(|| live.get("input_schema"))
+            .unwrap_or(&Value::Null);
+        violations.extend(
+            schema_subset_violations(&contract.input_schema, live_schema)
+                .into_iter()
+                .map(|violation| format!("{}: {violation}", contract.name)),
+        );
+
+        let annotations = &live["annotations"];
+        for (name, actual, expected) in [
+            (
+                "readOnlyHint",
+                annotations["readOnlyHint"].as_bool(),
+                contract.annotations.read_only,
+            ),
+            (
+                "destructiveHint",
+                annotations["destructiveHint"].as_bool(),
+                contract.annotations.destructive,
+            ),
+            (
+                "idempotentHint",
+                annotations["idempotentHint"].as_bool(),
+                contract.annotations.idempotent,
+            ),
+            (
+                "openWorldHint",
+                annotations["openWorldHint"].as_bool(),
+                contract.annotations.open_world,
+            ),
+        ] {
+            if actual != Some(expected) {
+                violations.push(format!(
+                    "{}: annotation {name} is {actual:?}, expected {expected}",
+                    contract.name
+                ));
+            }
+        }
+
+        if live["capabilities"] != json!(contract.capabilities) {
+            violations.push(format!(
+                "{}: live capabilities {} differ from portable capabilities {}",
+                contract.name,
+                live["capabilities"],
+                json!(contract.capabilities)
+            ));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "portable SDK contracts are not accepted by the active backend ({} violation(s)):\n  {}",
         violations.len(),
         violations.join("\n  ")
     );

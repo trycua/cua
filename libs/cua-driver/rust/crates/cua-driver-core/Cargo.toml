@@ -9,6 +9,7 @@ yaml = ["dep:serde_yaml_ng", "dep:regex"]
 rego = ["dep:regorus"]
 
 [dependencies]
+cua-driver-contract = { path = "../cua-driver-contract" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

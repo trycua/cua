@@ -106,13 +106,17 @@ Capture a full-display vision screenshot in true screen pixels (no downscale), f
 
 Return the logical size of the main display in points plus its backing scale factor. Agents click in points; Retina displays have scale_factor 2.0. Requires no TCC permissions.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 
 ### `get_cursor_position`
 
 Return the current mouse cursor position in screen points (origin top-left).
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less.
 
 ### `get_config`
 

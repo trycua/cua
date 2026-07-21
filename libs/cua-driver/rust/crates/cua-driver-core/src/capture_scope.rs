@@ -5,94 +5,13 @@
 //! policy state: doing so would let an anonymous proxy connection bypass the
 //! per-session contract.
 
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
-use std::fmt;
 use std::sync::{Mutex, OnceLock};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CaptureScopePolicy {
-    #[default]
-    Auto,
-    Window,
-    Desktop,
-}
-
-impl CaptureScopePolicy {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "auto" => Some(Self::Auto),
-            "window" => Some(Self::Window),
-            "desktop" => Some(Self::Desktop),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Window => "window",
-            Self::Desktop => "desktop",
-        }
-    }
-}
-
-impl fmt::Display for CaptureScopePolicy {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EffectiveCaptureScope {
-    Window,
-    Desktop,
-}
-
-impl EffectiveCaptureScope {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Window => "window",
-            Self::Desktop => "desktop",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EscalationReason {
-    AxTreePixelMismatch,
-    BackgroundDeliveryFailed,
-    ForegroundIneffective,
-    NoWindowTarget,
-    Other,
-}
-
-impl EscalationReason {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "ax_tree_pixel_mismatch" => Some(Self::AxTreePixelMismatch),
-            "background_delivery_failed" => Some(Self::BackgroundDeliveryFailed),
-            "foreground_ineffective" => Some(Self::ForegroundIneffective),
-            "no_window_target" => Some(Self::NoWindowTarget),
-            "other" => Some(Self::Other),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::AxTreePixelMismatch => "ax_tree_pixel_mismatch",
-            Self::BackgroundDeliveryFailed => "background_delivery_failed",
-            Self::ForegroundIneffective => "foreground_ineffective",
-            Self::NoWindowTarget => "no_window_target",
-            Self::Other => "other",
-        }
-    }
-}
+pub use cua_driver_contract::{
+    CaptureScope as CaptureScopePolicy, EffectiveScope as EffectiveCaptureScope, EscalationReason,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionCaptureScope {
@@ -122,14 +41,18 @@ impl SessionCaptureScope {
     }
 
     pub fn as_json(&self, session: &str) -> Value {
-        json!({
-            "session": session,
-            "capture_scope": self.policy.as_str(),
-            "effective_scope": self.effective_scope().as_str(),
-            "desktop_unlocked": self.desktop_unlocked,
-            "escalation_reason": self.escalation_reason.map(EscalationReason::as_str),
-            "escalation_detail": self.escalation_detail,
-        })
+        serde_json::to_value(self.output(session)).expect("session output serializes")
+    }
+
+    pub fn output(&self, session: &str) -> cua_driver_contract::SessionStateOutput {
+        cua_driver_contract::SessionStateOutput {
+            session: session.to_owned(),
+            capture_scope: self.policy,
+            effective_scope: self.effective_scope(),
+            desktop_unlocked: self.desktop_unlocked,
+            escalation_reason: self.escalation_reason,
+            escalation_detail: self.escalation_detail.clone(),
+        }
     }
 }
 
@@ -359,6 +282,7 @@ pub fn enforce_tool(tool_name: &str, args: &Value) -> Result<(), ScopeViolation>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn fresh(prefix: &str) -> String {
         format!("capture-scope-{prefix}-{}", std::process::id())

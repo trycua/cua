@@ -129,6 +129,12 @@ jobs:
           cd libs/cua-driver/python
           python build_wheel.py --version "${{ needs.get-version.outputs.version }}" --arch "${{ matrix.arch }}"
 
+      - name: Load generated UniFFI bindings from the built wheel
+        shell: bash
+        run: |
+          python -m pip install --force-reinstall libs/cua-driver/python/dist/*.whl
+          python -c "from cua_driver import CuaDriver; print(CuaDriver.connect(None).socket_path())"
+
       - name: List built artifacts
         shell: bash
         run: |

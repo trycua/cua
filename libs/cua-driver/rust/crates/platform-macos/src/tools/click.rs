@@ -14,9 +14,11 @@
 //!   to full-window space using the most recent `zoom` context stored per-pid.
 
 use async_trait::async_trait;
+use cua_driver_contract::{ClickButton, ClickInput};
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
+    tool_args::parse_typed_projection,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -167,14 +169,12 @@ impl Tool for ClickTool {
                     "suggestion": "pass scope=\"desktop\"",
                 }));
             }
-            let sx_shot = args
-                .opt_f64("x")
-                .or_else(|| args.opt_i64("x").map(|i| i as f64))
-                .unwrap_or(0.0);
-            let sy_shot = args
-                .opt_f64("y")
-                .or_else(|| args.opt_i64("y").map(|i| i as f64))
-                .unwrap_or(0.0);
+            let input = match parse_typed_projection::<ClickInput>("click", &args) {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+            let sx_shot = input.x;
+            let sy_shot = input.y;
             // ── Desktop-screenshot pixels → logical screen points ──────────────
             // The vision invariant: the pixel an agent reads off the screenshot it
             // was handed is the pixel that gets clicked. `get_desktop_state`
@@ -206,18 +206,17 @@ impl Tool for ClickTool {
             .unwrap_or(1.0);
             let sx = sx_shot / desktop_ratio;
             let sy = sy_shot / desktop_ratio;
-            let button = match args.str_or("button", "left").to_lowercase().as_str() {
-                "right" => "right",
-                "middle" => "middle",
-                "" | "left" => "left",
-                other => {
-                    return ToolResult::error(format!(
-                        "click: unknown button \"{other}\" — expected one of left, right, middle."
-                    ))
-                }
+            let button = match input.button.unwrap_or(ClickButton::Left) {
+                ClickButton::Left => "left",
+                ClickButton::Right => "right",
+                ClickButton::Middle => "middle",
             }
-            .to_string();
-            let count = args.u64_or("count", 1) as usize;
+            .to_owned();
+            let count = input.count.unwrap_or(1) as usize;
+            if count == 0 {
+                return ToolResult::error("click.count must be at least 1.")
+                    .with_structured(serde_json::json!({ "code": "invalid_arguments" }));
+            }
             // Glide the session's agent cursor to the screen point for visibility.
             let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
             crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), sx, sy).await;

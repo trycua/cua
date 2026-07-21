@@ -578,8 +578,9 @@ tar -xzf "$TMP_DIR/$TARBALL" -C "$TMP_DIR"
 #       ├── CuaDriver.app/     (minimal bundle; copy of the same binary
 #       │                         lives at Contents/MacOS/cua-driver)
 #       └── LICENSE
-#   Linux bare-binary tarball expands to:
-#     cua-driver               (single file at the archive root)
+#   Linux bare-runtime tarball expands to:
+#     cua-driver and libcua_driver_sdk.so at the archive root. The installer
+#     consumes the CLI; SDK packaging consumes the colocated library.
 case "$LABEL" in
     darwin-*)
         STAGE="cua-driver-rs-${VERSION}-darwin-universal"

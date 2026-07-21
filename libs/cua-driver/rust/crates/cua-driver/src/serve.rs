@@ -245,19 +245,20 @@ fn register_recording_session_end_hook(
 
 /// Returns the platform default socket/pipe path.
 pub fn default_socket_path() -> String {
+    let namespace = crate::bundle::state_namespace();
     #[cfg(target_os = "macos")]
     {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        format!("{home}/Library/Caches/cua-driver/cua-driver.sock")
+        format!("{home}/Library/Caches/{namespace}/{namespace}.sock")
     }
     #[cfg(target_os = "linux")]
     {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        format!("{home}/.cache/cua-driver/cua-driver.sock")
+        format!("{home}/.cache/{namespace}/{namespace}.sock")
     }
     #[cfg(target_os = "windows")]
     {
-        r"\\.\pipe\cua-driver".to_owned()
+        format!(r"\\.\pipe\{namespace}")
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
@@ -275,25 +276,30 @@ pub fn default_socket_path() -> String {
 /// Medium-IL daemon. See #1602 / the `cua-driver-uia` crate for the worker side.
 #[cfg(target_os = "windows")]
 pub fn default_uia_pipe_path() -> String {
-    r"\\.\pipe\cua-driver-uia".to_owned()
+    if crate::bundle::is_local_installation() {
+        r"\\.\pipe\cua-driver-local-uia".to_owned()
+    } else {
+        r"\\.\pipe\cua-driver-uia".to_owned()
+    }
 }
 
 /// Returns the platform default PID file path.
 pub fn default_pid_file_path() -> String {
+    let namespace = crate::bundle::state_namespace();
     #[cfg(target_os = "macos")]
     {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        format!("{home}/Library/Caches/cua-driver/cua-driver.pid")
+        format!("{home}/Library/Caches/{namespace}/{namespace}.pid")
     }
     #[cfg(target_os = "linux")]
     {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        format!("{home}/.cache/cua-driver/cua-driver.pid")
+        format!("{home}/.cache/{namespace}/{namespace}.pid")
     }
     #[cfg(target_os = "windows")]
     {
         let local = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| "C:/Temp".into());
-        format!("{local}/cua-driver/cua-driver.pid")
+        format!("{local}/{namespace}/{namespace}.pid")
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
@@ -1114,7 +1120,7 @@ fn maybe_spawn_uia_worker() {
         }
     };
     let uia = match current.parent() {
-        Some(dir) => dir.join("cua-driver-uia.exe"),
+        Some(dir) => dir.join(crate::bundle::uia_executable_name()),
         None => return,
     };
     if !uia.exists() {

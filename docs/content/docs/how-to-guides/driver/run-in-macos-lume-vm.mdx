@@ -144,14 +144,27 @@ with open('/tmp/cua-driver-permissions.json') as source:
 
 assert status['accessibility'] is True
 assert status['screen_recording'] is True
-assert status['screen_recording_capturable'] is True
+assert status['screen_recording_capturable'] is None
+assert status['direct_capture_status'] == 'not_checked'
 assert status['source']['attribution'] == 'driver-daemon'
 PY
 ```
 
-Exercise both the accessibility and capture paths:
+Run the prompt-capable live probe explicitly, then exercise both the
+accessibility and capture paths:
 
 ```bash
+/Users/lume/.local/bin/cua-driver call check_permissions '{"prompt":true}' \
+  > /tmp/cua-driver-permissions-live.json
+/usr/bin/python3 - <<'PY'
+import json
+
+with open('/tmp/cua-driver-permissions-live.json') as source:
+    status = json.load(source)['structuredContent']
+
+assert status['screen_recording_capturable'] is True
+assert status['direct_capture_status'] == 'ready'
+PY
 /Users/lume/.local/bin/cua-driver call get_accessibility_tree '{}'
 /Users/lume/.local/bin/cua-driver call set_config '{"capture_scope":"desktop"}'
 /Users/lume/.local/bin/cua-driver call get_desktop_state '{}' \

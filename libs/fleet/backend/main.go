@@ -50,7 +50,6 @@ import (
 	"cyclops-cs-backend/metrics"
 	"cyclops-cs-backend/middlewares"
 	"cyclops-cs-backend/telemetry"
-	"cyclops-cs-backend/templates"
 
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 	"github.com/trycua/cloud/pkg/featureflags"
@@ -129,17 +128,6 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	r.Handle("DELETE /api/user-keys/{id}",
 		withMiddlewares("/api/user-keys/{id}", []string{"id"}, c.DeleteUserKey))
 
-	// Per-user pool templates — Redis-backed saved pool configs the SPA
-	// reuses to seed new pools. SPA-auth, same pipeline as /api/keys.
-	// Always registered; the handlers reply 503 when no Redis is wired.
-	r.Handle("POST /api/pool-templates",
-		withMiddlewares("/api/pool-templates", nil, c.CreatePoolTemplate))
-	r.Handle("GET /api/pool-templates",
-		withMiddlewares("/api/pool-templates", nil, c.ListPoolTemplates))
-	r.Handle("GET /api/pool-templates/{name}",
-		withMiddlewares("/api/pool-templates/{name}", []string{"name"}, c.GetPoolTemplate))
-	r.Handle("DELETE /api/pool-templates/{name}",
-		withMiddlewares("/api/pool-templates/{name}", []string{"name"}, c.DeletePoolTemplate))
 
 	r.Handle("/api/gateway/{name}",
 		withMiddlewares("/api/gateway/{name}", []string{"name"}, c.Gateway))
@@ -169,25 +157,25 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	// Keep deprecated batch/label routes registered so callers get an explicit
 	// terminal status instead of an implicit 404 from the router.
 	r.Handle("POST /api/batch/{pool}/submit",
-		withMiddlewares("/api/batch/{pool}/submit", []string{"pool"}, c.DeprecatedBatchRoute))
+		withMiddlewares("/api/batch/{pool}/submit", []string{"pool"}, c.DeprecatedBatchSubmit))
 	r.Handle("POST /api/batch/{pool}/lanes",
-		withMiddlewares("/api/batch/{pool}/lanes", []string{"pool"}, c.DeprecatedBatchRoute))
+		withMiddlewares("/api/batch/{pool}/lanes", []string{"pool"}, c.DeprecatedBatchLanesCreate))
 	r.Handle("DELETE /api/batch/{pool}/lanes",
-		withMiddlewares("/api/batch/{pool}/lanes", []string{"pool"}, c.DeprecatedBatchRoute))
+		withMiddlewares("/api/batch/{pool}/lanes", []string{"pool"}, c.DeprecatedBatchLanesDelete))
 	r.Handle("GET /api/batch/{pool}/{id}/status",
-		withMiddlewares("/api/batch/{pool}/{id}/status", []string{"pool", "id"}, c.DeprecatedBatchRoute))
+		withMiddlewares("/api/batch/{pool}/{id}/status", []string{"pool", "id"}, c.DeprecatedBatchStatus))
 	r.Handle("GET /api/batch/{pool}/{id}/results",
-		withMiddlewares("/api/batch/{pool}/{id}/results", []string{"pool", "id"}, c.DeprecatedBatchRoute))
+		withMiddlewares("/api/batch/{pool}/{id}/results", []string{"pool", "id"}, c.DeprecatedBatchResults))
 	r.Handle("DELETE /api/batch/{pool}/{id}",
-		withMiddlewares("/api/batch/{pool}/{id}", []string{"pool", "id"}, c.DeprecatedBatchRoute))
+		withMiddlewares("/api/batch/{pool}/{id}", []string{"pool", "id"}, c.DeprecatedBatchDelete))
 	r.Handle("POST /api/label/{pool}/{label}/batch",
-		withMiddlewares("/api/label/{pool}/{label}/batch", []string{"pool", "label"}, c.DeprecatedBatchRoute))
+		withMiddlewares("/api/label/{pool}/{label}/batch", []string{"pool", "label"}, c.DeprecatedLabelBatch))
 	r.Handle("GET /api/label/{pool}/{label}/status",
-		withMiddlewares("/api/label/{pool}/{label}/status", []string{"pool", "label"}, c.DeprecatedBatchRoute))
+		withMiddlewares("/api/label/{pool}/{label}/status", []string{"pool", "label"}, c.DeprecatedLabelStatus))
 	r.Handle("GET /api/label/{pool}/{label}/results",
-		withMiddlewares("/api/label/{pool}/{label}/results", []string{"pool", "label"}, c.DeprecatedBatchRoute))
+		withMiddlewares("/api/label/{pool}/{label}/results", []string{"pool", "label"}, c.DeprecatedLabelResults))
 	r.Handle("DELETE /api/label/{pool}/{label}",
-		withMiddlewares("/api/label/{pool}/{label}", []string{"pool", "label"}, c.DeprecatedBatchRoute))
+		withMiddlewares("/api/label/{pool}/{label}", []string{"pool", "label"}, c.DeprecatedLabelDelete))
 
 	// Wrap the entire mux in the metrics middleware so every request
 	// (including /healthz and unmatched routes) is recorded. This must be
@@ -294,21 +282,10 @@ func run() error {
 		slog.Info("workload-oidc: disabled (KC_WORKLOAD_ADMIN_CLIENT_SECRET unset)")
 	}
 
-	// Redis-backed pool templates. A connection failure is non-fatal —
-	// the routes stay registered and reply 503 until Redis is reachable,
-	// mirroring how other optional surfaces degrade gracefully.
 	h := handlers.New(admin, cfg)
 	h.WorkloadAdmin = workloadAdmin
 	h.WorkloadAudience = cfg.Keycloak.WorkloadAudience
 	h.WorkloadTokenURL = cfg.Keycloak.WorkloadTokenURL
-	if store, err := templates.New(ctx, cfg.Templates.RedisURL); err != nil {
-		slog.Error("pool templates: init failed; /api/pool-templates will return 503", "err", err)
-	} else if store != nil {
-		h.Templates = store
-		slog.Info("pool templates: enabled")
-	} else {
-		slog.Info("pool templates: disabled (no Redis URL configured)")
-	}
 
 	router := setupRouter(h)
 

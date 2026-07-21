@@ -1,0 +1,136 @@
+---
+title: Troubleshoot stale macOS permissions
+description: Reset stale app-scoped TCC grants when Cua Driver reports missing permissions that appear enabled in System Settings.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This guide shows you how to repair stale macOS Transparency, Consent, and
+Control (TCC) grants for Cua Driver without resetting permissions for other
+apps.
+
+## When to use this guide
+
+Use this guide when **System Settings → Privacy & Security** shows CuaDriver as
+enabled, but the `check_permissions` MCP tool or `cua-driver diagnose` reports
+`accessibility: false` or `screen_recording: false`.
+
+The current Cua Driver bundle ID is `com.trycua.driver`. Older releases also
+shipped as `com.trycua.cuadriver` and `com.trycua.cuadriverrs`. A grant attached
+to an older bundle ID or signing identity does not authorize the current app.
+
+## Diagnose the installed app
+
+Run the read-only diagnostic before changing permissions:
+
+```bash
+cua-driver diagnose
+```
+
+Confirm that `/Applications/CuaDriver.app` exists and that the daemon probes
+disagree with System Settings. If the app is missing, [install Cua Driver](/how-to-guides/driver/install)
+before continuing.
+
+<Callout type="warn">
+  Sanitize `diagnose` output before sharing it. The report may contain usernames, local paths,
+  process IDs, and other details about the local installation.
+</Callout>
+
+## Stop Cua Driver and MCP clients
+
+Quit every MCP client configured to start Cua Driver, then stop the daemon:
+
+```bash
+cua-driver stop
+cua-driver status
+```
+
+Continue only when the status reports that the daemon is not running. Leaving
+a driver or MCP client running can relaunch the app and recreate TCC entries
+while you reset them.
+
+## Reset only Cua Driver's TCC grants
+
+Reset Accessibility, Screen Recording, and Automation for the current bundle
+ID:
+
+```bash
+tccutil reset Accessibility com.trycua.driver
+tccutil reset ScreenCapture com.trycua.driver
+tccutil reset AppleEvents com.trycua.driver
+```
+
+If this Mac previously ran an older Cua Driver release, also clear any entries
+for its historical bundle IDs:
+
+```bash
+tccutil reset Accessibility com.trycua.cuadriver
+tccutil reset ScreenCapture com.trycua.cuadriver
+tccutil reset AppleEvents com.trycua.cuadriver
+
+tccutil reset Accessibility com.trycua.cuadriverrs
+tccutil reset ScreenCapture com.trycua.cuadriverrs
+tccutil reset AppleEvents com.trycua.cuadriverrs
+```
+
+These commands affect only the named app and service. Do not run an unscoped
+TCC reset, and do not open or edit `TCC.db`.
+
+### If `tccutil` cannot find the current bundle ID
+
+If `tccutil` reports `No such bundle identifier` for `com.trycua.driver`,
+re-register the installed app with LaunchServices:
+
+```bash
+/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister \
+  -f /Applications/CuaDriver.app
+```
+
+Retry the three resets for `com.trycua.driver` after registration completes.
+
+A removed historical app may no longer be registered, so the historical bundle
+IDs can still produce `No such bundle identifier`. You can ignore that result:
+there is no installed historical bundle for `tccutil` to resolve. Do not create
+a temporary or synthetic app bundle to make an old identifier resolvable.
+
+## Relaunch and grant permissions again
+
+Use the permissions command to launch `/Applications/CuaDriver.app` through
+LaunchServices under its current bundle identity:
+
+```bash
+cua-driver permissions grant
+```
+
+In **System Settings → Privacy & Security**, enable CuaDriver under both
+**Accessibility** and **Screen Recording**. If macOS asks you to quit and reopen
+the app after granting Screen Recording, do so, then run the command above
+again. If CuaDriver is missing from **Screen & System Audio Recording**, click
+**+** and add `/Applications/CuaDriver.app` before enabling it. Automation
+consent is requested later when a driver action needs to control another app.
+
+## Verify the repaired grants
+
+Check the running daemon without opening another permission prompt:
+
+```bash
+cua-driver permissions status --json
+```
+
+The result should report `accessibility: true`, `screen_recording: true`, and
+`source.attribution: "driver-daemon"`. Because status is read-only, it should
+report `screen_recording_capturable: null` and
+`direct_capture_status: "not_checked"`. Run `cua-driver permissions grant` to
+request and verify direct ScreenCaptureKit access explicitly; do not use a
+read-only diagnostic as a prompt-capable probe.
+
+If either permission remains false, run `cua-driver diagnose` again and confirm
+that the reported executable and bundle are the installed
+`/Applications/CuaDriver.app`, not an older copy or a terminal-owned process.
+Remember to sanitize the report before sharing it.
+
+## Related guides
+
+- [macOS permissions reference](/reference/cua-driver/macos-permissions)
+- [Install Cua Driver](/how-to-guides/driver/install)
+- [Keep Cua Driver running](/how-to-guides/driver/keep-running)

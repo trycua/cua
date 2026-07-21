@@ -1,0 +1,7 @@
+f CyclopsSdk.modulemap
+f CyclopsSdk.swift
+f CyclopsSdkFFI.h
+f CyclopsSdkFFI.modulemap
+f CyclopsSdkSchema.swift
+f CyclopsSdkSchemaFFI.h
+f CyclopsSdkSchemaFFI.modulemap

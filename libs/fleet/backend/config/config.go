@@ -24,7 +24,6 @@ type Configuration struct {
 	Auth      AuthConfiguration
 	Keycloak  KeycloakConfiguration
 	Gateway   GatewayConfiguration
-	Templates TemplatesConfiguration
 	Metrics   MetricsConfiguration
 	Telemetry TelemetryConfiguration
 }
@@ -72,11 +71,6 @@ type GatewayConfiguration struct {
 	ClusterDomain string
 }
 
-// TemplatesConfiguration drives the per-user pool-template store
-// (/api/pool-templates). BATCH_REDIS_URL remains a compatibility fallback.
-type TemplatesConfiguration struct {
-	RedisURL string // POOL_TEMPLATES_REDIS_URL (falls back to BATCH_REDIS_URL)
-}
 
 type MetricsConfiguration struct {
 	Addr string // METRICS_ADDR — Prometheus listen addr
@@ -115,8 +109,6 @@ var specs = []flagSpec{
 	{"gateway.scheme", "orch-scheme", "ORCH_SCHEME", "http", "orchestrator scheme"},
 	{"gateway.port", "orch-port", "ORCH_PORT", "80", "orchestrator port"},
 	{"gateway.cluster-domain", "cluster-domain", "CLUSTER_DOMAIN", "svc.cluster.local", "in-cluster DNS domain"},
-	{"batch.redis-url", "batch-redis-url", "BATCH_REDIS_URL", "", "legacy pool-templates Redis URL fallback"},
-	{"templates.redis-url", "pool-templates-redis-url", "POOL_TEMPLATES_REDIS_URL", "", "pool-templates Redis URL (falls back to batch Redis)"},
 	{"metrics.addr", "metrics-addr", "METRICS_ADDR", ":9091", "Prometheus metrics listen address"},
 	{"telemetry.endpoint", "otel-endpoint", "OTEL_EXPORTER_OTLP_ENDPOINT", "https://otel.cua.ai", "OTLP HTTP traces endpoint"},
 	{"telemetry.protocol", "otel-protocol", "OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf", "OTLP exporter protocol"},
@@ -148,10 +140,6 @@ func LoadConfig() (*Configuration, error) {
 		issuer = realmPath
 	}
 
-	templatesRedis := viper.GetString("templates.redis-url")
-	if templatesRedis == "" {
-		templatesRedis = viper.GetString("batch.redis-url")
-	}
 
 	cfg := &Configuration{
 		WebServer: WebServerConfiguration{Addr: viper.GetString("webserver.addr")},
@@ -182,7 +170,6 @@ func LoadConfig() (*Configuration, error) {
 			Port:          viper.GetString("gateway.port"),
 			ClusterDomain: viper.GetString("gateway.cluster-domain"),
 		},
-		Templates: TemplatesConfiguration{RedisURL: templatesRedis},
 		Metrics:   MetricsConfiguration{Addr: viper.GetString("metrics.addr")},
 		Telemetry: TelemetryConfiguration{
 			Endpoint:         viper.GetString("telemetry.endpoint"),

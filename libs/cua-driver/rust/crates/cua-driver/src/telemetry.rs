@@ -56,6 +56,15 @@ const ENV_CLI_COMPLETION_CLIENT_KIND: &str = "CUA_DRIVER_CLI_TELEMETRY_CLIENT_KI
 const ENV_CLI_COMPLETION_EXIT_CODE: &str = "CUA_DRIVER_CLI_TELEMETRY_EXIT_CODE";
 const ENV_CLI_COMPLETION_DURATION_MS: &str = "CUA_DRIVER_CLI_TELEMETRY_DURATION_MS";
 const ENV_LIFECYCLE_WORKER: &str = "CUA_DRIVER_LIFECYCLE_TELEMETRY_WORKER";
+const ENV_UPDATE_EVENT_WORKER: &str = "CUA_DRIVER_UPDATE_TELEMETRY_WORKER";
+const ENV_UPDATE_EVENT_NAME: &str = "CUA_DRIVER_UPDATE_TELEMETRY_EVENT";
+const ENV_UPDATE_SOURCE: &str = "CUA_DRIVER_UPDATE_TELEMETRY_SOURCE";
+const ENV_UPDATE_OUTCOME: &str = "CUA_DRIVER_UPDATE_TELEMETRY_OUTCOME";
+const ENV_UPDATE_TARGET_VERSION: &str = "CUA_DRIVER_UPDATE_TELEMETRY_TARGET_VERSION";
+const ENV_UPDATE_CACHE_HIT: &str = "CUA_DRIVER_UPDATE_TELEMETRY_CACHE_HIT";
+const ENV_UPDATE_DAEMON_WAS_RUNNING: &str = "CUA_DRIVER_UPDATE_TELEMETRY_DAEMON_RUNNING";
+const ENV_UPDATE_FAILURE_CLASS: &str = "CUA_DRIVER_UPDATE_TELEMETRY_FAILURE_CLASS";
+const ENV_UPDATE_DURATION_MS: &str = "CUA_DRIVER_UPDATE_TELEMETRY_DURATION_MS";
 pub const ENV_INSTALL_CHANNEL: &str = "CUA_DRIVER_INSTALL_CHANNEL";
 pub const ENV_RELEASE_VERSION: &str = "CUA_DRIVER_RELEASE_VERSION";
 
@@ -72,6 +81,9 @@ pub mod event {
     pub const PERMISSIONS_GATE_STARTED: &str = "cua_driver_permissions_gate_started";
     pub const PERMISSIONS_GATE_DISMISSED: &str = "cua_driver_permissions_gate_dismissed";
     pub const PERMISSIONS_GATE_COMPLETED: &str = "cua_driver_permissions_gate_completed";
+    pub const UPDATE_CHECKED: &str = "cua_driver_update_checked";
+    pub const UPDATE_APPLY_STARTED: &str = "cua_driver_update_apply_started";
+    pub const UPDATE_APPLY_COMPLETED: &str = "cua_driver_update_apply_completed";
 }
 
 const INSPECTABLE_EVENTS: &[&str] = &[
@@ -87,7 +99,80 @@ const INSPECTABLE_EVENTS: &[&str] = &[
     event::PERMISSIONS_GATE_STARTED,
     event::PERMISSIONS_GATE_DISMISSED,
     event::PERMISSIONS_GATE_COMPLETED,
+    event::UPDATE_CHECKED,
+    event::UPDATE_APPLY_STARTED,
+    event::UPDATE_APPLY_COMPLETED,
 ];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateCheckSource {
+    Background,
+    Cli,
+    Mcp,
+}
+
+impl UpdateCheckSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Background => "background",
+            Self::Cli => "cli",
+            Self::Mcp => "mcp",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateCheckOutcome {
+    UpToDate,
+    Available,
+    Unavailable,
+}
+
+impl UpdateCheckOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::UpToDate => "up_to_date",
+            Self::Available => "available",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateApplyOutcome {
+    Installed,
+    AlreadyCurrent,
+    Failed,
+}
+
+impl UpdateApplyOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Installed => "installed",
+            Self::AlreadyCurrent => "already_current",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateFailureClass {
+    None,
+    CheckFailed,
+    InstallerExit,
+    InstallerLaunch,
+}
+
+impl UpdateFailureClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::CheckFailed => "check_failed",
+            Self::InstallerExit => "installer_exit",
+            Self::InstallerLaunch => "installer_launch",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Transport {
@@ -170,7 +255,9 @@ pub fn reset_id() -> Result<(), String> {
     let Some(home) = telemetry_home_dir() else {
         return Ok(());
     };
-    let legacy = if std::env::var_os(ENV_TELEMETRY_HOME).is_none() {
+    let legacy = if std::env::var_os(ENV_TELEMETRY_HOME).is_none()
+        && !crate::bundle::is_local_installation()
+    {
         home_root().map(|root| root.join(LEGACY_HOME_SUBDIRECTORY))
     } else {
         None
@@ -323,6 +410,23 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("panel_shown", Value::Bool(true)),
             ("dismissed", Value::Bool(false)),
             ("resolution", Value::String("granted".into())),
+            ("duration_bucket", Value::String("2s_9_999ms".into())),
+        ]),
+        event::UPDATE_CHECKED => bounded_properties(&[
+            ("source", Value::String("cli".into())),
+            ("outcome", Value::String("available".into())),
+            ("target_version", Value::String("1.2.3".into())),
+            ("cache_hit", Value::Bool(false)),
+        ]),
+        event::UPDATE_APPLY_STARTED => bounded_properties(&[
+            ("target_version", Value::String("1.2.3".into())),
+            ("daemon_was_running", Value::Bool(false)),
+        ]),
+        event::UPDATE_APPLY_COMPLETED => bounded_properties(&[
+            ("target_version", Value::String("1.2.3".into())),
+            ("outcome", Value::String("installed".into())),
+            ("failure_class", Value::String("none".into())),
+            ("daemon_was_running", Value::Bool(false)),
             ("duration_bucket", Value::String("2s_9_999ms".into())),
         ]),
         _ => Map::new(),
@@ -1352,6 +1456,203 @@ pub(crate) fn capture_bounded(
     spawn_payload(event_name, payload);
 }
 
+/// Record an explicit or freshness-bounded update check. A detached worker
+/// owns delivery because CLI checks are one-shot processes and must not wait
+/// on PostHog before returning to the user.
+pub(crate) fn capture_update_checked(
+    source: UpdateCheckSource,
+    outcome: UpdateCheckOutcome,
+    target_version: Option<&str>,
+    cache_hit: bool,
+) {
+    spawn_update_event_worker(
+        event::UPDATE_CHECKED,
+        Some(source.as_str()),
+        Some(outcome.as_str()),
+        target_version,
+        Some(cache_hit),
+        None,
+        None,
+        None,
+    );
+}
+
+pub(crate) fn capture_update_apply_started(target_version: &str, daemon_was_running: bool) {
+    spawn_update_event_worker(
+        event::UPDATE_APPLY_STARTED,
+        None,
+        None,
+        Some(target_version),
+        None,
+        Some(daemon_was_running),
+        None,
+        None,
+    );
+}
+
+pub(crate) fn capture_update_apply_completed(
+    target_version: Option<&str>,
+    outcome: UpdateApplyOutcome,
+    failure_class: UpdateFailureClass,
+    daemon_was_running: bool,
+    elapsed: Duration,
+) {
+    spawn_update_event_worker(
+        event::UPDATE_APPLY_COMPLETED,
+        None,
+        Some(outcome.as_str()),
+        target_version,
+        None,
+        Some(daemon_was_running),
+        Some(failure_class.as_str()),
+        Some(elapsed),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_update_event_worker(
+    event_name: &'static str,
+    source: Option<&str>,
+    outcome: Option<&str>,
+    target_version: Option<&str>,
+    cache_hit: Option<bool>,
+    daemon_was_running: Option<bool>,
+    failure_class: Option<&str>,
+    elapsed: Option<Duration>,
+) {
+    if !is_enabled() {
+        return;
+    }
+    let Ok(executable) = std::env::current_exe() else {
+        return;
+    };
+    let mut worker = std::process::Command::new(executable);
+    worker
+        .env(ENV_UPDATE_EVENT_WORKER, "1")
+        .env(ENV_UPDATE_EVENT_NAME, event_name)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(source) = source {
+        worker.env(ENV_UPDATE_SOURCE, source);
+    }
+    if let Some(outcome) = outcome {
+        worker.env(ENV_UPDATE_OUTCOME, outcome);
+    }
+    if let Some(version) = target_version.and_then(strict_release_version) {
+        worker.env(ENV_UPDATE_TARGET_VERSION, version);
+    }
+    if let Some(cache_hit) = cache_hit {
+        worker.env(ENV_UPDATE_CACHE_HIT, if cache_hit { "1" } else { "0" });
+    }
+    if let Some(daemon_was_running) = daemon_was_running {
+        worker.env(
+            ENV_UPDATE_DAEMON_WAS_RUNNING,
+            if daemon_was_running { "1" } else { "0" },
+        );
+    }
+    if let Some(failure_class) = failure_class {
+        worker.env(ENV_UPDATE_FAILURE_CLASS, failure_class);
+    }
+    if let Some(elapsed) = elapsed {
+        worker.env(ENV_UPDATE_DURATION_MS, elapsed.as_millis().to_string());
+    }
+    let _ = worker.spawn();
+}
+
+/// Run the hidden update-event delivery worker before CLI parsing. Every
+/// environment value is revalidated into a closed enum or strict SemVer before
+/// it can enter a payload.
+pub(crate) fn run_update_event_worker_if_requested() -> bool {
+    if !parse_env_bool(ENV_UPDATE_EVENT_WORKER).unwrap_or(false) {
+        return false;
+    }
+    let event_name = std::env::var(ENV_UPDATE_EVENT_NAME).unwrap_or_default();
+    let target_version = std::env::var(ENV_UPDATE_TARGET_VERSION)
+        .ok()
+        .and_then(|value| strict_release_version(&value))
+        .unwrap_or_else(|| "unknown".into());
+    let properties = match event_name.as_str() {
+        event::UPDATE_CHECKED => {
+            let source = match std::env::var(ENV_UPDATE_SOURCE).as_deref() {
+                Ok("background") => "background",
+                Ok("cli") => "cli",
+                Ok("mcp") => "mcp",
+                _ => return true,
+            };
+            let outcome = match std::env::var(ENV_UPDATE_OUTCOME).as_deref() {
+                Ok("up_to_date") => "up_to_date",
+                Ok("available") => "available",
+                Ok("unavailable") => "unavailable",
+                _ => return true,
+            };
+            bounded_properties(&[
+                ("source", Value::String(source.into())),
+                ("outcome", Value::String(outcome.into())),
+                ("target_version", Value::String(target_version)),
+                (
+                    "cache_hit",
+                    Value::Bool(parse_env_bool(ENV_UPDATE_CACHE_HIT).unwrap_or(false)),
+                ),
+            ])
+        }
+        event::UPDATE_APPLY_STARTED => bounded_properties(&[
+            ("target_version", Value::String(target_version)),
+            (
+                "daemon_was_running",
+                Value::Bool(parse_env_bool(ENV_UPDATE_DAEMON_WAS_RUNNING).unwrap_or(false)),
+            ),
+        ]),
+        event::UPDATE_APPLY_COMPLETED => {
+            let outcome = match std::env::var(ENV_UPDATE_OUTCOME).as_deref() {
+                Ok("installed") => "installed",
+                Ok("already_current") => "already_current",
+                Ok("failed") => "failed",
+                _ => return true,
+            };
+            let failure_class = match std::env::var(ENV_UPDATE_FAILURE_CLASS).as_deref() {
+                Ok("none") => "none",
+                Ok("check_failed") => "check_failed",
+                Ok("installer_exit") => "installer_exit",
+                Ok("installer_launch") => "installer_launch",
+                _ => return true,
+            };
+            let elapsed = std::env::var(ENV_UPDATE_DURATION_MS)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .map(Duration::from_millis)
+                .unwrap_or_default();
+            bounded_properties(&[
+                ("target_version", Value::String(target_version)),
+                ("outcome", Value::String(outcome.into())),
+                ("failure_class", Value::String(failure_class.into())),
+                (
+                    "daemon_was_running",
+                    Value::Bool(parse_env_bool(ENV_UPDATE_DAEMON_WAS_RUNNING).unwrap_or(false)),
+                ),
+                (
+                    "duration_bucket",
+                    Value::String(duration_bucket(elapsed).into()),
+                ),
+            ])
+        }
+        _ => return true,
+    };
+    if !is_enabled() {
+        return true;
+    }
+    let Some(identity) = get_or_create_install_id() else {
+        return true;
+    };
+    let payload = build_payload(&event_name, &properties, &identity, Transport::Cli);
+    if let Err(error) =
+        post_to_posthog_with_timeout(&payload, Duration::from_secs(POSTHOG_TIMEOUT_SECS))
+    {
+        debug_log(format_args!("{event_name} failed: {error}"));
+    }
+    true
+}
+
 /// Record a finite CLI command only after its outcome is known. This is
 /// synchronous with a short timeout because one-shot processes may exit before
 /// a detached request is delivered.
@@ -1771,7 +2072,7 @@ fn telemetry_home_dir() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os(ENV_TELEMETRY_HOME) {
         return Some(PathBuf::from(path));
     }
-    home_root().map(|home| home.join(HOME_SUBDIRECTORY))
+    home_root().map(|home| home.join(crate::bundle::user_home_subdirectory()))
 }
 
 fn home_root() -> Option<PathBuf> {
@@ -1882,7 +2183,7 @@ fn try_lifecycle_lock(home: &Path) -> Option<File> {
 }
 
 fn migrate_legacy_telemetry_home() {
-    if std::env::var_os(ENV_TELEMETRY_HOME).is_some() {
+    if std::env::var_os(ENV_TELEMETRY_HOME).is_some() || crate::bundle::is_local_installation() {
         return;
     }
     let Some(root) = home_root() else {
@@ -2806,6 +3107,45 @@ mod tests {
         }
         let serve_start = inspect_event(event::SERVE_START_LEGACY).unwrap();
         assert_eq!(serve_start["properties"]["transport"], "daemon");
+    }
+
+    #[test]
+    fn update_events_expose_only_bounded_funnel_properties() {
+        let checked = inspect_event(event::UPDATE_CHECKED).unwrap();
+        assert_eq!(checked["properties"]["source"], "cli");
+        assert_eq!(checked["properties"]["outcome"], "available");
+        assert_eq!(checked["properties"]["target_version"], "1.2.3");
+        assert_eq!(checked["properties"]["cache_hit"], false);
+
+        let started = inspect_event(event::UPDATE_APPLY_STARTED).unwrap();
+        assert_eq!(started["properties"]["target_version"], "1.2.3");
+        assert_eq!(started["properties"]["daemon_was_running"], false);
+
+        let completed = inspect_event(event::UPDATE_APPLY_COMPLETED).unwrap();
+        assert_eq!(completed["properties"]["outcome"], "installed");
+        assert_eq!(completed["properties"]["failure_class"], "none");
+        assert_eq!(completed["properties"]["duration_bucket"], "2s_9_999ms");
+
+        for payload in [checked, started, completed] {
+            let serialized = serde_json::to_string(&payload)
+                .unwrap()
+                .to_ascii_lowercase();
+            for forbidden in [
+                "raw_error",
+                "exit_code",
+                "install_command",
+                "release_notes_url",
+                "file_path",
+                "arguments",
+                "prompt",
+                "$ip",
+            ] {
+                assert!(
+                    !serialized.contains(forbidden),
+                    "update payload contains {forbidden}: {serialized}"
+                );
+            }
+        }
     }
 
     #[test]

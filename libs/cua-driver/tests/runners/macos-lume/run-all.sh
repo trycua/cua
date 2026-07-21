@@ -139,14 +139,14 @@ echo "[INSTALL] Building and installing ${SOURCE_SHA} with the golden signing id
 bash "${DRIVER_ROOT}/scripts/install-local.sh" --release --autostart \
   2>&1 | tee "${ARTIFACT_DIR}/install-local.log"
 
-codesign -d -r- /Applications/CuaDriver.app \
+codesign -d -r- /Applications/CuaDriverLocal.app \
   > "${ARTIFACT_DIR}/codesign-requirement.txt" 2>&1
 if ! grep -Fq "certificate leaf" "${ARTIFACT_DIR}/codesign-requirement.txt"; then
-  echo "CuaDriver.app is not signed with the golden image's stable certificate identity" >&2
+  echo "CuaDriverLocal.app is not signed with the golden image's stable certificate identity" >&2
   exit 1
 fi
 
-INSTALLED_BIN="${HOME}/.local/bin/cua-driver"
+INSTALLED_BIN="${HOME}/.local/bin/cua-driver-local"
 PERMISSIONS_FILE="${ARTIFACT_DIR}/permissions.json"
 PERMISSIONS_READY=0
 for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -154,7 +154,8 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
       && jq -e '
         .accessibility == true
         and .screen_recording == true
-        and .screen_recording_capturable == true
+        and .screen_recording_capturable == null
+        and .direct_capture_status == "not_checked"
         and .source.attribution == "driver-daemon"
       ' "${PERMISSIONS_FILE}" >/dev/null; then
     PERMISSIONS_READY=1
@@ -168,9 +169,21 @@ if [[ "${PERMISSIONS_READY}" != 1 ]]; then
   exit 1
 fi
 
-echo "[AUTOMATION] Verifying the installed CuaDriver can query System Events"
+LIVE_PERMISSIONS_FILE="${ARTIFACT_DIR}/permissions-live-capture.json"
+if ! "${INSTALLED_BIN}" call check_permissions '{"prompt":true}' \
+    > "${LIVE_PERMISSIONS_FILE}" \
+    || ! jq -e '
+      .structuredContent.screen_recording_capturable == true
+      and .structuredContent.direct_capture_status == "ready"
+    ' "${LIVE_PERMISSIONS_FILE}" >/dev/null; then
+  cat "${LIVE_PERMISSIONS_FILE}" >&2 || true
+  echo "The cloned golden image does not have usable direct ScreenCaptureKit consent" >&2
+  exit 1
+fi
+
+echo "[APP DISCOVERY] Verifying the installed CuaDriver can enumerate apps"
 if ! "${INSTALLED_BIN}" list_apps '{}' > "${ARTIFACT_DIR}/driver-list-apps.json"; then
-  echo "CuaDriver cannot control System Events; rebuild the seed and grant the Automation prompt" >&2
+  echo "CuaDriver cannot enumerate applications" >&2
   exit 2
 fi
 

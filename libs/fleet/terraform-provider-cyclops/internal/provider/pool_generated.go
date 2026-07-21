@@ -60,8 +60,8 @@ func poolResourceSchema() schema.Schema {
 			"memory":               schema.StringAttribute{Required: true},
 			"container_disk_image": schema.StringAttribute{Required: true},
 			"image_pull_secret":    schema.StringAttribute{Optional: true, Computed: true, Description: "Kubernetes image pull secret. Defaults to ecr-credentials."},
-			"runtime":              schema.StringAttribute{Optional: true, Computed: true, Description: "Pool backend. \"kubevirt\" (default) provisions a KubeVirt VM. \"macos\" provisions a macOS sandbox (ADMIN-ONLY — the cyclops-cs backend rejects macos pool writes from non-admins; the SPA hides the option). Flows verbatim through the compat shim into the OSGymSandboxTemplate vmTemplate, where macos_backend dispatches on it.", Validators: []validator.String{stringvalidator.OneOf("gvisor", "kubevirt", "macos")}},
-			"firmware":             schema.StringAttribute{Optional: true, Computed: true, Description: "VM firmware. Use \"efi\" for GPT/UEFI-only guest images (e.g. the dockur-built Windows desktop-workspace); \"bios\" is KubeVirt's default and what the Linux workspace images boot with.", Validators: []validator.String{stringvalidator.OneOf("bios", "efi")}},
+			"runtime":              schema.StringAttribute{Optional: true, Computed: true, Description: "Pool backend. \"kubevirt\" (default) provisions a KubeVirt\nVM. \"macos\" provisions a macOS sandbox (ADMIN-ONLY\n— the cyclops-cs backend rejects macos pool writes from\nnon-admins; the SPA hides the option). Flows verbatim\nthrough the compat shim into the OSGymSandboxTemplate\nvmTemplate, where macos_backend dispatches on it.", Validators: []validator.String{stringvalidator.OneOf("gvisor", "kubevirt", "macos")}},
+			"firmware":             schema.StringAttribute{Optional: true, Computed: true, Description: "VM firmware. Use \"efi\" for GPT/UEFI-only guest images\n(e.g. the dockur-built Windows desktop-workspace);\n\"bios\" is KubeVirt's default and what the Linux\nworkspace images boot with.", Validators: []validator.String{stringvalidator.OneOf("bios", "efi")}},
 			"readiness_probe_json": schema.StringAttribute{Optional: true, CustomType: jsontypes.NormalizedType{}, Description: "JSON object for the VMI readinessProbe."},
 			"liveness_probe_json":  schema.StringAttribute{Optional: true, CustomType: jsontypes.NormalizedType{}, Description: "JSON object for the VMI livenessProbe."},
 			"phase":                schema.StringAttribute{Computed: true},
@@ -76,9 +76,9 @@ func poolResourceSchema() schema.Schema {
 				"protocol":    schema.StringAttribute{Optional: true, Computed: true, Validators: []validator.String{stringvalidator.OneOf("TCP", "UDP")}},
 			}}},
 			"autoscaling": schema.SingleNestedBlock{Attributes: map[string]schema.Attribute{
-				"min_pool_size":     schema.Int64Attribute{Optional: true, Computed: true, Description: "Durable warm floor (KEDA minReplicaCount).", Validators: []validator.Int64{int64validator.AtLeast(0)}},
-				"initial_pool_size": schema.Int64Attribute{Optional: true, Computed: true, Description: "One-time warm head-start seeded on create.", Validators: []validator.Int64{int64validator.AtLeast(0)}},
-				"max_pool_size":     schema.Int64Attribute{Required: true, Description: "Hard ceiling (KEDA maxReplicaCount).", Validators: []validator.Int64{int64validator.AtLeast(1)}},
+				"min_pool_size":     schema.Int64Attribute{Optional: true, Computed: true, Description: "ScaledObject minReplicaCount — the durable warm\nfloor kept while the extension is enabled. 0 lets\nthe pool scale to zero when there are no claims.", Validators: []validator.Int64{int64validator.AtLeast(0)}},
+				"initial_pool_size": schema.Int64Attribute{Optional: true, Computed: true, Description: "One-time warm head-start: the pool-operator seeds\nspec.replicas to this when the pool is created so\nthe first claims bind without a cold start. KEDA\nthen owns spec.replicas; the value decays toward\nthe live claim demand (floored at minPoolSize)\nonce KEDA begins polling.", Validators: []validator.Int64{int64validator.AtLeast(0)}},
+				"max_pool_size":     schema.Int64Attribute{Required: true, Description: "ScaledObject maxReplicaCount — hard ceiling.", Validators: []validator.Int64{int64validator.AtLeast(1)}},
 			}},
 		},
 	}

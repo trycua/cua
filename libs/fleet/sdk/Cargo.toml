@@ -1,0 +1,25 @@
+[package]
+name = "cyclops-sdk"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[dependencies]
+async-trait.workspace = true
+cyclops-sdk-schema = { path = "../sdk-schema" }
+futures-timer.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+uniffi.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+camino = "1.0"
+tokio.workspace = true
+uniffi = { workspace = true, features = ["bindgen"] }

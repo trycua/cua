@@ -34,6 +34,22 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("os: ubuntu-24.04-arm", workflow)
         self.assertIn("arch: arm64", workflow)
 
+    def test_macos_bundle_explains_screen_capture_and_automation_prompts(self) -> None:
+        plist = self.read(
+            "libs/cua-driver/rust/scripts/CuaDriverBundle/Contents/Info.plist"
+        )
+
+        self.assertIn("NSScreenCaptureUsageDescription", plist)
+        self.assertIn("NSAppleEventsUsageDescription", plist)
+        self.assertNotIn("NSMicrophoneUsageDescription", plist)
+
+        cli = self.read("libs/cua-driver/rust/crates/cua-driver/src/cli.rs")
+        self.assertIn("missing from Screen & System Audio Recording", cli)
+        self.assertIn("add {app_path}", cli)
+
+        limits = self.read("docs/content/docs/reference/cua-driver/limits.mdx")
+        self.assertIn("without this grant it returns the tree only (no PNG)", limits)
+
     def test_release_please_owns_driver_and_lume(self) -> None:
         config = self.read("release-please-config.json")
         workflow = self.read(".github/workflows/release-please.yml")
@@ -166,23 +182,17 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('"path": "scripts/install.ps1"', config)
         self.assertIn('"path": "rust/Skills/cua-driver/SKILL.md"', config)
 
-    def test_installers_preserve_legacy_telemetry_state_before_cleanup(self) -> None:
-        for relative_path in (
-            "libs/cua-driver/scripts/_install-rust.sh",
-            "libs/cua-driver/scripts/_install-local-rust.sh",
-        ):
-            installer = self.read(relative_path)
-            cleanup = installer.index('rm -rf "$LEGACY_HOME_DIR"')
-            self.assertLess(
-                installer.index("for telemetry_file in .telemetry_id .installation_recorded"),
-                cleanup,
-                relative_path,
-            )
-            self.assertLess(
-                installer.index('cp -p "$LEGACY_HOME_DIR/$telemetry_file"'),
-                cleanup,
-                relative_path,
-            )
+    def test_release_installers_preserve_legacy_telemetry_state_before_cleanup(self) -> None:
+        installer = self.read("libs/cua-driver/scripts/_install-rust.sh")
+        cleanup = installer.index('rm -rf "$LEGACY_HOME_DIR"')
+        self.assertLess(
+            installer.index("for telemetry_file in .telemetry_id .installation_recorded"),
+            cleanup,
+        )
+        self.assertLess(
+            installer.index('cp -p "$LEGACY_HOME_DIR/$telemetry_file"'),
+            cleanup,
+        )
 
         powershell = self.read("libs/cua-driver/scripts/install.ps1")
         cleanup = powershell.index("Remove-Item -LiteralPath $LegacyHomeDir -Recurse -Force")
@@ -196,6 +206,26 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             powershell.index("Copy-Item -LiteralPath $legacyTelemetryPath"),
             cleanup,
         )
+
+    def test_local_installer_does_not_clean_release_or_legacy_homes(self) -> None:
+        installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")
+
+        self.assertIn(
+            'HOME_DIR="${CUA_DRIVER_LOCAL_HOME:-$HOME/.cua-driver-local}"',
+            installer,
+        )
+        self.assertNotIn("LEGACY_HOME_DIR", installer)
+        self.assertNotIn(".cua-driver-rs", installer)
+        self.assertNotIn('rm -rf "$HOME/.cua-driver"', installer)
+
+    def test_local_install_hints_name_the_local_permission_identity(self) -> None:
+        installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")
+        shared_hints = self.read("libs/cua-driver/scripts/post-install-hints.txt")
+
+        self.assertIn('permission prompts say \\"Cua Driver Local\\"', installer)
+        self.assertNotIn('permission prompts say \\"Cua Driver\\"', installer)
+        self.assertIn("launches the installed", shared_hints)
+        self.assertNotIn("launches CuaDriver", shared_hints)
 
     def test_local_macos_signing_uses_an_unambiguous_identity_hash(self) -> None:
         installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")

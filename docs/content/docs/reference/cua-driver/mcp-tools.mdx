@@ -682,10 +682,11 @@ All parameters are optional; omit any you do not want to change.
 
 Report TCC permission status for Accessibility and Screen Recording. By default also raises the system permission dialogs for any missing grants — Apple's request APIs are no-ops when the grant is already active, so this is safe to call repeatedly. Pass &#123;"prompt": false&#125; for a purely read-only status check.
 
-Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit probe when `prompt` is true; null on read-only calls), `direct_capture_status` (`ready`, `unavailable`, `blocked_by_screen_recording`, or `not_checked`), and `source` (which TCC identity the booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). macOS attributes grants to the responsible process, so a standalone call from a terminal reports the terminal's grants, not the driver's. The prompt-capable ScreenCaptureKit probe never runs when `prompt` is false.
+Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit probe when `prompt` is true; null on read-only calls), `direct_capture_status` (`ready`, `unavailable`, `blocked_by_screen_recording`, or `not_checked`), and `source` (which TCC identity the booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). macOS attributes grants to the responsible process, so a standalone call from a terminal reports the terminal's grants, not the driver's. The prompt-capable ScreenCaptureKit probe never runs when `prompt` is false. Pass `probe_direct_capture:false` with `prompt:true` to register/request only the two required TCC grants before separately explaining Tahoe's direct-capture consent.
 
 **Arguments:**
 
+- `probe_direct_capture` (boolean, optional): When prompting and Screen Recording is granted, also run the live ScreenCaptureKit probe that may raise Tahoe's direct-capture consent. Default true. Set false for a staged Accessibility/Screen Recording request.
 - `prompt` (boolean, optional): Raise the system permission prompts for missing grants. Default true.
 
 ### `health_report`

@@ -2445,6 +2445,22 @@ fn permission_grant_needs_direct_capture(structured: &serde_json::Value) -> bool
         && !permission_flag(structured, "screen_recording_capturable")
 }
 
+fn permission_check_request(
+    prompt: bool,
+    probe_direct_capture: bool,
+) -> crate::serve::DaemonRequest {
+    crate::serve::DaemonRequest {
+        method: "call".into(),
+        name: Some("check_permissions".into()),
+        args: Some(serde_json::json!({
+            "prompt": prompt,
+            "probe_direct_capture": probe_direct_capture,
+        })),
+        session_id: None,
+        observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+    }
+}
+
 /// Launch CuaDriver via LaunchServices so the permission prompt attributes to
 /// com.trycua.driver, wait (user-paced) for the daemon to come up — its socket
 /// only appears once the permissions gate passes, i.e. the grant was given —
@@ -2457,8 +2473,13 @@ fn run_permissions_grant() {
         let app_path = crate::bundle::app_bundle_path();
         let bundle_id = crate::bundle::bundle_id();
         let socket = crate::serve::default_socket_path();
-        if crate::serve::is_daemon_listening(&socket) {
+        let daemon_already_running = crate::serve::is_daemon_listening(&socket);
+        if daemon_already_running {
             println!("{app_name} daemon already running — checking its permissions…");
+            println!(
+                "Requesting any missing Accessibility and Screen Recording grants now. \
+                 macOS may show a prompt or add {app_name} to System Settings."
+            );
         } else {
             println!("Launching {app_name} to request permissions.");
             println!(
@@ -2487,17 +2508,22 @@ fn run_permissions_grant() {
         // and only a fresh process image sees a later grant. During each
         // restart the socket briefly disappears, so tolerate transient
         // connection failures rather than bailing on the first one.
-        let req = crate::serve::DaemonRequest {
-            method: "call".into(),
-            name: Some("check_permissions".into()),
-            args: Some(serde_json::json!({ "prompt": false })),
-            session_id: None,
-            observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
-        };
+        let req = permission_check_request(false, false);
+        // A daemon that is already inside the permission gate may be a
+        // prompt-suppressed re-exec. Merely polling it cannot register a
+        // missing Screen Recording row. Re-raise the two required TCC requests
+        // through the daemon identity, but deliberately defer Tahoe's separate
+        // direct-capture probe until after the explanation below.
+        let prompt_req = permission_check_request(true, false);
         let poll_deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
         let mut ax = false;
         let mut sr = false;
+        let mut required_prompts_requested = !daemon_already_running;
         loop {
+            if !required_prompts_requested {
+                required_prompts_requested = crate::serve::send_request(&socket, &prompt_req)
+                    .is_ok_and(|response| response.ok);
+            }
             if let Some(structured) = crate::serve::send_request(&socket, &req)
                 .ok()
                 .filter(|r| r.ok)
@@ -2548,13 +2574,7 @@ fn run_permissions_grant() {
         );
         println!("Choose Allow to request and verify direct capture now…");
 
-        let direct_req = crate::serve::DaemonRequest {
-            method: "call".into(),
-            name: Some("check_permissions".into()),
-            args: Some(serde_json::json!({ "prompt": true })),
-            session_id: None,
-            observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
-        };
+        let direct_req = permission_check_request(true, true);
         let direct_deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
         let mut direct_status = None;
         loop {
@@ -3649,6 +3669,24 @@ mod tests {
         });
 
         assert!(!permission_grant_is_ready(&incomplete));
+    }
+
+    #[test]
+    fn permission_grant_stages_required_prompts_before_direct_capture() {
+        let staged = permission_check_request(true, false);
+        let staged_args = staged.args.expect("staged request args");
+        assert_eq!(staged_args.get("prompt"), Some(&serde_json::json!(true)));
+        assert_eq!(
+            staged_args.get("probe_direct_capture"),
+            Some(&serde_json::json!(false))
+        );
+
+        let direct = permission_check_request(true, true);
+        let direct_args = direct.args.expect("direct request args");
+        assert_eq!(
+            direct_args.get("probe_direct_capture"),
+            Some(&serde_json::json!(true))
+        );
     }
 
     #[test]

@@ -31,7 +31,7 @@ struct Run: AsyncParsableCommand {
 
     @Option(
         name: .customLong("log-file"),
-        help: "Log path for --detach (default: ~/Library/Logs/lume/<vm>.log)"
+        help: "Log path for --detach (default: ~/Library/Logs/lume/VM_NAME.log)"
     )
     var logFile: String?
 

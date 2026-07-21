@@ -65,9 +65,16 @@ Closing the native window only hides it; it does not stop the guest. Reopen it
 from Lume's Dock icon, **Window → Show VM Window**, or another `lume attach`
 command. The older `--no-display` flag remains an alias for `--display none`.
 
-Drop files or folders from Finder onto the native viewer to copy them over SSH
-to the `lume` user's guest Desktop. SSH must be available, and Lume refuses to
-overwrite an item with the same name.
+### Copy files into a native guest
+
+Drop one or more files or folders from Finder onto the native VM screen. Lume
+shows the transfer status while recursively copying the items over SSH to
+`/Users/lume/Desktop`.
+
+File drop is available only in the native viewer and transfers from host to
+guest. SSH for the default `lume` guest account must be available. Lume rejects
+the entire drop rather than overwriting an existing Desktop item; items in the
+same drop must also have distinct names.
 
 Gracefully restart or shut down a guest over SSH:
 
@@ -95,9 +102,11 @@ lume run macos-tahoe --shared-dir ~/Projects
 ```
 
 The directory appears in the guest at `/Volumes/My Shared Files`. In the native
-viewer, **Share Folder** can also add a directory while the guest is running;
-folders added from the toolbar last for that run only. Use a read-only mount
-when the guest only needs to read the files:
+viewer, **Share Folder** can also add a directory while the guest is running,
+including the first folder added to a VM that started without shared folders;
+no guest restart or remount is needed. Folders added from the toolbar last for
+that run only. Use a read-only mount when the guest only needs to read the
+files:
 
 ```bash
 lume run macos-tahoe --shared-dir ~/Projects:ro

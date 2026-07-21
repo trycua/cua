@@ -1,11 +1,67 @@
-"""Python wrapper for cua-driver - cross-platform MCP server.
+"""Python SDK and binary wrapper for the cross-platform cua-driver MCP server.
 
-This package provides a thin Python wrapper around the cua-driver Rust binary,
-enabling pip-installable access to the MCP server for computer-use automation.
+The package bundles the native Rust binary and provides synchronous and async
+clients for its MCP stdio protocol.
 """
 
 __version__ = "0.10.0"  # x-release-please-version
 
-from .wrapper import run_cua_driver, get_binary_path
+from ._generated import (
+    CONTRACT_VERSION,
+    MCP_PROTOCOL_VERSION,
+    ClickArgs,
+    DragArgs,
+    EndSessionArgs,
+    EscalateSessionArgs,
+    GetCursorPositionArgs,
+    GetDesktopStateArgs,
+    GetScreenSizeArgs,
+    GetSessionStateArgs,
+    HotkeyArgs,
+    MoveCursorArgs,
+    PressKeyArgs,
+    ScrollArgs,
+    StartSessionArgs,
+    TypeTextArgs,
+)
+from .client import AsyncCuaDriverClient, CuaDriverClient
+from .result import ImageContent, ToolResult
+from .transport import (
+    AsyncStdioMcpTransport,
+    AsyncTransport,
+    McpResponseError,
+    StdioMcpTransport,
+    Transport,
+)
+from .wrapper import get_binary_path, run_cua_driver
 
-__all__ = ["run_cua_driver", "get_binary_path", "__version__"]
+__all__ = [
+    "AsyncCuaDriverClient",
+    "AsyncStdioMcpTransport",
+    "AsyncTransport",
+    "ClickArgs",
+    "CONTRACT_VERSION",
+    "CuaDriverClient",
+    "DragArgs",
+    "EndSessionArgs",
+    "EscalateSessionArgs",
+    "GetCursorPositionArgs",
+    "GetDesktopStateArgs",
+    "GetScreenSizeArgs",
+    "GetSessionStateArgs",
+    "HotkeyArgs",
+    "ImageContent",
+    "MCP_PROTOCOL_VERSION",
+    "McpResponseError",
+    "MoveCursorArgs",
+    "PressKeyArgs",
+    "ScrollArgs",
+    "StartSessionArgs",
+    "StdioMcpTransport",
+    "ToolResult",
+    "Transport",
+    "TypeTextArgs",
+    "__version__",
+    "get_binary_path",
+    "run_cua_driver",
+]

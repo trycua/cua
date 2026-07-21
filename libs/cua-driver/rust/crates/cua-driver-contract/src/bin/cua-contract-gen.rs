@@ -54,7 +54,7 @@ fn run() -> Result<(), String> {
     }
     if matches!(target, "all" | "clients") {
         files.push(GeneratedFile {
-            path: root.join("clients/python/src/cua_driver_client/_generated.py"),
+            path: root.join("python/src/cua_driver/_generated.py"),
             contents: generate_python(&contract)?,
         });
         files.push(GeneratedFile {
@@ -118,7 +118,7 @@ fn apply_plan(root: &Path, files: Vec<GeneratedFile>, check: bool) -> Result<(),
 }
 
 fn client_owner(root: &Path, path: &Path) -> Option<PathBuf> {
-    [root.join("clients/python"), root.join("clients/typescript")]
+    [root.join("python"), root.join("clients/typescript")]
         .into_iter()
         .find(|candidate| path.starts_with(candidate))
 }

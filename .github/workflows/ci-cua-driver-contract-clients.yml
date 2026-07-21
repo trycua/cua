@@ -5,6 +5,7 @@ on:
     paths:
       - "libs/cua-driver/contract/**"
       - "libs/cua-driver/clients/**"
+      - "libs/cua-driver/python/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
       - "libs/cua-driver/rust/crates/cua-driver-contract/**"
@@ -14,6 +15,7 @@ on:
     paths:
       - "libs/cua-driver/contract/**"
       - "libs/cua-driver/clients/**"
+      - "libs/cua-driver/python/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
       - "libs/cua-driver/rust/crates/cua-driver-contract/**"
@@ -60,8 +62,8 @@ jobs:
         run: cargo test --locked -p cua-driver-core --test contract_parity
 
       - name: Test Python reference client
-        working-directory: libs/cua-driver/clients/python
-        run: PYTHONPATH=src python -m unittest discover -s tests -v
+        working-directory: libs/cua-driver/python
+        run: PYTHONPATH=src python -m unittest discover -s tests -p 'test_client.py' -v
 
       - name: Install TypeScript reference client dependencies
         working-directory: libs/cua-driver/clients/typescript

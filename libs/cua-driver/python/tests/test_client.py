@@ -5,8 +5,9 @@ import sys
 import unittest
 from pathlib import Path
 from typing import Any, Mapping
+from unittest.mock import patch
 
-from cua_driver_client import (
+from cua_driver import (
     AsyncCuaDriverClient,
     AsyncStdioMcpTransport,
     CuaDriverClient,
@@ -18,7 +19,7 @@ from cua_driver_client import (
 )
 
 
-FIXTURES = Path(__file__).parents[3] / "contract" / "fixtures"
+FIXTURES = Path(__file__).parents[2] / "contract" / "fixtures"
 MCP_FIXTURE = Path(__file__).with_name("mcp_fixture.py")
 
 
@@ -40,6 +41,15 @@ def fixture(name: str) -> Mapping[str, Any]:
 
 
 class ClientTests(unittest.TestCase):
+    def test_default_stdio_uses_bundled_binary(self) -> None:
+        binary = Path("/tmp/cua-driver-test-binary")
+        with patch("cua_driver.client.get_binary_path", return_value=binary):
+            client = CuaDriverClient.stdio()
+        try:
+            self.assertEqual(client._transport._command, (str(binary), "mcp"))
+        finally:
+            client.close()
+
     def test_generated_session_method_uses_wire_names(self) -> None:
         transport = FakeTransport(fixture("session-success.json"))
         client = CuaDriverClient(transport)

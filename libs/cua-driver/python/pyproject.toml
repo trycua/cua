@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "cua-driver"
 version = "0.10.0"
-description = "Python wrapper for cua-driver - cross-platform MCP server for computer-use automation"
+description = "Python SDK and bundled binary for cross-platform computer-use automation"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
@@ -17,6 +17,7 @@ keywords = [
     "automation",
     "accessibility",
     "screen-capture",
+    "sdk",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

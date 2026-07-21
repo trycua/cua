@@ -1,4 +1,4 @@
-"""MCP transport implementations for the experimental Python client."""
+"""MCP transport implementations for the cua-driver Python SDK."""
 
 from __future__ import annotations
 

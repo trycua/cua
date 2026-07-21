@@ -3,7 +3,8 @@
 This directory contains the checked-in, generated contract for the first
 portable cua-driver client slice. The Rust crate at
 `rust/crates/cua-driver-contract` is the source of truth. It generates this
-manifest and the Python and TypeScript client surfaces under `clients/`.
+manifest, the Python client surface under `python/`, and the TypeScript client
+under `clients/typescript/`.
 
 The prototype intentionally keeps execution, platform integration, policy, and
 permission handling in the native cua-driver process. Clients communicate with
@@ -67,9 +68,9 @@ cargo test -p cua-driver-contract
 cargo test -p cua-driver-core --test contract_parity
 ```
 
-Client tests live in `clients/python` and `clients/typescript`. CI runs the
-generator in check mode so hand-edited or stale generated files fail the pull
-request. Each client package also contains a generated ownership manifest. The
-generator renders and validates the complete plan before atomic replacement,
-rejects unsafe or symlinked paths, detects stale owned files in check mode, and
-prunes only previously declared generated files in write mode.
+Client tests live in `python/tests/test_client.py` and `clients/typescript`. CI
+runs the generator in check mode so hand-edited or stale generated files fail
+the pull request. Each client package also contains a generated ownership
+manifest. The generator renders and validates the complete plan before atomic
+replacement, rejects unsafe or symlinked paths, detects stale owned files in
+check mode, and prunes only previously declared generated files in write mode.

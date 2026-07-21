@@ -8,6 +8,11 @@ from typing import Any
 from ._generated import GeneratedAsyncClientMixin, GeneratedClientMixin
 from .result import ToolResult
 from .transport import AsyncStdioMcpTransport, AsyncTransport, StdioMcpTransport, Transport
+from .wrapper import get_binary_path
+
+
+def _bundled_mcp_command() -> tuple[str, str]:
+    return (str(get_binary_path()), "mcp")
 
 
 class CuaDriverClient(GeneratedClientMixin):
@@ -15,8 +20,9 @@ class CuaDriverClient(GeneratedClientMixin):
         self._transport = transport
 
     @classmethod
-    def stdio(cls, command: Sequence[str] = ("cua-driver", "mcp")) -> "CuaDriverClient":
-        return cls(StdioMcpTransport(command))
+    def stdio(cls, command: Sequence[str] | None = None) -> "CuaDriverClient":
+        resolved = _bundled_mcp_command() if command is None else command
+        return cls(StdioMcpTransport(resolved))
 
     def call_tool(
         self, name: str, arguments: Mapping[str, Any] | None = None
@@ -45,9 +51,10 @@ class AsyncCuaDriverClient(GeneratedAsyncClientMixin):
 
     @classmethod
     def stdio(
-        cls, command: Sequence[str] = ("cua-driver", "mcp")
+        cls, command: Sequence[str] | None = None
     ) -> "AsyncCuaDriverClient":
-        return cls(AsyncStdioMcpTransport(command))
+        resolved = _bundled_mcp_command() if command is None else command
+        return cls(AsyncStdioMcpTransport(resolved))
 
     async def call_tool(
         self, name: str, arguments: Mapping[str, Any] | None = None

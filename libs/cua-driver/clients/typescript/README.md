@@ -1,10 +1,10 @@
-# Experimental cua-driver TypeScript client
+# cua-driver TypeScript SDK
 
-This private reference package is generated from the canonical cua-driver
-contract and speaks MCP over a spawned `cua-driver mcp` stdio process.
+This package is generated from the canonical cua-driver contract and speaks MCP
+over a spawned `cua-driver mcp` stdio process.
 
 ```ts
-import { CuaDriverClient } from "@trycua/cua-driver-client"
+import { CuaDriverClient } from "@trycua/cua-driver"
 
 const client = CuaDriverClient.stdio()
 try {
@@ -17,6 +17,5 @@ try {
 }
 ```
 
-The native driver remains the execution, policy, and approval boundary. This
-experimental package must not be published from the draft branch.
+The native driver remains the execution, policy, and approval boundary.
 Requests have bounded timeouts, and action calls are never retried automatically.

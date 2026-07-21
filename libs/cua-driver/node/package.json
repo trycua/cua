@@ -1,6 +1,6 @@
 {
   "name": "@trycua/cua-driver-embedded",
-  "version": "0.1.0",
+  "version": "0.10.0",
   "description": "Host-owned cua-driver lifecycle for Node and Electron applications",
   "type": "module",
   "packageManager": "pnpm@10.12.3",

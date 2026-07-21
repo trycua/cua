@@ -33,6 +33,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
   issues: read
   pull-requests: read
 
@@ -495,6 +496,49 @@ jobs:
 
       - name: Verify checked-in release versions
         run: python3 .github/scripts/validate_release_versions.py --product driver
+
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: libs/cua-driver/node/package.json
+
+      - name: Check embedded host package publication
+        id: embedded-package
+        shell: bash
+        run: |
+          PACKAGE=$(node -p "require('./libs/cua-driver/node/package.json').name")
+          VERSION="${{ steps.version.outputs.version }}"
+          if npm view "$PACKAGE@$VERSION" version >/dev/null 2>/tmp/npm-view-error; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "$PACKAGE@$VERSION is already published; skipping."
+          elif grep -q 'E404' /tmp/npm-view-error; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            cat /tmp/npm-view-error >&2
+            exit 1
+          fi
+
+      - name: Build and test embedded host package
+        if: steps.embedded-package.outputs.publish == 'true'
+        working-directory: libs/cua-driver/node
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm typecheck
+          pnpm build
+
+      - name: Publish embedded host package
+        if: steps.embedded-package.outputs.publish == 'true'
+        working-directory: libs/cua-driver/node
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Stage release files
         run: |

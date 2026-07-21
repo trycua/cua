@@ -1,0 +1,41 @@
+name: "CI: cua-driver embedded Node host"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/node/**"
+      - ".github/workflows/ci-node-cua-driver-embedded.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "libs/cua-driver/node/**"
+      - ".github/workflows/ci-node-cua-driver-embedded.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: libs/cua-driver/node/package.json
+      - name: Install dependencies
+        working-directory: libs/cua-driver/node
+        run: pnpm install --frozen-lockfile
+      - name: Validate package
+        working-directory: libs/cua-driver/node
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm build
+          pnpm pack --pack-destination "${{ runner.temp }}"

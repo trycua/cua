@@ -156,6 +156,35 @@ describe.skipIf(process.platform === 'win32')('embedded cua-driver lifecycle', (
     await expect(driver.start()).rejects.toMatchObject({ code: 'startup-timeout' });
   });
 
+  it('force-kills an unresponsive child after a startup failure', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'cua-embedded-unresponsive-'));
+    temporaryDirectories.push(directory);
+    const binaryPath = join(directory, 'unresponsive-driver');
+    const pidPath = join(directory, 'pid');
+    await writeFile(
+      binaryPath,
+      `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+process.on("SIGTERM", () => process.stderr.write("ignored SIGTERM\\n"));
+setInterval(() => {}, 1000);
+`
+    );
+    await chmod(binaryPath, 0o755);
+    const driver = new EmbeddedCuaDriver({
+      binaryPath,
+      hostBundleId: 'com.example.host',
+      startupTimeoutMs: 1_000,
+      shutdownTimeoutMs: 100,
+      stderr: 'ignore',
+    });
+    drivers.push(driver);
+
+    await expect(driver.start()).rejects.toMatchObject({ code: 'startup-timeout' });
+    const pid = Number(await readFile(pidPath, 'utf8'));
+    expect(() => process.kill(pid, 0)).toThrow();
+  });
+
   it('can stop while startup is still waiting for the socket', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'cua embedded stop '));
     temporaryDirectories.push(directory);

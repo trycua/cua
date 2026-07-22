@@ -139,3 +139,35 @@ across builds) rather than a re-driving script.
 If recording is still enabled while replay runs, the replay is
 itself recorded into the current output directory — that's the
 intended regression-diff workflow.
+
+## Human demonstrations
+
+> **Windows only.** Human demonstrations are separate from ordinary tool-call
+> recording and are not automatically replayable.
+
+Call `start_demonstration` with the `pid` and `window_id` returned by
+`list_windows`. Call `stop_demonstration` when the task is complete. Stop writes
+`TRAJECTORY.md`, `SUMMARY.json`, and `DEMONSTRATION.json` next to the captured
+`turn-NNNNN/` folders. The summary and manifest mark the capture incomplete when
+hook events were dropped or screenshots were unavailable.
+
+The red border is a user notification. Cua-driver creates it before installing
+the input hook and drops input if border rendering stops. As a user-space
+overlay, it cannot prove that another window or a secure desktop has not
+obscured it.
+
+Capture has these limits:
+
+- events are accepted only while the selected top-level window is foreground;
+- the supplied window must belong to the supplied process;
+- cua-driver-injected events are ignored;
+- text input events record only `text entered (redacted)` and never retain
+  literal text or its length;
+- screenshots can still contain text and other content visible in the target
+  window, so review artifacts before sharing them;
+- the hook and border stop on `stop_demonstration` or when the owning MCP
+  session ends.
+
+Use the bundled **`DEMONSTRATION.md`** guide to turn `TRAJECTORY.md` into a
+skill. Skill authoring remains in the host agent; cua-driver makes no model API
+request.

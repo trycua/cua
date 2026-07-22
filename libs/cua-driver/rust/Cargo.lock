@@ -922,6 +922,7 @@ dependencies = [
  "cua-driver-contract",
  "futures-util",
  "image",
+ "input-capture",
  "libc",
  "regex",
  "regorus",
@@ -1813,6 +1814,18 @@ dependencies = [
  "hashbrown 0.17.1",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "input-capture"
+version = "0.11.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+ "windows 0.58.0",
 ]
 
 [[package]]

@@ -35,6 +35,10 @@ base64 = { workspace = true }
 sha2 = "0.10"
 url = "2.5"
 
+# Window-scoped human input capture. The Windows backend is implemented;
+# other platforms return Unsupported.
+input-capture = { path = "../input-capture" }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

@@ -12,7 +12,7 @@ description: Reference for every MCP tool Cua Driver exposes
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`cua-driver` exposes 49 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 51 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -913,6 +913,26 @@ Perform hover, right-click, double-click, scroll, or drag in an exactly-bound br
 ```json
 {"action":"hover","session":"example","tab_id":"example","target_id":"example"}
 ```
+
+### `start_demonstration`
+
+Call only after the user explicitly asks to record a human demonstration. Start observing human input on one foreground Windows window. A red border is shown before capture starts. The border hides and input is ignored when the target loses foreground or rendering stops. Typed input content is never retained, but screenshots can contain text visible in the target window. Call stop_demonstration when the human finishes.
+
+**Arguments:**
+
+- `output_dir` (string, optional): New or empty output directory. Defaults to a unique directory under the system temporary directory.
+- `pid` (integer, required): Process id returned by list_windows.
+- `window_id` (integer, required): Window id returned by list_windows.
+
+```json
+{"pid":844,"window_id":10725}
+```
+
+### `stop_demonstration`
+
+Stop human input capture, remove the recording border, and write the trajectory and summary artifacts. Calling this without an active demonstration is a no-op.
+
+**Arguments:** none.
 
 ### `escalate_session`
 

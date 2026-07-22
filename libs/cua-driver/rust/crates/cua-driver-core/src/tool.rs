@@ -279,6 +279,8 @@ pub struct ToolRegistry {
     order: Vec<String>,
     /// Shared recording session — auto-records each non-read-only tool call.
     pub recording: Arc<RecordingSession>,
+    /// Human input capture is independent from executable tool-call recording.
+    pub demonstrations: Arc<crate::demonstration::DemonstrationManager>,
 }
 
 impl ToolRegistry {
@@ -287,6 +289,7 @@ impl ToolRegistry {
             tools: HashMap::new(),
             order: Vec::new(),
             recording: Arc::new(RecordingSession::new()),
+            demonstrations: Arc::new(crate::demonstration::DemonstrationManager::new()),
         }
     }
 
@@ -305,6 +308,12 @@ impl ToolRegistry {
         self.register(Box::new(GetRecordingStateTool::new(session)));
         self.register(Box::new(ReplayTrajectoryTool));
         self.register(Box::new(crate::recording_tools::InstallFfmpegTool));
+        self.register(Box::new(
+            crate::demonstration_tools::StartDemonstrationTool::new(self.demonstrations.clone()),
+        ));
+        self.register(Box::new(
+            crate::demonstration_tools::StopDemonstrationTool::new(self.demonstrations.clone()),
+        ));
     }
 
     /// Register the platform-independent session-lifecycle tools
@@ -406,7 +415,12 @@ impl ToolRegistry {
         let should_record = !tool.def().read_only
             && !matches!(
                 resolved_name,
-                "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
+                "start_recording"
+                    | "stop_recording"
+                    | "get_recording_state"
+                    | "replay_trajectory"
+                    | "start_demonstration"
+                    | "stop_demonstration"
             );
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
         let recording_args = recording_args_for(resolved_name, &args);

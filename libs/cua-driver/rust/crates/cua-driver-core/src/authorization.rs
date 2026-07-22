@@ -114,6 +114,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "set_agent_cursor_motion"
         | "set_agent_cursor_style"
         | "stop_recording"
+        | "stop_demonstration"
         | "replay_trajectory" => RiskClass::R1,
 
         // Surfaces that can reveal or control sensitive local/authenticated
@@ -125,6 +126,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "set_config"
         | "escalate_session"
         | "start_recording"
+        | "start_demonstration"
         | "get_browser_state"
         | "browser_prepare"
         | "browser_navigate"
@@ -144,7 +146,10 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
     RiskAssessment {
         class,
         enforcement: RiskEnforcement::MetadataOnly,
-        operation_sensitive: matches!(tool, "browser_prepare" | "browser_dialog" | "page"),
+        operation_sensitive: matches!(
+            tool,
+            "start_demonstration" | "browser_prepare" | "browser_dialog" | "page"
+        ),
     }
 }
 

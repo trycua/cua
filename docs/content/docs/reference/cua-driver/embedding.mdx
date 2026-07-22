@@ -45,9 +45,9 @@ driver.uniffiDestroy();
 await embedded.stop();
 ```
 
-The package does not install or bundle cua-driver. Ship a compatible executable outside Electron's ASAR archive, preserve its executable bit, and sign the nested executable before signing and notarizing the enclosing macOS app. The `/electron` entry point requests Accessibility and Screen Recording from Electron's main process; its native `ffi-rs` module must also remain outside ASAR.
+The package does not install or bundle cua-driver. Ship a compatible executable outside Electron's ASAR archive, preserve its executable bit, and sign the nested executable before signing and notarizing the enclosing macOS app. The `/electron` entry point exposes low-level Accessibility and Screen Recording requests that run in Electron's main process; its native `ffi-rs` module must also remain outside ASAR. The host remains responsible for permission UI, status, and restart policy, and must not start the daemon until both grants are active.
 
-Destroy the SDK client and call `await embedded.stop()` from every orderly shutdown path. Electron hosts should defer their first `before-quit` event until `stop()` completes because asynchronous cleanup cannot run after the host process has exited. If grants change while the daemon is running, use `driver.restart()` so macOS re-evaluates them in a fresh process.
+Destroy the SDK client and call `await embedded.stop()` from every orderly shutdown path. Electron hosts should defer their first `before-quit` event until `stop()` completes because asynchronous cleanup cannot run after the host process has exited. If grants change while the daemon is running, destroy the SDK client, call `embedded.restart()`, and reconnect so macOS re-evaluates them in a fresh process.
 
 ## Host requirements
 

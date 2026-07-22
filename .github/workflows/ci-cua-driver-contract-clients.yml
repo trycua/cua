@@ -162,11 +162,14 @@ jobs:
         run: |
           mkdir -p /tmp/cua-driver-npm/smoke
           npm pack --pack-destination /tmp/cua-driver-npm
-          tar -tzf /tmp/cua-driver-npm/*.tgz | grep -F 'package/dist/native/libcua_driver_sdk.so'
+          tar -tzf /tmp/cua-driver-npm/*.tgz > /tmp/cua-driver-npm/contents.txt
+          grep -F 'package/dist/native/libcua_driver_sdk.so' /tmp/cua-driver-npm/contents.txt
+          grep -F 'package/dist/embedded.js' /tmp/cua-driver-npm/contents.txt
+          grep -F 'package/dist/electron.js' /tmp/cua-driver-npm/contents.txt
           npm install --prefix /tmp/cua-driver-npm/smoke /tmp/cua-driver-npm/*.tgz
           cd /tmp/cua-driver-npm/smoke
           node --input-type=module -e \
-            "const sdk = await import('@trycua/cua-driver'); const driver = sdk.CuaDriver.connect(undefined); console.log(driver.socketPath()); driver.uniffiDestroy()"
+            "const sdk = await import('@trycua/cua-driver'); const driver = sdk.CuaDriver.connect(undefined); console.log(driver.socketPath()); driver.uniffiDestroy(); const embedded = await import('@trycua/cua-driver/embedded'); if (typeof embedded.EmbeddedCuaDriver !== 'function') process.exit(1)"
 
       - name: Check Python agent SDK example
         run: python -m py_compile libs/cua-driver/examples/agent-sdks/claude_agent.py

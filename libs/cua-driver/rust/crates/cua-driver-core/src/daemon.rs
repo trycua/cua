@@ -44,6 +44,18 @@ pub enum ToolObservationOrigin {
     Direct,
 }
 
+/// Closed, content-free identity for a direct daemon client. This is carried
+/// separately from `observation_origin` so older daemons safely ignore the
+/// additive field instead of rejecting a newer enum variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DaemonClientKind {
+    Cli,
+    PythonSdk,
+    TypescriptSdk,
+    Unknown,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DaemonRequest {
     pub method: String,
@@ -59,6 +71,11 @@ pub struct DaemonRequest {
     /// observation. Older peers ignore this additive field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observation_origin: Option<ToolObservationOrigin>,
+    /// Privacy-bounded direct-client identity used only for aggregate product
+    /// telemetry. Raw package names, application names, and host identifiers
+    /// are never accepted here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_kind: Option<DaemonClientKind>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -104,6 +121,7 @@ pub fn request_daemon_metadata(socket_path: &str) -> anyhow::Result<DaemonMetada
             args: None,
             session_id: None,
             observation_origin: None,
+            client_kind: None,
         },
     )?;
     if !response.ok {
@@ -173,6 +191,7 @@ pub fn is_daemon_listening(socket_path: &str) -> bool {
             args: None,
             session_id: None,
             observation_origin: None,
+            client_kind: None,
         };
         send_request(socket_path, &request)
             .ok()
@@ -275,8 +294,8 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
 #[cfg(test)]
 mod tests {
     use super::{
-        current_daemon_metadata, socket_path_for_namespace, DaemonRequest, DaemonResponse,
-        ToolObservationOrigin,
+        current_daemon_metadata, socket_path_for_namespace, DaemonClientKind, DaemonRequest,
+        DaemonResponse, ToolObservationOrigin,
     };
 
     #[test]
@@ -295,6 +314,23 @@ mod tests {
         .unwrap();
         assert_eq!(request.session_id, None);
         assert_eq!(request.observation_origin, None);
+        assert_eq!(request.client_kind, None);
+    }
+
+    #[test]
+    fn direct_client_kind_is_bounded_and_snake_case() {
+        let request = DaemonRequest {
+            method: "call".into(),
+            name: Some("start_session".into()),
+            args: None,
+            session_id: None,
+            observation_origin: Some(ToolObservationOrigin::Direct),
+            client_kind: Some(DaemonClientKind::TypescriptSdk),
+        };
+        let value = serde_json::to_value(request).unwrap();
+        assert_eq!(value["client_kind"], "typescript_sdk");
+        assert!(value.get("application_name").is_none());
+        assert!(value.get("package_name").is_none());
     }
 
     #[test]

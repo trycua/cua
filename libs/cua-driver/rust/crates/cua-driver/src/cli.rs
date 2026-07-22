@@ -1771,6 +1771,7 @@ pub fn run_call(
             // CLI one-shot is its own ephemeral, anonymous/global session.
             session_id: None,
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+            client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
         };
         match crate::serve::send_request(&socket_path, &req) {
             Ok(resp) => {
@@ -1934,6 +1935,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 // nobody, so only an unconditional stop (CLI / manual) reaps it.
                 session_id: None,
                 observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+                client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => {
@@ -1945,6 +1947,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                         args: Some(serde_json::json!({})),
                         session_id: None,
                         observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+                        client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
                     };
                     if let Ok(sr) = crate::serve::send_request(&socket_path, &state_req) {
                         if let Some(result) = sr.result {
@@ -1979,6 +1982,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 args: Some(serde_json::json!({})),
                 session_id: None,
                 observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+                client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => println!("Recording stopped."),
@@ -2002,6 +2006,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 args: Some(serde_json::json!({})),
                 session_id: None,
                 observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+                client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => {
@@ -2332,6 +2337,7 @@ fn run_permissions_status(json: bool) {
             args: Some(serde_json::json!({ "prompt": false })),
             session_id: None,
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+            client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
         };
         crate::serve::send_request(&socket, &req)
             .ok()
@@ -2465,6 +2471,7 @@ fn permission_check_request(
         })),
         session_id: None,
         observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+        client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
     }
 }
 
@@ -3107,6 +3114,7 @@ fn diagnose_tcc_section() -> String {
             args: Some(serde_json::json!({ "prompt": false })),
             session_id: None,
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+            client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
         })
         .and_then(|request| crate::serve::send_request(&socket, &request).ok())
         .filter(|response| response.ok)
@@ -3297,6 +3305,7 @@ pub fn run_config_cmd(
             args: Some(args),
             session_id: None,
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+            client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
         };
         let response = crate::serve::send_request(&socket_path, &req).unwrap_or_else(|error| {
             eprintln!("Cua Driver daemon request on {socket_path} failed: {error}");

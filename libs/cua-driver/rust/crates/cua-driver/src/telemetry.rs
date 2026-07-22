@@ -366,6 +366,8 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("revived", Value::Bool(false)),
             ("concurrent_sessions_bucket", Value::String("1".into())),
             ("entry_transport", Value::String("mcp_stdio".into())),
+            ("client_kind", Value::String("mcp".into())),
+            ("capture_scope", Value::String("auto".into())),
             ("execution_mode", Value::String(execution_mode().into())),
         ]),
         event::AGENT_SESSION_ENDED => bounded_properties(&[
@@ -393,6 +395,10 @@ pub fn inspect_event(event_name: &str) -> Result<Value, String> {
             ("cursor_motion_customized", Value::Bool(false)),
             ("multi_cursor_bucket", Value::String("1".into())),
             ("observed_multiple_transports", Value::Bool(false)),
+            ("client_kind", Value::String("mcp".into())),
+            ("capture_scope", Value::String("auto".into())),
+            ("auto_escalated_to_desktop", Value::Bool(true)),
+            ("escalation_reason", Value::String("other".into())),
             ("execution_mode", Value::String(execution_mode().into())),
         ]),
         event::PERMISSIONS_GATE_STARTED => bounded_properties(&[
@@ -485,6 +491,10 @@ static AGENT_SESSIONS: OnceLock<Mutex<HashMap<String, AgentSessionState>>> = Onc
 struct AgentSessionState {
     started: std::time::Instant,
     entry_transport: Transport,
+    client_kind: cua_driver_core::session::SessionClientKind,
+    capture_scope: cua_driver_core::CaptureScope,
+    auto_escalated_to_desktop: bool,
+    escalation_reason: Option<cua_driver_core::EscalationReason>,
     transport_bits: u8,
     tool_count: u64,
     computer_action_count: u64,
@@ -500,10 +510,18 @@ struct AgentSessionState {
 }
 
 impl AgentSessionState {
-    fn new(entry_transport: Transport) -> Self {
+    fn new(
+        entry_transport: Transport,
+        client_kind: cua_driver_core::session::SessionClientKind,
+        capture_scope: cua_driver_core::CaptureScope,
+    ) -> Self {
         Self {
             started: std::time::Instant::now(),
             entry_transport,
+            client_kind,
+            capture_scope,
+            auto_escalated_to_desktop: false,
+            escalation_reason: None,
             transport_bits: transport_bit(entry_transport),
             tool_count: 0,
             computer_action_count: 0,
@@ -523,10 +541,20 @@ impl AgentSessionState {
         &mut self,
         transport: Transport,
         computer_action: bool,
+        escalation_reason: Option<cua_driver_core::EscalationReason>,
         outcome: &cua_driver_core::server::ToolCompletionObservation,
     ) {
         self.transport_bits |= transport_bit(transport);
         let tool_name = outcome.tool_name.as_str();
+        if tool_name == "escalate_session"
+            && outcome.success
+            && self.capture_scope == cua_driver_core::CaptureScope::Auto
+        {
+            if let Some(reason) = escalation_reason {
+                self.auto_escalated_to_desktop = true;
+                self.escalation_reason = Some(reason);
+            }
+        }
         if matches!(tool_name, "start_session" | "end_session") {
             return;
         }
@@ -655,6 +683,22 @@ impl AgentSessionState {
                 "observed_multiple_transports",
                 Value::Bool(self.transport_bits.count_ones() > 1),
             ),
+            (
+                "client_kind",
+                Value::String(session_client_kind(self.client_kind).into()),
+            ),
+            (
+                "capture_scope",
+                Value::String(capture_scope(self.capture_scope).into()),
+            ),
+            (
+                "auto_escalated_to_desktop",
+                Value::Bool(self.auto_escalated_to_desktop),
+            ),
+            (
+                "escalation_reason",
+                Value::String(escalation_reason(self.escalation_reason).into()),
+            ),
             ("execution_mode", Value::String(execution_mode().into())),
         ])
     }
@@ -675,6 +719,37 @@ fn session_transport(transport: cua_driver_core::session::SessionTransport) -> T
         cua_driver_core::session::SessionTransport::Daemon => Transport::Daemon,
         cua_driver_core::session::SessionTransport::McpStdio => Transport::McpStdio,
         cua_driver_core::session::SessionTransport::McpHttp => Transport::McpHttp,
+    }
+}
+
+fn session_client_kind(kind: cua_driver_core::session::SessionClientKind) -> &'static str {
+    match kind {
+        cua_driver_core::session::SessionClientKind::Cli => "cli",
+        cua_driver_core::session::SessionClientKind::Direct => "direct",
+        cua_driver_core::session::SessionClientKind::Mcp => "mcp",
+        cua_driver_core::session::SessionClientKind::PythonSdk => "python_sdk",
+        cua_driver_core::session::SessionClientKind::TypescriptSdk => "typescript_sdk",
+    }
+}
+
+fn capture_scope(scope: cua_driver_core::CaptureScope) -> &'static str {
+    match scope {
+        cua_driver_core::CaptureScope::Auto => "auto",
+        cua_driver_core::CaptureScope::Window => "window",
+        cua_driver_core::CaptureScope::Desktop => "desktop",
+    }
+}
+
+fn escalation_reason(reason: Option<cua_driver_core::EscalationReason>) -> &'static str {
+    match reason {
+        Some(cua_driver_core::EscalationReason::AxTreePixelMismatch) => "ax_tree_pixel_mismatch",
+        Some(cua_driver_core::EscalationReason::BackgroundDeliveryFailed) => {
+            "background_delivery_failed"
+        }
+        Some(cua_driver_core::EscalationReason::ForegroundIneffective) => "foreground_ineffective",
+        Some(cua_driver_core::EscalationReason::NoWindowTarget) => "no_window_target",
+        Some(cua_driver_core::EscalationReason::Other) => "other",
+        None => "not_applicable",
     }
 }
 
@@ -746,7 +821,14 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
             if sessions.len() >= MAX_TRACKED_AGENT_SESSIONS {
                 return;
             }
-            sessions.insert(session_id.to_owned(), AgentSessionState::new(transport));
+            sessions.insert(
+                session_id.to_owned(),
+                AgentSessionState::new(
+                    transport,
+                    observation.client_kind,
+                    observation.capture_scope,
+                ),
+            );
             sessions.len()
         };
         let declaration = match observation.declaration {
@@ -765,6 +847,14 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
                     Value::String(concurrent_sessions_bucket(concurrent).into()),
                 ),
                 ("entry_transport", Value::String(transport.as_str().into())),
+                (
+                    "client_kind",
+                    Value::String(session_client_kind(observation.client_kind).into()),
+                ),
+                (
+                    "capture_scope",
+                    Value::String(capture_scope(observation.capture_scope).into()),
+                ),
                 ("execution_mode", Value::String(execution_mode().into())),
             ]),
             transport,
@@ -776,6 +866,7 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
         session_id: &str,
         transport: cua_driver_core::session::SessionTransport,
         computer_action: bool,
+        escalation_reason: Option<cua_driver_core::EscalationReason>,
         outcome: &cua_driver_core::server::ToolCompletionObservation,
     ) {
         let sessions = AGENT_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
@@ -785,7 +876,12 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
             return;
         }
         if let Some(state) = sessions.get_mut(session_id) {
-            state.observe(session_transport(transport), computer_action, outcome);
+            state.observe(
+                session_transport(transport),
+                computer_action,
+                escalation_reason,
+                outcome,
+            );
         }
     }
 
@@ -1946,7 +2042,7 @@ fn build_payload(
     transport: Transport,
 ) -> Value {
     let mut event_properties = properties.clone();
-    event_properties.insert("telemetry_schema_version".into(), Value::from(3));
+    event_properties.insert("telemetry_schema_version".into(), Value::from(4));
     event_properties
         .entry("product_version")
         .or_insert_with(|| Value::String(current_product_version().into()));
@@ -2934,7 +3030,7 @@ mod tests {
     }
 
     #[test]
-    fn v3_payload_allows_server_geoip_without_sending_an_ip_or_client_timestamp() {
+    fn v4_payload_allows_server_geoip_without_sending_an_ip_or_client_timestamp() {
         let _guard = ENV_LOCK.lock().unwrap();
         let identity = InstallationIdentity {
             id: "test-id".into(),
@@ -2970,7 +3066,7 @@ mod tests {
         ] {
             assert!(properties.contains_key(required), "missing {required}");
         }
-        assert_eq!(properties["telemetry_schema_version"], 3);
+        assert_eq!(properties["telemetry_schema_version"], 4);
         assert_eq!(properties["is_synthetic"], false);
         assert!(!properties.contains_key("$geoip_disable"));
         assert!(!properties.contains_key("$ip"));
@@ -3079,7 +3175,7 @@ mod tests {
         let permissions = inspect_event(event::PERMISSIONS_GATE_COMPLETED).unwrap();
         assert_eq!(permissions["properties"]["resolution"], "granted");
         for payload in [permissions_started, permissions_dismissed, permissions] {
-            assert_eq!(payload["properties"]["telemetry_schema_version"], 3);
+            assert_eq!(payload["properties"]["telemetry_schema_version"], 4);
             assert!(payload.get("timestamp").is_none());
             let serialized = serde_json::to_string(&payload)
                 .unwrap()
@@ -3195,11 +3291,16 @@ mod tests {
             DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation, ToolErrorClass,
         };
 
-        let mut state = AgentSessionState::new(Transport::McpStdio);
+        let mut state = AgentSessionState::new(
+            Transport::McpStdio,
+            cua_driver_core::session::SessionClientKind::PythonSdk,
+            cua_driver_core::CaptureScope::Auto,
+        );
         state.started = std::time::Instant::now() - Duration::from_secs(75);
         state.observe(
             Transport::McpHttp,
             true,
+            None,
             &ToolCompletionObservation {
                 tool_name: "click".into(),
                 operation: cua_driver_core::server::ToolOperation::NotApplicable,
@@ -3215,6 +3316,23 @@ mod tests {
         state.observe(
             Transport::McpHttp,
             false,
+            Some(cua_driver_core::EscalationReason::NoWindowTarget),
+            &ToolCompletionObservation {
+                tool_name: "escalate_session".into(),
+                operation: cua_driver_core::server::ToolOperation::NotApplicable,
+                computer_action: false,
+                success: true,
+                error_class: ToolErrorClass::None,
+                refusal_code: cua_driver_core::server::ToolRefusalCode::None,
+                duration_bucket: DurationBucket::Under10Ms,
+                output_type: OutputType::Text,
+                output_size_bucket: OutputSizeBucket::Under1KiB,
+            },
+        );
+        state.observe(
+            Transport::McpHttp,
+            false,
+            None,
             &ToolCompletionObservation {
                 tool_name: "page".into(),
                 operation: cua_driver_core::server::ToolOperation::QueryDom,
@@ -3254,6 +3372,10 @@ mod tests {
         assert_eq!(properties["cursor_motion_customized"], true);
         assert_eq!(properties["multi_cursor_bucket"], "3_5");
         assert_eq!(properties["observed_multiple_transports"], true);
+        assert_eq!(properties["client_kind"], "python_sdk");
+        assert_eq!(properties["capture_scope"], "auto");
+        assert_eq!(properties["auto_escalated_to_desktop"], true);
+        assert_eq!(properties["escalation_reason"], "no_window_target");
 
         let serialized = serde_json::to_string(&properties)
             .unwrap()
@@ -3273,6 +3395,60 @@ mod tests {
                 "aggregate contains {forbidden}: {serialized}"
             );
         }
+    }
+
+    #[test]
+    fn failed_or_non_auto_escalation_is_not_counted() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
+            ToolErrorClass, ToolOperation, ToolRefusalCode,
+        };
+
+        let failed = ToolCompletionObservation {
+            tool_name: "escalate_session".into(),
+            operation: ToolOperation::NotApplicable,
+            computer_action: false,
+            success: false,
+            error_class: ToolErrorClass::InvalidParams,
+            refusal_code: ToolRefusalCode::None,
+            duration_bucket: DurationBucket::Under10Ms,
+            output_type: OutputType::Text,
+            output_size_bucket: OutputSizeBucket::Under1KiB,
+        };
+        let mut auto = AgentSessionState::new(
+            Transport::Daemon,
+            cua_driver_core::session::SessionClientKind::TypescriptSdk,
+            cua_driver_core::CaptureScope::Auto,
+        );
+        auto.observe(
+            Transport::Daemon,
+            false,
+            Some(cua_driver_core::EscalationReason::Other),
+            &failed,
+        );
+        let properties =
+            auto.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
+        assert_eq!(properties["auto_escalated_to_desktop"], false);
+        assert_eq!(properties["escalation_reason"], "not_applicable");
+
+        let mut desktop = AgentSessionState::new(
+            Transport::Daemon,
+            cua_driver_core::session::SessionClientKind::PythonSdk,
+            cua_driver_core::CaptureScope::Desktop,
+        );
+        let mut successful = failed;
+        successful.success = true;
+        successful.error_class = ToolErrorClass::None;
+        desktop.observe(
+            Transport::Daemon,
+            false,
+            Some(cua_driver_core::EscalationReason::Other),
+            &successful,
+        );
+        let properties =
+            desktop.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
+        assert_eq!(properties["auto_escalated_to_desktop"], false);
+        assert_eq!(properties["escalation_reason"], "not_applicable");
     }
 
     #[test]
@@ -3302,8 +3478,12 @@ mod tests {
         );
         assert_eq!(event_properties["operation"], "browser_click_trusted");
 
-        let mut state = AgentSessionState::new(Transport::McpStdio);
-        state.observe(Transport::McpStdio, true, &outcome);
+        let mut state = AgentSessionState::new(
+            Transport::McpStdio,
+            cua_driver_core::session::SessionClientKind::Mcp,
+            cua_driver_core::CaptureScope::Window,
+        );
+        state.observe(Transport::McpStdio, true, None, &outcome);
         let session_properties =
             state.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
         assert_eq!(session_properties["computer_action_count_bucket"], "0");
@@ -3333,10 +3513,15 @@ mod tests {
                 ToolOperation::BrowserPointerDoubleClickDomEvent,
             ),
         ] {
-            let mut state = AgentSessionState::new(Transport::McpStdio);
+            let mut state = AgentSessionState::new(
+                Transport::McpStdio,
+                cua_driver_core::session::SessionClientKind::Mcp,
+                cua_driver_core::CaptureScope::Window,
+            );
             state.observe(
                 Transport::McpStdio,
                 true,
+                None,
                 &ToolCompletionObservation {
                     tool_name: tool_name.into(),
                     operation,
@@ -3386,7 +3571,7 @@ mod tests {
     fn agent_session_inspect_samples_expose_only_the_contract() {
         for event_name in [event::AGENT_SESSION_STARTED, event::AGENT_SESSION_ENDED] {
             let payload = inspect_event(event_name).unwrap();
-            assert_eq!(payload["properties"]["telemetry_schema_version"], 3);
+            assert_eq!(payload["properties"]["telemetry_schema_version"], 4);
             let properties = payload["properties"].as_object().unwrap();
             for forbidden_key in ["session", "session_id", "agent_session_id", "cursor_id"] {
                 assert!(!properties.contains_key(forbidden_key));
@@ -3430,6 +3615,8 @@ mod tests {
                     declaration: SessionDeclaration::StartSession,
                     revived: false,
                     transport: SessionTransport::McpStdio,
+                    client_kind: cua_driver_core::session::SessionClientKind::Mcp,
+                    capture_scope: cua_driver_core::CaptureScope::Auto,
                 },
             );
             capture_tool_completed(

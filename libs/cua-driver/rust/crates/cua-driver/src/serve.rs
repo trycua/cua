@@ -357,6 +357,7 @@ async fn invoke_daemon_tool(
     req: DaemonRequest,
 ) -> DaemonResponse {
     let observation_transport = daemon_observation_transport(&req);
+    let direct_client_kind = req.client_kind;
     let raw_name = req.name.as_deref().unwrap_or("").to_owned();
     let tool_name = if raw_name == "type_text_chars" {
         eprintln!(
@@ -430,7 +431,30 @@ async fn invoke_daemon_tool(
                 cua_driver_core::session::SessionTransport::Daemon
             }
         };
-        cua_driver_core::session::begin_tool_call(&tool_name, &args, true, transport)
+        let client_kind = match transport {
+            cua_driver_core::session::SessionTransport::McpStdio
+            | cua_driver_core::session::SessionTransport::McpHttp => {
+                cua_driver_core::session::SessionClientKind::Mcp
+            }
+            cua_driver_core::session::SessionTransport::Cli => {
+                cua_driver_core::session::SessionClientKind::Cli
+            }
+            cua_driver_core::session::SessionTransport::Daemon => match direct_client_kind {
+                Some(cua_driver_core::daemon::DaemonClientKind::Cli) => {
+                    cua_driver_core::session::SessionClientKind::Cli
+                }
+                Some(cua_driver_core::daemon::DaemonClientKind::PythonSdk) => {
+                    cua_driver_core::session::SessionClientKind::PythonSdk
+                }
+                Some(cua_driver_core::daemon::DaemonClientKind::TypescriptSdk) => {
+                    cua_driver_core::session::SessionClientKind::TypescriptSdk
+                }
+                Some(cua_driver_core::daemon::DaemonClientKind::Unknown) | None => {
+                    cua_driver_core::session::SessionClientKind::Direct
+                }
+            },
+        };
+        cua_driver_core::session::begin_tool_call(&tool_name, &args, true, transport, client_kind)
     });
 
     let result = registry.invoke(&tool_name, args).await;
@@ -1578,6 +1602,7 @@ pub fn run_stop_cmd(socket_path: &str) {
         args: None,
         session_id: None,
         observation_origin: None,
+        client_kind: None,
     };
     match send_request(socket_path, &req) {
         Ok(_) => {
@@ -1625,6 +1650,7 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
             args: None,
             session_id: None,
             observation_origin: Some(ToolObservationOrigin::Direct),
+            client_kind: None,
         };
         if let Ok(response) = send_request(socket_path, &request) {
             if let Some(status) = response.result {
@@ -1701,6 +1727,7 @@ pub fn run_revoke_cmd(socket_path: &str, session: Option<&str>, all: bool) {
         }),
         session_id: None,
         observation_origin: Some(ToolObservationOrigin::Direct),
+        client_kind: None,
     };
     match send_request(socket_path, &request) {
         Ok(response) if response.ok => {
@@ -1831,6 +1858,7 @@ mod gate_tests {
             args: Some(serde_json::json!({})),
             session_id: sid.map(|s| s.to_owned()),
             observation_origin: None,
+            client_kind: None,
         }
     }
 
@@ -1893,6 +1921,7 @@ mod gate_tests {
             args: None,
             session_id: Some(sid.to_owned()),
             observation_origin: None,
+            client_kind: None,
         };
         let resp = tokio::task::spawn_blocking(move || send_request(&socket2, &end))
             .await
@@ -1936,6 +1965,7 @@ mod gate_tests {
             args: Some(serde_json::json!({ "session": s3b.clone() })),
             session_id: Some(s3b),
             observation_origin: None,
+            client_kind: None,
         };
         let resp = tokio::task::spawn_blocking(move || send_request(&socket3b, &start))
             .await
@@ -1982,6 +2012,7 @@ mod gate_tests {
             args: None,
             session_id: None,
             observation_origin: None,
+            client_kind: None,
         };
         let _ = tokio::task::spawn_blocking(move || send_request(&socket5, &shutdown)).await;
         let _ = server.await;
@@ -2000,6 +2031,7 @@ mod telemetry_routing_tests {
             args: Some(serde_json::json!({})),
             session_id: Some("bounded-session".into()),
             observation_origin: origin,
+            client_kind: None,
         }
     }
 

@@ -13,7 +13,7 @@ use cua_driver_contract::{
 };
 use cua_driver_core::daemon::{
     is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
-    DaemonRequest, ToolObservationOrigin,
+    DaemonClientKind, DaemonRequest, ToolObservationOrigin,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -193,6 +193,25 @@ pub enum DriverError {
 #[derive(uniffi::Object)]
 pub struct CuaDriver {
     socket_path: String,
+    client_kind: DaemonClientKind,
+}
+
+/// Runtime that imported the shared UniFFI SDK library. The language package
+/// selects this automatically at its root entry point; callers do not need to
+/// supply telemetry metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SdkClientKind {
+    Python,
+    Typescript,
+}
+
+impl From<SdkClientKind> for DaemonClientKind {
+    fn from(value: SdkClientKind) -> Self {
+        match value {
+            SdkClientKind::Python => Self::PythonSdk,
+            SdkClientKind::Typescript => Self::TypescriptSdk,
+        }
+    }
 }
 
 macro_rules! desktop_tool_methods {
@@ -252,7 +271,24 @@ impl CuaDriver {
                 reason: "socket_path must not be empty".into(),
             });
         }
-        Ok(Arc::new(Self { socket_path }))
+        Ok(Arc::new(Self {
+            socket_path,
+            client_kind: DaemonClientKind::Unknown,
+        }))
+    }
+
+    /// Language-package entry point that preserves the public `connect` API
+    /// while attaching a closed runtime category to daemon requests.
+    #[uniffi::constructor]
+    pub fn connect_with_client_kind(
+        socket_path: Option<String>,
+        client_kind: SdkClientKind,
+    ) -> Result<Arc<Self>, DriverError> {
+        let driver = Self::connect(socket_path)?;
+        Ok(Arc::new(Self {
+            socket_path: driver.socket_path.clone(),
+            client_kind: client_kind.into(),
+        }))
     }
 
     pub fn socket_path(&self) -> String {
@@ -299,6 +335,7 @@ impl CuaDriver {
             args: None,
             session_id: None,
             observation_origin: Some(ToolObservationOrigin::Direct),
+            client_kind: Some(self.client_kind),
         };
         let response =
             send_request(&self.socket_path, &request).map_err(|error| DriverError::Transport {
@@ -374,6 +411,7 @@ impl CuaDriver {
             args: Some(arguments),
             session_id: None,
             observation_origin: Some(ToolObservationOrigin::Direct),
+            client_kind: Some(self.client_kind),
         };
         let response =
             send_request(&self.socket_path, &request).map_err(|error| DriverError::Transport {
@@ -547,7 +585,8 @@ mod tests {
             }
         });
         let (_directory, socket, server) = serve_once(response);
-        let driver = CuaDriver::connect(Some(socket)).unwrap();
+        let driver =
+            CuaDriver::connect_with_client_kind(Some(socket), SdkClientKind::Python).unwrap();
         let result = driver
             .get_desktop_state(GetDesktopStateInput {
                 session: Some("run-1".into()),
@@ -563,6 +602,7 @@ mod tests {
         assert_eq!(request["name"], "get_desktop_state");
         assert_eq!(request["args"], serde_json::json!({"session": "run-1"}));
         assert_eq!(request["observation_origin"], "direct");
+        assert_eq!(request["client_kind"], "python_sdk");
     }
 
     #[test]
@@ -579,6 +619,7 @@ mod tests {
         let request = server.join().unwrap();
         assert_eq!(request["method"], "list");
         assert_eq!(request["observation_origin"], "direct");
+        assert_eq!(request["client_kind"], "unknown");
     }
 
     #[test]

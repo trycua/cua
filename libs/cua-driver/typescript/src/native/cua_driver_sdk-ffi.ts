@@ -303,6 +303,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect_with_client_kind": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_driver_sdk_fn_method_cuadriver_call_tool": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -459,6 +464,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect_with_client_kind": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -676,6 +686,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings(uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_driver_sdk_fn_func_request_mac_os_permissions(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect(socketPath: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect_with_client_kind(socketPath: Uint8Array, clientKind: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_call_tool(uniffiSelf: bigint, name: Uint8Array, argumentsJson: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_cuadriver_click(uniffiSelf: bigint, input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_cuadriver_drag(uniffiSelf: bigint, input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -708,6 +719,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings(): number;
     uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions(): number;
     uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect(): number;
+    uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect_with_client_kind(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_call_tool(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_click(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_drag(): number;

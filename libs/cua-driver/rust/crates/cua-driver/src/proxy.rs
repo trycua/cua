@@ -434,11 +434,13 @@ fn fetch_tools_list_from_daemon(
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_else(|| {
-                    // Fallback: derive from the centralised map by
-                    // name. Keeps the proxy compatible with daemon
+                    // Fallback: derive from the centralised name + schema
+                    // resolver. Keeps the proxy compatible with daemon
                     // builds that pre-date the capabilities field.
                     name.as_str()
-                        .map(cua_driver_core::tool::default_capabilities_for)
+                        .map(|name| {
+                            cua_driver_core::tool::advertised_capabilities_for(name, &input_schema)
+                        })
                         .unwrap_or_default()
                         .into_iter()
                         .map(serde_json::Value::String)

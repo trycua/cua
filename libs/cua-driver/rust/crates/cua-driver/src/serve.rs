@@ -675,12 +675,14 @@ pub async fn run_serve(
                                 // fields are ignored.
                                 //
                                 // `capabilities` is sourced from the centralised
-                                // `cua_driver_core::tool::default_capabilities_for`
-                                // name → tokens map so daemon responses match the
-                                // core MCP capability contract.
+                                // name + concrete-schema resolver so daemon
+                                // responses match the core MCP capability contract.
                                 let tools: Vec<serde_json::Value> = reg.iter_defs()
                                     .map(|(name, def)| {
-                                        let caps = cua_driver_core::tool::default_capabilities_for(name);
+                                        let caps = cua_driver_core::tool::advertised_capabilities_for(
+                                            name,
+                                            &def.input_schema,
+                                        );
                                         let risk = cua_driver_core::authorization::risk_metadata_json(name);
                                         serde_json::json!({
                                             "name": name,
@@ -1303,7 +1305,10 @@ pub async fn run_serve(
                                 // above for rationale (capabilities map, etc.).
                                 let tools: Vec<serde_json::Value> = reg.iter_defs()
                                     .map(|(name, def)| {
-                                        let caps = cua_driver_core::tool::default_capabilities_for(name);
+                                        let caps = cua_driver_core::tool::advertised_capabilities_for(
+                                            name,
+                                            &def.input_schema,
+                                        );
                                         let risk = cua_driver_core::authorization::risk_metadata_json(name);
                                         serde_json::json!({
                                             "name": name,

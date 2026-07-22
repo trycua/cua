@@ -11,6 +11,17 @@ on:
         description: "Runner label; use the Azure RDP runner label for VM e2e"
         required: true
         default: "windows-latest"
+      lane:
+        description: "Diagnostic lane; canonical interactive dispatches use all"
+        required: false
+        type: choice
+        default: all
+        options:
+          - all
+          - shared
+          - native
+          - capture
+          - installer
 
 permissions:
   contents: read
@@ -38,6 +49,7 @@ jobs:
           echo "sha=${sha,,}" >> "$GITHUB_OUTPUT"
 
   shared:
+    if: inputs.lane == 'all' || inputs.lane == 'shared'
     name: "Windows / shared Electron + Tauri"
     needs: source
     runs-on: ${{ inputs.runner }}
@@ -76,6 +88,7 @@ jobs:
           retention-days: 14
 
   native:
+    if: inputs.lane == 'all' || inputs.lane == 'native'
     name: "Windows / native WPF + WinUI3 + WebView2"
     needs: source
     runs-on: ${{ inputs.runner }}
@@ -114,6 +127,7 @@ jobs:
           retention-days: 14
 
   capture:
+    if: inputs.lane == 'all' || inputs.lane == 'capture'
     name: "Windows / capture and desktop scope"
     needs: source
     runs-on: ${{ inputs.runner }}
@@ -151,9 +165,80 @@ jobs:
           compression-level: 0
           retention-days: 14
 
+  installer:
+    if: inputs.lane == 'all' || inputs.lane == 'installer'
+    name: "Windows / install-local.ps1 smoke"
+    needs: source
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install into an isolated local namespace
+        shell: pwsh
+        env:
+          CUA_DRIVER_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+        run: |
+          $env:CUA_DRIVER_LOCAL_HOME = Join-Path $env:RUNNER_TEMP "cua-driver-local-home"
+          $env:CUA_DRIVER_LOCAL_INSTALL_DIR = Join-Path $env:RUNNER_TEMP "cua-driver-local-bin"
+          & .\libs\cua-driver\scripts\install-local.ps1 -NoAutoStart -NoPathUpdate
+
+          $installed = Join-Path $env:CUA_DRIVER_LOCAL_INSTALL_DIR "cua-driver-local.exe"
+          if (-not (Test-Path -LiteralPath $installed)) { throw "missing installed binary: $installed" }
+          & $installed --version | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP "cua-driver-local-version.txt")
+          if ($LASTEXITCODE -ne 0) { throw "installed binary --version failed with exit $LASTEXITCODE" }
+
+          $socket = "\\.\pipe\cua-driver-install-smoke-$env:GITHUB_RUN_ID"
+          $daemonOut = Join-Path $env:RUNNER_TEMP "cua-driver-local-daemon.out.log"
+          $daemonErr = Join-Path $env:RUNNER_TEMP "cua-driver-local-daemon.err.log"
+          $daemon = Start-Process -FilePath $installed `
+            -ArgumentList @('serve', '--socket', $socket) `
+            -RedirectStandardOutput $daemonOut -RedirectStandardError $daemonErr `
+            -NoNewWindow -PassThru
+          try {
+            $configPath = Join-Path $env:RUNNER_TEMP "cua-driver-local-config.json"
+            $connected = $false
+            foreach ($attempt in 1..30) {
+              if ($daemon.HasExited) { throw "installed daemon exited early with code $($daemon.ExitCode)" }
+              $config = (& $installed --socket $socket call get_config '{}' 2>$null | Out-String).Trim()
+              if ($LASTEXITCODE -eq 0) {
+                $config | Tee-Object -FilePath $configPath
+                $connected = $true
+                break
+              }
+              Start-Sleep -Seconds 1
+            }
+            if (-not $connected) { throw "installed binary could not connect to its daemon" }
+          }
+          finally {
+            if (-not $daemon.HasExited) {
+              Stop-Process -Id $daemon.Id -ErrorAction SilentlyContinue
+              $daemon.WaitForExit(5000) | Out-Null
+            }
+          }
+          if (-not (Select-String -LiteralPath (Join-Path $env:RUNNER_TEMP "cua-driver-local-config.json") -SimpleMatch $env:CUA_DRIVER_SOURCE_SHA -Quiet)) {
+            throw "installed binary did not report the expected source SHA"
+          }
+      - name: Upload installer evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: rust-windows-install-local
+          path: |
+            ${{ runner.temp }}/cua-driver-local-version.txt
+            ${{ runner.temp }}/cua-driver-local-config.json
+            ${{ runner.temp }}/cua-driver-local-daemon.out.log
+            ${{ runner.temp }}/cua-driver-local-daemon.err.log
+          if-no-files-found: ignore
+          retention-days: 14
+
   summary:
     if: always()
-    needs: [source, shared, native, capture]
+    needs: [source, shared, native, capture, installer]
     name: "Windows / matrix summary"
     runs-on: ubuntu-latest
     timeout-minutes: 10

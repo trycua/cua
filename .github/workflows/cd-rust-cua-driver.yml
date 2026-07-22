@@ -510,9 +510,14 @@ jobs:
           if-no-files-found: error
 
   # ── Release ──────────────────────────────────────────────────────────────────
+  # Tag pushes build immutable candidate artifacts only. Publishing is an
+  # explicit second step after the exact tag SHA passes the interactive E2E
+  # matrices and install-local smokes. This keeps Release Please from making a
+  # GitHub release (and therefore PyPI/npm SDK packages) public before that
+  # evidence exists.
   release:
     needs: [build-linux, build-windows, build-macos-universal]
-    if: startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.publish == true
+    if: github.event_name == 'workflow_dispatch' && inputs.publish == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

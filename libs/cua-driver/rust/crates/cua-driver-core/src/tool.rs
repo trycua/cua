@@ -911,20 +911,18 @@ impl ToolRegistry {
         evidence: TrustedInvocationEvidence,
     ) -> ToolResult {
         let runtime_scope = context.runtime_scope_key();
-        let invocation = DISPATCH_RUNTIME_SCOPE
-            .scope(runtime_scope, async {
-                DISPATCH_TRUSTED_INVOCATION_EVIDENCE
-                    .scope(evidence.clone(), async {
-                        DISPATCH_AUTHORIZATION_CONTEXT
-                            .scope(
-                                context.clone(),
-                                self.invoke_authorized(name, args, context.as_ref(), &evidence),
-                            )
-                            .await
-                    })
-                    .await
-            })
-            ;
+        let invocation = DISPATCH_RUNTIME_SCOPE.scope(runtime_scope, async {
+            DISPATCH_TRUSTED_INVOCATION_EVIDENCE
+                .scope(evidence.clone(), async {
+                    DISPATCH_AUTHORIZATION_CONTEXT
+                        .scope(
+                            context.clone(),
+                            self.invoke_authorized(name, args, context.as_ref(), &evidence),
+                        )
+                        .await
+                })
+                .await
+        });
         if let Some(manager) = self.workspace_manager.clone() {
             crate::workspace::with_manager(manager, invocation).await
         } else {
@@ -1032,10 +1030,10 @@ impl ToolRegistry {
             Err(error) => {
                 let mut result =
                     ToolResult::error(error.to_string()).with_structured(serde_json::json!({
-                    "code": error.code(),
-                    "workspace_id": self.workspace_manager.as_ref()
-                        .and_then(|manager| manager.resolve_workspace_id(&args).ok().flatten()),
-                }));
+                        "code": error.code(),
+                        "workspace_id": self.workspace_manager.as_ref()
+                            .and_then(|manager| manager.resolve_workspace_id(&args).ok().flatten()),
+                    }));
                 restore_public_runtime_result(&mut result, &runtime_prefix);
                 return result;
             }

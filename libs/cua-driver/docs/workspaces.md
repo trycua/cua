@@ -18,10 +18,12 @@ authoritative contract for the current platform.
 3. Either pass the returned `workspace_id` to `launch_app`, or bind it once
    with `start_session({session, workspace_id})` and let later launches inherit
    the binding.
-4. Call `get_workspace_state` with the workspace id or bound session to discover
-   its native windows. Pass the returned `workspace_ref` with the same session or
-   explicit workspace id to `get_window_state` and window-targeted input tools.
-   A later state call invalidates older references.
+4. Call `get_workspace_state` with the workspace id or bound session to capture
+   a bounded visual overview and discover its native windows. Pass the returned
+   `workspace_ref` with the same session or explicit workspace id to
+   `get_window_state` and window-targeted input tools. A later state call
+   invalidates older references. Typed SDKs use their generic tool call for this
+   platform-rich flow; the portable typed action records remain desktop-only.
 5. Use `move_window_to_workspace` only when the workspace advertises
    `move_existing_window: true`. A nested compositor requires relaunch because
    a Wayland client cannot change display-server connections after launch.

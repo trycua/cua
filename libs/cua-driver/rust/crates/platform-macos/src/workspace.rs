@@ -355,7 +355,44 @@ impl WorkspaceBackend for MacosWorkspaceBackend {
             })
             .take(256)
             .collect();
-        Ok(json!({"windows":windows,"space_id":space_id,"bounded":true}))
+        let capture_windows = windows.clone();
+        let overview = tokio::task::spawn_blocking(move || {
+            let captures: Vec<_> = capture_windows
+                .iter()
+                .take(32)
+                .filter_map(|window| {
+                    crate::capture::screenshot_window_bytes(window.window_id)
+                        .ok()
+                        .map(|png| (window, png))
+                })
+                .collect();
+            cua_driver_core::image_utils::compose_workspace_png(
+                &captures
+                    .iter()
+                    .map(
+                        |(window, png)| cua_driver_core::image_utils::WorkspaceWindowImage {
+                            png,
+                            x: window.bounds.x.round() as i32,
+                            y: window.bounds.y.round() as i32,
+                            width: window.bounds.width.max(1.0).round() as u32,
+                            height: window.bounds.height.max(1.0).round() as u32,
+                        },
+                    )
+                    .collect::<Vec<_>>(),
+                2048,
+            )
+        })
+        .await
+        .ok()
+        .and_then(Result::ok);
+        use base64::Engine;
+        Ok(json!({
+            "windows":windows,
+            "space_id":space_id,
+            "bounded":true,
+            "overview_png":overview.map(|png| base64::engine::general_purpose::STANDARD.encode(png)),
+            "overview_window_limit":32,
+        }))
     }
 
     fn configure_command(

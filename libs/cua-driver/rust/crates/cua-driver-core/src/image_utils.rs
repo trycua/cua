@@ -19,6 +19,66 @@
 use anyhow::{anyhow, bail, Result};
 use image::{ColorType, DynamicImage, ImageBuffer, ImageDecoder, ImageFormat};
 
+pub struct WorkspaceWindowImage<'a> {
+    pub png: &'a [u8],
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Compose top-level window captures into one bounded workspace overview.
+/// Input order is top-to-bottom z-order; painting reverses it so front windows
+/// remain visible. Coordinates are normalized because native desktops can use
+/// negative origins.
+pub fn compose_workspace_png(
+    windows: &[WorkspaceWindowImage<'_>],
+    max_dimension: u32,
+) -> Result<Vec<u8>> {
+    if windows.is_empty() {
+        bail!("workspace overview has no capturable windows");
+    }
+    let min_x = windows.iter().map(|window| window.x).min().unwrap_or(0);
+    let min_y = windows.iter().map(|window| window.y).min().unwrap_or(0);
+    let max_x = windows
+        .iter()
+        .map(|window| i64::from(window.x) + i64::from(window.width))
+        .max()
+        .unwrap_or(1);
+    let max_y = windows
+        .iter()
+        .map(|window| i64::from(window.y) + i64::from(window.height))
+        .max()
+        .unwrap_or(1);
+    let width = u32::try_from((max_x - i64::from(min_x)).max(1))?;
+    let height = u32::try_from((max_y - i64::from(min_y)).max(1))?;
+    let mut canvas = image::RgbaImage::from_pixel(width, height, image::Rgba([24, 24, 24, 255]));
+
+    for window in windows.iter().rev() {
+        if window.width == 0 || window.height == 0 {
+            continue;
+        }
+        let capture = image::load_from_memory_with_format(window.png, ImageFormat::Png)?
+            .resize_exact(
+                window.width,
+                window.height,
+                image::imageops::FilterType::Lanczos3,
+            )
+            .to_rgba8();
+        image::imageops::overlay(
+            &mut canvas,
+            &capture,
+            i64::from(window.x - min_x),
+            i64::from(window.y - min_y),
+        );
+    }
+
+    let mut png = Vec::new();
+    DynamicImage::ImageRgba8(canvas)
+        .write_to(&mut std::io::Cursor::new(&mut png), ImageFormat::Png)?;
+    resize_png_if_needed(&png, max_dimension)
+}
+
 // ── PNG → JPEG ────────────────────────────────────────────────────────────
 
 /// Convert raw PNG bytes to JPEG at the given quality (1-95).
@@ -317,6 +377,34 @@ mod tests {
         let (w, h) = png_dimensions(&resized).unwrap();
         assert_eq!(w, 50);
         assert_eq!(h, 25);
+    }
+
+    #[test]
+    fn workspace_composite_normalizes_origins_and_bounds_output() {
+        let red = encode_rgba_to_png(&[255, 0, 0, 255], 1, 1).unwrap();
+        let blue = encode_rgba_to_png(&[0, 0, 255, 255], 1, 1).unwrap();
+        let composed = compose_workspace_png(
+            &[
+                WorkspaceWindowImage {
+                    png: &red,
+                    x: -10,
+                    y: 5,
+                    width: 20,
+                    height: 10,
+                },
+                WorkspaceWindowImage {
+                    png: &blue,
+                    x: 10,
+                    y: 15,
+                    width: 20,
+                    height: 10,
+                },
+            ],
+            16,
+        )
+        .unwrap();
+        let (width, height) = png_dimensions(&composed).unwrap();
+        assert_eq!((width, height), (16, 8));
     }
 
     #[test]

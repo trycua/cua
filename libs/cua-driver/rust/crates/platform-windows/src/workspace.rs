@@ -677,6 +677,7 @@ impl WorkspaceBackend for WindowsWorkspaceBackend {
             let target = desktop.desktop.id();
             tokio::task::spawn_blocking(move || {
                 let mut windows = Vec::new();
+                let mut captures = Vec::new();
                 for window in crate::win32::list_windows(None).into_iter().take(512) {
                     let Ok(hwnd) = isize::try_from(window.hwnd) else {
                         continue;
@@ -685,6 +686,11 @@ impl WorkspaceBackend for WindowsWorkspaceBackend {
                         continue;
                     };
                     if observed == target {
+                        if captures.len() < 32 && window.width > 0 && window.height > 0 {
+                            if let Ok(png) = crate::capture::screenshot_window_bytes(window.hwnd) {
+                                captures.push((window.x, window.y, window.width, window.height, png));
+                            }
+                        }
                         windows.push(json!({
                             "window_id":window.hwnd,
                             "pid":window.pid,
@@ -695,7 +701,30 @@ impl WorkspaceBackend for WindowsWorkspaceBackend {
                         }));
                     }
                 }
-                Ok(json!({"windows":windows,"desktop_id":target.to_string(),"bounded":true}))
+                let overview = cua_driver_core::image_utils::compose_workspace_png(
+                    &captures
+                        .iter()
+                        .map(|(x, y, width, height, png)| {
+                            cua_driver_core::image_utils::WorkspaceWindowImage {
+                                png,
+                                x: *x,
+                                y: *y,
+                                width: *width as u32,
+                                height: *height as u32,
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                    2048,
+                )
+                .ok();
+                use base64::Engine;
+                Ok(json!({
+                    "windows":windows,
+                    "desktop_id":target.to_string(),
+                    "bounded":true,
+                    "overview_png":overview.map(|png| base64::engine::general_purpose::STANDARD.encode(png)),
+                    "overview_window_limit":32,
+                }))
             })
             .await
             .map_err(|error| PublicError::Backend(format!("workspace state task failed: {error}")))?

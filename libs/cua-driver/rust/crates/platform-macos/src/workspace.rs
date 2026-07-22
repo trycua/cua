@@ -331,6 +331,33 @@ impl WorkspaceBackend for MacosWorkspaceBackend {
         Ok(json!({"space_id": space_id, "verified": true, "private_api": true}))
     }
 
+    async fn get_state(&self, workspace_id: &str) -> Result<serde_json::Value, WorkspaceError> {
+        let space_id = *self
+            .workspaces
+            .lock()
+            .unwrap()
+            .get(workspace_id)
+            .ok_or_else(|| WorkspaceError::NotFound(workspace_id.to_owned()))?;
+        let api = PrivateSpaceApi::load().ok_or_else(|| {
+            WorkspaceError::Unavailable("required SkyLight Space symbols are unavailable".into())
+        })?;
+        let active_space = api.active_space();
+        let windows: Vec<_> = crate::windows::all_windows()
+            .into_iter()
+            .filter_map(|mut window| {
+                let spaces = api.spaces_for_window(window.window_id).ok()?;
+                if !spaces.contains(&space_id) {
+                    return None;
+                }
+                window.on_current_space = Some(space_id == active_space);
+                window.space_ids = Some(spaces);
+                Some(window)
+            })
+            .take(256)
+            .collect();
+        Ok(json!({"windows":windows,"space_id":space_id,"bounded":true}))
+    }
+
     fn configure_command(
         &self,
         workspace_id: &str,
@@ -368,6 +395,7 @@ mod tests {
         let names: std::collections::HashSet<_> = registry.tool_names().collect();
         assert!(names.contains("list_workspace_backends"));
         assert!(names.contains("create_workspace"));
+        assert!(names.contains("get_workspace_state"));
         assert!(names.contains("move_window_to_workspace"));
         assert!(names.contains("close_workspace"));
     }

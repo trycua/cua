@@ -860,6 +860,22 @@ impl Tool for LaunchAppTool {
                 }))
             }
         };
+        let _workspace_lease = if let Some(workspace_id) = workspace_id.as_deref() {
+            let manager = cua_driver_core::workspace::default_manager()
+                .expect("workspace id resolution requires a manager");
+            match manager.lease_operation(workspace_id) {
+                Ok(lease) => Some(lease),
+                Err(error) => {
+                    return ToolResult::error(error.to_string()).with_structured(json!({
+                        "code": error.code(),
+                        "workspace_id": workspace_id,
+                        "app_launched": false,
+                    }))
+                }
+            }
+        } else {
+            None
+        };
         let launch_path_opt = args.opt_str("launch_path");
         let name_opt = args.opt_str("name");
         let urls: Vec<String> = args.str_array("urls");

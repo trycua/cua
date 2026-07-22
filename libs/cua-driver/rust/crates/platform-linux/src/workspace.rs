@@ -619,6 +619,15 @@ impl WorkspaceBackend for LinuxWorkspaceBackend {
         ))
     }
 
+    async fn get_state(
+        &self,
+        _workspace_id: &str,
+    ) -> std::result::Result<serde_json::Value, WorkspaceError> {
+        Err(WorkspaceError::Unsupported(
+            "nested compositor state routing is not implemented".into(),
+        ))
+    }
+
     fn configure_command(
         &self,
         workspace_id: &str,

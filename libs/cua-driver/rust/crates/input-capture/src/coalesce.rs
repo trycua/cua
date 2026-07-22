@@ -68,6 +68,13 @@ impl Coalescer {
         events
     }
 
+    pub fn flush_if_idle(&mut self, now_ms: u64) -> Option<HumanEvent> {
+        (self.run_start_ms.is_some()
+            && now_ms.saturating_sub(self.last_key_ms) >= self.idle_flush_ms)
+            .then(|| self.flush())
+            .flatten()
+    }
+
     pub fn flush(&mut self) -> Option<HumanEvent> {
         let t_ms = self.run_start_ms.take()?;
         if std::mem::take(&mut self.char_count) == 0 {
@@ -155,6 +162,17 @@ mod tests {
         let events = coalescer.push(text('b'), 1200);
         assert_eq!(events, vec![HumanEvent::Text { t_ms: 0 }]);
         assert_eq!(coalescer.flush(), Some(HumanEvent::Text { t_ms: 1200 }));
+    }
+
+    #[test]
+    fn timer_flushes_an_idle_run_without_another_key() {
+        let mut coalescer = Coalescer::new().with_idle_flush(1000);
+        coalescer.push(text('a'), 10);
+        assert!(coalescer.flush_if_idle(1009).is_none());
+        assert_eq!(
+            coalescer.flush_if_idle(1010),
+            Some(HumanEvent::Text { t_ms: 10 })
+        );
     }
 
     #[test]

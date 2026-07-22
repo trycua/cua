@@ -65,10 +65,11 @@ mod platform {
         HDC, HGDIOBJ,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, GetWindowRect, IsIconic, IsWindow, IsWindowVisible,
-        RegisterClassW, SetWindowPos, ShowWindow, UpdateLayeredWindow, HWND_TOPMOST,
-        SWP_NOACTIVATE, SWP_NOSIZE, SW_SHOWNOACTIVATE, ULW_ALPHA, WNDCLASSW, WS_EX_LAYERED,
-        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+        CreateWindowExW, DestroyWindow, GetAncestor, GetForegroundWindow, GetWindowRect, IsIconic,
+        IsWindow, IsWindowVisible, RegisterClassW, SetWindowPos, ShowWindow, UpdateLayeredWindow,
+        GA_ROOT, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOSIZE, SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA,
+        WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+        WS_EX_TRANSPARENT, WS_POPUP,
     };
 
     /// Outward glow radius in pixels. The glow starts exactly at the window's
@@ -153,8 +154,24 @@ mod platform {
                 };
                 if !alive {
                     health.clear();
+                    unsafe {
+                        let _ = ShowWindow(hwnd, SW_HIDE);
+                    }
                     std::thread::sleep(std::time::Duration::from_millis(TARGET_FPS_MS));
                     continue;
+                }
+                let foreground = unsafe { GetAncestor(GetForegroundWindow(), GA_ROOT) };
+                if foreground.is_invalid() || foreground != unsafe { GetAncestor(target, GA_ROOT) }
+                {
+                    health.clear();
+                    unsafe {
+                        let _ = ShowWindow(hwnd, SW_HIDE);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(TARGET_FPS_MS));
+                    continue;
+                }
+                unsafe {
+                    let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                 }
 
                 let mut rect = RECT::default();

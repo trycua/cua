@@ -3,15 +3,25 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use serde::Serialize;
 use serde_json::Value;
 
 const MAX_INLINE_FRAMES: usize = 4;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CaptureEvidence {
+    pub dropped_events: usize,
+    pub screenshot_failures: usize,
+}
+
 #[derive(Debug, Serialize)]
 pub struct Summary {
     pub action_count: usize,
     pub duration_ms: u64,
+    pub dropped_events: usize,
+    pub screenshot_failures: usize,
+    pub complete: bool,
     pub action_histogram: BTreeMap<String, usize>,
 }
 
@@ -32,9 +42,9 @@ struct Turn {
     has_screenshot: bool,
 }
 
-pub fn write(directory: &Path) -> anyhow::Result<Artifacts> {
+pub fn write(directory: &Path, evidence: CaptureEvidence) -> anyhow::Result<Artifacts> {
     let turns = read_turns(directory)?;
-    let summary = summarize(&turns);
+    let summary = summarize(&turns, evidence);
     let inline = pick_inline_frames(&turns);
 
     let trajectory_md = directory.join("TRAJECTORY.md");
@@ -57,10 +67,11 @@ fn read_turns(directory: &Path) -> anyhow::Result<Vec<Turn>> {
     let mut entries: Vec<_> = std::fs::read_dir(directory)?
         .filter_map(Result::ok)
         .filter(|entry| {
-            entry
-                .file_name()
-                .to_str()
-                .is_some_and(|name| name.starts_with("turn-"))
+            entry.path().is_dir()
+                && entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with("turn-"))
         })
         .collect();
     entries.sort_by_key(|entry| entry.file_name());
@@ -68,12 +79,11 @@ fn read_turns(directory: &Path) -> anyhow::Result<Vec<Turn>> {
     let mut turns = Vec::new();
     for entry in entries {
         let dir_name = entry.file_name().to_string_lossy().into_owned();
-        let Ok(text) = std::fs::read_to_string(entry.path().join("action.json")) else {
-            continue;
-        };
-        let Ok(value): Result<Value, _> = serde_json::from_str(&text) else {
-            continue;
-        };
+        let action_path = entry.path().join("action.json");
+        let text = std::fs::read_to_string(&action_path)
+            .with_context(|| format!("read {}", action_path.display()))?;
+        let value: Value = serde_json::from_str(&text)
+            .with_context(|| format!("parse {}", action_path.display()))?;
         let index = dir_name
             .strip_prefix("turn-")
             .and_then(|value| value.parse().ok())
@@ -97,7 +107,7 @@ fn read_turns(directory: &Path) -> anyhow::Result<Vec<Turn>> {
     Ok(turns)
 }
 
-fn summarize(turns: &[Turn]) -> Summary {
+fn summarize(turns: &[Turn], evidence: CaptureEvidence) -> Summary {
     let mut action_histogram = BTreeMap::new();
     for turn in turns {
         *action_histogram.entry(turn.action.clone()).or_insert(0) += 1;
@@ -105,6 +115,9 @@ fn summarize(turns: &[Turn]) -> Summary {
     Summary {
         action_count: turns.len(),
         duration_ms: turns.last().map_or(0, |turn| turn.t_ms),
+        dropped_events: evidence.dropped_events,
+        screenshot_failures: evidence.screenshot_failures,
+        complete: evidence.dropped_events == 0 && evidence.screenshot_failures == 0,
         action_histogram,
     }
 }
@@ -203,6 +216,12 @@ fn render_markdown(
     );
     output
         .push_str("> Screenshots are best-effort post-event captures linked by relative path.\n\n");
+    if !summary.complete {
+        output.push_str(&format!(
+            "> **Incomplete capture:** {} events dropped; {} screenshots unavailable.\n\n",
+            summary.dropped_events, summary.screenshot_failures
+        ));
+    }
 
     if turns.is_empty() {
         output.push_str("No input was captured.\n");
@@ -290,17 +309,18 @@ mod tests {
             }),
             true,
         );
-        let artifacts = write(&directory).unwrap();
+        let artifacts = write(&directory, CaptureEvidence::default()).unwrap();
         let markdown = std::fs::read_to_string(&artifacts.trajectory_md).unwrap();
         assert!(markdown.contains("Right-click at (10, 20)"));
         assert!(markdown.contains("best-effort post-event"));
         assert_eq!(artifacts.summary.action_count, 1);
+        assert!(artifacts.summary.complete);
     }
 
     #[test]
     fn empty_demonstration_is_valid() {
         let directory = directory("empty");
-        let artifacts = write(&directory).unwrap();
+        let artifacts = write(&directory, CaptureEvidence::default()).unwrap();
         assert_eq!(artifacts.summary.action_count, 0);
         assert!(std::fs::read_to_string(artifacts.trajectory_md)
             .unwrap()
@@ -322,8 +342,25 @@ mod tests {
                 true,
             );
         }
-        let artifacts = write(&directory).unwrap();
+        let artifacts = write(&directory, CaptureEvidence::default()).unwrap();
         let markdown = std::fs::read_to_string(artifacts.trajectory_md).unwrap();
         assert!(markdown.matches("\n![step").count() <= MAX_INLINE_FRAMES);
+    }
+
+    #[test]
+    fn reports_incomplete_capture() {
+        let directory = directory("incomplete");
+        let artifacts = write(
+            &directory,
+            CaptureEvidence {
+                dropped_events: 2,
+                screenshot_failures: 1,
+            },
+        )
+        .unwrap();
+        assert!(!artifacts.summary.complete);
+        assert!(std::fs::read_to_string(artifacts.trajectory_md)
+            .unwrap()
+            .contains("Incomplete capture"));
     }
 }

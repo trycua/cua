@@ -26,7 +26,7 @@ impl Tool for StartDemonstrationTool {
     fn def(&self) -> &ToolDef {
         START_DEF.get_or_init(|| ToolDef {
             name: "start_demonstration".into(),
-            description: "Start observing human input on one Windows window. A red border is shown before capture starts. Input is ignored when the target is not foreground or border rendering stops. Typed content is never retained. Call stop_demonstration when the human finishes.".into(),
+            description: "Start observing human input on one foreground Windows window. A red border is shown before capture starts. The border hides and input is ignored when the target loses foreground or rendering stops. Typed content is never retained. Call stop_demonstration when the human finishes.".into(),
             input_schema: json!({
                 "type": "object",
                 "required": ["pid", "window_id"],
@@ -119,18 +119,32 @@ impl Tool for StopDemonstrationTool {
     async fn invoke(&self, _args: Value) -> ToolResult {
         let manager = self.manager.clone();
         match tokio::task::spawn_blocking(move || manager.stop()).await {
-            Ok(Ok(Some(result))) => ToolResult::text(format!(
-                "Demonstration stopped. {} actions captured. Trajectory: {}",
-                result.artifacts.summary.action_count,
-                result.artifacts.trajectory_md.display()
-            ))
-            .with_structured(json!({
-                "active": false,
-                "output_dir": result.output_dir,
-                "trajectory_md": result.artifacts.trajectory_md,
-                "summary_json": result.artifacts.summary_json,
-                "action_count": result.artifacts.summary.action_count,
-            })),
+            Ok(Ok(Some(result))) => {
+                let summary = &result.artifacts.summary;
+                let warning = (!summary.complete).then(|| {
+                    format!(
+                        " Warning: incomplete capture ({} events dropped, {} screenshots unavailable).",
+                        summary.dropped_events, summary.screenshot_failures
+                    )
+                });
+                ToolResult::text(format!(
+                    "Demonstration stopped. {} actions captured. Trajectory: {}{}",
+                    summary.action_count,
+                    result.artifacts.trajectory_md.display(),
+                    warning.unwrap_or_default()
+                ))
+                .with_structured(json!({
+                    "active": false,
+                    "output_dir": result.output_dir,
+                    "trajectory_md": result.artifacts.trajectory_md,
+                    "summary_json": result.artifacts.summary_json,
+                    "manifest": result.manifest,
+                    "action_count": summary.action_count,
+                    "dropped_events": summary.dropped_events,
+                    "screenshot_failures": summary.screenshot_failures,
+                    "complete": summary.complete,
+                }))
+            }
             Ok(Ok(None)) => ToolResult::text("No demonstration is active."),
             Ok(Err(error)) => ToolResult::error(format!(
                 "Demonstration stopped, but artifact processing failed: {error}"

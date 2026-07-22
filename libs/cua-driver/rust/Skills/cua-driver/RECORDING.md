@@ -147,7 +147,9 @@ intended regression-diff workflow.
 
 Call `start_demonstration` with the `pid` and `window_id` returned by
 `list_windows`. Call `stop_demonstration` when the task is complete. Stop writes
-`TRAJECTORY.md` and `SUMMARY.json` next to the captured `turn-NNNNN/` folders.
+`TRAJECTORY.md`, `SUMMARY.json`, and `DEMONSTRATION.json` next to the captured
+`turn-NNNNN/` folders. The summary and manifest mark the capture incomplete when
+hook events were dropped or screenshots were unavailable.
 
 The red border is a user notification. Cua-driver creates it before installing
 the input hook and drops input if border rendering stops. As a user-space

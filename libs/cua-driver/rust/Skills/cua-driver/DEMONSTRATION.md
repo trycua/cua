@@ -16,7 +16,10 @@ Call `stop_demonstration`. It writes, next to the `turn-*/` folders:
 - **`TRAJECTORY.md`** — readable action prose; screenshots referenced by
   **relative path**, only a few key frames embedded inline. Read THIS, not the
   raw `action.json` tree — it will not blow up your context with base64.
-- **`SUMMARY.json`** — action count, duration, and action histogram.
+- **`SUMMARY.json`** — action count, duration, completeness, dropped-event and
+  screenshot-failure counts, and the action histogram.
+- **`DEMONSTRATION.json`** — schema and driver versions, target identity,
+  timestamps, stop reason, and capture completeness.
 
 ## 2. Read the trajectory and identify the task
 

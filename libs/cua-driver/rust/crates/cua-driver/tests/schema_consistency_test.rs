@@ -16,6 +16,7 @@
 use cua_driver_contract::{
     compatibility::schema_subset_violations, manifest, Platform, SchemaMode,
 };
+use cua_driver_core::tool::advertised_capabilities_for;
 use cua_driver_core::tool_schema::shared_schema_violations;
 use cua_driver_testkit::RawDriver;
 use serde_json::{json, Value};
@@ -64,6 +65,22 @@ fn registered_tool_contracts_match_on_active_backend() {
             .cloned()
             .unwrap_or_else(|| json!({}));
         violations.extend(shared_schema_violations(name, &schema));
+
+        let schema_accepts_delivery_mode = schema
+            .pointer("/properties/delivery_mode")
+            .is_some_and(Value::is_object);
+        let advertises_delivery_mode =
+            tool["capabilities"].as_array().is_some_and(|capabilities| {
+                capabilities
+                    .iter()
+                    .any(|capability| capability == "input.delivery_mode")
+            });
+        if schema_accepts_delivery_mode != advertises_delivery_mode {
+            violations.push(format!(
+                "{name}: delivery_mode schema={schema_accepts_delivery_mode} but \
+                 input.delivery_mode capability={advertises_delivery_mode}"
+            ));
+        }
     }
 
     assert!(
@@ -163,12 +180,13 @@ fn portable_desktop_contracts_are_accepted_by_active_backend() {
             }
         }
 
-        if live["capabilities"] != json!(contract.capabilities) {
+        let expected_capabilities = advertised_capabilities_for(&contract.name, live_schema);
+        if live["capabilities"] != json!(expected_capabilities) {
             violations.push(format!(
-                "{}: live capabilities {} differ from portable capabilities {}",
+                "{}: live capabilities {} differ from schema-aware capabilities {}",
                 contract.name,
                 live["capabilities"],
-                json!(contract.capabilities)
+                json!(expected_capabilities)
             ));
         }
     }

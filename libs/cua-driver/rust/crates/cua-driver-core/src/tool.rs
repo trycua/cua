@@ -59,7 +59,7 @@ impl ToolDef {
         //
         // Published SDK tools resolve capabilities from their typed Rust
         // contract. The legacy map remains only for runtime-only tools.
-        let caps = default_capabilities_for(&self.name);
+        let caps = advertised_capabilities_for(&self.name, &self.input_schema);
         let risk = crate::authorization::risk_metadata_json(&self.name);
         serde_json::json!({
             "name": self.name,
@@ -93,6 +93,8 @@ impl ToolDef {
 ///   `input.pointer.move`, `input.pointer.button` (raw down/up)
 /// - `input.keyboard.type`, `input.keyboard.hotkey`,
 ///   `input.keyboard.press`
+/// - `input.delivery_mode` (the live tool schema accepts the shared
+///   `background` / `foreground` delivery ladder)
 /// - `screen.capture`, `screen.capture.window`,
 ///   `screen.capture.region`, `screen.dimensions`,
 ///   `screen.cursor.position`
@@ -263,6 +265,31 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         _ => &[],
     };
     caps.iter().map(|s| (*s).to_owned()).collect()
+}
+
+/// Capabilities advertised by a concrete runtime tool definition.
+///
+/// Most capabilities are stable properties of a tool name and come from the
+/// typed portable contract (or the legacy runtime-only map). Delivery mode is
+/// different: the typed desktop SDK intentionally exposes a narrower,
+/// desktop-only input while the live platform schemas additionally accept
+/// window-targeted `delivery_mode`. Deriving this one token from the concrete
+/// schema keeps `tools/list` truthful on every platform and prevents either
+/// overclaiming a tool that cannot accept the field or omitting support from a
+/// richer live schema.
+pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec<String> {
+    let mut capabilities = default_capabilities_for(tool_name);
+    let accepts_delivery_mode = input_schema
+        .pointer("/properties/delivery_mode")
+        .is_some_and(Value::is_object);
+    if accepts_delivery_mode
+        && !capabilities
+            .iter()
+            .any(|capability| capability == "input.delivery_mode")
+    {
+        capabilities.push("input.delivery_mode".into());
+    }
+    capabilities
 }
 
 /// A callable tool handler. Object-safe — uses `Box<dyn Tool>`.
@@ -784,6 +811,7 @@ mod capability_tests {
         "input.keyboard.type.terminal_safe",
         "input.keyboard.hotkey",
         "input.keyboard.press",
+        "input.delivery_mode",
         // screen
         "screen.capture",
         "screen.capture.window",
@@ -896,6 +924,28 @@ mod capability_tests {
     }
 
     #[test]
+    fn delivery_mode_capability_is_derived_from_the_runtime_schema() {
+        let with_delivery_mode = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "delivery_mode": crate::tool_schema::delivery_mode_schema()
+            }
+        });
+        let without_delivery_mode = serde_json::json!({"type": "object", "properties": {}});
+
+        assert!(
+            advertised_capabilities_for("press_key", &with_delivery_mode)
+                .iter()
+                .any(|capability| capability == "input.delivery_mode")
+        );
+        assert!(
+            !advertised_capabilities_for("press_key", &without_delivery_mode)
+                .iter()
+                .any(|capability| capability == "input.delivery_mode")
+        );
+    }
+
+    #[test]
     fn unknown_tools_get_empty_capabilities() {
         // Tools without a mapping (typically internal/stub tools like
         // `unsupported_platform`) return `[]`. Consumers fall back to
@@ -973,6 +1023,30 @@ mod capability_tests {
             cap_strs.contains(&"input.pointer.click.left"),
             "click missing input.pointer.click.left: {cap_strs:?}"
         );
+    }
+
+    #[test]
+    fn to_list_entry_advertises_delivery_mode_only_when_accepted() {
+        let mut accepting = dummy_def("press_key");
+        accepting.input_schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "delivery_mode": crate::tool_schema::delivery_mode_schema()
+            }
+        });
+        let accepting_entry = accepting.to_list_entry();
+        assert!(accepting_entry["capabilities"]
+            .as_array()
+            .expect("capabilities array")
+            .iter()
+            .any(|capability| capability == "input.delivery_mode"));
+
+        let rejecting_entry = dummy_def("press_key").to_list_entry();
+        assert!(!rejecting_entry["capabilities"]
+            .as_array()
+            .expect("capabilities array")
+            .iter()
+            .any(|capability| capability == "input.delivery_mode"));
     }
 
     #[test]

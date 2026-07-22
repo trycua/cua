@@ -8,6 +8,7 @@
 #![cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 
 use cua_driver_testkit::{Driver, McpDriver, RawDriver};
+use std::collections::BTreeSet;
 
 #[test]
 fn tools_list_schema_shape() {
@@ -109,21 +110,53 @@ fn tools_list_schema_shape() {
         }
     }
 
-    for tool in [
+    const DELIVERY_MODE_TOOLS: &[&str] = &[
         "click",
         "double_click",
         "right_click",
+        "drag",
         "type_text",
         "press_key",
         "hotkey",
         "scroll",
-    ] {
+        "browser_dialog",
+    ];
+    for tool in DELIVERY_MODE_TOOLS {
         let delivery = &properties(tool)["delivery_mode"];
         assert!(
             enum_contains(delivery, "background") && enum_contains(delivery, "foreground"),
             "{tool}.delivery_mode should advertise background and foreground: {delivery:?}"
         );
     }
+    let schema_tools: BTreeSet<&str> = tools
+        .iter()
+        .filter(|tool| tool["inputSchema"]["properties"]["delivery_mode"].is_object())
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    let capability_tools: BTreeSet<&str> = tools
+        .iter()
+        .filter(|tool| {
+            tool["capabilities"].as_array().is_some_and(|capabilities| {
+                capabilities
+                    .iter()
+                    .any(|capability| capability == "input.delivery_mode")
+            })
+        })
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    let expected_tools: BTreeSet<&str> = DELIVERY_MODE_TOOLS.iter().copied().collect();
+    assert_eq!(
+        schema_tools, expected_tools,
+        "unexpected delivery_mode schema set"
+    );
+    assert_eq!(
+        capability_tools, expected_tools,
+        "input.delivery_mode must match the exact runtime schema support set"
+    );
+    assert_eq!(
+        list_resp["result"]["capability_version"], "1",
+        "adding one capability token is additive and must not bump the vocabulary version"
+    );
     // Capture scope belongs to the session lifecycle on every platform. The
     // action-level `scope` selects a coordinate/transport form but cannot
     // override the session policy enforced by the registry.

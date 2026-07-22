@@ -63,5 +63,17 @@ fn every_generated_contract_uses_live_capability_tokens() {
             "{} capabilities",
             contract.name
         );
+        assert_eq!(
+            contract
+                .input_schema
+                .pointer("/properties/delivery_mode")
+                .is_some(),
+            contract
+                .capabilities
+                .iter()
+                .any(|capability| capability == "input.delivery_mode"),
+            "{} typed contract delivery_mode schema/capability mismatch",
+            contract.name
+        );
     }
 }

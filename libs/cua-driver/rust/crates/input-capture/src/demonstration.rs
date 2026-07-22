@@ -1,17 +1,22 @@
 //! Lifecycle coupling for the recording indicator and platform input capture.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::SyncSender;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::indicator::Indicator;
 use crate::render_health::RenderHealth;
-use crate::{start as start_capture, CaptureConfig, CaptureError, HumanEvent};
+use crate::{
+    start as start_capture, validate, CaptureConfig, CaptureError, CaptureStats, HumanEvent,
+};
 
 /// A live human demonstration. Drop it to stop capture and remove the border.
 pub struct Demonstration {
     // Drop capture before the indicator so input never outlives notification.
     capture: Option<crate::platform::Capture>,
     _indicator: Indicator,
+    dropped_events: Arc<AtomicUsize>,
 }
 
 impl Demonstration {
@@ -19,6 +24,7 @@ impl Demonstration {
         config: CaptureConfig,
         sink: SyncSender<HumanEvent>,
     ) -> Result<Self, CaptureError> {
+        validate(&config)?;
         let started_at = Instant::now();
         let health = RenderHealth::new();
         let indicator = Indicator::start(config.window_id as isize, health.clone(), started_at)
@@ -35,16 +41,21 @@ impl Demonstration {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
-        let capture = start_capture(config, health, sink, started_at)?;
+        let dropped_events = Arc::new(AtomicUsize::new(0));
+        let capture = start_capture(config, health, sink, started_at, dropped_events.clone())?;
         Ok(Self {
             capture: Some(capture),
             _indicator: indicator,
+            dropped_events,
         })
     }
 
-    pub fn stop(mut self) {
+    pub fn stop(mut self) -> CaptureStats {
         if let Some(capture) = self.capture.take() {
             capture.stop();
+        }
+        CaptureStats {
+            dropped_events: self.dropped_events.load(Ordering::Acquire),
         }
     }
 }

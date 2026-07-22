@@ -41,7 +41,10 @@ impl DemonstrationManager {
     }
 
     pub fn start(&self, config: DemonstrationConfig) -> anyhow::Result<PathBuf> {
-        let mut active = self.active.lock().unwrap();
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if active.is_some() {
             anyhow::bail!("a demonstration is already active");
         }
@@ -66,7 +69,10 @@ impl DemonstrationManager {
         &self,
         predicate: impl FnOnce(&DemonstrationSession) -> bool,
     ) -> Option<DemonstrationSession> {
-        let mut active = self.active.lock().unwrap();
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if active.as_ref().is_some_and(predicate) {
             active.take()
         } else {

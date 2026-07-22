@@ -26,7 +26,7 @@ impl Tool for StartDemonstrationTool {
     fn def(&self) -> &ToolDef {
         START_DEF.get_or_init(|| ToolDef {
             name: "start_demonstration".into(),
-            description: "Start observing human input on one foreground Windows window. A red border is shown before capture starts. The border hides and input is ignored when the target loses foreground or rendering stops. Typed content is never retained. Call stop_demonstration when the human finishes.".into(),
+            description: "Call only after the user explicitly asks to record a human demonstration. Start observing human input on one foreground Windows window. A red border is shown before capture starts. The border hides and input is ignored when the target loses foreground or rendering stops. Typed input content is never retained, but screenshots can contain text visible in the target window. Call stop_demonstration when the human finishes.".into(),
             input_schema: json!({
                 "type": "object",
                 "required": ["pid", "window_id"],

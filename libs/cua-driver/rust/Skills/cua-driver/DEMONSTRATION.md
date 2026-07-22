@@ -75,8 +75,9 @@ description: Use when <trigger>. Do NOT use when <anti-trigger>.
 - **Generalize literal text into `{placeholders}`.** Default capture records
   only `text entered (redacted)` — never invent the literal value; represent it
   as an input under `## Inputs`.
-- **Never invent or hardcode secrets.** Text content is always redacted; make
-  varying or sensitive values explicit inputs.
+- **Never invent or hardcode secrets.** Text input events are always redacted,
+  but screenshots can contain visible content. Review them before sharing and
+  make varying or sensitive values explicit inputs.
 - **Keep it minimal.** One screen of steps beats a transcript. Drop turns that
   were just navigation.
 - **Always add a Verification section.** A skill the agent can't self-check is a

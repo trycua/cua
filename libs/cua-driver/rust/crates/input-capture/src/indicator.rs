@@ -21,11 +21,12 @@ impl Indicator {
     /// submitted frame.
     pub fn start(
         target_hwnd: isize,
+        target_pid: u32,
         health: RenderHealth,
         started_at: Instant,
     ) -> anyhow::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
-        let thread = platform::spawn(target_hwnd, health, started_at, stop.clone())?;
+        let thread = platform::spawn(target_hwnd, target_pid, health, started_at, stop.clone())?;
         Ok(Self {
             stop,
             thread: Some(thread),
@@ -65,11 +66,11 @@ mod platform {
         HDC, HGDIOBJ,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, GetAncestor, GetForegroundWindow, GetWindowRect, IsIconic,
-        IsWindow, IsWindowVisible, RegisterClassW, SetWindowPos, ShowWindow, UpdateLayeredWindow,
-        GA_ROOT, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOSIZE, SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA,
-        WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-        WS_EX_TRANSPARENT, WS_POPUP,
+        CreateWindowExW, DestroyWindow, GetAncestor, GetForegroundWindow, GetWindowRect,
+        GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, RegisterClassW,
+        SetWindowPos, ShowWindow, UpdateLayeredWindow, GA_ROOT, HWND_TOPMOST, SWP_NOACTIVATE,
+        SWP_NOSIZE, SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WNDCLASSW, WS_EX_LAYERED,
+        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
     };
 
     /// Outward glow radius in pixels. The glow starts exactly at the window's
@@ -80,6 +81,7 @@ mod platform {
 
     pub fn spawn(
         target_hwnd: isize,
+        target_pid: u32,
         health: RenderHealth,
         started_at: Instant,
         stop: Arc<AtomicBool>,
@@ -87,7 +89,7 @@ mod platform {
         let handle = std::thread::Builder::new()
             .name("recording-indicator".into())
             .spawn(move || {
-                if let Err(e) = run(target_hwnd, &health, started_at, &stop) {
+                if let Err(e) = run(target_hwnd, target_pid, &health, started_at, &stop) {
                     tracing::warn!("recording indicator stopped: {e}");
                 }
                 // On exit the health naturally goes stale; also latch dark.
@@ -98,6 +100,7 @@ mod platform {
 
     fn run(
         target_hwnd: isize,
+        target_pid: u32,
         health: &RenderHealth,
         started_at: Instant,
         stop: &Arc<AtomicBool>,
@@ -148,7 +151,10 @@ mod platform {
                 let target = HWND(target_hwnd as *mut _);
                 // Pause frame health while the target is unavailable.
                 let alive = unsafe {
-                    IsWindow(target).as_bool()
+                    let mut actual_pid = 0;
+                    GetWindowThreadProcessId(target, Some(&mut actual_pid));
+                    actual_pid == target_pid
+                        && IsWindow(target).as_bool()
                         && IsWindowVisible(target).as_bool()
                         && !IsIconic(target).as_bool()
                 };
@@ -381,6 +387,7 @@ mod platform {
     use super::*;
     pub fn spawn(
         _target_hwnd: isize,
+        _target_pid: u32,
         _health: RenderHealth,
         _started_at: Instant,
         _stop: Arc<AtomicBool>,

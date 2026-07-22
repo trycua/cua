@@ -51,7 +51,7 @@ pub(crate) fn validate(config: &CaptureConfig) -> Result<(), CaptureError> {
             config.window_id, config.pid
         )));
     }
-    if !is_target_foreground(config.window_id as isize) {
+    if !is_target_foreground(config.window_id as isize, config.pid as u32) {
         return Err(CaptureError::Hook(format!(
             "window {} must be foreground before capture starts",
             config.window_id
@@ -62,6 +62,7 @@ pub(crate) fn validate(config: &CaptureConfig) -> Result<(), CaptureError> {
 
 struct HookState {
     target_hwnd: isize,
+    target_pid: u32,
     health: RenderHealth,
     sink: SyncSender<HumanEvent>,
     started_at: Instant,
@@ -96,11 +97,14 @@ impl HookState {
 }
 
 /// Compare top-level roots so input sent to a child control remains in scope.
-fn is_target_foreground(target: isize) -> bool {
+fn is_target_foreground(target: isize, expected_pid: u32) -> bool {
     unsafe {
+        let target = HWND(target as *mut _);
+        let mut actual_pid = 0;
+        GetWindowThreadProcessId(target, Some(&mut actual_pid));
         let foreground = GetAncestor(GetForegroundWindow(), GA_ROOT);
-        let target = GetAncestor(HWND(target as *mut _), GA_ROOT);
-        !foreground.is_invalid() && foreground == target
+        let target = GetAncestor(target, GA_ROOT);
+        actual_pid == expected_pid && !foreground.is_invalid() && foreground == target
     }
 }
 
@@ -132,10 +136,11 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
             // 1. drop injected (our own actuation / replay).
             let injected = info.flags & LLMHF_INJECTED != 0;
             if !injected {
-                if let Ok(mut guard) = HOOK_STATE.try_lock() {
-                    if let Some(st) = guard.as_mut() {
-                        handle_mouse(st, wparam.0 as u32, info);
-                    }
+                let mut guard = HOOK_STATE
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(state) = guard.as_mut() {
+                    handle_mouse(state, wparam.0 as u32, info);
                 }
             }
         }
@@ -161,7 +166,7 @@ fn handle_mouse(st: &mut HookState, msg: u32, info: &MSLLHOOKSTRUCT) {
 
     let pt = info.pt;
     let now = st.now();
-    if !is_target_foreground(st.target_hwnd)
+    if !is_target_foreground(st.target_hwnd, st.target_pid)
         || !st.health.is_fresh(now)
         || !point_in_target(st.target_hwnd, pt)
     {
@@ -258,10 +263,11 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
             let injected = info.flags.0 & LLKHF_INJECTED.0 != 0;
             let is_down = wparam.0 as u32 == WM_KEYDOWN || wparam.0 as u32 == WM_SYSKEYDOWN;
             if !injected && is_down {
-                if let Ok(mut guard) = HOOK_STATE.try_lock() {
-                    if let Some(st) = guard.as_mut() {
-                        handle_key(st, info.vkCode, info.scanCode);
-                    }
+                let mut guard = HOOK_STATE
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(state) = guard.as_mut() {
+                    handle_key(state, info.vkCode, info.scanCode);
                 }
             }
         }
@@ -271,7 +277,7 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
 
 fn handle_key(st: &mut HookState, vk: u32, scan: u32) {
     let now = st.now();
-    if !is_target_foreground(st.target_hwnd) || !st.health.is_fresh(now) {
+    if !is_target_foreground(st.target_hwnd, st.target_pid) || !st.health.is_fresh(now) {
         flush_text(st);
         flush_scroll(st);
         st.mouse_down = None;
@@ -455,6 +461,7 @@ impl Capture {
             }
             *guard = Some(HookState {
                 target_hwnd: cfg.window_id as isize,
+                target_pid: cfg.pid as u32,
                 health,
                 sink,
                 started_at,
@@ -523,6 +530,17 @@ fn pump(report: Sender<Result<u32, String>>) {
 
     let tid = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
     let timer_id = unsafe { SetTimer(HWND::default(), 0, 100, None) };
+    if timer_id == 0 {
+        unsafe {
+            let _ = UnhookWindowsHookEx(kbd);
+            let _ = UnhookWindowsHookEx(mouse);
+        }
+        let _ = report.send(Err("SetTimer failed".into()));
+        *HOOK_STATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        return;
+    }
     let _ = report.send(Ok(tid));
 
     // Standard message loop. LL hook callbacks fire on this thread between
@@ -534,19 +552,20 @@ fn pump(report: Sender<Result<u32, String>>) {
             break; // WM_QUIT (0) or error (-1)
         }
         if msg.message == WM_TIMER {
-            if let Ok(mut guard) = HOOK_STATE.try_lock() {
-                if let Some(state) = guard.as_mut() {
-                    let now = state.now();
-                    if let Some(event) = state.coalescer.flush_if_idle(now) {
-                        state.emit(event);
-                    }
-                    if state
-                        .pending_scroll
-                        .as_ref()
-                        .is_some_and(|scroll| now.saturating_sub(scroll.last_ms) >= SCROLL_IDLE_MS)
-                    {
-                        flush_scroll(state);
-                    }
+            let mut guard = HOOK_STATE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(state) = guard.as_mut() {
+                let now = state.now();
+                if let Some(event) = state.coalescer.flush_if_idle(now) {
+                    state.emit(event);
+                }
+                if state
+                    .pending_scroll
+                    .as_ref()
+                    .is_some_and(|scroll| now.saturating_sub(scroll.last_ms) >= SCROLL_IDLE_MS)
+                {
+                    flush_scroll(state);
                 }
             }
             continue;
@@ -583,6 +602,7 @@ mod tests {
         let dropped_events = Arc::new(AtomicUsize::new(0));
         let state = HookState {
             target_hwnd: 0,
+            target_pid: 0,
             health: RenderHealth::new(),
             sink,
             started_at: Instant::now(),

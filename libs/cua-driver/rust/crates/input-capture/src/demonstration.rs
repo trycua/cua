@@ -27,8 +27,13 @@ impl Demonstration {
         validate(&config)?;
         let started_at = Instant::now();
         let health = RenderHealth::new();
-        let indicator = Indicator::start(config.window_id as isize, health.clone(), started_at)
-            .map_err(|error| CaptureError::Hook(format!("indicator: {error}")))?;
+        let indicator = Indicator::start(
+            config.window_id as isize,
+            config.pid as u32,
+            health.clone(),
+            started_at,
+        )
+        .map_err(|error| CaptureError::Hook(format!("indicator: {error}")))?;
 
         // Install hooks only after the border submits its first frame.
         let deadline = Instant::now() + std::time::Duration::from_secs(1);

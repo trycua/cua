@@ -450,11 +450,14 @@ pub(crate) fn build_elements_array_with_token(
             if let Some(desc) = node.value_description.clone() {
                 entry["value_description"] = serde_json::Value::String(desc);
             }
-            if let Some(min) = node.min_value {
-                entry["min"] = serde_json::json!(min);
-            }
-            if let Some(max) = node.max_value {
-                entry["max"] = serde_json::json!(max);
+            // Only surface a real range: WebKit reports AXMinValue/AXMaxValue
+            // as 0.0/0.0 on non-range controls (checkboxes, radios), which
+            // would be pure noise on every two-state element.
+            if let (Some(min), Some(max)) = (node.min_value, node.max_value) {
+                if max > min {
+                    entry["min"] = serde_json::json!(min);
+                    entry["max"] = serde_json::json!(max);
+                }
             }
             if let Some(enabled) = node.enabled {
                 entry["enabled"] = serde_json::Value::Bool(enabled);
@@ -656,6 +659,18 @@ mod tests {
         for key in ["value_description", "min", "max", "enabled", "selected"] {
             assert!(entry.get(key).is_none(), "{key} must be omitted");
         }
+    }
+
+    #[test]
+    fn elements_omit_degenerate_min_max_range() {
+        // WebKit reports AXMinValue/AXMaxValue as 0.0/0.0 on non-range
+        // controls (checkboxes, radios) — a degenerate range is omitted.
+        let mut nodes = vec![node(Some(0), "AXCheckBox", Some("On"), 0, None, None)];
+        nodes[0].min_value = Some(0.0);
+        nodes[0].max_value = Some(0.0);
+        let entry = &build_elements_array(&nodes)[0];
+        assert!(entry.get("min").is_none(), "degenerate min must be omitted");
+        assert!(entry.get("max").is_none(), "degenerate max must be omitted");
     }
 
     #[test]

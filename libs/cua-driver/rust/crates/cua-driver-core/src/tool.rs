@@ -642,6 +642,8 @@ pub struct ToolRegistry {
     protected_resource_grants: Arc<crate::consent::ProtectedResourceGrants>,
     protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     browser_engine: Option<Arc<crate::browser::BrowserEngine>>,
+    /// Human input capture is independent from executable tool-call recording.
+    pub demonstrations: Arc<crate::demonstration::DemonstrationManager>,
 }
 
 impl ToolRegistry {
@@ -660,12 +662,20 @@ impl ToolRegistry {
         ));
         let protected_resource_ownership =
             Arc::new(crate::consent::ProtectedResourceOwnershipStore::default());
+        let demonstrations = Arc::new(crate::demonstration::DemonstrationManager::new());
         let weak_grants = Arc::downgrade(&protected_resource_grants);
         let weak_ownership = Arc::downgrade(&protected_resource_ownership);
+        let weak_demonstrations = Arc::downgrade(&demonstrations);
         let session_end_hook =
             crate::session::register_scoped_session_end_hook(move |session_id| {
                 if let Some(ownership) = weak_ownership.upgrade() {
                     ownership.remove_session(session_id);
+                }
+                if let Some(demonstrations) = weak_demonstrations.upgrade() {
+                    let session_id = session_id.to_owned();
+                    std::thread::spawn(move || {
+                        let _ = demonstrations.stop_owner(&session_id);
+                    });
                 }
                 let Some(grants) = weak_grants.upgrade() else {
                     return;
@@ -706,6 +716,7 @@ impl ToolRegistry {
             protected_resource_grants,
             protected_resource_ownership,
             browser_engine: None,
+            demonstrations,
         }
     }
 
@@ -834,13 +845,12 @@ impl ToolRegistry {
             self.replay_registry.clone(),
         )));
         self.register(Box::new(crate::recording_tools::InstallFfmpegTool));
-        self.register(Box::new(crate::recording_tools::ProcessRecordingTool));
-        self.register(Box::new(crate::recording_tools::StartDemonstrationTool::new(
-            self.recording.clone(),
-        )));
-        self.register(Box::new(crate::recording_tools::StopDemonstrationTool::new(
-            self.recording.clone(),
-        )));
+        self.register(Box::new(
+            crate::demonstration_tools::StartDemonstrationTool::new(self.demonstrations.clone()),
+        ));
+        self.register(Box::new(
+            crate::demonstration_tools::StopDemonstrationTool::new(self.demonstrations.clone()),
+        ));
     }
 
     /// Install the encrypted history hook and its two permission-gated,
@@ -1507,7 +1517,12 @@ impl ToolRegistry {
         let should_record = !tool.def().read_only
             && !matches!(
                 resolved_name,
-                "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
+                "start_recording"
+                    | "stop_recording"
+                    | "get_recording_state"
+                    | "replay_trajectory"
+                    | "start_demonstration"
+                    | "stop_demonstration"
             );
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
         let _desktop_action = if is_physical_desktop_action(resolved_name) {

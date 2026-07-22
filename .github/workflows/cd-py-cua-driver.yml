@@ -202,6 +202,11 @@ jobs:
           cache-dependency-path: libs/cua-driver/typescript/package-lock.json
       - name: Verify one release version
         run: python3 .github/scripts/validate_release_versions.py --product driver
+      - name: Ensure npm provenance identifies the canonical repository
+        working-directory: libs/cua-driver/typescript
+        run: |
+          npm pkg set repository.type=git \
+            repository.url=git+https://github.com/trycua/cua.git
       - name: Install and build TypeScript SDK
         working-directory: libs/cua-driver/typescript
         run: |
@@ -245,6 +250,10 @@ jobs:
             --version "${{ needs.get-version.outputs.version }}" \
             --native-dir "$RUNNER_TEMP/cua-driver-native" \
             --output-dir "$RUNNER_TEMP/cua-driver-npm"
+          ROOT_PACKAGE="$RUNNER_TEMP/cua-driver-npm/trycua-cua-driver-${{ needs.get-version.outputs.version }}.tgz"
+          REPOSITORY=$(tar -xOf "$ROOT_PACKAGE" package/package.json | node -e \
+            "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).repository?.url ?? ''))")
+          test "$REPOSITORY" = "git+https://github.com/trycua/cua.git"
           ls -lh "$RUNNER_TEMP/cua-driver-npm"/*.tgz
       - name: Smoke-test the packed Linux SDK
         run: |

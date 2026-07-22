@@ -70,6 +70,9 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             workflow,
         )
         self.assertIn("git rebase origin/main", workflow)
+        self.assertIn("merge_release_please_manifests.py", workflow)
+        self.assertIn('git diff --name-only --diff-filter=U', workflow)
+        self.assertIn("git rebase --abort", workflow)
         self.assertIn('--force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD"', workflow)
         self.assertNotIn("git push --force ", workflow)
         self.assertIn("sync_driver_release_docs.py", workflow)

@@ -70,10 +70,10 @@ pub struct MacOsPermissionStatus {
 pub fn current_mac_os_permission_status() -> MacOsPermissionStatus {
     #[cfg(target_os = "macos")]
     {
-        return MacOsPermissionStatus {
+        MacOsPermissionStatus {
             accessibility: mac_os_accessibility_granted(),
             screen_recording: mac_os_screen_recording_granted(),
-        };
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -88,10 +88,10 @@ pub fn current_mac_os_permission_status() -> MacOsPermissionStatus {
 pub fn request_mac_os_permissions() -> MacOsPermissionStatus {
     #[cfg(target_os = "macos")]
     {
-        return MacOsPermissionStatus {
+        MacOsPermissionStatus {
             accessibility: request_mac_os_accessibility(),
             screen_recording: request_mac_os_screen_recording(),
-        };
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -120,7 +120,7 @@ pub fn open_mac_os_screen_recording_settings() -> Result<(), DriverError> {
                 ),
             });
         }
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(target_os = "macos"))]
     {

@@ -261,7 +261,7 @@ unsafe fn extract_event_record(event_ptr: *mut c_void) -> *mut c_void {
 ///
 /// Returns `true` when `SLEventPostToPid` resolved and the post was attempted.
 /// Returns `false` when the SPI is absent — caller falls back to `CGEvent::post_to_pid`.
-pub fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_message: bool) -> bool {
+pub(super) fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_message: bool) -> bool {
     let post_fn = match post_to_pid_fn() {
         Some(f) => f,
         None => return false,
@@ -302,7 +302,7 @@ pub fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_message: bool
 
 /// Stamp a window-local `(x, y)` point onto `event_ptr` via the private
 /// `CGEventSetWindowLocation` SPI. Returns `true` when the SPI resolved.
-pub fn set_window_location(event_ptr: *mut c_void, x: f64, y: f64) -> bool {
+pub(super) fn set_window_location(event_ptr: *mut c_void, x: f64, y: f64) -> bool {
     match set_window_loc_fn() {
         Some(f) => {
             unsafe { f(event_ptr, x, y) };
@@ -314,7 +314,7 @@ pub fn set_window_location(event_ptr: *mut c_void, x: f64, y: f64) -> bool {
 
 /// Stamp `value` onto `event_ptr` at raw SkyLight field index `field` via
 /// `SLEventSetIntegerValueField`. Returns `false` when SPI absent.
-pub fn set_integer_field(event_ptr: *mut c_void, field: u32, value: i64) -> bool {
+pub(super) fn set_integer_field(event_ptr: *mut c_void, field: u32, value: i64) -> bool {
     match set_int_field_fn() {
         Some(f) => {
             unsafe { f(event_ptr, field, value) };

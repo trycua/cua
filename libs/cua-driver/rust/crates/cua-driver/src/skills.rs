@@ -44,19 +44,16 @@
 //! - Claude Code: `~/.claude/skills/`
 //! - Codex:       `~/.agents/skills/`
 //! - OpenClaw:    `~/.openclaw/skills/`
-//! - OpenCode:    `~/.config/opencode/skills/` (macOS / Linux),
-//!                `%APPDATA%\opencode\skills\` (Windows)
+//! - OpenCode: `~/.config/opencode/skills/` (macOS / Linux),
+//!   `%APPDATA%\opencode\skills\` (Windows)
 //! - Antigravity: `~/.gemini/skills/` — shared between Antigravity CLI
-//!                (`agy`) and Antigravity IDE; same dir Google Gemini CLI
-//!                used before the May-2026 transition, so existing
-//!                installs migrate forward unchanged.
-//! - Hermes:      `~/.hermes/skills/` — NousResearch/hermes-agent.
-//!                The user-level skill space Hermes resolves at agent
-//!                load time (separate from the repo-bundled
-//!                `hermes-agent/skills/` tree, which is read-only and
-//!                version-controlled). Hermes' own `computer-use`
-//!                skill teaches its wrapper vocabulary; the
-//!                cua-driver pack provides the platform deep dives.
+//!   (`agy`) and Antigravity IDE; same dir Google Gemini CLI used before the
+//!   May-2026 transition, so existing installs migrate forward unchanged.
+//! - Hermes: `~/.hermes/skills/` — NousResearch/hermes-agent. The user-level
+//!   skill space Hermes resolves at agent load time (separate from the
+//!   repo-bundled `hermes-agent/skills/` tree, which is read-only and
+//!   version-controlled). Hermes' own `computer-use` skill teaches its wrapper
+//!   vocabulary; the cua-driver pack provides the platform deep dives.
 //!
 //! Only acts on a given agent when its parent skills dir already
 //! exists (i.e. the agent itself is installed). Never clobbers an
@@ -148,7 +145,7 @@ fn home_dir() -> Result<PathBuf> {
     #[cfg(not(windows))]
     {
         let home = std::env::var("HOME").map_err(|_| anyhow!("HOME not set"))?;
-        return Ok(PathBuf::from(home).join(crate::bundle::user_home_subdirectory()));
+        Ok(PathBuf::from(home).join(crate::bundle::user_home_subdirectory()))
     }
 }
 
@@ -338,9 +335,10 @@ fn install(flags: &[String], force: bool) -> Result<()> {
 
 /// Best-effort removal of any pre-rename skill pack. Three legacy
 /// locations are swept:
-///   1. `<HomeDir>/skills/cua-driver-rs/`       — old pack NAME under new home dir
-///   2. `<LegacyHomeDir>/skills/cua-driver/`    — new pack NAME under old home dir
-///   3. `<LegacyHomeDir>/skills/cua-driver-rs/` — old pack NAME under old home dir
+/// 1. `<HomeDir>/skills/cua-driver-rs/`       — old pack NAME under new home dir
+/// 2. `<LegacyHomeDir>/skills/cua-driver/`    — new pack NAME under old home dir
+/// 3. `<LegacyHomeDir>/skills/cua-driver-rs/` — old pack NAME under old home dir
+///
 /// Plus every `<agent_skills>/cua-driver-rs` symlink/junction.
 ///
 /// Then attempts to remove the empty `<LegacyHomeDir>/skills/` and
@@ -403,7 +401,7 @@ fn sweep_legacy_skill_pack() {
             Err(_) => continue,
         };
         let legacy_link = parent.join(LEGACY_SKILL_PACK_NAME);
-        if !parent.exists() || !legacy_link.symlink_metadata().is_ok() {
+        if !parent.exists() || legacy_link.symlink_metadata().is_err() {
             continue;
         }
         if !is_symlink_or_junction(&legacy_link) {

@@ -310,10 +310,10 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
     // never animates; an absent cursor (seed found nothing to prime) is skipped.
     let should_animate = {
         let guard = RENDER.lock().unwrap();
-        match guard.as_ref().and_then(|m| m.cursors.get(&key)) {
-            Some(rs) if rs.core.cfg.enabled && rs.core.pos.0 > -50.0 => true,
-            _ => false,
-        }
+        matches!(
+            guard.as_ref().and_then(|m| m.cursors.get(&key)),
+            Some(rs) if rs.core.cfg.enabled && rs.core.pos.0 > -50.0
+        )
     };
     if !should_animate {
         return;
@@ -510,13 +510,13 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     // the AppKit call returns a non-positive value, since downstream paint
     // math divides by this and a 0.0 would zero out the cursor.
     let mut backing_scale: f64 = msg_send![main_screen, backingScaleFactor];
-    if !(backing_scale > 0.0) {
+    if backing_scale.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
         use core_graphics::display::{CGDisplayBounds, CGMainDisplayID};
         let display_id = CGMainDisplayID();
         let bounds = CGDisplayBounds(display_id);
         backing_scale =
             crate::tools::get_screen_size::get_backing_scale(display_id, bounds.size.width as i64);
-        if !(backing_scale > 0.0) {
+        if backing_scale.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             backing_scale = 1.0;
         }
     }
@@ -566,7 +566,7 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let _: () = msg_send![layer, setContentsScale: backing_scale];
     // kCAGravityTopLeft — the string literal "topLeft"
     let gravity_ns: *mut AnyObject = msg_send![class!(NSString),
-        stringWithUTF8String: b"topLeft\0".as_ptr()
+        stringWithUTF8String: c"topLeft".as_ptr().cast::<u8>()
     ];
     let _: () = msg_send![layer, setContentsGravity: gravity_ns];
 

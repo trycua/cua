@@ -555,12 +555,10 @@ impl Tool for ScrollTool {
 
                 tokio::task::spawn_blocking(move || {
                     for _ in 0..amount {
-                        if let Err(e) = crate::input::keyboard::press_key(pid, &key, &[]) {
-                            return Err(e);
-                        }
+                        crate::input::keyboard::press_key(pid, &key, &[])?;
                         std::thread::sleep(std::time::Duration::from_millis(50));
                     }
-                    Ok(())
+                    Ok::<(), anyhow::Error>(())
                 })
                 .await
             },

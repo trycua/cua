@@ -450,7 +450,7 @@ fn verify_typed(before: Option<&str>, after: Option<&str>, text: &str) -> bool {
         return true;
     }
     let Some(after) = after else { return false };
-    after.contains(text) || before.map_or(false, |b| after.chars().count() > b.chars().count())
+    after.contains(text) || before.is_some_and(|b| after.chars().count() > b.chars().count())
 }
 
 /// Read the focused/target field's `AXValue`, for before/after read-back.

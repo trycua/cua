@@ -963,11 +963,10 @@ fn remove_redundant_static_text(nodes: &mut Vec<SemanticNode>) {
         let Some(name) = node.name.as_deref() else {
             return false;
         };
-        !node
-            .parent_ax_id
+        node.parent_ax_id
             .as_ref()
             .and_then(|parent| names.get(parent))
-            .is_some_and(|parent_name| parent_name == name)
+            .is_none_or(|parent_name| parent_name != name)
     });
 }
 

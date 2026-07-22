@@ -717,8 +717,8 @@ mod tests {
         // Every entry must carry hint + message.
         for entry in structured["checks"].as_array().unwrap() {
             assert_eq!(entry["status"], "fail");
-            assert!(entry["hint"].as_str().unwrap_or("").len() > 0);
-            assert!(entry["message"].as_str().unwrap_or("").len() > 0);
+            assert!(!entry["hint"].as_str().unwrap_or("").is_empty());
+            assert!(!entry["message"].as_str().unwrap_or("").is_empty());
         }
     }
 

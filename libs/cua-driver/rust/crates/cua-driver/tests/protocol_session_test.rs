@@ -66,7 +66,7 @@ fn concurrent_clients_with_cursor_moves() {
     }
 
     // Each process moves its cursor to different positions.
-    let positions = vec![(100.0_f64, 200.0_f64), (500.0, 600.0)];
+    let positions = [(100.0_f64, 200.0_f64), (500.0, 600.0)];
     for ((i, d), (px, py)) in drivers.iter_mut().enumerate().zip(positions.iter()) {
         d.send(&serde_json::json!({
             "jsonrpc":"2.0","id":2,"method":"tools/call",

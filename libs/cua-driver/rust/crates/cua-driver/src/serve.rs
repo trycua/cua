@@ -1546,7 +1546,7 @@ pub fn run_serve_cmd(
     if is_daemon_listening(&socket_path) {
         let pid_hint = pid_file_path
             .as_deref()
-            .and_then(|p| read_pid_file(p))
+            .and_then(read_pid_file)
             .map(|pid| format!(" (pid {pid})"))
             .unwrap_or_default();
         eprintln!(

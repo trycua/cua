@@ -5,15 +5,14 @@
 //! get mapped into the sandbox by the legacy Windows Sandbox runner.
 //!
 //! Each scenario covers a Win32 hosting pattern the agent should handle:
-//!   - counter        : UIA Invoke on a plain WPF button
-//!   - text_body      : get_window_state extracts known marker text
-//!   - message_box    : modal MessageBox enumeration
-//!   - bottom_strip   : Save/Cancel buttons present in the UIA tree
-//!                      (regression guard for the GetClientRect-vs-
-//!                      GetWindowRect capture bug fixed in #1696)
-//!   - owned_popup    : owned secondary window discovered via list_windows
-//!   - layered_popup  : WS_EX_LAYERED window enumerated and captured
-//!   - child_hwnd     : native Win32 BUTTON child HWND visible in tree
+//! - counter: UIA Invoke on a plain WPF button
+//! - text_body: get_window_state extracts known marker text
+//! - message_box: modal MessageBox enumeration
+//! - bottom_strip: Save/Cancel buttons present in the UIA tree (regression
+//!   guard for the GetClientRect-vs-GetWindowRect capture bug fixed in #1696)
+//! - owned_popup: owned secondary window discovered via list_windows
+//! - layered_popup: WS_EX_LAYERED window enumerated and captured
+//! - child_hwnd: native Win32 BUTTON child HWND visible in tree
 //!
 //! Run via the sandbox runner:
 //!   ..\tests\runners\windows-sandbox\run-tests-in-sandbox.ps1 harness_wpf

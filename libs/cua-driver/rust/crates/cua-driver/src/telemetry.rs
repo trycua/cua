@@ -266,11 +266,11 @@ pub fn reset_id() -> Result<(), String> {
 }
 
 fn reset_id_in_homes(home: &Path, legacy: Option<&Path>) -> Result<(), String> {
-    let lifecycle_lock = open_lock_file(&home, TELEMETRY_LIFECYCLE_LOCK_FILE_NAME)?;
+    let lifecycle_lock = open_lock_file(home, TELEMETRY_LIFECYCLE_LOCK_FILE_NAME)?;
     lifecycle_lock
         .lock()
         .map_err(|error| format!("failed to lock telemetry lifecycle: {error}"))?;
-    let identity_lock = open_lock_file(&home, TELEMETRY_IDENTITY_LOCK_FILE_NAME)?;
+    let identity_lock = open_lock_file(home, TELEMETRY_IDENTITY_LOCK_FILE_NAME)?;
     identity_lock
         .lock()
         .map_err(|error| format!("failed to lock telemetry identity: {error}"))?;
@@ -1805,7 +1805,7 @@ pub(crate) fn capture_cli_completed(
         event::CLI_COMPLETED,
         &bounded_properties(&[
             ("command", Value::String(command.into())),
-            ("tool_name", Value::String(tool_name.into())),
+            ("tool_name", Value::String(tool_name)),
             ("operation", Value::String(operation.into())),
             (
                 "computer_action",
@@ -2253,6 +2253,7 @@ fn open_lock_file(home: &Path, name: &str) -> Result<File, String> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(home.join(name))
         .map_err(|error| format!("failed to open telemetry state lock: {error}"))
 }

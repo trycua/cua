@@ -126,11 +126,10 @@ pub(crate) fn check_bundle_identity() -> CheckEntry {
     let (message, hint) = match bid.as_deref() {
         None | Some("") => (
             "Process has no CFBundleIdentifier.".to_owned(),
-            format!(
-                "Run the binary inside CuaDriver.app so TCC grants attribute correctly. \
-                 Start the daemon with `open -n -g -a CuaDriver --args serve` and \
-                 connect via `cua-driver mcp`."
-            ),
+            "Run the binary inside CuaDriver.app so TCC grants attribute correctly. \
+             Start the daemon with `open -n -g -a CuaDriver --args serve` and \
+             connect via `cua-driver mcp`."
+                .to_owned(),
         ),
         Some(other) => (
             format!("Bundle is {other}, not {CANONICAL_BUNDLE_ID}."),

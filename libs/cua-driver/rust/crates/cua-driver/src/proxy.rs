@@ -512,13 +512,12 @@ fn daemon_owns_tool_observation(result: &serde_json::Value) -> bool {
 
 /// JSON-RPC method dispatcher for the proxy. Mirrors
 /// `cua_driver_core::server::handle_request`:
-///   - `initialize`     → static `initialize_result()` (same envelope
-///                        as the core protocol server; the daemon's
-///                        identity is hidden from the MCP client).
-///   - `tools/list`     → return the cached daemon tool list.
-///   - `tools/call`     → forward to the daemon and reshape the
-///                        response into MCP's `CallTool.Result`.
-///   - other            → method-not-found.
+/// - `initialize` → static `initialize_result()` (same envelope as the core
+///   protocol server; the daemon's identity is hidden from the MCP client).
+/// - `tools/list` → return the cached daemon tool list.
+/// - `tools/call` → forward to the daemon and reshape the response into MCP's
+///   `CallTool.Result`.
+/// - other → method-not-found.
 async fn handle_proxy_request(
     req: Request,
     id: serde_json::Value,

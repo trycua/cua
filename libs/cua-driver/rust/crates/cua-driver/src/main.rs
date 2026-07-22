@@ -289,27 +289,22 @@ fn main() {
     match command {
         cli::Command::Telemetry(command) => {
             run_telemetry_command(command);
-            return;
         }
         cli::Command::ListTools => {
             let reg = Arc::new(build_macos_registry());
             cli::run_list_tools(&reg);
-            return;
         }
         cli::Command::Describe(name) => {
             let reg = Arc::new(build_macos_registry());
             cli::run_describe(&reg, &name);
-            return;
         }
         cli::Command::McpConfig { client } => {
             cli::run_mcp_config(client.as_deref());
-            return;
         }
         cli::Command::Manifest { pretty } => {
             // Surface 8: machine-readable CLI manifest. Read-only — no
             // registry build needed, no daemon contact.
             cli::run_manifest(pretty);
-            return;
         }
         cli::Command::Call {
             tool,
@@ -318,7 +313,6 @@ fn main() {
             socket,
         } => {
             cli::run_call(&tool, json_args, screenshot_out_file, socket);
-            return;
         }
         cli::Command::Serve {
             socket,
@@ -514,12 +508,10 @@ fn main() {
             } else {
                 let _ = serve_handle.join();
             }
-            return;
         }
         cli::Command::Stop { socket } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             serve::run_stop_cmd(&sp);
-            return;
         }
         cli::Command::Revoke {
             socket,
@@ -528,13 +520,11 @@ fn main() {
         } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             serve::run_revoke_cmd(&sp, session.as_deref(), all);
-            return;
         }
         cli::Command::Status { socket } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();
             serve::run_status_cmd(&sp, &pid_path);
-            return;
         }
         cli::Command::Recording {
             subcommand,
@@ -542,20 +532,16 @@ fn main() {
             socket,
         } => {
             cli::run_recording_cmd(&subcommand, &args, socket.as_deref());
-            return;
         }
         cli::Command::DumpDocs { pretty, doc_type } => {
             let reg = Arc::new(build_macos_registry());
             cli::run_dump_docs_with_type(&reg, pretty, &doc_type);
-            return;
         }
         cli::Command::Update { apply, json } => {
             cli::run_update_cmd(apply, json);
-            return;
         }
         cli::Command::CheckUpdate { json, no_cache } => {
             cli::run_check_update_cmd(json, no_cache);
-            return;
         }
         cli::Command::Doctor { json } => {
             // Long-running interactive entry point — kick off the
@@ -566,23 +552,18 @@ fn main() {
                 version_check::maybe_announce_update();
             }
             cli::run_doctor_cmd(json);
-            return;
         }
         cli::Command::Diagnose => {
             cli::run_diagnose_cmd();
-            return;
         }
         cli::Command::Permissions { subcommand, json } => {
             cli::run_permissions_cmd(&subcommand, json);
-            return;
         }
         cli::Command::Autostart { subcommand } => {
             autostart::run_autostart_cmd(&subcommand);
-            return;
         }
         cli::Command::Skills { subcommand, flags } => {
             skills::run(&subcommand, &flags);
-            return;
         }
         cli::Command::BrowserApprove {
             pid,
@@ -600,7 +581,6 @@ fn main() {
                 profile_mode.as_deref(),
                 profile_name.as_deref(),
             );
-            return;
         }
         cli::Command::Config {
             subcommand,
@@ -614,7 +594,6 @@ fn main() {
                 value.as_deref(),
                 socket.as_deref(),
             );
-            return;
         }
         cli::Command::Mcp {
             socket,
@@ -639,7 +618,6 @@ fn main() {
                 std::process::exit(1);
             }
             telemetry::flush_pending(std::time::Duration::from_millis(750));
-            return;
         }
     }
 }

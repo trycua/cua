@@ -63,9 +63,9 @@ impl Tool for GetDesktopStateTool {
         };
         let screenshot_out_file = input.screenshot_out_file.map(|s| {
             // Expand ~ prefix (mirrors get_window_state).
-            if s.starts_with("~/") {
+            if let Some(relative) = s.strip_prefix("~/") {
                 let home = std::env::var("HOME").unwrap_or_default();
-                format!("{home}/{}", &s[2..])
+                format!("{home}/{relative}")
             } else {
                 s
             }

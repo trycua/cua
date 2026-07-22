@@ -404,17 +404,6 @@ impl CuaDriver {
             client_kind: DaemonClientKind::Unknown,
         })
     }
-
-    /// Transitional adapter for the released private daemon protocol and the
-    /// current MCP host. It is intentionally not exported through UniFFI and
-    /// will disappear when the official MCP adapter owns generic dispatch.
-    #[doc(hidden)]
-    pub fn compatibility_registry(&self) -> Option<Arc<cua_driver_core::tool::ToolRegistry>> {
-        match &self.backend {
-            DriverBackend::Embedded(runtime) => runtime.registry(),
-            DriverBackend::Daemon { .. } => None,
-        }
-    }
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -449,8 +438,9 @@ impl CuaDriver {
         }
     }
 
-    /// Temporary compatibility escape hatch. New application code should use
-    /// the typed methods; MCP servers own generic discovery and invocation.
+    /// Generic protocol-adapter surface. Ordinary applications should prefer
+    /// typed methods; MCP and other open-ended adapters use this method so they
+    /// remain downstream of the same public SDK runtime.
     pub async fn call_tool(
         &self,
         name: String,
@@ -460,8 +450,7 @@ impl CuaDriver {
         self.invoke(&name, arguments).await
     }
 
-    /// Temporary compatibility discovery surface for adapters migrating to
-    /// the typed SDK contract.
+    /// Canonical tool inventory for MCP and other protocol adapters.
     pub async fn list_tools_json(&self) -> Result<String, DriverError> {
         let result = match &self.backend {
             DriverBackend::Embedded(runtime) => runtime.tools_list()?,

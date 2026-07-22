@@ -132,6 +132,10 @@ jobs:
         working-directory: libs/cua-driver
         run: node scripts/generate-uniffi-bindings.mjs --check
 
+      - name: Verify generated public C ABI header
+        working-directory: libs/cua-driver/rust
+        run: cargo run --locked -p cua-driver-bindgen --bin cua-driver-abi-header -- --check
+
       - name: Test contract crate
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver-contract

@@ -78,9 +78,12 @@ The product boundary is reflected directly in packaging:
 
 ### RFC 2447 versioned C ABI slice (2026-07-22)
 
-- A checked-in public C header defines version negotiation, opaque driver and
+- A generated, checked-in public C header defines version negotiation, opaque driver and
   operation handles, caller-owned buffers, status/error mapping, asynchronous
   completion, cancellation, and idempotent release.
+- `cua-driver-abi-header` uses pinned `cbindgen` over the Rust ABI exports, and
+  CI rejects header drift. UniFFI still independently generates the
+  language-facing Python and TypeScript bindings from the safe Rust SDK.
 - The safe Rust `CuaDriver` wrapper imports the exported C symbols, so Rust,
   Python, and TypeScript all traverse the same native seam.
 - The ABI owns a process-lifetime asynchronous executor. Foreign callers do

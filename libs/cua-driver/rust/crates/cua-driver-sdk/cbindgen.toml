@@ -1,0 +1,68 @@
+language = "C"
+include_guard = "CUA_DRIVER_ABI_H"
+cpp_compat = true
+documentation = true
+usize_is_size_t = true
+style = "type"
+autogen_warning = "/* Generated from cua-driver-sdk/src/abi.rs by cua-driver-abi-header. Do not edit. */"
+header = "/* SPDX-License-Identifier: MIT */"
+after_includes = """
+#if defined(_WIN32)
+#if defined(CUA_DRIVER_ABI_BUILD)
+#define CUA_DRIVER_API __declspec(dllexport)
+#else
+#define CUA_DRIVER_API __declspec(dllimport)
+#endif
+#else
+#define CUA_DRIVER_API __attribute__((visibility(\"default\")))
+#endif
+"""
+
+[parse]
+parse_deps = false
+
+[export]
+include = [
+  "CUA_DRIVER_ABI_MAJOR",
+  "CUA_DRIVER_ABI_MINOR",
+  "CUA_DRIVER_ABI_PATCH",
+  "CuaDriverAbiVersion",
+  "CuaDriverStatus",
+  "CuaDriverBuffer",
+  "CuaDriverHandle",
+  "CuaDriverOperation",
+  "CuaDriverCompletionV1",
+  "cua_driver_abi_version_v1",
+  "cua_driver_abi_is_compatible_v1",
+  "cua_driver_buffer_free_v1",
+  "cua_driver_create_v1",
+  "cua_driver_destroy_v1",
+  "cua_driver_is_available_v1",
+  "cua_driver_metadata_json_v1",
+  "cua_driver_list_tools_json_v1",
+  "cua_driver_invoke_v1",
+  "cua_driver_shutdown_v1",
+  "cua_driver_operation_cancel_v1",
+  "cua_driver_operation_release_v1",
+]
+exclude = [
+  "Handle",
+  "Operation",
+  "buffer_free",
+  "create",
+  "destroy",
+  "is_available",
+  "metadata_json",
+  "list_tools_json",
+  "invoke",
+  "shutdown",
+  "operation_cancel",
+  "operation_release",
+]
+
+[enum]
+rename_variants = "ScreamingSnakeCase"
+prefix_with_name = true
+
+[fn]
+prefix = "CUA_DRIVER_API"

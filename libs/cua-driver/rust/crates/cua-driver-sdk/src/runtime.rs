@@ -8,9 +8,12 @@ use cua_driver_core::{protocol::ToolResult as CoreToolResult, tool::ToolRegistry
 use cursor_overlay::CursorConfig;
 use serde_json::Value;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
 };
+
+const RECORDING_IDLE_TTL_SECS_DEFAULT: u64 = 300;
+const SESSION_IDLE_TTL_SECS_DEFAULT: u64 = 300;
 
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeOptions {
@@ -38,6 +41,7 @@ impl RuntimeOptions {
 pub(crate) struct DriverRuntime {
     registry: Arc<ToolRegistry>,
     shutdown: AtomicBool,
+    last_activity: AtomicU64,
     /// Calls hold a read guard; shutdown takes the write guard after closing
     /// admission. Therefore shutdown is idempotent and does not return while a
     /// previously admitted operation is still executing.
@@ -45,14 +49,18 @@ pub(crate) struct DriverRuntime {
 }
 
 impl DriverRuntime {
-    pub(crate) fn create(options: RuntimeOptions) -> Self {
+    pub(crate) fn create(options: RuntimeOptions) -> Arc<Self> {
         let registry = Arc::new(build_registry(&options));
         registry.init_self_weak();
-        Self {
+        register_recording_session_end_hook(&registry);
+        let runtime = Arc::new(Self {
             registry,
             shutdown: AtomicBool::new(false),
+            last_activity: AtomicU64::new(now_unix_secs()),
             lifecycle: tokio::sync::RwLock::new(()),
-        }
+        });
+        spawn_lifecycle_maintenance(&runtime);
+        runtime
     }
 
     pub(crate) fn is_running(&self) -> bool {
@@ -62,6 +70,8 @@ impl DriverRuntime {
     pub(crate) async fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Release);
         let _drained = self.lifecycle.write().await;
+        let recording = self.registry.recording.clone();
+        let _ = tokio::task::spawn_blocking(move || recording.stop_owner(None)).await;
     }
 
     pub(crate) fn tools_list(&self) -> Option<Value> {
@@ -72,16 +82,88 @@ impl DriverRuntime {
         if !self.is_running() {
             return None;
         }
+        self.last_activity.store(now_unix_secs(), Ordering::Relaxed);
         let _operation = self.lifecycle.read().await;
         if !self.is_running() {
             return None;
         }
-        Some(self.registry.invoke(name, args).await)
+        let ending_session = (name == "end_session")
+            .then(|| {
+                args.get("session")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .flatten();
+        let result = self.registry.invoke(name, args).await;
+        if let Some(session) = ending_session {
+            // `end_session` is a lifecycle boundary: do not report completion
+            // until any recording owned by the session has finalized.
+            let recording = self.registry.recording.clone();
+            let _ = tokio::task::spawn_blocking(move || recording.stop_owner(Some(&session))).await;
+        }
+        Some(result)
     }
+}
 
-    pub(crate) fn registry(&self) -> Arc<ToolRegistry> {
-        self.registry.clone()
-    }
+fn configured_ttl(name: &str, fallback: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(fallback)
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn spawn_lifecycle_maintenance(runtime: &Arc<DriverRuntime>) {
+    let runtime = Arc::downgrade(runtime);
+    let recording_ttl = configured_ttl(
+        "CUA_DRIVER_RS_RECORDING_IDLE_TTL_SECS",
+        RECORDING_IDLE_TTL_SECS_DEFAULT,
+    );
+    let session_ttl = std::time::Duration::from_secs(configured_ttl(
+        "CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS",
+        SESSION_IDLE_TTL_SECS_DEFAULT,
+    ));
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        let Some(runtime) = runtime.upgrade() else {
+            break;
+        };
+        if !runtime.is_running() {
+            break;
+        }
+        let ended = cua_driver_core::session::evict_idle(session_ttl);
+        if !ended.is_empty() {
+            tracing::info!(
+                count = ended.len(),
+                "idle-TTL reclaimed sessions: {ended:?}"
+            );
+        }
+        let idle = now_unix_secs().saturating_sub(runtime.last_activity.load(Ordering::Relaxed));
+        if idle >= recording_ttl && runtime.registry.recording.current_state().enabled {
+            tracing::warn!("recording idle {idle}s ≥ {recording_ttl}s TTL; auto-stopping");
+            let _ = runtime.registry.recording.stop_owner(None);
+        }
+    });
+}
+
+fn register_recording_session_end_hook(registry: &Arc<ToolRegistry>) {
+    let recording = Arc::downgrade(&registry.recording);
+    cua_driver_core::session::register_session_end_hook(move |session| {
+        let Some(recording) = recording.upgrade() else {
+            return;
+        };
+        let session = session.to_owned();
+        std::thread::spawn(move || {
+            let _ = recording.stop_owner(Some(&session));
+        });
+    });
 }
 
 fn build_registry(options: &RuntimeOptions) -> ToolRegistry {

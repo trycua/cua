@@ -10,9 +10,10 @@ The package root exposes the native daemon SDK:
 import { CuaDriver } from "@trycua/cua-driver"
 ```
 
-The `/embedded` and `/electron` entrypoints let a signed desktop host own a
-private daemon and its macOS permission onboarding. The package does not contain
-a TypeScript MCP client. Agents already have
+The `/embedded` entrypoint lets a signed desktop host own a private daemon. The
+`/electron` entrypoint exposes low-level macOS permission requests from Electron
+main; the host still owns permission UI, status, and restart policy. The package
+does not contain a TypeScript MCP client. Agents already have
 runtime-neutral MCP clients and should configure the executable directly:
 
 ```text
@@ -92,7 +93,10 @@ On macOS, the application must spawn the daemon from the process that owns the
 Accessibility and Screen Recording grants. Launching through a gateway,
 terminal, `open`, or `NSWorkspace` changes the responsibility chain.
 
-Electron main processes can request the grants after `app.whenReady()`:
+Electron main processes can call the permission primitives after
+`app.whenReady()`. These functions run in the importing host process, so macOS
+attributes their requests to the host rather than to the npm package or child
+driver:
 
 ```ts
 import {
@@ -107,9 +111,12 @@ if (!hasRequiredMacOSPermissions(permissions) && !permissions.screenRecording) {
 }
 ```
 
-Stop the daemon before the host exits. If grants change while it is running,
-restart it so macOS evaluates them in a fresh process. The package does not
-install or bundle the executable; keep it and the Electron adapter's `ffi-rs`
+The adapter does not provide dialogs, settings rows, or onboarding policy. Do
+not start the daemon until `hasRequiredMacOSPermissions()` returns true. Stop the
+daemon before the host exits. If grants change while it is running, destroy any
+SDK client, call `embedded.restart()`, and reconnect so macOS evaluates the
+grants in a fresh process. The package does not install or bundle the
+executable; keep it and the Electron adapter's `ffi-rs`
 native module outside ASAR and sign the nested executable before the host app.
 
 Host-native assembly and loader tests are implemented. Publishing the npm

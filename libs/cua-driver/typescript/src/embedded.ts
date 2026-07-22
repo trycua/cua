@@ -142,6 +142,7 @@ export class EmbeddedCuaDriver {
   #starting: Promise<EmbeddedDriverConnection> | undefined;
   #startupAbort: AbortController | undefined;
   #stopping: Promise<void> | undefined;
+  #unexpectedExitCleanup: Promise<void> | undefined;
 
   constructor(options: EmbeddedDriverOptions) {
     if (!options.binaryPath.trim()) throw new TypeError('binaryPath must not be empty');
@@ -162,9 +163,10 @@ export class EmbeddedCuaDriver {
     if (this.#connection) return Promise.resolve(this.#connection);
     if (this.#starting) return this.#starting;
     const waitForStop = this.#stopping ?? Promise.resolve();
+    const waitForCleanup = this.#unexpectedExitCleanup ?? Promise.resolve();
     const startupAbort = new AbortController();
     this.#startupAbort = startupAbort;
-    this.#starting = waitForStop
+    this.#starting = Promise.all([waitForStop, waitForCleanup])
       .then(() => this.#start(startupAbort.signal))
       .finally(() => {
         if (this.#startupAbort === startupAbort) this.#startupAbort = undefined;
@@ -224,7 +226,11 @@ export class EmbeddedCuaDriver {
         if (this.#connection) {
           this.#child = undefined;
           this.#connection = undefined;
-          void removeSocket(socketPath).catch(() => undefined);
+          const cleanup = removeSocket(socketPath).catch(() => undefined);
+          this.#unexpectedExitCleanup = cleanup;
+          void cleanup.finally(() => {
+            if (this.#unexpectedExitCleanup === cleanup) this.#unexpectedExitCleanup = undefined;
+          });
           return;
         }
         reject(
@@ -307,6 +313,7 @@ export class EmbeddedCuaDriver {
       this.#child.kill('SIGTERM');
     }
     if (this.#starting) await this.#starting.catch(() => undefined);
+    if (this.#unexpectedExitCleanup) await this.#unexpectedExitCleanup;
 
     const child = this.#child;
     const socketPath = this.#connection?.socketPath;

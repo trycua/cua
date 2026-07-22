@@ -119,13 +119,23 @@ grep_matches_or_empty() {
 ruby_method_names() {
   source_file="$1"
   method_prefix="$2"
-  grep_matches_or_empty "${method_prefix}_Type[A-Za-z0-9_]+" "$source_file" | LC_ALL=C sort -u
+  case "$method_prefix" in
+    check_lower) pattern='check_lower_[A-Za-z0-9_]+' ;;
+    read) pattern='read(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
+    write) pattern='write_(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
+  esac
+  grep_matches_or_empty "$pattern" "$source_file" | LC_ALL=C sort -u
 }
 
 ruby_defined_method_names() {
   source_file="$1"
   method_prefix="$2"
-  sed -n -E "s/^[[:space:]]*def (self\\.)?(${method_prefix}_Type[A-Za-z0-9_]+).*/\\2/p" "$source_file" | LC_ALL=C sort -u
+  case "$method_prefix" in
+    check_lower) pattern='check_lower_[A-Za-z0-9_]+' ;;
+    read) pattern='read(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
+    write) pattern='write_(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
+  esac
+  sed -n -E "s/^[[:space:]]*def (self\\.)?(${pattern}).*/\\2/p" "$source_file" | LC_ALL=C sort -u
 }
 
 write_ruby_method_array() {
@@ -610,33 +620,393 @@ mv "$raw_output/cyclops_sdk.rb" "$generated_root/ruby/cyclops_sdk/sdk.rb"
 mv "$raw_output/cyclops_sdk_schema.rb" "$generated_root/ruby/cyclops_sdk/schema.rb"
 # UniFFI 0.31.0 emits `OsGym` in cross-crate Ruby helper references while the
 # schema component exports `OSGym`; normalize the generated helper calls.
-sed -i.bak "s/check_lower_TypeOsGym/check_lower_TypeOSGym/g" "$generated_root/ruby/cyclops_sdk/sdk.rb"
-rm "$generated_root/ruby/cyclops_sdk/sdk.rb.bak"
-# UniFFI 0.31.0 lowers a foreign callback interface as an object clone. Ruby
-# callback implementations have no Rust handle, so avoid cloning nil handles.
+for ruby_component in sdk schema; do
+  sed -i.bak "s/OsGym/OSGym/g" "$generated_root/ruby/cyclops_sdk/$ruby_component.rb"
+  rm "$generated_root/ruby/cyclops_sdk/$ruby_component.rb.bak"
+done
+# UniFFI 0.31.0 omits Ruby support for foreign callback interfaces.
+# Add the callback-handle map and vtable that its Rust scaffolding expects.
 python3 - "$generated_root/ruby/cyclops_sdk/sdk.rb" <<'PYTHON_RUBY_PATCH'
 import pathlib
+import re
 import sys
+
 path = pathlib.Path(sys.argv[1])
 text = path.read_text()
-old = """  def uniffi_clone_handle()
+
+text = text.replace("require 'ffi'\n", "require 'ffi'\nrequire 'monitor'\n", 1)
+future_ffi_anchor = "  ffi_lib 'cyclops_sdk'\n"
+future_ffi = """  ffi_lib 'cyclops_sdk'
+
+  callback :RustFutureContinuationCallback,
+    [:uint64, :int8],
+    :void
+  attach_function :ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+    [:uint64, :RustFutureContinuationCallback, :uint64],
+    :void
+  attach_function :ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+    [:uint64, RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :ffi_cyclops_sdk_rust_future_free_rust_buffer,
+    [:uint64],
+    :void
+  attach_function :ffi_cyclops_sdk_rust_future_poll_void,
+    [:uint64, :RustFutureContinuationCallback, :uint64],
+    :void
+  attach_function :ffi_cyclops_sdk_rust_future_complete_void,
+    [:uint64, RustCallStatus.by_ref],
+    :void
+  attach_function :ffi_cyclops_sdk_rust_future_free_void,
+    [:uint64],
+    :void
+"""
+if future_ffi_anchor not in text:
+    raise SystemExit("expected Ruby FFI library declaration not found")
+text = text.replace(future_ffi_anchor, future_ffi, 1)
+
+future_runtime_anchor = "private_class_method :consume_buffer_into_error\n"
+future_runtime = """UNIFFI_RUST_FUTURE_POLL_READY = 0
+UNIFFI_RUST_FUTURE_POLL_WAKE = 1
+UNIFFI_CALLBACK_SUCCESS = 0
+UNIFFI_CALLBACK_ERROR = 1
+UNIFFI_CALLBACK_UNEXPECTED_ERROR = 2
+
+def self.uniffi_lower_http_error(error)
+  unless error.is_a?(HttpError::Transport)
+    raise InternalError, "Unexpected HttpError variant: #{error.class}"
+  end
+
+  RustBuffer.allocWithBuilder do |builder|
+    builder.write_U32(1)
+    reason = error.reason
+    reason = reason.fetch(:reason) if reason.is_a?(Hash) && reason.keys == [:reason]
+    builder.write_String(reason)
+    builder.finalize()
+  end
+end
+
+def self.uniffi_trait_interface_call(call_status, make_call, write_return_value, error_type = nil, lower_error = nil)
+  begin
+    write_return_value.call make_call.call
+  rescue StandardError => error
+    buffer = if !error_type.nil? && uniffi_is_error_type?(error, error_type)
+      call_status[:code] = UNIFFI_CALLBACK_ERROR
+      lower_error.call error
+    else
+      call_status[:code] = UNIFFI_CALLBACK_UNEXPECTED_ERROR
+      RustBuffer.allocFromString(error.inspect)
+    end
+
+    error_buffer = call_status[:error_buf]
+    error_buffer[:capacity] = buffer[:capacity]
+    error_buffer[:len] = buffer[:len]
+    error_buffer[:data] = buffer[:data]
+  end
+end
+
+def self.uniffi_is_error_type?(error, error_type)
+  return true if error_type.is_a?(Class) && error.is_a?(error_type)
+
+  error_type.constants.any? do |name|
+    error_class = error_type.const_get(name)
+    error_class.is_a?(Class) && error.is_a?(error_class)
+  end
+end
+
+def self.uniffi_rust_future(error_module, handle, poll_function, complete_function, free_function)
+  monitor = Monitor.new
+  condition = monitor.new_cond
+  poll_state = nil
+  continuation = Proc.new do |_callback_data, state|
+    monitor.synchronize do
+      poll_state = state
+      condition.signal
+    end
+  end
+
+  begin
+    loop do
+      monitor.synchronize { poll_state = nil }
+      UniFFILib.public_send(poll_function, handle, continuation, 0)
+      state = monitor.synchronize do
+        condition.wait_while { poll_state.nil? }
+        poll_state
+      end
+      break if state == UNIFFI_RUST_FUTURE_POLL_READY
+      next if state == UNIFFI_RUST_FUTURE_POLL_WAKE
+
+      raise InternalError, "Unknown Rust future poll state: #{state}"
+    end
+
+    status = RustCallStatus.new
+    result = UniFFILib.public_send(complete_function, handle, status)
+    case status.code
+    when CALL_SUCCESS
+      result
+    when CALL_ERROR
+      if error_module.nil?
+        status.error_buf.free
+        raise InternalError, "CALL_ERROR with no error_module set"
+      end
+      raise consume_buffer_into_error(error_module, status.error_buf)
+    when CALL_PANIC
+      if status.error_buf.len > 0
+        raise InternalError, status.error_buf.consumeIntoString()
+      end
+      raise InternalError, "Rust panic"
+    else
+      raise InternalError, "Unknown call status: #{status.code}"
+    end
+  ensure
+    UniFFILib.public_send(free_function, handle) unless handle.nil?
+  end
+end
+
+def self.uniffi_rust_future_rust_buffer(error_module, handle)
+  uniffi_rust_future(
+    error_module,
+    handle,
+    :ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+    :ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+    :ffi_cyclops_sdk_rust_future_free_rust_buffer,
+  )
+end
+
+def self.uniffi_rust_future_void(error_module, handle)
+  uniffi_rust_future(
+    error_module,
+    handle,
+    :ffi_cyclops_sdk_rust_future_poll_void,
+    :ffi_cyclops_sdk_rust_future_complete_void,
+    :ffi_cyclops_sdk_rust_future_free_void,
+  )
+end
+
+private_class_method :consume_buffer_into_error
+"""
+if future_runtime_anchor not in text:
+    raise SystemExit("expected Ruby error helper declaration not found")
+text = text.replace(future_runtime_anchor, future_runtime, 1)
+
+buffer_pattern = r"(?m)^(\s*)result = CyclopsSdk\.rust_call_with_error\(([^,]+),:([a-z0-9_]+),(.*)\)$"
+def replace_buffer(match):
+    indent, error_module, function, arguments = match.groups()
+    return (
+        f"{indent}result = CyclopsSdk.uniffi_rust_future_rust_buffer(\n"
+        f"{indent}  {error_module},\n"
+        f"{indent}  UniFFILib.{function}({arguments},RustCallStatus.new),\n"
+        f"{indent})"
+    )
+text, buffer_replacements = re.subn(buffer_pattern, replace_buffer, text)
+if buffer_replacements != 11:
+    raise SystemExit(f"expected 11 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
+
+void_pattern = r"(?m)^(\s*)CyclopsSdk\.rust_call_with_error\(([^,]+),:([a-z0-9_]+),(.*)\)$"
+def replace_void(match):
+    indent, error_module, function, arguments = match.groups()
+    return (
+        f"{indent}CyclopsSdk.uniffi_rust_future_void(\n"
+        f"{indent}  {error_module},\n"
+        f"{indent}  UniFFILib.{function}({arguments},RustCallStatus.new),\n"
+        f"{indent})"
+    )
+text, void_replacements = re.subn(void_pattern, replace_void, text)
+if void_replacements != 2:
+    raise SystemExit(f"expected 2 Ruby void future wrappers, found {void_replacements}")
+
+handle_map_anchor = """def self.uniffi_bytes(v)
+  raise TypeError, \"no implicit conversion of #{v} into String\" unless v.respond_to?(:to_str)
+  v.to_str
+end
+
+"""
+handle_map = """def self.uniffi_bytes(v)
+  raise TypeError, \"no implicit conversion of #{v} into String\" unless v.respond_to?(:to_str)
+  v.to_str
+end
+
+class UniffiHandleMap
+  def initialize
+    @lock = Monitor.new
+    @map = {}
+    @counter = 1
+  end
+
+  def insert(object)
+    @lock.synchronize do
+      handle = @counter
+      @counter += 2
+      @map[handle] = object
+      handle
+    end
+  end
+
+  def get(handle)
+    @lock.synchronize do
+      object = @map.fetch(handle) { raise InternalError, \"unknown UniFFI callback handle #{handle}\" }
+      object
+    end
+  end
+
+  def clone_handle(handle)
+    @lock.synchronize do
+      object = @map.fetch(handle) { raise InternalError, \"unknown UniFFI callback handle #{handle}\" }
+      new_handle = @counter
+      @counter += 2
+      @map[new_handle] = object
+      new_handle
+    end
+  end
+
+  def remove(handle)
+    @lock.synchronize do
+      @map.delete(handle) { raise InternalError, \"unknown UniFFI callback handle #{handle}\" }
+    end
+  end
+end
+
+private_constant :UniffiHandleMap
+
+"""
+if handle_map_anchor not in text:
+    raise SystemExit("expected Ruby helper insertion point not found")
+text = text.replace(handle_map_anchor, handle_map, 1)
+
+old_init = """  attach_function :uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient,
+    [:pointer, RustCallStatus.by_ref],
+    :void
+"""
+new_init = """  callback :ForeignFutureDroppedCallback,
+    [:uint64],
+    :void
+  callback :CallbackInterfaceFree,
+    [:uint64],
+    :void
+  callback :CallbackInterfaceClone,
+    [:uint64],
+    :uint64
+  class ForeignFutureDroppedCallbackStruct < FFI::Struct
+    layout :handle, :uint64,
+           :free, :ForeignFutureDroppedCallback
+  end
+  class ForeignFutureResultRustBuffer < FFI::Struct
+    layout :return_value, RustBuffer.by_value,
+           :call_status, RustCallStatus
+  end
+  callback :ForeignFutureCompleteRustBuffer,
+    [:uint64, ForeignFutureResultRustBuffer.by_value],
+    :void
+  callback :CallbackInterfaceHttpClientMethod0,
+    [:uint64, RustBuffer.by_value, :ForeignFutureCompleteRustBuffer, :uint64, ForeignFutureDroppedCallbackStruct.by_ref],
+    :void
+  class VTableCallbackInterfaceHttpClient < FFI::Struct
+    layout :uniffi_free, :CallbackInterfaceFree,
+           :uniffi_clone, :CallbackInterfaceClone,
+           :execute, :CallbackInterfaceHttpClientMethod0
+  end
+  attach_function :uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient,
+    [VTableCallbackInterfaceHttpClient.by_ref],
+    :void
+"""
+if old_init not in text:
+    raise SystemExit("expected HttpClient vtable initializer not found")
+text = text.replace(old_init, new_init, 1)
+
+old_http_client = """  # A private helper for lowering instances into a raw handle.
+  # This does an explicit typecheck, because accidentally lowering a different type of
+  # object in a place where this type is expected, could lead to memory unsafety.
+  def self.uniffi_check_lower(inst)
+    if not inst.is_a? self
+      raise TypeError.new \"Expected a HttpClient instance, got #{inst}\"
+    end
+  end
+
+  def uniffi_clone_handle()
     return CyclopsSdk.rust_call(
       :uniffi_cyclops_sdk_fn_clone_httpclient,
       @handle
     )
   end
+
+  def self.uniffi_lower(inst)
+    return inst.uniffi_clone_handle()
+  end
 """
-new = """  def uniffi_clone_handle()
-    return 0 if @handle.nil?
+new_http_client = """  @uniffi_handle_map = UniffiHandleMap.new
+
+  class << self
+    attr_reader :uniffi_handle_map
+  end
+
+  def self.uniffi_check_lower(inst)
+    unless inst.is_a?(self) && inst.respond_to?(:execute)
+      raise TypeError.new \"Expected a HttpClient instance, got #{inst}\"
+    end
+  end
+
+  def uniffi_clone_handle()
     return CyclopsSdk.rust_call(
       :uniffi_cyclops_sdk_fn_clone_httpclient,
       @handle
     )
   end
+
+  def self.uniffi_lower(inst)
+    if inst.instance_variable_defined?(:@handle)
+      inst.uniffi_clone_handle()
+    else
+      @uniffi_handle_map.insert(inst)
+    end
+  end
 """
-if old not in text:
-    raise SystemExit("expected HttpClient clone method not found")
-path.write_text(text.replace(old, new, 1))
+if old_http_client not in text:
+    raise SystemExit("expected HttpClient lowering block not found")
+text = text.replace(old_http_client, new_http_client, 1)
+
+vtable_pattern = r"end\s+class CyclopsCredentials\n"
+vtable = """end
+
+module UniffiCallbackInterfaceHttpClient
+  UNIFFI_DROPPED_CALLBACK = Proc.new { |_handle| }
+
+  EXECUTE_CALLBACK = Proc.new do |uniffi_handle, request, future_callback, callback_data, dropped_callback|
+    dropped_callback[:handle] = 0
+    dropped_callback[:free] = UNIFFI_DROPPED_CALLBACK
+    result = UniFFILib::ForeignFutureResultRustBuffer.new
+    status = RustCallStatus.new
+    CyclopsSdk.uniffi_trait_interface_call(
+      status,
+      Proc.new { HttpClient.uniffi_handle_map.get(uniffi_handle).execute(request.consumeIntoTypeHttpRequest) },
+      Proc.new { |response| result[:return_value] = RustBuffer.alloc_from_TypeHttpResponse(response) },
+      HttpError,
+      Proc.new { |error| CyclopsSdk.uniffi_lower_http_error(error) }
+    )
+    result[:call_status] = status
+    future_callback.call(callback_data, result)
+  end
+
+  UNIFFI_FREE_CALLBACK = Proc.new do |uniffi_handle|
+    HttpClient.uniffi_handle_map.remove(uniffi_handle)
+  end
+
+  UNIFFI_CLONE_CALLBACK = Proc.new do |uniffi_handle|
+    HttpClient.uniffi_handle_map.clone_handle(uniffi_handle)
+  end
+
+  UNIFFI_VTABLE = UniFFILib::VTableCallbackInterfaceHttpClient.new
+  UNIFFI_VTABLE[:uniffi_free] = UNIFFI_FREE_CALLBACK
+  UNIFFI_VTABLE[:uniffi_clone] = UNIFFI_CLONE_CALLBACK
+  UNIFFI_VTABLE[:execute] = EXECUTE_CALLBACK
+  UniFFILib.uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient(UNIFFI_VTABLE)
+end
+
+  class CyclopsCredentials
+"""
+text, replacements = re.subn(vtable_pattern, vtable, text, count=1)
+if replacements != 1:
+    raise SystemExit("expected HttpClient vtable insertion point not found")
+
+path.write_text(text)
 PYTHON_RUBY_PATCH
 write_ruby_facade \
   "$generated_root/ruby/cyclops_sdk/sdk.rb" \

@@ -201,8 +201,8 @@ end
 
   def self.check_lower_TypeOSGymSandboxClaimStatus(v)
     RustBuffer.check_lower_Optionalstring(v.phase)
-    RustBuffer.check_lower_OptionalSequenceTypeOsGymSandboxClaimCondition(v.conditions)
-    RustBuffer.check_lower_OptionalTypeOsGymSandboxClaimSandbox(v.sandbox)
+    RustBuffer.check_lower_OptionalSequenceTypeOSGymSandboxClaimCondition(v.conditions)
+    RustBuffer.check_lower_OptionalTypeOSGymSandboxClaimSandbox(v.sandbox)
   end
 
   def self.alloc_from_TypeOSGymSandboxClaimStatus(v)
@@ -701,7 +701,7 @@ end
 
   def self.check_lower_OptionalTypeOSGymSandboxClaimSandbox(v)
     if not v.nil?
-      RustBuffer.check_lower_TypeOsGymSandboxClaimSandbox(v)
+      RustBuffer.check_lower_TypeOSGymSandboxClaimSandbox(v)
     end
   end
 
@@ -890,7 +890,7 @@ end
 
   def self.check_lower_OptionalSequenceTypeOSGymSandboxClaimCondition(v)
     if not v.nil?
-      RustBuffer.check_lower_SequenceTypeOsGymSandboxClaimCondition(v)
+      RustBuffer.check_lower_SequenceTypeOSGymSandboxClaimCondition(v)
     end
   end
 
@@ -995,7 +995,7 @@ end
 
   def self.check_lower_SequenceTypeOSGymSandboxClaimCondition(v)
     v.each do |item|
-      RustBuffer.check_lower_TypeOsGymSandboxClaimCondition(item)
+      RustBuffer.check_lower_TypeOSGymSandboxClaimCondition(item)
     end
   end
 
@@ -1158,8 +1158,8 @@ class RustBufferStream
 
   # The Record type OSGymSandboxClaimCondition.
 
-  def readTypeOsGymSandboxClaimCondition
-    OsGymSandboxClaimCondition.new(
+  def readTypeOSGymSandboxClaimCondition
+    OSGymSandboxClaimCondition.new(
       type: readOptionalstring,
       status: readOptionalstring,
       reason: readOptionalstring,
@@ -1170,8 +1170,8 @@ class RustBufferStream
 
   # The Record type OSGymSandboxClaimSandbox.
 
-  def readTypeOsGymSandboxClaimSandbox
-    OsGymSandboxClaimSandbox.new(
+  def readTypeOSGymSandboxClaimSandbox
+    OSGymSandboxClaimSandbox.new(
       name: readOptionalstring,
       service: readOptionalstring
     )
@@ -1179,26 +1179,26 @@ class RustBufferStream
 
   # The Record type OSGymSandboxClaimStatus.
 
-  def readTypeOsGymSandboxClaimStatus
-    OsGymSandboxClaimStatus.new(
+  def readTypeOSGymSandboxClaimStatus
+    OSGymSandboxClaimStatus.new(
       phase: readOptionalstring,
-      conditions: readOptionalSequenceTypeOsGymSandboxClaimCondition,
-      sandbox: readOptionalTypeOsGymSandboxClaimSandbox
+      conditions: readOptionalSequenceTypeOSGymSandboxClaimCondition,
+      sandbox: readOptionalTypeOSGymSandboxClaimSandbox
     )
   end
 
   # The Record type OSGymSandboxSpec.
 
-  def readTypeOsGymSandboxSpec
-    OsGymSandboxSpec.new(
+  def readTypeOSGymSandboxSpec
+    OSGymSandboxSpec.new(
       vm_template: readTypeVmTemplate
     )
   end
 
   # The Record type OSGymSandboxStatus.
 
-  def readTypeOsGymSandboxStatus
-    OsGymSandboxStatus.new(
+  def readTypeOSGymSandboxStatus
+    OSGymSandboxStatus.new(
       phase: readOptionalstring,
       runtime: readOptionalstring,
       ready: readOptionalbool,
@@ -1212,16 +1212,16 @@ class RustBufferStream
 
   # The Record type OSGymSandboxTemplateSpec.
 
-  def readTypeOsGymSandboxTemplateSpec
-    OsGymSandboxTemplateSpec.new(
+  def readTypeOSGymSandboxTemplateSpec
+    OSGymSandboxTemplateSpec.new(
       vm_template: readTypeVmTemplate
     )
   end
 
   # The Record type OSGymSandboxWarmPoolSpec.
 
-  def readTypeOsGymSandboxWarmPoolSpec
-    OsGymSandboxWarmPoolSpec.new(
+  def readTypeOSGymSandboxWarmPoolSpec
+    OSGymSandboxWarmPoolSpec.new(
       replicas: readU32,
       sandbox_template_ref: readTypeSandboxTemplateRef,
       autoscaling: readOptionalTypeWarmPoolAutoscaling
@@ -1230,8 +1230,8 @@ class RustBufferStream
 
   # The Record type OSGymSandboxWarmPoolStatus.
 
-  def readTypeOsGymSandboxWarmPoolStatus
-    OsGymSandboxWarmPoolStatus.new(
+  def readTypeOSGymSandboxWarmPoolStatus
+    OSGymSandboxWarmPoolStatus.new(
       replicas: readOptionalu32,
       ready_replicas: readOptionalu32,
       selector: readOptionalstring
@@ -1240,8 +1240,8 @@ class RustBufferStream
 
   # The Record type OSGymWorkspacePoolStatus.
 
-  def readTypeOsGymWorkspacePoolStatus
-    OsGymWorkspacePoolStatus.new(
+  def readTypeOSGymWorkspacePoolStatus
+    OSGymWorkspacePoolStatus.new(
       phase: readOptionalstring,
       total_count: readOptionalu32,
       available_count: readOptionalu32,
@@ -1513,15 +1513,15 @@ class RustBufferStream
 
   # The Optional<T> type for TypeOSGymSandboxClaimSandbox.
 
-  def readOptionalTypeOsGymSandboxClaimSandbox
+  def readOptionalTypeOSGymSandboxClaimSandbox
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return readTypeOsGymSandboxClaimSandbox
+      return readTypeOSGymSandboxClaimSandbox
     else
-      raise InternalError, 'Unexpected flag byte for OptionalTypeOsGymSandboxClaimSandbox'
+      raise InternalError, 'Unexpected flag byte for OptionalTypeOSGymSandboxClaimSandbox'
     end
   end
 
@@ -1639,15 +1639,15 @@ class RustBufferStream
 
   # The Optional<T> type for SequenceTypeOSGymSandboxClaimCondition.
 
-  def readOptionalSequenceTypeOsGymSandboxClaimCondition
+  def readOptionalSequenceTypeOSGymSandboxClaimCondition
     flag = unpack_from 1, 'c'
 
     if flag == 0
       return nil
     elsif flag == 1
-      return readSequenceTypeOsGymSandboxClaimCondition
+      return readSequenceTypeOSGymSandboxClaimCondition
     else
-      raise InternalError, 'Unexpected flag byte for OptionalSequenceTypeOsGymSandboxClaimCondition'
+      raise InternalError, 'Unexpected flag byte for OptionalSequenceTypeOSGymSandboxClaimCondition'
     end
   end
 
@@ -1713,7 +1713,7 @@ class RustBufferStream
 
   # The Sequence<T> type for TypeOSGymSandboxClaimCondition.
 
-  def readSequenceTypeOsGymSandboxClaimCondition
+  def readSequenceTypeOSGymSandboxClaimCondition
     count = unpack_from 4, 'l>'
 
     raise InternalError, 'Unexpected negative sequence length' if count.negative?
@@ -1721,7 +1721,7 @@ class RustBufferStream
     items = []
 
     count.times do
-      items.append readTypeOsGymSandboxClaimCondition
+      items.append readTypeOSGymSandboxClaimCondition
     end
 
     items
@@ -1853,7 +1853,7 @@ class RustBufferBuilder
 
   # The Record type OSGymSandboxClaimCondition.
 
-  def write_TypeOsGymSandboxClaimCondition(v)
+  def write_TypeOSGymSandboxClaimCondition(v)
     self.write_Optionalstring(v.type)
     self.write_Optionalstring(v.status)
     self.write_Optionalstring(v.reason)
@@ -1863,28 +1863,28 @@ class RustBufferBuilder
 
   # The Record type OSGymSandboxClaimSandbox.
 
-  def write_TypeOsGymSandboxClaimSandbox(v)
+  def write_TypeOSGymSandboxClaimSandbox(v)
     self.write_Optionalstring(v.name)
     self.write_Optionalstring(v.service)
   end
 
   # The Record type OSGymSandboxClaimStatus.
 
-  def write_TypeOsGymSandboxClaimStatus(v)
+  def write_TypeOSGymSandboxClaimStatus(v)
     self.write_Optionalstring(v.phase)
-    self.write_OptionalSequenceTypeOsGymSandboxClaimCondition(v.conditions)
-    self.write_OptionalTypeOsGymSandboxClaimSandbox(v.sandbox)
+    self.write_OptionalSequenceTypeOSGymSandboxClaimCondition(v.conditions)
+    self.write_OptionalTypeOSGymSandboxClaimSandbox(v.sandbox)
   end
 
   # The Record type OSGymSandboxSpec.
 
-  def write_TypeOsGymSandboxSpec(v)
+  def write_TypeOSGymSandboxSpec(v)
     self.write_TypeVmTemplate(v.vm_template)
   end
 
   # The Record type OSGymSandboxStatus.
 
-  def write_TypeOsGymSandboxStatus(v)
+  def write_TypeOSGymSandboxStatus(v)
     self.write_Optionalstring(v.phase)
     self.write_Optionalstring(v.runtime)
     self.write_Optionalbool(v.ready)
@@ -1897,13 +1897,13 @@ class RustBufferBuilder
 
   # The Record type OSGymSandboxTemplateSpec.
 
-  def write_TypeOsGymSandboxTemplateSpec(v)
+  def write_TypeOSGymSandboxTemplateSpec(v)
     self.write_TypeVmTemplate(v.vm_template)
   end
 
   # The Record type OSGymSandboxWarmPoolSpec.
 
-  def write_TypeOsGymSandboxWarmPoolSpec(v)
+  def write_TypeOSGymSandboxWarmPoolSpec(v)
     self.write_U32(v.replicas)
     self.write_TypeSandboxTemplateRef(v.sandbox_template_ref)
     self.write_OptionalTypeWarmPoolAutoscaling(v.autoscaling)
@@ -1911,7 +1911,7 @@ class RustBufferBuilder
 
   # The Record type OSGymSandboxWarmPoolStatus.
 
-  def write_TypeOsGymSandboxWarmPoolStatus(v)
+  def write_TypeOSGymSandboxWarmPoolStatus(v)
     self.write_Optionalu32(v.replicas)
     self.write_Optionalu32(v.ready_replicas)
     self.write_Optionalstring(v.selector)
@@ -1919,7 +1919,7 @@ class RustBufferBuilder
 
   # The Record type OSGymWorkspacePoolStatus.
 
-  def write_TypeOsGymWorkspacePoolStatus(v)
+  def write_TypeOSGymWorkspacePoolStatus(v)
     self.write_Optionalstring(v.phase)
     self.write_Optionalu32(v.total_count)
     self.write_Optionalu32(v.available_count)
@@ -2090,12 +2090,12 @@ class RustBufferBuilder
 
   # The Optional<T> type for TypeOSGymSandboxClaimSandbox.
 
-  def write_OptionalTypeOsGymSandboxClaimSandbox(v)
+  def write_OptionalTypeOSGymSandboxClaimSandbox(v)
     if v.nil?
       pack_into(1, 'c', 0)
     else
       pack_into(1, 'c', 1)
-      self.write_TypeOsGymSandboxClaimSandbox(v)
+      self.write_TypeOSGymSandboxClaimSandbox(v)
     end
   end
 
@@ -2189,12 +2189,12 @@ class RustBufferBuilder
 
   # The Optional<T> type for SequenceTypeOSGymSandboxClaimCondition.
 
-  def write_OptionalSequenceTypeOsGymSandboxClaimCondition(v)
+  def write_OptionalSequenceTypeOSGymSandboxClaimCondition(v)
     if v.nil?
       pack_into(1, 'c', 0)
     else
       pack_into(1, 'c', 1)
-      self.write_SequenceTypeOsGymSandboxClaimCondition(v)
+      self.write_SequenceTypeOSGymSandboxClaimCondition(v)
     end
   end
 
@@ -2242,11 +2242,11 @@ class RustBufferBuilder
 
   # The Sequence<T> type for TypeOSGymSandboxClaimCondition.
 
-  def write_SequenceTypeOsGymSandboxClaimCondition(items)
+  def write_SequenceTypeOSGymSandboxClaimCondition(items)
     pack_into(4, 'l>', items.size)
 
     items.each do |item|
-      self.write_TypeOsGymSandboxClaimCondition(item)
+      self.write_TypeOSGymSandboxClaimCondition(item)
     end
   end
 
@@ -2566,7 +2566,7 @@ class ClaimSpec
 end
 
   # Record type OSGymSandboxClaimCondition
-class OsGymSandboxClaimCondition
+class OSGymSandboxClaimCondition
   attr_reader :type, :status, :reason, :message, :last_transition_time
 
   def initialize(type:, status:, reason:, message:, last_transition_time:)
@@ -2599,7 +2599,7 @@ class OsGymSandboxClaimCondition
 end
 
   # Record type OSGymSandboxClaimSandbox
-class OsGymSandboxClaimSandbox
+class OSGymSandboxClaimSandbox
   attr_reader :name, :service
 
   def initialize(name:, service:)
@@ -2620,7 +2620,7 @@ class OsGymSandboxClaimSandbox
 end
 
   # Record type OSGymSandboxClaimStatus
-class OsGymSandboxClaimStatus
+class OSGymSandboxClaimStatus
   attr_reader :phase, :conditions, :sandbox
 
   def initialize(phase:, conditions:, sandbox:)
@@ -2789,7 +2789,7 @@ class VmTemplate
 end
 
   # Record type OSGymSandboxSpec
-class OsGymSandboxSpec
+class OSGymSandboxSpec
   attr_reader :vm_template
 
   def initialize(vm_template:)
@@ -2806,7 +2806,7 @@ class OsGymSandboxSpec
 end
 
   # Record type OSGymSandboxStatus
-class OsGymSandboxStatus
+class OSGymSandboxStatus
   attr_reader :phase, :runtime, :ready, :vm_name, :service, :message, :reset_issued_at, :reset_vmi_uid
 
   def initialize(phase:, runtime:, ready:, vm_name:, service:, message:, reset_issued_at:, reset_vmi_uid:)
@@ -2851,7 +2851,7 @@ class OsGymSandboxStatus
 end
 
   # Record type OSGymSandboxTemplateSpec
-class OsGymSandboxTemplateSpec
+class OSGymSandboxTemplateSpec
   attr_reader :vm_template
 
   def initialize(vm_template:)
@@ -2868,7 +2868,7 @@ class OsGymSandboxTemplateSpec
 end
 
   # Record type OSGymSandboxWarmPoolSpec
-class OsGymSandboxWarmPoolSpec
+class OSGymSandboxWarmPoolSpec
   attr_reader :replicas, :sandbox_template_ref, :autoscaling
 
   def initialize(replicas:, sandbox_template_ref:, autoscaling:)
@@ -2893,7 +2893,7 @@ class OsGymSandboxWarmPoolSpec
 end
 
   # Record type OSGymSandboxWarmPoolStatus
-class OsGymSandboxWarmPoolStatus
+class OSGymSandboxWarmPoolStatus
   attr_reader :replicas, :ready_replicas, :selector
 
   def initialize(replicas:, ready_replicas:, selector:)
@@ -2943,7 +2943,7 @@ class WarmPoolAutoscaling
 end
 
   # Record type OSGymWorkspacePoolStatus
-class OsGymWorkspacePoolStatus
+class OSGymWorkspacePoolStatus
   attr_reader :phase, :total_count, :available_count, :claimed_count
 
   def initialize(phase:, total_count:, available_count:, claimed_count:)

@@ -352,6 +352,29 @@ PYTHON_SMOKE
 rm "$runtime_copy"
 runtime_copy=""
 "$generator" --check
+ruby_sdk_source="$bindings_dir/ruby/cyclops_sdk/sdk.rb"
+grep -Fq -- "@uniffi_handle_map = UniffiHandleMap.new" "$ruby_sdk_source" || fail "Ruby callback bindings do not retain native callback objects"
+grep -Fq -- "module UniffiCallbackInterfaceHttpClient" "$ruby_sdk_source" || fail "Ruby callback bindings do not register an HTTP callback vtable"
+grep -Fq -- "[VTableCallbackInterfaceHttpClient.by_ref]" "$ruby_sdk_source" || fail "Ruby callback vtable initializer has the wrong FFI signature"
+grep -Fq -- "def self.uniffi_rust_future_rust_buffer" "$ruby_sdk_source" || fail "Ruby bindings do not resolve Rust-buffer futures"
+grep -Fq -- "def self.uniffi_trait_interface_call" "$ruby_sdk_source" || fail "Ruby callback bindings do not report callback results to Rust"
+grep -Fq -- "def self.uniffi_lower_http_error" "$ruby_sdk_source" || fail "Ruby callback bindings do not serialize HttpError values"
+grep -Fq -- "builder.write_U32(1)" "$ruby_sdk_source" || fail "Ruby callback bindings encode HttpError variant tags"
+grep -Fq -- "reason = reason.fetch(:reason)" "$ruby_sdk_source" || fail "Ruby callback bindings normalize HttpError keyword payloads"
+grep -Fq -- "def self.uniffi_is_error_type?" "$ruby_sdk_source" || fail "Ruby callback bindings do not classify callback errors"
+grep -Fq -- "CyclopsSdk.uniffi_rust_future_rust_buffer" "$ruby_sdk_source" || fail "Ruby async methods do not resolve Rust-buffer futures"
+grep -Fq -- "def self.uniffi_rust_future_void" "$ruby_sdk_source" || fail "Ruby bindings do not resolve void futures"
+grep -Fq -- "CyclopsSdk.uniffi_rust_future_void" "$ruby_sdk_source" || fail "Ruby async void methods do not resolve Rust futures"
+grep -Fq -- "UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool(uniffi_clone_handle(),RustBuffer.alloc_from_TypeCreatePoolRequest(request),RustCallStatus.new)" "$ruby_sdk_source" || fail "Ruby async factories do not pass the generated status placeholder"
+grep -Fq -- "    readTypePoolSpec" "$bindings_dir/ruby/cyclops_sdk.rb" || fail "Ruby facade does not delegate schema record readers"
+if grep -Fq -- "OsGym" "$ruby_sdk_source"; then
+  fail "Ruby SDK retains cross-crate OsGym helper names"
+fi
+grep -Fq -- "    readTypeOSGymWorkspacePoolStatus" "$bindings_dir/ruby/cyclops_sdk.rb" || fail "Ruby facade does not delegate schema optional readers"
+if grep -Fq -- "return 0 if @handle.nil?" "$ruby_sdk_source"; then
+  fail "Ruby callback bindings lower native callbacks to an invalid zero handle"
+fi
+
 baseline_hash="$(tree_hash "$bindings_dir")"
 assert_no_harness_artifacts
 

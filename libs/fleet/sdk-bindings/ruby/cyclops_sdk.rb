@@ -12,11 +12,15 @@ module CyclopsSdk
     check_lower_TypePoolSpec
   ].freeze
   SCHEMA_READ_METHODS = %i[
+    readTypeClaimSpec
+    readTypeOSGymSandboxClaimStatus
+    readTypeOSGymWorkspacePoolStatus
+    readTypePoolSpec
   ].freeze
   SCHEMA_WRITE_METHODS = %i[
     write_TypeClaimSpec
-    write_TypeOsGymSandboxClaimStatus
-    write_TypeOsGymWorkspacePoolStatus
+    write_TypeOSGymSandboxClaimStatus
+    write_TypeOSGymWorkspacePoolStatus
     write_TypePoolSpec
   ].freeze
 

@@ -473,6 +473,30 @@ fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterBool : FfiConverter {
+    typealias FfiType = Int8
+    typealias SwiftType = Bool
+
+    public static func lift(_ value: Int8) throws -> Bool {
+        return value != 0
+    }
+
+    public static func lower(_ value: Bool) -> Int8 {
+        return value ? 1 : 0
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Bool {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Bool, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterString: FfiConverter {
     typealias SwiftType = String
     typealias FfiType = RustBuffer
@@ -528,6 +552,220 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
         writeBytes(&buf, value)
     }
 }
+
+
+
+
+public protocol AccessTokenProvider: AnyObject, Sendable {
+
+    func getAccessToken(forceRefresh: Bool) async throws  -> String
+
+}
+open class AccessTokenProviderImpl: AccessTokenProvider, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_fn_clone_accesstokenprovider(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_fn_free_accesstokenprovider(handle, $0) }
+    }
+
+
+
+
+open func getAccessToken(forceRefresh: Bool)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_accesstokenprovider_get_access_token(
+                    self.uniffiCloneHandle(),
+                    FfiConverterBool.lower(forceRefresh)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeAccessTokenProviderError_lift
+        )
+}
+
+
+
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceAccessTokenProvider {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceAccessTokenProvider] = [UniffiVTableCallbackInterfaceAccessTokenProvider(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeAccessTokenProvider.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface AccessTokenProvider: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeAccessTokenProvider.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface AccessTokenProvider: handle missing in uniffiClone")
+            }
+        },
+        getAccessToken: { (
+            uniffiHandle: UInt64,
+            forceRefresh: Int8,
+            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteRustBuffer,
+            uniffiCallbackData: UInt64,
+            uniffiOutDroppedCallback: UnsafeMutablePointer<UniffiForeignFutureDroppedCallbackStruct>
+        ) in
+            let makeCall = {
+                () async throws -> String in
+                guard let uniffiObj = try? FfiConverterTypeAccessTokenProvider.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try await uniffiObj.getAccessToken(
+                     forceRefresh: try FfiConverterBool.lift(forceRefresh)
+                )
+            }
+
+            let uniffiHandleSuccess = { (returnValue: String) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureResultRustBuffer(
+                        returnValue: FfiConverterString.lower(returnValue),
+                        callStatus: RustCallStatus()
+                    )
+                )
+            }
+            let uniffiHandleError = { (statusCode, errorBuf) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureResultRustBuffer(
+                        returnValue: RustBuffer.empty(),
+                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
+                    )
+                )
+            }
+            uniffiTraitInterfaceCallAsyncWithError(
+                makeCall: makeCall,
+                handleSuccess: uniffiHandleSuccess,
+                handleError: uniffiHandleError,
+                lowerError: FfiConverterTypeAccessTokenProviderError_lower,
+                droppedCallback: uniffiOutDroppedCallback
+            )
+        }
+    )]
+}
+
+private func uniffiCallbackInitAccessTokenProvider() {
+    uniffi_cyclops_sdk_fn_init_callback_vtable_accesstokenprovider(UniffiCallbackInterfaceAccessTokenProvider.vtable)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAccessTokenProvider: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<AccessTokenProvider>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = AccessTokenProvider
+
+    public static func lift(_ handle: UInt64) throws -> AccessTokenProvider {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return AccessTokenProviderImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: AccessTokenProvider) -> UInt64 {
+         if let rustImpl = value as? AccessTokenProviderImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AccessTokenProvider {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: AccessTokenProvider, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAccessTokenProvider_lift(_ handle: UInt64) throws -> AccessTokenProvider {
+    return try FfiConverterTypeAccessTokenProvider.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAccessTokenProvider_lower(_ value: AccessTokenProvider) -> UInt64 {
+    return FfiConverterTypeAccessTokenProvider.lower(value)
+}
+
+
 
 
 
@@ -612,6 +850,35 @@ public static func connect(configuration: CyclopsConfiguration, httpClient: Http
     return try  FfiConverterTypeCyclopsClient_lift(try rustCallWithError(FfiConverterTypeSdkError_lift) {
     uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect(
         FfiConverterTypeCyclopsConfiguration_lower(configuration),
+        FfiConverterTypeHttpClient_lower(httpClient),$0
+    )
+})
+}
+
+public static func connectBrowserWithAccessToken(configuration: CyclopsTokenProviderConfiguration, accessToken: String)throws  -> CyclopsClient  {
+    return try  FfiConverterTypeCyclopsClient_lift(try rustCallWithError(FfiConverterTypeSdkError_lift) {
+    uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_browser_with_access_token(
+        FfiConverterTypeCyclopsTokenProviderConfiguration_lower(configuration),
+        FfiConverterString.lower(accessToken),$0
+    )
+})
+}
+
+public static func connectWithAccessToken(configuration: CyclopsTokenProviderConfiguration, accessToken: String, httpClient: HttpClient)throws  -> CyclopsClient  {
+    return try  FfiConverterTypeCyclopsClient_lift(try rustCallWithError(FfiConverterTypeSdkError_lift) {
+    uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token(
+        FfiConverterTypeCyclopsTokenProviderConfiguration_lower(configuration),
+        FfiConverterString.lower(accessToken),
+        FfiConverterTypeHttpClient_lower(httpClient),$0
+    )
+})
+}
+
+public static func connectWithAccessTokenProvider(configuration: CyclopsTokenProviderConfiguration, tokenProvider: AccessTokenProvider, httpClient: HttpClient)throws  -> CyclopsClient  {
+    return try  FfiConverterTypeCyclopsClient_lift(try rustCallWithError(FfiConverterTypeSdkError_lift) {
+    uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider(
+        FfiConverterTypeCyclopsTokenProviderConfiguration_lower(configuration),
+        FfiConverterTypeAccessTokenProvider_lower(tokenProvider),
         FfiConverterTypeHttpClient_lower(httpClient),$0
     )
 })
@@ -1431,6 +1698,72 @@ public func FfiConverterTypeCyclopsConfiguration_lower(_ value: CyclopsConfigura
 }
 
 
+public struct CyclopsTokenProviderConfiguration: Equatable, Hashable {
+    public var baseUrl: String
+    public var poolPollIntervalMs: UInt64
+    public var poolPollLimit: UInt32
+    public var claimPollIntervalMs: UInt64
+    public var claimPollLimit: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(baseUrl: String, poolPollIntervalMs: UInt64, poolPollLimit: UInt32, claimPollIntervalMs: UInt64, claimPollLimit: UInt32) {
+        self.baseUrl = baseUrl
+        self.poolPollIntervalMs = poolPollIntervalMs
+        self.poolPollLimit = poolPollLimit
+        self.claimPollIntervalMs = claimPollIntervalMs
+        self.claimPollLimit = claimPollLimit
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CyclopsTokenProviderConfiguration: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCyclopsTokenProviderConfiguration: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CyclopsTokenProviderConfiguration {
+        return
+            try CyclopsTokenProviderConfiguration(
+                baseUrl: FfiConverterString.read(from: &buf),
+                poolPollIntervalMs: FfiConverterUInt64.read(from: &buf),
+                poolPollLimit: FfiConverterUInt32.read(from: &buf),
+                claimPollIntervalMs: FfiConverterUInt64.read(from: &buf),
+                claimPollLimit: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CyclopsTokenProviderConfiguration, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.baseUrl, into: &buf)
+        FfiConverterUInt64.write(value.poolPollIntervalMs, into: &buf)
+        FfiConverterUInt32.write(value.poolPollLimit, into: &buf)
+        FfiConverterUInt64.write(value.claimPollIntervalMs, into: &buf)
+        FfiConverterUInt32.write(value.claimPollLimit, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCyclopsTokenProviderConfiguration_lift(_ buf: RustBuffer) throws -> CyclopsTokenProviderConfiguration {
+    return try FfiConverterTypeCyclopsTokenProviderConfiguration.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCyclopsTokenProviderConfiguration_lower(_ value: CyclopsTokenProviderConfiguration) -> RustBuffer {
+    return FfiConverterTypeCyclopsTokenProviderConfiguration.lower(value)
+}
+
+
 public struct HttpHeader: Equatable, Hashable {
     public var name: String
     public var value: String
@@ -1792,6 +2125,80 @@ public func FfiConverterTypeSandbox_lift(_ buf: RustBuffer) throws -> Sandbox {
 #endif
 public func FfiConverterTypeSandbox_lower(_ value: Sandbox) -> RustBuffer {
     return FfiConverterTypeSandbox.lower(value)
+}
+
+
+public enum AccessTokenProviderError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    case Failed(reason: String
+    )
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension AccessTokenProviderError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAccessTokenProviderError: FfiConverterRustBuffer {
+    typealias SwiftType = AccessTokenProviderError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AccessTokenProviderError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .Failed(
+            reason: try FfiConverterString.read(from: &buf)
+            )
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AccessTokenProviderError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case let .Failed(reason):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(reason, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAccessTokenProviderError_lift(_ buf: RustBuffer) throws -> AccessTokenProviderError {
+    return try FfiConverterTypeAccessTokenProviderError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAccessTokenProviderError_lower(_ value: AccessTokenProviderError) -> RustBuffer {
+    return FfiConverterTypeAccessTokenProviderError.lower(value)
 }
 
 
@@ -2472,16 +2879,29 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() != 46699) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() != 1180) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 38803) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect() != 54404) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_browser_with_access_token() != 55589) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token() != 10148) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider() != 58487) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new() != 25746) {
         return InitializationResult.apiChecksumMismatch
     }
 
+    uniffiCallbackInitAccessTokenProvider()
     uniffiCallbackInitHttpClient()
     uniffiEnsureCyclopsSdkSchemaInitialized()
     return InitializationResult.ok

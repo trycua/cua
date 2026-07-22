@@ -1,11 +1,13 @@
 mod support;
 
 use cyclops_sdk::{
-    CyclopsClient, CyclopsConfiguration, CyclopsCredentials, HttpError, HttpHeader, HttpRequest,
+    AccessTokenProvider, AccessTokenProviderError, CyclopsClient, CyclopsConfiguration,
+    CyclopsCredentials, CyclopsTokenProviderConfiguration, HttpError, HttpHeader, HttpRequest,
     HttpResponse, SdkError,
 };
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 use support::ScriptedHttpClient;
+use tokio::sync::Mutex;
 
 const BASE_URL: &str = "https://cyclops.example:8443/api";
 const TOKEN_URL: &str = "https://identity.example/oauth/token";
@@ -209,6 +211,77 @@ async fn refreshes_once_after_unauthorized() {
 }
 
 #[tokio::test]
+async fn provider_token_is_used_without_calling_the_token_endpoint() {
+    let http = Arc::new(ScriptedHttpClient::new([Ok(response(200, b"ok"))]));
+    let provider = Arc::new(ScriptedAccessTokenProvider::new([Ok(
+        "browser-token".into()
+    )]));
+    let client = provider_client(Arc::clone(&http), provider);
+
+    assert_eq!(
+        client
+            .execute_authenticated(request("https://cyclops.example:8443/api/pools"))
+            .await
+            .unwrap()
+            .body,
+        b"ok"
+    );
+
+    let requests = http.requests().await;
+    assert_eq!(requests.len(), 1);
+    assert_bearer(&requests[0], "browser-token");
+}
+
+#[tokio::test]
+async fn provider_is_forced_to_refresh_once_after_a_control_plane_401() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(response(401, b"expired")),
+        Ok(response(200, b"ok")),
+    ]));
+    let provider = Arc::new(ScriptedAccessTokenProvider::new([
+        Ok("browser-token-a".into()),
+        Ok("browser-token-b".into()),
+    ]));
+    let client = provider_client(Arc::clone(&http), Arc::clone(&provider));
+
+    assert_eq!(
+        client
+            .execute_authenticated(request("https://cyclops.example:8443/api/pools"))
+            .await
+            .unwrap()
+            .body,
+        b"ok"
+    );
+
+    assert_eq!(provider.refresh_requests().await, vec![false, true]);
+    let requests = http.requests().await;
+    assert_eq!(requests.len(), 2);
+    assert_bearer(&requests[0], "browser-token-a");
+    assert_bearer(&requests[1], "browser-token-b");
+}
+
+#[tokio::test]
+async fn provider_error_and_empty_token_are_reported_as_token_errors() {
+    let provider_error = Arc::new(ScriptedAccessTokenProvider::new([Err(
+        AccessTokenProviderError::Failed {
+            reason: "browser session expired".into(),
+        },
+    )]));
+    let error = provider_client(Arc::new(ScriptedHttpClient::new([])), provider_error)
+        .execute_authenticated(request("https://cyclops.example:8443/api/pools"))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, SdkError::Token { .. }));
+
+    let empty_token = Arc::new(ScriptedAccessTokenProvider::new([Ok("  \n\t".into())]));
+    let error = provider_client(Arc::new(ScriptedHttpClient::new([])), empty_token)
+        .execute_authenticated(request("https://cyclops.example:8443/api/pools"))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, SdkError::Token { .. }));
+}
+
+#[tokio::test]
 async fn does_not_retry_a_second_unauthorized() {
     let http = Arc::new(ScriptedHttpClient::new([
         Ok(token("token-a", 3600)),
@@ -292,6 +365,57 @@ fn client(http: Arc<ScriptedHttpClient>) -> Arc<CyclopsClient> {
     .unwrap()
 }
 
+fn provider_client(
+    http: Arc<ScriptedHttpClient>,
+    provider: Arc<ScriptedAccessTokenProvider>,
+) -> Arc<CyclopsClient> {
+    CyclopsClient::connect_with_access_token_provider(
+        CyclopsTokenProviderConfiguration {
+            base_url: BASE_URL.into(),
+            pool_poll_interval_ms: 1,
+            pool_poll_limit: 1,
+            claim_poll_interval_ms: 1,
+            claim_poll_limit: 1,
+        },
+        provider,
+        http,
+    )
+    .unwrap()
+}
+
+struct ScriptedAccessTokenProvider {
+    values: Mutex<VecDeque<Result<String, AccessTokenProviderError>>>,
+    refresh_requests: Mutex<Vec<bool>>,
+}
+
+impl ScriptedAccessTokenProvider {
+    fn new(values: impl IntoIterator<Item = Result<String, AccessTokenProviderError>>) -> Self {
+        Self {
+            values: Mutex::new(values.into_iter().collect()),
+            refresh_requests: Mutex::new(Vec::new()),
+        }
+    }
+
+    async fn refresh_requests(&self) -> Vec<bool> {
+        self.refresh_requests.lock().await.clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl AccessTokenProvider for ScriptedAccessTokenProvider {
+    async fn get_access_token(
+        &self,
+        force_refresh: bool,
+    ) -> Result<String, AccessTokenProviderError> {
+        self.refresh_requests.lock().await.push(force_refresh);
+        self.values
+            .lock()
+            .await
+            .pop_front()
+            .expect("access-token provider called more than scripted")
+    }
+}
+
 fn request(url: &str) -> HttpRequest {
     HttpRequest {
         method: "GET".into(),
@@ -345,4 +469,53 @@ fn assert_bearer(request: &HttpRequest, token: &str) {
             .value,
         format!("Bearer {token}")
     );
+}
+
+#[tokio::test]
+async fn static_access_token_is_used_without_token_provider_callback() {
+    let http = Arc::new(ScriptedHttpClient::new([Ok(response(200, b"ok"))]));
+    let client = static_token_client(Arc::clone(&http), "browser-token");
+
+    assert_eq!(
+        client
+            .execute_authenticated(request("https://cyclops.example:8443/api/pools"))
+            .await
+            .unwrap()
+            .body,
+        b"ok"
+    );
+
+    let requests = http.requests().await;
+    assert_eq!(requests.len(), 1);
+    assert_bearer(&requests[0], "browser-token");
+}
+
+fn static_token_client(http: Arc<ScriptedHttpClient>, access_token: &str) -> Arc<CyclopsClient> {
+    CyclopsClient::connect_with_access_token(
+        CyclopsTokenProviderConfiguration {
+            base_url: BASE_URL.into(),
+            pool_poll_interval_ms: 1,
+            pool_poll_limit: 1,
+            claim_poll_interval_ms: 1,
+            claim_poll_limit: 1,
+        },
+        access_token.into(),
+        http,
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn static_access_token_is_not_retried_after_a_401() {
+    let http = Arc::new(ScriptedHttpClient::new([Ok(response(401, b"expired"))]));
+    let client = static_token_client(Arc::clone(&http), "browser-token");
+
+    let error = client
+        .execute_authenticated(request("https://cyclops.example:8443/api/pools"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, SdkError::Token { reason } if reason.contains("static access token was rejected"))
+    );
+    assert_eq!(http.requests().await.len(), 1);
 }

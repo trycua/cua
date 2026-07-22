@@ -762,6 +762,7 @@ Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native br
 **Arguments:**
 
 - `continuation` (string, optional): Opaque continuation minted by an earlier semantic_v2 response.
+- `include_screenshot` (boolean, optional): Capture the exact tab viewport as PNG through CDP without selecting the tab or foregrounding its native window. The request refuses if capture cannot be completed.
 - `pid` (integer, optional): Native browser process id (bind mode).
 - `query` (string, optional): Read-only semantic match over role, accessible name, and visible text.
 - `scope_ref` (string, optional): Current semantic/content ref whose subtree should be observed.

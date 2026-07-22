@@ -4,7 +4,7 @@
 /* eslint-disable */
 // @ts-nocheck
 
-import lib from "@ubjs/node";
+import lib from "./node-runtime.js";
 const { UniffiNativeModule, FfiType, resolveLibPath } = lib;
 
 import {

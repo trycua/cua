@@ -129,3 +129,12 @@ The npm package installs one optional native package selected for the current
 OS and CPU. It does not bundle the `cua-driver` executable: ship that executable
 outside ASAR, preserve its executable bit, and sign it before signing and
 notarizing the enclosing app.
+
+Each native package also carries Cua's copy-mode build of the pinned
+`@ubjs/node` N-API runtime. Upstream `0.31.0-3` returns Rust-owned memory through
+external ArrayBuffers, which Electron 20 and newer intentionally reject because
+of V8's memory cage. The copy-mode runtime keeps the generated UniFFI API and
+RustBuffer ownership contract unchanged, but copies at the native/JavaScript
+boundary before freeing Rust-owned return buffers. Regular Node and Electron
+therefore receive the same values; Electron hosts do not need to spawn or
+configure the private daemon themselves.

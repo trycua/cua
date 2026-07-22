@@ -58,6 +58,14 @@ function normalizeTypeScript(name, source) {
     /(from\s+["']\.\/[A-Za-z0-9_-]+)(["'])/g,
     "$1.js$2",
   )
+  if (name.endsWith("-ffi.ts")) {
+    const needle = 'import lib from "@ubjs/node";'
+    const matches = output.split(needle).length - 1
+    if (matches !== 1) {
+      throw new Error(`expected one Node runtime import in ${name}, found ${matches}`)
+    }
+    output = output.replace(needle, 'import lib from "./node-runtime.js";')
+  }
   if (name === "cua_driver_contract-ffi.ts") {
     const needle = 'crateName: "cua_driver_contract"'
     const matches = output.split(needle).length - 1

@@ -488,6 +488,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect() != 42154:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect_with_client_kind() != 43287:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_call_tool() != 31445:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_click() != 34118:
@@ -842,6 +844,12 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect_with_client_kind.argtypes = (
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect_with_client_kind.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_call_tool.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1006,6 +1014,9 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions.restyp
 _UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect_with_client_kind.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect_with_client_kind.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_call_tool.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_call_tool.restype = ctypes.c_uint16
@@ -2419,6 +2430,51 @@ class _UniffiFfiConverterTypeEmbeddedDriverHostState(_UniffiConverterRustBuffer)
 
 
 
+class SdkClientKind(enum.Enum):
+    """
+    Runtime that imported the shared UniFFI SDK library. The language package
+    selects this automatically at its root entry point; callers do not need to
+    supply telemetry metadata.
+"""
+
+    PYTHON = 0
+
+    TYPESCRIPT = 1
+
+
+
+class _UniffiFfiConverterTypeSdkClientKind(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return SdkClientKind.PYTHON
+        if variant == 2:
+            return SdkClientKind.TYPESCRIPT
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == SdkClientKind.PYTHON:
+            return
+        if value == SdkClientKind.TYPESCRIPT:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == SdkClientKind.PYTHON:
+            buf.write_i32(1)
+        if value == SdkClientKind.TYPESCRIPT:
+            buf.write_i32(2)
+
+
+
+
+
+
+
+
 
 
 
@@ -2513,6 +2569,28 @@ class CuaDriver(CuaDriverProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect,
+            *_uniffi_lowered_args,
+        )
+        return cls._uniffi_make_instance(_uniffi_ffi_result)
+    @classmethod
+    def connect_with_client_kind(cls, socket_path: typing.Optional[str],client_kind: SdkClientKind) -> CuaDriver:
+        """
+        Language-package entry point that preserves the public `connect` API
+        while attaching a closed runtime category to daemon requests.
+"""
+
+        _UniffiFfiConverterOptionalString.check_lower(socket_path)
+
+        _UniffiFfiConverterTypeSdkClientKind.check_lower(client_kind)
+        _uniffi_lowered_args = (
+            _UniffiFfiConverterOptionalString.lower(socket_path),
+            _UniffiFfiConverterTypeSdkClientKind.lower(client_kind),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCuaDriver.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect_with_client_kind,
             *_uniffi_lowered_args,
         )
         return cls._uniffi_make_instance(_uniffi_ffi_result)
@@ -3106,6 +3184,7 @@ __all__ = [
     "DriverError",
     "EmbeddedDriverError",
     "EmbeddedDriverHostState",
+    "SdkClientKind",
     "DriverMetadata",
     "EmbeddedEnvironmentVariable",
     "EmbeddedMcpConfiguration",

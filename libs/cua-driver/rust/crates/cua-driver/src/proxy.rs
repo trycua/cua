@@ -140,6 +140,7 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
                                 &call.args,
                                 known_tool,
                                 cua_driver_core::session::SessionTransport::McpStdio,
+                                cua_driver_core::session::SessionClientKind::Mcp,
                             )
                         })
                     })
@@ -238,6 +239,7 @@ async fn run_control_connection(
         args: None,
         session_id: Some(session_id.clone()),
         observation_origin: None,
+        client_kind: None,
     };
     let line = match serde_json::to_string(&begin) {
         Ok(s) => s + "\n",
@@ -376,6 +378,7 @@ fn fetch_tools_list_from_daemon(
         args: None,
         session_id: Some(session_id.to_owned()),
         observation_origin: None,
+        client_kind: None,
     };
     let resp = send_request(socket_path, &req)?;
     if !resp.ok {
@@ -509,13 +512,12 @@ fn daemon_owns_tool_observation(result: &serde_json::Value) -> bool {
 
 /// JSON-RPC method dispatcher for the proxy. Mirrors
 /// `cua_driver_core::server::handle_request`:
-///   - `initialize`     → static `initialize_result()` (same envelope
-///                        as the core protocol server; the daemon's
-///                        identity is hidden from the MCP client).
-///   - `tools/list`     → return the cached daemon tool list.
-///   - `tools/call`     → forward to the daemon and reshape the
-///                        response into MCP's `CallTool.Result`.
-///   - other            → method-not-found.
+/// - `initialize` → static `initialize_result()` (same envelope as the core
+///   protocol server; the daemon's identity is hidden from the MCP client).
+/// - `tools/list` → return the cached daemon tool list.
+/// - `tools/call` → forward to the daemon and reshape the response into MCP's
+///   `CallTool.Result`.
+/// - other → method-not-found.
 async fn handle_proxy_request(
     req: Request,
     id: serde_json::Value,
@@ -581,6 +583,7 @@ async fn forward_tool_call(
         args: Some(args),
         session_id: Some(session_id.to_owned()),
         observation_origin: daemon_observes_tool_calls.then_some(ToolObservationOrigin::McpProxy),
+        client_kind: None,
     };
 
     // The daemon client is sync, so jump to a blocking thread to keep

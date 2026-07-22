@@ -111,9 +111,9 @@ impl Tool for GetWindowStateTool {
         let query = args.opt_str("query");
         let screenshot_out_file = args.opt_str("screenshot_out_file").map(|s| {
             // Expand ~ prefix.
-            if s.starts_with("~/") {
+            if let Some(relative) = s.strip_prefix("~/") {
                 let home = std::env::var("HOME").unwrap_or_default();
-                format!("{home}/{}", &s[2..])
+                format!("{home}/{relative}")
             } else {
                 s
             }

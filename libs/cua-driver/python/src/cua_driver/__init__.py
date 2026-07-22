@@ -7,7 +7,7 @@ through their runtime's MCP client instead of importing a language MCP facade.
 __version__ = "0.11.0"  # x-release-please-version
 
 from ._native import (
-    CuaDriver,
+    CuaDriver as _NativeCuaDriver,
     DriverError,
     DriverMetadata,
     EmbeddedCuaDriverHost,
@@ -21,6 +21,7 @@ from ._native import (
     EmbeddedPermissionMode,
     ImageContent,
     MacOsPermissionStatus,
+    SdkClientKind,
     ToolResult,
     current_mac_os_permission_status,
     open_mac_os_screen_recording_settings,
@@ -54,6 +55,16 @@ from ._native_contract import (
     TypeTextInput,
 )
 from .wrapper import get_binary_path, run_cua_driver
+
+
+def _connect_python_sdk(cls, socket_path):
+    """Preserve ``CuaDriver.connect`` while tagging the imported runtime."""
+
+    return cls.connect_with_client_kind(socket_path, SdkClientKind.PYTHON)
+
+
+_NativeCuaDriver.connect = classmethod(_connect_python_sdk)
+CuaDriver = _NativeCuaDriver
 
 __all__ = [
     "CaptureScope",

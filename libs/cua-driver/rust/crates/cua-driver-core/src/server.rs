@@ -579,7 +579,14 @@ pub fn session_tool_context(
     }
     let call = req.tool_call().ok()?;
     let known_tool = call.name == "type_text_chars" || registry.get_def(&call.name).is_some();
-    crate::session::begin_tool_call(&call.name, &call.args, known_tool, transport)
+    let client_kind = match transport {
+        crate::session::SessionTransport::Cli => crate::session::SessionClientKind::Cli,
+        crate::session::SessionTransport::Daemon => crate::session::SessionClientKind::Direct,
+        crate::session::SessionTransport::McpStdio | crate::session::SessionTransport::McpHttp => {
+            crate::session::SessionClientKind::Mcp
+        }
+    };
+    crate::session::begin_tool_call(&call.name, &call.args, known_tool, transport, client_kind)
 }
 
 fn notify_session_started(metadata: InitializeMetadata) {

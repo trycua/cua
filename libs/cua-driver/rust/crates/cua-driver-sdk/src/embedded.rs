@@ -142,7 +142,7 @@ enum HostPhase {
         generation: String,
         cancel: Arc<AtomicBool>,
     },
-    Ready(RunningProcess),
+    Ready(Box<RunningProcess>),
     Stopping {
         generation: String,
     },
@@ -326,7 +326,7 @@ impl EmbeddedCuaDriverHost {
             enum Action {
                 Done,
                 Wait,
-                Stop(RunningProcess),
+                Stop(Box<RunningProcess>),
             }
             let action = {
                 let mut inner = self.inner.lock().unwrap();
@@ -353,7 +353,7 @@ impl EmbeddedCuaDriverHost {
             match action {
                 Action::Done => return Ok(()),
                 Action::Wait => notified.await,
-                Action::Stop(running) => return self.clone().finish_stop(running).await,
+                Action::Stop(running) => return self.clone().finish_stop(*running).await,
             }
         }
     }
@@ -543,7 +543,7 @@ impl EmbeddedCuaDriverHost {
             );
             if still_starting {
                 inner.last_exit = None;
-                inner.phase = HostPhase::Ready(pending.take().unwrap());
+                inner.phase = HostPhase::Ready(Box::new(pending.take().unwrap()));
             }
             still_starting
         };
@@ -923,7 +923,7 @@ fn validate_socket_path(socket_path: &str) -> Result<(), EmbeddedDriverError> {
         if !std::path::Path::new(socket_path).is_absolute() {
             return configuration_error("Unix socket_path must be absolute");
         }
-        if socket_path.as_bytes().len() >= 104 {
+        if socket_path.len() >= 104 {
             return configuration_error(
                 "socket_path exceeds the portable Unix socket length limit",
             );

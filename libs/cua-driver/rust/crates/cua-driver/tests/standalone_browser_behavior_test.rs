@@ -303,7 +303,7 @@ fn browser_specs() -> Vec<BrowserSpec> {
     #[cfg(target_os = "macos")]
     {
         let home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
-        return select_browser_products(
+        select_browser_products(
             [
                 (
                     "chrome",
@@ -330,7 +330,7 @@ fn browser_specs() -> Vec<BrowserSpec> {
             })
             .collect(),
             false,
-        );
+        )
     }
     #[cfg(target_os = "linux")]
     {
@@ -658,11 +658,11 @@ fn driver_profile_root() -> PathBuf {
     }
     #[cfg(target_os = "macos")]
     {
-        return PathBuf::from(std::env::var_os("HOME").expect("HOME"))
+        PathBuf::from(std::env::var_os("HOME").expect("HOME"))
             .join("Library")
             .join("Application Support")
             .join("CuaDriver")
-            .join("BrowserProfiles");
+            .join("BrowserProfiles")
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -2329,7 +2329,7 @@ fn run_multi_tab(spec: &BrowserSpec) {
         // This is setup instrumentation and runs before the background sentinel;
         // the driver action below must still leave the tab selected state and
         // native foreground unchanged.
-        let background_ws = cdp_page_websocket_for_url(fixture.cdp_port, &second_server.page_url());
+        let background_ws = cdp_page_websocket_for_url(fixture.cdp_port, second_server.page_url());
         harness_cdp_call_at_url(
             &background_ws,
             "Emulation.setDeviceMetricsOverride",
@@ -2357,7 +2357,7 @@ fn run_multi_tab(spec: &BrowserSpec) {
         // createTarget(background=true) on every host, but Page.bringToFront
         // reliably selects the fixture tab. No browser action below this
         // setup point may activate a target.
-        bring_harness_page_to_front(fixture.cdp_port, &fixture.server.page_url());
+        bring_harness_page_to_front(fixture.cdp_port, fixture.server.page_url());
 
         // Begin the background proof only after Chromium has honored the
         // explicit selected-tab setup and the first fixture is observably
@@ -2365,9 +2365,9 @@ fn run_multi_tab(spec: &BrowserSpec) {
         let setup_deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let foreground_visibility =
-                harness_page_visibility(fixture.cdp_port, &fixture.server.page_url());
+                harness_page_visibility(fixture.cdp_port, fixture.server.page_url());
             let background_visibility =
-                harness_page_visibility(fixture.cdp_port, &second_server.page_url());
+                harness_page_visibility(fixture.cdp_port, second_server.page_url());
             if foreground_visibility == "visible" && background_visibility == "hidden" {
                 break;
             }
@@ -2698,7 +2698,7 @@ fn run_same_title_tabs(spec: &BrowserSpec) {
             );
             assert!(created["targetId"].is_string(), "{created}");
             wait_for_observed(&second_server, "WEB_HARNESS_MARKER_v1");
-            bring_harness_page_to_front(fixture.cdp_port, &fixture.server.page_url());
+            bring_harness_page_to_front(fixture.cdp_port, fixture.server.page_url());
 
             run_with_background_oracles(&mut fixture, |fixture| {
                 let deadline = Instant::now() + Duration::from_secs(5);

@@ -2057,6 +2057,9 @@ impl BrowserEngine {
         Ok(document)
     }
 
+    // These values form one semantic snapshot envelope; keeping them explicit
+    // makes the stored reference index and reported metadata auditable together.
+    #[allow(clippy::too_many_arguments)]
     fn semantic_outcome(
         &self,
         snapshot_id: u64,

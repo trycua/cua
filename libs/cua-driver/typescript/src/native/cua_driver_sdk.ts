@@ -1451,6 +1451,40 @@ const FfiConverterTypeEmbeddedDriverHostState = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * Runtime that imported the shared UniFFI SDK library. The language package
+ * selects this automatically at its root entry point; callers do not need to
+ * supply telemetry metadata.
+ */
+export enum SdkClientKind {
+    Python,
+    Typescript
+}
+
+const FfiConverterTypeSdkClientKind = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = SdkClientKind;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return SdkClientKind.Python;
+                case 2: return SdkClientKind.Typescript;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case SdkClientKind.Python: return ordinalConverter.write(1, into);
+                case SdkClientKind.Typescript: return ordinalConverter.write(2, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
 export interface CuaDriverLike {
 
 /**
@@ -1506,6 +1540,23 @@ private constructor(pointer: UniffiHandle) {
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect(
         FfiConverterOptionalString.lower(socketPath, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Language-package entry point that preserves the public `connect` API
+ * while attaching a closed runtime category to daemon requests.
+ */
+    static connectWithClientKind(socketPath: string | undefined, clientKind: SdkClientKind): CuaDriverLike /*throws*/ {
+    return FfiConverterTypeCuaDriver.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeDriverError.lift.bind(FfiConverterTypeDriverError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect_with_client_kind(
+        FfiConverterOptionalString.lower(socketPath, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeSdkClientKind.lower(clientKind, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -2295,6 +2346,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect() !== 42154) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect");
     }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect_with_client_kind() !== 43287) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect_with_client_kind");
+    }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_call_tool() !== 31445) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriver_call_tool");
     }
@@ -2396,6 +2450,7 @@ export default Object.freeze({
     FfiConverterTypeEmbeddedPermissionMode,
     FfiConverterTypeImageContent,
     FfiConverterTypeMacOsPermissionStatus,
+    FfiConverterTypeSdkClientKind,
     FfiConverterTypeToolResult,
   }
 });

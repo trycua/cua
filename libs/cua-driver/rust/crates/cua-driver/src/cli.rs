@@ -1045,7 +1045,7 @@ pub fn run_describe(registry: &ToolRegistry, name: &str) {
             process::exit(64);
         }
         Some(def) => {
-            print!("name: {}\n", def.name);
+            println!("name: {}", def.name);
             if !def.description.is_empty() {
                 print!("\ndescription:\n{}", def.description);
                 if !def.description.ends_with('\n') {
@@ -1771,6 +1771,7 @@ pub fn run_call(
             // CLI one-shot is its own ephemeral, anonymous/global session.
             session_id: None,
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+            client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
         };
         match crate::serve::send_request(&socket_path, &req) {
             Ok(resp) => {
@@ -1856,7 +1857,6 @@ pub fn run_call(
                             }
                         }
                     }
-                    return;
                 } else {
                     if let Some(err) = resp.error {
                         eprintln!("{err}");
@@ -1934,6 +1934,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 // nobody, so only an unconditional stop (CLI / manual) reaps it.
                 session_id: None,
                 observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+                client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => {
@@ -1945,6 +1946,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                         args: Some(serde_json::json!({})),
                         session_id: None,
                         observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+                        client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
                     };
                     if let Ok(sr) = crate::serve::send_request(&socket_path, &state_req) {
                         if let Some(result) = sr.result {
@@ -1979,6 +1981,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 args: Some(serde_json::json!({})),
                 session_id: None,
                 observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+                client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => println!("Recording stopped."),
@@ -2002,6 +2005,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 args: Some(serde_json::json!({})),
                 session_id: None,
                 observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+                client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => {
@@ -2059,7 +2063,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
 fn run_recording_render(args: &[String]) {
     // First positional = input dir, second positional = output mp4.
     let positionals: Vec<&String> = args.iter().filter(|s| !s.starts_with("--")).collect();
-    let input_dir = match positionals.get(0) {
+    let input_dir = match positionals.first() {
         Some(s) if !s.is_empty() => std::path::PathBuf::from(s),
         _ => {
             eprintln!(
@@ -2332,6 +2336,7 @@ fn run_permissions_status(json: bool) {
             args: Some(serde_json::json!({ "prompt": false })),
             session_id: None,
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+            client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
         };
         crate::serve::send_request(&socket, &req)
             .ok()
@@ -2465,6 +2470,7 @@ fn permission_check_request(
         })),
         session_id: None,
         observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+        client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
     }
 }
 
@@ -3107,6 +3113,7 @@ fn diagnose_tcc_section() -> String {
             args: Some(serde_json::json!({ "prompt": false })),
             session_id: None,
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+            client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
         })
         .and_then(|request| crate::serve::send_request(&socket, &request).ok())
         .filter(|response| response.ok)
@@ -3297,6 +3304,7 @@ pub fn run_config_cmd(
             args: Some(args),
             session_id: None,
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
+            client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
         };
         let response = crate::serve::send_request(&socket_path, &req).unwrap_or_else(|error| {
             eprintln!("Cua Driver daemon request on {socket_path} failed: {error}");
@@ -3352,9 +3360,8 @@ pub fn run_config_cmd(
             let config = get_config();
             // Support dotted key paths like "agent_cursor.enabled".
             let v = if key.contains('.') {
-                let mut parts = key.splitn(2, '.');
-                let parent = parts.next().unwrap();
-                let child = parts.next().unwrap();
+                let (parent, child) = key.split_once('.').unwrap();
+
                 config
                     .get(parent)
                     .and_then(|object| object.get(child))
@@ -3802,6 +3809,7 @@ mod tests {
 
     /// Every subcommand entry has the same JSON shape — name + description
     /// + args[] — so consumers can render the catalog uniformly without
+    ///
     /// per-subcommand branching.
     #[test]
     fn manifest_subcommands_have_uniform_shape() {
@@ -3852,7 +3860,7 @@ fn first_sentence(text: &str) -> String {
         return String::new();
     }
     let flat: String = trimmed
-        .splitn(3, "\n\n")
+        .split("\n\n")
         .next()
         .unwrap_or(trimmed)
         .split('\n')

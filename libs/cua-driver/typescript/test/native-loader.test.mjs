@@ -163,6 +163,7 @@ test(
       assert.equal(result.verified, true)
       assert.equal(request.name, "get_desktop_state")
       assert.deepEqual(request.args, { session: "node-run" })
+      assert.equal(request.client_kind, "typescript_sdk")
     } finally {
       fixture.kill()
       rmSync(directory, { recursive: true, force: true })

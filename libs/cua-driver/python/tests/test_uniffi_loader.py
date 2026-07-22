@@ -178,6 +178,7 @@ except FileNotFoundError:
         self.assertTrue(result.verified)
         self.assertEqual(captured[0]["name"], "get_desktop_state")
         self.assertEqual(captured[0]["args"], {"session": "python-run"})
+        self.assertEqual(captured[0]["client_kind"], "python_sdk")
 
 
 if os.environ.get("CUA_DRIVER_REQUIRE_UNIFFI") == "1" and not LIBRARY.exists():

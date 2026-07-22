@@ -134,7 +134,7 @@ fn native_window_target(window_id: u32) -> anyhow::Result<NativeWindowTarget> {
         .iter()
         .filter(|window| window.pid == target.pid && same_bounds(&window.bounds, &target.bounds))
         .collect::<Vec<_>>();
-    same_bounds.sort_by(|a, b| b.z_index.cmp(&a.z_index));
+    same_bounds.sort_by_key(|window| std::cmp::Reverse(window.z_index));
     let same_bounds_ordinal = same_bounds
         .iter()
         .position(|window| window.window_id == target.window_id)

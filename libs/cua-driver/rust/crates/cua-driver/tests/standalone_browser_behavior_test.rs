@@ -15,6 +15,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
+#[cfg(target_os = "macos")]
+use cua_driver_testkit::ax::element_index_containing;
 use cua_driver_testkit::e2e::{
     append_json_line, execute_case, recording_evidence, write_environment_from_env, CaseSpec,
     Delivery, DriverRoute, EnvironmentRecord, Evidence, Observation, OracleKind, RefusalCode,
@@ -1478,6 +1480,148 @@ fn run_background_type(spec: &BrowserSpec) {
             wait_for_value(&fixture.server, "txt-input", "standalone-browser");
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn native_omnibox(snapshot: &ToolResponse) -> (u64, f64, f64, String) {
+    let index = element_index_containing(snapshot.tree_text(), "Address and search bar")
+        .unwrap_or_else(|| panic!("native browser omnibox missing: {}", snapshot.tree_text()));
+    let elements = snapshot.structured()["elements"]
+        .as_array()
+        .expect("native window snapshot elements");
+    let element = elements
+        .iter()
+        .find(|element| element["element_index"].as_u64() == Some(index))
+        .unwrap_or_else(|| panic!("omnibox element [{index}] missing: {}", snapshot.raw));
+    let frame = element["frame"]
+        .as_object()
+        .unwrap_or_else(|| panic!("omnibox [{index}] has no frame: {}", snapshot.raw));
+    let window = elements
+        .iter()
+        .find(|element| element["role"] == "AXWindow")
+        .and_then(|element| element["frame"].as_object())
+        .unwrap_or_else(|| panic!("native browser window frame missing: {}", snapshot.raw));
+    let window_width = window["w"].as_f64().expect("browser window width");
+    let scale = snapshot.structured()["screenshot_width"]
+        .as_f64()
+        .expect("browser screenshot width")
+        / window_width;
+    let x = (frame["x"].as_f64().expect("omnibox x") - window["x"].as_f64().expect("window x")
+        + frame["w"].as_f64().expect("omnibox width") / 2.0)
+        * scale;
+    let y = (frame["y"].as_f64().expect("omnibox y") - window["y"].as_f64().expect("window y")
+        + frame["h"].as_f64().expect("omnibox height") / 2.0)
+        * scale;
+    (
+        index,
+        x,
+        y,
+        element["value"].as_str().unwrap_or_default().to_owned(),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn wait_for_native_omnibox_value(fixture: &mut BrowserFixture, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let snapshot = fixture.driver.call(
+            "get_window_state",
+            serde_json::json!({
+                "pid": fixture.pid as i64,
+                "window_id": fixture.window_id,
+                "capture_mode": "ax",
+            }),
+        );
+        let (_, _, _, value) = native_omnibox(&snapshot);
+        if value == expected {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "native omnibox value did not reach {expected:?}; actual={value:?}"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn run_native_omnibox_select_all(spec: &BrowserSpec) {
+    let scenario = format!("macos-{}-native-omnibox-select-all", spec.name);
+    let case = CaseSpec::delivered(
+        scenario.clone(),
+        spec.name.clone(),
+        "standalone-chromium-native-chrome",
+        "hotkey_cmd_a_replace",
+        Targeting::Px,
+        Delivery::Foreground,
+        Scope::Window,
+        DriverRoute::MacosCgEventHid,
+        vec![OracleKind::FixtureState],
+    );
+    execute_case(case, |evidence| {
+        let mut fixture = launch_browser(spec, &scenario);
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        let snapshot = fixture.driver.call(
+            "get_window_state",
+            serde_json::json!({
+                "pid": fixture.pid as i64,
+                "window_id": fixture.window_id,
+                "capture_mode": "ax",
+            }),
+        );
+        let (index, x, y, _) = native_omnibox(&snapshot);
+        let initial = "cua-hotkey-initial";
+        let replacement = "cua-hotkey-replacement";
+        let seeded = fixture.driver.call(
+            "set_value",
+            serde_json::json!({
+                "pid": fixture.pid as i64,
+                "window_id": fixture.window_id,
+                "element_index": index,
+                "value": initial,
+            }),
+        );
+        assert!(!seeded.is_error(), "seed native omnibox: {}", seeded.raw);
+        wait_for_native_omnibox_value(&mut fixture, initial);
+
+        let selected = fixture.driver.call(
+            "hotkey",
+            serde_json::json!({
+                "pid": fixture.pid as i64,
+                "window_id": fixture.window_id,
+                "x": x,
+                "y": y,
+                "keys": ["cmd", "a"],
+                "delivery_mode": "foreground",
+            }),
+        );
+        assert!(
+            !selected.is_error(),
+            "native omnibox Cmd+A: {}",
+            selected.raw
+        );
+        assert_eq!(selected.verified(), Some(false), "{}", selected.raw);
+        assert_eq!(selected.structured()["effect"], "unverifiable");
+
+        let replaced = fixture.driver.call(
+            "type_text",
+            serde_json::json!({
+                "pid": fixture.pid as i64,
+                "window_id": fixture.window_id,
+                "x": x,
+                "y": y,
+                "text": replacement,
+                "delivery_mode": "foreground",
+            }),
+        );
+        assert!(
+            !replaced.is_error(),
+            "replace native omnibox: {}",
+            replaced.raw
+        );
+        wait_for_native_omnibox_value(&mut fixture, replacement);
+        Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
     });
 }
 
@@ -3310,6 +3454,11 @@ macro_rules! standalone_browser_test {
 standalone_browser_test!(standalone_browser_roundtrip, run_roundtrip);
 standalone_browser_test!(standalone_browser_semantic_state, run_semantic_state);
 standalone_browser_test!(standalone_browser_background_type, run_background_type);
+#[cfg(target_os = "macos")]
+standalone_browser_test!(
+    standalone_browser_native_omnibox_select_all,
+    run_native_omnibox_select_all
+);
 standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
 standalone_browser_test!(
     standalone_browser_prepare_isolated,

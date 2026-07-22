@@ -471,6 +471,33 @@ pub fn read_pid_file(pid_file_path: &str) -> Option<u32> {
 // ── Server ────────────────────────────────────────────────────────────────────
 
 #[cfg(unix)]
+#[derive(Clone, Copy)]
+struct SocketIdentity {
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(unix)]
+fn socket_identity(socket_path: &str) -> anyhow::Result<SocketIdentity> {
+    use std::os::unix::fs::MetadataExt as _;
+    let metadata = std::fs::symlink_metadata(socket_path)?;
+    Ok(SocketIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    })
+}
+
+#[cfg(unix)]
+fn remove_owned_socket(socket_path: &str, identity: SocketIdentity) {
+    let Ok(current) = socket_identity(socket_path) else {
+        return;
+    };
+    if current.device == identity.device && current.inode == identity.inode {
+        let _ = std::fs::remove_file(socket_path);
+    }
+}
+
+#[cfg(unix)]
 fn secure_embedded_socket(socket_path: &str, embedded: bool) -> anyhow::Result<()> {
     if !embedded {
         return Ok(());
@@ -501,12 +528,17 @@ pub async fn run_serve(
         std::fs::create_dir_all(dir)?;
     }
 
-    // Remove stale socket file (from a crashed previous daemon).
-    let _ = std::fs::remove_file(socket_path);
+    let embedded = cua_driver_core::embedded_mode();
+    // Embedded hosts remove confirmed-stale sockets before spawning us. Do not
+    // unlink a socket that may belong to another live embedded host.
+    if !embedded {
+        let _ = std::fs::remove_file(socket_path);
+    }
 
     let listener =
         UnixListener::bind(socket_path).map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
-    secure_embedded_socket(socket_path, cua_driver_core::embedded_mode())?;
+    secure_embedded_socket(socket_path, embedded)?;
+    let bound_socket = socket_identity(socket_path)?;
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
 
@@ -807,8 +839,8 @@ pub async fn run_serve(
         }
     }
 
-    // Clean up.
-    let _ = std::fs::remove_file(socket_path);
+    // Do not unlink a replacement socket created after this listener was bound.
+    remove_owned_socket(socket_path, bound_socket);
     if let Some(pid_path) = pid_file_path {
         let _ = std::fs::remove_file(pid_path);
     }
@@ -1008,12 +1040,16 @@ pub async fn run_serve(
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
 
-    // Build the cross-IL security descriptor once, reuse on every pipe
-    // instance. If this fails we fall back to the default-ACL `create`
-    // (which is High-IL exclusive when the daemon is at High IL — i.e.
-    // the bug we're trying to fix). Log the failure so it's diagnosable.
-    let security_attrs = unsafe { build_open_pipe_security_attrs() };
-    if security_attrs.is_none() {
+    // Standalone elevated daemons need the cross-IL descriptor. Embedded
+    // daemons inherit the host's token, so use the token's default DACL instead
+    // of granting pipe access to Everyone.
+    let embedded = cua_driver_core::embedded_mode();
+    let security_attrs = if embedded {
+        None
+    } else {
+        unsafe { build_open_pipe_security_attrs() }
+    };
+    if !embedded && security_attrs.is_none() {
         eprintln!(
             "cua-driver: failed to build cross-IL SECURITY_ATTRIBUTES; pipe will be \
              High-IL exclusive. CLI and MCP clients from Medium-IL processes \
@@ -1052,25 +1088,26 @@ pub async fn run_serve(
     }
     register_recording_session_end_hook(registry.recording.clone());
 
+    let mut first_pipe = true;
     loop {
-        // Create a new pipe server instance to accept the next client.
-        // Use create_with_security_attributes_raw so Medium-IL clients can
-        // open the pipe even though we're at High IL (see comment on
-        // build_open_pipe_security_attrs). Fall back to default ACL if
-        // SD construction failed at startup.
+        // Standalone daemons use the cross-IL descriptor when available;
+        // embedded daemons use the default DACL and reserve the pipe name with
+        // their first instance.
+        let first_pipe_instance = embedded && first_pipe;
         let server = if sec_attrs_ptr.is_null() {
             ServerOptions::new()
-                .first_pipe_instance(false)
+                .first_pipe_instance(first_pipe_instance)
                 .create(socket_path)
                 .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?
         } else {
             unsafe {
                 ServerOptions::new()
-                    .first_pipe_instance(false)
+                    .first_pipe_instance(first_pipe_instance)
                     .create_with_security_attributes_raw(socket_path, sec_attrs_ptr)
                     .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?
             }
         };
+        first_pipe = false;
 
         tokio::select! {
             result = server.connect() => {
@@ -1538,7 +1575,7 @@ pub fn run_revoke_cmd(socket_path: &str, session: Option<&str>, all: bool) {
 
 #[cfg(all(test, unix))]
 mod socket_tests {
-    use super::secure_embedded_socket;
+    use super::{remove_owned_socket, secure_embedded_socket, socket_identity};
     use std::os::unix::fs::PermissionsExt as _;
 
     #[test]
@@ -1559,6 +1596,21 @@ mod socket_tests {
             std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777,
             0o600
         );
+    }
+
+    #[test]
+    fn cleanup_preserves_a_replacement_socket() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let first = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let first_identity = socket_identity(socket.to_str().unwrap()).unwrap();
+        std::fs::remove_file(&socket).unwrap();
+        let _replacement = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+
+        remove_owned_socket(socket.to_str().unwrap(), first_identity);
+
+        assert!(socket.exists());
+        drop(first);
     }
 }
 

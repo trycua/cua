@@ -587,14 +587,15 @@ release source revision:
 
 Pending review.
 
-The 2026-07-22 revision incorporates architecture feedback from
-[@r33drichards](https://github.com/r33drichards). The original figure showed
-the embedded bindings and MCP adapter as peers over a typed native core. That
-shape still allowed two interfaces over private implementation details. The
-revised decision makes `cua-driver-sdk` the public typed boundary and requires
-MCP servers to consume the same SDK contract as every application. Rust servers
-call the Rust SDK directly; Python and TypeScript servers use generated
-bindings, so no unnecessary C ABI round-trip is imposed on Rust.
+The 2026-07-22 revision in
+[#2454](https://github.com/trycua/cua/pull/2454) incorporates architecture
+feedback from [@r33drichards](https://github.com/r33drichards). The original
+figure showed the embedded bindings and MCP adapter as peers over a typed native
+core. That shape still allowed two interfaces over private implementation
+details. The revised decision makes `cua-driver-sdk` the public typed boundary
+and requires MCP servers to consume the same SDK contract as every application.
+Rust servers call the Rust SDK directly; Python and TypeScript servers use
+generated bindings, so no unnecessary C ABI round-trip is imposed on Rust.
 
 The discussion issue should capture the final decision, other material
 feedback, accepted amendments, rejected alternatives, remaining risks,

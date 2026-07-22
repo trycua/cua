@@ -51,6 +51,27 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         )
         self.assertNotIn('npm publish "$package"', workflow)
 
+    def test_npm_packages_declare_and_verify_provenance_repository(self) -> None:
+        workflow = self.read(".github/workflows/cd-py-cua-driver.yml")
+        package = json.loads(
+            self.read("libs/cua-driver/typescript/package.json")
+        )
+        package_lock = json.loads(
+            self.read("libs/cua-driver/typescript/package-lock.json")
+        )
+        expected = {
+            "type": "git",
+            "url": "git+https://github.com/trycua/cua.git",
+        }
+
+        self.assertEqual(package["repository"], expected)
+        self.assertEqual(package_lock["packages"][""]["repository"], expected)
+        self.assertIn("npm pkg set repository.type=git", workflow)
+        self.assertIn(
+            'test "$REPOSITORY" = "git+https://github.com/trycua/cua.git"',
+            workflow,
+        )
+
     def test_macos_bundle_explains_screen_capture_and_automation_prompts(self) -> None:
         plist = self.read(
             "libs/cua-driver/rust/scripts/CuaDriverBundle/Contents/Info.plist"

@@ -99,6 +99,12 @@ jobs:
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: "libs/cua-driver/rust -> target"
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
+            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

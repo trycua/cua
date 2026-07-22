@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "UniFFI-backed imported SDK for the Cua Driver daemon"
+description = "Canonical typed SDK and UniFFI boundary for Cua Driver"
 publish = false
 
 [lib]
@@ -18,11 +18,26 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
 uniffi = { workspace = true, features = ["tokio"] }
 uuid = { workspace = true }
+cursor-overlay = { path = "../cursor-overlay" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+platform-macos = { path = "../platform-macos" }
 core-foundation = "0.10"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+platform-windows = { path = "../platform-windows" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+platform-linux = { path = "../platform-linux" }
+
+[features]
+default = []
+portal-input = ["platform-linux/portal-input"]
+portal-capture = ["platform-linux/portal-capture"]
+portal-libei = ["portal-input", "portal-capture"]
 
 [dev-dependencies]
 tempfile = "3"

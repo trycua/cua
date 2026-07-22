@@ -6,9 +6,11 @@
  */
 import { CuaDriver, SdkClientKind } from "./native/cua_driver_sdk.js"
 
-// The same native library backs Python and TypeScript. Keep the public
-// CuaDriver.connect signature stable while attaching the importing runtime as
-// a closed, content-free category to direct daemon requests.
+// The same native library backs Python and TypeScript. The package root tags
+// both the canonical same-process constructor and the temporary daemon
+// compatibility constructor with the importing runtime.
+CuaDriver.create = (options) =>
+  CuaDriver.createWithClientKind(options, SdkClientKind.Typescript)
 CuaDriver.connect = (socketPath: string | undefined) =>
   CuaDriver.connectWithClientKind(socketPath, SdkClientKind.Typescript)
 

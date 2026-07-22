@@ -1,8 +1,14 @@
 # Cua Driver integration surfaces: MCP/CLI and SDK bindings
 
-Status: accepted and implemented as an experimental imported-SDK vertical slice
+Status: superseded in part by RFC 2447
 
 Decision date: 2026-07-21
+
+> This document preserves the rationale for the 0.11.0 daemon-client SDK.
+> [RFC 2447](../../../rfcs/2447-cua-driver-native-core-and-mcp-adapter.md)
+> keeps MCP as the agent boundary but replaces the imported SDK topology with a
+> same-process runtime and makes MCP a downstream SDK consumer. Where this
+> document says the SDK is only a daemon client, RFC 2447 is authoritative.
 
 This document separates two Cua products that were previously discussed as if
 they were one: Cua as a tool used by an agent, and Cua as an API imported by an

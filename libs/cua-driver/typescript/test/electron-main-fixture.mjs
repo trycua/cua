@@ -70,7 +70,7 @@ try {
   const pid = connection.pid
   const { CuaDriver } = await import("@trycua/cua-driver")
   const driver = CuaDriver.connect(socketPath)
-  const tools = JSON.parse(driver.listToolsJson())
+  const tools = JSON.parse(await driver.listToolsJson())
   driver.uniffiDestroy()
   const result = {
     versions: {

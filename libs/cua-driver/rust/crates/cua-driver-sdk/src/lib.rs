@@ -1,9 +1,9 @@
-//! Canonical Rust implementation for imported Cua Driver SDKs.
+//! Canonical typed Cua Driver SDK and UniFFI export boundary.
 //!
-//! This library intentionally talks to the existing daemon rather than
-//! embedding the platform automation engine. Python and Node bindings therefore
-//! share one implementation while retaining the daemon's permission ownership,
-//! session state, policy enforcement, and platform event-loop constraints.
+//! [`CuaDriver::create`] owns the platform runtime in the importing process.
+//! [`CuaDriver::connect`] remains a temporary compatibility constructor for the
+//! released daemon-client topology. Both paths expose the same typed operations;
+//! MCP and daemon transports are downstream adapters rather than peer contracts.
 
 use cua_driver_contract::{
     ClickInput, DragInput, EndSessionInput, EndSessionOutput, EscalateSessionInput,
@@ -21,7 +21,9 @@ use std::sync::Arc;
 use thiserror::Error;
 
 mod embedded;
+mod runtime;
 pub use embedded::*;
+use runtime::{DriverRuntime, RuntimeOptions};
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ImageContent {
@@ -188,12 +190,53 @@ pub enum DriverError {
         message: String,
         error_code: String,
     },
+    #[error("the Cua Driver SDK has been shut down")]
+    Shutdown,
 }
 
 #[derive(uniffi::Object)]
 pub struct CuaDriver {
-    socket_path: String,
+    backend: DriverBackend,
     client_kind: DaemonClientKind,
+}
+
+enum DriverBackend {
+    Embedded(Arc<DriverRuntime>),
+    Daemon { socket_path: String },
+}
+
+/// Process topology used by this SDK object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum DriverExecutionMode {
+    Embedded,
+    Daemon,
+}
+
+/// Options for a same-process Cua Driver SDK runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct DriverOptions {
+    /// Preserve the temporary reduced screenshot surface used by older Claude
+    /// Code integrations. New applications should leave this false.
+    pub claude_code_compatibility: bool,
+}
+
+impl Default for DriverOptions {
+    fn default() -> Self {
+        Self {
+            claude_code_compatibility: false,
+        }
+    }
+}
+
+/// Rust-only host configuration used by the standalone daemon. Language
+/// bindings intentionally receive the smaller [`DriverOptions`] record.
+pub struct DriverHostOptions {
+    pub cursor: cursor_overlay::CursorConfig,
+    pub claude_code_compatibility: bool,
+    pub prepare_desktop_environment: bool,
+    /// Temporary compatibility hook for daemon-only administrative tools.
+    /// Desktop operations must live behind the typed SDK contract instead.
+    pub register_host_tools: Option<fn(&mut cua_driver_core::tool::ToolRegistry)>,
 }
 
 /// Runtime that imported the shared UniFFI SDK library. The language package
@@ -233,11 +276,11 @@ macro_rules! desktop_tool_methods {
 
 macro_rules! define_desktop_tool_methods {
     ($($method:ident: $input:ty,)*) => {
-        #[uniffi::export]
+        #[uniffi::export(async_runtime = "tokio")]
         impl CuaDriver {
             $(
-                pub fn $method(&self, input: $input) -> Result<ToolResult, DriverError> {
-                    self.invoke_typed(<$input as ToolInput>::TOOL_NAME, input)
+                pub async fn $method(&self, input: $input) -> Result<ToolResult, DriverError> {
+                    self.invoke_typed(<$input as ToolInput>::TOOL_NAME, input).await
                 }
             )*
         }
@@ -261,8 +304,38 @@ desktop_tool_methods!(define_exported_tool_names);
 
 #[uniffi::export]
 impl CuaDriver {
+    /// Create a same-process driver runtime. This constructor never launches
+    /// `cua-driver` and never opens daemon IPC.
+    #[uniffi::constructor]
+    pub fn create(options: Option<DriverOptions>) -> Result<Arc<Self>, DriverError> {
+        let options = options.unwrap_or_default();
+        Ok(Arc::new(Self {
+            backend: DriverBackend::Embedded(Arc::new(DriverRuntime::create(
+                RuntimeOptions::embedded(options.claude_code_compatibility),
+            ))),
+            client_kind: DaemonClientKind::Unknown,
+        }))
+    }
+
+    /// Language-package entry point for the same-process runtime. The wrapper
+    /// at each package root selects the client kind automatically.
+    #[uniffi::constructor]
+    pub fn create_with_client_kind(
+        options: Option<DriverOptions>,
+        client_kind: SdkClientKind,
+    ) -> Result<Arc<Self>, DriverError> {
+        let driver = Self::create(options)?;
+        let DriverBackend::Embedded(runtime) = &driver.backend else {
+            unreachable!("create always returns an embedded runtime")
+        };
+        Ok(Arc::new(Self {
+            backend: DriverBackend::Embedded(runtime.clone()),
+            client_kind: client_kind.into(),
+        }))
+    }
+
     /// Connect to the default installed daemon or an explicitly selected socket.
-    /// Construction does not launch a process or perform I/O.
+    /// This is the temporary compatibility path for released socket clients.
     #[uniffi::constructor]
     pub fn connect(socket_path: Option<String>) -> Result<Arc<Self>, DriverError> {
         let socket_path = socket_path.unwrap_or_else(|| socket_path_for_namespace("cua-driver"));
@@ -272,7 +345,7 @@ impl CuaDriver {
             });
         }
         Ok(Arc::new(Self {
-            socket_path,
+            backend: DriverBackend::Daemon { socket_path },
             client_kind: DaemonClientKind::Unknown,
         }))
     }
@@ -285,154 +358,288 @@ impl CuaDriver {
         client_kind: SdkClientKind,
     ) -> Result<Arc<Self>, DriverError> {
         let driver = Self::connect(socket_path)?;
+        let DriverBackend::Daemon { socket_path } = &driver.backend else {
+            unreachable!("connect always returns a daemon client")
+        };
         Ok(Arc::new(Self {
-            socket_path: driver.socket_path.clone(),
+            backend: DriverBackend::Daemon {
+                socket_path: socket_path.clone(),
+            },
             client_kind: client_kind.into(),
         }))
     }
 
+    pub fn execution_mode(&self) -> DriverExecutionMode {
+        match &self.backend {
+            DriverBackend::Embedded(_) => DriverExecutionMode::Embedded,
+            DriverBackend::Daemon { .. } => DriverExecutionMode::Daemon,
+        }
+    }
+
+    /// Compatibility accessor. Embedded runtimes have no socket and return an
+    /// empty string; new code should branch on [`Self::execution_mode`].
     pub fn socket_path(&self) -> String {
-        self.socket_path.clone()
+        match &self.backend {
+            DriverBackend::Embedded(_) => String::new(),
+            DriverBackend::Daemon { socket_path } => socket_path.clone(),
+        }
     }
 
     pub fn is_available(&self) -> bool {
-        is_daemon_listening(&self.socket_path)
+        match &self.backend {
+            DriverBackend::Embedded(runtime) => runtime.is_running(),
+            DriverBackend::Daemon { socket_path } => is_daemon_listening(socket_path),
+        }
     }
+}
 
-    pub fn metadata(&self) -> Result<DriverMetadata, DriverError> {
-        let metadata =
-            request_daemon_metadata(&self.socket_path).map_err(|error| DriverError::Transport {
-                socket_path: self.socket_path.clone(),
-                reason: error.to_string(),
-            })?;
-        Ok(DriverMetadata {
-            driver_version: metadata.driver_version,
-            contract_version: metadata.contract_version,
-            tools_list_schema_version: metadata.tools_list_schema_version,
-            capability_version: metadata.capability_version,
-            mcp_protocol_version: metadata.mcp_protocol_version,
-            pid: metadata.pid,
-            embedded: metadata.embedded,
-            host_bundle_id: metadata.host_bundle_id,
+impl CuaDriver {
+    /// Construct the same SDK-owned runtime for the standalone daemon host.
+    /// This Rust-only entry point keeps CLI presentation options out of the
+    /// generated language contract.
+    pub fn create_for_host(options: DriverHostOptions) -> Arc<Self> {
+        Arc::new(Self {
+            backend: DriverBackend::Embedded(Arc::new(DriverRuntime::create(RuntimeOptions {
+                cursor: options.cursor,
+                compatibility_mode: options.claude_code_compatibility,
+                prepare_desktop_environment: options.prepare_desktop_environment,
+                register_host_tools: options.register_host_tools,
+            }))),
+            client_kind: DaemonClientKind::Unknown,
         })
     }
 
-    /// Escape hatch for forward-compatible tools and application-owned server
-    /// adapters. Typed methods below serialize the same canonical Rust inputs.
-    pub fn call_tool(
+    /// Transitional adapter for the released private daemon protocol and the
+    /// current MCP host. It is intentionally not exported through UniFFI and
+    /// will disappear when the official MCP adapter owns generic dispatch.
+    #[doc(hidden)]
+    pub fn compatibility_registry(&self) -> Option<Arc<cua_driver_core::tool::ToolRegistry>> {
+        match &self.backend {
+            DriverBackend::Embedded(runtime) => Some(runtime.registry()),
+            DriverBackend::Daemon { .. } => None,
+        }
+    }
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+impl CuaDriver {
+    pub async fn metadata(&self) -> Result<DriverMetadata, DriverError> {
+        match &self.backend {
+            DriverBackend::Embedded(runtime) => {
+                if !runtime.is_running() {
+                    return Err(DriverError::Shutdown);
+                }
+                Ok(DriverMetadata {
+                    driver_version: env!("CARGO_PKG_VERSION").into(),
+                    contract_version: cua_driver_contract::CONTRACT_VERSION.into(),
+                    tools_list_schema_version: cua_driver_contract::TOOLS_LIST_SCHEMA_VERSION
+                        .into(),
+                    capability_version: cua_driver_contract::CAPABILITY_VERSION.into(),
+                    mcp_protocol_version: cua_driver_contract::MCP_PROTOCOL_VERSION.into(),
+                    pid: std::process::id(),
+                    embedded: true,
+                    host_bundle_id: None,
+                })
+            }
+            DriverBackend::Daemon { socket_path } => {
+                let socket_path = socket_path.clone();
+                let request_path = socket_path.clone();
+                let metadata =
+                    tokio::task::spawn_blocking(move || request_daemon_metadata(&request_path))
+                        .await
+                        .map_err(|error| DriverError::Protocol {
+                            reason: format!("metadata task failed: {error}"),
+                        })?
+                        .map_err(|error| DriverError::Transport {
+                            socket_path,
+                            reason: error.to_string(),
+                        })?;
+                Ok(DriverMetadata {
+                    driver_version: metadata.driver_version,
+                    contract_version: metadata.contract_version,
+                    tools_list_schema_version: metadata.tools_list_schema_version,
+                    capability_version: metadata.capability_version,
+                    mcp_protocol_version: metadata.mcp_protocol_version,
+                    pid: metadata.pid,
+                    embedded: metadata.embedded,
+                    host_bundle_id: metadata.host_bundle_id,
+                })
+            }
+        }
+    }
+
+    /// Temporary compatibility escape hatch. New application code should use
+    /// the typed methods; MCP servers own generic discovery and invocation.
+    pub async fn call_tool(
         &self,
         name: String,
         arguments_json: String,
     ) -> Result<ToolResult, DriverError> {
         let arguments = parse_arguments(&name, &arguments_json)?;
-        self.invoke(&name, arguments)
+        self.invoke(&name, arguments).await
     }
 
-    pub fn list_tools_json(&self) -> Result<String, DriverError> {
-        let request = DaemonRequest {
-            method: "list".into(),
-            name: None,
-            args: None,
-            session_id: None,
-            observation_origin: Some(ToolObservationOrigin::Direct),
-            client_kind: Some(self.client_kind),
-        };
-        let response =
-            send_request(&self.socket_path, &request).map_err(|error| DriverError::Transport {
-                socket_path: self.socket_path.clone(),
-                reason: error.to_string(),
-            })?;
-        if !response.ok {
-            return Err(DriverError::Protocol {
-                reason: response
-                    .error
-                    .unwrap_or_else(|| "list request failed".into()),
-            });
-        }
-        serde_json::to_string(&response.result.unwrap_or(Value::Null)).map_err(|error| {
-            DriverError::Protocol {
-                reason: error.to_string(),
+    /// Temporary compatibility discovery surface for adapters migrating to
+    /// the typed SDK contract.
+    pub async fn list_tools_json(&self) -> Result<String, DriverError> {
+        let result = match &self.backend {
+            DriverBackend::Embedded(runtime) => {
+                runtime.tools_list().ok_or(DriverError::Shutdown)?
             }
+            DriverBackend::Daemon { socket_path } => {
+                let socket_path = socket_path.clone();
+                let request_path = socket_path.clone();
+                let request = DaemonRequest {
+                    method: "list".into(),
+                    name: None,
+                    args: None,
+                    session_id: None,
+                    observation_origin: Some(ToolObservationOrigin::Direct),
+                    client_kind: Some(self.client_kind),
+                };
+                let response =
+                    tokio::task::spawn_blocking(move || send_request(&request_path, &request))
+                        .await
+                        .map_err(|error| DriverError::Protocol {
+                            reason: format!("list task failed: {error}"),
+                        })?
+                        .map_err(|error| DriverError::Transport {
+                            socket_path,
+                            reason: error.to_string(),
+                        })?;
+                if !response.ok {
+                    return Err(DriverError::Protocol {
+                        reason: response
+                            .error
+                            .unwrap_or_else(|| "list request failed".into()),
+                    });
+                }
+                response.result.unwrap_or(Value::Null)
+            }
+        };
+        serde_json::to_string(&result).map_err(|error| DriverError::Protocol {
+            reason: error.to_string(),
         })
     }
 
-    pub fn start_session(
+    pub async fn start_session(
         &self,
         input: StartSessionInput,
     ) -> Result<StartSessionOutput, DriverError> {
         self.invoke_typed(StartSessionInput::TOOL_NAME, input)
-            .and_then(|result| result.typed_success(StartSessionInput::TOOL_NAME))
+            .await?
+            .typed_success(StartSessionInput::TOOL_NAME)
     }
 
-    pub fn escalate_session(
+    pub async fn escalate_session(
         &self,
         input: EscalateSessionInput,
     ) -> Result<SessionStateOutput, DriverError> {
         self.invoke_typed(EscalateSessionInput::TOOL_NAME, input)
-            .and_then(|result| result.typed_success(EscalateSessionInput::TOOL_NAME))
+            .await?
+            .typed_success(EscalateSessionInput::TOOL_NAME)
     }
 
-    pub fn get_session_state(
+    pub async fn get_session_state(
         &self,
         input: GetSessionStateInput,
     ) -> Result<SessionStateOutput, DriverError> {
         self.invoke_typed(GetSessionStateInput::TOOL_NAME, input)
-            .and_then(|result| result.typed_success(GetSessionStateInput::TOOL_NAME))
+            .await?
+            .typed_success(GetSessionStateInput::TOOL_NAME)
     }
 
-    pub fn end_session(&self, input: EndSessionInput) -> Result<EndSessionOutput, DriverError> {
+    pub async fn end_session(
+        &self,
+        input: EndSessionInput,
+    ) -> Result<EndSessionOutput, DriverError> {
         self.invoke_typed(EndSessionInput::TOOL_NAME, input)
-            .and_then(|result| result.typed_success(EndSessionInput::TOOL_NAME))
+            .await?
+            .typed_success(EndSessionInput::TOOL_NAME)
+    }
+
+    /// Stop accepting new embedded operations. Repeated calls are harmless;
+    /// daemon compatibility clients do not own the daemon and therefore no-op.
+    pub async fn shutdown(&self) -> Result<(), DriverError> {
+        if let DriverBackend::Embedded(runtime) = &self.backend {
+            runtime.shutdown().await;
+        }
+        Ok(())
     }
 }
 
 desktop_tool_methods!(define_desktop_tool_methods);
 
 impl CuaDriver {
-    fn invoke_typed<T: Serialize>(&self, name: &str, input: T) -> Result<ToolResult, DriverError> {
+    async fn invoke_typed<T: Serialize>(
+        &self,
+        name: &str,
+        input: T,
+    ) -> Result<ToolResult, DriverError> {
         let arguments =
             serde_json::to_value(input).map_err(|error| DriverError::InvalidArguments {
                 tool: name.into(),
                 reason: error.to_string(),
             })?;
-        self.invoke(name, arguments)
+        self.invoke(name, arguments).await
     }
 
-    fn invoke(&self, name: &str, arguments: Value) -> Result<ToolResult, DriverError> {
+    async fn invoke(&self, name: &str, arguments: Value) -> Result<ToolResult, DriverError> {
         if !arguments.is_object() {
             return Err(DriverError::InvalidArguments {
                 tool: name.into(),
                 reason: "arguments must be a JSON object".into(),
             });
         }
-        let request = DaemonRequest {
-            method: "call".into(),
-            name: Some(name.into()),
-            args: Some(arguments),
-            session_id: None,
-            observation_origin: Some(ToolObservationOrigin::Direct),
-            client_kind: Some(self.client_kind),
+        let raw = match &self.backend {
+            DriverBackend::Embedded(runtime) => {
+                let result = runtime
+                    .invoke(name, arguments)
+                    .await
+                    .ok_or(DriverError::Shutdown)?;
+                serde_json::to_value(result).map_err(|error| DriverError::Protocol {
+                    reason: format!("serialize {name} result: {error}"),
+                })?
+            }
+            DriverBackend::Daemon { socket_path } => {
+                let socket_path = socket_path.clone();
+                let request_path = socket_path.clone();
+                let request = DaemonRequest {
+                    method: "call".into(),
+                    name: Some(name.into()),
+                    args: Some(arguments),
+                    session_id: None,
+                    observation_origin: Some(ToolObservationOrigin::Direct),
+                    client_kind: Some(self.client_kind),
+                };
+                let response =
+                    tokio::task::spawn_blocking(move || send_request(&request_path, &request))
+                        .await
+                        .map_err(|error| DriverError::Protocol {
+                            reason: format!("{name} transport task failed: {error}"),
+                        })?
+                        .map_err(|error| DriverError::Transport {
+                            socket_path,
+                            reason: error.to_string(),
+                        })?;
+                if !response.ok {
+                    return Err(DriverError::Tool {
+                        tool: name.into(),
+                        message: response
+                            .error
+                            .unwrap_or_else(|| "daemon rejected the request".into()),
+                        error_code: response
+                            .exit_code
+                            .map(|code| code.to_string())
+                            .unwrap_or_default(),
+                    });
+                }
+                response.result.ok_or_else(|| DriverError::Protocol {
+                    reason: format!("{name} response omitted result"),
+                })?
+            }
         };
-        let response =
-            send_request(&self.socket_path, &request).map_err(|error| DriverError::Transport {
-                socket_path: self.socket_path.clone(),
-                reason: error.to_string(),
-            })?;
-        if !response.ok {
-            return Err(DriverError::Tool {
-                tool: name.into(),
-                message: response
-                    .error
-                    .unwrap_or_else(|| "daemon rejected the request".into()),
-                error_code: response
-                    .exit_code
-                    .map(|code| code.to_string())
-                    .unwrap_or_default(),
-            });
-        }
-        normalize_result(response.result.ok_or_else(|| DriverError::Protocol {
-            reason: format!("{name} response omitted result"),
-        })?)
+        normalize_result(raw)
     }
 }
 
@@ -571,8 +778,38 @@ mod tests {
         (directory, socket.to_string_lossy().into_owned(), handle)
     }
 
-    #[test]
-    fn typed_desktop_call_serializes_contract_and_normalizes_result() {
+    #[tokio::test]
+    async fn embedded_runtime_owns_tools_without_daemon_ipc_and_shuts_down_idempotently() {
+        let driver = CuaDriver::create(None).unwrap();
+        assert_eq!(driver.execution_mode(), DriverExecutionMode::Embedded);
+        assert!(driver.socket_path().is_empty());
+        assert!(driver.is_available());
+
+        let metadata = driver.metadata().await.unwrap();
+        assert!(metadata.embedded);
+        assert_eq!(metadata.pid, std::process::id());
+        let listed: Value = serde_json::from_str(&driver.list_tools_json().await.unwrap()).unwrap();
+        let names = listed["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        for published in EXPORTED_TOOL_NAMES {
+            assert!(names.contains(published), "missing {published}");
+        }
+
+        driver.shutdown().await.unwrap();
+        driver.shutdown().await.unwrap();
+        assert!(!driver.is_available());
+        assert!(matches!(
+            driver.list_tools_json().await,
+            Err(DriverError::Shutdown)
+        ));
+    }
+
+    #[tokio::test]
+    async fn typed_desktop_call_serializes_contract_and_normalizes_result() {
         let response = serde_json::json!({
             "ok": true,
             "result": {
@@ -592,6 +829,7 @@ mod tests {
                 session: Some("run-1".into()),
                 screenshot_out_file: None,
             })
+            .await
             .unwrap();
         assert_eq!(result.text, "captured");
         assert_eq!(result.images[0].mime_type, "image/png");
@@ -605,15 +843,15 @@ mod tests {
         assert_eq!(request["client_kind"], "python_sdk");
     }
 
-    #[test]
-    fn tool_discovery_uses_the_shared_direct_daemon_protocol() {
+    #[tokio::test]
+    async fn tool_discovery_uses_the_shared_direct_daemon_protocol() {
         let response = serde_json::json!({
             "ok": true,
             "result": [{"name": "get_desktop_state"}]
         });
         let (_directory, socket, server) = serve_once(response);
         let driver = CuaDriver::connect(Some(socket)).unwrap();
-        let tools: Value = serde_json::from_str(&driver.list_tools_json().unwrap()).unwrap();
+        let tools: Value = serde_json::from_str(&driver.list_tools_json().await.unwrap()).unwrap();
         assert_eq!(tools[0]["name"], "get_desktop_state");
 
         let request = server.join().unwrap();
@@ -622,8 +860,8 @@ mod tests {
         assert_eq!(request["client_kind"], "unknown");
     }
 
-    #[test]
-    fn session_method_returns_the_canonical_typed_output() {
+    #[tokio::test]
+    async fn session_method_returns_the_canonical_typed_output() {
         let response = serde_json::json!({
             "ok": true,
             "result": {
@@ -648,6 +886,7 @@ mod tests {
                 session: "run-2".into(),
                 capture_scope: Some(cua_driver_contract::CaptureScope::Auto),
             })
+            .await
             .unwrap();
         assert!(output.active);
         assert_eq!(output.state.session, "run-2");

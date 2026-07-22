@@ -1,6 +1,11 @@
 # UniFFI imported-SDK implementation journal
 
-Status: package-root SDK cleanup validated locally; pull-request exact-head CI pending
+Status: historical baseline plus RFC 2447 migration log
+
+The original sections below record the daemon-client SDK shipped in 0.11.0.
+[RFC 2447](../../../rfcs/2447-cua-driver-native-core-and-mcp-adapter.md)
+supersedes that topology: the public typed SDK now owns the platform runtime,
+and daemon/MCP hosting is migrating downstream of it.
 
 ## Definition of done
 
@@ -49,6 +54,24 @@ The product boundary is reflected directly in packaging:
 - Node N-API generation is available through `ubrn generate napi bindings`; it loads the same `cdylib` through `@ubjs/node` and currently requires a separately orchestrated Rust build.
 
 ## Verification log
+
+### RFC 2447 first implementation slice (2026-07-22)
+
+- `CuaDriver.create()` constructs the platform runtime in the importing process;
+  it neither launches `cua-driver` nor opens daemon IPC.
+- `cua-driver serve` constructs that same SDK-owned runtime and temporarily
+  exposes its private registry through the existing compatibility transport.
+- Python and TypeScript package roots select their binding client kind for both
+  `create()` and the transitional `connect()` path.
+- SDK operations are generated as asynchronous Python and TypeScript methods.
+- Rust SDK tests passed: 11 tests, including typed inventory parity,
+  same-process PID identity, idempotent shutdown, and daemon compatibility.
+- Python loader tests passed: 3 tests across in-process and daemon modes.
+- Node loader tests passed: 4 tests across in-process and daemon modes; the
+  Electron lifecycle fixture remains a separate release-matrix check.
+- Local macOS tests required a test-copy rpath for the Command Line Tools
+  `swift-5.5` runtime. No rpath mutation is checked in or applied to release
+  artifacts.
 
 ### Rust and contract
 

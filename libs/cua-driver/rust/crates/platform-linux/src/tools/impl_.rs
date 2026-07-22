@@ -7126,6 +7126,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
             },
         ));
     }
+    let mut r = ToolRegistry::new();
     {
         let cursor_registry = state.cursor_registry.clone();
         let state_for_session_end = state.clone();
@@ -7140,7 +7141,6 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
             crate::input::forget_master_pointer(session_id);
         });
     }
-    let mut r = ToolRegistry::new();
     r.register(Box::new(ListAppsTool));
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool {

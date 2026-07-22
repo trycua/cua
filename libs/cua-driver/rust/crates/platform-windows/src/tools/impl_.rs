@@ -8688,26 +8688,20 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     // resolve element_index → window-local screenshot coords for click.png.
     crate::recording_hooks::set_element_cache(state.element_cache.clone());
 
-    // Drop a session's owned cursor on `session_end` (explicit end_session, the
-    // CLI `session end` verb, or the daemon idle-TTL sweep). The session id IS
-    // the cursor key (caller-declared `session`), so this prunes the metadata
-    // registry AND stops the overlay painting that session's cursor. Both paths
-    // guard "default" so the anonymous / one-shot cursor survives. Registering
-    // once per process (build_registry runs once in the daemon) is guarded so a
-    // repeated build in tests can't accumulate duplicate hooks. Mirrors the
-    // macOS `register_all` session_end hook (platform-macos/src/tools/mod.rs).
-    {
-        static HOOK_ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-        if HOOK_ONCE.set(()).is_ok() {
-            let cursor_registry = state.cursor_registry.clone();
-            r.register_session_end_hook(move |session_id| {
-                cursor_registry.remove(session_id);
-                crate::overlay::remove_cursor(session_id.to_owned());
-            });
-        }
-    }
-
     let mut r = ToolRegistry::new();
+
+    // Drop a session's owned cursor on `session_end` (explicit end_session, the
+    // CLI `session end` verb, or the daemon idle-TTL sweep). The session id is
+    // the cursor key, so this prunes the metadata registry and stops the
+    // overlay painting that session's cursor. The hook belongs to this host's
+    // registry and runs inside its session namespace.
+    {
+        let cursor_registry = state.cursor_registry.clone();
+        r.register_session_end_hook(move |session_id| {
+            cursor_registry.remove(session_id);
+            crate::overlay::remove_cursor(session_id.to_owned());
+        });
+    }
     r.register(Box::new(ListAppsTool));
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool {

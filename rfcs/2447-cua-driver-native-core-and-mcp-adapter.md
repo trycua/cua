@@ -63,7 +63,7 @@ flowchart LR
 
     CORE --> ABI
     ABI --> RUST
-    ABI --> UNIFFI
+    RUST --> UNIFFI
     UNIFFI --> PY
     UNIFFI --> TS
 
@@ -86,7 +86,8 @@ flowchart LR
 
 **Figure 1.** Every language SDK exposes the same typed application contract.
 The versioned C ABI allows the private native core to be replaced without a
-source-level rewrite of downstream Rust, Python, or TypeScript applications.
+source-level rewrite of the safe Rust SDK or downstream Python and TypeScript
+applications.
 MCP servers and CLIs are downstream consumers; MCP stdio is a server or bridge,
 not the product CLI.
 
@@ -100,8 +101,8 @@ The diagram is read from the foundation upward:
    opaque handles, explicit ownership, and version negotiation.
 3. The **safe Rust `CuaDriver` SDK** wraps that ABI and defines typed
    operations, inputs, outputs, errors, and lifecycle behavior.
-4. **UniFFI** generates the Python and TypeScript bridge from the canonical
-   typed contract exposed by the safe SDK.
+4. **UniFFI** consumes the safe Rust SDK metadata and generates the Python and
+   TypeScript bridge from its canonical typed contract.
 5. The **Python SDK** and **TypeScript SDK** are generated bindings that expose
    the same public typed contract in their respective languages. They are also
    light green.
@@ -150,10 +151,20 @@ the boundary.
 The first implementation keeps the safe Rust SDK and Rust core in one library,
 but the safe wrapper imports the versioned exported C symbols instead of
 calling private Rust functions. The ABI owns its asynchronous executor, so C,
-Python, and TypeScript callers do not need to supply a Tokio runtime. CI
-compiles a client against the checked-in C header and exercises version
-negotiation, ownership, asynchronous completion, shutdown, and exported-symbol
-parity. Rust unit tests additionally cover cancellation and panic containment.
+Python, and TypeScript callers do not need to supply a Tokio runtime. The
+distributed C header is generated from the Rust `#[repr(C)]` exports with a
+pinned `cbindgen` tool and checked byte-for-byte in CI; it is not a second
+hand-maintained declaration. CI compiles a client against that generated header
+and exercises version negotiation, ownership, asynchronous completion,
+shutdown, and exported-symbol parity. Rust unit tests additionally cover
+cancellation and panic containment.
+
+UniFFI still generates the Python and TypeScript binding scaffolding, including
+the private FFI symbols those bindings use. That generated scaffolding is not
+the implementation-neutral C SDK contract: its symbols and layout are an
+internal detail of the UniFFI bindings. The stable `cua_driver_*_v1` header is
+therefore generated separately, but from the same Rust implementation, using
+`cbindgen`. Neither header nor language bindings are maintained by hand.
 
 ### Python and TypeScript SDKs
 

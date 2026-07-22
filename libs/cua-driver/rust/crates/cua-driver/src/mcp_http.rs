@@ -25,7 +25,6 @@ use cua_driver_core::protocol::{Request, Response};
 use cua_driver_core::server::{
     handle_request, session_tool_context, tool_observation_timer, StdioExecutionPath,
 };
-use cua_driver_core::tool::ToolRegistry;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, info, warn};
@@ -40,7 +39,7 @@ pub fn configured_port() -> Option<u16> {
 }
 
 /// Spawn the HTTP MCP listener bound to `127.0.0.1:port` (loopback only).
-pub fn spawn(registry: Arc<ToolRegistry>, port: u16) {
+pub fn spawn(sdk: Arc<crate::sdk_adapter::SdkAdapter>, port: u16) {
     tokio::spawn(async move {
         let addr: SocketAddr = ([127, 0, 0, 1], port).into();
         match TcpListener::bind(addr).await {
@@ -49,9 +48,9 @@ pub fn spawn(registry: Arc<ToolRegistry>, port: u16) {
                 loop {
                     match listener.accept().await {
                         Ok((stream, peer)) => {
-                            let reg = registry.clone();
+                            let sdk = sdk.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = serve_conn(stream, reg).await {
+                                if let Err(e) = serve_conn(stream, sdk).await {
                                     debug!(%peer, "MCP HTTP connection closed: {e}");
                                 }
                             });
@@ -71,7 +70,10 @@ pub fn spawn(registry: Arc<ToolRegistry>, port: u16) {
 /// Handle one TCP connection: a keep-alive loop of HTTP requests. Requests on a
 /// single connection stay FIFO-ordered (so one agent's ordered calls are safe);
 /// parallelism comes from DISTINCT connections, each its own task.
-async fn serve_conn(mut stream: TcpStream, registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
+async fn serve_conn(
+    mut stream: TcpStream,
+    sdk: Arc<crate::sdk_adapter::SdkAdapter>,
+) -> anyhow::Result<()> {
     loop {
         let Some(req) = read_http_request(&mut stream).await? else {
             return Ok(()); // clean EOF
@@ -86,7 +88,7 @@ async fn serve_conn(mut stream: TcpStream, registry: Arc<ToolRegistry>) -> anyho
             )
             .await?;
         } else {
-            match dispatch(&req.body, &registry).await {
+            match dispatch(&req.body, &sdk).await {
                 Some(resp_json) => {
                     write_http(&mut stream, 200, resp_json.as_bytes(), keep_alive).await?
                 }
@@ -106,7 +108,7 @@ async fn serve_conn(mut stream: TcpStream, registry: Arc<ToolRegistry>) -> anyho
 /// Parse a JSON-RPC request body and dispatch via the shared MCP handler. Returns
 /// `Some(json)` for a request, or `None` for a notification (no `id`). Applies the
 /// caller-declared `session` identity so HTTP behaves identically to stdio.
-async fn dispatch(body: &[u8], registry: &Arc<ToolRegistry>) -> Option<String> {
+async fn dispatch(body: &[u8], sdk: &Arc<crate::sdk_adapter::SdkAdapter>) -> Option<String> {
     let mut req: Request = match serde_json::from_slice(body) {
         Ok(r) => r,
         Err(_) => return Some(serialize(&Response::parse_error())),
@@ -115,13 +117,13 @@ async fn dispatch(body: &[u8], registry: &Arc<ToolRegistry>) -> Option<String> {
     let initialize_metadata = req.initialize_metadata();
     let session_context = session_tool_context(
         &req,
-        registry,
+        |name| sdk.is_known_tool(name),
         cua_driver_core::session::SessionTransport::McpHttp,
     );
     let id = req.id.clone().unwrap_or(serde_json::Value::Null);
     apply_session_identity(&mut req);
-    let timer = http_tool_observation_timer(&req, registry);
-    let response = handle_request(req, id, registry).await;
+    let timer = http_tool_observation_timer(&req, |name| sdk.is_known_tool(name));
+    let response = handle_request(req, id, sdk.as_ref()).await;
     if let Some(timer) = timer {
         let outcome = timer.finish(&response);
         if let Some(context) = session_context {
@@ -140,13 +142,9 @@ async fn dispatch(body: &[u8], registry: &Arc<ToolRegistry>) -> Option<String> {
 
 fn http_tool_observation_timer(
     req: &Request,
-    registry: &ToolRegistry,
+    is_known_tool: impl Fn(&str) -> bool,
 ) -> Option<cua_driver_core::server::ToolObservationTimer> {
-    tool_observation_timer(
-        req,
-        |name| name == "type_text_chars" || registry.get_def(name).is_some(),
-        StdioExecutionPath::DirectDaemon,
-    )
+    tool_observation_timer(req, is_known_tool, StdioExecutionPath::DirectDaemon)
 }
 
 fn serialize(resp: &Response) -> String {
@@ -304,19 +302,18 @@ mod tests {
 
     #[test]
     fn http_observes_tool_calls_but_not_initialize_requests() {
-        let registry = ToolRegistry::new();
         let tool_call: Request = serde_json::from_value(json!({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": { "name": "unknown", "arguments": {} }
         }))
         .unwrap();
-        assert!(http_tool_observation_timer(&tool_call, &registry).is_some());
+        assert!(http_tool_observation_timer(&tool_call, |_| false).is_some());
 
         let initialize: Request = serde_json::from_value(json!({
             "jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {}
         }))
         .unwrap();
-        assert!(http_tool_observation_timer(&initialize, &registry).is_none());
+        assert!(http_tool_observation_timer(&initialize, |_| false).is_none());
     }
 
     #[test]
@@ -324,5 +321,22 @@ mod tests {
         // Default (unset) → None is environment-dependent; just assert the parse
         // helper handles a bad value gracefully.
         assert!(configured_port().is_none() || configured_port().is_some());
+    }
+
+    #[tokio::test]
+    async fn http_tools_list_is_the_sdk_inventory() {
+        let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
+            .await
+            .expect("SDK adapter");
+        let expected = sdk.tools_list();
+        let response = dispatch(
+            br#"{"jsonrpc":"2.0","id":7,"method":"tools/list","params":{}}"#,
+            &sdk,
+        )
+        .await
+        .expect("JSON-RPC response");
+        let response: serde_json::Value = serde_json::from_str(&response).expect("response JSON");
+        assert_eq!(response["result"]["tools"], expected["tools"]);
+        sdk.shutdown().await.expect("SDK shutdown");
     }
 }

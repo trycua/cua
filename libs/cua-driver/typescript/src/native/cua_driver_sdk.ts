@@ -1603,8 +1603,9 @@ const FfiConverterTypeSdkClientKind = (() => {
 export interface CuaDriverLike {
 
 /**
- * Temporary compatibility escape hatch. New application code should use
- * the typed methods; MCP servers own generic discovery and invocation.
+ * Generic protocol-adapter surface. Ordinary applications should prefer
+ * typed methods; MCP and other open-ended adapters use this method so they
+ * remain downstream of the same public SDK runtime.
  */
     callTool(name: string, argumentsJson: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
     click(input: ClickInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
@@ -1619,8 +1620,7 @@ export interface CuaDriverLike {
     hotkey(input: HotkeyInput, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ToolResult>;
     isAvailable(): boolean;
 /**
- * Temporary compatibility discovery surface for adapters migrating to
- * the typed SDK contract.
+ * Canonical tool inventory for MCP and other protocol adapters.
  */
     listToolsJson(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
     metadata(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<DriverMetadata>;
@@ -1728,8 +1728,9 @@ private constructor(pointer: UniffiHandle) {
 
 
 /**
- * Temporary compatibility escape hatch. New application code should use
- * the typed methods; MCP servers own generic discovery and invocation.
+ * Generic protocol-adapter surface. Ordinary applications should prefer
+ * typed methods; MCP and other open-ended adapters use this method so they
+ * remain downstream of the same public SDK runtime.
  */
     async callTool(name: string, argumentsJson: string, asyncOpts_?: { signal: AbortSignal }): Promise<ToolResult> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -2080,8 +2081,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Temporary compatibility discovery surface for adapters migrating to
- * the typed SDK contract.
+ * Canonical tool inventory for MCP and other protocol adapters.
  */
     async listToolsJson(asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -2798,7 +2798,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_with_client_kind() !== 3630) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_with_client_kind");
     }
-    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_call_tool() !== 8122) {
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_call_tool() !== 24493) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriver_call_tool");
     }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_click() !== 56077) {
@@ -2834,7 +2834,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_is_available() !== 42961) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriver_is_available");
     }
-    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_list_tools_json() !== 36787) {
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_list_tools_json() !== 33039) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_cuadriver_list_tools_json");
     }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_cuadriver_metadata() !== 55026) {

@@ -8,6 +8,38 @@ use crate::authorization::authorize_tool_call;
 use crate::protocol::{initialize_result, InitializeMetadata, Request, Response, ResponseBody};
 use crate::tool::ToolRegistry;
 
+/// Runtime contract consumed by protocol adapters such as MCP.
+///
+/// The standalone server implements this with the public Cua Driver SDK; the
+/// `ToolRegistry` implementation remains for core-level tests and embedders.
+/// Keeping the protocol dependent on this small contract prevents transports
+/// from reaching through the SDK into its private platform registry.
+#[async_trait::async_trait]
+pub trait ToolProvider: Send + Sync {
+    fn tools_list(&self) -> serde_json::Value;
+    async fn invoke_tool(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<serde_json::Value, String>;
+}
+
+#[async_trait::async_trait]
+impl ToolProvider for ToolRegistry {
+    fn tools_list(&self) -> serde_json::Value {
+        ToolRegistry::tools_list(self)
+    }
+
+    async fn invoke_tool(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        serde_json::to_value(self.invoke(name, arguments).await)
+            .map_err(|error| format!("Serialize error: {error}"))
+    }
+}
+
 /// Receives privacy-bounded observations from the stdio MCP transport.
 ///
 /// The observer never receives tool arguments, text/image content, response
@@ -571,14 +603,14 @@ pub fn tool_observation_timer(
 /// and all other arguments remain outside the observer seam.
 pub fn session_tool_context(
     req: &Request,
-    registry: &ToolRegistry,
+    is_known_tool: impl Fn(&str) -> bool,
     transport: crate::session::SessionTransport,
 ) -> Option<crate::session::SessionToolContext> {
     if req.method != "tools/call" {
         return None;
     }
     let call = req.tool_call().ok()?;
-    let known_tool = call.name == "type_text_chars" || registry.get_def(&call.name).is_some();
+    let known_tool = call.name == "type_text_chars" || is_known_tool(&call.name);
     let client_kind = match transport {
         crate::session::SessionTransport::Cli => crate::session::SessionClientKind::Cli,
         crate::session::SessionTransport::Daemon => crate::session::SessionClientKind::Direct,
@@ -793,12 +825,12 @@ fn size_bucket(size: usize) -> OutputSizeBucket {
 pub async fn handle_request(
     req: Request,
     id: serde_json::Value,
-    registry: &Arc<ToolRegistry>,
+    provider: &dyn ToolProvider,
 ) -> Response {
     match req.method.as_str() {
         "initialize" => Response::ok(id, initialize_result()),
 
-        "tools/list" => Response::ok(id, registry.tools_list()),
+        "tools/list" => Response::ok(id, provider.tools_list()),
 
         "tools/call" => match req.tool_call() {
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
@@ -844,10 +876,9 @@ pub async fn handle_request(
                     }
                 }
 
-                let result = registry.invoke(&call.name, call.args).await;
-                match serde_json::to_value(result) {
-                    Ok(v) => Response::ok(id, v),
-                    Err(e) => Response::error(id, -32603, format!("Serialize error: {e}")),
+                match provider.invoke_tool(&call.name, call.args).await {
+                    Ok(result) => Response::ok(id, result),
+                    Err(error) => Response::error(id, -32603, error),
                 }
             }
         },

@@ -26,6 +26,7 @@ mod doctor;
 mod mcp_http;
 mod proxy;
 mod responsibility;
+mod sdk_adapter;
 mod serve;
 mod skills;
 mod telemetry;
@@ -269,12 +270,14 @@ fn build_driver_without_cursor() -> Arc<cua_driver_sdk::CuaDriver> {
     )
 }
 
-fn compatibility_registry(
-    driver: &Arc<cua_driver_sdk::CuaDriver>,
-) -> Arc<cua_driver_core::tool::ToolRegistry> {
-    driver
-        .compatibility_registry()
-        .expect("host driver must own a local runtime")
+fn sdk_tool_inventory(driver: Arc<cua_driver_sdk::CuaDriver>) -> serde_json::Value {
+    match sdk_adapter::SdkAdapter::load_blocking(driver) {
+        Ok(sdk) => sdk.tools_list(),
+        Err(error) => {
+            eprintln!("Could not load Cua Driver SDK tool inventory: {error}");
+            std::process::exit(1);
+        }
+    }
 }
 
 // ── macOS entry-point ─────────────────────────────────────────────────────
@@ -305,12 +308,12 @@ fn main() {
             run_telemetry_command(command);
         }
         cli::Command::ListTools => {
-            let reg = compatibility_registry(&build_driver_without_cursor());
-            cli::run_list_tools(&reg);
+            let tools = sdk_tool_inventory(build_driver_without_cursor());
+            cli::run_list_tools(&tools);
         }
         cli::Command::Describe(name) => {
-            let reg = compatibility_registry(&build_driver_without_cursor());
-            cli::run_describe(&reg, &name);
+            let tools = sdk_tool_inventory(build_driver_without_cursor());
+            cli::run_describe(&tools, &name);
         }
         cli::Command::McpConfig { client } => {
             cli::run_mcp_config(client.as_deref());
@@ -521,8 +524,8 @@ fn main() {
             cli::run_recording_cmd(&subcommand, &args, socket.as_deref());
         }
         cli::Command::DumpDocs { pretty, doc_type } => {
-            let reg = compatibility_registry(&build_driver_without_cursor());
-            cli::run_dump_docs_with_type(&reg, pretty, &doc_type);
+            let tools = sdk_tool_inventory(build_driver_without_cursor());
+            cli::run_dump_docs_with_type(&tools, pretty, &doc_type);
         }
         cli::Command::Update { apply, json } => {
             cli::run_update_cmd(apply, json);
@@ -639,13 +642,13 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         cli::Command::ListTools => {
-            let reg = compatibility_registry(&build_driver_without_cursor());
-            cli::run_list_tools(&reg);
+            let tools = sdk_tool_inventory(build_driver_without_cursor());
+            cli::run_list_tools(&tools);
             return Ok(());
         }
         cli::Command::Describe(name) => {
-            let reg = compatibility_registry(&build_driver_without_cursor());
-            cli::run_describe(&reg, &name);
+            let tools = sdk_tool_inventory(build_driver_without_cursor());
+            cli::run_describe(&tools, &name);
             return Ok(());
         }
         cli::Command::McpConfig { client } => {
@@ -740,8 +743,8 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         cli::Command::DumpDocs { pretty, doc_type } => {
-            let reg = compatibility_registry(&build_driver_without_cursor());
-            cli::run_dump_docs_with_type(&reg, pretty, &doc_type);
+            let tools = sdk_tool_inventory(build_driver_without_cursor());
+            cli::run_dump_docs_with_type(&tools, pretty, &doc_type);
             return Ok(());
         }
         cli::Command::Update { apply, json } => {

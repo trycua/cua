@@ -25,6 +25,7 @@ pub const CUA_DRIVER_ABI_PATCH: u16 = 0;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Version of the implementation-neutral Cua Driver ABI.
 pub struct CuaDriverAbiVersion {
     pub struct_size: u32,
     pub major: u16,
@@ -35,6 +36,7 @@ pub struct CuaDriverAbiVersion {
 
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Stable status codes returned across the C ABI.
 pub enum CuaDriverStatus {
     Ok = 0,
     InvalidArgument = 1,
@@ -48,6 +50,8 @@ pub enum CuaDriverStatus {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
+/// Caller-owned byte buffer returned by the ABI.
+/// Pass it to `cua_driver_buffer_free_v1`; freeing an empty buffer is harmless.
 pub struct CuaDriverBuffer {
     pub data: *mut u8,
     pub len: usize,
@@ -78,6 +82,7 @@ impl CuaDriverBuffer {
     }
 }
 
+/// Opaque driver runtime handle.
 pub struct CuaDriverHandle {
     runtime: Arc<DriverRuntime>,
 }
@@ -114,10 +119,13 @@ impl OperationState {
     }
 }
 
+/// Opaque token for one asynchronous operation.
 pub struct CuaDriverOperation {
     state: Arc<OperationState>,
 }
 
+/// Completion callback for asynchronous operations. It is called exactly once
+/// unless the process terminates. Result and error buffers are caller-owned.
 pub type CuaDriverCompletionV1 = extern "C" fn(
     context: *mut c_void,
     status: CuaDriverStatus,
@@ -291,6 +299,7 @@ where
 }
 
 #[no_mangle]
+/// Read the runtime ABI version into `out_version`.
 pub unsafe extern "C" fn cua_driver_abi_version_v1(
     out_version: *mut CuaDriverAbiVersion,
 ) -> CuaDriverStatus {
@@ -310,6 +319,7 @@ pub unsafe extern "C" fn cua_driver_abi_version_v1(
 }
 
 #[no_mangle]
+/// Return whether this runtime supports a caller compiled for `major.minor`.
 pub extern "C" fn cua_driver_abi_is_compatible_v1(major: u16, minor: u16) -> bool {
     major == CUA_DRIVER_ABI_MAJOR
         && matches!(
@@ -319,6 +329,7 @@ pub extern "C" fn cua_driver_abi_is_compatible_v1(major: u16, minor: u16) -> boo
 }
 
 #[no_mangle]
+/// Free and clear a buffer returned by this ABI. Repeated calls are harmless.
 pub unsafe extern "C" fn cua_driver_buffer_free_v1(buffer: *mut CuaDriverBuffer) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         let Some(buffer) = buffer.as_mut() else {
@@ -336,6 +347,8 @@ pub unsafe extern "C" fn cua_driver_buffer_free_v1(buffer: *mut CuaDriverBuffer)
 }
 
 #[no_mangle]
+/// Create an in-process driver. `options_json` is empty or a UTF-8 JSON object;
+/// the current option is `{"claude_code_compatibility": boolean}`.
 pub unsafe extern "C" fn cua_driver_create_v1(
     options_json: *const u8,
     options_len: usize,
@@ -358,15 +371,15 @@ pub unsafe extern "C" fn cua_driver_create_v1(
                 )
             })?
         };
-        let runtime = Arc::new(DriverRuntime::create(RuntimeOptions::embedded(
-            options.claude_code_compatibility,
-        )));
+        let runtime =
+            DriverRuntime::create(RuntimeOptions::embedded(options.claude_code_compatibility));
         *out_handle = Box::into_raw(Box::new(CuaDriverHandle { runtime }));
         Ok(())
     })
 }
 
 #[no_mangle]
+/// Destroy and clear a driver handle. Repeated calls are harmless.
 pub unsafe extern "C" fn cua_driver_destroy_v1(handle: *mut *mut CuaDriverHandle) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         let Some(handle) = handle.as_mut() else {
@@ -380,6 +393,7 @@ pub unsafe extern "C" fn cua_driver_destroy_v1(handle: *mut *mut CuaDriverHandle
 }
 
 #[no_mangle]
+/// Return whether the driver still accepts operations.
 pub unsafe extern "C" fn cua_driver_is_available_v1(
     handle: *mut CuaDriverHandle,
     out_available: *mut bool,
@@ -399,6 +413,7 @@ pub unsafe extern "C" fn cua_driver_is_available_v1(
 }
 
 #[no_mangle]
+/// Return driver metadata as caller-owned UTF-8 JSON.
 pub unsafe extern "C" fn cua_driver_metadata_json_v1(
     handle: *mut CuaDriverHandle,
     out_json: *mut CuaDriverBuffer,
@@ -421,6 +436,7 @@ pub unsafe extern "C" fn cua_driver_metadata_json_v1(
 }
 
 #[no_mangle]
+/// Return the canonical SDK/MCP tool inventory as caller-owned UTF-8 JSON.
 pub unsafe extern "C" fn cua_driver_list_tools_json_v1(
     handle: *mut CuaDriverHandle,
     out_json: *mut CuaDriverBuffer,
@@ -446,6 +462,8 @@ pub unsafe extern "C" fn cua_driver_list_tools_json_v1(
 }
 
 #[no_mangle]
+/// Invoke a named tool asynchronously. Cancellation is requested with
+/// `cua_driver_operation_cancel_v1`; release the token after completion.
 pub unsafe extern "C" fn cua_driver_invoke_v1(
     handle: *mut CuaDriverHandle,
     name: *const u8,
@@ -521,6 +539,7 @@ pub unsafe extern "C" fn cua_driver_invoke_v1(
 }
 
 #[no_mangle]
+/// Stop admission, drain admitted calls, and finalize SDK-owned resources.
 pub unsafe extern "C" fn cua_driver_shutdown_v1(
     handle: *mut CuaDriverHandle,
     callback: Option<CuaDriverCompletionV1>,
@@ -559,6 +578,7 @@ pub unsafe extern "C" fn cua_driver_shutdown_v1(
 }
 
 #[no_mangle]
+/// Request cancellation of an asynchronous operation.
 pub unsafe extern "C" fn cua_driver_operation_cancel_v1(operation: *mut CuaDriverOperation) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         if let Some(operation) = operation.as_ref() {
@@ -568,6 +588,7 @@ pub unsafe extern "C" fn cua_driver_operation_cancel_v1(operation: *mut CuaDrive
 }
 
 #[no_mangle]
+/// Release and clear an operation token. Repeated calls are harmless.
 pub unsafe extern "C" fn cua_driver_operation_release_v1(operation: *mut *mut CuaDriverOperation) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         let Some(operation) = operation.as_mut() else {
@@ -746,7 +767,7 @@ impl NativeAbiDriver {
     }
 
     pub(crate) fn create_for_host(options: RuntimeOptions) -> Self {
-        let runtime = Arc::new(DriverRuntime::create(options));
+        let runtime = DriverRuntime::create(options);
         let handle = Box::into_raw(Box::new(CuaDriverHandle { runtime })).cast::<ffi::Handle>();
         Self {
             handle: Mutex::new(handle),
@@ -888,18 +909,6 @@ impl NativeAbiDriver {
             ))
         }
     }
-
-    pub(crate) fn registry(&self) -> Option<Arc<cua_driver_core::tool::ToolRegistry>> {
-        // Transitional Rust-only host hook. It is intentionally not part of
-        // the stable C header and is removed when the daemon becomes a pure
-        // public-SDK consumer.
-        unsafe {
-            self.raw_handle()
-                .cast::<CuaDriverHandle>()
-                .as_ref()
-                .map(|handle| handle.runtime.registry())
-        }
-    }
 }
 
 impl Drop for NativeAbiDriver {
@@ -949,8 +958,9 @@ mod tests {
     }
 
     #[test]
-    fn checked_in_header_matches_the_exported_v1_contract() {
+    fn generated_header_exposes_the_exported_v1_contract() {
         let header = include_str!("../../../include/cua_driver_abi.h");
+        assert!(header.contains("Do not edit"));
         for declaration in [
             "#define CUA_DRIVER_ABI_MAJOR 1",
             "#define CUA_DRIVER_ABI_MINOR 0",

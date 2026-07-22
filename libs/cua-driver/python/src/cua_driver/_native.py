@@ -494,7 +494,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_create_with_client_kind() != 3630:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_call_tool() != 8122:
+    if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_call_tool() != 24493:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_click() != 56077:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -518,7 +518,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_is_available() != 42961:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_list_tools_json() != 36787:
+    if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_list_tools_json() != 33039:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_metadata() != 55026:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -2623,8 +2623,9 @@ class CuaDriverProtocol(typing.Protocol):
 
     async def call_tool(self, name: str,arguments_json: str) -> ToolResult:
         """
-        Temporary compatibility escape hatch. New application code should use
-        the typed methods; MCP servers own generic discovery and invocation.
+        Generic protocol-adapter surface. Ordinary applications should prefer
+        typed methods; MCP and other open-ended adapters use this method so they
+        remain downstream of the same public SDK runtime.
 """
         raise NotImplementedError
     async def click(self, input: cua_driver._native_contract.ClickInput) -> ToolResult:
@@ -2651,8 +2652,7 @@ class CuaDriverProtocol(typing.Protocol):
         raise NotImplementedError
     async def list_tools_json(self, ) -> str:
         """
-        Temporary compatibility discovery surface for adapters migrating to
-        the typed SDK contract.
+        Canonical tool inventory for MCP and other protocol adapters.
 """
         raise NotImplementedError
     async def metadata(self, ) -> DriverMetadata:
@@ -2788,8 +2788,9 @@ class CuaDriver(CuaDriverProtocol):
         return inst
     async def call_tool(self, name: str,arguments_json: str) -> ToolResult:
         """
-        Temporary compatibility escape hatch. New application code should use
-        the typed methods; MCP servers own generic discovery and invocation.
+        Generic protocol-adapter surface. Ordinary applications should prefer
+        typed methods; MCP and other open-ended adapters use this method so they
+        remain downstream of the same public SDK runtime.
 """
 
         _UniffiFfiConverterString.check_lower(name)
@@ -2989,8 +2990,7 @@ class CuaDriver(CuaDriverProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     async def list_tools_json(self, ) -> str:
         """
-        Temporary compatibility discovery surface for adapters migrating to
-        the typed SDK contract.
+        Canonical tool inventory for MCP and other protocol adapters.
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),

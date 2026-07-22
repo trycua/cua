@@ -35,6 +35,22 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("os: ubuntu-24.04-arm", workflow)
         self.assertIn("arch: arm64", workflow)
 
+    def test_python_publish_smokes_windows_arm64_on_arm64(self) -> None:
+        workflow = self.read(".github/workflows/cd-py-cua-driver.yml")
+
+        self.assertIn("os: windows-11-arm", workflow)
+        self.assertEqual(workflow.count("os: windows-latest"), 1)
+
+    def test_npm_publish_uses_explicit_local_tarball_paths(self) -> None:
+        workflow = self.read(".github/workflows/cd-py-cua-driver.yml")
+
+        self.assertIn('npm publish "./$package"', workflow)
+        self.assertIn(
+            'npm publish "./dist/trycua-cua-driver-$VERSION.tgz"',
+            workflow,
+        )
+        self.assertNotIn('npm publish "$package"', workflow)
+
     def test_macos_bundle_explains_screen_capture_and_automation_prompts(self) -> None:
         plist = self.read(
             "libs/cua-driver/rust/scripts/CuaDriverBundle/Contents/Info.plist"

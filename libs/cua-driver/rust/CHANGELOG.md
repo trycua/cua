@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.12.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.11.0...cua-driver-rs-v0.12.0) (2026-07-22)
+
+
+### Features
+
+* **cua-driver:** add client and modality telemetry ([#2441](https://github.com/trycua/cua/issues/2441)) ([5cd0000](https://github.com/trycua/cua/commit/5cd0000e2e018a835303a8f8bdd82a88ea483a6e))
+* **cua-driver:** add true in-process SDK runtime ([#2461](https://github.com/trycua/cua/issues/2461)) ([617508a](https://github.com/trycua/cua/commit/617508a7ae123f277b203d31fca29933927a4636))
+* **cua-driver:** add versioned native ABI ([b172afc](https://github.com/trycua/cua/commit/b172afc75f39832a4bdfaa9040d6d4f556449b49))
+* **cua-driver:** expose macOS control state in window elements ([db281a3](https://github.com/trycua/cua/commit/db281a3b0d9bbabaf74f3c6847adf6abbb66995a))
+
+
+### Bug Fixes
+
+* **cua-driver:** advertise delivery mode capability ([7f6657c](https://github.com/trycua/cua/commit/7f6657c440cedf1f20c6307c849a89487f867b41)), closes [#2425](https://github.com/trycua/cua/issues/2425)
+* **cua-driver:** avoid SIGCHLD handler in doctor ([31bbc07](https://github.com/trycua/cua/commit/31bbc074d75f59fe2c417cddc66cf4093bd8330b)), closes [#2348](https://github.com/trycua/cua/issues/2348)
+* **cua-driver:** enforce scope for mouse button actions ([caa241b](https://github.com/trycua/cua/commit/caa241be5f801e2060d4f5823fde64f9e6dc2be4)), closes [#2368](https://github.com/trycua/cua/issues/2368)
+* **cua-driver:** support Electron UniFFI buffers ([#2455](https://github.com/trycua/cua/issues/2455)) ([d3bf82a](https://github.com/trycua/cua/commit/d3bf82a2cbb27fd83cfa836c04f9f5678e3e3aad))
+
 ## [0.11.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.10.0...cua-driver-rs-v0.11.0) (2026-07-22)
 
 

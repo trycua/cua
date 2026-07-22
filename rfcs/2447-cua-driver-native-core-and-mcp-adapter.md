@@ -10,6 +10,7 @@ status: review
 discussion: https://github.com/trycua/cua/issues/2447
 implementation:
   - https://github.com/trycua/cua/pull/2461
+  - https://github.com/trycua/cua/pull/2467
 supersedes:
 superseded_by:
 ---
@@ -146,11 +147,13 @@ version negotiation, owned buffers, error/status mapping, async completion and
 cancellation, idempotent destruction, and a rule that native panics never cross
 the boundary.
 
-The first implementation may keep the safe Rust SDK and Rust core in one
-library while this ABI is hardened. That direct path is an internal
-optimization behind the same public SDK API, not a second public contract.
-Before the Rust SDK switches to the ABI, CI must run ABI compatibility,
-ownership, fault, and full SDK conformance tests through both paths.
+The first implementation keeps the safe Rust SDK and Rust core in one library,
+but the safe wrapper imports the versioned exported C symbols instead of
+calling private Rust functions. The ABI owns its asynchronous executor, so C,
+Python, and TypeScript callers do not need to supply a Tokio runtime. CI
+compiles a client against the checked-in C header and exercises version
+negotiation, ownership, asynchronous completion, shutdown, and exported-symbol
+parity. Rust unit tests additionally cover cancellation and panic containment.
 
 ### Python and TypeScript SDKs
 

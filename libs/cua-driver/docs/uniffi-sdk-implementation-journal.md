@@ -26,9 +26,12 @@ Deliver an experimental imported-SDK vertical slice in pull request #2341 where:
 - UniFFI: `0.31.0`, matching the repository's Fleet SDK precedent.
 - Node generator/runtime: `uniffi-bindgen-react-native` / `@ubjs/*` `0.31.0-3`.
 
-## Architecture decision
+## Historical architecture decision
 
-The FFI library is a daemon client, not an in-process copy of the GUI engine. This preserves the daemon's process-wide session state, permission ownership, platform event-loop constraints, policy enforcement, and timeout behavior. The shared Rust contract remains transport-free and is consumed by both live tool handlers and the exported UniFFI methods.
+Version 0.11.0 initially shipped the FFI library as a daemon client. RFC 2447
+supersedes that topology: `CuaDriver.create()` now owns the platform runtime in
+the importing process, while `connect()` remains the explicit compatibility
+path for an external daemon.
 
 The public integration split remains:
 
@@ -72,6 +75,21 @@ The product boundary is reflected directly in packaging:
 - Local macOS tests required a test-copy rpath for the Command Line Tools
   `swift-5.5` runtime. No rpath mutation is checked in or applied to release
   artifacts.
+
+### RFC 2447 versioned C ABI slice (2026-07-22)
+
+- A checked-in public C header defines version negotiation, opaque driver and
+  operation handles, caller-owned buffers, status/error mapping, asynchronous
+  completion, cancellation, and idempotent release.
+- The safe Rust `CuaDriver` wrapper imports the exported C symbols, so Rust,
+  Python, and TypeScript all traverse the same native seam.
+- The ABI owns a process-lifetime asynchronous executor. Foreign callers do
+  not need Tokio or a daemon to create and use the embedded runtime.
+- Unit tests contain panics, validate cancellation, and assert that the header
+  matches the exported v1 contract. CI compiles and runs an external C client
+  against the release library and checks its exported symbol table.
+- Linux, macOS, and Windows release archives include the public header next to
+  the shared library.
 
 ### Rust and contract
 

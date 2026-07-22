@@ -15,15 +15,17 @@ use cua_driver_core::daemon::{
     is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
     DaemonClientKind, DaemonRequest, ToolObservationOrigin,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 use thiserror::Error;
 
+mod abi;
 mod embedded;
 mod runtime;
+use abi::NativeAbiDriver;
 pub use embedded::*;
-use runtime::{DriverRuntime, RuntimeOptions};
+use runtime::RuntimeOptions;
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ImageContent {
@@ -47,7 +49,7 @@ pub struct ToolResult {
 
 /// Transport-independent daemon identity used to prove that standalone and
 /// embedded SDK/MCP routes reached a compatible Rust implementation.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct DriverMetadata {
     pub driver_version: String,
     pub contract_version: String,
@@ -201,7 +203,7 @@ pub struct CuaDriver {
 }
 
 enum DriverBackend {
-    Embedded(Arc<DriverRuntime>),
+    Embedded(Arc<NativeAbiDriver>),
     Daemon { socket_path: String },
 }
 
@@ -213,19 +215,11 @@ pub enum DriverExecutionMode {
 }
 
 /// Options for a same-process Cua Driver SDK runtime.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, uniffi::Record)]
 pub struct DriverOptions {
     /// Preserve the temporary reduced screenshot surface used by older Claude
     /// Code integrations. New applications should leave this false.
     pub claude_code_compatibility: bool,
-}
-
-impl Default for DriverOptions {
-    fn default() -> Self {
-        Self {
-            claude_code_compatibility: false,
-        }
-    }
 }
 
 /// Rust-only host configuration used by the standalone daemon. Language
@@ -310,9 +304,9 @@ impl CuaDriver {
     pub fn create(options: Option<DriverOptions>) -> Result<Arc<Self>, DriverError> {
         let options = options.unwrap_or_default();
         Ok(Arc::new(Self {
-            backend: DriverBackend::Embedded(Arc::new(DriverRuntime::create(
-                RuntimeOptions::embedded(options.claude_code_compatibility),
-            ))),
+            backend: DriverBackend::Embedded(Arc::new(NativeAbiDriver::create(
+                options.claude_code_compatibility,
+            )?)),
             client_kind: DaemonClientKind::Unknown,
         }))
     }
@@ -387,7 +381,7 @@ impl CuaDriver {
 
     pub fn is_available(&self) -> bool {
         match &self.backend {
-            DriverBackend::Embedded(runtime) => runtime.is_running(),
+            DriverBackend::Embedded(runtime) => runtime.is_available(),
             DriverBackend::Daemon { socket_path } => is_daemon_listening(socket_path),
         }
     }
@@ -399,12 +393,14 @@ impl CuaDriver {
     /// generated language contract.
     pub fn create_for_host(options: DriverHostOptions) -> Arc<Self> {
         Arc::new(Self {
-            backend: DriverBackend::Embedded(Arc::new(DriverRuntime::create(RuntimeOptions {
-                cursor: options.cursor,
-                compatibility_mode: options.claude_code_compatibility,
-                prepare_desktop_environment: options.prepare_desktop_environment,
-                register_host_tools: options.register_host_tools,
-            }))),
+            backend: DriverBackend::Embedded(Arc::new(NativeAbiDriver::create_for_host(
+                RuntimeOptions {
+                    cursor: options.cursor,
+                    compatibility_mode: options.claude_code_compatibility,
+                    prepare_desktop_environment: options.prepare_desktop_environment,
+                    register_host_tools: options.register_host_tools,
+                },
+            ))),
             client_kind: DaemonClientKind::Unknown,
         })
     }
@@ -415,7 +411,7 @@ impl CuaDriver {
     #[doc(hidden)]
     pub fn compatibility_registry(&self) -> Option<Arc<cua_driver_core::tool::ToolRegistry>> {
         match &self.backend {
-            DriverBackend::Embedded(runtime) => Some(runtime.registry()),
+            DriverBackend::Embedded(runtime) => runtime.registry(),
             DriverBackend::Daemon { .. } => None,
         }
     }
@@ -425,22 +421,7 @@ impl CuaDriver {
 impl CuaDriver {
     pub async fn metadata(&self) -> Result<DriverMetadata, DriverError> {
         match &self.backend {
-            DriverBackend::Embedded(runtime) => {
-                if !runtime.is_running() {
-                    return Err(DriverError::Shutdown);
-                }
-                Ok(DriverMetadata {
-                    driver_version: env!("CARGO_PKG_VERSION").into(),
-                    contract_version: cua_driver_contract::CONTRACT_VERSION.into(),
-                    tools_list_schema_version: cua_driver_contract::TOOLS_LIST_SCHEMA_VERSION
-                        .into(),
-                    capability_version: cua_driver_contract::CAPABILITY_VERSION.into(),
-                    mcp_protocol_version: cua_driver_contract::MCP_PROTOCOL_VERSION.into(),
-                    pid: std::process::id(),
-                    embedded: true,
-                    host_bundle_id: None,
-                })
-            }
+            DriverBackend::Embedded(runtime) => runtime.metadata(),
             DriverBackend::Daemon { socket_path } => {
                 let socket_path = socket_path.clone();
                 let request_path = socket_path.clone();
@@ -483,9 +464,7 @@ impl CuaDriver {
     /// the typed SDK contract.
     pub async fn list_tools_json(&self) -> Result<String, DriverError> {
         let result = match &self.backend {
-            DriverBackend::Embedded(runtime) => {
-                runtime.tools_list().ok_or(DriverError::Shutdown)?
-            }
+            DriverBackend::Embedded(runtime) => runtime.tools_list()?,
             DriverBackend::Daemon { socket_path } => {
                 let socket_path = socket_path.clone();
                 let request_path = socket_path.clone();
@@ -562,7 +541,7 @@ impl CuaDriver {
     /// daemon compatibility clients do not own the daemon and therefore no-op.
     pub async fn shutdown(&self) -> Result<(), DriverError> {
         if let DriverBackend::Embedded(runtime) = &self.backend {
-            runtime.shutdown().await;
+            runtime.shutdown().await?;
         }
         Ok(())
     }
@@ -592,15 +571,7 @@ impl CuaDriver {
             });
         }
         let raw = match &self.backend {
-            DriverBackend::Embedded(runtime) => {
-                let result = runtime
-                    .invoke(name, arguments)
-                    .await
-                    .ok_or(DriverError::Shutdown)?;
-                serde_json::to_value(result).map_err(|error| DriverError::Protocol {
-                    reason: format!("serialize {name} result: {error}"),
-                })?
-            }
+            DriverBackend::Embedded(runtime) => runtime.invoke(name, arguments).await?,
             DriverBackend::Daemon { socket_path } => {
                 let socket_path = socket_path.clone();
                 let request_path = socket_path.clone();

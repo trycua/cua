@@ -169,6 +169,69 @@ pub unsafe fn copy_number_attr(element: AXUIElementRef, attr_name: &str) -> Opti
     n.to_f64()
 }
 
+/// Copy a boolean attribute from an AX element. Returns `None` on any error
+/// or if the attribute is neither a `CFBoolean` nor a `CFNumber` (some apps
+/// report AXEnabled/AXSelected as a 0/1 CFNumber instead of a CFBoolean).
+pub unsafe fn copy_bool_attr(element: AXUIElementRef, attr_name: &str) -> Option<bool> {
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::number::CFNumber;
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    let type_id = core_foundation::base::CFGetTypeID(value);
+    if type_id == CFBoolean::type_id() {
+        let b = CFBoolean::wrap_under_create_rule(value as _);
+        return Some(b.into());
+    }
+    if type_id == CFNumber::type_id() {
+        let n = CFNumber::wrap_under_create_rule(value as _);
+        return n.to_f64().map(|f| f != 0.0);
+    }
+    CFRelease(value);
+    None
+}
+
+/// Copy an attribute that may be a `CFString`, `CFNumber`, or `CFBoolean`,
+/// coerced to a display string. A slider's `AXValue` is a CFNumber and a
+/// checkbox/radio's is a CFBoolean/0|1 CFNumber — `copy_string_attr` drops
+/// those on its CFString type gate, which is why the tree historically showed
+/// no value for such controls. Numbers render without a trailing `.0` when
+/// integral (`8`, not `8.0`); booleans render as `1`/`0` to match how AppKit
+/// reports two-state controls.
+pub unsafe fn copy_stringish_attr(element: AXUIElementRef, attr_name: &str) -> Option<String> {
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::number::CFNumber;
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    let type_id = core_foundation::base::CFGetTypeID(value);
+    if type_id == CFStr::type_id() {
+        let s = CFStr::wrap_under_create_rule(value as _);
+        return Some(s.to_string());
+    }
+    if type_id == CFNumber::type_id() {
+        let n = CFNumber::wrap_under_create_rule(value as _);
+        let f = n.to_f64()?;
+        return Some(if f == f.trunc() && f.abs() < 1e15 {
+            format!("{}", f as i64)
+        } else {
+            format!("{f}")
+        });
+    }
+    if type_id == CFBoolean::type_id() {
+        let b = CFBoolean::wrap_under_create_rule(value as _);
+        return Some(if bool::from(b) { "1".into() } else { "0".into() });
+    }
+    CFRelease(value);
+    None
+}
+
 /// Get the action names for an AX element.
 ///
 /// # Safety

@@ -267,6 +267,12 @@ mod tests {
             depth,
             parent_element_index: None,
             frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: None,
+            selected: None,
         }
     }
 

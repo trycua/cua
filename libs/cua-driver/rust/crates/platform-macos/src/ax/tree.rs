@@ -89,6 +89,21 @@ pub struct AXNode {
     /// Screen-coordinate bounding rect `[x, y, width, height]` captured at
     /// walk time. `None` when AX didn't report a usable position+size.
     pub frame: Option<[f64; 4]>,
+    /// AXValue coerced to a string for ALL CF types (CFNumber → "8",
+    /// CFBoolean → "1"/"0", CFString as-is). Kept separate from `value`
+    /// (string-only) so tree_markdown and the has_content gate — both of
+    /// which read `value` — stay byte-identical; only the structured
+    /// `elements` array consumes this.
+    pub value_state: Option<String>,
+    /// AXValueDescription — human-readable value form (e.g. "8 dB").
+    pub value_description: Option<String>,
+    /// AXMinValue / AXMaxValue for range controls (sliders, steppers).
+    pub min_value: Option<f64>,
+    pub max_value: Option<f64>,
+    /// AXEnabled. `None` when the app doesn't report the attribute.
+    pub enabled: Option<bool>,
+    /// AXSelected. `None` when the app doesn't report the attribute.
+    pub selected: Option<bool>,
 }
 
 pub struct TreeWalkResult {
@@ -367,6 +382,24 @@ unsafe fn walk_element(
 
     let element_ptr = element as usize;
     let frame = element_screen_rect(element);
+    // Control-state attributes for the structured `elements` array only —
+    // read after the layout-node early-return above so skipped containers
+    // don't pay the extra AX round-trips. `value_state` re-reads AXValue with
+    // full CF-type coercion (CFNumber/CFBoolean values are invisible to the
+    // string-only `value` above), falling back to the same
+    // AXPlaceholderValue the string path uses.
+    let value_state = copy_stringish_attr(element, "AXValue")
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| copy_string_attr(element, "AXPlaceholderValue"))
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty());
+    let value_description = copy_string_attr(element, "AXValueDescription")
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty());
+    let min_value = copy_number_attr(element, "AXMinValue");
+    let max_value = copy_number_attr(element, "AXMaxValue");
+    let enabled = copy_bool_attr(element, "AXEnabled");
+    let selected = copy_bool_attr(element, "AXSelected");
     let node = if is_actionable {
         let idx = *counter;
         *counter += 1;
@@ -398,6 +431,12 @@ unsafe fn walk_element(
             depth,
             parent_element_index: parent_index,
             frame,
+            value_state: value_state.clone(),
+            value_description: value_description.clone(),
+            min_value,
+            max_value,
+            enabled,
+            selected,
         }
     } else {
         AXNode {
@@ -425,6 +464,12 @@ unsafe fn walk_element(
             depth,
             parent_element_index: parent_index,
             frame,
+            value_state: value_state.clone(),
+            value_description: value_description.clone(),
+            min_value,
+            max_value,
+            enabled,
+            selected,
         }
     };
 
